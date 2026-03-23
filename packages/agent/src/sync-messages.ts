@@ -299,7 +299,7 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
  * records that reference those protocols.
  *
  * Returns a {@link PushResult} with per-CID outcome tracking instead of throwing
- * on the first failure. Callers use this to advance the push frontier
+ * on the first failure. Callers use this to advance the push checkpoint
  * incrementally — only up to the highest contiguous success.
  */
 export async function pushMessages({ did, dwnUrl, delegateDid, protocol, messageCids, agent, permissionsApi }: {

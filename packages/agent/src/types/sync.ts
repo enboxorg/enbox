@@ -87,14 +87,14 @@ export async function computeScopeId(scope: SyncScope): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Causal frontier types
+// Replication checkpoint types
 // ---------------------------------------------------------------------------
 
 /**
  * Maximum number of in-flight deliveries (runtime ordinals) a link may
  * accumulate before transitioning to `repairing`. This is the overflow
  * threshold for the engine's in-memory delivery tracker, not for durable
- * frontier state. Normative per the sync redesign RFC.
+ * checkpoint state. Normative per the sync redesign RFC.
  */
 export const MAX_PENDING_TOKENS = 100;
 
@@ -102,13 +102,13 @@ export const MAX_PENDING_TOKENS = 100;
  * Tracks directional (pull or push) replay progression for a single
  * replication link. All tokens belong to the same `(streamId, epoch)`.
  *
- * This is the **durable** frontier state persisted to the ledger.
+ * This is the **durable** replication checkpoint persisted to the ledger.
  * In-memory delivery-order tracking (ordinals, in-flight commits) is owned
  * by the sync engine and is not persisted — on crash recovery, replay
  * restarts from `contiguousAppliedToken` and idempotent apply handles
  * any re-delivered events.
  */
-export type DirectionFrontier = {
+export type DirectionCheckpoint = {
   /**
    * The latest token received from the source (pull) or confirmed by the
    * remote (push). May be ahead of `contiguousAppliedToken` when events
@@ -158,11 +158,11 @@ export type ReplicationLinkState = {
   /** Current link status. */
   status: LinkStatus;
 
-  /** Pull-direction frontier (remote → local). */
-  pull: DirectionFrontier;
+  /** Pull-direction replication checkpoint (remote → local). */
+  pull: DirectionCheckpoint;
 
-  /** Push-direction frontier (local → remote). */
-  push: DirectionFrontier;
+  /** Push-direction replication checkpoint (local → remote). */
+  push: DirectionCheckpoint;
 
   /** Delegate DID used to sign sync messages, if any. */
   delegateDid?: string;
@@ -186,7 +186,7 @@ export type ReplicationLinkState = {
 
 /**
  * Result of a batch push operation. Replaces the previous throw-on-first-failure
- * pattern so callers can advance the push frontier incrementally.
+ * pattern so callers can advance the push replication checkpoint incrementally.
  */
 export type PushResult = {
   /** messageCids that were accepted (202/204/409 — idempotent success). */

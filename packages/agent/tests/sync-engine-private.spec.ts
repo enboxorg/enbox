@@ -1588,7 +1588,7 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Pull delivery-order tracking (ordinal-based frontier)
+  // Pull delivery-order tracking (ordinal-based replication checkpoint)
   // ---------------------------------------------------------------------------
 
   describe('pull delivery-order tracking', () => {
@@ -1597,7 +1597,7 @@ describe('SyncEngineLevel — private methods', () => {
       return { streamId: 'stream-1', epoch: 'epoch-1', position: String(pos), messageCid: `cid-${pos}` };
     }
 
-    it('should advance frontier only when all earlier ordinals are committed', () => {
+    it('should advance checkpoint only when all earlier ordinals are committed', () => {
       const engine = new SyncEngineLevel({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
@@ -1620,7 +1620,7 @@ describe('SyncEngineLevel — private methods', () => {
       rt.inflight.get(1).committed = true;
       const drained1 = (engine as any).drainCommittedPull(linkKey);
 
-      // Frontier must NOT advance — ordinal 0 is still uncommitted.
+      // Checkpoint must NOT advance — ordinal 0 is still uncommitted.
       expect(drained1).toBe(0);
       expect(link.pull.contiguousAppliedToken).toBeUndefined();
 
@@ -1628,12 +1628,12 @@ describe('SyncEngineLevel — private methods', () => {
       rt.inflight.get(0).committed = true;
       const drained2 = (engine as any).drainCommittedPull(linkKey);
 
-      // Frontier should advance through both: 0 → token 1, then 1 → token 5.
+      // Checkpoint should advance through both: 0 → token 1, then 1 → token 5.
       expect(drained2).toBe(2);
       expect(link.pull.contiguousAppliedToken).toEqual(token(5));
     });
 
-    it('should handle sparse positions from filtered streams correctly', () => {
+    it('should advance checkpoint through sparse positions from filtered streams', () => {
       const engine = new SyncEngineLevel({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
@@ -1659,7 +1659,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(link.pull.contiguousAppliedToken).toEqual(token(9));
     });
 
-    it('should NOT advance frontier past a failed event (failure blocks progression)', async () => {
+    it('should NOT advance checkpoint past a failed event (failure blocks progression)', async () => {
       const engine = new SyncEngineLevel({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
@@ -1690,7 +1690,7 @@ describe('SyncEngineLevel — private methods', () => {
       rt.inflight.get(2).committed = true;
       (engine as any).drainCommittedPull(linkKey);
 
-      // Frontier must still be at token 1 — ordinal 1 is blocking.
+      // Checkpoint must still be at token 1 — ordinal 1 is blocking.
       expect(link.pull.contiguousAppliedToken).toEqual(token(1));
 
       // Ordinal 1 fails — simulating what the catch block does.
@@ -1699,7 +1699,7 @@ describe('SyncEngineLevel — private methods', () => {
       rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
       link.status = 'repairing';
 
-      // Frontier must still be at token 1 — the failed event was never committed.
+      // Checkpoint must still be at token 1 — the failed event was never committed.
       expect(link.pull.contiguousAppliedToken).toEqual(token(1));
       expect(link.status).toBe('repairing');
     });

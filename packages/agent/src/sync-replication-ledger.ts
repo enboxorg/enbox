@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
-import type { DirectionFrontier, LinkStatus, ReplicationLinkState, SyncScope } from './types/sync.js';
+import type { DirectionCheckpoint, LinkStatus, ReplicationLinkState, SyncScope } from './types/sync.js';
 
 import { computeScopeId } from './types/sync.js';
 
@@ -10,12 +10,12 @@ const KEY_SEP = '^';
 
 /**
  * Durable replication ledger — persists {@link ReplicationLinkState} for each
- * sync link in a LevelDB sublevel. Provides CRUD operations and frontier
- * progression helpers.
+ * sync link in a LevelDB sublevel. Provides CRUD operations and replication
+ * checkpoint helpers.
  *
  * Key format: `{tenantDid}^{remoteEndpoint}^{scopeId}`
  *
- * Each link tracks independent pull and push {@link DirectionFrontier}s.
+ * Each link tracks independent pull and push {@link DirectionCheckpoint}s.
  * The ledger does not own subscriptions or timers — it is a passive state
  * store called by the sync engine.
  */
@@ -47,7 +47,7 @@ export class ReplicationLedger {
 
   /**
    * Get-or-create a link. If the link does not exist, it is created with
-   * `initializing` status and empty frontiers.
+   * `initializing` status and empty checkpoints.
    */
   public async getOrCreateLink(params: {
     tenantDid : string;
@@ -69,7 +69,7 @@ export class ReplicationLedger {
       }
     }
 
-    // Create a new link with empty frontiers.
+    // Create a new link with empty checkpoints.
     const link: ReplicationLinkState = {
       tenantDid      : params.tenantDid,
       remoteEndpoint : params.remoteEndpoint,
@@ -131,7 +131,7 @@ export class ReplicationLedger {
   }
 
   // ---------------------------------------------------------------------------
-  // Minimal frontier helpers (durable state only — no progression logic)
+  // Minimal checkpoint helpers (durable state only — no progression logic)
   // ---------------------------------------------------------------------------
 
   /**
@@ -148,13 +148,13 @@ export class ReplicationLedger {
 
   /**
    * Check whether a token belongs to the same domain (streamId + epoch) as
-   * the frontier's current baseline. Returns `true` if domains match or if
-   * the frontier has no baseline yet.
+   * the checkpoint's current baseline. Returns `true` if domains match or if
+   * the checkpoint has no baseline yet.
    */
-  public static validateTokenDomain(frontier: DirectionFrontier, token: ProgressToken): boolean {
-    if (frontier.contiguousAppliedToken === undefined) { return true; }
-    return token.streamId === frontier.contiguousAppliedToken.streamId &&
-           token.epoch === frontier.contiguousAppliedToken.epoch;
+  public static validateTokenDomain(checkpoint: DirectionCheckpoint, token: ProgressToken): boolean {
+    if (checkpoint.contiguousAppliedToken === undefined) { return true; }
+    return token.streamId === checkpoint.contiguousAppliedToken.streamId &&
+           token.epoch === checkpoint.contiguousAppliedToken.epoch;
   }
 
   /**
@@ -162,12 +162,12 @@ export class ReplicationLedger {
    * Does NOT advance `contiguousAppliedToken` — that is owned by the engine's
    * delivery-order tracking.
    */
-  public static setReceivedToken(frontier: DirectionFrontier, token: ProgressToken): void {
+  public static setReceivedToken(checkpoint: DirectionCheckpoint, token: ProgressToken): void {
     if (
-      frontier.receivedToken === undefined ||
-      ReplicationLedger.comparePosition(token, frontier.receivedToken) > 0
+      checkpoint.receivedToken === undefined ||
+      ReplicationLedger.comparePosition(token, checkpoint.receivedToken) > 0
     ) {
-      frontier.receivedToken = token;
+      checkpoint.receivedToken = token;
     }
   }
 
@@ -176,16 +176,17 @@ export class ReplicationLedger {
    * must have already verified that all earlier delivered tokens for this link
    * are durably committed before calling this.
    */
-  public static commitContiguousToken(frontier: DirectionFrontier, token: ProgressToken): void {
-    frontier.contiguousAppliedToken = token;
+  public static commitContiguousToken(checkpoint: DirectionCheckpoint, token: ProgressToken): void {
+    checkpoint.contiguousAppliedToken = token;
   }
 
   /**
-   * Reset a frontier (e.g., after repair or domain change). Clears all state.
+   * Reset a replication checkpoint (e.g., after repair or domain change).
+   * Clears all state.
    */
-  public static resetFrontier(frontier: DirectionFrontier, token?: ProgressToken): void {
-    frontier.contiguousAppliedToken = token;
-    frontier.receivedToken = token;
+  public static resetCheckpoint(checkpoint: DirectionCheckpoint, token?: ProgressToken): void {
+    checkpoint.contiguousAppliedToken = token;
+    checkpoint.receivedToken = token;
   }
 }
 

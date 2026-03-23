@@ -124,7 +124,7 @@ export class SyncEngineLevel implements SyncEngine {
   private _syncLock = false;
 
   /**
-   * Durable replication ledger — persists per-link frontier state.
+   * Durable replication ledger — persists per-link checkpoint state.
    * Used by live sync to track pull/push progression independently per link.
    * Poll-mode sync still uses the legacy `getCursor`/`setCursor` path.
    * Lazily initialized on first use to avoid sublevel() calls on mock dbs.
@@ -594,7 +594,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Drain contiguously committed ordinals from the runtime state, advancing
-   * the link's pull frontier for each drained entry. Returns the number of
+    * the link's pull checkpoint for each drained entry. Returns the number of
    * entries drained (0 if the next ordinal is not yet committed).
    */
   private drainCommittedPull(linkKey: string): number {
@@ -607,7 +607,7 @@ export class SyncEngineLevel implements SyncEngine {
       const entry = rt.inflight.get(rt.nextCommitOrdinal);
       if (!entry || !entry.committed) { break; }
 
-      // This ordinal is committed — advance the durable frontier.
+      // This ordinal is committed — advance the durable checkpoint.
       ReplicationLedger.commitContiguousToken(link.pull, entry.token);
       ReplicationLedger.setReceivedToken(link.pull, entry.token);
       rt.inflight.delete(rt.nextCommitOrdinal);
@@ -669,7 +669,7 @@ export class SyncEngineLevel implements SyncEngine {
   }): Promise<void> {
     const { did, delegateDid, dwnUrl, protocol } = target;
 
-    // Resolve the cursor from the link's pull frontier (preferred) or legacy storage.
+    // Resolve the cursor from the link's pull checkpoint (preferred) or legacy storage.
     const cursorKey = this.buildCursorKey(did, dwnUrl, protocol);
     const link = this._activeLinks.get(cursorKey);
     const cursor = link?.pull.contiguousAppliedToken ?? await this.getCursor(cursorKey);
@@ -696,7 +696,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Define the subscription handler that processes incoming events.
     // NOTE: The WebSocket client fires handlers without awaiting (fire-and-forget),
     // so multiple handlers can be in-flight concurrently. The ordinal tracker
-    // ensures the frontier advances only when all earlier deliveries are committed.
+    // ensures the checkpoint advances only when all earlier deliveries are committed.
     const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
       if (subMessage.type === 'eose') {
         // End-of-stored-events — catch-up complete.
@@ -708,7 +708,7 @@ export class SyncEngineLevel implements SyncEngine {
             ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
             // Drain committed entries. Do NOT unconditionally advance to the
             // EOSE cursor — earlier stored events may still be in-flight
-            // (handlers are fire-and-forget). The frontier advances only as
+            // (handlers are fire-and-forget). The checkpoint advances only as
             // far as the contiguous drain reaches.
             this.drainCommittedPull(cursorKey);
             await this.ledger.saveLink(link);
@@ -726,7 +726,7 @@ export class SyncEngineLevel implements SyncEngine {
         // Domain validation: reject tokens from a different stream/epoch.
         if (link && !ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
           console.warn(`SyncEngineLevel: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
-          ReplicationLedger.resetFrontier(link.pull);
+          ReplicationLedger.resetCheckpoint(link.pull);
           const rt = this._linkRuntimes.get(cursorKey);
           if (rt) { rt.inflight.clear(); rt.nextCommitOrdinal = rt.nextDeliveryOrdinal; }
           await this.ledger.setStatus(link, 'repairing');
@@ -767,7 +767,7 @@ export class SyncEngineLevel implements SyncEngine {
           this._recentlyPulledCids.set(`${pulledCid}|${dwnUrl}`, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
           this.evictExpiredEchoEntries();
 
-          // Mark this ordinal as committed and drain the frontier.
+          // Mark this ordinal as committed and drain the checkpoint.
           if (link && rt) {
             const entry = rt.inflight.get(ordinal);
             if (entry) { entry.committed = true; }
@@ -790,7 +790,7 @@ export class SyncEngineLevel implements SyncEngine {
         } catch (error: any) {
           console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
           // A failed processRawMessage means local state is incomplete.
-          // Transition to repairing immediately — do NOT advance the frontier
+          // Transition to repairing immediately — do NOT advance the checkpoint
           // past this failure or let later ordinals commit past it. SMT
           // reconciliation will discover and fill the gap.
           if (link && rt) {
@@ -823,7 +823,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Build a resubscribe factory so the WebSocket client can resume with
     // a fresh cursor-stamped message after reconnection.
     const resubscribeFactory: ResubscribeFactory = async (resumeCursor?: ProgressToken) => {
-      // On reconnect, use the latest durable frontier position if available.
+      // On reconnect, use the latest durable checkpoint position if available.
       const effectiveCursor = resumeCursor ?? link?.pull.contiguousAppliedToken ?? cursor;
       const resumeRequest = {
         ...subscribeRequest,
@@ -982,7 +982,7 @@ export class SyncEngineLevel implements SyncEngine {
           permissionsApi : this._permissionsApi,
         });
 
-        // Advance the push frontier for successfully pushed entries.
+        // Advance the push checkpoint for successfully pushed entries.
         // Push is sequential (single batch, in-order processing) so we can
         // commit directly without ordinal tracking — there's no concurrent
         // completion to reorder.
@@ -995,8 +995,8 @@ export class SyncEngineLevel implements SyncEngine {
             if (hitFailure) { break; }
             if (succeededSet.has(entry.cid) && entry.localToken) {
               if (!ReplicationLedger.validateTokenDomain(link.push, entry.localToken)) {
-                console.warn(`SyncEngineLevel: Push frontier domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
-                ReplicationLedger.resetFrontier(link.push);
+                console.warn(`SyncEngineLevel: Push checkpoint domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
+                ReplicationLedger.resetCheckpoint(link.push);
                 await this.ledger.setStatus(link, 'repairing');
                 break;
               }

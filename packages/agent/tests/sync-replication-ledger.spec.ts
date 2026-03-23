@@ -1,4 +1,4 @@
-import type { DirectionFrontier } from '../src/types/sync.js';
+import type { DirectionCheckpoint } from '../src/types/sync.js';
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
@@ -33,7 +33,7 @@ describe('ReplicationLedger', () => {
   // ---------------------------------------------------------------------------
 
   describe('getOrCreateLink', () => {
-    it('should create a new link with initializing status and empty frontiers', async () => {
+    it('should create a new link with initializing status and empty checkpoints', async () => {
       const link = await ledger.getOrCreateLink({
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
@@ -94,7 +94,7 @@ describe('ReplicationLedger', () => {
   });
 
   describe('saveLink', () => {
-    it('should persist frontier changes', async () => {
+    it('should persist checkpoint changes', async () => {
       const link = await ledger.getOrCreateLink({
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
@@ -186,7 +186,7 @@ describe('ReplicationLedger', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Minimal frontier helpers
+  // Minimal checkpoint helpers
   // ---------------------------------------------------------------------------
 
   describe('comparePosition', () => {
@@ -210,74 +210,74 @@ describe('ReplicationLedger', () => {
   });
 
   describe('validateTokenDomain', () => {
-    it('should return true when frontier has no baseline', () => {
-      const frontier: DirectionFrontier = {};
-      expect(ReplicationLedger.validateTokenDomain(frontier, token(1))).toBe(true);
+    it('should return true when checkpoint has no baseline', () => {
+      const checkpoint: DirectionCheckpoint = {};
+      expect(ReplicationLedger.validateTokenDomain(checkpoint, token(1))).toBe(true);
     });
 
     it('should return true for matching streamId and epoch', () => {
-      const frontier: DirectionFrontier = { contiguousAppliedToken: token(1) };
-      expect(ReplicationLedger.validateTokenDomain(frontier, token(5))).toBe(true);
+      const checkpoint: DirectionCheckpoint = { contiguousAppliedToken: token(1) };
+      expect(ReplicationLedger.validateTokenDomain(checkpoint, token(5))).toBe(true);
     });
 
     it('should return false for mismatched streamId', () => {
-      const frontier: DirectionFrontier = { contiguousAppliedToken: token(1) };
+      const checkpoint: DirectionCheckpoint = { contiguousAppliedToken: token(1) };
       const foreign = { streamId: 'other-stream', epoch: 'epoch-1', position: '2', messageCid: 'cid-2' };
-      expect(ReplicationLedger.validateTokenDomain(frontier, foreign)).toBe(false);
+      expect(ReplicationLedger.validateTokenDomain(checkpoint, foreign)).toBe(false);
     });
 
     it('should return false for mismatched epoch', () => {
-      const frontier: DirectionFrontier = { contiguousAppliedToken: token(1) };
+      const checkpoint: DirectionCheckpoint = { contiguousAppliedToken: token(1) };
       const stale = { streamId: 'stream-1', epoch: 'old-epoch', position: '2', messageCid: 'cid-2' };
-      expect(ReplicationLedger.validateTokenDomain(frontier, stale)).toBe(false);
+      expect(ReplicationLedger.validateTokenDomain(checkpoint, stale)).toBe(false);
     });
   });
 
   describe('setReceivedToken', () => {
     it('should set receivedToken to the highest seen', () => {
-      const frontier: DirectionFrontier = {};
-      ReplicationLedger.setReceivedToken(frontier, token(5));
-      expect(frontier.receivedToken).toEqual(token(5));
+      const checkpoint: DirectionCheckpoint = {};
+      ReplicationLedger.setReceivedToken(checkpoint, token(5));
+      expect(checkpoint.receivedToken).toEqual(token(5));
 
-      ReplicationLedger.setReceivedToken(frontier, token(3));
-      expect(frontier.receivedToken).toEqual(token(5)); // did not regress
+      ReplicationLedger.setReceivedToken(checkpoint, token(3));
+      expect(checkpoint.receivedToken).toEqual(token(5)); // did not regress
 
-      ReplicationLedger.setReceivedToken(frontier, token(10));
-      expect(frontier.receivedToken).toEqual(token(10));
+      ReplicationLedger.setReceivedToken(checkpoint, token(10));
+      expect(checkpoint.receivedToken).toEqual(token(10));
     });
   });
 
   describe('commitContiguousToken', () => {
     it('should set contiguousAppliedToken', () => {
-      const frontier: DirectionFrontier = {};
-      ReplicationLedger.commitContiguousToken(frontier, token(42));
-      expect(frontier.contiguousAppliedToken).toEqual(token(42));
+      const checkpoint: DirectionCheckpoint = {};
+      ReplicationLedger.commitContiguousToken(checkpoint, token(42));
+      expect(checkpoint.contiguousAppliedToken).toEqual(token(42));
     });
   });
 
-  describe('resetFrontier', () => {
+  describe('resetCheckpoint', () => {
     it('should clear all state and set the token', () => {
-      const frontier: DirectionFrontier = {
+      const checkpoint: DirectionCheckpoint = {
         receivedToken          : token(10),
         contiguousAppliedToken : token(5),
       };
 
-      ReplicationLedger.resetFrontier(frontier, token(10));
+      ReplicationLedger.resetCheckpoint(checkpoint, token(10));
 
-      expect(frontier.contiguousAppliedToken).toEqual(token(10));
-      expect(frontier.receivedToken).toEqual(token(10));
+      expect(checkpoint.contiguousAppliedToken).toEqual(token(10));
+      expect(checkpoint.receivedToken).toEqual(token(10));
     });
 
     it('should clear to undefined when no token is provided', () => {
-      const frontier: DirectionFrontier = {
+      const checkpoint: DirectionCheckpoint = {
         receivedToken          : token(10),
         contiguousAppliedToken : token(5),
       };
 
-      ReplicationLedger.resetFrontier(frontier);
+      ReplicationLedger.resetCheckpoint(checkpoint);
 
-      expect(frontier.contiguousAppliedToken).toBeUndefined();
-      expect(frontier.receivedToken).toBeUndefined();
+      expect(checkpoint.contiguousAppliedToken).toBeUndefined();
+      expect(checkpoint.receivedToken).toBeUndefined();
     });
   });
 });
