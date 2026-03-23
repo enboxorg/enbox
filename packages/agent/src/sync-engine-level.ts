@@ -704,18 +704,20 @@ export class SyncEngineLevel implements SyncEngine {
           if (!ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
             console.warn(`SyncEngineLevel: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`);
             await this.ledger.setStatus(link, 'repairing');
-          } else {
-            ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
-            // Drain committed entries. Do NOT unconditionally advance to the
-            // EOSE cursor — earlier stored events may still be in-flight
-            // (handlers are fire-and-forget). The checkpoint advances only as
-            // far as the contiguous drain reaches.
-            this.drainCommittedPull(cursorKey);
-            await this.ledger.saveLink(link);
+            // Do not set connectivity to online — replication is unhealthy.
+            return;
           }
+          ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
+          // Drain committed entries. Do NOT unconditionally advance to the
+          // EOSE cursor — earlier stored events may still be in-flight
+          // (handlers are fire-and-forget). The checkpoint advances only as
+          // far as the contiguous drain reaches.
+          this.drainCommittedPull(cursorKey);
+          await this.ledger.saveLink(link);
         } else {
           await this.setCursor(cursorKey, subMessage.cursor);
         }
+        // Transport is reachable — set connectivity to online.
         this._connectivityState = 'online';
         return;
       }
@@ -851,8 +853,7 @@ export class SyncEngineLevel implements SyncEngine {
       },
     }) as MessagesSubscribeReply;
     if (reply.status.code !== 200 || !reply.subscription) {
-      console.error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
-      return;
+      throw new Error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
     }
 
     this._liveSubscriptions.push({
@@ -943,8 +944,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     const reply = response.reply as MessagesSubscribeReply;
     if (reply.status.code !== 200 || !reply.subscription) {
-      console.error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
-      return;
+      throw new Error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
     }
 
     this._localSubscriptions.push({

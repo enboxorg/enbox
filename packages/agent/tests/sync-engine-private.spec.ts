@@ -651,18 +651,19 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should not add subscription when reply status is not 200', async () => {
+    it('should throw when reply status is not 200', async () => {
       const { agent } = createPullMockAgent({
         status       : { code: 500, detail: 'Error' },
         subscription : undefined,
       });
       const engine = new SyncEngineLevel({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
-      sinon.stub(console, 'error');
 
-      await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-      });
+      await expect(
+        (engine as any).openLivePullSubscription({
+          did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        })
+      ).rejects.toThrow('MessagesSubscribe failed');
 
       expect((engine as any)._liveSubscriptions.length).toBe(0);
     });
@@ -769,7 +770,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._localSubscriptions = [];
     });
 
-    it('should not add subscription when reply status is not 200', async () => {
+    it('should throw when reply status is not 200', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
@@ -782,11 +783,12 @@ describe('SyncEngineLevel — private methods', () => {
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
-      sinon.stub(console, 'error');
 
-      await (engine as any).openLocalPushSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-      });
+      await expect(
+        (engine as any).openLocalPushSubscription({
+          did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        })
+      ).rejects.toThrow('Local MessagesSubscribe failed');
 
       expect((engine as any)._localSubscriptions.length).toBe(0);
     });
