@@ -10,7 +10,9 @@ import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-j
 
 import type { PermissionsApi } from './types/permissions.js';
 import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
-import type { PushResult, StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
+import type { PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
+
+import { ReplicationLedger } from './sync-replication-ledger.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
@@ -89,6 +91,20 @@ export class SyncEngineLevel implements SyncEngine {
   private _syncLock = false;
 
   /**
+   * Durable replication ledger — persists per-link frontier state.
+   * Used by live sync to track pull/push progression independently per link.
+   * Poll-mode sync still uses the legacy `getCursor`/`setCursor` path.
+   */
+  private _ledger: ReplicationLedger;
+
+  /**
+   * In-memory cache of active links, keyed by `{did}^{dwnUrl}^{protocol}`.
+   * Populated from the ledger on `startLiveSync`, used by subscription handlers
+   * to avoid async ledger lookups on every event.
+   */
+  private _activeLinks: Map<string, ReplicationLinkState> = new Map();
+
+  /**
    * Hex-encoded default hashes for empty subtrees at each depth, keyed by depth.
    * Lazily initialized on first use. Used by `walkTreeDiff` to detect empty subtrees
    * and short-circuit the recursive walk instead of descending all the way to MAX_DIFF_DEPTH.
@@ -144,6 +160,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
     this._db = (db) ? db : new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
+    this._ledger = new ReplicationLedger(this._db);
   }
 
   /**
@@ -454,10 +471,26 @@ export class SyncEngineLevel implements SyncEngine {
       console.error('SyncEngineLevel: Error during initial live-sync catch-up', error);
     }
 
-    // Step 2: Open live subscriptions for each sync target.
+    // Step 2: Initialize replication links and open live subscriptions.
     const syncTargets = await this.getSyncTargets();
     for (const target of syncTargets) {
       try {
+        // Get or create the link in the durable ledger.
+        const link = await this._ledger.getOrCreateLink({
+          tenantDid      : target.did,
+          remoteEndpoint : target.dwnUrl,
+          scope          : { kind: 'full' },
+          delegateDid    : target.delegateDid,
+          protocol       : target.protocol,
+        });
+
+        // Cache the link for fast access by subscription handlers.
+        const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
+        this._activeLinks.set(linkKey, link);
+
+        // Transition to live.
+        await this._ledger.setStatus(link, 'live');
+
         await this.openLivePullSubscription(target);
         await this.openLocalPushSubscription(target);
       } catch (error: any) {
@@ -528,9 +561,10 @@ export class SyncEngineLevel implements SyncEngine {
   }): Promise<void> {
     const { did, delegateDid, dwnUrl, protocol } = target;
 
-    // Resolve the cursor from the last session (if any).
+    // Resolve the cursor from the link's pull frontier (preferred) or legacy storage.
     const cursorKey = this.buildCursorKey(did, dwnUrl, protocol);
-    const cursor = await this.getCursor(cursorKey);
+    const link = this._activeLinks.get(cursorKey);
+    const cursor = link?.pull.contiguousAppliedToken ?? await this.getCursor(cursorKey);
 
     // Build the MessagesSubscribe filters.
     const filters = protocol ? [{ protocol }] : [];
@@ -554,8 +588,14 @@ export class SyncEngineLevel implements SyncEngine {
     // Define the subscription handler that processes incoming events.
     const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
       if (subMessage.type === 'eose') {
-        // End-of-stored-events — catch-up complete, persist cursor.
-        await this.setCursor(cursorKey, subMessage.cursor);
+        // End-of-stored-events — catch-up complete.
+        if (link) {
+          // Advance frontier to the EOSE cursor (represents the end of stored events).
+          ReplicationLedger.advanceFrontier(link.pull, subMessage.cursor);
+          await this._ledger.saveLink(link);
+        } else {
+          await this.setCursor(cursorKey, subMessage.cursor);
+        }
         this._connectivityState = 'online';
         return;
       }
@@ -584,16 +624,25 @@ export class SyncEngineLevel implements SyncEngine {
           await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
 
           // Track this CID for echo-loop suppression, scoped to the source endpoint.
-          // Prevents pushing a message back to the same remote it was pulled from,
-          // while still allowing fan-out to other providers.
           const pulledCid = await Message.getCid(event.message);
           this._recentlyPulledCids.set(`${pulledCid}|${dwnUrl}`, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
           this.evictExpiredEchoEntries();
 
-          // Only advance the cursor after successful processing.
-          // If processing fails, the event will be re-delivered on
-          // reconnection (cursor-based resume from the last good point).
-          await this.setCursor(cursorKey, subMessage.cursor);
+          // Advance the pull frontier after successful processing.
+          if (link) {
+            const result = ReplicationLedger.advanceFrontier(link.pull, subMessage.cursor);
+            await this._ledger.saveLink(link);
+
+            // If pending tokens overflow, transition to repairing.
+            if (result === 'overflow') {
+              console.warn(`SyncEngineLevel: Pull frontier overflow for ${did} -> ${dwnUrl}, transitioning to repairing`);
+              await this._ledger.setStatus(link, 'repairing');
+              // The next SMT integrity check will perform repair reconciliation.
+            }
+          } else {
+            // Legacy path: no link available, use simple cursor persistence.
+            await this.setCursor(cursorKey, subMessage.cursor);
+          }
         } catch (error: any) {
           console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
         }
@@ -621,9 +670,11 @@ export class SyncEngineLevel implements SyncEngine {
     // Build a resubscribe factory so the WebSocket client can resume with
     // a fresh cursor-stamped message after reconnection.
     const resubscribeFactory: ResubscribeFactory = async (resumeCursor?: ProgressToken) => {
+      // On reconnect, use the latest durable frontier position if available.
+      const effectiveCursor = resumeCursor ?? link?.pull.contiguousAppliedToken ?? cursor;
       const resumeRequest = {
         ...subscribeRequest,
-        messageParams: { ...subscribeRequest.messageParams, cursor: resumeCursor ?? cursor },
+        messageParams: { ...subscribeRequest.messageParams, cursor: effectiveCursor },
       };
       const { message: resumeMsg } = await this.agent.dwn.processRequest(resumeRequest);
       if (!resumeMsg) {
