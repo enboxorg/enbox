@@ -561,6 +561,17 @@ export class SyncEngineLevel implements SyncEngine {
         await this.ledger.setStatus(link, 'live');
       } catch (error: any) {
         console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
+
+        // Clean up in-memory state for the failed link so it doesn't appear
+        // active to later code. The durable link remains at 'initializing'.
+        const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
+        this._activeLinks.delete(linkKey);
+        this._linkRuntimes.delete(linkKey);
+
+        // Recompute connectivity — if no live subscriptions remain, reset to unknown.
+        if (this._liveSubscriptions.length === 0) {
+          this._connectivityState = 'unknown';
+        }
       }
     }
 

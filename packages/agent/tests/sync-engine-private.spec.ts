@@ -1206,6 +1206,88 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // startLiveSync — partial setup failure cleanup
+  // ---------------------------------------------------------------------------
+
+  describe('startLiveSync — partial setup failure cleanup', () => {
+    it('should clean up in-memory state when push subscription fails', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      // Stub sync() to no-op (initial catch-up).
+      sinon.stub(engine, 'sync').resolves();
+
+      // Return one sync target.
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' },
+      ]);
+
+      // Pull subscription succeeds (sets connectivity to online).
+      sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<void> => {
+        (engine as any)._liveSubscriptions.push({
+          did    : 'did:example:alice', dwnUrl : 'https://dwn.example.com',
+          close  : sinon.stub().resolves(),
+        });
+        (engine as any)._connectivityState = 'online';
+      });
+
+      // Push subscription fails.
+      sinon.stub(engine as any, 'openLocalPushSubscription').rejects(new Error('push open failed'));
+
+      sinon.stub(console, 'error');
+
+      await engine.startSync({ mode: 'live', interval: '10s' });
+
+      // _activeLinks should not contain the failed link.
+      const linkKey = (engine as any).buildCursorKey('did:example:alice', 'https://dwn.example.com', undefined);
+      expect((engine as any)._activeLinks.has(linkKey)).toBe(false);
+      expect((engine as any)._linkRuntimes.has(linkKey)).toBe(false);
+
+      // Pull subscription should have been closed (the openLivePullSubscription
+      // stub added it, and the catch path in startLiveSync should have closed it
+      // via the inner try/catch around push). Since we stubbed openLivePullSubscription
+      // directly, the inner try/catch won't fire — but _activeLinks cleanup still runs.
+
+      // Connectivity should be reset since no live subscriptions remain after cleanup.
+      // The pull sub was added by our stub but startLiveSync's catch-path inner try/catch
+      // for the push won't close it because openLivePullSubscription was stubbed.
+      // However the outer catch does clean up _activeLinks and resets connectivity
+      // if no _liveSubscriptions remain. Our stub added one, so connectivity stays online.
+      // This is correct — the pull subscription was opened by the stub and is still in
+      // _liveSubscriptions. In the real code path (non-stubbed), the inner try/catch
+      // would close it.
+
+      await engine.stopSync();
+    });
+
+    it('should reset connectivity to unknown when no subscriptions remain after failure', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      sinon.stub(engine, 'sync').resolves();
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' },
+      ]);
+
+      // Pull subscription fails immediately (no subscriptions added).
+      sinon.stub(engine as any, 'openLivePullSubscription').rejects(new Error('pull open failed'));
+
+      sinon.stub(console, 'error');
+
+      await engine.startSync({ mode: 'live', interval: '10s' });
+
+      // No subscriptions opened at all — connectivity should be unknown.
+      expect((engine as any)._connectivityState).toBe('unknown');
+      expect((engine as any)._liveSubscriptions.length).toBe(0);
+
+      const linkKey = (engine as any).buildCursorKey('did:example:alice', 'https://dwn.example.com', undefined);
+      expect((engine as any)._activeLinks.has(linkKey)).toBe(false);
+
+      await engine.stopSync();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // openLivePullSubscription — subscriptionHandler callback
   // ---------------------------------------------------------------------------
 
