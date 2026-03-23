@@ -419,7 +419,8 @@ describe('sync-messages', () => {
       expect(sendStub.calledOnce).toBe(true);
     });
 
-    it('should throw when RPC send fails', async () => {
+    it('should report RPC failures in PushResult.failed instead of throwing', async () => {
+      const consoleStub = sinon.stub(console, 'error');
       const mockAgent = {
         dwn: {
           processRequest: sinon.stub().resolves({
@@ -432,13 +433,17 @@ describe('sync-messages', () => {
         rpc: { sendDwnRequest: sinon.stub().rejects(new Error('network error')) },
       } as any;
 
-      await expect(pushMessages({
+      const result = await pushMessages({
         did            : 'did:example:alice',
         dwnUrl         : 'https://dwn.example.com',
         messageCids    : ['cid-1'],
         agent          : mockAgent,
         permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
-      })).rejects.toThrow('push to https://dwn.example.com failed');
+      });
+
+      expect(result.failed).toHaveLength(1);
+      expect(result.succeeded).toHaveLength(0);
+      expect(consoleStub.called).toBe(true);
     });
 
     it('should log error for non-successful push replies', async () => {

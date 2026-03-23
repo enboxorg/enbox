@@ -91,8 +91,10 @@ export async function computeScopeId(scope: SyncScope): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /**
- * Maximum number of out-of-order tokens a frontier may accumulate before
- * the link transitions to `repairing`. Normative per the sync redesign RFC.
+ * Maximum number of in-flight deliveries (runtime ordinals) a link may
+ * accumulate before transitioning to `repairing`. This is the overflow
+ * threshold for the engine's in-memory delivery tracker, not for durable
+ * frontier state. Normative per the sync redesign RFC.
  */
 export const MAX_PENDING_TOKENS = 100;
 

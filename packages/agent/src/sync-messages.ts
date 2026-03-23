@@ -297,12 +297,6 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
  * Messages are fetched first, then sorted in dependency order (topological sort)
  * so that initial writes come before updates, and ProtocolsConfigures come before
  * records that reference those protocols.
- */
-/**
- * Reads missing messages from the local DWN and pushes them to the remote DWN.
- * Messages are fetched first, then sorted in dependency order (topological sort)
- * so that initial writes come before updates, and ProtocolsConfigures come before
- * records that reference those protocols.
  *
  * Returns a {@link PushResult} with per-CID outcome tracking instead of throwing
  * on the first failure. Callers use this to advance the push frontier
