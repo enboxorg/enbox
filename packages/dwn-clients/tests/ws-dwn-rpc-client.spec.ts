@@ -769,7 +769,7 @@ describe('WebSocketDwnRpcClient', () => {
 
         // Factory should have been called with the lastCursor
         expect(factorySpy.callCount).toBe(1);
-        expect(factorySpy.firstCall.args[0]).toBe('cursor-123');
+        expect(factorySpy.firstCall.args[0]).toEqual(lastToken);
 
         // subscriptionRequest should have been called with the factory's returned message
         expect(subscriptionRequestStub.callCount).toBe(1);

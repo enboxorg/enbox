@@ -1,6 +1,6 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 import type { SinonFakeTimers } from 'sinon';
-import type { Dwn, MessageEvent, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, MessageEvent, ProgressToken, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import { base64url } from 'multiformats/bases/base64';
 import { useFakeTimers } from 'sinon';
@@ -547,7 +547,7 @@ describe('websocket backpressure (rpc.ack)', function () {
       }
     });
 
-    const sendAck = (cursor: string): void => {
+    const sendAck = (cursor: ProgressToken): void => {
       const ackRequest = createJsonRpcAck(subscriptionId, cursor);
       socket.send(JSON.stringify(ackRequest));
     };
@@ -766,7 +766,7 @@ describe('websocket backpressure (rpc.ack)', function () {
     });
 
     // Send an ack for a subscription that doesn't exist
-    const ackRequest = createJsonRpcAck('nonexistent-sub-id', 'some-cursor');
+    const ackRequest = createJsonRpcAck('nonexistent-sub-id', { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' });
     socket.send(JSON.stringify(ackRequest));
 
     // Should get back a success response (the handler still responds 200 OK
