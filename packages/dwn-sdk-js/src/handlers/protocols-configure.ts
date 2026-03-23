@@ -83,7 +83,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
 
       // only emit if the event log is set
       if (this.deps.eventLog !== undefined) {
-        await this.deps.eventLog.emit(tenant, { message }, indexes);
+        await this.deps.eventLog.emit(tenant, { message }, indexes, messageCid);
       }
 
       messageReply = {

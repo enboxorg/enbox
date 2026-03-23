@@ -7,6 +7,7 @@ import type {
   EventLogSubscribeOptions,
   EventSubscription,
   MessageEvent,
+  ProgressToken,
   SubscriptionListener,
 } from '../types/subscriptions.js';
 
@@ -30,11 +31,12 @@ type EmitterPayload = { tenant: string; event: MessageEvent; indexes: KeyValues;
 type EmitterEvents = Record<string, EmitterPayload>;
 
 /**
- * Internal storage entry — the event plus its indexes.
+ * Internal storage entry — the event plus its indexes and message CID.
  */
 type StoredEntry = {
-  event : MessageEvent;
-  indexes : KeyValues;
+  event      : MessageEvent;
+  indexes    : KeyValues;
+  messageCid : string;
 };
 
 export interface EventEmitterEventLogConfig {
@@ -77,12 +79,43 @@ export class EventEmitterEventLog implements EventLog {
    */
   private tenantSeqs: Map<string, number> = new Map();
 
+  /**
+   * Epoch for this EventLog instance. Generated once at construction as a
+   * UUID v4. Changes every restart (correct for in-memory — state is lost).
+   */
+  private readonly epoch: string;
+
   constructor(config: EventEmitterEventLogConfig = {}) {
     this.maxEventsPerTenant = config.maxEventsPerTenant ?? 10_000;
+    this.epoch = crypto.randomUUID();
 
     if (config.errorHandler) {
       this.errorHandler = config.errorHandler;
     }
+  }
+
+  /**
+   * Derives a stable `streamId` for a given tenant. Deterministic — same
+   * tenant always produces the same streamId on any instance.
+   */
+  private async getStreamId(tenant: string): Promise<string> {
+    const bytes = new TextEncoder().encode(tenant);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+    const hashArray = new Uint8Array(hashBuffer);
+    // Take first 16 hex chars (64 bits) of the hash for a compact stable ID.
+    return Array.from(hashArray.slice(0, 8), (b: number) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  /**
+   * Constructs a {@link ProgressToken} from internal state.
+   */
+  private async buildToken(tenant: string, seq: number, messageCid: string): Promise<ProgressToken> {
+    return {
+      streamId   : await this.getStreamId(tenant),
+      epoch      : this.epoch,
+      position   : String(seq),
+      messageCid,
+    };
   }
 
   public async open(): Promise<void> {
@@ -96,13 +129,13 @@ export class EventEmitterEventLog implements EventLog {
     this.tenantSeqs.clear();
   }
 
-  public async emit(tenant: string, event: MessageEvent, indexes: KeyValues): Promise<string> {
+  public async emit(tenant: string, event: MessageEvent, indexes: KeyValues, messageCid: string): Promise<ProgressToken | undefined> {
     if (!this.isOpen) {
       this.errorHandler(new DwnError(
         DwnErrorCode.EventLogNotOpenError,
         'a message emitted when EventLog is closed'
       ));
-      return '';
+      return undefined;
     }
 
     // Assign a monotonic sequence number for this tenant.
@@ -116,7 +149,7 @@ export class EventEmitterEventLog implements EventLog {
       log = new Map();
       this.tenantLogs.set(tenant, log);
     }
-    log.set(seq, { event, indexes });
+    log.set(seq, { event, indexes, messageCid });
 
     // Evict oldest entries if the log exceeds the retention limit.
     if (log.size > this.maxEventsPerTenant) {
@@ -133,12 +166,12 @@ export class EventEmitterEventLog implements EventLog {
     const channel = `${tenant}_${EVENTS_LISTENER_CHANNEL}`;
     this.emitter.emit(channel, { tenant, event, indexes, seq });
 
-    return String(seq);
+    return this.buildToken(tenant, seq, messageCid);
   }
 
   public async read(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
     const { cursor, limit, filters } = options;
-    const cursorSeq = cursor !== undefined ? EventEmitterEventLog.parseCursor(cursor) : undefined;
+    const cursorSeq = cursor !== undefined ? EventEmitterEventLog.parsePosition(cursor.position) : undefined;
     const log = this.tenantLogs.get(tenant);
 
     if (log === undefined || log.size === 0) {
@@ -166,17 +199,23 @@ export class EventEmitterEventLog implements EventLog {
       if (results.length >= maxResults) { break; }
     }
 
-    const lastSeq = results.length > 0 ? results[results.length - 1].seq : undefined;
-    return { events: results, cursor: lastSeq !== undefined ? String(lastSeq) : cursor };
+    if (results.length > 0) {
+      const lastEntry = results[results.length - 1];
+      const lastStoredEntry = log.get(lastEntry.seq);
+      const lastToken = await this.buildToken(tenant, lastEntry.seq, lastStoredEntry!.messageCid);
+      return { events: results, cursor: lastToken };
+    }
+
+    return { events: results, cursor };
   }
 
   /**
-   * Parse an opaque cursor string into an internal sequence number.
+   * Parse a position string into an internal sequence number.
    */
-  private static parseCursor(cursor: string): number {
-    const seq = Number(cursor);
+  private static parsePosition(position: string): number {
+    const seq = Number(position);
     if (Number.isNaN(seq) || seq < 0) {
-      throw new DwnError(DwnErrorCode.EventLogNotOpenError, `invalid cursor: '${cursor}'`);
+      throw new DwnError(DwnErrorCode.EventLogNotOpenError, `invalid cursor position: '${position}'`);
     }
     return seq;
   }
@@ -190,9 +229,17 @@ export class EventEmitterEventLog implements EventLog {
     const channel = `${tenant}_${EVENTS_LISTENER_CHANNEL}`;
     const { cursor, filters } = options ?? {};
 
+    // Helper to build a token from a live emitter payload.
+    const tokenFromPayload = async (payload: EmitterPayload): Promise<ProgressToken> => {
+      const log = this.tenantLogs.get(tenant);
+      const stored = log?.get(payload.seq);
+      const cid = stored?.messageCid ?? '';
+      return this.buildToken(tenant, payload.seq, cid);
+    };
+
     if (cursor !== undefined) {
       // ---- Cursor mode: catch-up from stored events, then EOSE, then live ----
-      const cursorSeq = EventEmitterEventLog.parseCursor(cursor);
+      const cursorSeq = EventEmitterEventLog.parsePosition(cursor.position);
 
       // Buffer live events that arrive during catch-up to avoid losing them.
       type BufferedEvent = { event: MessageEvent; seq: number };
@@ -207,7 +254,9 @@ export class EventEmitterEventLog implements EventLog {
         if (!catchUpComplete) {
           pendingLiveEvents.push({ event: payload.event, seq: payload.seq });
         } else {
-          listener({ type: 'event', cursor: String(payload.seq), event: payload.event });
+          void tokenFromPayload(payload).then((token) => {
+            listener({ type: 'event', cursor: token, event: payload.event });
+          });
         }
       };
 
@@ -215,19 +264,27 @@ export class EventEmitterEventLog implements EventLog {
 
       // Step 2: Read stored events from cursor and deliver them.
       const readResult = await this.read(tenant, { cursor, filters });
-      // The read cursor is the last event's seq (string) or the input cursor if nothing new.
+      // The read cursor is the token of the last read event, or the input cursor if nothing new.
       const eoseCursor = readResult.cursor ?? cursor;
-      const lastCatchUpSeq = readResult.cursor !== undefined ? Number(readResult.cursor) : cursorSeq;
+      const lastCatchUpSeq = readResult.cursor !== undefined
+        ? EventEmitterEventLog.parsePosition(readResult.cursor.position)
+        : cursorSeq;
 
       for (const entry of readResult.events) {
-        listener({ type: 'event', cursor: String(entry.seq), event: entry.event });
+        const log = this.tenantLogs.get(tenant);
+        const stored = log?.get(entry.seq);
+        const token = await this.buildToken(tenant, entry.seq, stored?.messageCid ?? '');
+        listener({ type: 'event', cursor: token, event: entry.event });
       }
 
       // Step 3: Deliver any live events that arrived during catch-up (with seq > lastCatchUpSeq).
       catchUpComplete = true;
       for (const liveEvent of pendingLiveEvents) {
         if (liveEvent.seq > lastCatchUpSeq) {
-          listener({ type: 'event', cursor: String(liveEvent.seq), event: liveEvent.event });
+          const log = this.tenantLogs.get(tenant);
+          const stored = log?.get(liveEvent.seq);
+          const token = await this.buildToken(tenant, liveEvent.seq, stored?.messageCid ?? '');
+          listener({ type: 'event', cursor: token, event: liveEvent.event });
         }
       }
 
@@ -246,7 +303,9 @@ export class EventEmitterEventLog implements EventLog {
       if (filters !== undefined && filters.length > 0) {
         if (!FilterUtility.matchAnyFilter(payload.indexes, filters)) { return; }
       }
-      listener({ type: 'event', cursor: String(payload.seq), event: payload.event });
+      void tokenFromPayload(payload).then((token) => {
+        listener({ type: 'event', cursor: token, event: payload.event });
+      });
     };
 
     this.emitter.on(channel, handler);
@@ -255,6 +314,26 @@ export class EventEmitterEventLog implements EventLog {
       id,
       close: async (): Promise<void> => { this.emitter.off(channel, handler); }
     };
+  }
+
+  public async getReplayBounds(tenant: string): Promise<{ oldest: ProgressToken; latest: ProgressToken } | undefined> {
+    const log = this.tenantLogs.get(tenant);
+    if (log === undefined || log.size === 0) {
+      return undefined;
+    }
+
+    // Map is ordered by insertion (ascending seq). First and last keys are min/max.
+    const keys = [...log.keys()];
+    const oldestSeq = keys[0];
+    const latestSeq = keys[keys.length - 1];
+
+    const oldestEntry = log.get(oldestSeq)!;
+    const latestEntry = log.get(latestSeq)!;
+
+    const oldest = await this.buildToken(tenant, oldestSeq, oldestEntry.messageCid);
+    const latest = await this.buildToken(tenant, latestSeq, latestEntry.messageCid);
+
+    return { oldest, latest };
   }
 
   public async trim(tenant: string, olderThan: number | string): Promise<void> {

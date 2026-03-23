@@ -165,7 +165,8 @@ export class RecordsWriteHandler implements MethodHandler {
 
       const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
       await this.deps.messageStore.put(tenant, messageWithOptionalEncodedData, indexes);
-      await this.deps.stateIndex!.insert(tenant, await Message.getCid(message), indexes);
+      const messageCid = await Message.getCid(message);
+      await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
 
       // NOTE: We only emit a `RecordsWrite` when the message is the latest base state.
       // Because we allow a `RecordsWrite` which is not the latest state to be written, but not queried, we shouldn't emit it either.
@@ -176,7 +177,7 @@ export class RecordsWriteHandler implements MethodHandler {
       // records (<= 30 KB).  This allows live sync to store the record
       // immediately without a separate MessagesRead round-trip.
       if (this.deps.eventLog !== undefined && isLatestBaseState) {
-        await this.deps.eventLog.emit(tenant, { message: messageWithOptionalEncodedData, initialWrite }, indexes);
+        await this.deps.eventLog.emit(tenant, { message: messageWithOptionalEncodedData, initialWrite }, indexes, messageCid);
       }
     } catch (error) {
       if (error instanceof DwnError) {

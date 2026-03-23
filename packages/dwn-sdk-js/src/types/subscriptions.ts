@@ -2,6 +2,31 @@ import type { RecordsWriteMessage } from './records-types.js';
 import type { Filter, KeyValues } from './query-types.js';
 import type { GenericMessage, GenericMessageReply, MessageSubscription } from './message-types.js';
 
+// ---------------------------------------------------------------------------
+// ProgressToken — structured cursor for EventLog replay/resume
+// ---------------------------------------------------------------------------
+
+/**
+ * Structured cursor for EventLog replay and resume. Replaces the previous
+ * opaque `string` cursor to provide explicit ordering semantics required
+ * by causal frontier progression in multi-master sync.
+ *
+ * Comparisons are valid only when `streamId` and `epoch` are equal.
+ * `position` is compared numerically (BigInt-safe), never lexicographically.
+ * Progress tokens are source-local: they MUST NOT be reused across different
+ * remote providers or EventLog instances.
+ */
+export type ProgressToken = {
+  /** Stable identity of the source event stream domain. */
+  streamId   : string;
+  /** Stream generation/version; changes on non-compatible reset. */
+  epoch      : string;
+  /** Monotonic decimal string within `(streamId, epoch)`. Compared numerically. */
+  position   : string;
+  /** The CID of the message associated with this event. */
+  messageCid : string;
+};
+
 /**
  * Internal listener type used by {@link EventLog.emit} to notify in-process
  * subscribers. Not intended for direct consumer use — consumers should use
@@ -32,17 +57,16 @@ export type SubscriptionReply = GenericMessageReply & {
 // ---------------------------------------------------------------------------
 
 /**
- * A regular subscription event carrying a message and its EventLog cursor.
+ * A regular subscription event carrying a message and its EventLog progress token.
  */
 export type SubscriptionEvent = {
   type : 'event';
   /**
-   * Opaque cursor string assigned by the EventLog implementation. Clients should
-   * persist this value and pass it back to `subscribe()` or `read()` to resume
-   * from this point. The format is implementation-defined (e.g. numeric sequence
-   * for in-memory, Redis stream ID, NATS stream sequence, etc.).
+   * Structured progress token assigned by the EventLog implementation. Clients
+   * should persist this value and pass it back to `subscribe()` or `read()` to
+   * resume from this point.
    */
-  cursor : string;
+  cursor : ProgressToken;
   /** The event payload (message + optional initialWrite). */
   event : MessageEvent;
 };
@@ -57,10 +81,10 @@ export type SubscriptionEvent = {
 export type SubscriptionEose = {
   type : 'eose';
   /**
-   * Opaque cursor string of the last stored event that was replayed.
+   * Progress token of the last stored event that was replayed.
    * Echoes the input cursor when no stored events matched (i.e. already caught up).
    */
-  cursor : string;
+  cursor : ProgressToken;
 };
 
 /**
@@ -80,15 +104,15 @@ export type SubscriptionListener = (message: SubscriptionMessage) => void;
  */
 export type EventLogSubscribeOptions = {
   /**
-   * Opaque cursor string to resume from (exclusive — events after this cursor
+   * Progress token to resume from (exclusive — events after this position
    * are replayed). When provided, stored events are replayed first, followed by
    * an EOSE marker, then live events. When omitted, only live events are delivered.
    *
-   * Cursor values are implementation-defined and must be obtained from a prior
-   * interaction with the same EventLog instance (e.g. `SubscriptionEvent.cursor`,
-   * `EventLogReadResult.cursor`, or the return value of `emit()`).
+   * Tokens must be obtained from a prior interaction with the same EventLog
+   * instance (e.g. `SubscriptionEvent.cursor`, `EventLogReadResult.cursor`,
+   * or the return value of `emit()`).
    */
-  cursor? : string;
+  cursor? : ProgressToken;
 
   /**
    * Filters evaluated against event indexes. Events must match at least one
@@ -119,8 +143,8 @@ export type EventLogEntry = {
  * Options accepted by {@link EventLog.read}.
  */
 export type EventLogReadOptions = {
-  /** Opaque cursor string to resume from (exclusive — returns events after this cursor). */
-  cursor? : string;
+  /** Progress token to resume from (exclusive — returns events after this position). */
+  cursor? : ProgressToken;
 
   /** Maximum number of events to return. */
   limit? : number;
@@ -137,14 +161,14 @@ export type EventLogReadResult = {
   events : EventLogEntry[];
 
   /**
-   * Opaque cursor string for resuming subsequent reads or subscriptions.
+   * Progress token for resuming subsequent reads or subscriptions.
    *
-   * - When events are returned: cursor of the last event.
+   * - When events are returned: token of the last event.
    * - When no events are returned but a cursor was provided: the input cursor
    *   (meaning "you are caught up, nothing new since this point").
    * - When no events exist and no cursor was provided: `undefined`.
    */
-  cursor? : string;
+  cursor? : ProgressToken;
 };
 
 /**
@@ -162,9 +186,13 @@ export type EventLogReadResult = {
 export interface EventLog {
   /**
    * Persist an event and notify in-process subscribers.
-   * @returns The opaque cursor string assigned to the event, or empty string on failure.
+   * @param tenant     The tenant DID.
+   * @param event      The event payload.
+   * @param indexes    Index values for the event.
+   * @param messageCid The CID of the message being emitted — embedded in the returned token.
+   * @returns A {@link ProgressToken} assigned to the event, or `undefined` on failure.
    */
-  emit(tenant: string, event: MessageEvent, indexes: KeyValues): Promise<string>;
+  emit(tenant: string, event: MessageEvent, indexes: KeyValues, messageCid: string): Promise<ProgressToken | undefined>;
 
   /**
    * Read events from the log starting after `cursor`, optionally filtered.
@@ -187,6 +215,13 @@ export interface EventLog {
    * @param options  Optional cursor and filters for catch-up replay.
    */
   subscribe(tenant: string, id: string, listener: SubscriptionListener, options?: EventLogSubscribeOptions): Promise<EventSubscription>;
+
+  /**
+   * Returns the oldest and latest available progress tokens for a tenant,
+   * or `undefined` if the tenant has no events. Used to construct
+   * `ProgressGap` metadata when a consumer's cursor is no longer replayable.
+   */
+  getReplayBounds(tenant: string): Promise<{ oldest: ProgressToken; latest: ProgressToken } | undefined>;
 
   /**
    * Delete events older than the given sequence number or ISO-8601 timestamp.

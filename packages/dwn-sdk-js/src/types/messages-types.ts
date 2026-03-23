@@ -1,5 +1,5 @@
 import type { RangeCriterion } from './query-types.js';
-import type { SubscriptionListener } from './subscriptions.js';
+import type { ProgressToken, SubscriptionListener } from './subscriptions.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, MessageSubscription } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
@@ -109,9 +109,9 @@ export type MessagesSubscribeDescriptor = {
   filters: MessagesFilter[];
   permissionGrantId?: string;
   /**
-   * Opaque EventLog cursor string to resume from. When provided, the handler replays
-   * events from the EventLog starting after this cursor instead of returning no
+   * Progress token to resume from. When provided, the handler replays events
+   * from the EventLog starting after this position instead of returning no
    * initial snapshot. An EOSE marker is sent after catch-up.
    */
-  cursor?: string;
+  cursor?: ProgressToken;
 };

@@ -1,6 +1,6 @@
 import type { GeneralJws } from './jws-types.js';
 import type { JweEncryption } from '../utils/encryption.js';
-import type { SubscriptionListener } from './subscriptions.js';
+import type { ProgressToken, SubscriptionListener } from './subscriptions.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSubscription, Pagination } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { PaginationCursor, RangeCriterion, RangeFilter, StartsWithFilter } from './query-types.js';
@@ -132,11 +132,11 @@ export type RecordsSubscribeDescriptor = {
   dateSort?: DateSort;
   pagination?: Pagination;
   /**
-   * Opaque EventLog cursor string to resume from. When provided, the handler replays
-   * events from the EventLog starting after this cursor instead of querying the
+   * Progress token to resume from. When provided, the handler replays events
+   * from the EventLog starting after this position instead of querying the
    * MessageStore for an initial snapshot. An EOSE marker is sent after catch-up.
    */
-  cursor?: string;
+  cursor?: ProgressToken;
 };
 
 export type RecordsFilter = {

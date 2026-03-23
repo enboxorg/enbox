@@ -1,6 +1,7 @@
 import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { Pagination } from '../types/message-types.js';
+import type { ProgressToken } from '../types/subscriptions.js';
 import type { DataEncodedRecordsWriteMessage, DateSort, RecordsFilter, RecordsSubscribeDescriptor, RecordsSubscribeMessage } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -23,10 +24,10 @@ export type RecordsSubscribeOptions = {
   protocolRole?: string;
 
   /**
-   * Opaque EventLog cursor string to resume from. When provided, catch-up events are
-   * replayed from the EventLog and an EOSE marker is delivered before live events.
+   * Progress token to resume from. When provided, catch-up events are replayed
+   * from the EventLog and an EOSE marker is delivered before live events.
    */
-  cursor?: string;
+  cursor?: ProgressToken;
 
   /**
    * The delegated grant to sign on behalf of the logical author, which is the grantor (`grantedBy`) of the delegated grant.

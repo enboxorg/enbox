@@ -6,6 +6,7 @@ import type { MessageSigner } from '../../src/types/signer.js';
 import type { MessagesReadOptions } from '../../src/interfaces/messages-read.js';
 import type { MessagesSubscribeOptions } from '../../src/interfaces/messages-subscribe.js';
 import type { PermissionGrantCreateOptions } from '../../src/protocols/permissions.js';
+import type { ProgressToken } from '../../src/types/subscriptions.js';
 import type { ProtocolsConfigureOptions } from '../../src/interfaces/protocols-configure.js';
 import type { ProtocolsQueryOptions } from '../../src/interfaces/protocols-query.js';
 
@@ -201,8 +202,8 @@ export type GenerateRecordsSubscribeInput = {
     dateSort?: DateSort;
     pagination?: Pagination;
     protocolRole?: string;
-    /** Opaque EventLog cursor for catch-up + EOSE subscribe. */
-    cursor?: string;
+    /** Progress token for catch-up + EOSE subscribe. */
+    cursor?: ProgressToken;
 };
 
 export type GenerateRecordsSubscribeOutput = {
@@ -243,8 +244,8 @@ export type GenerateMessagesSubscribeInput = {
   filters?: MessagesFilter[];
   messageTimestamp?: string;
   permissionGrantId?: string;
-  /** Opaque EventLog cursor for catch-up + EOSE subscribe. */
-  cursor?: string;
+  /** Progress token for catch-up + EOSE subscribe. */
+  cursor?: ProgressToken;
 };
 
 export type GenerateMessagesSubscribeOutput = {
