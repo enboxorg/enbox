@@ -846,10 +846,10 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('flushPendingPushes', () => {
-    it('should clear pending push CIDs after flushing', async () => {
+    it('should clear pending push entries after flushing', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._pendingPushCids.set('key1', {
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', cids: [],
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', entries: [],
       });
 
       await (engine as any).flushPendingPushes();
@@ -858,13 +858,13 @@ describe('SyncEngineLevel — private methods', () => {
       expect((engine as any)._pushDebounceTimer).toBeUndefined();
     });
 
-    it('should skip entries with empty cids array', async () => {
+    it('should skip targets with empty entries array', async () => {
       const mockAgent = { agentDid: 'did:example:agent' } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       (engine as any)._pendingPushCids.set('key1', {
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', cids: [],
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', entries: [],
       });
 
       // Should not throw or call pushMessages
@@ -889,7 +889,9 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       (engine as any)._pendingPushCids.set('key1', {
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', cids: ['cid-1'],
+        did     : 'did:example:alice',
+        dwnUrl  : 'https://dwn.example.com',
+        entries : [{ cid: 'cid-1' }],
       });
 
       const consoleStub = sinon.stub(console, 'error');

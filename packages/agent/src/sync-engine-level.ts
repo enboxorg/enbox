@@ -130,8 +130,11 @@ export class SyncEngineLevel implements SyncEngine {
   /** Debounce timer for batched push-on-write. */
   private _pushDebounceTimer?: ReturnType<typeof setTimeout>;
 
-  /** Pending message CIDs to push, accumulated during the debounce window. */
-  private _pendingPushCids: Map<string, { did: string; dwnUrl: string; delegateDid?: string; protocol?: string; cids: string[] }> = new Map();
+  /** Entry in the pending push queue — a message CID with its local EventLog token. */
+  private _pendingPushCids: Map<string, {
+    did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
+    entries: { cid: string; localToken?: ProgressToken }[];
+  }> = new Map();
 
   /**
    * CIDs recently received via pull subscription, keyed by `cid|dwnUrl` to
@@ -764,10 +767,10 @@ export class SyncEngineLevel implements SyncEngine {
 
       let pending = this._pendingPushCids.get(targetKey);
       if (!pending) {
-        pending = { did, dwnUrl, delegateDid, protocol, cids: [] };
+        pending = { did, dwnUrl, delegateDid, protocol, entries: [] };
         this._pendingPushCids.set(targetKey, pending);
       }
-      pending.cids.push(cid);
+      pending.entries.push({ cid, localToken: subMessage.cursor });
 
       // Debounce the push.
       if (this._pushDebounceTimer) {
@@ -809,15 +812,17 @@ export class SyncEngineLevel implements SyncEngine {
   private async flushPendingPushes(): Promise<void> {
     this._pushDebounceTimer = undefined;
 
-    const entries = [...this._pendingPushCids.entries()];
+    const batches = [...this._pendingPushCids.entries()];
     this._pendingPushCids.clear();
 
     // Push to all endpoints in parallel — each target is independent.
-    await Promise.all(entries.map(async ([, pending]) => {
-      const { did, dwnUrl, delegateDid, protocol, cids } = pending;
-      if (cids.length === 0) {
+    await Promise.all(batches.map(async ([targetKey, pending]) => {
+      const { did, dwnUrl, delegateDid, protocol, entries: pushEntries } = pending;
+      if (pushEntries.length === 0) {
         return;
       }
+
+      const cids = pushEntries.map(e => e.cid);
 
       try {
         const result = await pushMessages({
@@ -827,17 +832,30 @@ export class SyncEngineLevel implements SyncEngine {
           permissionsApi : this._permissionsApi,
         });
 
-        // Re-queue failed CIDs so they are retried on the next debounce
+        // Advance the push frontier for successfully pushed entries.
+        const link = this._activeLinks.get(targetKey);
+        if (link) {
+          const succeededSet = new Set(result.succeeded);
+          for (const entry of pushEntries) {
+            if (succeededSet.has(entry.cid) && entry.localToken) {
+              ReplicationLedger.advanceFrontier(link.push, entry.localToken);
+            }
+          }
+          await this._ledger.saveLink(link);
+        }
+
+        // Re-queue failed entries so they are retried on the next debounce
         // cycle (or picked up by the SMT integrity check).
         if (result.failed.length > 0) {
           console.error(`SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}: ${result.failed.length} of ${cids.length} messages failed`);
-          const targetKey = this.buildCursorKey(did, dwnUrl, protocol);
+          const failedSet = new Set(result.failed);
+          const failedEntries = pushEntries.filter(e => failedSet.has(e.cid));
           let requeued = this._pendingPushCids.get(targetKey);
           if (!requeued) {
-            requeued = { did, dwnUrl, delegateDid, protocol, cids: [] };
+            requeued = { did, dwnUrl, delegateDid, protocol, entries: [] };
             this._pendingPushCids.set(targetKey, requeued);
           }
-          requeued.cids.push(...result.failed);
+          requeued.entries.push(...failedEntries);
 
           // Schedule a retry after a short delay.
           if (!this._pushDebounceTimer) {
