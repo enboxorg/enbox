@@ -1530,4 +1530,47 @@ describe('SyncEngineLevel — private methods', () => {
       expect(mockAgent.rpc.sendDwnRequest.called).toBe(true);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Echo-loop suppression
+  // ---------------------------------------------------------------------------
+
+  describe('echo-loop suppression', () => {
+    it('should return false for unknown CIDs', () => {
+      const result = (syncEngine as any).isRecentlyPulled('unknown-cid');
+      expect(result).toBe(false);
+    });
+
+    it('should return true for recently added CIDs', () => {
+      const map = (syncEngine as any)._recentlyPulledCids as Map<string, number>;
+      map.set('cid-1', Date.now() + 60_000);
+
+      expect((syncEngine as any).isRecentlyPulled('cid-1')).toBe(true);
+    });
+
+    it('should return false and evict expired CIDs', () => {
+      const map = (syncEngine as any)._recentlyPulledCids as Map<string, number>;
+      map.set('cid-expired', Date.now() - 1); // already expired
+
+      expect((syncEngine as any).isRecentlyPulled('cid-expired')).toBe(false);
+      expect(map.has('cid-expired')).toBe(false);
+    });
+
+    it('should evict entries beyond the max cap', () => {
+      const map = (syncEngine as any)._recentlyPulledCids as Map<string, number>;
+      map.clear();
+
+      // Fill beyond the cap (10,000).
+      const cap = (SyncEngineLevel as any).ECHO_SUPPRESS_MAX_ENTRIES;
+      for (let i = 0; i < cap + 50; i++) {
+        map.set(`cid-${i}`, Date.now() + 60_000);
+      }
+
+      expect(map.size).toBe(cap + 50);
+
+      // Eviction should trim to cap.
+      (syncEngine as any).evictExpiredEchoEntries();
+      expect(map.size).toBe(cap);
+    });
+  });
 });

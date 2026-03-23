@@ -10,7 +10,7 @@ import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-j
 
 import type { PermissionsApi } from './types/permissions.js';
 import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
-import type { StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
+import type { PushResult, StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
@@ -116,6 +116,20 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Pending message CIDs to push, accumulated during the debounce window. */
   private _pendingPushCids: Map<string, { did: string; dwnUrl: string; delegateDid?: string; protocol?: string; cids: string[] }> = new Map();
+
+  /**
+   * CIDs recently received via pull subscription, with expiry timestamps.
+   * Checked before queuing a CID for push to suppress echo loops where a
+   * message pulled from remote is immediately pushed back. TTL: 60 seconds.
+   * Cap: 10,000 entries (oldest evicted on overflow).
+   */
+  private _recentlyPulledCids: Map<string, number> = new Map();
+
+  /** TTL for echo-loop suppression entries (60 seconds). */
+  private static readonly ECHO_SUPPRESS_TTL_MS = 60_000;
+
+  /** Maximum entries in the echo-loop suppression cache. */
+  private static readonly ECHO_SUPPRESS_MAX_ENTRIES = 10_000;
 
   /** Count of consecutive SMT sync failures (for backoff in poll mode). */
   private _consecutiveFailures = 0;
@@ -569,6 +583,12 @@ export class SyncEngineLevel implements SyncEngine {
 
           await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
 
+          // Track this CID for echo-loop suppression — prevents the push-on-write
+          // handler from re-pushing a message that was just pulled from remote.
+          const pulledCid = await Message.getCid(event.message);
+          this._recentlyPulledCids.set(pulledCid, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
+          this.evictExpiredEchoEntries();
+
           // Only advance the cursor after successful processing.
           // If processing fails, the event will be re-delivered on
           // reconnection (cursor-based resume from the last good point).
@@ -683,6 +703,12 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
 
+      // Echo-loop suppression: skip CIDs that were recently pulled from remote.
+      // This prevents pushing back a message that was just received via pull.
+      if (this.isRecentlyPulled(cid)) {
+        return;
+      }
+
       let pending = this._pendingPushCids.get(targetKey);
       if (!pending) {
         pending = { did, dwnUrl, delegateDid, protocol, cids: [] };
@@ -741,31 +767,35 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       try {
-        await pushMessages({
+        const result = await pushMessages({
           did, dwnUrl, delegateDid, protocol,
           messageCids    : cids,
           agent          : this.agent,
           permissionsApi : this._permissionsApi,
         });
+
+        // Re-queue failed CIDs so they are retried on the next debounce
+        // cycle (or picked up by the SMT integrity check).
+        if (result.failed.length > 0) {
+          console.error(`SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}: ${result.failed.length} of ${cids.length} messages failed`);
+          const targetKey = this.buildCursorKey(did, dwnUrl, protocol);
+          let requeued = this._pendingPushCids.get(targetKey);
+          if (!requeued) {
+            requeued = { did, dwnUrl, delegateDid, protocol, cids: [] };
+            this._pendingPushCids.set(targetKey, requeued);
+          }
+          requeued.cids.push(...result.failed);
+
+          // Schedule a retry after a short delay.
+          if (!this._pushDebounceTimer) {
+            this._pushDebounceTimer = setTimeout((): void => {
+              void this.flushPendingPushes();
+            }, PUSH_DEBOUNCE_MS * 4); // Back off: 1 second instead of 250ms.
+          }
+        }
       } catch (error: any) {
+        // Truly unexpected error (not per-message failure).
         console.error(`SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}`, error);
-
-        // Re-queue the failed CIDs so they are retried on the next
-        // debounce cycle (or picked up by the SMT integrity check).
-        const targetKey = this.buildCursorKey(did, dwnUrl, protocol);
-        let requeued = this._pendingPushCids.get(targetKey);
-        if (!requeued) {
-          requeued = { did, dwnUrl, delegateDid, protocol, cids: [] };
-          this._pendingPushCids.set(targetKey, requeued);
-        }
-        requeued.cids.push(...cids);
-
-        // Schedule a retry after a short delay.
-        if (!this._pushDebounceTimer) {
-          this._pushDebounceTimer = setTimeout((): void => {
-            void this.flushPendingPushes();
-          }, PUSH_DEBOUNCE_MS * 4); // Back off: 1 second instead of 250ms.
-        }
       }
     }));
   }
@@ -1183,6 +1213,50 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Echo-loop suppression
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Evicts expired entries from the echo-loop suppression cache.
+   * Also enforces the size cap by evicting oldest entries first.
+   */
+  private evictExpiredEchoEntries(): void {
+    const now = Date.now();
+
+    // Evict expired entries.
+    for (const [cid, expiry] of this._recentlyPulledCids) {
+      if (now >= expiry) {
+        this._recentlyPulledCids.delete(cid);
+      }
+    }
+
+    // Enforce size cap by evicting oldest entries.
+    if (this._recentlyPulledCids.size > SyncEngineLevel.ECHO_SUPPRESS_MAX_ENTRIES) {
+      const excess = this._recentlyPulledCids.size - SyncEngineLevel.ECHO_SUPPRESS_MAX_ENTRIES;
+      let evicted = 0;
+      for (const key of this._recentlyPulledCids.keys()) {
+        if (evicted >= excess) { break; }
+        this._recentlyPulledCids.delete(key);
+        evicted++;
+      }
+    }
+  }
+
+  /**
+   * Checks whether a CID was recently pulled from a remote and should not
+   * be pushed back (echo-loop suppression).
+   */
+  private isRecentlyPulled(cid: string): boolean {
+    const expiry = this._recentlyPulledCids.get(cid);
+    if (expiry === undefined) { return false; }
+    if (Date.now() >= expiry) {
+      this._recentlyPulledCids.delete(cid);
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Reads missing messages from the local DWN and pushes them to the remote DWN
    * in dependency order (topological sort).
@@ -1193,7 +1267,7 @@ export class SyncEngineLevel implements SyncEngine {
     delegateDid?: string;
     protocol?: string;
     messageCids: string[];
-  }): Promise<void> {
+  }): Promise<PushResult> {
     return pushMessages({
       did, dwnUrl, delegateDid, protocol, messageCids,
       agent          : this.agent,

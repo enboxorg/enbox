@@ -1,5 +1,6 @@
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
+import type { PushResult } from './types/sync.js';
 import type { GenericMessage, MessagesReadReply, MessagesSyncDiffEntry, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
@@ -297,6 +298,16 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
  * so that initial writes come before updates, and ProtocolsConfigures come before
  * records that reference those protocols.
  */
+/**
+ * Reads missing messages from the local DWN and pushes them to the remote DWN.
+ * Messages are fetched first, then sorted in dependency order (topological sort)
+ * so that initial writes come before updates, and ProtocolsConfigures come before
+ * records that reference those protocols.
+ *
+ * Returns a {@link PushResult} with per-CID outcome tracking instead of throwing
+ * on the first failure. Callers use this to advance the push frontier
+ * incrementally — only up to the highest contiguous success.
+ */
 export async function pushMessages({ did, dwnUrl, delegateDid, protocol, messageCids, agent, permissionsApi }: {
   did: string;
   dwnUrl: string;
@@ -305,13 +316,19 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
   messageCids: string[];
   agent: EnboxPlatformAgent;
   permissionsApi: PermissionsApi;
-}): Promise<void> {
+}): Promise<PushResult> {
+  const succeeded: string[] = [];
+  const failed: string[] = [];
+
   // Step 1: Fetch all local messages (streams are pull-based, not yet consumed).
   const fetched: SyncMessageEntry[] = [];
   for (const messageCid of messageCids) {
     const dwnMessage = await getLocalMessage({ author: did, messageCid, delegateDid, protocol, agent, permissionsApi });
     if (dwnMessage) {
       fetched.push(dwnMessage);
+    } else {
+      // Message could not be fetched locally — mark as failed.
+      failed.push(messageCid);
     }
   }
 
@@ -320,6 +337,7 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
 
   // Step 3: Push messages in dependency order, consuming each stream as we go.
   for (const entry of sorted) {
+    const cid = await getMessageCid(entry.message);
     try {
       const reply = await agent.rpc.sendDwnRequest({
         dwnUrl,
@@ -328,16 +346,19 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
         message   : entry.message
       });
 
-      if (!syncMessageReplyIsSuccessful(reply)) {
-        const cid = await getMessageCid(entry.message);
+      if (syncMessageReplyIsSuccessful(reply)) {
+        succeeded.push(cid);
+      } else {
         console.error(`SyncEngineLevel: push failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
+        failed.push(cid);
       }
     } catch (error: any) {
-      // Preserve the original error so callers can diagnose the root cause.
-      const detail = error.message ?? error;
-      throw new Error(`SyncEngineLevel: push to ${dwnUrl} failed: ${detail}`);
+      console.error(`SyncEngineLevel: push error for ${cid}: ${error.message ?? error}`);
+      failed.push(cid);
     }
   }
+
+  return { succeeded, failed };
 }
 
 /**
