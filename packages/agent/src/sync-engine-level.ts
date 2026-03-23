@@ -789,20 +789,14 @@ export class SyncEngineLevel implements SyncEngine {
           }
         } catch (error: any) {
           console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
-          // On individual event failure: remove the entry from inflight and
-          // advance nextCommitOrdinal past it if it's the current drain head.
-          // This prevents the drain from stalling on a missing entry.
-          // The frontier does NOT advance past the failed token — on reconnect,
-          // replay from contiguousAppliedToken will re-deliver it.
-          if (rt) {
-            rt.inflight.delete(ordinal);
-            // If this was the drain head, skip past it so later commits can drain.
-            while (rt.nextCommitOrdinal < rt.nextDeliveryOrdinal &&
-                   !rt.inflight.has(rt.nextCommitOrdinal)) {
-              rt.nextCommitOrdinal++;
-            }
-            // Drain any now-contiguous committed entries after the skip.
-            this.drainCommittedPull(cursorKey);
+          // A failed processRawMessage means local state is incomplete.
+          // Transition to repairing immediately — do NOT advance the frontier
+          // past this failure or let later ordinals commit past it. SMT
+          // reconciliation will discover and fill the gap.
+          if (link && rt) {
+            rt.inflight.clear();
+            rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
+            await this.ledger.setStatus(link, 'repairing');
           }
         }
       }

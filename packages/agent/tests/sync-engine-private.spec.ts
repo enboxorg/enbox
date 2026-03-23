@@ -1586,4 +1586,122 @@ describe('SyncEngineLevel — private methods', () => {
       expect(map.size).toBe(cap);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Pull delivery-order tracking (ordinal-based frontier)
+  // ---------------------------------------------------------------------------
+
+  describe('pull delivery-order tracking', () => {
+    /** Helper to build a ProgressToken. */
+    function token(pos: number): any {
+      return { streamId: 'stream-1', epoch: 'epoch-1', position: String(pos), messageCid: `cid-${pos}` };
+    }
+
+    it('should advance frontier only when all earlier ordinals are committed', () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      // Set up link and runtime state.
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : {}, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      const rt = (engine as any).getOrCreateRuntime(linkKey);
+
+      // Deliver ordinal 0 (token 1) and ordinal 1 (token 5).
+      rt.inflight.set(0, { ordinal: 0, token: token(1), committed: false });
+      rt.nextDeliveryOrdinal = 1;
+      rt.inflight.set(1, { ordinal: 1, token: token(5), committed: false });
+      rt.nextDeliveryOrdinal = 2;
+
+      // Ordinal 1 (token 5) completes first.
+      rt.inflight.get(1).committed = true;
+      const drained1 = (engine as any).drainCommittedPull(linkKey);
+
+      // Frontier must NOT advance — ordinal 0 is still uncommitted.
+      expect(drained1).toBe(0);
+      expect(link.pull.contiguousAppliedToken).toBeUndefined();
+
+      // Now ordinal 0 (token 1) completes.
+      rt.inflight.get(0).committed = true;
+      const drained2 = (engine as any).drainCommittedPull(linkKey);
+
+      // Frontier should advance through both: 0 → token 1, then 1 → token 5.
+      expect(drained2).toBe(2);
+      expect(link.pull.contiguousAppliedToken).toEqual(token(5));
+    });
+
+    it('should handle sparse positions from filtered streams correctly', () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : {}, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      const rt = (engine as any).getOrCreateRuntime(linkKey);
+
+      // Deliver sparse positions 1, 5, 9 in order.
+      for (let i = 0; i < 3; i++) {
+        const pos = [1, 5, 9][i];
+        rt.inflight.set(i, { ordinal: i, token: token(pos), committed: true });
+        rt.nextDeliveryOrdinal = i + 1;
+      }
+
+      const drained = (engine as any).drainCommittedPull(linkKey);
+
+      // All three should drain — sparse positions are fine.
+      expect(drained).toBe(3);
+      expect(link.pull.contiguousAppliedToken).toEqual(token(9));
+    });
+
+    it('should NOT advance frontier past a failed event (failure blocks progression)', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : {}, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      const rt = (engine as any).getOrCreateRuntime(linkKey);
+
+      // Simulate: ordinal 0 (token 1) succeeds, ordinal 1 (token 5) fails,
+      // ordinal 2 (token 9) succeeds.
+
+      // Ordinal 0 commits.
+      rt.inflight.set(0, { ordinal: 0, token: token(1), committed: true });
+      rt.nextDeliveryOrdinal = 1;
+      (engine as any).drainCommittedPull(linkKey);
+      expect(link.pull.contiguousAppliedToken).toEqual(token(1));
+
+      // Ordinal 1 delivered, ordinal 2 delivered.
+      rt.inflight.set(1, { ordinal: 1, token: token(5), committed: false });
+      rt.nextDeliveryOrdinal = 2;
+      rt.inflight.set(2, { ordinal: 2, token: token(9), committed: false });
+      rt.nextDeliveryOrdinal = 3;
+
+      // Ordinal 2 (token 9) succeeds.
+      rt.inflight.get(2).committed = true;
+      (engine as any).drainCommittedPull(linkKey);
+
+      // Frontier must still be at token 1 — ordinal 1 is blocking.
+      expect(link.pull.contiguousAppliedToken).toEqual(token(1));
+
+      // Ordinal 1 fails — simulating what the catch block does.
+      // The catch block clears inflight and sets repairing.
+      rt.inflight.clear();
+      rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
+      link.status = 'repairing';
+
+      // Frontier must still be at token 1 — the failed event was never committed.
+      expect(link.pull.contiguousAppliedToken).toEqual(token(1));
+      expect(link.status).toBe('repairing');
+    });
+  });
 });
