@@ -4,6 +4,7 @@ import type { HandlerDependencies, MethodHandler } from '../types/method-handler
 import type { MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
+import { DwnConstant } from '../core/dwn-constant.js';
 import { Encoder } from '../utils/encoder.js';
 import { hashToHex } from '../smt/smt-utils.js';
 import { messageReplyFromError } from '../core/message-reply.js';
@@ -13,11 +14,13 @@ import { PermissionsProtocol } from '../protocols/permissions.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 /**
- * Default maximum inline data size for diff responses (256 KB).
+ * Maximum inline data size for diff responses — aligned with the
+ * {@link DwnConstant.maxDataSizeAllowedToBeEncoded} threshold (30 KB).
  * RecordsWrite data payloads smaller than this are base64url-encoded and
- * included directly in the diff reply, avoiding a separate MessagesRead round-trip.
+ * included directly in the diff reply.  Larger payloads must be fetched
+ * separately via MessagesRead.
  */
-const DEFAULT_MAX_INLINE_DATA_SIZE = 262_144;
+const DEFAULT_MAX_INLINE_DATA_SIZE = DwnConstant.maxDataSizeAllowedToBeEncoded;
 
 
 export class MessagesSyncHandler implements MethodHandler {
