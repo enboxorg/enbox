@@ -1370,7 +1370,8 @@ describe('AgentDwnApi', () => {
       expect(resumeMessage.descriptor).toBeDefined();
 
       // Invoke the factory with a cursor — should merge cursor into messageParams.
-      const resumeMessageWithCursor = await capturedFactory!('cursor-abc');
+      const testToken = { streamId: 's1', epoch: 'e1', position: '42', messageCid: 'cid-42' };
+      const resumeMessageWithCursor = await capturedFactory!(testToken);
       expect(resumeMessageWithCursor).toBeDefined();
       expect(resumeMessageWithCursor.descriptor).toBeDefined();
     });
