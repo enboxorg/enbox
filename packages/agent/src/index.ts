@@ -6,6 +6,7 @@ export type * from './types/key-manager.js';
 export type * from './types/permissions.js';
 export type * from './types/sync.js';
 export { computeScopeId, MAX_PENDING_TOKENS } from './types/sync.js';
+export { ReplicationLedger } from './sync-replication-ledger.js';
 export type * from './types/vc.js';
 
 export * from './agent-did-resolver-cache.js';
