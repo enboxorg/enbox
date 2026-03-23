@@ -245,32 +245,15 @@ describe('ReplicationLedger', () => {
       expect(frontier.pendingTokens).toEqual([]);
     });
 
-    it('should add out-of-order tokens to pending', () => {
+    it('should handle sparse positions from filtered streams (1 -> 5 -> 9)', () => {
       const frontier: DirectionFrontier = { pendingTokens: [] };
 
       ReplicationLedger.advanceFrontier(frontier, token(1));
-      ReplicationLedger.advanceFrontier(frontier, token(3)); // gap at 2
+      ReplicationLedger.advanceFrontier(frontier, token(5));
+      ReplicationLedger.advanceFrontier(frontier, token(9));
 
-      expect(frontier.contiguousAppliedToken).toEqual(token(1));
-      expect(frontier.pendingTokens).toEqual([token(3)]);
-    });
-
-    it('should drain pending when the gap is filled', () => {
-      const frontier: DirectionFrontier = { pendingTokens: [] };
-
-      ReplicationLedger.advanceFrontier(frontier, token(1));
-      ReplicationLedger.advanceFrontier(frontier, token(3));
-      ReplicationLedger.advanceFrontier(frontier, token(4));
-
-      // pendingTokens has [3, 4], contiguous is still 1.
-      expect(frontier.contiguousAppliedToken).toEqual(token(1));
-      expect(frontier.pendingTokens).toEqual([token(3), token(4)]);
-
-      // Now fill the gap at 2.
-      ReplicationLedger.advanceFrontier(frontier, token(2));
-
-      // Should drain all the way to 4.
-      expect(frontier.contiguousAppliedToken).toEqual(token(4));
+      // Sparse positions are valid forward progression — no pending accumulation.
+      expect(frontier.contiguousAppliedToken).toEqual(token(9));
       expect(frontier.pendingTokens).toEqual([]);
     });
 
@@ -299,44 +282,55 @@ describe('ReplicationLedger', () => {
     });
 
     it('should return overflow when pendingTokens exceeds MAX_PENDING_TOKENS', () => {
-      const frontier: DirectionFrontier = { pendingTokens: [] };
+      // In Phase 2 with concurrent processing, pending tokens can accumulate
+      // when completion order differs from delivery order. Overflow detection
+      // triggers when the pending set exceeds the cap.
+      const frontier: DirectionFrontier = {
+        contiguousAppliedToken : token(100),
+        pendingTokens          : [],
+      };
 
-      // Apply token 1 as baseline.
-      ReplicationLedger.advanceFrontier(frontier, token(1));
-
-      // Skip token 2, then add MAX_PENDING_TOKENS + 1 out-of-order tokens.
-      for (let i = 3; i <= MAX_PENDING_TOKENS + 3; i++) {
-        ReplicationLedger.advanceFrontier(frontier, token(i));
+      // Manually fill pending beyond the cap (simulates concurrent Phase 2 state).
+      for (let i = 0; i <= MAX_PENDING_TOKENS; i++) {
+        frontier.pendingTokens.push(token(200 + i));
       }
 
-      // The last call should return overflow.
-      const result = ReplicationLedger.advanceFrontier(frontier, token(MAX_PENDING_TOKENS + 4));
+      // Advance with a token below pending range — won't drain them.
+      const result = ReplicationLedger.advanceFrontier(frontier, token(105));
       expect(result).toBe('overflow');
     });
 
-    it('should maintain pending in ascending position order', () => {
+    it('should return domain_mismatch for mismatched streamId', () => {
       const frontier: DirectionFrontier = { pendingTokens: [] };
-
       ReplicationLedger.advanceFrontier(frontier, token(1));
 
-      // Add out-of-order: 5, 3, 7, 4
-      ReplicationLedger.advanceFrontier(frontier, token(5));
-      ReplicationLedger.advanceFrontier(frontier, token(3));
-      ReplicationLedger.advanceFrontier(frontier, token(7));
-      ReplicationLedger.advanceFrontier(frontier, token(4));
-
-      const positions = frontier.pendingTokens.map(t => Number(t.position));
-      expect(positions).toEqual([3, 4, 5, 7]);
+      const foreignToken = { streamId: 'other-stream', epoch: 'epoch-1', position: '2', messageCid: 'cid-2' };
+      const result = ReplicationLedger.advanceFrontier(frontier, foreignToken);
+      expect(result).toBe('domain_mismatch');
+      // Baseline should not change.
+      expect(frontier.contiguousAppliedToken).toEqual(token(1));
     });
 
-    it('should not add duplicate pending tokens', () => {
+    it('should return domain_mismatch for mismatched epoch', () => {
       const frontier: DirectionFrontier = { pendingTokens: [] };
-
       ReplicationLedger.advanceFrontier(frontier, token(1));
-      ReplicationLedger.advanceFrontier(frontier, token(5));
-      ReplicationLedger.advanceFrontier(frontier, token(5)); // duplicate
 
-      expect(frontier.pendingTokens).toHaveLength(1);
+      const staleToken = { streamId: 'stream-1', epoch: 'old-epoch', position: '2', messageCid: 'cid-2' };
+      const result = ReplicationLedger.advanceFrontier(frontier, staleToken);
+      expect(result).toBe('domain_mismatch');
+    });
+
+    it('should drain pending tokens that are at or behind the baseline', () => {
+      const frontier: DirectionFrontier = {
+        contiguousAppliedToken : token(5),
+        pendingTokens          : [token(3), token(4), token(6)],
+      };
+
+      // Advance past position 6 — tokens 3 and 4 should be drained (behind baseline 10).
+      ReplicationLedger.advanceFrontier(frontier, token(10));
+
+      expect(frontier.contiguousAppliedToken).toEqual(token(10));
+      expect(frontier.pendingTokens).toEqual([]);
     });
   });
 

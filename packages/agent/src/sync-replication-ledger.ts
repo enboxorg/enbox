@@ -37,15 +37,9 @@ export class ReplicationLedger {
     return `${tenantDid}${KEY_SEP}${remoteEndpoint}${KEY_SEP}${scopeId}`;
   }
 
-  /** Parse a compound key back into its components. */
-  private static parseKey(key: string): { tenantDid: string; remoteEndpoint: string; scopeId: string } {
-    const parts = key.split(KEY_SEP);
-    return {
-      tenantDid      : parts[0],
-      remoteEndpoint : parts[1],
-      scopeId        : parts[2],
-    };
-  }
+  // Note: compound keys use raw '^' separator. This is safe because tenantDid
+  // (DID URI), remoteEndpoint (URL), and scopeId (base64url hash) cannot
+  // contain '^'. If future fields can contain '^', keys must be escaped.
 
   // ---------------------------------------------------------------------------
   // CRUD
@@ -153,16 +147,36 @@ export class ReplicationLedger {
   }
 
   /**
-   * Advance a frontier after successfully applying a token. Handles both
-   * contiguous advancement and out-of-order pending tracking.
+   * Advance a frontier after successfully applying a token.
    *
-   * Returns `'overflow'` if `pendingTokens` exceeds {@link MAX_PENDING_TOKENS},
-   * signaling the caller should transition the link to `repairing`.
+   * **Sparse-position aware:** EventLog positions come from the source's
+   * global sequence, not from the filtered result set. A subscription with
+   * protocol filters may deliver positions 1, 5, 9 (skipping non-matching
+   * events). The frontier tracks delivery order, not position arithmetic —
+   * any token with a higher position than the current baseline is a valid
+   * forward progression.
+   *
+   * Out-of-order detection uses delivery sequence, not position gaps.
+   * `pendingTokens` accumulates tokens that arrived before earlier-position
+   * tokens were applied (true reordering). When pendingTokens exceeds
+   * {@link MAX_PENDING_TOKENS}, returns `'overflow'` to signal the caller
+   * should transition the link to `repairing`.
+   *
+   * Returns `'domain_mismatch'` if the token's `streamId` or `epoch` does
+   * not match the frontier's existing baseline.
    */
   public static advanceFrontier(
     frontier: DirectionFrontier,
     appliedToken: ProgressToken,
-  ): 'ok' | 'overflow' {
+  ): 'ok' | 'overflow' | 'domain_mismatch' {
+    // Validate token domain against the frontier baseline.
+    if (frontier.contiguousAppliedToken !== undefined) {
+      if (appliedToken.streamId !== frontier.contiguousAppliedToken.streamId ||
+          appliedToken.epoch !== frontier.contiguousAppliedToken.epoch) {
+        return 'domain_mismatch';
+      }
+    }
+
     // Update receivedToken to the highest seen.
     if (
       frontier.receivedToken === undefined ||
@@ -171,25 +185,25 @@ export class ReplicationLedger {
       frontier.receivedToken = appliedToken;
     }
 
+    const appliedPos = BigInt(appliedToken.position);
+
     if (frontier.contiguousAppliedToken === undefined) {
-      // First token ever — set it as the contiguous baseline.
+      // First token ever — set it as the baseline.
       frontier.contiguousAppliedToken = appliedToken;
     } else {
-      const expectedNext = BigInt(frontier.contiguousAppliedToken.position) + BigInt(1);
-      const appliedPos = BigInt(appliedToken.position);
+      const baselinePos = BigInt(frontier.contiguousAppliedToken.position);
 
-      if (appliedPos === expectedNext) {
-        // Contiguous: advance the baseline.
+      if (appliedPos > baselinePos) {
+        // Forward progression — advance the baseline.
+        // In a filtered stream, positions are sparse (e.g. 1 -> 5 -> 9).
+        // Any higher position is valid advancement, not a gap.
         frontier.contiguousAppliedToken = appliedToken;
-      } else if (appliedPos > expectedNext) {
-        // Out of order: add to pending.
-        ReplicationLedger.insertPending(frontier.pendingTokens, appliedToken);
       }
-      // appliedPos <= contiguousAppliedToken.position — already applied, ignore.
+      // appliedPos <= baselinePos — already applied or duplicate, ignore.
     }
 
-    // Drain any pendingTokens that are now contiguous with the baseline.
-    ReplicationLedger.drainContiguousPending(frontier);
+    // Drain any pendingTokens that are now behind or equal to the baseline.
+    ReplicationLedger.drainAppliedPending(frontier);
 
     // Check overflow.
     if (frontier.pendingTokens.length > MAX_PENDING_TOKENS) {
@@ -200,52 +214,20 @@ export class ReplicationLedger {
   }
 
   /**
-   * Insert a token into the pending list in ascending position order.
-   * Skips if already present (by position + messageCid).
+   * Remove pending tokens that are at or behind the current baseline
+   * (they have been implicitly applied by the baseline advancing past them).
    */
-  private static insertPending(pending: ProgressToken[], token: ProgressToken): void {
-    const pos = BigInt(token.position);
-
-    // Find insertion point (binary search).
-    let lo = 0;
-    let hi = pending.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (BigInt(pending[mid].position) < pos) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
-      }
-    }
-
-    // Check for duplicate.
-    if (lo < pending.length && pending[lo].position === token.position && pending[lo].messageCid === token.messageCid) {
-      return;
-    }
-
-    pending.splice(lo, 0, token);
-  }
-
-  /**
-   * Drain pending tokens that are contiguous with `contiguousAppliedToken`,
-   * advancing the baseline as far as possible.
-   */
-  private static drainContiguousPending(frontier: DirectionFrontier): void {
+  private static drainAppliedPending(frontier: DirectionFrontier): void {
     if (frontier.contiguousAppliedToken === undefined) { return; }
 
-    let baseline = BigInt(frontier.contiguousAppliedToken.position);
+    const baseline = BigInt(frontier.contiguousAppliedToken.position);
 
+    // pendingTokens is sorted ascending — remove from the front while <= baseline.
     while (frontier.pendingTokens.length > 0) {
-      const next = frontier.pendingTokens[0];
-      const nextPos = BigInt(next.position);
-
-      if (nextPos === baseline + BigInt(1)) {
-        // Contiguous — advance.
-        frontier.contiguousAppliedToken = next;
+      const nextPos = BigInt(frontier.pendingTokens[0].position);
+      if (nextPos <= baseline) {
         frontier.pendingTokens.shift();
-        baseline = nextPos;
       } else {
-        // Gap — stop draining.
         break;
       }
     }

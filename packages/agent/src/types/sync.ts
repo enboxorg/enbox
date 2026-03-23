@@ -65,10 +65,10 @@ export async function computeScopeId(scope: SyncScope): Promise<string> {
   if (scope.kind === 'protocol') {
     canonical.protocol = scope.protocol;
     if (scope.protocolPathPrefixes !== undefined) {
-      canonical.protocolPathPrefixes = [...scope.protocolPathPrefixes].sort();
+      canonical.protocolPathPrefixes = [...new Set(scope.protocolPathPrefixes)].sort();
     }
     if (scope.contextIdPrefixes !== undefined) {
-      canonical.contextIdPrefixes = [...scope.contextIdPrefixes].sort();
+      canonical.contextIdPrefixes = [...new Set(scope.contextIdPrefixes)].sort();
     }
   }
 
@@ -165,7 +165,13 @@ export type ReplicationLinkState = {
   /** Delegate DID used to sign sync messages, if any. */
   delegateDid?: string;
 
-  /** Protocol filter for this link, if any. */
+  /**
+   * Protocol filter for this link, if any. Duplicates the protocol in `scope`
+   * for operational convenience — used by permission lookups and cursor key
+   * building. The scope is the source of truth for what to sync; this field
+   * is the source of truth for how to authenticate. To be consolidated in
+   * Phase 3 when scope resolution is more complex.
+   */
   protocol?: string;
 
   /** ISO-8601 timestamp of last successful sync activity. */

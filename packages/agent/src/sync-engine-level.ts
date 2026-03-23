@@ -491,11 +491,11 @@ export class SyncEngineLevel implements SyncEngine {
         const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
         this._activeLinks.set(linkKey, link);
 
-        // Transition to live.
-        await this._ledger.setStatus(link, 'live');
-
+        // Open subscriptions first — only transition to live if both succeed.
         await this.openLivePullSubscription(target);
         await this.openLocalPushSubscription(target);
+
+        await this._ledger.setStatus(link, 'live');
       } catch (error: any) {
         console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
       }
@@ -549,6 +549,9 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
     this._localSubscriptions = [];
+
+    // Clear the in-memory link cache.
+    this._activeLinks.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -594,7 +597,11 @@ export class SyncEngineLevel implements SyncEngine {
         // End-of-stored-events — catch-up complete.
         if (link) {
           // Advance frontier to the EOSE cursor (represents the end of stored events).
-          ReplicationLedger.advanceFrontier(link.pull, subMessage.cursor);
+          const eoseResult = ReplicationLedger.advanceFrontier(link.pull, subMessage.cursor);
+          if (eoseResult === 'domain_mismatch') {
+            console.warn(`SyncEngineLevel: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, resetting frontier`);
+            ReplicationLedger.resetFrontier(link.pull, subMessage.cursor);
+          }
           await this._ledger.saveLink(link);
         } else {
           await this.setCursor(cursorKey, subMessage.cursor);
@@ -634,13 +641,16 @@ export class SyncEngineLevel implements SyncEngine {
           // Advance the pull frontier after successful processing.
           if (link) {
             const result = ReplicationLedger.advanceFrontier(link.pull, subMessage.cursor);
-            await this._ledger.saveLink(link);
 
-            // If pending tokens overflow, transition to repairing.
-            if (result === 'overflow') {
+            if (result === 'domain_mismatch') {
+              console.warn(`SyncEngineLevel: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
+              ReplicationLedger.resetFrontier(link.pull);
+              await this._ledger.setStatus(link, 'repairing');
+            } else if (result === 'overflow') {
               console.warn(`SyncEngineLevel: Pull frontier overflow for ${did} -> ${dwnUrl}, transitioning to repairing`);
               await this._ledger.setStatus(link, 'repairing');
-              // The next SMT integrity check will perform repair reconciliation.
+            } else {
+              await this._ledger.saveLink(link);
             }
           } else {
             // Legacy path: no link available, use simple cursor persistence.
@@ -838,7 +848,11 @@ export class SyncEngineLevel implements SyncEngine {
           const succeededSet = new Set(result.succeeded);
           for (const entry of pushEntries) {
             if (succeededSet.has(entry.cid) && entry.localToken) {
-              ReplicationLedger.advanceFrontier(link.push, entry.localToken);
+              const pushResult = ReplicationLedger.advanceFrontier(link.push, entry.localToken);
+              if (pushResult === 'domain_mismatch') {
+                console.warn(`SyncEngineLevel: Push frontier domain mismatch for ${did} -> ${dwnUrl}, resetting`);
+                ReplicationLedger.resetFrontier(link.push, entry.localToken);
+              }
             }
           }
           await this._ledger.saveLink(link);
@@ -865,8 +879,21 @@ export class SyncEngineLevel implements SyncEngine {
           }
         }
       } catch (error: any) {
-        // Truly unexpected error (not per-message failure).
+        // Truly unexpected error (not per-message failure). Re-queue entire
+        // batch so entries aren't silently dropped from the debounce queue.
         console.error(`SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}`, error);
+        let requeued = this._pendingPushCids.get(targetKey);
+        if (!requeued) {
+          requeued = { did, dwnUrl, delegateDid, protocol, entries: [] };
+          this._pendingPushCids.set(targetKey, requeued);
+        }
+        requeued.entries.push(...pushEntries);
+
+        if (!this._pushDebounceTimer) {
+          this._pushDebounceTimer = setTimeout((): void => {
+            void this.flushPendingPushes();
+          }, PUSH_DEBOUNCE_MS * 4);
+        }
       }
     }));
   }
