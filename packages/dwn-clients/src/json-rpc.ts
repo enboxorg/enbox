@@ -1,3 +1,5 @@
+import type { ProgressToken } from '@enbox/dwn-sdk-js';
+
 export type JsonRpcId = string | number | null;
 export type JsonRpcParams = any;
 export type JsonRpcVersion = '2.0';
@@ -122,11 +124,11 @@ export const createJsonRpcSubscriptionRequest = (
 
 /**
  * Creates a JSON-RPC notification to acknowledge receipt of subscription events
- * up to the given cursor. No `id` is set because no response is expected.
+ * up to the given progress token. No `id` is set because no response is expected.
  */
 export const createJsonRpcAck = (
   subscriptionId: JsonRpcId,
-  cursor: string,
+  cursor: ProgressToken,
 ): JsonRpcRequest => {
   return {
     jsonrpc      : '2.0',

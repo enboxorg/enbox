@@ -1,6 +1,6 @@
 import type { NatsConnection } from '@nats-io/transport-node';
 import type { ConsumerMessages, JetStreamClient, JetStreamManager } from '@nats-io/jetstream';
-import type { EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, Filter, KeyValues, MessageEvent, SubscriptionListener } from '@enbox/dwn-sdk-js';
+import type { EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, Filter, KeyValues, MessageEvent, ProgressToken, SubscriptionListener } from '@enbox/dwn-sdk-js';
 
 import log from 'loglevel';
 
@@ -165,6 +165,12 @@ export default class NatsEventLog implements EventLog {
   /** Active subscription consumers, keyed by consumer name. */
   #activeConsumers: Map<string, { messages?: ConsumerMessages; stopped: boolean }> = new Map();
 
+  /**
+   * Epoch for this EventLog instance. Stable as long as the JetStream stream exists.
+   * Generated once at `open()` from the stream's creation timestamp.
+   */
+  #epoch: string = '';
+
   constructor() {
     this.#config = loadConfig();
   }
@@ -183,6 +189,10 @@ export default class NatsEventLog implements EventLog {
 
     // Ensure the stream exists (idempotent — update if it already exists).
     await this.#ensureStream();
+
+    // Derive a stable epoch from the stream creation time.
+    const streamInfo = await this.#jsm.streams.info(this.#config.streamName);
+    this.#epoch = streamInfo.created ?? crypto.randomUUID();
 
     log.info(`NatsEventLog: connected to ${servers.join(', ')}, stream '${this.#config.streamName}' ready`);
   }
@@ -208,15 +218,35 @@ export default class NatsEventLog implements EventLog {
     }
   }
 
+  /**
+   * Derives a stable streamId from the JetStream stream name and tenant subject.
+   */
+  async #getStreamId(tenant: string): Promise<string> {
+    const input = `${this.#config.streamName}/${this.#tenantSubject(tenant)}`;
+    const bytes = new TextEncoder().encode(input);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+    const hashArray = new Uint8Array(hashBuffer);
+    return Array.from(hashArray.slice(0, 8), (b: number) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  async #buildToken(tenant: string, seq: number, messageCid: string): Promise<ProgressToken> {
+    return {
+      streamId : await this.#getStreamId(tenant),
+      epoch    : this.#epoch,
+      position : String(seq),
+      messageCid,
+    };
+  }
+
   // ---- emit ----------------------------------------------------------------
 
-  public async emit(tenant: string, event: MessageEvent, indexes: KeyValues): Promise<string> {
+  public async emit(tenant: string, event: MessageEvent, indexes: KeyValues, messageCid: string): Promise<ProgressToken | undefined> {
     this.#assertOpen();
 
     const subject = this.#tenantSubject(tenant);
     const data = encodePayload({ event, indexes });
     const ack = await this.#js!.publish(subject, data);
-    return String(ack.seq);
+    return this.#buildToken(tenant, ack.seq, messageCid);
   }
 
   // ---- read ----------------------------------------------------------------
@@ -235,7 +265,7 @@ export default class NatsEventLog implements EventLog {
 
     if (cursor !== undefined) {
       consumerOpts.deliver_policy = DeliverPolicy.StartSequence;
-      consumerOpts.opt_start_seq = Number(cursor) + 1;
+      consumerOpts.opt_start_seq = Number(cursor.position) + 1;
     } else {
       consumerOpts.deliver_policy = DeliverPolicy.All;
     }
@@ -244,7 +274,8 @@ export default class NatsEventLog implements EventLog {
     const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
 
     const events: EventLogEntry[] = [];
-    let lastCursor: string | undefined;
+    let lastSeq: number | undefined;
+    let lastMessageCid: string | undefined;
 
     try {
       const messages = await this.#js!.consumers.get(this.#config.streamName, consumer.name);
@@ -266,7 +297,9 @@ export default class NatsEventLog implements EventLog {
           indexes : payload.indexes,
         });
 
-        lastCursor = String(msg.seq);
+        lastSeq = msg.seq;
+        // Extract messageCid from the event's message if available.
+        lastMessageCid = (payload.indexes['messageCid'] as string) ?? '';
 
         if (events.length >= maxResults) {
           break;
@@ -281,9 +314,14 @@ export default class NatsEventLog implements EventLog {
       }
     }
 
+    if (lastSeq !== undefined) {
+      const lastToken = await this.#buildToken(tenant, lastSeq, lastMessageCid ?? '');
+      return { events, cursor: lastToken };
+    }
+
     return {
       events,
-      cursor: lastCursor ?? cursor,
+      cursor,
     };
   }
 
@@ -311,7 +349,7 @@ export default class NatsEventLog implements EventLog {
 
     if (cursor !== undefined) {
       consumerOpts.deliver_policy = DeliverPolicy.StartSequence;
-      consumerOpts.opt_start_seq = Number(cursor) + 1;
+      consumerOpts.opt_start_seq = Number(cursor.position) + 1;
     } else {
       consumerOpts.deliver_policy = DeliverPolicy.New;
     }
@@ -346,14 +384,15 @@ export default class NatsEventLog implements EventLog {
             continue;
           }
 
-          const eventCursor = String(msg.seq);
-          listener({ type: 'event', cursor: eventCursor, event: payload.event });
+          const msgCid = (payload.indexes['messageCid'] as string) ?? '';
+          const eventToken = await this.#buildToken(tenant, msg.seq, msgCid);
+          listener({ type: 'event', cursor: eventToken, event: payload.event });
           msg.ack();
 
           // EOSE detection: when pending reaches 0, all stored events have been
           // delivered and we transition to live mode.
           if (!sentEose && msg.info.pending === 0) {
-            listener({ type: 'eose', cursor: eventCursor });
+            listener({ type: 'eose', cursor: eventToken });
             sentEose = true;
           }
         }
@@ -378,7 +417,7 @@ export default class NatsEventLog implements EventLog {
         }
         try {
           const info = await this.#jsm!.consumers.info(this.#config.streamName, consumerName);
-          if (info.num_pending === 0 && info.delivered.stream_seq <= Number(cursor)) {
+          if (info.num_pending === 0 && info.delivered.stream_seq <= Number(cursor.position)) {
             listener({ type: 'eose', cursor });
           }
         } catch {
@@ -400,6 +439,30 @@ export default class NatsEventLog implements EventLog {
         }
       },
     };
+  }
+
+  // ---- getReplayBounds ------------------------------------------------------
+
+  public async getReplayBounds(tenant: string): Promise<{ oldest: ProgressToken; latest: ProgressToken } | undefined> {
+    this.#assertOpen();
+
+    const subject = this.#tenantSubject(tenant);
+
+    // Get stream info to find first/last sequence for this subject.
+    const streamInfo = await this.#jsm!.streams.info(this.#config.streamName, { subjects_filter: subject });
+    const firstSeq = streamInfo.state.first_seq;
+    const lastSeq = streamInfo.state.last_seq;
+
+    if (lastSeq === 0 || firstSeq > lastSeq) {
+      return undefined;
+    }
+
+    // We don't have the messageCid for the boundary events without reading them,
+    // so we use empty strings. These tokens are used for gap metadata, not replay.
+    const oldest = await this.#buildToken(tenant, firstSeq, '');
+    const latest = await this.#buildToken(tenant, lastSeq, '');
+
+    return { oldest, latest };
   }
 
   // ---- trim ----------------------------------------------------------------

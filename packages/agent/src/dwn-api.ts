@@ -5,6 +5,7 @@ import type {
   EncryptionKeyDeriver,
   GenericMessage,
   KeyDecrypter,
+  ProgressToken,
   ProtocolDefinition,
   RecordsWrite,
   RecordsWriteMessage,
@@ -568,7 +569,7 @@ export class AgentDwnApi {
     // subscribe message with a cursor on reconnection.
     let resubscribeFactory: ResubscribeFactory | undefined;
     if (subscriptionHandler !== undefined && !('messageCid' in request)) {
-      resubscribeFactory = async (cursor?: string): Promise<GenericMessage> => {
+      resubscribeFactory = async (cursor?: ProgressToken): Promise<GenericMessage> => {
         const resumeParams = cursor !== undefined
           ? { ...request.messageParams, cursor } as DwnMessageParams[T]
           : request.messageParams;

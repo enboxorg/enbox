@@ -8,7 +8,7 @@ import type { RegistrationStore } from '../registration/registration-store.js';
 import type { RequestContext } from '../lib/json-rpc-router.js';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from '../http-api.js';
-import type { Dwn, GenericMessage, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, ProgressToken, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 import type { JsonRpcErrorResponse, JsonRpcId, JsonRpcRequest, JsonRpcResponse, JsonRpcSubscription } from '@enbox/dwn-clients';
 
 import log from 'loglevel';
@@ -117,10 +117,10 @@ export class SocketConnection {
   }
 
   /**
-   * Acknowledges subscription events up to the given cursor, advancing the
-   * flow-control window for the subscription.
+   * Acknowledges subscription events up to the given progress token, advancing
+   * the flow-control window for the subscription.
    */
-  ackSubscription(id: JsonRpcId, cursor: string): void {
+  ackSubscription(id: JsonRpcId, cursor: ProgressToken): void {
     const fc = this.flowControllers.get(id);
     if (fc) {
       fc.ack(cursor);
