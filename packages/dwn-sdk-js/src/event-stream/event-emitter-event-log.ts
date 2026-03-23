@@ -265,14 +265,25 @@ export class EventEmitterEventLog implements EventLog {
   }
 
   /**
-   * Parse a position string into an internal sequence number.
+   * Parse a position string into an internal sequence number using BigInt
+   * for safe handling of values beyond `Number.MAX_SAFE_INTEGER`.
+   *
+   * The returned `number` is safe for the in-memory EventLog which uses
+   * `Map<number, StoredEntry>` keys — in-memory sequences will never
+   * exceed safe integer range. The BigInt parse validates correctness
+   * before the narrowing conversion.
    */
   private static parsePosition(position: string): number {
-    const seq = Number(position);
-    if (Number.isNaN(seq) || seq < 0) {
+    try {
+      const big = BigInt(position);
+      if (big < 0n) {
+        throw new DwnError(DwnErrorCode.EventLogNotOpenError, `invalid cursor position: '${position}'`);
+      }
+      return Number(big);
+    } catch (e) {
+      if (e instanceof DwnError) { throw e; }
       throw new DwnError(DwnErrorCode.EventLogNotOpenError, `invalid cursor position: '${position}'`);
     }
-    return seq;
   }
 
   public async subscribe(

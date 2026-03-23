@@ -3,7 +3,7 @@ import type { JweEncryption } from '../utils/encryption.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSubscription, Pagination } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { PaginationCursor, RangeCriterion, RangeFilter, StartsWithFilter } from './query-types.js';
-import type { ProgressToken, SubscriptionListener } from './subscriptions.js';
+import type { ProgressGapInfo, ProgressToken, SubscriptionListener } from './subscriptions.js';
 
 export enum DateSort {
   CreatedAscending = 'createdAscending',
@@ -203,6 +203,8 @@ export type RecordsSubscribeReply = GenericMessageReply & {
   subscription?: MessageSubscription;
   entries?: RecordsQueryReplyEntry[];
   cursor?: PaginationCursor;
+  /** Present when status.code is 410 — structured gap metadata. */
+  error?: { code: 'ProgressGap' } & ProgressGapInfo;
 };
 
 export type RecordsReadMessage = {

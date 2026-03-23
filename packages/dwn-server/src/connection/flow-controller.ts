@@ -75,7 +75,21 @@ export class FlowController {
       return;
     }
 
-    // Find the matching token by position + messageCid within the same stream/epoch.
+    // Reject tokens from a different stream/epoch — these indicate a client
+    // bug or a stale reconnection with an old token domain.
+    if (this.unacked.length > 0) {
+      const expected = this.unacked[0];
+      if (cursor.streamId !== expected.streamId || cursor.epoch !== expected.epoch) {
+        log.debug(
+          `FlowController: rejected ack with mismatched token domain for subscription ${String(this.subscriptionId)}: ` +
+          `expected streamId=${expected.streamId} epoch=${expected.epoch}, ` +
+          `got streamId=${cursor.streamId} epoch=${cursor.epoch}`
+        );
+        return;
+      }
+    }
+
+    // Find the matching token by position + messageCid.
     const idx = this.unacked.findIndex(
       (t) => t.position === cursor.position && t.messageCid === cursor.messageCid
     );

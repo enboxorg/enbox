@@ -1,7 +1,7 @@
 import type { MessageStore } from '../types/message-store.js';
-import type { SubscriptionListener } from '../types/subscriptions.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
+import type { ProgressGapInfo, SubscriptionListener } from '../types/subscriptions.js';
 
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
@@ -62,11 +62,11 @@ export class MessagesSubscribeHandler implements MethodHandler {
       };
     } catch (error) {
       if (error instanceof DwnError && error.code === DwnErrorCode.EventLogProgressGap) {
-        const gapInfo = (error as any).gapInfo;
+        const gapInfo = (error as any).gapInfo as ProgressGapInfo | undefined;
         return {
-          status: { code: 410, detail: 'Progress token gap' },
-          ...(gapInfo !== undefined ? { error: { code: 'ProgressGap', ...gapInfo } } : {}),
-        } as MessagesSubscribeReply;
+          status : { code: 410, detail: 'Progress token gap' },
+          error  : gapInfo !== undefined ? { code: 'ProgressGap' as const, ...gapInfo } : undefined,
+        };
       }
       return messageReplyFromError(error, 500);
     }

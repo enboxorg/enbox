@@ -1,9 +1,9 @@
 import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { MessageSort } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
-import type { SubscriptionListener } from '../types/subscriptions.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
+import type { ProgressGapInfo, SubscriptionListener } from '../types/subscriptions.js';
 import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -94,11 +94,11 @@ export class RecordsSubscribeHandler implements MethodHandler {
         };
       } catch (error) {
         if (error instanceof DwnError && error.code === DwnErrorCode.EventLogProgressGap) {
-          const gapInfo = (error as any).gapInfo;
+          const gapInfo = (error as any).gapInfo as ProgressGapInfo | undefined;
           return {
-            status: { code: 410, detail: 'Progress token gap' },
-            ...(gapInfo !== undefined ? { error: { code: 'ProgressGap', ...gapInfo } } : {}),
-          } as RecordsSubscribeReply;
+            status : { code: 410, detail: 'Progress token gap' },
+            error  : gapInfo !== undefined ? { code: 'ProgressGap' as const, ...gapInfo } : undefined,
+          };
         }
         return messageReplyFromError(error, 500);
       }

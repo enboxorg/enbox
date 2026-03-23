@@ -1,7 +1,7 @@
 import type { RangeCriterion } from './query-types.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, MessageSubscription } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import type { ProgressToken, SubscriptionListener } from './subscriptions.js';
+import type { ProgressGapInfo, ProgressToken, SubscriptionListener } from './subscriptions.js';
 
 /**
  * filters used when filtering for any type of Message across interfaces
@@ -100,6 +100,8 @@ export type MessagesSubscribeMessage = {
 
 export type MessagesSubscribeReply = GenericMessageReply & {
   subscription?: MessageSubscription;
+  /** Present when status.code is 410 — structured gap metadata. */
+  error?: { code: 'ProgressGap' } & ProgressGapInfo;
 };
 
 export type MessagesSubscribeDescriptor = {

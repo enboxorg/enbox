@@ -253,12 +253,13 @@ export default class NatsEventLog implements EventLog {
     } else if (cursor.epoch !== this.#epoch) {
       reason = 'epoch_mismatch';
     } else {
-      // Check if position is within replay bounds.
+      // Check if position is within replay bounds using BigInt
+      // for safe handling of NATS sequences beyond Number.MAX_SAFE_INTEGER.
       const bounds = await this.getReplayBounds(tenant);
       if (bounds !== undefined) {
-        const cursorSeq = Number(cursor.position);
-        const oldestSeq = Number(bounds.oldest.position);
-        if (cursorSeq < oldestSeq - 1) {
+        const cursorSeq = BigInt(cursor.position);
+        const oldestSeq = BigInt(bounds.oldest.position);
+        if (cursorSeq < oldestSeq - 1n) {
           reason = 'token_too_old';
         } else {
           return; // Valid.
@@ -511,10 +512,47 @@ export default class NatsEventLog implements EventLog {
       return undefined;
     }
 
-    // We don't have the messageCid for the boundary events without reading them,
-    // so we use empty strings. These tokens are used for gap metadata, not replay.
-    const oldest = await this.#buildToken(tenant, firstSeq, '');
-    const latest = await this.#buildToken(tenant, lastSeq, '');
+    // Read boundary messages to extract their real messageCid values.
+    // Uses a one-shot ordered consumer to fetch a single message at a given sequence.
+    const readBoundaryCid = async (seq: number): Promise<string> => {
+      let consumerName: string | undefined;
+      try {
+        const consumer = await this.#jsm!.consumers.add(this.#config.streamName, {
+          filter_subject : subject,
+          ack_policy     : AckPolicy.None,
+          deliver_policy : DeliverPolicy.StartSequence,
+          opt_start_seq  : seq,
+        });
+        consumerName = consumer.name;
+
+        const handle = await this.#js!.consumers.get(this.#config.streamName, consumerName);
+        const iter = await handle.fetch({ max_messages: 1, expires: 2_000 });
+
+        for await (const msg of iter) {
+          const payload = decodePayload(msg.data);
+          const cid = (payload?.indexes?.['messageCid'] as string);
+          if (cid && cid !== '') {
+            return cid;
+          }
+        }
+      } catch {
+        // Fall through to deterministic placeholder.
+      } finally {
+        if (consumerName) {
+          try {
+            await this.#jsm!.consumers.delete(this.#config.streamName, consumerName);
+          } catch { /* best effort */ }
+        }
+      }
+      // Deterministic placeholder if the message could not be read.
+      return `boundary-seq-${seq}`;
+    };
+
+    const oldestCid = await readBoundaryCid(firstSeq);
+    const latestCid = await readBoundaryCid(lastSeq);
+
+    const oldest = await this.#buildToken(tenant, firstSeq, oldestCid);
+    const latest = await this.#buildToken(tenant, lastSeq, latestCid);
 
     return { oldest, latest };
   }
