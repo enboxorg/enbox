@@ -1967,4 +1967,143 @@ describe('SyncEngineLevel — private methods', () => {
       clearInterval((engine as any)._degradedPollTimers.get(linkKey));
     });
   });
+
+  describe('transitionToRepairing and retry scheduling', () => {
+    it('should schedule a retry when first repair fails', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : {}, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+
+      sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
+      sinon.stub(engine as any, 'getLocalRoot').rejects(new Error('network error'));
+      sinon.stub(console, 'error');
+      sinon.stub(console, 'warn');
+
+      const saveStub = sinon.stub().resolves();
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+
+      await (engine as any).transitionToRepairing(linkKey, link);
+
+      // Wait for repair + retry scheduling to settle.
+      await new Promise(r => setTimeout(r, 100));
+
+      // A retry timer should be scheduled.
+      expect((engine as any)._repairRetryTimers.has(linkKey)).toBe(true);
+
+      // Clean up.
+      clearTimeout((engine as any)._repairRetryTimers.get(linkKey));
+    });
+
+    it('should clear retry timer on teardown', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'test-link';
+
+      (engine as any)._repairRetryTimers.set(linkKey, setTimeout(() => {}, 60_000));
+      expect((engine as any)._repairRetryTimers.size).toBe(1);
+
+      await (engine as any).teardownLiveSync();
+
+      expect((engine as any)._repairRetryTimers.size).toBe(0);
+    });
+
+    it('should store resumeToken from ProgressGap for use during repair', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const resumeToken = { streamId: 's1', epoch: 'e1', position: '99', messageCid: 'cid-99' };
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : {}, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      // Stub ledger and repair to capture the context.
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = { setStatus: setStatusStub };
+      sinon.stub(engine as any, 'repairLink').resolves();
+
+      await (engine as any).transitionToRepairing(linkKey, link, { resumeToken });
+
+      // Repair context should have the resume token.
+      const ctx = (engine as any)._repairContext.get(linkKey);
+      expect(ctx).toBeDefined();
+      expect(ctx.resumeToken).toEqual(resumeToken);
+    });
+  });
+
+  describe('doRepairLink — post-repair checkpoint', () => {
+    it('should set checkpoint to resumeToken from ProgressGap after successful repair', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const resumeToken = { streamId: 's1', epoch: 'e1', position: '99', messageCid: 'cid-99' };
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
+        pull           : {}, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+      (engine as any)._repairContext.set(linkKey, { resumeToken });
+
+      sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
+      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-a');
+      sinon.stub(engine as any, 'openLivePullSubscription').resolves();
+      sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+
+      const saveStub = sinon.stub().resolves();
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+
+      await (engine as any).doRepairLink(linkKey);
+
+      // Checkpoint should be set to the resume token, not undefined.
+      expect(link.pull.contiguousAppliedToken).toEqual(resumeToken);
+      expect(link.pull.receivedToken).toEqual(resumeToken);
+      expect(link.status).toBe('live');
+      // Repair context should be cleared after success.
+      expect((engine as any)._repairContext.has(linkKey)).toBe(false);
+    });
+
+    it('should not leave checkpoint undefined after non-gap repair', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const existingToken = { streamId: 's1', epoch: 'e1', position: '50', messageCid: 'cid-50' };
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
+        pull           : { contiguousAppliedToken: existingToken }, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+      // No repair context — this is a non-gap repair (e.g., domain mismatch).
+
+      sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
+      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-a');
+      sinon.stub(engine as any, 'openLivePullSubscription').resolves();
+      sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+
+      const saveStub = sinon.stub().resolves();
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+
+      await (engine as any).doRepairLink(linkKey);
+
+      // Checkpoint should use the existing token, not undefined.
+      expect(link.pull.contiguousAppliedToken).toEqual(existingToken);
+      expect(link.status).toBe('live');
+    });
+  });
 });

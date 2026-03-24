@@ -566,9 +566,10 @@ export class SyncEngineLevel implements SyncEngine {
         // Detect ProgressGap (410) — the cursor is stale, link needs SMT repair.
         if ((error as any).isProgressGap && link) {
           console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
-          await this.ledger.setStatus(link, 'repairing');
-          // Kick off repair asynchronously — don't block other targets.
-          void this.repairLink(linkKey);
+          const gapInfo = (error as any).gapInfo;
+          await this.transitionToRepairing(linkKey, link, {
+            resumeToken: gapInfo?.latestAvailable,
+          });
           continue;
         }
 
@@ -656,6 +657,90 @@ export class SyncEngineLevel implements SyncEngine {
   /** Per-link active repair promises — prevents concurrent repair for the same link. */
   private _activeRepairs: Map<string, Promise<void>> = new Map();
 
+  /** Per-link retry timers for failed repairs below max attempts. */
+  private _repairRetryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+  /** Backoff schedule for repair retries (milliseconds). */
+  private static readonly REPAIR_BACKOFF_MS = [1_000, 3_000, 10_000];
+
+  /**
+   * Per-link repair context — stores ProgressGap metadata for use during
+   * repair. The `resumeToken` (from `gapInfo.latestAvailable`) is used as
+   * the post-repair checkpoint so the reopened subscription replays from
+   * a valid boundary instead of starting live-only.
+   */
+  private _repairContext: Map<string, { resumeToken?: ProgressToken }> = new Map();
+
+  /**
+   * Central helper for transitioning a link to `repairing`. Encapsulates:
+   * - status change
+   * - optional gap context storage
+   * - repair kick-off with retry scheduling on failure
+   *
+   * All code paths that set `repairing` should go through this helper to
+   * guarantee a future retry path.
+   */
+  private async transitionToRepairing(
+    linkKey: string,
+    link: ReplicationLinkState,
+    options?: { resumeToken?: ProgressToken },
+  ): Promise<void> {
+    await this.ledger.setStatus(link, 'repairing');
+
+    if (options?.resumeToken) {
+      this._repairContext.set(linkKey, { resumeToken: options.resumeToken });
+    }
+
+    // Clear runtime ordinals immediately — stale state must not linger
+    // across repair attempts.
+    const rt = this._linkRuntimes.get(linkKey);
+    if (rt) {
+      rt.inflight.clear();
+      rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
+    }
+
+    // Kick off repair with retry scheduling on failure.
+    void this.repairLink(linkKey).catch(() => {
+      this.scheduleRepairRetry(linkKey);
+    });
+  }
+
+  /**
+   * Schedule a retry for a failed repair. Uses exponential backoff.
+   * No-op if the link is already in `degraded_poll` (timer loop owns retries)
+   * or if a retry is already scheduled.
+   */
+  private scheduleRepairRetry(linkKey: string): void {
+    // Don't schedule if already in degraded_poll or retry pending.
+    const link = this._activeLinks.get(linkKey);
+    if (!link || link.status === 'degraded_poll') { return; }
+    if (this._repairRetryTimers.has(linkKey)) { return; }
+
+    const attempts = this._repairAttempts.get(linkKey) ?? 0;
+    const backoff = SyncEngineLevel.REPAIR_BACKOFF_MS;
+    const delayMs = backoff[Math.min(attempts, backoff.length - 1)];
+
+    const timer = setTimeout(async (): Promise<void> => {
+      this._repairRetryTimers.delete(linkKey);
+
+      // Verify link still exists and is still repairing.
+      const currentLink = this._activeLinks.get(linkKey);
+      if (!currentLink || currentLink.status !== 'repairing') { return; }
+
+      try {
+        await this.repairLink(linkKey);
+      } catch {
+        // repairLink handles max attempts → degraded_poll internally.
+        // If still below max, schedule another retry.
+        if (currentLink.status === 'repairing') {
+          this.scheduleRepairRetry(linkKey);
+        }
+      }
+    }, delayMs);
+
+    this._repairRetryTimers.set(linkKey, timer);
+  }
+
   /**
    * Repair a single link. Deduplicates concurrent calls via `_activeRepairs`.
    * If repair is already running for this link, returns the existing promise.
@@ -686,15 +771,15 @@ export class SyncEngineLevel implements SyncEngine {
     this._repairAttempts.set(linkKey, attempts);
 
     // Step 1: Close existing subscriptions FIRST to stop old events from
-    // mutating local state while repair runs. This is critical — without it,
-    // old subscription handlers can process events concurrently with SMT repair.
+    // mutating local state while repair runs.
     await this.closeLinkSubscriptions(link);
 
-    // Step 2: Clear the stale checkpoint so repair starts from a clean state.
-    // After SMT reconciliation converges, the checkpoint is re-established
-    // from the newly opened subscription's first EOSE.
-    ReplicationLedger.resetCheckpoint(link.pull);
-    await this.ledger.saveLink(link);
+    // Step 2: Clear runtime ordinals immediately — stale state must not
+    // persist across repair attempts (successful or failed).
+    const rt = this.getOrCreateRuntime(linkKey);
+    rt.inflight.clear();
+    rt.nextDeliveryOrdinal = 0;
+    rt.nextCommitOrdinal = 0;
 
     try {
       // Step 3: Run SMT reconciliation for this link.
@@ -724,8 +809,23 @@ export class SyncEngineLevel implements SyncEngine {
         }
       }
 
-      // Step 4: Reopen subscriptions with no cursor (start fresh after repair).
-      // The EOSE from the new subscription will establish the checkpoint.
+      // Step 4: Determine the post-repair resume token.
+      // - If repair was triggered by ProgressGap, use the stored resumeToken
+      //   (from gapInfo.latestAvailable) so the reopened subscription replays
+      //   from a valid boundary, closing the race window between SMT and resubscribe.
+      // - Otherwise, use the existing contiguousAppliedToken if still valid.
+      // - Push checkpoint is NOT reset during repair: push frontier tracks what
+      //   the local EventLog has delivered to the remote. SMT repair handles
+      //   pull-side convergence; push-side convergence is handled by the diff's
+      //   onlyLocal push. The push checkpoint remains the local authority.
+      const repairCtx = this._repairContext.get(linkKey);
+      const resumeToken = repairCtx?.resumeToken ?? link.pull.contiguousAppliedToken;
+      ReplicationLedger.resetCheckpoint(link.pull, resumeToken);
+      await this.ledger.saveLink(link);
+
+      // Step 5: Reopen subscriptions with the repaired checkpoint.
+      // If resumeToken is set, the subscription replays from that point.
+      // The catch-up + EOSE will deliver any writes that happened during repair.
       const target = { did, dwnUrl, delegateDid, protocol };
       await this.openLivePullSubscription(target);
       try {
@@ -741,12 +841,12 @@ export class SyncEngineLevel implements SyncEngine {
         throw pushError;
       }
 
-      // Step 5: Reset runtime state and transition to live.
-      const rt = this.getOrCreateRuntime(linkKey);
-      rt.inflight.clear();
-      rt.nextDeliveryOrdinal = 0;
-      rt.nextCommitOrdinal = 0;
+      // Step 6: Clean up repair context and transition to live.
+      this._repairContext.delete(linkKey);
       this._repairAttempts.delete(linkKey);
+      // Clear any pending retry timer — repair succeeded.
+      const retryTimer = this._repairRetryTimers.get(linkKey);
+      if (retryTimer) { clearTimeout(retryTimer); this._repairRetryTimers.delete(linkKey); }
       await this.ledger.setStatus(link, 'live');
 
     } catch (error: any) {
@@ -882,6 +982,11 @@ export class SyncEngineLevel implements SyncEngine {
     this._degradedPollTimers.clear();
     this._repairAttempts.clear();
     this._activeRepairs.clear();
+    for (const timer of this._repairRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this._repairRetryTimers.clear();
+    this._repairContext.clear();
 
     // Clear the in-memory link and runtime state.
     this._activeLinks.clear();
@@ -941,8 +1046,7 @@ export class SyncEngineLevel implements SyncEngine {
 
           if (!ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
             console.warn(`SyncEngineLevel: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`);
-            await this.ledger.setStatus(link, 'repairing');
-            void this.repairLink(cursorKey);
+            await this.transitionToRepairing(cursorKey, link);
             return;
           }
           ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
@@ -974,11 +1078,7 @@ export class SyncEngineLevel implements SyncEngine {
         // Domain validation: reject tokens from a different stream/epoch.
         if (link && !ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
           console.warn(`SyncEngineLevel: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
-          ReplicationLedger.resetCheckpoint(link.pull);
-          const rt = this._linkRuntimes.get(cursorKey);
-          if (rt) { rt.inflight.clear(); rt.nextCommitOrdinal = rt.nextDeliveryOrdinal; }
-          await this.ledger.setStatus(link, 'repairing');
-          void this.repairLink(cursorKey);
+          await this.transitionToRepairing(cursorKey, link);
           return;
         }
 
@@ -1033,8 +1133,7 @@ export class SyncEngineLevel implements SyncEngine {
             // Overflow: too many in-flight ordinals without draining.
             if (rt.inflight.size > MAX_PENDING_TOKENS) {
               console.warn(`SyncEngineLevel: Pull in-flight overflow for ${did} -> ${dwnUrl}, transitioning to repairing`);
-              await this.ledger.setStatus(link, 'repairing');
-              void this.repairLink(cursorKey);
+              await this.transitionToRepairing(cursorKey, link);
             }
           } else if (!link) {
             // Legacy path: no link available, use simple cursor persistence.
@@ -1046,11 +1145,8 @@ export class SyncEngineLevel implements SyncEngine {
           // Transition to repairing immediately — do NOT advance the checkpoint
           // past this failure or let later ordinals commit past it. SMT
           // reconciliation will discover and fill the gap.
-          if (link && rt) {
-            rt.inflight.clear();
-            rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
-            await this.ledger.setStatus(link, 'repairing');
-            void this.repairLink(cursorKey);
+          if (link) {
+            await this.transitionToRepairing(cursorKey, link);
           }
         }
       }
@@ -1255,8 +1351,7 @@ export class SyncEngineLevel implements SyncEngine {
             if (succeededSet.has(entry.cid) && entry.localToken) {
               if (!ReplicationLedger.validateTokenDomain(link.push, entry.localToken)) {
                 console.warn(`SyncEngineLevel: Push checkpoint domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
-                ReplicationLedger.resetCheckpoint(link.push);
-                await this.ledger.setStatus(link, 'repairing');
+                await this.transitionToRepairing(targetKey, link);
                 break;
               }
               ReplicationLedger.setReceivedToken(link.push, entry.localToken);
