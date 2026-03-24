@@ -59,13 +59,15 @@ function extractAncestryDeps(message: GenericMessage): ClosureDependencyEdge[] {
 
   // contextId dependency — if the record has a contextId that differs from
   // its own recordId, the context root record must be present. The contextId
-  // is the recordId of the top-level ancestor in the context chain.
+  // is a hierarchical path of recordIds (e.g., "rootId/childId/grandchildId").
+  // The context root is the first segment.
   const contextId = (message as any).contextId as string | undefined;
   if (contextId && recordId && contextId !== recordId) {
+    const contextRootId = contextId.split('/')[0];
     edges.push({
       dependencyClass : 2,
       label           : 'contextRoot',
-      identifier      : contextId,
+      identifier      : contextRootId,
       identifierType  : 'recordId',
     });
   }
@@ -197,22 +199,27 @@ function extractProtocolAwareDeps(
 
   // --- Class 4: Squash / visibility floor ---
   // If the protocol path has $squash: true, the closure must include the
-  // ProtocolsConfigure (already handled by class 1) and any sibling records
-  // that would be affected by the squash. However, the squash floor itself
-  // is a state-level concern resolved by the DWN's built-in squash task.
-  // For closure purposes, we need to ensure the ProtocolsConfigure defining
-  // the squash rule is present (class 1), and that the parent context record
-  // is present so the squash scope can be determined.
+  // context scope root so squash scope can be determined. The runtime
+  // determines squash scope using Records.getParentContextFromOfContextId(contextId):
+  //   - Root records (contextId = recordId, no '/'): parent context is "" → unscoped
+  //   - Nested records (contextId = "a/b/c"): parent context is "a/b" → scoped
+  // For closure, the parent context root record (first segment of contextId)
+  // must be present so the subset consumer can determine what gets purged.
   if (ruleSet?.$squash === true) {
-    const parentId = desc.parentId as string | undefined;
-    if (parentId) {
+    const contextId = (message as any).contextId as string | undefined;
+    if (contextId && contextId.includes('/')) {
+      // Nested context — extract the root of the parent context.
+      // contextId = "rootId/childId/thisId" → parent context root = "rootId"
+      const contextRootId = contextId.split('/')[0];
       edges.push({
         dependencyClass : 4,
-        label           : 'squashParentContext',
-        identifier      : parentId,
+        label           : 'squashContextRoot',
+        identifier      : contextRootId,
         identifierType  : 'recordId',
       });
     }
+    // For root-level squash (contextId has no '/'), no parent context dependency
+    // is needed — squash is unscoped across all siblings at that protocolPath.
   }
 
   // --- Class 5: Encryption ---
@@ -577,7 +584,9 @@ function mapEdgeToFailureCode(edge: ClosureDependencyEdge): ClosureFailureCode {
     case 3:
       if (edge.label === 'permissionGrant') { return ClosureFailureCode.GrantMissing; }
       return ClosureFailureCode.GrantRevocationMissing;
-    case 4: return ClosureFailureCode.VisibilityFloorMissing;
+    case 4:
+      if (edge.label === 'squashContextRoot') { return ClosureFailureCode.VisibilityFloorMissing; }
+      return ClosureFailureCode.VisibilityFloorMissing;
     case 5: return ClosureFailureCode.EncryptionDependencyMissing;
     case 6: return ClosureFailureCode.CrossProtocolReferenceMissing;
     default: return ClosureFailureCode.DependencyForbidden;
