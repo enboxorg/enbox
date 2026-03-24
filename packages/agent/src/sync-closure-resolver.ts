@@ -248,18 +248,28 @@ function extractProtocolAwareDeps(
         identifierType  : 'protocol',
       });
 
-      // If the record has a contextId (multi-party context), a contextKey record
-      // tagged with this protocol and contextId must be locally present for decryption.
+      // Context key lookup (non-enforcing scaffolding):
+      // For records with a contextId, a contextKey record in the key-delivery
+      // protocol would be needed for multi-party decryption. However, determining
+      // whether a context is actually multi-party requires evaluating the protocol's
+      // action rules ($role descendants, relational who/of rules) — which is complex
+      // rule-set tree analysis not yet implemented here.
+      //
+      // For now, this edge is emitted as a diagnostic marker but does NOT fail
+      // closure when the context key is absent (the resolver returns a synthetic
+      // sentinel). This avoids false failures for single-party contexts where
+      // ProtocolPath encryption is used and no context key exists.
+      //
+      // Full enforcement requires: multi-party detection → if multi-party, require
+      // contextKey; if single-party, skip. Deferred to follow-up.
       const contextId = (message as any).contextId as string | undefined;
       if (contextId) {
-        // Context root is the first segment of contextId — context keys are tagged
-        // with the root contextId, not the full path.
         const rootContextId = contextId.split('/')[0];
         edges.push({
           dependencyClass : 5,
           label           : 'contextKeyRecord',
           identifier      : `${desc.protocol}:${rootContextId}`,
-          identifierType  : 'messageCid', // Resolved via tag-based query, not CID lookup (see resolveDependency)
+          identifierType  : 'messageCid',
         });
       }
     }
@@ -293,14 +303,16 @@ function extractProtocolAwareDeps(
         // Level 2: $ref parent record in the referenced protocol.
         // When path depth is 2 (e.g., "thread/comment"), the parent is the $ref node
         // itself, which lives in the referenced protocol. The parent's recordId is
-        // the message's parentId.
+        // the message's parentId. The query MUST be scoped to the referenced
+        // protocol URI to prevent false matches from the composing protocol.
+        // Identifier format: "referencedProtocol|parentId"
         const pathSegments = protocolPath.split('/');
         const parentId = desc.parentId as string | undefined;
         if (pathSegments.length === 2 && parentId) {
           edges.push({
             dependencyClass : 6,
             label           : 'crossProtocolParent',
-            identifier      : parentId,
+            identifier      : `${referencedProtocol}|${parentId}`,
             identifierType  : 'recordId',
           });
         }
@@ -590,7 +602,25 @@ async function resolveDependency(
         return byRecordId.length > 0 ? byRecordId[0] : null;
       }
 
-      // For parentRecord or other recordId lookups, query latest state.
+      // crossProtocolParent: identifier is "referencedProtocol|parentId"
+      // Query MUST be scoped to the referenced protocol URI.
+      if (edge.label === 'crossProtocolParent') {
+        const pipeIdx = edge.identifier.indexOf('|');
+        if (pipeIdx > 0) {
+          const refProtocol = edge.identifier.substring(0, pipeIdx);
+          const refParentId = edge.identifier.substring(pipeIdx + 1);
+          const { messages: refParents } = await messageStore.query(context.tenantDid, [{
+            interface         : 'Records',
+            method            : 'Write',
+            protocol          : refProtocol,
+            recordId          : refParentId,
+            isLatestBaseState : true,
+          }]);
+          return refParents.length > 0 ? refParents[0] : null;
+        }
+      }
+
+      // For parentRecord, contextRoot, or other recordId lookups, query latest state.
       const { messages } = await messageStore.query(context.tenantDid, [{
         interface         : 'Records',
         recordId          : edge.identifier,

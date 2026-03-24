@@ -37,6 +37,13 @@ function mockMessageStore(options: {
       if (filter.interface === 'Protocols' && filter.protocol) {
         return { messages: queryResults.get(`protocol:${filter.protocol}`) ?? [] };
       }
+      // Match by protocol + recordId (Class 6 cross-protocol parent)
+      if (filter.recordId && filter.protocol && filter.interface === 'Records') {
+        const key = `protocol+recordId:${filter.protocol}|${filter.recordId}`;
+        const result = queryResults.get(key);
+        if (result) { return { messages: result }; }
+        // Fall through to bare recordId match below.
+      }
       // Match by recordId (Class 2/3)
       if (filter.recordId) {
         return { messages: queryResults.get(`recordId:${filter.recordId}`) ?? [] };
@@ -574,6 +581,7 @@ describe('evaluateClosure', () => {
           ['protocol:https://comments.example.com', [composingConfig]],
           ['protocol:https://threads.example.com', [referencedConfig]],
           ['recordId:thread-1', [parentThread]],
+          ['protocol+recordId:https://threads.example.com|thread-1', [parentThread]],
         ]),
       });
 
