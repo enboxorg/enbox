@@ -653,13 +653,31 @@ export class SyncEngineLevel implements SyncEngine {
   /** Per-link repair attempt counters. */
   private _repairAttempts: Map<string, number> = new Map();
 
+  /** Per-link active repair promises — prevents concurrent repair for the same link. */
+  private _activeRepairs: Map<string, Promise<void>> = new Map();
+
   /**
-   * Repair a single link using SMT set reconciliation, then attempt to
-   * re-establish live subscriptions. If repair succeeds and subscriptions
-   * reopen, the link transitions back to `live`. If repair fails
-   * {@link MAX_REPAIR_ATTEMPTS} times, the link enters `degraded_poll`.
+   * Repair a single link. Deduplicates concurrent calls via `_activeRepairs`.
+   * If repair is already running for this link, returns the existing promise.
    */
-  private async repairLink(linkKey: string): Promise<void> {
+  private repairLink(linkKey: string): Promise<void> {
+    const existing = this._activeRepairs.get(linkKey);
+    if (existing) { return existing; }
+
+    const promise = this.doRepairLink(linkKey).finally(() => {
+      this._activeRepairs.delete(linkKey);
+    });
+    this._activeRepairs.set(linkKey, promise);
+    return promise;
+  }
+
+  /**
+   * Internal repair implementation. Runs SMT set reconciliation for a single
+   * link, then attempts to re-establish live subscriptions. If repair succeeds,
+   * transitions to `live`. If it fails, throws so callers (degraded_poll timer,
+   * startup) can handle retry scheduling.
+   */
+  private async doRepairLink(linkKey: string): Promise<void> {
     const link = this._activeLinks.get(linkKey);
     if (!link) { return; }
 
@@ -667,8 +685,19 @@ export class SyncEngineLevel implements SyncEngine {
     const attempts = (this._repairAttempts.get(linkKey) ?? 0) + 1;
     this._repairAttempts.set(linkKey, attempts);
 
+    // Step 1: Close existing subscriptions FIRST to stop old events from
+    // mutating local state while repair runs. This is critical — without it,
+    // old subscription handlers can process events concurrently with SMT repair.
+    await this.closeLinkSubscriptions(link);
+
+    // Step 2: Clear the stale checkpoint so repair starts from a clean state.
+    // After SMT reconciliation converges, the checkpoint is re-established
+    // from the newly opened subscription's first EOSE.
+    ReplicationLedger.resetCheckpoint(link.pull);
+    await this.ledger.saveLink(link);
+
     try {
-      // Step 1: Run SMT reconciliation for this link (same logic as sync() but single-target).
+      // Step 3: Run SMT reconciliation for this link.
       const localRoot = await this.getLocalRoot(did, delegateDid, protocol);
       const remoteRoot = await this.getRemoteRoot(did, dwnUrl, delegateDid, protocol);
 
@@ -695,16 +724,13 @@ export class SyncEngineLevel implements SyncEngine {
         }
       }
 
-      // Step 2: Close existing subscriptions for this link.
-      await this.closeLinkSubscriptions(link);
-
-      // Step 3: Reopen subscriptions with the repaired checkpoint.
+      // Step 4: Reopen subscriptions with no cursor (start fresh after repair).
+      // The EOSE from the new subscription will establish the checkpoint.
       const target = { did, dwnUrl, delegateDid, protocol };
       await this.openLivePullSubscription(target);
       try {
         await this.openLocalPushSubscription(target);
       } catch (pushError) {
-        // Close pull if push fails.
         const pullSub = this._liveSubscriptions.find(
           s => s.did === did && s.dwnUrl === dwnUrl && s.protocol === protocol
         );
@@ -715,14 +741,13 @@ export class SyncEngineLevel implements SyncEngine {
         throw pushError;
       }
 
-      // Step 4: Reset runtime state and transition to live.
+      // Step 5: Reset runtime state and transition to live.
       const rt = this.getOrCreateRuntime(linkKey);
       rt.inflight.clear();
       rt.nextDeliveryOrdinal = 0;
       rt.nextCommitOrdinal = 0;
       this._repairAttempts.delete(linkKey);
       await this.ledger.setStatus(link, 'live');
-      this._connectivityState = 'online';
 
     } catch (error: any) {
       console.error(`SyncEngineLevel: Repair failed for ${did} -> ${dwnUrl} (attempt ${attempts})`, error);
@@ -730,9 +755,11 @@ export class SyncEngineLevel implements SyncEngine {
       if (attempts >= SyncEngineLevel.MAX_REPAIR_ATTEMPTS) {
         console.warn(`SyncEngineLevel: Max repair attempts reached for ${did} -> ${dwnUrl}, entering degraded_poll`);
         await this.enterDegradedPoll(linkKey);
+        return; // enterDegradedPoll handles further retries.
       }
-      // Otherwise, link stays in 'repairing' — next integrity check or explicit
-      // call will retry.
+
+      // Re-throw so callers (degraded_poll timer) can handle retry scheduling.
+      throw error;
     }
   }
 
@@ -783,18 +810,19 @@ export class SyncEngineLevel implements SyncEngine {
     const interval = baseInterval + jitter;
 
     const timer = setInterval(async (): Promise<void> => {
+      // If the link was transitioned out of degraded_poll externally (e.g.,
+      // by teardown or manual intervention), stop polling.
       if (link.status !== 'degraded_poll') {
-        // Link was transitioned by something else — stop polling.
         clearInterval(timer);
         this._degradedPollTimers.delete(linkKey);
         return;
       }
 
       try {
-        // Attempt repair — if successful, repairLink transitions to live
-        // and we stop polling on the next interval check.
+        // Attempt repair. Reset attempt counter so repairLink doesn't
+        // immediately re-enter degraded_poll on failure.
+        this._repairAttempts.set(linkKey, 0);
         await this.ledger.setStatus(link, 'repairing');
-        this._repairAttempts.set(linkKey, 0); // Reset attempts for degraded poll retries.
         await this.repairLink(linkKey);
 
         // If repairLink succeeded, link is now 'live' — stop polling.
@@ -802,10 +830,12 @@ export class SyncEngineLevel implements SyncEngine {
           clearInterval(timer);
           this._degradedPollTimers.delete(linkKey);
         }
-      } catch (error: any) {
-        // Stay in degraded_poll — will retry on next interval.
+      } catch {
+        // Repair failed — restore degraded_poll status so the timer continues.
+        // This is critical: repairLink sets status to 'repairing' internally,
+        // and if we don't restore degraded_poll, the next tick would see
+        // status !== 'degraded_poll' and stop the timer permanently.
         await this.ledger.setStatus(link, 'degraded_poll');
-        console.error(`SyncEngineLevel: degraded_poll repair failed for ${link.tenantDid} -> ${link.remoteEndpoint}`, error);
       }
     }, interval);
 
@@ -845,12 +875,13 @@ export class SyncEngineLevel implements SyncEngine {
     }
     this._localSubscriptions = [];
 
-    // Clear degraded-poll timers.
+    // Clear degraded-poll timers and repair state.
     for (const timer of this._degradedPollTimers.values()) {
       clearInterval(timer);
     }
     this._degradedPollTimers.clear();
     this._repairAttempts.clear();
+    this._activeRepairs.clear();
 
     // Clear the in-memory link and runtime state.
     this._activeLinks.clear();
@@ -931,6 +962,14 @@ export class SyncEngineLevel implements SyncEngine {
 
       if (subMessage.type === 'event') {
         const event: MessageEvent = subMessage.event;
+
+        // Guard: if the link is not live (e.g., repairing, degraded_poll, paused),
+        // skip all processing. Old subscription handlers may still fire after the
+        // link transitions — these events should be ignored entirely, not just
+        // skipped at the checkpoint level.
+        if (link && link.status !== 'live' && link.status !== 'initializing') {
+          return;
+        }
 
         // Domain validation: reject tokens from a different stream/epoch.
         if (link && !ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {

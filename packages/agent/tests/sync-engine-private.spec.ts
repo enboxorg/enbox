@@ -1806,21 +1806,20 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
 
-      // Stub the SMT methods to simulate successful reconciliation.
-      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-a'); // roots match = no diff needed
+      // Stub everything doRepairLink needs (called in order).
       sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
+      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-a');
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
 
-      // Stub the ledger.
-      const setStatusStub = sinon.stub();
-      (engine as any)._ledger = { setStatus: setStatusStub };
+      const saveStub = sinon.stub().resolves();
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
 
       await (engine as any).repairLink(linkKey);
 
-      // Link should now be live.
-      expect(setStatusStub.calledWith(link, 'live')).toBe(true);
+      expect(link.status).toBe('live');
     });
 
     it('should track repair attempts and enter degraded_poll after max attempts', async () => {
@@ -1834,21 +1833,53 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 
-      // Stub SMT to always fail.
+      sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
       sinon.stub(engine as any, 'getLocalRoot').rejects(new Error('network error'));
       sinon.stub(console, 'error');
       sinon.stub(console, 'warn');
 
+      const saveStub = sinon.stub().resolves();
+      (engine as any)._ledger = { saveLink: saveStub, setStatus: sinon.stub().resolves() };
+
       const enterDegradedStub = sinon.stub(engine as any, 'enterDegradedPoll').resolves();
 
-      // Run repair MAX_REPAIR_ATTEMPTS times.
       const maxAttempts = (SyncEngineLevel as any).MAX_REPAIR_ATTEMPTS;
       for (let i = 0; i < maxAttempts; i++) {
-        await (engine as any).repairLink(linkKey);
+        try {
+          await (engine as any).repairLink(linkKey);
+        } catch {
+          // Expected — doRepairLink re-throws on failure (except when entering degraded_poll).
+        }
       }
 
-      // Should have entered degraded_poll.
       expect(enterDegradedStub.calledOnce).toBe(true);
+    });
+
+    it('should deduplicate concurrent repair calls for the same link', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
+        pull           : {}, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+
+      let repairCallCount = 0;
+      sinon.stub(engine as any, 'doRepairLink').callsFake(async (): Promise<void> => {
+        repairCallCount++;
+        await new Promise(r => setTimeout(r, 50));
+      });
+
+      // Fire two repairs concurrently.
+      const p1 = (engine as any).repairLink(linkKey);
+      const p2 = (engine as any).repairLink(linkKey);
+      await Promise.all([p1, p2]);
+
+      // Only one actual repair should have run.
+      expect(repairCallCount).toBe(1);
     });
   });
 
