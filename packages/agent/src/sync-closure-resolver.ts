@@ -59,13 +59,15 @@ function extractAncestryDeps(message: GenericMessage): ClosureDependencyEdge[] {
 
   // contextId dependency — if the record has a contextId that differs from
   // its own recordId, the context root record must be present. The contextId
-  // is the recordId of the top-level ancestor in the context chain.
+  // is a hierarchical path of recordIds (e.g., "rootId/childId/grandchildId").
+  // The context root is the first segment.
   const contextId = (message as any).contextId as string | undefined;
   if (contextId && recordId && contextId !== recordId) {
+    const contextRootId = contextId.split('/')[0];
     edges.push({
       dependencyClass : 2,
       label           : 'contextRoot',
-      identifier      : contextId,
+      identifier      : contextRootId,
       identifierType  : 'recordId',
     });
   }
@@ -144,42 +146,135 @@ function extractAuthorizationDeps(message: GenericMessage): ClosureDependencyEdg
   return edges;
 }
 
+// ---------------------------------------------------------------------------
+// Protocol-definition-aware dependency extraction (classes 4, 5, 6)
+//
+// These classes require the ProtocolDefinition to be available (fetched by
+// class 1 resolution). They are called during BFS traversal, not as static
+// extractors from the message alone.
+// ---------------------------------------------------------------------------
+
 /**
- * Class 4: Visibility and state-floor closure.
- * If the message is a RecordsWrite at a protocol path that uses $squash,
- * the squash floor record must be present. This is evaluated by the resolver
- * using the protocol definition from the cache.
+ * Look up the ProtocolRuleSet for a given protocolPath within a protocol
+ * structure tree. Returns undefined if the path doesn't exist.
  *
- * Note: Squash floor dependencies are discovered during traversal after the
- * protocol definition is fetched. This function returns an empty array —
- * squash deps are added by the resolver during graph exploration.
+ * Mirrors `getRuleSetAtPath` from `@enbox/dwn-sdk-js/src/utils/protocols.ts`
+ * (not in public API, reimplemented here to avoid internal path coupling).
  */
-function extractVisibilityDeps(_message: GenericMessage): ClosureDependencyEdge[] {
-  // Squash floor deps require protocol definition context (fetched during traversal).
-  // They are added by the resolver, not by static extraction.
-  return [];
+function getRuleSetAtProtocolPath(
+  structure: Record<string, any> | undefined,
+  protocolPath: string,
+): any | undefined {
+  if (!structure || !protocolPath) { return undefined; }
+
+  const segments = protocolPath.split('/');
+  let currentLevel: Record<string, any> = structure;
+  let current: any;
+
+  for (const segment of segments) {
+    if (!Object.hasOwn(currentLevel, segment)) { return undefined; }
+    current = currentLevel[segment];
+    currentLevel = current;
+  }
+
+  return current;
 }
 
 /**
- * Class 5: Encryption closure.
- * If the message has encryption metadata, the key-delivery dependencies
- * are needed. Like squash deps, these require protocol definition context.
+ * Extract protocol-definition-aware dependencies for classes 4, 5, and 6.
+ * Called during BFS traversal after the ProtocolDefinition has been fetched
+ * and cached (class 1 resolution ensures this).
+ *
+ * @param message - The message being evaluated.
+ * @param protocolDef - The cached ProtocolDefinition (from class 1 resolution).
+ * @param context - The evaluation context (for accessing `uses` map resolution).
  */
-function extractEncryptionDeps(_message: GenericMessage): ClosureDependencyEdge[] {
-  // Encryption deps require protocol definition context.
-  // Deferred to resolver traversal.
-  return [];
-}
+function extractProtocolAwareDeps(
+  message: GenericMessage,
+  protocolDef: any,
+): ClosureDependencyEdge[] {
+  const desc = message.descriptor as Record<string, unknown>;
+  if (desc.interface !== 'Records') { return []; }
 
-/**
- * Class 6: Cross-protocol composition closure.
- * If the message's protocol path starts with a $ref node, the parent record
- * is in a different protocol. This requires protocol definition context.
- */
-function extractCrossProtocolDeps(_message: GenericMessage): ClosureDependencyEdge[] {
-  // Cross-protocol deps require protocol definition context.
-  // Deferred to resolver traversal.
-  return [];
+  const protocolPath = desc.protocolPath as string | undefined;
+  if (!protocolPath) { return []; }
+
+  const edges: ClosureDependencyEdge[] = [];
+  const ruleSet = getRuleSetAtProtocolPath(protocolDef?.structure, protocolPath);
+
+  // --- Class 4: Squash / visibility floor ---
+  // The runtime's squash backstop derives scope entirely from the incoming
+  // message's own contextId (via Records.getParentContextFromOfContextId).
+  // It does NOT fetch any additional record to determine scope — the contextId
+  // is part of the message, and the $squash rule is in the ProtocolsConfigure
+  // (already a class 1 dependency). So no additional closure dependency is
+  // needed for squash. processRawMessage triggers the DWN's built-in squash
+  // resumable task which handles purging internally.
+  //
+  // Future work: if subset-specific squash side-effects are needed (where the
+  // consumer has records that the source purged), that belongs in the engine's
+  // post-apply logic, not in closure dependency extraction.
+
+  // --- Class 5: Encryption (protocol-definition-level only) ---
+  // Currently verifies that the ProtocolsConfigure with the injected $encryption
+  // key material is present when the type has encryptionRequired: true. This is
+  // satisfied by the same ProtocolsConfigure that class 1 ensures.
+  //
+  // This is NOT the full closure RFC meaning of encryption closure. The RFC's
+  // class 5 also requires key-delivery protocol records (context-key records
+  // used for ECDH-ES key agreement). Full key-delivery closure requires:
+  //   - Resolving the key-delivery protocol definition
+  //   - Fetching context-specific key records from the key-delivery protocol path
+  //   - Ensuring the encryption derivation chain is locally present
+  // That is follow-up work — it requires understanding the agent's
+  // KeyDeliveryProtocolDefinition and how context keys are stored.
+  if (ruleSet?.$encryption) {
+    const typeName = protocolPath.split('/').pop();
+    const typeDef = protocolDef?.types?.[typeName ?? ''];
+    if (typeDef?.encryptionRequired === true) {
+      edges.push({
+        dependencyClass : 5,
+        label           : 'encryptionKeyMaterial',
+        identifier      : desc.protocol as string,
+        identifierType  : 'protocol',
+      });
+    }
+  }
+
+  // --- Class 6: Cross-protocol $ref (protocol-config-level only) ---
+  // Currently ensures the referenced protocol's ProtocolsConfigure is present.
+  // This is the first necessary step: without the referenced protocol definition,
+  // authorization of composed records cannot be evaluated.
+  //
+  // This is NOT the full closure RFC meaning of cross-protocol closure. The RFC
+  // also requires:
+  //   - The actual $ref parent record in the referenced protocol
+  //   - Cross-protocol role records used for authorization (e.g., "threads:thread/participant")
+  //   - Transitive ProtocolsConfigure chains if the referenced protocol also uses $ref
+  // That is follow-up work — it requires resolving the $ref type path in the
+  // referenced protocol's structure and fetching the specific parent record.
+  const firstSegment = protocolPath.split('/')[0];
+  const rootRuleSet = protocolDef?.structure?.[firstSegment];
+  if (rootRuleSet?.$ref) {
+    // Parse the $ref value: "alias:typePath"
+    const colonIdx = rootRuleSet.$ref.indexOf(':');
+    if (colonIdx > 0) {
+      const alias = rootRuleSet.$ref.substring(0, colonIdx);
+      const usesMap = protocolDef?.uses;
+      const referencedProtocol = usesMap?.[alias];
+      if (referencedProtocol) {
+        // The referenced protocol's ProtocolsConfigure must be present.
+        edges.push({
+          dependencyClass : 6,
+          label           : 'crossProtocolConfig',
+          identifier      : referencedProtocol,
+          identifierType  : 'protocol',
+        });
+      }
+    }
+  }
+
+  return edges;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,61 +336,33 @@ export async function evaluateClosure(
     for (let i = 0; i < batchSize; i++) {
       const current = queue.shift()!;
 
-      // Extract dependency edges from all static classes.
-      const edges = [
+      // Phase 1: Extract and resolve static dependency edges (classes 1-3).
+      // This populates the protocolCache when class 1 (ProtocolsConfigure)
+      // is resolved, which is needed by classes 4-6.
+      const staticEdges = [
         ...extractProtocolDeps(current),
         ...extractAncestryDeps(current),
         ...extractAuthorizationDeps(current),
-        ...extractVisibilityDeps(current),
-        ...extractEncryptionDeps(current),
-        ...extractCrossProtocolDeps(current),
       ];
 
-      for (const edge of edges) {
-        allEdges.push(edge);
+      const resolveResult = await resolveEdges(
+        staticEdges, allEdges, messageStore, context, visited, queue, rootCid, currentDepth
+      );
+      if (resolveResult) { return resolveResult; } // Early failure.
 
-        // Check if already satisfied (cached from a prior root in this batch).
-        const depKey = `${edge.identifierType}:${edge.identifier}`;
-        if (context.satisfiedDeps.has(depKey)) { continue; }
-        if (context.missingDeps.has(depKey)) {
-          return {
-            complete       : false,
-            rootMessageCid : rootCid,
-            edges          : allEdges,
-            failure        : {
-              code   : mapEdgeToFailureCode(edge),
-              edge,
-              detail : `dependency '${edge.label}' (${edge.identifier}) is missing`,
-            },
-            depth: currentDepth,
-          };
-        }
-
-        // Attempt to resolve the dependency from the local store.
-        const resolved = await resolveDependency(edge, messageStore, context);
-        if (!resolved) {
-          context.missingDeps.add(depKey);
-          return {
-            complete       : false,
-            rootMessageCid : rootCid,
-            edges          : allEdges,
-            failure        : {
-              code   : mapEdgeToFailureCode(edge),
-              edge,
-              detail : `dependency '${edge.label}' (${edge.identifier}) not found locally`,
-            },
-            depth: currentDepth,
-          };
-        }
-
-        context.satisfiedDeps.add(depKey);
-
-        // If the resolved dependency is a message, add it to the queue for
-        // transitive dependency evaluation (if not already visited).
-        const resolvedCid = await Message.getCid(resolved);
-        if (!visited.has(resolvedCid)) {
-          visited.add(resolvedCid);
-          queue.push(resolved);
+      // Phase 2: Extract protocol-definition-aware edges (classes 4-6).
+      // Runs AFTER static resolution so the ProtocolDefinition is in the cache.
+      const currentDesc = current.descriptor as Record<string, unknown>;
+      const currentProtocol = currentDesc.protocol as string | undefined;
+      if (currentProtocol) {
+        const cachedProtocolMsg = context.protocolCache.get(currentProtocol);
+        const protocolDef = (cachedProtocolMsg?.descriptor as any)?.definition;
+        if (protocolDef) {
+          const protoAwareEdges = extractProtocolAwareDeps(current, protocolDef);
+          const protoResult = await resolveEdges(
+            protoAwareEdges, allEdges, messageStore, context, visited, queue, rootCid, currentDepth
+          );
+          if (protoResult) { return protoResult; }
         }
       }
     }
@@ -335,6 +402,67 @@ export async function evaluateClosureBatch(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Resolve a list of dependency edges. Returns a ClosureResult on failure,
+ * or null if all edges were resolved successfully.
+ */
+async function resolveEdges(
+  edges: ClosureDependencyEdge[],
+  allEdges: ClosureDependencyEdge[],
+  messageStore: MessageStore,
+  context: ClosureEvaluationContext,
+  visited: Set<string>,
+  queue: GenericMessage[],
+  rootCid: string,
+  currentDepth: number,
+): Promise<ClosureResult | null> {
+  for (const edge of edges) {
+    allEdges.push(edge);
+
+    const depKey = `${edge.identifierType}:${edge.identifier}`;
+    if (context.satisfiedDeps.has(depKey)) { continue; }
+    if (context.missingDeps.has(depKey)) {
+      return {
+        complete       : false,
+        rootMessageCid : rootCid,
+        edges          : allEdges,
+        failure        : {
+          code   : mapEdgeToFailureCode(edge),
+          edge,
+          detail : `dependency '${edge.label}' (${edge.identifier}) is missing`,
+        },
+        depth: currentDepth,
+      };
+    }
+
+    const resolved = await resolveDependency(edge, messageStore, context);
+    if (!resolved) {
+      context.missingDeps.add(depKey);
+      return {
+        complete       : false,
+        rootMessageCid : rootCid,
+        edges          : allEdges,
+        failure        : {
+          code   : mapEdgeToFailureCode(edge),
+          edge,
+          detail : `dependency '${edge.label}' (${edge.identifier}) not found locally`,
+        },
+        depth: currentDepth,
+      };
+    }
+
+    context.satisfiedDeps.add(depKey);
+
+    const resolvedCid = await Message.getCid(resolved);
+    if (!visited.has(resolvedCid)) {
+      visited.add(resolvedCid);
+      queue.push(resolved);
+    }
+  }
+
+  return null; // All edges resolved successfully.
+}
 
 /**
  * Resolve a dependency edge by querying the local MessageStore.
@@ -462,7 +590,9 @@ function mapEdgeToFailureCode(edge: ClosureDependencyEdge): ClosureFailureCode {
     case 3:
       if (edge.label === 'permissionGrant') { return ClosureFailureCode.GrantMissing; }
       return ClosureFailureCode.GrantRevocationMissing;
-    case 4: return ClosureFailureCode.VisibilityFloorMissing;
+    case 4:
+      if (edge.label === 'squashContextRoot') { return ClosureFailureCode.VisibilityFloorMissing; }
+      return ClosureFailureCode.VisibilityFloorMissing;
     case 5: return ClosureFailureCode.EncryptionDependencyMissing;
     case 6: return ClosureFailureCode.CrossProtocolReferenceMissing;
     default: return ClosureFailureCode.DependencyForbidden;
