@@ -160,6 +160,14 @@ export class SyncEngineLevel implements SyncEngine {
   /** Current sync mode, set by `startSync`. */
   private _syncMode: SyncMode = 'poll';
 
+  /**
+   * Monotonic session generation counter. Incremented on every teardown.
+   * Async operations (repair, retry timers) capture the generation at start
+   * and bail if it has changed — this prevents stale work from mutating
+   * state after teardown or mode switch.
+   */
+  private _syncGeneration = 0;
+
   /** Active live pull subscriptions (remote -> local via MessagesSubscribe). */
   private _liveSubscriptions: LiveSubscription[] = [];
 
@@ -722,8 +730,12 @@ export class SyncEngineLevel implements SyncEngine {
     const backoff = SyncEngineLevel.REPAIR_BACKOFF_MS;
     const delayMs = backoff[Math.min(attempts - 1, backoff.length - 1)];
 
+    const timerGeneration = this._syncGeneration;
     const timer = setTimeout(async (): Promise<void> => {
       this._repairRetryTimers.delete(linkKey);
+
+      // Bail if teardown occurred since this timer was scheduled.
+      if (this._syncGeneration !== timerGeneration) { return; }
 
       // Verify link still exists and is still repairing.
       const currentLink = this._activeLinks.get(linkKey);
@@ -768,6 +780,11 @@ export class SyncEngineLevel implements SyncEngine {
     const link = this._activeLinks.get(linkKey);
     if (!link) { return; }
 
+    // Capture the sync generation at repair start. If teardown occurs during
+    // any await, the generation will have incremented and we bail before
+    // mutating state — preventing the race where repair continues after teardown.
+    const generation = this._syncGeneration;
+
     const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, protocol } = link;
     const attempts = (this._repairAttempts.get(linkKey) ?? 0) + 1;
     this._repairAttempts.set(linkKey, attempts);
@@ -775,6 +792,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Step 1: Close existing subscriptions FIRST to stop old events from
     // mutating local state while repair runs.
     await this.closeLinkSubscriptions(link);
+    if (this._syncGeneration !== generation) { return; } // Teardown occurred.
 
     // Step 2: Clear runtime ordinals immediately — stale state must not
     // persist across repair attempts (successful or failed).
@@ -786,10 +804,13 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       // Step 3: Run SMT reconciliation for this link.
       const localRoot = await this.getLocalRoot(did, delegateDid, protocol);
+      if (this._syncGeneration !== generation) { return; }
       const remoteRoot = await this.getRemoteRoot(did, dwnUrl, delegateDid, protocol);
+      if (this._syncGeneration !== generation) { return; }
 
       if (localRoot !== remoteRoot) {
         const diff = await this.diffWithRemote({ did, dwnUrl, delegateDid, protocol });
+        if (this._syncGeneration !== generation) { return; }
 
         if (diff.onlyRemote.length > 0) {
           const prefetched: (MessagesSyncDiffEntry & { message: GenericMessage })[] = [];
@@ -804,10 +825,12 @@ export class SyncEngineLevel implements SyncEngine {
             }
           }
           await this.pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids: needsFetchCids, prefetched });
+          if (this._syncGeneration !== generation) { return; }
         }
 
         if (diff.onlyLocal.length > 0) {
           await this.pushMessages({ did, dwnUrl, delegateDid, protocol, messageCids: diff.onlyLocal });
+          if (this._syncGeneration !== generation) { return; }
         }
       }
 
@@ -824,13 +847,12 @@ export class SyncEngineLevel implements SyncEngine {
       const resumeToken = repairCtx?.resumeToken ?? link.pull.contiguousAppliedToken;
       ReplicationLedger.resetCheckpoint(link.pull, resumeToken);
       await this.ledger.saveLink(link);
+      if (this._syncGeneration !== generation) { return; }
 
       // Step 5: Reopen subscriptions with the repaired checkpoints.
-      // Pull: resumeToken closes the remote→local race window.
-      // Push: push checkpoint closes the local→remote race window —
-      //   local writes during repair are replayed via catch-up.
       const target = { did, dwnUrl, delegateDid, protocol };
       await this.openLivePullSubscription(target);
+      if (this._syncGeneration !== generation) { return; }
       try {
         await this.openLocalPushSubscription({
           ...target,
@@ -846,22 +868,25 @@ export class SyncEngineLevel implements SyncEngine {
         }
         throw pushError;
       }
+      if (this._syncGeneration !== generation) { return; }
 
       // Step 6: Clean up repair context and transition to live.
       this._repairContext.delete(linkKey);
       this._repairAttempts.delete(linkKey);
-      // Clear any pending retry timer — repair succeeded.
       const retryTimer = this._repairRetryTimers.get(linkKey);
       if (retryTimer) { clearTimeout(retryTimer); this._repairRetryTimers.delete(linkKey); }
       await this.ledger.setStatus(link, 'live');
 
     } catch (error: any) {
+      // If teardown occurred during repair, don't retry or enter degraded_poll.
+      if (this._syncGeneration !== generation) { return; }
+
       console.error(`SyncEngineLevel: Repair failed for ${did} -> ${dwnUrl} (attempt ${attempts})`, error);
 
       if (attempts >= SyncEngineLevel.MAX_REPAIR_ATTEMPTS) {
         console.warn(`SyncEngineLevel: Max repair attempts reached for ${did} -> ${dwnUrl}, entering degraded_poll`);
         await this.enterDegradedPoll(linkKey);
-        return; // enterDegradedPoll handles further retries.
+        return;
       }
 
       // Re-throw so callers (degraded_poll timer) can handle retry scheduling.
@@ -915,7 +940,15 @@ export class SyncEngineLevel implements SyncEngine {
     const jitter = Math.floor(Math.random() * 15_000);
     const interval = baseInterval + jitter;
 
+    const pollGeneration = this._syncGeneration;
     const timer = setInterval(async (): Promise<void> => {
+      // Bail if teardown occurred since this timer was created.
+      if (this._syncGeneration !== pollGeneration) {
+        clearInterval(timer);
+        this._degradedPollTimers.delete(linkKey);
+        return;
+      }
+
       // If the link was transitioned out of degraded_poll externally (e.g.,
       // by teardown or manual intervention), stop polling.
       if (link.status !== 'degraded_poll') {
@@ -952,6 +985,11 @@ export class SyncEngineLevel implements SyncEngine {
    * Tears down all live subscriptions and push listeners.
    */
   private async teardownLiveSync(): Promise<void> {
+    // Increment generation to invalidate all in-flight async operations
+    // (repairs, retry timers, degraded-poll ticks). Any async work that
+    // captured the previous generation will bail on its next checkpoint.
+    this._syncGeneration++;
+
     // Clear the push debounce timer.
     if (this._pushDebounceTimer) {
       clearTimeout(this._pushDebounceTimer);
