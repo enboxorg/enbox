@@ -8,12 +8,15 @@ import ms from 'ms';
 import { Level } from 'level';
 import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
 
+import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
 import type { PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
 
+import { evaluateClosure } from './sync-closure-resolver.js';
 import { MAX_PENDING_TOKENS } from './types/sync.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
+import { createClosureContext, invalidateClosureCache } from './sync-closure-types.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
@@ -196,6 +199,13 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** TTL for echo-loop suppression entries (60 seconds). */
   private static readonly ECHO_SUPPRESS_TTL_MS = 60_000;
+
+  /**
+   * Per-tenant closure evaluation contexts for the current live sync session.
+   * Caches ProtocolsConfigure and grant lookups across events for the same
+   * tenant. Keyed by tenantDid to prevent cross-tenant cache pollution.
+   */
+  private _closureContexts: Map<string, ClosureEvaluationContext> = new Map();
 
   /** Maximum entries in the echo-loop suppression cache. */
   private static readonly ECHO_SUPPRESS_MAX_ENTRIES = 10_000;
@@ -1032,6 +1042,9 @@ export class SyncEngineLevel implements SyncEngine {
     this._repairRetryTimers.clear();
     this._repairContext.clear();
 
+    // Clear closure evaluation contexts.
+    this._closureContexts.clear();
+
     // Clear the in-memory link and runtime state.
     this._activeLinks.clear();
     this._linkRuntimes.clear();
@@ -1154,6 +1167,50 @@ export class SyncEngineLevel implements SyncEngine {
           }
 
           await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
+
+          // Invalidate closure cache entries that may be affected by this message.
+          // Must run before closure validation so subsequent evaluations in the
+          // same session see the updated local state.
+          const closureCtxForInvalidation = this._closureContexts.get(did);
+          if (closureCtxForInvalidation) {
+            invalidateClosureCache(closureCtxForInvalidation, event.message);
+          }
+
+          // Closure validation for scoped subset sync (Phase 3).
+          // For protocol-scoped links, verify that all hard dependencies for
+          // this operation are locally present before considering it committed.
+          // Full-tenant scope bypasses this entirely (returns complete with 0 queries).
+          if (link && link.scope.kind === 'protocol') {
+            const messageStore = this.agent.dwn.node.storage.messageStore;
+            let closureCtx = this._closureContexts.get(did);
+            if (!closureCtx) {
+              closureCtx = createClosureContext(did);
+              this._closureContexts.set(did, closureCtx);
+            }
+
+            const closureResult = await evaluateClosure(
+              event.message, messageStore, link.scope, closureCtx
+            );
+
+            if (!closureResult.complete) {
+              console.warn(
+                `SyncEngineLevel: Closure incomplete for ${did} -> ${dwnUrl}: ` +
+                `${closureResult.failure!.code} — ${closureResult.failure!.detail}`
+              );
+              await this.transitionToRepairing(cursorKey, link);
+              return;
+            }
+          }
+
+          // NOTE: Squash local side-effect for scoped subset sync is deferred.
+          // When a subset consumer applies a squash record, it should locally
+          // purge older siblings — but this requires careful alignment with the
+          // DWN SDK's performRecordsSquash / purgeRecordMessages internals.
+          // For now, processRawMessage handles squash via the DWN's built-in
+          // resumable task system. If the local DWN processes the squash write,
+          // it will trigger its own squash task. Subset-specific squash side-
+          // effects (where the consumer has records the source purged) are
+          // reconciled by SMT integrity checks.
 
           // Track this CID for echo-loop suppression, scoped to the source endpoint.
           const pulledCid = await Message.getCid(event.message);
