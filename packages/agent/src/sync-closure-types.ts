@@ -52,7 +52,14 @@ export type ClosureDependencyEdge = {
    */
   identifier: string;
   /** The type of identifier — determines the fetch strategy. */
-  identifierType: 'messageCid' | 'recordId' | 'protocol' | 'grantId';
+  identifierType: 'messageCid' | 'recordId' | 'protocol' | 'grantId' | 'filter';
+  /**
+   * When `identifierType` is `'filter'`, this carries the full query filter
+   * as a structured object. Used for dependencies that require multi-field
+   * queries (e.g., cross-protocol role records queried by protocol +
+   * protocolPath + recipient + contextId prefix).
+   */
+  filter?: Record<string, unknown>;
 };
 
 // ---------------------------------------------------------------------------
@@ -178,12 +185,81 @@ export function invalidateClosureCache(
     }
   }
 
-  // Any Records message → invalidate recordId-based satisfied/missing entries.
+  // Any Records message → invalidate dep keys that could be affected.
+  // Handles multiple key formats:
+  //   - plain recordId entries (class 2 parent/context/initialWrite)
+  //   - composite protocol|recordId entries (class 6 crossProtocolParent)
+  //   - filter-based entries keyed by protocol+protocolPath (class 6 role records)
+  //   - contextKeyRecord entries keyed by source protocol from tags (class 5)
+  // Uses boundary-aware matching for recordId to avoid substring collisions,
+  // prefix matching for filter/contextKey entries, and tag-based source
+  // protocol extraction for key-delivery records.
   if (desc.interface === 'Records') {
     const recordId = (message as any).recordId as string | undefined;
+    const protocol = desc.protocol as string | undefined;
+    const protocolPath = desc.protocolPath as string | undefined;
+
     if (recordId) {
-      context.satisfiedDeps.delete(`recordId:${recordId}`);
-      context.missingDeps.delete(`recordId:${recordId}`);
+      // Invalidate dep keys that reference this exact recordId.
+      // Check for recordId at a key boundary (preceded by ':' or '|')
+      // to avoid substring false matches (e.g., 'thread-1' matching 'thread-10').
+      const matchesRecordId = (key: string): boolean => {
+        const idx = key.indexOf(recordId);
+        if (idx === -1) { return false; }
+        const charBefore = idx > 0 ? key[idx - 1] : ':';
+        const charAfter = idx + recordId.length < key.length ? key[idx + recordId.length] : '|';
+        const validBefore = charBefore === ':' || charBefore === '|';
+        const validAfter = charAfter === '|' || charAfter === undefined;
+        return validBefore && (idx + recordId.length === key.length || validAfter);
+      };
+      for (const key of context.satisfiedDeps) {
+        if (matchesRecordId(key)) { context.satisfiedDeps.delete(key); }
+      }
+      for (const key of context.missingDeps) {
+        if (matchesRecordId(key)) { context.missingDeps.delete(key); }
+      }
+    }
+
+    // Invalidate filter-based role record deps that match this protocol + protocolPath.
+    // These are keyed like "filter:protocol|protocolPath|author|context".
+    if (protocol && protocolPath) {
+      const filterPrefix = `filter:${protocol}|${protocolPath}`;
+      for (const key of context.satisfiedDeps) {
+        if (key.startsWith(filterPrefix)) { context.satisfiedDeps.delete(key); }
+      }
+      for (const key of context.missingDeps) {
+        if (key.startsWith(filterPrefix)) { context.missingDeps.delete(key); }
+      }
+    }
+
+    // Invalidate contextKeyRecord deps.
+    // Context key records are in the key-delivery protocol, but their closure
+    // cache keys use the SOURCE protocol (from tags.protocol), not the
+    // key-delivery protocol URI. So when a key-delivery record arrives, we
+    // must extract the source protocol from the record's tags.
+    if (protocol === 'https://identity.foundation/protocols/key-delivery') {
+      // Real key-delivery writes have tags: { protocol: sourceProtocol, contextId: ... }
+      const tags = (message as any).descriptor?.tags as Record<string, string> | undefined;
+      const sourceProtocol = tags?.protocol;
+      if (sourceProtocol) {
+        const ctxKeyPrefix = `messageCid:${sourceProtocol}|`;
+        for (const key of context.satisfiedDeps) {
+          if (key.startsWith(ctxKeyPrefix)) { context.satisfiedDeps.delete(key); }
+        }
+        for (const key of context.missingDeps) {
+          if (key.startsWith(ctxKeyPrefix)) { context.missingDeps.delete(key); }
+        }
+      }
+    } else if (protocol) {
+      // For non-key-delivery protocols, invalidate contextKeyRecord entries
+      // keyed by this protocol (e.g., if a record write changes the context).
+      const ctxKeyPrefix = `messageCid:${protocol}|`;
+      for (const key of context.satisfiedDeps) {
+        if (key.startsWith(ctxKeyPrefix)) { context.satisfiedDeps.delete(key); }
+      }
+      for (const key of context.missingDeps) {
+        if (key.startsWith(ctxKeyPrefix)) { context.missingDeps.delete(key); }
+      }
     }
   }
 }

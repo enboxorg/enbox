@@ -113,8 +113,9 @@ function extractAuthorizationDeps(message: GenericMessage): ClosureDependencyEdg
   const auth = (message as any).authorization;
   if (!auth) { return []; }
 
-  // Check for permissionGrantId in the signature payload.
-  const payload = auth.authorSignature?.payload ?? auth.payload;
+  // The signature payload is at authorization.signature.payload (GeneralJws).
+  // This is the base64url-encoded JSON containing permissionGrantId, protocolRole, etc.
+  const payload = auth.signature?.payload;
   if (payload) {
     try {
       // Payload is base64url-encoded JSON.
@@ -327,7 +328,8 @@ function extractProtocolAwareDeps(
   // This is extracted from the authorization payload regardless of $ref presence.
   const auth = (message as any).authorization;
   if (auth && protocolDef?.uses) {
-    const payload = auth.authorSignature?.payload ?? auth.payload;
+    // Same payload path as class 3: authorization.signature.payload
+    const payload = auth.signature?.payload;
     if (payload) {
       try {
         const decoded = JSON.parse(
@@ -347,16 +349,55 @@ function extractProtocolAwareDeps(
               identifier      : roleProtocol,
               identifierType  : 'protocol',
             });
-            // Note: The actual role record (e.g., the participant record in the
-            // threads protocol) would require querying by protocol + protocolPath +
-            // recipient + contextId prefix. That query depends on the message's
-            // author and context, which is available here. However, the role record's
-            // recordId is not known from the message alone — it requires a query.
-            // For now, the ProtocolsConfigure dependency ensures the protocol
-            // definition is available for authorization evaluation. Full role-record
-            // closure (querying for the actual participant record) is deferred as it
-            // requires the resolveDependency infrastructure to support tag/filter-based
-            // queries, not just recordId lookups.
+
+            // The actual role record in the referenced protocol.
+            // Mirrors verifyInvokedRole() from protocol-authorization-action.ts:
+            // queries by protocol + protocolPath + recipient + contextId prefix.
+            const roleProtocolPath = protocolRole.substring(roleColonIdx + 1);
+            // Derive author from the message's JWS signature, not from the
+            // payload. The payload does NOT contain an author field — the
+            // DWN SDK extracts it from the signature's `kid` header via
+            // Message.getAuthor().
+            const messageAuthor = Message.getAuthor(message);
+            const messageContextId = (message as any).contextId as string | undefined;
+
+            if (messageAuthor) {
+              // Build the role record query filter.
+              const roleFilter: Record<string, unknown> = {
+                interface         : 'Records',
+                method            : 'Write',
+                protocol          : roleProtocol,
+                protocolPath      : roleProtocolPath,
+                recipient         : messageAuthor,
+                isLatestBaseState : true,
+              };
+
+              // Context scoping: the role record must be within the same context.
+              // The ancestor segment count determines how many contextId segments
+              // to use as the prefix filter (matching verifyInvokedRole logic).
+              if (messageContextId) {
+                const ancestorCount = roleProtocolPath.split('/').length - 1;
+                if (ancestorCount > 0) {
+                  const contextSegments = messageContextId.split('/');
+                  const contextPrefix = contextSegments.slice(0, ancestorCount).join('/');
+                  if (contextPrefix) {
+                    roleFilter.contextId = { gte: contextPrefix, lt: contextPrefix + '\uffff' };
+                  }
+                }
+              }
+
+              // Cache key must include the context prefix to prevent false
+              // positives across different contexts (e.g., different threads).
+              const contextPrefix = roleFilter.contextId
+                ? JSON.stringify(roleFilter.contextId) : 'no-context';
+              edges.push({
+                dependencyClass : 6,
+                label           : 'crossProtocolRoleRecord',
+                identifier      : `${roleProtocol}|${roleProtocolPath}|${messageAuthor}|${contextPrefix}`,
+                identifierType  : 'filter',
+                filter          : roleFilter,
+              });
+            }
           }
         }
       } catch {
@@ -679,7 +720,7 @@ async function resolveDependency(
     case 'messageCid': {
       // Special case: contextKeyRecord uses messageCid type but requires a
       // tag-based query against the key-delivery protocol, not a CID lookup.
-      // Identifier format is "sourceProtocol:rootContextId".
+      // Identifier format is "sourceProtocol|rootContextId".
       if (edge.label === 'contextKeyRecord') {
         const separatorIdx = edge.identifier.indexOf('|');
         if (separatorIdx > 0) {
@@ -702,6 +743,17 @@ async function resolveDependency(
         }
       }
       return await messageStore.get(context.tenantDid, edge.identifier) ?? null;
+    }
+
+    case 'filter': {
+      // Filter-based resolution: query the MessageStore with the structured
+      // filter carried in edge.filter. Used for dependencies that require
+      // multi-field queries (e.g., cross-protocol role records).
+      if (!edge.filter) { return null; }
+      const { messages: filterResults } = await messageStore.query(
+        context.tenantDid, [edge.filter as any]
+      );
+      return filterResults.length > 0 ? filterResults[0] : null;
     }
 
     default:

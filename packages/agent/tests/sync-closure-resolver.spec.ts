@@ -256,7 +256,7 @@ describe('evaluateClosure', () => {
         protocol    : 'https://example.com/proto',
         dateCreated : '2025-01-01T00:00:00.000000Z',
       });
-      (msg as any).authorization = { authorSignature: { payload } };
+      (msg as any).authorization = { signature: { payload, signatures: [{ protected: payload, signature: 'fake' }] } };
 
       const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
       const grantRecord = mockMessage({ interface: 'Records', method: 'Write' });
@@ -282,7 +282,7 @@ describe('evaluateClosure', () => {
         protocol    : 'https://example.com/proto',
         dateCreated : '2025-01-01T00:00:00.000000Z',
       });
-      (msg as any).authorization = { authorSignature: { payload } };
+      (msg as any).authorization = { signature: { payload, signatures: [{ protected: payload, signature: 'fake' }] } };
 
       const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
 
@@ -780,6 +780,183 @@ describe('evaluateClosure', () => {
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.CrossProtocolReferenceMissing);
     });
+
+    it('should require cross-protocol role record when protocolRole is invoked', async () => {
+      const composingDef = {
+        protocol  : 'https://comments.example.com',
+        published : true,
+        uses      : { threads: 'https://threads.example.com' },
+        types     : { comment: {} },
+        structure : {
+          thread: {
+            $ref    : 'threads:thread',
+            comment : {
+              $actions: [
+                { role: 'threads:thread/participant', can: ['create', 'read'] },
+              ],
+            },
+          },
+        },
+      };
+      const composingConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: composingDef },
+      } as any;
+      const referencedConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: { protocol: 'https://threads.example.com' } },
+      } as any;
+
+      // Build proper JWS authorization structure.
+      // Message.getAuthor extracts DID from authorization.signature.signatures[0].protected.kid
+      const protectedHeader = Buffer.from(JSON.stringify({
+        kid: 'did:example:bob#key-1',
+      })).toString('base64url');
+      const rolePayload = Buffer.from(JSON.stringify({
+        protocolRole: 'threads:thread/participant',
+      })).toString('base64url');
+
+      const msg = mockMessage({
+        protocol     : 'https://comments.example.com',
+        protocolPath : 'thread/comment',
+        parentId     : 'thread-1',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'comment-1';
+      (msg as any).contextId = 'thread-1/comment-1';
+      // Real DWN authorization structure:
+      // authorization.signature is a GeneralJws with:
+      //   - payload: base64url JSON with protocolRole
+      //   - signatures[0].protected: base64url JSON with kid (for author extraction)
+      (msg as any).authorization = {
+        signature: {
+          payload    : rolePayload,
+          signatures : [{ protected: protectedHeader, signature: 'fake' }],
+        },
+      };
+
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentThread as any).recordId = 'thread-1';
+
+      // The role record (participant) in the referenced protocol.
+      const roleRecord = mockMessage({
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : 'https://threads.example.com',
+        protocolPath : 'thread/participant',
+      });
+      (roleRecord as any).recordId = 'participant-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://comments.example.com', [composingConfig]],
+          ['protocol:https://threads.example.com', [referencedConfig]],
+          ['recordId:thread-1', [parentThread]],
+          ['protocol+recordId:https://threads.example.com|thread-1', [parentThread]],
+        ]),
+      });
+
+      // Override query to handle the filter-based role record query.
+      (store.query as sinon.SinonStub).callsFake(
+        async (_tenant: string, filters: any[]): Promise<{ messages: GenericMessage[] }> => {
+          const filter = filters[0] ?? {};
+          if (filter.interface === 'Protocols' && filter.protocol) {
+            const key = `protocol:${filter.protocol}`;
+            if (key === 'protocol:https://comments.example.com') { return { messages: [composingConfig] }; }
+            if (key === 'protocol:https://threads.example.com') { return { messages: [referencedConfig] }; }
+          }
+          if (filter.recordId && filter.protocol && filter.interface === 'Records') {
+            if (filter.protocol === 'https://threads.example.com' && filter.recordId === 'thread-1') {
+              return { messages: [parentThread] };
+            }
+          }
+          if (filter.recordId) {
+            if (filter.recordId === 'thread-1') { return { messages: [parentThread] }; }
+          }
+          // Filter-based role record query.
+          if (filter.protocol === 'https://threads.example.com' &&
+              filter.protocolPath === 'thread/participant' &&
+              filter.recipient === 'did:example:bob') {
+            return { messages: [roleRecord] };
+          }
+          return { messages: [] };
+        }
+      );
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://comments.example.com',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(true);
+      expect(result.edges.some(e => e.label === 'crossProtocolRoleRecord')).toBe(true);
+      expect(result.edges.some(e => e.label === 'crossProtocolRoleConfig')).toBe(true);
+    });
+
+    it('should fail closure when cross-protocol role record is absent', async () => {
+      const composingDef = {
+        protocol  : 'https://comments.example.com',
+        published : true,
+        uses      : { threads: 'https://threads.example.com' },
+        types     : { comment: {} },
+        structure : {
+          thread: {
+            $ref    : 'threads:thread',
+            comment : {
+              $actions: [
+                { role: 'threads:thread/participant', can: ['create', 'read'] },
+              ],
+            },
+          },
+        },
+      };
+      const composingConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: composingDef },
+      } as any;
+      const referencedConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: { protocol: 'https://threads.example.com' } },
+      } as any;
+
+      const absentProtectedHeader = Buffer.from(JSON.stringify({
+        kid: 'did:example:bob#key-1',
+      })).toString('base64url');
+      const absentRolePayload = Buffer.from(JSON.stringify({
+        protocolRole: 'threads:thread/participant',
+      })).toString('base64url');
+
+      const msg = mockMessage({
+        protocol     : 'https://comments.example.com',
+        protocolPath : 'thread/comment',
+        parentId     : 'thread-1',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'comment-1';
+      (msg as any).contextId = 'thread-1/comment-1';
+      (msg as any).authorization = {
+        signature: {
+          payload    : absentRolePayload,
+          signatures : [{ protected: absentProtectedHeader, signature: 'fake' }],
+        },
+      };
+
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentThread as any).recordId = 'thread-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://comments.example.com', [composingConfig]],
+          ['protocol:https://threads.example.com', [referencedConfig]],
+          ['recordId:thread-1', [parentThread]],
+          ['protocol+recordId:https://threads.example.com|thread-1', [parentThread]],
+          // No role record in the store!
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://comments.example.com',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.CrossProtocolReferenceMissing);
+      expect(result.failure!.edge.label).toBe('crossProtocolRoleRecord');
+    });
   });
 
   describe('traversal limits', () => {
@@ -961,6 +1138,96 @@ describe('evaluateClosure', () => {
       // Other entries should remain.
       expect(ctx.protocolCache.has('https://example.com/other')).toBe(true);
       expect(ctx.grantCache.has('grant-2')).toBe(true);
+    });
+
+    it('should invalidate composite crossProtocolParent dep keys containing the recordId', () => {
+      const ctx = createClosureContext('did:example:alice');
+      // Composite key format: "recordId:referencedProtocol|parentId"
+      ctx.missingDeps.add('recordId:https://threads.example.com|thread-1');
+      ctx.satisfiedDeps.add('recordId:https://threads.example.com|thread-2');
+
+      const parentMsg = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentMsg as any).recordId = 'thread-1';
+
+      invalidateClosureCache(ctx, parentMsg);
+
+      // thread-1 composite key should be cleared.
+      expect(ctx.missingDeps.has('recordId:https://threads.example.com|thread-1')).toBe(false);
+      // thread-2 should remain (different recordId).
+      expect(ctx.satisfiedDeps.has('recordId:https://threads.example.com|thread-2')).toBe(true);
+    });
+
+    it('should invalidate filter-based role record dep keys matching protocol+protocolPath', () => {
+      const ctx = createClosureContext('did:example:alice');
+      const roleKey = 'filter:https://threads.example.com|thread/participant|did:example:bob|{"gte":"t1","lt":"t1\\uffff"}';
+      ctx.missingDeps.add(roleKey);
+
+      // A participant record arrives in the referenced protocol.
+      const roleMsg = mockMessage({
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : 'https://threads.example.com',
+        protocolPath : 'thread/participant',
+      });
+      (roleMsg as any).recordId = 'participant-1';
+
+      invalidateClosureCache(ctx, roleMsg);
+
+      expect(ctx.missingDeps.has(roleKey)).toBe(false);
+    });
+
+    it('should invalidate contextKeyRecord dep keys when real key-delivery record arrives', () => {
+      const ctx = createClosureContext('did:example:alice');
+      // contextKeyRecord cache key uses the SOURCE protocol, not the key-delivery protocol.
+      ctx.missingDeps.add('messageCid:https://example.com/chat|thread-1');
+
+      // Real key-delivery record: protocol is the key-delivery protocol URI,
+      // with tags pointing to the source protocol and contextId.
+      const keyMsg = mockMessage({
+        interface : 'Records',
+        method    : 'Write',
+        protocol  : 'https://identity.foundation/protocols/key-delivery',
+        tags      : { protocol: 'https://example.com/chat', contextId: 'thread-1' },
+      });
+      (keyMsg as any).recordId = 'context-key-1';
+
+      invalidateClosureCache(ctx, keyMsg);
+
+      expect(ctx.missingDeps.has('messageCid:https://example.com/chat|thread-1')).toBe(false);
+    });
+
+    it('should not false-match recordId substrings (thread-1 vs thread-10)', () => {
+      const ctx = createClosureContext('did:example:alice');
+      ctx.missingDeps.add('recordId:thread-1');
+      ctx.missingDeps.add('recordId:thread-10');
+
+      const msg = mockMessage({ interface: 'Records', method: 'Write' });
+      (msg as any).recordId = 'thread-1';
+
+      invalidateClosureCache(ctx, msg);
+
+      // thread-1 should be cleared, thread-10 should remain.
+      expect(ctx.missingDeps.has('recordId:thread-1')).toBe(false);
+      expect(ctx.missingDeps.has('recordId:thread-10')).toBe(true);
+    });
+
+    it('should clear stale missingDeps so re-evaluation can succeed', () => {
+      const ctx = createClosureContext('did:example:alice');
+
+      // Simulate a previously-missing parent record.
+      ctx.missingDeps.add('recordId:parent-1');
+      ctx.missingDeps.add('recordId:https://threads.example.com|parent-1');
+
+      // The parent record arrives.
+      const parentMsg = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentMsg as any).recordId = 'parent-1';
+
+      invalidateClosureCache(ctx, parentMsg);
+
+      // Both plain and composite keys should be cleared.
+      expect(ctx.missingDeps.has('recordId:parent-1')).toBe(false);
+      expect(ctx.missingDeps.has('recordId:https://threads.example.com|parent-1')).toBe(false);
+      // Next closure evaluation will re-query and find the record present.
     });
   });
 });
