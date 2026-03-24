@@ -2105,5 +2105,38 @@ describe('SyncEngineLevel — private methods', () => {
       expect(link.pull.contiguousAppliedToken).toEqual(existingToken);
       expect(link.status).toBe('live');
     });
+
+    it('should reopen local push subscription with push checkpoint cursor', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const pushToken = { streamId: 's1', epoch: 'e1', position: '50', messageCid: 'cid-50' };
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
+        pull           : {}, push           : { contiguousAppliedToken: pushToken },
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+
+      sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
+      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-a');
+      sinon.stub(engine as any, 'openLivePullSubscription').resolves();
+
+      // Capture the args passed to openLocalPushSubscription.
+      const pushSubStub = sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+
+      const saveStub = sinon.stub().resolves();
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+
+      await (engine as any).doRepairLink(linkKey);
+
+      // Verify push subscription was reopened with the push checkpoint as cursor.
+      expect(pushSubStub.calledOnce).toBe(true);
+      const pushTarget = pushSubStub.firstCall.args[0];
+      expect(pushTarget.pushCursor).toEqual(pushToken);
+    });
   });
 });
