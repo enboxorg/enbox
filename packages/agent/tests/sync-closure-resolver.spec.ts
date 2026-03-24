@@ -780,6 +780,164 @@ describe('evaluateClosure', () => {
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.CrossProtocolReferenceMissing);
     });
+
+    it('should require cross-protocol role record when protocolRole is invoked', async () => {
+      const composingDef = {
+        protocol  : 'https://comments.example.com',
+        published : true,
+        uses      : { threads: 'https://threads.example.com' },
+        types     : { comment: {} },
+        structure : {
+          thread: {
+            $ref    : 'threads:thread',
+            comment : {
+              $actions: [
+                { role: 'threads:thread/participant', can: ['create', 'read'] },
+              ],
+            },
+          },
+        },
+      };
+      const composingConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: composingDef },
+      } as any;
+      const referencedConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: { protocol: 'https://threads.example.com' } },
+      } as any;
+
+      // Message with cross-protocol role invocation in authorization.
+      const rolePayload = Buffer.from(JSON.stringify({
+        protocolRole : 'threads:thread/participant',
+        authorDid    : 'did:example:bob',
+      })).toString('base64url');
+
+      const msg = mockMessage({
+        protocol     : 'https://comments.example.com',
+        protocolPath : 'thread/comment',
+        parentId     : 'thread-1',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'comment-1';
+      (msg as any).contextId = 'thread-1/comment-1';
+      (msg as any).authorization = { authorSignature: { payload: rolePayload } };
+
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentThread as any).recordId = 'thread-1';
+
+      // The role record (participant) in the referenced protocol.
+      const roleRecord = mockMessage({
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : 'https://threads.example.com',
+        protocolPath : 'thread/participant',
+      });
+      (roleRecord as any).recordId = 'participant-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://comments.example.com', [composingConfig]],
+          ['protocol:https://threads.example.com', [referencedConfig]],
+          ['recordId:thread-1', [parentThread]],
+          ['protocol+recordId:https://threads.example.com|thread-1', [parentThread]],
+        ]),
+      });
+
+      // Override query to handle the filter-based role record query.
+      (store.query as sinon.SinonStub).callsFake(
+        async (_tenant: string, filters: any[]): Promise<{ messages: GenericMessage[] }> => {
+          const filter = filters[0] ?? {};
+          if (filter.interface === 'Protocols' && filter.protocol) {
+            const key = `protocol:${filter.protocol}`;
+            if (key === 'protocol:https://comments.example.com') { return { messages: [composingConfig] }; }
+            if (key === 'protocol:https://threads.example.com') { return { messages: [referencedConfig] }; }
+          }
+          if (filter.recordId && filter.protocol && filter.interface === 'Records') {
+            if (filter.protocol === 'https://threads.example.com' && filter.recordId === 'thread-1') {
+              return { messages: [parentThread] };
+            }
+          }
+          if (filter.recordId) {
+            if (filter.recordId === 'thread-1') { return { messages: [parentThread] }; }
+          }
+          // Filter-based role record query.
+          if (filter.protocol === 'https://threads.example.com' &&
+              filter.protocolPath === 'thread/participant' &&
+              filter.recipient === 'did:example:bob') {
+            return { messages: [roleRecord] };
+          }
+          return { messages: [] };
+        }
+      );
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://comments.example.com',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(true);
+      expect(result.edges.some(e => e.label === 'crossProtocolRoleRecord')).toBe(true);
+      expect(result.edges.some(e => e.label === 'crossProtocolRoleConfig')).toBe(true);
+    });
+
+    it('should fail closure when cross-protocol role record is absent', async () => {
+      const composingDef = {
+        protocol  : 'https://comments.example.com',
+        published : true,
+        uses      : { threads: 'https://threads.example.com' },
+        types     : { comment: {} },
+        structure : {
+          thread: {
+            $ref    : 'threads:thread',
+            comment : {
+              $actions: [
+                { role: 'threads:thread/participant', can: ['create', 'read'] },
+              ],
+            },
+          },
+        },
+      };
+      const composingConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: composingDef },
+      } as any;
+      const referencedConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: { protocol: 'https://threads.example.com' } },
+      } as any;
+
+      const rolePayload = Buffer.from(JSON.stringify({
+        protocolRole : 'threads:thread/participant',
+        authorDid    : 'did:example:bob',
+      })).toString('base64url');
+
+      const msg = mockMessage({
+        protocol     : 'https://comments.example.com',
+        protocolPath : 'thread/comment',
+        parentId     : 'thread-1',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'comment-1';
+      (msg as any).contextId = 'thread-1/comment-1';
+      (msg as any).authorization = { authorSignature: { payload: rolePayload } };
+
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentThread as any).recordId = 'thread-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://comments.example.com', [composingConfig]],
+          ['protocol:https://threads.example.com', [referencedConfig]],
+          ['recordId:thread-1', [parentThread]],
+          ['protocol+recordId:https://threads.example.com|thread-1', [parentThread]],
+          // No role record in the store!
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://comments.example.com',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.CrossProtocolReferenceMissing);
+      expect(result.failure!.edge.label).toBe('crossProtocolRoleRecord');
+    });
   });
 
   describe('traversal limits', () => {

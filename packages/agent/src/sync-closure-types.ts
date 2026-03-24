@@ -52,7 +52,14 @@ export type ClosureDependencyEdge = {
    */
   identifier: string;
   /** The type of identifier — determines the fetch strategy. */
-  identifierType: 'messageCid' | 'recordId' | 'protocol' | 'grantId';
+  identifierType: 'messageCid' | 'recordId' | 'protocol' | 'grantId' | 'filter';
+  /**
+   * When `identifierType` is `'filter'`, this carries the full query filter
+   * as a structured object. Used for dependencies that require multi-field
+   * queries (e.g., cross-protocol role records queried by protocol +
+   * protocolPath + recipient + contextId prefix).
+   */
+  filter?: Record<string, unknown>;
 };
 
 // ---------------------------------------------------------------------------
