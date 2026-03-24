@@ -459,9 +459,12 @@ describe('evaluateClosure', () => {
       });
       (msg as any).recordId = 'secret-1';
 
+      const keyDeliveryConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+
       const store = mockMessageStore({
         queryResults: new Map([
           ['protocol:https://example.com/proto', [protocolConfig]],
+          ['protocol:https://identity.foundation/protocols/key-delivery', [keyDeliveryConfig]],
         ]),
       });
 
@@ -471,6 +474,55 @@ describe('evaluateClosure', () => {
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'encryptionKeyMaterial')).toBe(true);
+      expect(result.edges.some(e => e.label === 'keyDeliveryProtocol')).toBe(true);
+    });
+
+    it('should require key-delivery protocol and context key for encrypted records with contextId', async () => {
+      const protocolDef = {
+        protocol  : 'https://example.com/proto',
+        published : false,
+        types     : { secret: { encryptionRequired: true } },
+        structure : {
+          secret: {
+            $encryption: { rootKeyId: 'key-1', publicKeyJwk: {} },
+          },
+        },
+      };
+      const protocolConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: protocolDef },
+      } as any;
+
+      const msg = mockMessage({
+        protocol     : 'https://example.com/proto',
+        protocolPath : 'secret',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'secret-1';
+      (msg as any).contextId = 'root-ctx-1/secret-1';
+
+      const keyDeliveryConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure' },
+      } as any;
+
+      // Context root record needed by class 2 context ancestry.
+      const contextRoot = mockMessage({ interface: 'Records', method: 'Write' });
+      (contextRoot as any).recordId = 'root-ctx-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+          ['protocol:https://identity.foundation/protocols/key-delivery', [keyDeliveryConfig]],
+          ['recordId:root-ctx-1', [contextRoot]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(true);
+      expect(result.edges.some(e => e.label === 'keyDeliveryProtocol')).toBe(true);
+      expect(result.edges.some(e => e.label === 'contextKeyRecord')).toBe(true);
     });
   });
 
@@ -531,6 +583,8 @@ describe('evaluateClosure', () => {
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'crossProtocolConfig')).toBe(true);
+      // Level 2: $ref parent record in the referenced protocol.
+      expect(result.edges.some(e => e.label === 'crossProtocolParent')).toBe(true);
     });
 
     it('should fail when referenced protocol ProtocolsConfigure is missing', async () => {
