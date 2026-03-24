@@ -373,8 +373,8 @@ describe('evaluateClosure', () => {
       });
 
       const ctx = createClosureContext('did:example:alice');
-      // Pre-populate the satisfied set.
-      ctx.satisfiedCids.add('https://example.com/proto');
+      // Pre-populate the satisfied set with composite key format.
+      ctx.satisfiedDeps.add('protocol:https://example.com/proto');
 
       const msg = mockMessage({ protocol: 'https://example.com/proto', dateCreated: '2025-01-01T00:00:00.000000Z' });
       const result = await evaluateClosure(msg, store, {

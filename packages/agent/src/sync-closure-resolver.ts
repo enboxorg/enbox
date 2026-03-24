@@ -112,6 +112,16 @@ function extractAuthorizationDeps(message: GenericMessage): ClosureDependencyEdg
           identifier      : decoded.permissionGrantId,
           identifierType  : 'grantId',
         });
+        // Also require the grant's revocation state to be resolvable.
+        // The revocation is a child record at protocolPath 'grant/revocation'
+        // with parentId === grantId. We add it as a separate edge so the
+        // resolver can check for its presence (or confirmed absence).
+        edges.push({
+          dependencyClass : 3,
+          label           : 'grantRevocation',
+          identifier      : decoded.permissionGrantId,
+          identifierType  : 'grantId',
+        });
       }
     } catch {
       // If we can't decode, skip — authorization will fail at apply time.
@@ -232,8 +242,9 @@ export async function evaluateClosure(
         allEdges.push(edge);
 
         // Check if already satisfied (cached from a prior root in this batch).
-        if (context.satisfiedCids.has(edge.identifier)) { continue; }
-        if (context.missingCids.has(edge.identifier)) {
+        const depKey = `${edge.identifierType}:${edge.identifier}`;
+        if (context.satisfiedDeps.has(depKey)) { continue; }
+        if (context.missingDeps.has(depKey)) {
           return {
             complete       : false,
             rootMessageCid : rootCid,
@@ -250,7 +261,7 @@ export async function evaluateClosure(
         // Attempt to resolve the dependency from the local store.
         const resolved = await resolveDependency(edge, messageStore, context);
         if (!resolved) {
-          context.missingCids.add(edge.identifier);
+          context.missingDeps.add(depKey);
           return {
             complete       : false,
             rootMessageCid : rootCid,
@@ -264,7 +275,7 @@ export async function evaluateClosure(
           };
         }
 
-        context.satisfiedCids.add(edge.identifier);
+        context.satisfiedDeps.add(depKey);
 
         // If the resolved dependency is a message, add it to the queue for
         // transitive dependency evaluation (if not already visited).
@@ -340,20 +351,67 @@ async function resolveDependency(
     }
 
     case 'recordId': {
-    // Query for the record by recordId (initial write or latest state).
+      if (edge.label === 'initialWrite') {
+      // Query specifically for the initial write: entryId === recordId,
+      // stored with isLatestBaseState: false after subsequent writes.
+      // Try entryId first (canonical), fall back to recordId + non-latest.
+        const { messages: byEntryId } = await messageStore.query(context.tenantDid, [{
+          entryId: edge.identifier,
+        }]);
+        if (byEntryId.length > 0) { return byEntryId[0]; }
+
+        // Fallback: query by recordId with isLatestBaseState: false
+        // (initial writes are re-stored with this flag after updates).
+        const { messages: byRecordId } = await messageStore.query(context.tenantDid, [{
+          interface         : 'Records',
+          method            : 'Write',
+          recordId          : edge.identifier,
+          isLatestBaseState : false,
+        }]);
+        return byRecordId.length > 0 ? byRecordId[0] : null;
+      }
+
+      // For parentRecord or other recordId lookups, query latest state.
       const { messages } = await messageStore.query(context.tenantDid, [{
-        interface : 'Records',
-        recordId  : edge.identifier,
+        interface         : 'Records',
+        recordId          : edge.identifier,
+        isLatestBaseState : true,
       }]);
       return messages.length > 0 ? messages[0] : null;
     }
 
     case 'grantId': {
-    // Check cache first.
+      if (edge.label === 'grantRevocation') {
+      // Query for revocation records: child records at 'grant/revocation'
+      // protocolPath with parentId === grantId. The absence of a revocation
+      // is a valid result (grant is not revoked) — return a synthetic
+      // "no revocation" marker so the dependency is considered satisfied.
+        const cacheKey = `revocation:${edge.identifier}`;
+        if (context.grantCache.has(cacheKey)) {
+          return context.grantCache.get(cacheKey) ?? null;
+        }
+        const { messages: revocations } = await messageStore.query(context.tenantDid, [{
+          interface         : 'Records',
+          method            : 'Write',
+          parentId          : edge.identifier,
+          protocolPath      : 'grant/revocation',
+          isLatestBaseState : true,
+        }]);
+        // If no revocation exists, the dependency is still satisfied (grant is active).
+        // Store whatever we found (or the grant itself as a sentinel) so we don't re-query.
+        const grantForSentinel = context.grantCache.get(edge.identifier);
+        const result = revocations.length > 0 ? revocations[0] : (grantForSentinel ?? null);
+        context.grantCache.set(cacheKey, result);
+        // Revocation presence or absence is always satisfiable — the closure
+        // question is "can we evaluate grant validity?" and we can as long as
+        // we have the grant record (already a separate edge).
+        return result ?? { descriptor: { interface: 'Synthetic', method: 'NoRevocation' } } as any;
+      }
+
+      // Grant record lookup.
       if (context.grantCache.has(edge.identifier)) {
         return context.grantCache.get(edge.identifier) ?? null;
       }
-      // Query for the grant record.
       const { messages } = await messageStore.query(context.tenantDid, [{
         recordId          : edge.identifier,
         isLatestBaseState : true,

@@ -98,10 +98,17 @@ export type ClosureEvaluationContext = {
   protocolCache: Map<string, any>;
   /** Cached grant records keyed by grantId. */
   grantCache: Map<string, GenericMessage | null>;
-  /** Set of messageCids already known to be locally present. */
-  satisfiedCids: Set<string>;
-  /** Set of messageCids already known to be missing/unfetchable. */
-  missingCids: Set<string>;
+  /**
+   * Set of dependency identifiers already known to be locally present.
+   * Keyed by `${identifierType}:${identifier}` to prevent cross-namespace
+   * collisions (e.g., a recordId and a grantId with the same string value).
+   */
+  satisfiedDeps: Set<string>;
+  /**
+   * Set of dependency identifiers already known to be missing/unfetchable.
+   * Same composite key format as `satisfiedDeps`.
+   */
+  missingDeps: Set<string>;
   /** Maximum traversal depth. Default 32. */
   maxDepth: number;
 };
@@ -114,8 +121,8 @@ export function createClosureContext(tenantDid: string, maxDepth?: number): Clos
     tenantDid,
     protocolCache : new Map(),
     grantCache    : new Map(),
-    satisfiedCids : new Set(),
-    missingCids   : new Set(),
+    satisfiedDeps : new Set(),
+    missingDeps   : new Set(),
     maxDepth      : maxDepth ?? 32,
   };
 }
