@@ -201,12 +201,23 @@ export function invalidateClosureCache(
     const protocolPath = desc.protocolPath as string | undefined;
 
     if (recordId) {
-      // Invalidate any dep key containing this recordId.
+      // Invalidate dep keys that reference this exact recordId.
+      // Check for recordId at a key boundary (preceded by ':' or '|')
+      // to avoid substring false matches (e.g., 'thread-1' matching 'thread-10').
+      const matchesRecordId = (key: string): boolean => {
+        const idx = key.indexOf(recordId);
+        if (idx === -1) { return false; }
+        const charBefore = idx > 0 ? key[idx - 1] : ':';
+        const charAfter = idx + recordId.length < key.length ? key[idx + recordId.length] : '|';
+        const validBefore = charBefore === ':' || charBefore === '|';
+        const validAfter = charAfter === '|' || charAfter === undefined;
+        return validBefore && (idx + recordId.length === key.length || validAfter);
+      };
       for (const key of context.satisfiedDeps) {
-        if (key.includes(recordId)) { context.satisfiedDeps.delete(key); }
+        if (matchesRecordId(key)) { context.satisfiedDeps.delete(key); }
       }
       for (const key of context.missingDeps) {
-        if (key.includes(recordId)) { context.missingDeps.delete(key); }
+        if (matchesRecordId(key)) { context.missingDeps.delete(key); }
       }
     }
 
@@ -222,9 +233,27 @@ export function invalidateClosureCache(
       }
     }
 
-    // Invalidate contextKeyRecord deps for this protocol.
-    // These are keyed like "messageCid:protocol|contextId".
-    if (protocol) {
+    // Invalidate contextKeyRecord deps.
+    // Context key records are in the key-delivery protocol, but their closure
+    // cache keys use the SOURCE protocol (from tags.protocol), not the
+    // key-delivery protocol URI. So when a key-delivery record arrives, we
+    // must extract the source protocol from the record's tags.
+    if (protocol === 'https://identity.foundation/protocols/key-delivery') {
+      // Real key-delivery writes have tags: { protocol: sourceProtocol, contextId: ... }
+      const tags = (message as any).descriptor?.tags as Record<string, string> | undefined;
+      const sourceProtocol = tags?.protocol;
+      if (sourceProtocol) {
+        const ctxKeyPrefix = `messageCid:${sourceProtocol}|`;
+        for (const key of context.satisfiedDeps) {
+          if (key.startsWith(ctxKeyPrefix)) { context.satisfiedDeps.delete(key); }
+        }
+        for (const key of context.missingDeps) {
+          if (key.startsWith(ctxKeyPrefix)) { context.missingDeps.delete(key); }
+        }
+      }
+    } else if (protocol) {
+      // For non-key-delivery protocols, invalidate contextKeyRecord entries
+      // keyed by this protocol (e.g., if a record write changes the context).
       const ctxKeyPrefix = `messageCid:${protocol}|`;
       for (const key of context.satisfiedDeps) {
         if (key.startsWith(ctxKeyPrefix)) { context.satisfiedDeps.delete(key); }

@@ -1170,22 +1170,39 @@ describe('evaluateClosure', () => {
       expect(ctx.missingDeps.has(roleKey)).toBe(false);
     });
 
-    it('should invalidate contextKeyRecord dep keys matching the protocol', () => {
+    it('should invalidate contextKeyRecord dep keys when real key-delivery record arrives', () => {
       const ctx = createClosureContext('did:example:alice');
-      // contextKeyRecord key format: "messageCid:protocol|contextId"
+      // contextKeyRecord cache key uses the SOURCE protocol, not the key-delivery protocol.
       ctx.missingDeps.add('messageCid:https://example.com/chat|thread-1');
 
-      // A key-delivery record arrives for this protocol.
+      // Real key-delivery record: protocol is the key-delivery protocol URI,
+      // with tags pointing to the source protocol and contextId.
       const keyMsg = mockMessage({
         interface : 'Records',
         method    : 'Write',
-        protocol  : 'https://example.com/chat',
+        protocol  : 'https://identity.foundation/protocols/key-delivery',
+        tags      : { protocol: 'https://example.com/chat', contextId: 'thread-1' },
       });
-      (keyMsg as any).recordId = 'key-record-1';
+      (keyMsg as any).recordId = 'context-key-1';
 
       invalidateClosureCache(ctx, keyMsg);
 
       expect(ctx.missingDeps.has('messageCid:https://example.com/chat|thread-1')).toBe(false);
+    });
+
+    it('should not false-match recordId substrings (thread-1 vs thread-10)', () => {
+      const ctx = createClosureContext('did:example:alice');
+      ctx.missingDeps.add('recordId:thread-1');
+      ctx.missingDeps.add('recordId:thread-10');
+
+      const msg = mockMessage({ interface: 'Records', method: 'Write' });
+      (msg as any).recordId = 'thread-1';
+
+      invalidateClosureCache(ctx, msg);
+
+      // thread-1 should be cleared, thread-10 should remain.
+      expect(ctx.missingDeps.has('recordId:thread-1')).toBe(false);
+      expect(ctx.missingDeps.has('recordId:thread-10')).toBe(true);
     });
 
     it('should clear stale missingDeps so re-evaluation can succeed', () => {

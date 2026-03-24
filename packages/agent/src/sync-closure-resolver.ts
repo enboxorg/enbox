@@ -718,7 +718,7 @@ async function resolveDependency(
     case 'messageCid': {
       // Special case: contextKeyRecord uses messageCid type but requires a
       // tag-based query against the key-delivery protocol, not a CID lookup.
-      // Identifier format is "sourceProtocol:rootContextId".
+      // Identifier format is "sourceProtocol|rootContextId".
       if (edge.label === 'contextKeyRecord') {
         const separatorIdx = edge.identifier.indexOf('|');
         if (separatorIdx > 0) {
