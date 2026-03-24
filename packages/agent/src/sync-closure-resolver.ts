@@ -263,10 +263,12 @@ function extractProtocolAwareDeps(
         const multiParty = isMultiPartyContext(protocolDef, rootProtocolPath);
         if (multiParty) {
           const rootContextId = contextId.split('/')[0];
+          // Separator is '|' (not ':') because protocol URIs contain '://'
+          // which would break indexOf(':') parsing in resolveDependency.
           edges.push({
             dependencyClass : 5,
             label           : 'contextKeyRecord',
-            identifier      : `${desc.protocol}:${rootContextId}`,
+            identifier      : `${desc.protocol}|${rootContextId}`,
             identifierType  : 'messageCid',
           });
         }
@@ -679,7 +681,7 @@ async function resolveDependency(
       // tag-based query against the key-delivery protocol, not a CID lookup.
       // Identifier format is "sourceProtocol:rootContextId".
       if (edge.label === 'contextKeyRecord') {
-        const separatorIdx = edge.identifier.indexOf(':');
+        const separatorIdx = edge.identifier.indexOf('|');
         if (separatorIdx > 0) {
           const sourceProtocol = edge.identifier.substring(0, separatorIdx);
           const rootContextId = edge.identifier.substring(separatorIdx + 1);
