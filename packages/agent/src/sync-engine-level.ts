@@ -8,10 +8,13 @@ import ms from 'ms';
 import { Level } from 'level';
 import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
 
+import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
 import type { PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
 
+import { createClosureContext } from './sync-closure-types.js';
+import { evaluateClosure } from './sync-closure-resolver.js';
 import { MAX_PENDING_TOKENS } from './types/sync.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 
@@ -196,6 +199,13 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** TTL for echo-loop suppression entries (60 seconds). */
   private static readonly ECHO_SUPPRESS_TTL_MS = 60_000;
+
+  /**
+   * Shared closure evaluation context for the current live sync session.
+   * Lazily created on first protocol-scoped event. Caches ProtocolsConfigure
+   * and grant lookups across events within the same session.
+   */
+  private _closureContext?: ClosureEvaluationContext;
 
   /** Maximum entries in the echo-loop suppression cache. */
   private static readonly ECHO_SUPPRESS_MAX_ENTRIES = 10_000;
@@ -920,6 +930,68 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
+   * Squash local side-effect: when a scoped subset consumer applies a squash
+   * record, it must locally purge older sibling records at the same
+   * protocolPath and parent context, mirroring the source's
+   * `performRecordsSquash` behavior. This ensures convergence between source
+   * and subset consumer even though squash purges emit no separate events.
+   *
+   * This queries the local MessageStore for sibling records older than the
+   * squash timestamp and deletes them. It does NOT use the DWN's internal
+   * `performRecordsSquash` because that runs as a resumable task tied to
+   * the write handler — here we execute the side-effect directly after
+   * the squash record has been applied via processRawMessage.
+   */
+  private async performLocalSquashSideEffect(
+    tenantDid: string,
+    squashMessage: GenericMessage,
+  ): Promise<void> {
+    try {
+      const desc = squashMessage.descriptor as Record<string, unknown>;
+      const protocol = desc.protocol as string;
+      const protocolPath = desc.protocolPath as string;
+      const squashTimestamp = desc.messageTimestamp as string;
+      const parentId = desc.parentId as string | undefined;
+
+      if (!protocol || !protocolPath || !squashTimestamp) { return; }
+
+      const messageStore = this.agent.dwn.node.storage.messageStore;
+
+      // Query for sibling records at the same protocol + protocolPath + parent scope.
+      const filter: Record<string, unknown> = {
+        interface         : 'Records',
+        method            : 'Write',
+        protocol,
+        protocolPath,
+        isLatestBaseState : true,
+      };
+      if (parentId) {
+        filter.parentId = parentId;
+      }
+
+      const { messages: siblings } = await messageStore.query(tenantDid, [filter as any]);
+
+      // Purge siblings whose newest message is strictly older than the squash.
+      const squashRecordId = (squashMessage as any).recordId as string;
+      for (const sibling of siblings) {
+        const siblingRecordId = (sibling as any).recordId as string;
+        if (siblingRecordId === squashRecordId) { continue; } // Skip the squash record itself.
+
+        const siblingTimestamp = (sibling.descriptor as any).messageTimestamp as string;
+        if (siblingTimestamp < squashTimestamp) {
+          // This sibling is older than the squash floor — purge it.
+          const siblingCid = await Message.getCid(sibling);
+          await messageStore.delete(tenantDid, siblingCid);
+        }
+      }
+    } catch (error: any) {
+      // Squash side-effect failure is not fatal — the SMT integrity check
+      // will detect and reconcile the divergence.
+      console.warn(`SyncEngineLevel: squash side-effect failed for ${tenantDid}`, error);
+    }
+  }
+
+  /**
    * Transition a link to `degraded_poll` and start a per-link polling timer.
    * The timer runs SMT reconciliation at a reduced frequency (30s with jitter)
    * and attempts to re-establish live subscriptions after each successful repair.
@@ -1031,6 +1103,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
     this._repairRetryTimers.clear();
     this._repairContext.clear();
+
+    // Clear closure evaluation context.
+    this._closureContext = undefined;
 
     // Clear the in-memory link and runtime state.
     this._activeLinks.clear();
@@ -1154,6 +1229,41 @@ export class SyncEngineLevel implements SyncEngine {
           }
 
           await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
+
+          // Closure validation for scoped subset sync (Phase 3).
+          // For protocol-scoped links, verify that all hard dependencies for
+          // this operation are locally present before considering it committed.
+          // Full-tenant scope bypasses this entirely (returns complete with 0 queries).
+          if (link && link.scope.kind === 'protocol') {
+            const messageStore = this.agent.dwn.node.storage.messageStore;
+            const closureCtx = this._closureContext ?? createClosureContext(did);
+            this._closureContext = closureCtx;
+
+            const closureResult = await evaluateClosure(
+              event.message, messageStore, link.scope, closureCtx
+            );
+
+            if (!closureResult.complete) {
+              console.warn(
+                `SyncEngineLevel: Closure incomplete for ${did} -> ${dwnUrl}: ` +
+                `${closureResult.failure!.code} — ${closureResult.failure!.detail}`
+              );
+              await this.transitionToRepairing(cursorKey, link);
+              return;
+            }
+          }
+
+          // Squash local side-effect for scoped subset sync (Phase 3).
+          // When a subset consumer applies a squash record, it must locally
+          // purge older sibling records at the same protocolPath and parent
+          // context — mirroring the source's performRecordsSquash behavior.
+          // This is a side-effect of applying the squash, not a separate event.
+          if (link && link.scope.kind === 'protocol') {
+            const desc = event.message.descriptor as Record<string, unknown>;
+            if (desc.squash === true && desc.interface === 'Records' && desc.method === 'Write') {
+              await this.performLocalSquashSideEffect(did, event.message);
+            }
+          }
 
           // Track this CID for echo-loop suppression, scoped to the source endpoint.
           const pulledCid = await Message.getCid(event.message);
