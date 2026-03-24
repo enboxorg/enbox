@@ -57,6 +57,19 @@ function extractAncestryDeps(message: GenericMessage): ClosureDependencyEdge[] {
     });
   }
 
+  // contextId dependency — if the record has a contextId that differs from
+  // its own recordId, the context root record must be present. The contextId
+  // is the recordId of the top-level ancestor in the context chain.
+  const contextId = (message as any).contextId as string | undefined;
+  if (contextId && recordId && contextId !== recordId) {
+    edges.push({
+      dependencyClass : 2,
+      label           : 'contextRoot',
+      identifier      : contextId,
+      identifierType  : 'recordId',
+    });
+  }
+
   // initialWrite dependency — non-initial writes need their initialWrite.
   // An initial write has entryId === recordId, but we can't compute entryId here
   // without the full CID computation. Instead, check dateCreated vs messageTimestamp
@@ -393,6 +406,7 @@ async function resolveDependency(
         const { messages: revocations } = await messageStore.query(context.tenantDid, [{
           interface         : 'Records',
           method            : 'Write',
+          protocol          : 'https://identity.foundation/dwn/permissions',
           parentId          : edge.identifier,
           protocolPath      : 'grant/revocation',
           isLatestBaseState : true,
@@ -413,6 +427,10 @@ async function resolveDependency(
         return context.grantCache.get(edge.identifier) ?? null;
       }
       const { messages } = await messageStore.query(context.tenantDid, [{
+        interface         : 'Records',
+        method            : 'Write',
+        protocol          : 'https://identity.foundation/dwn/permissions',
+        protocolPath      : 'grant',
         recordId          : edge.identifier,
         isLatestBaseState : true,
       }]);
@@ -439,7 +457,8 @@ function mapEdgeToFailureCode(edge: ClosureDependencyEdge): ClosureFailureCode {
     case 2:
       if (edge.label === 'initialWrite') { return ClosureFailureCode.InitialWriteMissing; }
       if (edge.label === 'parentRecord') { return ClosureFailureCode.ParentChainMissing; }
-      return ClosureFailureCode.ContextChainMissing;
+      if (edge.label === 'contextRoot') { return ClosureFailureCode.ContextChainMissing; }
+      return ClosureFailureCode.ParentChainMissing;
     case 3:
       if (edge.label === 'permissionGrant') { return ClosureFailureCode.GrantMissing; }
       return ClosureFailureCode.GrantRevocationMissing;

@@ -294,6 +294,83 @@ describe('evaluateClosure', () => {
     });
   });
 
+  describe('Class 2: Context ancestry closure', () => {
+    it('should require context root when contextId differs from recordId', async () => {
+      const msg = mockMessage({
+        protocol    : 'https://example.com/proto',
+        dateCreated : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'child-1';
+      (msg as any).contextId = 'context-root-1'; // different from recordId = needs context root
+
+      const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+      const contextRoot = mockMessage({ interface: 'Records', method: 'Write' });
+      (contextRoot as any).recordId = 'context-root-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+          ['recordId:context-root-1', [contextRoot]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(true);
+      expect(result.edges.some(e => e.label === 'contextRoot')).toBe(true);
+    });
+
+    it('should fail when context root is missing', async () => {
+      const msg = mockMessage({
+        protocol    : 'https://example.com/proto',
+        dateCreated : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'child-1';
+      (msg as any).contextId = 'context-root-missing';
+
+      const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.ContextChainMissing);
+    });
+
+    it('should not require context root when contextId equals recordId', async () => {
+      const msg = mockMessage({
+        protocol    : 'https://example.com/proto',
+        dateCreated : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'root-record';
+      (msg as any).contextId = 'root-record'; // same as recordId = IS the context root
+
+      const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(true);
+      expect(result.edges.every(e => e.label !== 'contextRoot')).toBe(true);
+    });
+  });
+
   describe('traversal limits', () => {
     it('should fail with DepthExceeded when traversal exceeds maxDepth', async () => {
       // Create a chain of messages that reference each other via parentId.
