@@ -256,7 +256,7 @@ describe('evaluateClosure', () => {
         protocol    : 'https://example.com/proto',
         dateCreated : '2025-01-01T00:00:00.000000Z',
       });
-      (msg as any).authorization = { authorSignature: { payload } };
+      (msg as any).authorization = { signature: { payload, signatures: [{ protected: payload, signature: 'fake' }] } };
 
       const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
       const grantRecord = mockMessage({ interface: 'Records', method: 'Write' });
@@ -282,7 +282,7 @@ describe('evaluateClosure', () => {
         protocol    : 'https://example.com/proto',
         dateCreated : '2025-01-01T00:00:00.000000Z',
       });
-      (msg as any).authorization = { authorSignature: { payload } };
+      (msg as any).authorization = { signature: { payload, signatures: [{ protected: payload, signature: 'fake' }] } };
 
       const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
 
@@ -822,11 +822,15 @@ describe('evaluateClosure', () => {
       });
       (msg as any).recordId = 'comment-1';
       (msg as any).contextId = 'thread-1/comment-1';
-      // Proper JWS authorization: signature has kid in protected header,
-      // authorSignature has protocolRole in payload.
+      // Real DWN authorization structure:
+      // authorization.signature is a GeneralJws with:
+      //   - payload: base64url JSON with protocolRole
+      //   - signatures[0].protected: base64url JSON with kid (for author extraction)
       (msg as any).authorization = {
-        signature       : { signatures: [{ protected: protectedHeader, signature: 'fake' }] },
-        authorSignature : { payload: rolePayload },
+        signature: {
+          payload    : rolePayload,
+          signatures : [{ protected: protectedHeader, signature: 'fake' }],
+        },
       };
 
       const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
@@ -926,8 +930,10 @@ describe('evaluateClosure', () => {
       (msg as any).recordId = 'comment-1';
       (msg as any).contextId = 'thread-1/comment-1';
       (msg as any).authorization = {
-        signature       : { signatures: [{ protected: absentProtectedHeader, signature: 'fake' }] },
-        authorSignature : { payload: absentRolePayload },
+        signature: {
+          payload    : absentRolePayload,
+          signatures : [{ protected: absentProtectedHeader, signature: 'fake' }],
+        },
       };
 
       const parentThread = mockMessage({ interface: 'Records', method: 'Write' });

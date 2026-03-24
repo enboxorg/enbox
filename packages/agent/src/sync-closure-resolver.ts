@@ -113,8 +113,9 @@ function extractAuthorizationDeps(message: GenericMessage): ClosureDependencyEdg
   const auth = (message as any).authorization;
   if (!auth) { return []; }
 
-  // Check for permissionGrantId in the signature payload.
-  const payload = auth.authorSignature?.payload ?? auth.payload;
+  // The signature payload is at authorization.signature.payload (GeneralJws).
+  // This is the base64url-encoded JSON containing permissionGrantId, protocolRole, etc.
+  const payload = auth.signature?.payload;
   if (payload) {
     try {
       // Payload is base64url-encoded JSON.
@@ -327,7 +328,8 @@ function extractProtocolAwareDeps(
   // This is extracted from the authorization payload regardless of $ref presence.
   const auth = (message as any).authorization;
   if (auth && protocolDef?.uses) {
-    const payload = auth.authorSignature?.payload ?? auth.payload;
+    // Same payload path as class 3: authorization.signature.payload
+    const payload = auth.signature?.payload;
     if (payload) {
       try {
         const decoded = JSON.parse(
