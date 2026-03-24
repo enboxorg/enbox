@@ -352,7 +352,11 @@ function extractProtocolAwareDeps(
             // Mirrors verifyInvokedRole() from protocol-authorization-action.ts:
             // queries by protocol + protocolPath + recipient + contextId prefix.
             const roleProtocolPath = protocolRole.substring(roleColonIdx + 1);
-            const messageAuthor = decoded.authorDid ?? decoded.author;
+            // Derive author from the message's JWS signature, not from the
+            // payload. The payload does NOT contain an author field — the
+            // DWN SDK extracts it from the signature's `kid` header via
+            // Message.getAuthor().
+            const messageAuthor = Message.getAuthor(message);
             const messageContextId = (message as any).contextId as string | undefined;
 
             if (messageAuthor) {
@@ -380,10 +384,14 @@ function extractProtocolAwareDeps(
                 }
               }
 
+              // Cache key must include the context prefix to prevent false
+              // positives across different contexts (e.g., different threads).
+              const contextPrefix = roleFilter.contextId
+                ? JSON.stringify(roleFilter.contextId) : 'no-context';
               edges.push({
                 dependencyClass : 6,
                 label           : 'crossProtocolRoleRecord',
-                identifier      : `${roleProtocol}|${roleProtocolPath}|${messageAuthor}`,
+                identifier      : `${roleProtocol}|${roleProtocolPath}|${messageAuthor}|${contextPrefix}`,
                 identifierType  : 'filter',
                 filter          : roleFilter,
               });

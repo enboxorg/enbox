@@ -805,10 +805,13 @@ describe('evaluateClosure', () => {
         descriptor: { interface: 'Protocols', method: 'Configure', definition: { protocol: 'https://threads.example.com' } },
       } as any;
 
-      // Message with cross-protocol role invocation in authorization.
+      // Build proper JWS authorization structure.
+      // Message.getAuthor extracts DID from authorization.signature.signatures[0].protected.kid
+      const protectedHeader = Buffer.from(JSON.stringify({
+        kid: 'did:example:bob#key-1',
+      })).toString('base64url');
       const rolePayload = Buffer.from(JSON.stringify({
-        protocolRole : 'threads:thread/participant',
-        authorDid    : 'did:example:bob',
+        protocolRole: 'threads:thread/participant',
       })).toString('base64url');
 
       const msg = mockMessage({
@@ -819,7 +822,12 @@ describe('evaluateClosure', () => {
       });
       (msg as any).recordId = 'comment-1';
       (msg as any).contextId = 'thread-1/comment-1';
-      (msg as any).authorization = { authorSignature: { payload: rolePayload } };
+      // Proper JWS authorization: signature has kid in protected header,
+      // authorSignature has protocolRole in payload.
+      (msg as any).authorization = {
+        signature       : { signatures: [{ protected: protectedHeader, signature: 'fake' }] },
+        authorSignature : { payload: rolePayload },
+      };
 
       const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
       (parentThread as any).recordId = 'thread-1';
@@ -902,9 +910,11 @@ describe('evaluateClosure', () => {
         descriptor: { interface: 'Protocols', method: 'Configure', definition: { protocol: 'https://threads.example.com' } },
       } as any;
 
-      const rolePayload = Buffer.from(JSON.stringify({
-        protocolRole : 'threads:thread/participant',
-        authorDid    : 'did:example:bob',
+      const absentProtectedHeader = Buffer.from(JSON.stringify({
+        kid: 'did:example:bob#key-1',
+      })).toString('base64url');
+      const absentRolePayload = Buffer.from(JSON.stringify({
+        protocolRole: 'threads:thread/participant',
       })).toString('base64url');
 
       const msg = mockMessage({
@@ -915,7 +925,10 @@ describe('evaluateClosure', () => {
       });
       (msg as any).recordId = 'comment-1';
       (msg as any).contextId = 'thread-1/comment-1';
-      (msg as any).authorization = { authorSignature: { payload: rolePayload } };
+      (msg as any).authorization = {
+        signature       : { signatures: [{ protected: absentProtectedHeader, signature: 'fake' }] },
+        authorSignature : { payload: absentRolePayload },
+      };
 
       const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
       (parentThread as any).recordId = 'thread-1';
