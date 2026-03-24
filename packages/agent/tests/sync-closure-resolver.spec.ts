@@ -371,6 +371,215 @@ describe('evaluateClosure', () => {
     });
   });
 
+  describe('Class 4: Squash/visibility closure', () => {
+    it('should require parent context record when protocolPath has $squash', async () => {
+      // Protocol definition with $squash on the 'patch' path under 'document'.
+      const protocolDef = {
+        protocol  : 'https://example.com/proto',
+        published : true,
+        types     : { document: {}, patch: {} },
+        structure : {
+          document: {
+            patch: {
+              $squash  : true,
+              $actions : [{ who: 'anyone', can: ['create'] }],
+            },
+          },
+        },
+      };
+      const protocolConfig = {
+        descriptor: {
+          interface  : 'Protocols',
+          method     : 'Configure',
+          definition : protocolDef,
+        },
+      } as any;
+
+      const msg = mockMessage({
+        protocol     : 'https://example.com/proto',
+        protocolPath : 'document/patch',
+        parentId     : 'doc-1',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'patch-1';
+
+      const parentDoc = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentDoc as any).recordId = 'doc-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+          ['recordId:doc-1', [parentDoc]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(true);
+      expect(result.edges.some(e => e.label === 'squashParentContext')).toBe(true);
+    });
+  });
+
+  describe('Class 5: Encryption closure', () => {
+    it('should require encryption key material when type has encryptionRequired', async () => {
+      const protocolDef = {
+        protocol  : 'https://example.com/proto',
+        published : false,
+        types     : {
+          secret: {
+            schema             : 'http://secret',
+            encryptionRequired : true,
+          },
+        },
+        structure: {
+          secret: {
+            $encryption : { rootKeyId: 'key-1', publicKeyJwk: {} },
+            $actions    : [{ who: 'anyone', can: ['create'] }],
+          },
+        },
+      };
+      const protocolConfig = {
+        descriptor: {
+          interface  : 'Protocols',
+          method     : 'Configure',
+          definition : protocolDef,
+        },
+      } as any;
+
+      const msg = mockMessage({
+        protocol     : 'https://example.com/proto',
+        protocolPath : 'secret',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'secret-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(true);
+      expect(result.edges.some(e => e.label === 'encryptionKeyMaterial')).toBe(true);
+    });
+  });
+
+  describe('Class 6: Cross-protocol $ref closure', () => {
+    it('should require referenced protocol ProtocolsConfigure when path uses $ref', async () => {
+      const composingDef = {
+        protocol  : 'https://comments.example.com',
+        published : true,
+        uses      : { threads: 'https://threads.example.com' },
+        types     : { comment: {} },
+        structure : {
+          thread: {
+            $ref    : 'threads:thread',
+            comment : {
+              $actions: [{ who: 'anyone', can: ['create'] }],
+            },
+          },
+        },
+      };
+      const composingConfig = {
+        descriptor: {
+          interface  : 'Protocols',
+          method     : 'Configure',
+          definition : composingDef,
+        },
+      } as any;
+
+      const referencedConfig = {
+        descriptor: {
+          interface  : 'Protocols',
+          method     : 'Configure',
+          definition : { protocol: 'https://threads.example.com' },
+        },
+      } as any;
+
+      const msg = mockMessage({
+        protocol     : 'https://comments.example.com',
+        protocolPath : 'thread/comment',
+        parentId     : 'thread-1',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'comment-1';
+
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentThread as any).recordId = 'thread-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://comments.example.com', [composingConfig]],
+          ['protocol:https://threads.example.com', [referencedConfig]],
+          ['recordId:thread-1', [parentThread]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://comments.example.com',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(true);
+      expect(result.edges.some(e => e.label === 'crossProtocolConfig')).toBe(true);
+    });
+
+    it('should fail when referenced protocol ProtocolsConfigure is missing', async () => {
+      const composingDef = {
+        protocol  : 'https://comments.example.com',
+        published : true,
+        uses      : { threads: 'https://threads.example.com' },
+        types     : { comment: {} },
+        structure : {
+          thread: {
+            $ref    : 'threads:thread',
+            comment : {
+              $actions: [{ who: 'anyone', can: ['create'] }],
+            },
+          },
+        },
+      };
+      const composingConfig = {
+        descriptor: {
+          interface  : 'Protocols',
+          method     : 'Configure',
+          definition : composingDef,
+        },
+      } as any;
+
+      const msg = mockMessage({
+        protocol     : 'https://comments.example.com',
+        protocolPath : 'thread/comment',
+        parentId     : 'thread-1',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'comment-1';
+
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentThread as any).recordId = 'thread-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://comments.example.com', [composingConfig]],
+          // No threads protocol config — missing
+          ['recordId:thread-1', [parentThread]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://comments.example.com',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.CrossProtocolReferenceMissing);
+    });
+  });
+
   describe('traversal limits', () => {
     it('should fail with DepthExceeded when traversal exceeds maxDepth', async () => {
       // Create a chain of messages that reference each other via parentId.
