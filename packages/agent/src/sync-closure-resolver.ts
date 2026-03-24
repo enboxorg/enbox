@@ -8,6 +8,7 @@ import type { GenericMessage, MessageStore } from '@enbox/dwn-sdk-js';
 
 import { Message } from '@enbox/dwn-sdk-js';
 
+import { isMultiPartyContext } from './protocol-utils.js';
 import { ClosureFailureCode, createClosureContext } from './sync-closure-types.js';
 
 // ---------------------------------------------------------------------------
@@ -248,29 +249,29 @@ function extractProtocolAwareDeps(
         identifierType  : 'protocol',
       });
 
-      // Context key lookup (non-enforcing scaffolding):
-      // For records with a contextId, a contextKey record in the key-delivery
-      // protocol would be needed for multi-party decryption. However, determining
-      // whether a context is actually multi-party requires evaluating the protocol's
-      // action rules ($role descendants, relational who/of rules) — which is complex
-      // rule-set tree analysis not yet implemented here.
+      // Level 3: Context key enforcement for multi-party contexts.
+      // Uses isMultiPartyContext() from protocol-utils to determine whether the
+      // record's root protocol path has $role descendants or relational who/of
+      // read rules — these indicate multi-party access where ProtocolContext
+      // encryption is used and a contextKey record is required for decryption.
       //
-      // For now, this edge is emitted as a diagnostic marker but does NOT fail
-      // closure when the context key is absent (the resolver returns a synthetic
-      // sentinel). This avoids false failures for single-party contexts where
-      // ProtocolPath encryption is used and no context key exists.
-      //
-      // Full enforcement requires: multi-party detection → if multi-party, require
-      // contextKey; if single-party, skip. Deferred to follow-up.
+      // Single-party contexts use ProtocolPath encryption (owner-only) and do
+      // NOT need a context key — the edge is skipped entirely.
       const contextId = (message as any).contextId as string | undefined;
       if (contextId) {
-        const rootContextId = contextId.split('/')[0];
-        edges.push({
-          dependencyClass : 5,
-          label           : 'contextKeyRecord',
-          identifier      : `${desc.protocol}:${rootContextId}`,
-          identifierType  : 'messageCid',
-        });
+        const rootProtocolPath = protocolPath.split('/')[0];
+        const multiParty = isMultiPartyContext(protocolDef, rootProtocolPath);
+        if (multiParty) {
+          const rootContextId = contextId.split('/')[0];
+          // Separator is '|' (not ':') because protocol URIs contain '://'
+          // which would break indexOf(':') parsing in resolveDependency.
+          edges.push({
+            dependencyClass : 5,
+            label           : 'contextKeyRecord',
+            identifier      : `${desc.protocol}|${rootContextId}`,
+            identifierType  : 'messageCid',
+          });
+        }
       }
     }
   }
@@ -680,7 +681,7 @@ async function resolveDependency(
       // tag-based query against the key-delivery protocol, not a CID lookup.
       // Identifier format is "sourceProtocol:rootContextId".
       if (edge.label === 'contextKeyRecord') {
-        const separatorIdx = edge.identifier.indexOf(':');
+        const separatorIdx = edge.identifier.indexOf('|');
         if (separatorIdx > 0) {
           const sourceProtocol = edge.identifier.substring(0, separatorIdx);
           const rootContextId = edge.identifier.substring(separatorIdx + 1);
@@ -693,11 +694,11 @@ async function resolveDependency(
             'tag.contextId' : rootContextId,
           } as any]);
           if (contextKeys.length > 0) { return contextKeys[0]; }
-          // Context key may not exist yet (single-party context, or not yet delivered).
-          // For single-party contexts, ProtocolPath encryption is used instead of
-          // ProtocolContext, so the context key is not needed. Return a synthetic
-          // sentinel to avoid false closure failures for single-party records.
-          return { descriptor: { interface: 'Synthetic', method: 'ContextKeyOptional' } } as any;
+          // No context key found. Since the edge is only emitted for multi-party
+          // contexts (isMultiPartyContext returned true), the absence of a context
+          // key means the consumer cannot decrypt this record. Return null to
+          // fail closure — the link will transition to repairing.
+          return null;
         }
       }
       return await messageStore.get(context.tenantDid, edge.identifier) ?? null;
