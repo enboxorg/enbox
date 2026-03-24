@@ -716,9 +716,11 @@ export class SyncEngineLevel implements SyncEngine {
     if (!link || link.status === 'degraded_poll') { return; }
     if (this._repairRetryTimers.has(linkKey)) { return; }
 
-    const attempts = this._repairAttempts.get(linkKey) ?? 0;
+    // attempts is already post-increment from doRepairLink, so subtract 1
+    // for the backoff index: first failure (attempts=1) → backoff[0]=1s.
+    const attempts = this._repairAttempts.get(linkKey) ?? 1;
     const backoff = SyncEngineLevel.REPAIR_BACKOFF_MS;
-    const delayMs = backoff[Math.min(attempts, backoff.length - 1)];
+    const delayMs = backoff[Math.min(attempts - 1, backoff.length - 1)];
 
     const timer = setTimeout(async (): Promise<void> => {
       this._repairRetryTimers.delete(linkKey);
@@ -823,13 +825,17 @@ export class SyncEngineLevel implements SyncEngine {
       ReplicationLedger.resetCheckpoint(link.pull, resumeToken);
       await this.ledger.saveLink(link);
 
-      // Step 5: Reopen subscriptions with the repaired checkpoint.
-      // If resumeToken is set, the subscription replays from that point.
-      // The catch-up + EOSE will deliver any writes that happened during repair.
+      // Step 5: Reopen subscriptions with the repaired checkpoints.
+      // Pull: resumeToken closes the remote→local race window.
+      // Push: push checkpoint closes the local→remote race window —
+      //   local writes during repair are replayed via catch-up.
       const target = { did, dwnUrl, delegateDid, protocol };
       await this.openLivePullSubscription(target);
       try {
-        await this.openLocalPushSubscription(target);
+        await this.openLocalPushSubscription({
+          ...target,
+          pushCursor: link.push.contiguousAppliedToken,
+        });
       } catch (pushError) {
         const pullSub = this._liveSubscriptions.find(
           s => s.did === did && s.dwnUrl === dwnUrl && s.protocol === protocol
@@ -1232,6 +1238,7 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private async openLocalPushSubscription(target: {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
+    pushCursor?: ProgressToken;
   }): Promise<void> {
     const { did, delegateDid, dwnUrl, protocol } = target;
 
@@ -1288,12 +1295,15 @@ export class SyncEngineLevel implements SyncEngine {
     };
 
     // Process the local subscription request.
+    // When a push cursor is provided (e.g., after repair), the local subscription
+    // replays events from that position, closing the race window where local
+    // writes during repair would otherwise be missed by push-on-write.
     const response = await this.agent.dwn.processRequest({
       author              : did,
       target              : did,
       messageType         : DwnInterface.MessagesSubscribe,
       granteeDid          : delegateDid,
-      messageParams       : { filters, permissionGrantId },
+      messageParams       : { filters, permissionGrantId, cursor: target.pushCursor },
       subscriptionHandler : subscriptionHandler as any,
     });
 
