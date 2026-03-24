@@ -156,20 +156,25 @@ function extractAuthorizationDeps(message: GenericMessage): ClosureDependencyEdg
 
 /**
  * Look up the ProtocolRuleSet for a given protocolPath within a protocol
- * definition's structure tree. Returns undefined if the path doesn't exist.
+ * structure tree. Returns undefined if the path doesn't exist.
+ *
+ * Mirrors `getRuleSetAtPath` from `@enbox/dwn-sdk-js/src/utils/protocols.ts`
+ * (not in public API, reimplemented here to avoid internal path coupling).
  */
-function resolveRuleSet(
-  definition: any,
+function getRuleSetAtProtocolPath(
+  structure: Record<string, any> | undefined,
   protocolPath: string,
 ): any | undefined {
-  if (!definition?.structure || !protocolPath) { return undefined; }
+  if (!structure || !protocolPath) { return undefined; }
 
   const segments = protocolPath.split('/');
-  let current = definition.structure;
+  let currentLevel: Record<string, any> = structure;
+  let current: any;
 
   for (const segment of segments) {
-    if (!current || typeof current !== 'object') { return undefined; }
-    current = current[segment];
+    if (!Object.hasOwn(currentLevel, segment)) { return undefined; }
+    current = currentLevel[segment];
+    currentLevel = current;
   }
 
   return current;
@@ -195,32 +200,20 @@ function extractProtocolAwareDeps(
   if (!protocolPath) { return []; }
 
   const edges: ClosureDependencyEdge[] = [];
-  const ruleSet = resolveRuleSet(protocolDef, protocolPath);
+  const ruleSet = getRuleSetAtProtocolPath(protocolDef?.structure, protocolPath);
 
   // --- Class 4: Squash / visibility floor ---
-  // If the protocol path has $squash: true, the closure must include the
-  // context scope root so squash scope can be determined. The runtime
-  // determines squash scope using Records.getParentContextFromOfContextId(contextId):
-  //   - Root records (contextId = recordId, no '/'): parent context is "" → unscoped
-  //   - Nested records (contextId = "a/b/c"): parent context is "a/b" → scoped
-  // For closure, the parent context root record (first segment of contextId)
-  // must be present so the subset consumer can determine what gets purged.
-  if (ruleSet?.$squash === true) {
-    const contextId = (message as any).contextId as string | undefined;
-    if (contextId && contextId.includes('/')) {
-      // Nested context — extract the root of the parent context.
-      // contextId = "rootId/childId/thisId" → parent context root = "rootId"
-      const contextRootId = contextId.split('/')[0];
-      edges.push({
-        dependencyClass : 4,
-        label           : 'squashContextRoot',
-        identifier      : contextRootId,
-        identifierType  : 'recordId',
-      });
-    }
-    // For root-level squash (contextId has no '/'), no parent context dependency
-    // is needed — squash is unscoped across all siblings at that protocolPath.
-  }
+  // The runtime's squash backstop derives scope entirely from the incoming
+  // message's own contextId (via Records.getParentContextFromOfContextId).
+  // It does NOT fetch any additional record to determine scope — the contextId
+  // is part of the message, and the $squash rule is in the ProtocolsConfigure
+  // (already a class 1 dependency). So no additional closure dependency is
+  // needed for squash. processRawMessage triggers the DWN's built-in squash
+  // resumable task which handles purging internally.
+  //
+  // Future work: if subset-specific squash side-effects are needed (where the
+  // consumer has records that the source purged), that belongs in the engine's
+  // post-apply logic, not in closure dependency extraction.
 
   // --- Class 5: Encryption ---
   // If the rule set has $encryption and the protocol type has encryptionRequired,

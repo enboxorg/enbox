@@ -372,7 +372,10 @@ describe('evaluateClosure', () => {
   });
 
   describe('Class 4: Squash/visibility closure', () => {
-    it('should require context root record for nested squash paths', async () => {
+    it('should NOT emit squash dependency edges — squash scope is derived from the message itself', async () => {
+      // The runtime derives squash scope entirely from the message's own contextId
+      // and the $squash rule in the ProtocolsConfigure (class 1 dependency).
+      // No additional record needs to be fetched for squash closure.
       const protocolDef = {
         protocol  : 'https://example.com/proto',
         published : true,
@@ -394,7 +397,6 @@ describe('evaluateClosure', () => {
         },
       } as any;
 
-      // Nested record: contextId = "doc-1/patch-1" → context root = "doc-1"
       const msg = mockMessage({
         protocol     : 'https://example.com/proto',
         protocolPath : 'document/patch',
@@ -404,13 +406,13 @@ describe('evaluateClosure', () => {
       (msg as any).recordId = 'patch-1';
       (msg as any).contextId = 'doc-1/patch-1';
 
-      const contextRoot = mockMessage({ interface: 'Records', method: 'Write' });
-      (contextRoot as any).recordId = 'doc-1';
+      const parentDoc = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentDoc as any).recordId = 'doc-1';
 
       const store = mockMessageStore({
         queryResults: new Map([
           ['protocol:https://example.com/proto', [protocolConfig]],
-          ['recordId:doc-1', [contextRoot]],
+          ['recordId:doc-1', [parentDoc]],
         ]),
       });
 
@@ -419,51 +421,8 @@ describe('evaluateClosure', () => {
       }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
-      expect(result.edges.some(e => e.label === 'squashContextRoot')).toBe(true);
-    });
-
-    it('should not require context root for root-level squash', async () => {
-      const protocolDef = {
-        protocol  : 'https://example.com/proto',
-        published : true,
-        types     : { document: {} },
-        structure : {
-          document: {
-            $squash  : true,
-            $actions : [{ who: 'anyone', can: ['create'] }],
-          },
-        },
-      };
-      const protocolConfig = {
-        descriptor: {
-          interface  : 'Protocols',
-          method     : 'Configure',
-          definition : protocolDef,
-        },
-      } as any;
-
-      // Root record: contextId = recordId (no '/') → squash is unscoped
-      const msg = mockMessage({
-        protocol     : 'https://example.com/proto',
-        protocolPath : 'document',
-        dateCreated  : '2025-01-01T00:00:00.000000Z',
-      });
-      (msg as any).recordId = 'doc-1';
-      (msg as any).contextId = 'doc-1';
-
-      const store = mockMessageStore({
-        queryResults: new Map([
-          ['protocol:https://example.com/proto', [protocolConfig]],
-        ]),
-      });
-
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
-
-      expect(result.complete).toBe(true);
-      // No squashContextRoot edge for root-level squash.
-      expect(result.edges.every(e => e.label !== 'squashContextRoot')).toBe(true);
+      // No class 4 squash edges — squash scope comes from the message itself.
+      expect(result.edges.every(e => e.dependencyClass !== 4)).toBe(true);
     });
   });
 
