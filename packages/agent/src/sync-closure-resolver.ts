@@ -215,15 +215,20 @@ function extractProtocolAwareDeps(
   // consumer has records that the source purged), that belongs in the engine's
   // post-apply logic, not in closure dependency extraction.
 
-  // --- Class 5: Encryption ---
-  // If the rule set has $encryption and the protocol type has encryptionRequired,
-  // the ProtocolsConfigure with injected $encryption keys must be present.
-  // Class 1 already ensures ProtocolsConfigure is in the closure. For class 5,
-  // we verify the actual type definition requires encryption — if so, the
-  // ProtocolsConfigure's $encryption block is the dependency (already satisfied
-  // by class 1). We add an explicit marker edge for diagnostics.
+  // --- Class 5: Encryption (protocol-definition-level only) ---
+  // Currently verifies that the ProtocolsConfigure with the injected $encryption
+  // key material is present when the type has encryptionRequired: true. This is
+  // satisfied by the same ProtocolsConfigure that class 1 ensures.
+  //
+  // This is NOT the full closure RFC meaning of encryption closure. The RFC's
+  // class 5 also requires key-delivery protocol records (context-key records
+  // used for ECDH-ES key agreement). Full key-delivery closure requires:
+  //   - Resolving the key-delivery protocol definition
+  //   - Fetching context-specific key records from the key-delivery protocol path
+  //   - Ensuring the encryption derivation chain is locally present
+  // That is follow-up work — it requires understanding the agent's
+  // KeyDeliveryProtocolDefinition and how context keys are stored.
   if (ruleSet?.$encryption) {
-    // Check if the type has encryptionRequired.
     const typeName = protocolPath.split('/').pop();
     const typeDef = protocolDef?.types?.[typeName ?? ''];
     if (typeDef?.encryptionRequired === true) {
@@ -236,10 +241,18 @@ function extractProtocolAwareDeps(
     }
   }
 
-  // --- Class 6: Cross-protocol $ref ---
-  // If the first segment of the protocol path is a $ref node, the record's
-  // parent lives in a different protocol. The referenced protocol's
-  // ProtocolsConfigure must be in the closure set.
+  // --- Class 6: Cross-protocol $ref (protocol-config-level only) ---
+  // Currently ensures the referenced protocol's ProtocolsConfigure is present.
+  // This is the first necessary step: without the referenced protocol definition,
+  // authorization of composed records cannot be evaluated.
+  //
+  // This is NOT the full closure RFC meaning of cross-protocol closure. The RFC
+  // also requires:
+  //   - The actual $ref parent record in the referenced protocol
+  //   - Cross-protocol role records used for authorization (e.g., "threads:thread/participant")
+  //   - Transitive ProtocolsConfigure chains if the referenced protocol also uses $ref
+  // That is follow-up work — it requires resolving the $ref type path in the
+  // referenced protocol's structure and fetching the specific parent record.
   const firstSegment = protocolPath.split('/')[0];
   const rootRuleSet = protocolDef?.structure?.[firstSegment];
   if (rootRuleSet?.$ref) {
