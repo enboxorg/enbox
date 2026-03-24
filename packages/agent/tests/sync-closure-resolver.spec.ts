@@ -1133,5 +1133,78 @@ describe('evaluateClosure', () => {
       expect(ctx.protocolCache.has('https://example.com/other')).toBe(true);
       expect(ctx.grantCache.has('grant-2')).toBe(true);
     });
+
+    it('should invalidate composite crossProtocolParent dep keys containing the recordId', () => {
+      const ctx = createClosureContext('did:example:alice');
+      // Composite key format: "recordId:referencedProtocol|parentId"
+      ctx.missingDeps.add('recordId:https://threads.example.com|thread-1');
+      ctx.satisfiedDeps.add('recordId:https://threads.example.com|thread-2');
+
+      const parentMsg = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentMsg as any).recordId = 'thread-1';
+
+      invalidateClosureCache(ctx, parentMsg);
+
+      // thread-1 composite key should be cleared.
+      expect(ctx.missingDeps.has('recordId:https://threads.example.com|thread-1')).toBe(false);
+      // thread-2 should remain (different recordId).
+      expect(ctx.satisfiedDeps.has('recordId:https://threads.example.com|thread-2')).toBe(true);
+    });
+
+    it('should invalidate filter-based role record dep keys matching protocol+protocolPath', () => {
+      const ctx = createClosureContext('did:example:alice');
+      const roleKey = 'filter:https://threads.example.com|thread/participant|did:example:bob|{"gte":"t1","lt":"t1\\uffff"}';
+      ctx.missingDeps.add(roleKey);
+
+      // A participant record arrives in the referenced protocol.
+      const roleMsg = mockMessage({
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : 'https://threads.example.com',
+        protocolPath : 'thread/participant',
+      });
+      (roleMsg as any).recordId = 'participant-1';
+
+      invalidateClosureCache(ctx, roleMsg);
+
+      expect(ctx.missingDeps.has(roleKey)).toBe(false);
+    });
+
+    it('should invalidate contextKeyRecord dep keys matching the protocol', () => {
+      const ctx = createClosureContext('did:example:alice');
+      // contextKeyRecord key format: "messageCid:protocol|contextId"
+      ctx.missingDeps.add('messageCid:https://example.com/chat|thread-1');
+
+      // A key-delivery record arrives for this protocol.
+      const keyMsg = mockMessage({
+        interface : 'Records',
+        method    : 'Write',
+        protocol  : 'https://example.com/chat',
+      });
+      (keyMsg as any).recordId = 'key-record-1';
+
+      invalidateClosureCache(ctx, keyMsg);
+
+      expect(ctx.missingDeps.has('messageCid:https://example.com/chat|thread-1')).toBe(false);
+    });
+
+    it('should clear stale missingDeps so re-evaluation can succeed', () => {
+      const ctx = createClosureContext('did:example:alice');
+
+      // Simulate a previously-missing parent record.
+      ctx.missingDeps.add('recordId:parent-1');
+      ctx.missingDeps.add('recordId:https://threads.example.com|parent-1');
+
+      // The parent record arrives.
+      const parentMsg = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentMsg as any).recordId = 'parent-1';
+
+      invalidateClosureCache(ctx, parentMsg);
+
+      // Both plain and composite keys should be cleared.
+      expect(ctx.missingDeps.has('recordId:parent-1')).toBe(false);
+      expect(ctx.missingDeps.has('recordId:https://threads.example.com|parent-1')).toBe(false);
+      // Next closure evaluation will re-query and find the record present.
+    });
   });
 });

@@ -185,12 +185,53 @@ export function invalidateClosureCache(
     }
   }
 
-  // Any Records message → invalidate recordId-based satisfied/missing entries.
+  // Any Records message → invalidate all dep keys that could be affected.
+  // This includes:
+  //   - plain recordId entries (class 2 parent/context/initialWrite)
+  //   - composite protocol|recordId entries (class 6 crossProtocolParent)
+  //   - filter-based entries (class 6 crossProtocolRoleRecord)
+  //   - contextKeyRecord entries (class 5)
+  // Rather than parsing every composite key format, we iterate and remove
+  // any entry whose key contains the recordId or the message's protocol.
+  // This is safe because the caches are per-tenant per-session — aggressive
+  // invalidation just causes re-queries on the next evaluation.
   if (desc.interface === 'Records') {
     const recordId = (message as any).recordId as string | undefined;
+    const protocol = desc.protocol as string | undefined;
+    const protocolPath = desc.protocolPath as string | undefined;
+
     if (recordId) {
-      context.satisfiedDeps.delete(`recordId:${recordId}`);
-      context.missingDeps.delete(`recordId:${recordId}`);
+      // Invalidate any dep key containing this recordId.
+      for (const key of context.satisfiedDeps) {
+        if (key.includes(recordId)) { context.satisfiedDeps.delete(key); }
+      }
+      for (const key of context.missingDeps) {
+        if (key.includes(recordId)) { context.missingDeps.delete(key); }
+      }
+    }
+
+    // Invalidate filter-based role record deps that match this protocol + protocolPath.
+    // These are keyed like "filter:protocol|protocolPath|author|context".
+    if (protocol && protocolPath) {
+      const filterPrefix = `filter:${protocol}|${protocolPath}`;
+      for (const key of context.satisfiedDeps) {
+        if (key.startsWith(filterPrefix)) { context.satisfiedDeps.delete(key); }
+      }
+      for (const key of context.missingDeps) {
+        if (key.startsWith(filterPrefix)) { context.missingDeps.delete(key); }
+      }
+    }
+
+    // Invalidate contextKeyRecord deps for this protocol.
+    // These are keyed like "messageCid:protocol|contextId".
+    if (protocol) {
+      const ctxKeyPrefix = `messageCid:${protocol}|`;
+      for (const key of context.satisfiedDeps) {
+        if (key.startsWith(ctxKeyPrefix)) { context.satisfiedDeps.delete(key); }
+      }
+      for (const key of context.missingDeps) {
+        if (key.startsWith(ctxKeyPrefix)) { context.missingDeps.delete(key); }
+      }
     }
   }
 }
