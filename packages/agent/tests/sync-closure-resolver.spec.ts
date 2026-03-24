@@ -484,14 +484,17 @@ describe('evaluateClosure', () => {
       expect(result.edges.some(e => e.label === 'keyDeliveryProtocol')).toBe(true);
     });
 
-    it('should require key-delivery protocol and context key for encrypted records with contextId', async () => {
+    it('should NOT require contextKey for single-party encrypted records', async () => {
+      // Single-party protocol: no $role, no relational read rules.
+      // ProtocolPath encryption is used — no context key needed.
       const protocolDef = {
         protocol  : 'https://example.com/proto',
         published : false,
         types     : { secret: { encryptionRequired: true } },
         structure : {
           secret: {
-            $encryption: { rootKeyId: 'key-1', publicKeyJwk: {} },
+            $encryption : { rootKeyId: 'key-1', publicKeyJwk: {} },
+            $actions    : [{ who: 'anyone', can: ['create'] }],
           },
         },
       };
@@ -507,11 +510,7 @@ describe('evaluateClosure', () => {
       (msg as any).recordId = 'secret-1';
       (msg as any).contextId = 'root-ctx-1/secret-1';
 
-      const keyDeliveryConfig = {
-        descriptor: { interface: 'Protocols', method: 'Configure' },
-      } as any;
-
-      // Context root record needed by class 2 context ancestry.
+      const keyDeliveryConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
       const contextRoot = mockMessage({ interface: 'Records', method: 'Write' });
       (contextRoot as any).recordId = 'root-ctx-1';
 
@@ -528,7 +527,145 @@ describe('evaluateClosure', () => {
       }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
+      // keyDeliveryProtocol edge IS present (protocol definition level).
       expect(result.edges.some(e => e.label === 'keyDeliveryProtocol')).toBe(true);
+      // contextKeyRecord edge is NOT present (single-party context).
+      expect(result.edges.every(e => e.label !== 'contextKeyRecord')).toBe(true);
+    });
+
+    it('should require contextKey for multi-party encrypted records and fail when absent', async () => {
+      // Multi-party protocol: has $role descendant → isMultiPartyContext returns true.
+      const protocolDef = {
+        protocol  : 'https://example.com/chat',
+        published : true,
+        types     : {
+          thread      : {},
+          participant : {},
+          message     : { encryptionRequired: true },
+        },
+        structure: {
+          thread: {
+            participant: {
+              $role    : true, // ← This makes it multi-party!
+              $actions : [{ who: 'anyone', can: ['read'] }],
+            },
+            message: {
+              $encryption : { rootKeyId: 'key-1', publicKeyJwk: {} },
+              $actions    : [{ role: 'thread/participant', can: ['create', 'read'] }],
+            },
+          },
+        },
+      };
+      const protocolConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: protocolDef },
+      } as any;
+
+      const msg = mockMessage({
+        protocol     : 'https://example.com/chat',
+        protocolPath : 'thread/message',
+        parentId     : 'thread-1',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'msg-1';
+      (msg as any).contextId = 'thread-1/msg-1';
+
+      const keyDeliveryConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentThread as any).recordId = 'thread-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/chat', [protocolConfig]],
+          ['protocol:https://identity.foundation/protocols/key-delivery', [keyDeliveryConfig]],
+          ['recordId:thread-1', [parentThread]],
+          // No contextKey record in the store!
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/chat',
+      }, createClosureContext('did:example:alice'));
+
+      // Closure should FAIL: multi-party context but no contextKey.
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.EncryptionDependencyMissing);
+      expect(result.failure!.edge.label).toBe('contextKeyRecord');
+    });
+
+    it('should succeed for multi-party encrypted records when contextKey is present', async () => {
+      const protocolDef = {
+        protocol  : 'https://example.com/chat',
+        published : true,
+        types     : {
+          thread      : {},
+          participant : {},
+          message     : { encryptionRequired: true },
+        },
+        structure: {
+          thread: {
+            participant: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: ['read'] }],
+            },
+            message: {
+              $encryption : { rootKeyId: 'key-1', publicKeyJwk: {} },
+              $actions    : [{ role: 'thread/participant', can: ['create', 'read'] }],
+            },
+          },
+        },
+      };
+      const protocolConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: protocolDef },
+      } as any;
+
+      const msg = mockMessage({
+        protocol     : 'https://example.com/chat',
+        protocolPath : 'thread/message',
+        parentId     : 'thread-1',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'msg-1';
+      (msg as any).contextId = 'thread-1/msg-1';
+
+      const keyDeliveryConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentThread as any).recordId = 'thread-1';
+
+      // Mock the context key as present (tag-based query returns a result).
+      // The mock store doesn't support tag queries, but the resolveDependency
+      // for contextKeyRecord queries by messageCid type, which falls through
+      // to messageStore.get(). We can mock that via getResults.
+      const contextKeyRecord = mockMessage({ interface: 'Records', method: 'Write' });
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/chat', [protocolConfig]],
+          ['protocol:https://identity.foundation/protocols/key-delivery', [keyDeliveryConfig]],
+          ['recordId:thread-1', [parentThread]],
+        ]),
+      });
+      // Override the query to return the context key for the tag-based query.
+      (store.query as any).callsFake(async (_tenant: string, filters: any[]): Promise<{ messages: GenericMessage[] }> => {
+        const filter = filters[0] ?? {};
+        if (filter.interface === 'Protocols' && filter.protocol) {
+          const key = `protocol:${filter.protocol}`;
+          if (key === 'protocol:https://example.com/chat') { return { messages: [protocolConfig] }; }
+          if (key === 'protocol:https://identity.foundation/protocols/key-delivery') { return { messages: [keyDeliveryConfig] }; }
+        }
+        if (filter['tag.protocol'] && filter['tag.contextId']) {
+          return { messages: [contextKeyRecord] };
+        }
+        if (filter.recordId) {
+          if (filter.recordId === 'thread-1') { return { messages: [parentThread] }; }
+        }
+        return { messages: [] };
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/chat',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'contextKeyRecord')).toBe(true);
     });
   });
