@@ -126,3 +126,64 @@ export function createClosureContext(tenantDid: string, maxDepth?: number): Clos
     maxDepth      : maxDepth ?? 32,
   };
 }
+
+/**
+ * Invalidate cached entries that may be affected by a newly processed message.
+ * Called after `processRawMessage` succeeds to ensure subsequent closure
+ * evaluations see the updated state.
+ *
+ * - `ProtocolsConfigure` → clears protocolCache for that protocol URI
+ * - Permissions grant write → clears grantCache for that recordId
+ * - Permissions revocation → clears grantCache for the parent grantId
+ * - Any Records message → clears satisfiedDeps/missingDeps for that recordId
+ *   (the message may have changed what's locally present)
+ */
+export function invalidateClosureCache(
+  context: ClosureEvaluationContext,
+  message: GenericMessage,
+): void {
+  const desc = message.descriptor as Record<string, unknown>;
+
+  // ProtocolsConfigure update → invalidate protocol cache.
+  if (desc.interface === 'Protocols' && desc.method === 'Configure') {
+    const protocol = desc.definition
+      ? (desc.definition as any).protocol as string | undefined
+      : undefined;
+    if (protocol) {
+      context.protocolCache.delete(protocol);
+    }
+  }
+
+  // Permissions protocol messages → invalidate grant/revocation cache.
+  if (desc.protocol === 'https://identity.foundation/dwn/permissions') {
+    const recordId = (message as any).recordId as string | undefined;
+    const protocolPath = desc.protocolPath as string | undefined;
+
+    if (protocolPath === 'grant' && recordId) {
+      // Grant write → invalidate the grant entry.
+      context.grantCache.delete(recordId);
+      // Also clear the satisfied/missing entries for this grant.
+      context.satisfiedDeps.delete(`grantId:${recordId}`);
+      context.missingDeps.delete(`grantId:${recordId}`);
+    }
+
+    if (protocolPath === 'grant/revocation') {
+      // Revocation write → invalidate the parent grant's revocation cache.
+      const parentId = desc.parentId as string | undefined;
+      if (parentId) {
+        context.grantCache.delete(`revocation:${parentId}`);
+        context.satisfiedDeps.delete(`grantId:${parentId}`);
+        context.missingDeps.delete(`grantId:${parentId}`);
+      }
+    }
+  }
+
+  // Any Records message → invalidate recordId-based satisfied/missing entries.
+  if (desc.interface === 'Records') {
+    const recordId = (message as any).recordId as string | undefined;
+    if (recordId) {
+      context.satisfiedDeps.delete(`recordId:${recordId}`);
+      context.missingDeps.delete(`recordId:${recordId}`);
+    }
+  }
+}

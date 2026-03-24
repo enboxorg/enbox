@@ -13,10 +13,10 @@ import type { PermissionsApi } from './types/permissions.js';
 import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
 import type { PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
 
-import { createClosureContext } from './sync-closure-types.js';
 import { evaluateClosure } from './sync-closure-resolver.js';
 import { MAX_PENDING_TOKENS } from './types/sync.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
+import { createClosureContext, invalidateClosureCache } from './sync-closure-types.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
@@ -1167,6 +1167,14 @@ export class SyncEngineLevel implements SyncEngine {
           }
 
           await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
+
+          // Invalidate closure cache entries that may be affected by this message.
+          // Must run before closure validation so subsequent evaluations in the
+          // same session see the updated local state.
+          const closureCtxForInvalidation = this._closureContexts.get(did);
+          if (closureCtxForInvalidation) {
+            invalidateClosureCache(closureCtxForInvalidation, event.message);
+          }
 
           // Closure validation for scoped subset sync (Phase 3).
           // For protocol-scoped links, verify that all hard dependencies for

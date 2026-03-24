@@ -3,7 +3,7 @@ import type { GenericMessage, MessageStore } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { ClosureFailureCode, createClosureContext } from '../src/sync-closure-types.js';
+import { ClosureFailureCode, createClosureContext, invalidateClosureCache } from '../src/sync-closure-types.js';
 import { evaluateClosure, evaluateClosureBatch } from '../src/sync-closure-resolver.js';
 
 // ---------------------------------------------------------------------------
@@ -461,6 +461,95 @@ describe('evaluateClosure', () => {
       expect(result.complete).toBe(true);
       // No queries should have been made — dependency was pre-satisfied.
       expect((store.query as sinon.SinonStub).called).toBe(false);
+    });
+  });
+
+  describe('invalidateClosureCache', () => {
+    it('should invalidate protocolCache when a ProtocolsConfigure is processed', () => {
+      const ctx = createClosureContext('did:example:alice');
+      ctx.protocolCache.set('https://example.com/proto', { some: 'cached-definition' });
+
+      const protocolMsg = mockMessage({
+        interface  : 'Protocols',
+        method     : 'Configure',
+        definition : { protocol: 'https://example.com/proto' },
+      });
+
+      invalidateClosureCache(ctx, protocolMsg);
+
+      expect(ctx.protocolCache.has('https://example.com/proto')).toBe(false);
+    });
+
+    it('should invalidate grantCache when a grant write is processed', () => {
+      const ctx = createClosureContext('did:example:alice');
+      ctx.grantCache.set('grant-1', mockMessage());
+      ctx.satisfiedDeps.add('grantId:grant-1');
+
+      const grantMsg = mockMessage({
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : 'https://identity.foundation/dwn/permissions',
+        protocolPath : 'grant',
+      });
+      (grantMsg as any).recordId = 'grant-1';
+
+      invalidateClosureCache(ctx, grantMsg);
+
+      expect(ctx.grantCache.has('grant-1')).toBe(false);
+      expect(ctx.satisfiedDeps.has('grantId:grant-1')).toBe(false);
+    });
+
+    it('should invalidate grantCache revocation entry when a revocation is processed', () => {
+      const ctx = createClosureContext('did:example:alice');
+      ctx.grantCache.set('revocation:grant-1', mockMessage());
+      ctx.satisfiedDeps.add('grantId:grant-1');
+
+      const revocationMsg = mockMessage({
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : 'https://identity.foundation/dwn/permissions',
+        protocolPath : 'grant/revocation',
+        parentId     : 'grant-1',
+      });
+
+      invalidateClosureCache(ctx, revocationMsg);
+
+      expect(ctx.grantCache.has('revocation:grant-1')).toBe(false);
+      expect(ctx.satisfiedDeps.has('grantId:grant-1')).toBe(false);
+    });
+
+    it('should invalidate recordId-based satisfied/missing entries on any Records message', () => {
+      const ctx = createClosureContext('did:example:alice');
+      ctx.satisfiedDeps.add('recordId:record-1');
+      ctx.missingDeps.add('recordId:record-2');
+
+      const recordMsg = mockMessage({ interface: 'Records', method: 'Write' });
+      (recordMsg as any).recordId = 'record-1';
+      invalidateClosureCache(ctx, recordMsg);
+      expect(ctx.satisfiedDeps.has('recordId:record-1')).toBe(false);
+
+      const recordMsg2 = mockMessage({ interface: 'Records', method: 'Write' });
+      (recordMsg2 as any).recordId = 'record-2';
+      invalidateClosureCache(ctx, recordMsg2);
+      expect(ctx.missingDeps.has('recordId:record-2')).toBe(false);
+    });
+
+    it('should not affect unrelated cache entries', () => {
+      const ctx = createClosureContext('did:example:alice');
+      ctx.protocolCache.set('https://example.com/other', { some: 'definition' });
+      ctx.grantCache.set('grant-2', mockMessage());
+
+      const protocolMsg = mockMessage({
+        interface  : 'Protocols',
+        method     : 'Configure',
+        definition : { protocol: 'https://example.com/proto' },
+      });
+
+      invalidateClosureCache(ctx, protocolMsg);
+
+      // Other entries should remain.
+      expect(ctx.protocolCache.has('https://example.com/other')).toBe(true);
+      expect(ctx.grantCache.has('grant-2')).toBe(true);
     });
   });
 });
