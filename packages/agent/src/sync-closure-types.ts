@@ -185,16 +185,15 @@ export function invalidateClosureCache(
     }
   }
 
-  // Any Records message → invalidate all dep keys that could be affected.
-  // This includes:
+  // Any Records message → invalidate dep keys that could be affected.
+  // Handles multiple key formats:
   //   - plain recordId entries (class 2 parent/context/initialWrite)
   //   - composite protocol|recordId entries (class 6 crossProtocolParent)
-  //   - filter-based entries (class 6 crossProtocolRoleRecord)
-  //   - contextKeyRecord entries (class 5)
-  // Rather than parsing every composite key format, we iterate and remove
-  // any entry whose key contains the recordId or the message's protocol.
-  // This is safe because the caches are per-tenant per-session — aggressive
-  // invalidation just causes re-queries on the next evaluation.
+  //   - filter-based entries keyed by protocol+protocolPath (class 6 role records)
+  //   - contextKeyRecord entries keyed by source protocol from tags (class 5)
+  // Uses boundary-aware matching for recordId to avoid substring collisions,
+  // prefix matching for filter/contextKey entries, and tag-based source
+  // protocol extraction for key-delivery records.
   if (desc.interface === 'Records') {
     const recordId = (message as any).recordId as string | undefined;
     const protocol = desc.protocol as string | undefined;
