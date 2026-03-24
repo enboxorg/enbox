@@ -2138,5 +2138,44 @@ describe('SyncEngineLevel — private methods', () => {
       const pushTarget = pushSubStub.firstCall.args[0];
       expect(pushTarget.pushCursor).toEqual(pushToken);
     });
+
+    it('should bail if teardown occurs during repair (generation check)', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
+        pull           : {}, push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+
+      const closeStub = sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
+
+      // Stub getLocalRoot to simulate an async operation during which teardown occurs.
+      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
+        // Simulate teardown by incrementing the generation.
+        (engine as any)._syncGeneration++;
+        return 'root-a';
+      });
+
+      const openPullStub = sinon.stub(engine as any, 'openLivePullSubscription').resolves();
+
+      const saveStub = sinon.stub().resolves();
+      const setStatusStub = sinon.stub().resolves();
+      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+
+      await (engine as any).doRepairLink(linkKey);
+
+      // closeLinkSubscriptions should have been called (before the generation check).
+      expect(closeStub.calledOnce).toBe(true);
+
+      // But subscriptions should NOT be reopened — repair bailed after getLocalRoot.
+      expect(openPullStub.called).toBe(false);
+
+      // Link should NOT have been set to live.
+      expect(setStatusStub.calledWith(link, 'live')).toBe(false);
+    });
   });
 });
