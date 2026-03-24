@@ -631,10 +631,9 @@ describe('evaluateClosure', () => {
       const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
       (parentThread as any).recordId = 'thread-1';
 
-      // Mock the context key as present (tag-based query returns a result).
-      // The mock store doesn't support tag queries, but the resolveDependency
-      // for contextKeyRecord queries by messageCid type, which falls through
-      // to messageStore.get(). We can mock that via getResults.
+      // Mock the context key as present. The resolveDependency for
+      // contextKeyRecord uses a tag-based query (tag.protocol + tag.contextId).
+      // We override the mock store's query stub below to handle this.
       const contextKeyRecord = mockMessage({ interface: 'Records', method: 'Write' });
 
       const store = mockMessageStore({
