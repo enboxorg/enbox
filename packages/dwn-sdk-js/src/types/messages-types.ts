@@ -10,7 +10,9 @@ export type MessagesFilter = {
   interface?: string;
   method?: string;
   protocol?: string;
-  protocolPath?: string;
+  /** Prefix filter for protocolPath. Matches records whose protocolPath equals
+   *  the prefix or starts with the prefix followed by '/'. */
+  protocolPathPrefix?: string;
   messageTimestamp?: RangeCriterion;
 };
 

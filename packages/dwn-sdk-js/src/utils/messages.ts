@@ -78,12 +78,26 @@ export class Messages {
   private static convertFilter(filter: MessagesFilter): Filter {
     const filterCopy = { ...filter } as Filter;
 
-    const { messageTimestamp } = filter;
+    const { messageTimestamp, protocolPathPrefix } = filter;
     const messageTimestampFilter = messageTimestamp ? FilterUtility.convertRangeCriterion(messageTimestamp) : undefined;
     if (messageTimestampFilter) {
       filterCopy.messageTimestamp = messageTimestampFilter;
       delete filterCopy.dateUpdated;
     }
+
+    // Convert protocolPathPrefix into a protocolPath range filter.
+    // The range gte: prefix, lt: prefix + '/\uffff' matches:
+    //   - exact: 'post' (prefix itself)
+    //   - children: 'post/attachment', 'post/comment', etc.
+    //   - NOT siblings: 'poster', 'postfix' (excluded because '/' < any alphanumeric)
+    if (protocolPathPrefix !== undefined) {
+      delete (filterCopy as any).protocolPathPrefix;
+      filterCopy.protocolPath = {
+        gte : protocolPathPrefix,
+        lt  : protocolPathPrefix + '/\uffff',
+      };
+    }
+
     return filterCopy as Filter;
   }
 }

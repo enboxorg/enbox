@@ -598,10 +598,11 @@ export function testMessagesSubscribeHandler(): void {
 
           });
 
-          it('allows subscribe of protocolPath filtered messages within a single protocol', async () => {
+          it('allows subscribe of protocolPathPrefix filtered messages within a single protocol', async () => {
             // scenario: Alice installs a protocol with two paths (post, post/attachment).
-            // She subscribes with a protocolPath filter for 'post' only.
-            // When she writes records to both paths, only the 'post' records should be received.
+            // She subscribes with a protocolPathPrefix filter for 'post'.
+            // Both 'post' and 'post/attachment' records should be received (prefix semantics).
+            // A ProtocolsConfigure event (which has no protocolPath) should NOT be received.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
@@ -613,23 +614,24 @@ export function testMessagesSubscribeHandler(): void {
             const { status: freeForAllReplyStatus } = await dwn.processMessage(alice.did, freeForAllConfigure);
             expect(freeForAllReplyStatus.code).toBe(202);
 
-            // subscribe with protocolPath filter for 'post' only
-            const postMessageCids: string[] = [];
-            const postHandler = async (msg: SubscriptionMessage):Promise<void> => {
+            // subscribe with protocolPathPrefix filter for 'post' — should match
+            // 'post' AND 'post/attachment' but NOT unrelated paths or ProtocolsConfigure
+            const prefixMessageCids: string[] = [];
+            const prefixHandler = async (msg: SubscriptionMessage):Promise<void> => {
               if (msg.type !== 'event') { return; }
               const { message } = msg.event;
               const messageCid = await Message.getCid(message);
-              postMessageCids.push(messageCid);
+              prefixMessageCids.push(messageCid);
             };
 
-            const { message: postSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
+            const { message: prefixSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
               author  : alice,
-              filters : [{ protocol: freeForAll.protocol, protocolPath: 'post' }],
+              filters : [{ protocol: freeForAll.protocol, protocolPathPrefix: 'post' }],
             });
-            const postReply = await dwn.processMessage(alice.did, postSubscribe, { subscriptionHandler: postHandler });
-            expect(postReply.status.code).toBe(200);
+            const prefixReply = await dwn.processMessage(alice.did, prefixSubscribe, { subscriptionHandler: prefixHandler });
+            expect(prefixReply.status.code).toBe(200);
 
-            // subscribe to all messages as a control
+            // subscribe to all protocol messages as a control
             const allMessageCids: string[] = [];
             const allHandler = async (msg: SubscriptionMessage):Promise<void> => {
               if (msg.type !== 'event') { return; }
@@ -639,7 +641,8 @@ export function testMessagesSubscribeHandler(): void {
             };
 
             const { message: allSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
-              author: alice,
+              author  : alice,
+              filters : [{ protocol: freeForAll.protocol }],
             });
             const allReply = await dwn.processMessage(alice.did, allSubscribe, { subscriptionHandler: allHandler });
             expect(allReply.status.code).toBe(200);
@@ -664,19 +667,18 @@ export function testMessagesSubscribeHandler(): void {
             const attachmentWriteReply = await dwn.processMessage(alice.did, attachmentMessage, { dataStream: attachmentDataStream });
             expect(attachmentWriteReply.status.code).toBe(202);
 
-            // verify: all-messages subscription received both records
+            // verify: prefix-filtered subscription received BOTH records (prefix semantics)
             await Poller.pollUntilSuccessOrTimeout(async () => {
+              // control subscription received both records
               expect(allMessageCids.length).toBe(2);
-              const expectedAllCids = [
+
+              // prefix subscription also received both 'post' and 'post/attachment'
+              expect(prefixMessageCids.length).toBe(2);
+              const expectedPrefixCids = [
                 await Message.getCid(postMessage),
                 await Message.getCid(attachmentMessage),
               ];
-              expect(allMessageCids.sort()).toEqual(expectedAllCids.sort());
-
-              // protocolPath-filtered subscription received only the 'post' record
-              expect(postMessageCids.length).toBe(1);
-              const expectedPostCids = [await Message.getCid(postMessage)];
-              expect(postMessageCids.sort()).toEqual(expectedPostCids.sort());
+              expect(prefixMessageCids.sort()).toEqual(expectedPrefixCids.sort());
             });
           });
 
