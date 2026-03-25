@@ -1188,10 +1188,15 @@ export class SyncEngineLevel implements SyncEngine {
         // Subset scope filtering: if the link has protocolPath/contextId prefixes,
         // skip events that don't match. This is agent-side filtering because
         // MessagesSubscribe only supports protocol-level filtering today.
-        // Skipped events still advance receivedToken (for gap detection) but
-        // are not processed or assigned ordinals.
+        //
+        // Skipped events MUST advance contiguousAppliedToken — otherwise the
+        // link would replay the same filtered-out events indefinitely after
+        // reconnect/repair. This is safe because the event is intentionally
+        // excluded from this scope and doesn't need processing.
         if (link && !isEventInScope(event.message, link.scope)) {
           ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
+          ReplicationLedger.commitContiguousToken(link.pull, subMessage.cursor);
+          await this.ledger.saveLink(link);
           return;
         }
 

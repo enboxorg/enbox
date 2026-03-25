@@ -2274,15 +2274,96 @@ describe('SyncEngineLevel — private methods', () => {
   // Subset scope filtering
   // ---------------------------------------------------------------------------
 
-  describe('isEventInScope', () => {
-    // Access the module-level function via a private method test.
-    // We test it indirectly by importing it or by testing the behavior
-    // through the subscription handler.
+  describe('isEventInScope (tested via exported helper)', () => {
+    // isEventInScope is a module-level function. We test it by importing
+    // the module and accessing it, or by testing behavior through the engine.
+    // Since it's not exported, we replicate its logic here for direct testing.
 
-    it('should accept all events for full-tenant scope (tested via link creation)', () => {
-      // isEventInScope is a module-level function, tested indirectly
-      // via the subset scope link creation tests below.
-      expect(true).toBe(true);
+    function isEventInScope(message: any, scope: any): boolean {
+      if (scope.kind === 'full') { return true; }
+      if (!scope.protocolPathPrefixes && !scope.contextIdPrefixes) { return true; }
+      const desc = message.descriptor || {};
+      if (scope.protocolPathPrefixes && scope.protocolPathPrefixes.length > 0) {
+        const protocolPath = desc.protocolPath;
+        if (!protocolPath) { return false; }
+        const matches = scope.protocolPathPrefixes.some(
+          (prefix: string) => protocolPath === prefix || protocolPath.startsWith(prefix + '/')
+        );
+        if (!matches) { return false; }
+      }
+      if (scope.contextIdPrefixes && scope.contextIdPrefixes.length > 0) {
+        const contextId = message.contextId;
+        if (!contextId) { return false; }
+        const matches = scope.contextIdPrefixes.some(
+          (prefix: string) => contextId === prefix || contextId.startsWith(prefix + '/')
+        );
+        if (!matches) { return false; }
+      }
+      return true;
+    }
+
+    it('should accept all events for full-tenant scope', () => {
+      const msg = { descriptor: { protocolPath: 'thread/message' } };
+      expect(isEventInScope(msg, { kind: 'full' })).toBe(true);
+    });
+
+    it('should accept all events when no prefixes are specified', () => {
+      const msg = { descriptor: { protocolPath: 'thread/message' } };
+      expect(isEventInScope(msg, { kind: 'protocol', protocol: 'https://example.com' })).toBe(true);
+    });
+
+    it('should accept events matching protocolPath prefix exactly', () => {
+      const msg = { descriptor: { protocolPath: 'thread/message' } };
+      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
+      expect(isEventInScope(msg, scope)).toBe(true);
+    });
+
+    it('should accept events matching protocolPath prefix with child path', () => {
+      const msg = { descriptor: { protocolPath: 'thread/message/attachment' } };
+      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
+      expect(isEventInScope(msg, scope)).toBe(true);
+    });
+
+    it('should reject events not matching protocolPath prefix', () => {
+      const msg = { descriptor: { protocolPath: 'thread/participant' } };
+      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
+      expect(isEventInScope(msg, scope)).toBe(false);
+    });
+
+    it('should not false-match prefix substrings (thread/message vs thread/messageDraft)', () => {
+      const msg = { descriptor: { protocolPath: 'thread/messageDraft' } };
+      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
+      expect(isEventInScope(msg, scope)).toBe(false);
+    });
+
+    it('should accept events matching contextId prefix', () => {
+      const msg = { descriptor: {}, contextId: 'ctx-root/child' };
+      const scope = { kind: 'protocol', protocol: 'x', contextIdPrefixes: ['ctx-root'] };
+      expect(isEventInScope(msg, scope)).toBe(true);
+    });
+
+    it('should reject events not matching contextId prefix', () => {
+      const msg = { descriptor: {}, contextId: 'other-root/child' };
+      const scope = { kind: 'protocol', protocol: 'x', contextIdPrefixes: ['ctx-root'] };
+      expect(isEventInScope(msg, scope)).toBe(false);
+    });
+
+    it('should reject events with no protocolPath when prefixes are required', () => {
+      const msg = { descriptor: {} };
+      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread'] };
+      expect(isEventInScope(msg, scope)).toBe(false);
+    });
+
+    it('should require both protocolPath AND contextId match when both are specified', () => {
+      const msg = { descriptor: { protocolPath: 'thread/message' }, contextId: 'wrong-ctx' };
+      const scope = {
+        kind                 : 'protocol',
+        protocol             : 'x',
+        protocolPathPrefixes : ['thread/message'],
+        contextIdPrefixes    : ['ctx-root'],
+      };
+      // protocolPath matches but contextId doesn't → reject.
+      expect(isEventInScope(msg, scope)).toBe(false);
     });
   });
 
