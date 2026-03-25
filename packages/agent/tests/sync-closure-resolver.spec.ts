@@ -1225,8 +1225,8 @@ describe('evaluateClosure', () => {
       });
 
       const ctx = createClosureContext('did:example:alice');
-      // Pre-populate the satisfied set with composite key format.
-      ctx.satisfiedDeps.add('protocol:https://example.com/proto');
+      // Pre-populate the satisfied set with the label:identifierType:identifier key format.
+      ctx.satisfiedDeps.add('protocolsConfigure:protocol:https://example.com/proto');
 
       const msg = mockMessage({ protocol: 'https://example.com/proto', dateCreated: '2025-01-01T00:00:00.000000Z' });
       const result = await evaluateClosure(msg, store, {
@@ -1258,7 +1258,7 @@ describe('evaluateClosure', () => {
     it('should invalidate grantCache when a grant write is processed', () => {
       const ctx = createClosureContext('did:example:alice');
       ctx.grantCache.set('grant-1', mockMessage());
-      ctx.satisfiedDeps.add('grantId:grant-1');
+      ctx.satisfiedDeps.add('permissionGrant:grantId:grant-1');
 
       const grantMsg = mockMessage({
         interface    : 'Records',
@@ -1271,13 +1271,14 @@ describe('evaluateClosure', () => {
       invalidateClosureCache(ctx, grantMsg);
 
       expect(ctx.grantCache.has('grant-1')).toBe(false);
-      expect(ctx.satisfiedDeps.has('grantId:grant-1')).toBe(false);
+      expect(ctx.satisfiedDeps.has('permissionGrant:grantId:grant-1')).toBe(false);
     });
 
     it('should invalidate grantCache revocation entry when a revocation is processed', () => {
       const ctx = createClosureContext('did:example:alice');
       ctx.grantCache.set('revocation:grant-1', mockMessage());
-      ctx.satisfiedDeps.add('grantId:grant-1');
+      ctx.satisfiedDeps.add('grantRevocation:grantId:grant-1');
+      ctx.satisfiedDeps.add('permissionGrant:grantId:grant-1');
 
       const revocationMsg = mockMessage({
         interface    : 'Records',
@@ -1290,7 +1291,8 @@ describe('evaluateClosure', () => {
       invalidateClosureCache(ctx, revocationMsg);
 
       expect(ctx.grantCache.has('revocation:grant-1')).toBe(false);
-      expect(ctx.satisfiedDeps.has('grantId:grant-1')).toBe(false);
+      expect(ctx.satisfiedDeps.has('grantRevocation:grantId:grant-1')).toBe(false);
+      expect(ctx.satisfiedDeps.has('permissionGrant:grantId:grant-1')).toBe(false);
     });
 
     it('should invalidate recordId-based satisfied/missing entries on any Records message', () => {

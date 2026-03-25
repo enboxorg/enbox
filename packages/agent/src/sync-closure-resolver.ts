@@ -663,7 +663,10 @@ async function resolveEdges(
   for (const edge of edges) {
     allEdges.push(edge);
 
-    const depKey = `${edge.identifierType}:${edge.identifier}`;
+    // Include label in dep key to distinguish edges with the same identifier
+    // but different semantics (e.g., permissionGrant vs grantRevocation both
+    // use identifierType:'grantId' with the same grantId).
+    const depKey = `${edge.label}:${edge.identifierType}:${edge.identifier}`;
     if (context.satisfiedDeps.has(depKey)) { continue; }
     if (context.missingDeps.has(depKey)) {
       return {
@@ -810,15 +813,25 @@ async function resolveDependency(
           protocolPath      : 'grant/revocation',
           isLatestBaseState : true,
         }]);
-        // If no revocation exists, the dependency is still satisfied (grant is active).
-        // Store whatever we found (or the grant itself as a sentinel) so we don't re-query.
-        const grantForSentinel = context.grantCache.get(edge.identifier);
-        const result = revocations.length > 0 ? revocations[0] : (grantForSentinel ?? null);
+        // Store the result. If no revocation exists, store an explicit synthetic
+        // sentinel — never use the grant record as a sentinel, because
+        // validateGrantTemporal checks descriptor.interface !== 'Synthetic' to
+        // distinguish real revocations from "no revocation" markers.
+        // Select the oldest revocation (matching SDK's Message.getOldestMessage logic).
+        // The oldest revocation determines the temporal boundary — messages at or after
+        // its timestamp are rejected.
+        let oldestRevocation: GenericMessage | undefined;
+        for (const rev of revocations) {
+          const revTs = (rev.descriptor as any).messageTimestamp as string;
+          if (!oldestRevocation || revTs < (oldestRevocation.descriptor as any).messageTimestamp) {
+            oldestRevocation = rev;
+          }
+        }
+
+        const noRevocationSentinel = { descriptor: { interface: 'Synthetic', method: 'NoRevocation' } } as any;
+        const result = oldestRevocation ?? noRevocationSentinel;
         context.grantCache.set(cacheKey, result);
-        // Revocation presence or absence is always satisfiable — the closure
-        // question is "can we evaluate grant validity?" and we can as long as
-        // we have the grant record (already a separate edge).
-        return result ?? { descriptor: { interface: 'Synthetic', method: 'NoRevocation' } } as any;
+        return result;
       }
 
       // Grant record lookup.
