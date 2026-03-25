@@ -30,6 +30,7 @@ async function waitFor(
     if (condition()) { return; }
     await new Promise(r => setTimeout(r, intervalMs));
   }
+  throw new Error(`waitFor timed out after ${timeoutMs}ms`);
 }
 
 describe('sync live handler path — real subscriptions via LocalDwnRpcShim', () => {
