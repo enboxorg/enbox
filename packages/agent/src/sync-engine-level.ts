@@ -1425,6 +1425,21 @@ export class SyncEngineLevel implements SyncEngine {
       // replay after repair/reconnect (same reason as the pull side).
       const pushLink = this._activeLinks.get(this.buildCursorKey(did, dwnUrl, protocol));
       if (pushLink && !isEventInScope(subMessage.event.message, pushLink.scope)) {
+        // Guard: only mutate durable state when the link is live/initializing.
+        // During repair/degraded_poll, orchestration owns checkpoint progression.
+        if (pushLink.status !== 'live' && pushLink.status !== 'initializing') {
+          return;
+        }
+
+        // Validate token domain before committing — a stream/epoch mismatch
+        // on the local EventLog should trigger repair, not silently overwrite.
+        if (!ReplicationLedger.validateTokenDomain(pushLink.push, subMessage.cursor)) {
+          await this.transitionToRepairing(
+            this.buildCursorKey(did, dwnUrl, protocol), pushLink
+          );
+          return;
+        }
+
         ReplicationLedger.setReceivedToken(pushLink.push, subMessage.cursor);
         ReplicationLedger.commitContiguousToken(pushLink.push, subMessage.cursor);
         await this.ledger.saveLink(pushLink);
