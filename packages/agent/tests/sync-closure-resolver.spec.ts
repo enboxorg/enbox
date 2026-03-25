@@ -346,6 +346,7 @@ describe('evaluateClosure', () => {
       }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.GrantNotYetActive);
       expect(result.failure!.detail).toContain('not yet active');
     });
 
@@ -376,6 +377,7 @@ describe('evaluateClosure', () => {
       }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.GrantExpired);
       expect(result.failure!.detail).toContain('expired');
     });
 

@@ -19,6 +19,10 @@ export enum ClosureFailureCode {
   ContextChainMissing = 'ClosureContextChainMissing',
   /** Class 3: A permission grant referenced by permissionGrantId is missing. */
   GrantMissing = 'ClosureGrantMissing',
+  /** Class 3: The grant exists but is not yet active at the message's timestamp. */
+  GrantNotYetActive = 'ClosureGrantNotYetActive',
+  /** Class 3: The grant exists but has expired at the message's timestamp. */
+  GrantExpired = 'ClosureGrantExpired',
   /** Class 3: A revocation record that affects a referenced grant is missing. */
   GrantRevocationMissing = 'ClosureGrantRevocationMissing',
   /** Class 4: A squash floor or visibility-floor record is missing. */

@@ -596,7 +596,7 @@ function validateGrantTemporal(
       rootMessageCid : rootCid,
       edges          : allEdges,
       failure        : {
-        code   : ClosureFailureCode.GrantMissing,
+        code   : ClosureFailureCode.GrantNotYetActive,
         edge   : grantEdge,
         detail : `grant '${grantEdge.identifier}' is not yet active at message timestamp ${messageTimestamp} (dateGranted: ${dateGranted})`,
       },
@@ -611,7 +611,7 @@ function validateGrantTemporal(
       rootMessageCid : rootCid,
       edges          : allEdges,
       failure        : {
-        code   : ClosureFailureCode.GrantMissing,
+        code   : ClosureFailureCode.GrantExpired,
         edge   : grantEdge,
         detail : `grant '${grantEdge.identifier}' expired at ${dateExpires}, message timestamp is ${messageTimestamp}`,
       },
