@@ -10,6 +10,7 @@ export type MessagesFilter = {
   interface?: string;
   method?: string;
   protocol?: string;
+  protocolPath?: string;
   messageTimestamp?: RangeCriterion;
 };
 
