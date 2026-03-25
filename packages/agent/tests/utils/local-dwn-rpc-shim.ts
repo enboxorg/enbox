@@ -54,9 +54,10 @@ export function createLocalDwnRpc(dwn: Dwn): EnboxRpc {
       return reply as DwnRpcResponse;
     },
 
-    // DidRpc methods (not used by sync engine, stubs for interface compliance)
-    async sendDidRequest(): Promise<any> {
-      return {};
+    // DidRpc — not used by the sync engine. Throws so accidental DID-RPC use
+    // fails loudly instead of silently succeeding with a nonsense shape.
+    async sendDidRequest(): Promise<never> {
+      throw new Error('LocalDwnRpcShim: sendDidRequest is not supported — this shim only handles DWN requests');
     },
 
     async getServerInfo(_dwnUrl: string): Promise<any> {
