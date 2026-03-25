@@ -46,4 +46,32 @@ describe('computeScopeId', () => {
       expect(id).not.toContain('=');
     }
   });
+
+  it('should dedupe and sort contextIdPrefixes', async () => {
+    const id1 = await computeScopeId({
+      kind              : 'protocol',
+      protocol          : 'https://example.com/proto',
+      contextIdPrefixes : ['b', 'a', 'b', 'c'],
+    });
+    const id2 = await computeScopeId({
+      kind              : 'protocol',
+      protocol          : 'https://example.com/proto',
+      contextIdPrefixes : ['c', 'a', 'b'],
+    });
+    // Same after dedup + sort.
+    expect(id1).toBe(id2);
+  });
+
+  it('should produce different ids with vs without contextIdPrefixes', async () => {
+    const id1 = await computeScopeId({
+      kind     : 'protocol',
+      protocol : 'https://example.com/proto',
+    });
+    const id2 = await computeScopeId({
+      kind              : 'protocol',
+      protocol          : 'https://example.com/proto',
+      contextIdPrefixes : ['ctx-1'],
+    });
+    expect(id1).not.toBe(id2);
+  });
 });

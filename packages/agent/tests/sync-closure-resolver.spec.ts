@@ -1146,6 +1146,51 @@ describe('evaluateClosure', () => {
       expect(result.failure!.code).toBe(ClosureFailureCode.CrossProtocolReferenceMissing);
       expect(result.failure!.edge.label).toBe('crossProtocolRoleRecord');
     });
+
+    it('should fail when crossProtocolParent record is missing in referenced protocol', async () => {
+      const composingDef = {
+        protocol  : 'https://comments.example.com',
+        published : true,
+        uses      : { threads: 'https://threads.example.com' },
+        types     : { comment: {} },
+        structure : {
+          thread: {
+            $ref    : 'threads:thread',
+            comment : { $actions: [{ who: 'anyone', can: ['create'] }] },
+          },
+        },
+      };
+      const composingConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: composingDef },
+      } as any;
+      const referencedConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: { protocol: 'https://threads.example.com' } },
+      } as any;
+
+      const msg = mockMessage({
+        protocol     : 'https://comments.example.com',
+        protocolPath : 'thread/comment',
+        parentId     : 'thread-missing',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'comment-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://comments.example.com', [composingConfig]],
+          ['protocol:https://threads.example.com', [referencedConfig]],
+          // No parent thread-missing in the referenced protocol
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://comments.example.com',
+      }, createClosureContext('did:example:alice'));
+
+      // Class 2 parentRecord check fires first (before class 6 crossProtocolParent).
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.ParentChainMissing);
+    });
   });
 
   describe('traversal limits', () => {
