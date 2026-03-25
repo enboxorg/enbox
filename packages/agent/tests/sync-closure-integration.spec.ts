@@ -18,6 +18,7 @@ import { ClosureFailureCode, createClosureContext } from '../src/sync-closure-ty
 describe('evaluateClosure — integration with real DWN', () => {
   let testHarness: PlatformAgentTestHarness;
   let messageStore: MessageStore;
+  let tenant: string;
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
@@ -25,12 +26,16 @@ describe('evaluateClosure — integration with real DWN', () => {
       agentStores      : 'dwn',
       testDataLocation : '__TESTDATA__/closure-integration',
     });
+    await testHarness.clearStorage();
+    await testHarness.createAgentDid();
+    tenant = testHarness.agent.agentDid.uri;
+    messageStore = testHarness.dwnMessageStore;
   });
 
   beforeEach(async () => {
-    await testHarness.clearStorage();
-    await testHarness.createAgentDid();
-    messageStore = testHarness.dwnMessageStore;
+    // Only clear DWN stores between tests — preserve DID material.
+    // These are closure/MessageStore tests, not DID publication tests.
+    await testHarness.clearDwnStores();
   });
 
   afterAll(async () => {
@@ -58,8 +63,6 @@ describe('evaluateClosure — integration with real DWN', () => {
     };
 
     it('should report closure complete for a record with its protocol installed', async () => {
-      const tenant = testHarness.agent.agentDid.uri;
-
       // Install protocol.
       const { reply: protoReply } = await testHarness.agent.dwn.processRequest({
         author        : tenant,
@@ -97,8 +100,6 @@ describe('evaluateClosure — integration with real DWN', () => {
     });
 
     it('should report closure incomplete when protocol is not installed', async () => {
-      const tenant = testHarness.agent.agentDid.uri;
-
       // Write directly to message store without installing the protocol.
       // This simulates a subset sync consumer receiving a record for an
       // unknown protocol.
@@ -145,8 +146,6 @@ describe('evaluateClosure — integration with real DWN', () => {
     };
 
     it('should require parent record for a child record', async () => {
-      const tenant = testHarness.agent.agentDid.uri;
-
       // Install protocol.
       await testHarness.agent.dwn.processRequest({
         author        : tenant, target        : tenant,
@@ -215,8 +214,6 @@ describe('evaluateClosure — integration with real DWN', () => {
     };
 
     it('should pass closure for a record written with a valid grant', async () => {
-      const tenant = testHarness.agent.agentDid.uri;
-
       // Install protocol.
       await testHarness.agent.dwn.processRequest({
         author        : tenant, target        : tenant,
@@ -273,8 +270,6 @@ describe('evaluateClosure — integration with real DWN', () => {
 
   describe('full-tenant scope bypass', () => {
     it('should skip closure entirely for kind:full scope', async () => {
-      const tenant = testHarness.agent.agentDid.uri;
-
       const fakeMessage: GenericMessage = {
         descriptor: {
           interface        : 'Records',
