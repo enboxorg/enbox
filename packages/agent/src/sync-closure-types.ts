@@ -19,6 +19,10 @@ export enum ClosureFailureCode {
   ContextChainMissing = 'ClosureContextChainMissing',
   /** Class 3: A permission grant referenced by permissionGrantId is missing. */
   GrantMissing = 'ClosureGrantMissing',
+  /** Class 3: The grant exists but is not yet active at the message's timestamp. */
+  GrantNotYetActive = 'ClosureGrantNotYetActive',
+  /** Class 3: The grant exists but has expired at the message's timestamp. */
+  GrantExpired = 'ClosureGrantExpired',
   /** Class 3: A revocation record that affects a referenced grant is missing. */
   GrantRevocationMissing = 'ClosureGrantRevocationMissing',
   /** Class 4: A squash floor or visibility-floor record is missing. */
@@ -167,20 +171,22 @@ export function invalidateClosureCache(
     const protocolPath = desc.protocolPath as string | undefined;
 
     if (protocolPath === 'grant' && recordId) {
-      // Grant write → invalidate the grant entry.
+      // Grant write → invalidate the grant cache and dep keys.
       context.grantCache.delete(recordId);
-      // Also clear the satisfied/missing entries for this grant.
-      context.satisfiedDeps.delete(`grantId:${recordId}`);
-      context.missingDeps.delete(`grantId:${recordId}`);
+      context.satisfiedDeps.delete(`permissionGrant:grantId:${recordId}`);
+      context.missingDeps.delete(`permissionGrant:grantId:${recordId}`);
     }
 
     if (protocolPath === 'grant/revocation') {
-      // Revocation write → invalidate the parent grant's revocation cache.
+      // Revocation write → invalidate revocation cache and both dep keys.
       const parentId = desc.parentId as string | undefined;
       if (parentId) {
         context.grantCache.delete(`revocation:${parentId}`);
-        context.satisfiedDeps.delete(`grantId:${parentId}`);
-        context.missingDeps.delete(`grantId:${parentId}`);
+        context.satisfiedDeps.delete(`grantRevocation:grantId:${parentId}`);
+        context.missingDeps.delete(`grantRevocation:grantId:${parentId}`);
+        // Also invalidate the grant itself since its revocation state changed.
+        context.satisfiedDeps.delete(`permissionGrant:grantId:${parentId}`);
+        context.missingDeps.delete(`permissionGrant:grantId:${parentId}`);
       }
     }
   }

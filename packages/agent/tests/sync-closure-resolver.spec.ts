@@ -301,6 +301,195 @@ describe('evaluateClosure', () => {
     });
   });
 
+  describe('Causal grant ordering', () => {
+    /** Helper to build a grant record with temporal fields. */
+    function mockGrantRecord(grantId: string, dateCreated: string, dateExpires: string): GenericMessage {
+      const grantData = { dateExpires, scope: { interface: 'Records', method: 'Write' } };
+      return {
+        recordId   : grantId,
+        descriptor : {
+          interface        : 'Records',
+          method           : 'Write',
+          dateCreated,
+          messageTimestamp : dateCreated,
+          protocol         : 'https://identity.foundation/dwn/permissions',
+          protocolPath     : 'grant',
+        },
+        encodedData: Buffer.from(JSON.stringify(grantData)).toString('base64url'),
+      } as any;
+    }
+
+    it('should fail when message timestamp is before grant dateGranted', async () => {
+      const grantId = 'grant-temporal-1';
+      const grantPayload = Buffer.from(JSON.stringify({ permissionGrantId: grantId })).toString('base64url');
+
+      // Message at 2024-01-01, grant active from 2025-01-01.
+      const msg = mockMessage({
+        protocol         : 'https://example.com/proto',
+        dateCreated      : '2024-01-01T00:00:00.000000Z',
+        messageTimestamp : '2024-01-01T00:00:00.000000Z',
+      });
+      (msg as any).authorization = { signature: { payload: grantPayload, signatures: [{ protected: grantPayload, signature: 'fake' }] } };
+
+      const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+      const grantRecord = mockGrantRecord(grantId, '2025-01-01T00:00:00.000000Z', '2026-01-01T00:00:00.000000Z');
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+          [`recordId:${grantId}`, [grantRecord]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.GrantNotYetActive);
+      expect(result.failure!.detail).toContain('not yet active');
+    });
+
+    it('should fail when message timestamp is at or after grant dateExpires', async () => {
+      const grantId = 'grant-temporal-2';
+      const grantPayload = Buffer.from(JSON.stringify({ permissionGrantId: grantId })).toString('base64url');
+
+      // Message at 2026-06-01, grant expires at 2026-01-01.
+      const msg = mockMessage({
+        protocol         : 'https://example.com/proto',
+        dateCreated      : '2025-06-01T00:00:00.000000Z',
+        messageTimestamp : '2026-06-01T00:00:00.000000Z',
+      });
+      (msg as any).authorization = { signature: { payload: grantPayload, signatures: [{ protected: grantPayload, signature: 'fake' }] } };
+
+      const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+      const grantRecord = mockGrantRecord(grantId, '2025-01-01T00:00:00.000000Z', '2026-01-01T00:00:00.000000Z');
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+          [`recordId:${grantId}`, [grantRecord]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.GrantExpired);
+      expect(result.failure!.detail).toContain('expired');
+    });
+
+    it('should fail when grant is revoked before message timestamp', async () => {
+      const grantId = 'grant-temporal-3';
+      const grantPayload = Buffer.from(JSON.stringify({ permissionGrantId: grantId })).toString('base64url');
+
+      // Message at 2025-06-01, revocation at 2025-03-01 (before message).
+      const msg = mockMessage({
+        protocol         : 'https://example.com/proto',
+        dateCreated      : '2025-01-01T00:00:00.000000Z',
+        messageTimestamp : '2025-06-01T00:00:00.000000Z',
+      });
+      (msg as any).authorization = { signature: { payload: grantPayload, signatures: [{ protected: grantPayload, signature: 'fake' }] } };
+
+      const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+      const grantRecord = mockGrantRecord(grantId, '2025-01-01T00:00:00.000000Z', '2027-01-01T00:00:00.000000Z');
+      const revocationRecord = mockMessage({
+        interface        : 'Records',
+        method           : 'Write',
+        messageTimestamp : '2025-03-01T00:00:00.000000Z',
+      });
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+          [`recordId:${grantId}`, [grantRecord]],
+        ]),
+      });
+
+      // Pre-populate the grant cache with the revocation record.
+      const ctx = createClosureContext('did:example:alice');
+      ctx.grantCache.set(grantId, grantRecord);
+      ctx.grantCache.set(`revocation:${grantId}`, revocationRecord);
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, ctx);
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.detail).toContain('revoked');
+    });
+
+    it('should succeed when grant is temporally valid and not revoked', async () => {
+      const grantId = 'grant-temporal-4';
+      const grantPayload = Buffer.from(JSON.stringify({ permissionGrantId: grantId })).toString('base64url');
+
+      // Message at 2025-06-01, grant active 2025-01-01 to 2026-01-01, no revocation.
+      const msg = mockMessage({
+        protocol         : 'https://example.com/proto',
+        dateCreated      : '2025-06-01T00:00:00.000000Z',
+        messageTimestamp : '2025-06-01T00:00:00.000000Z',
+      });
+      (msg as any).authorization = { signature: { payload: grantPayload, signatures: [{ protected: grantPayload, signature: 'fake' }] } };
+
+      const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+      const grantRecord = mockGrantRecord(grantId, '2025-01-01T00:00:00.000000Z', '2026-01-01T00:00:00.000000Z');
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+          [`recordId:${grantId}`, [grantRecord]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(true);
+    });
+
+    it('should succeed when revocation exists but is after message timestamp', async () => {
+      const grantId = 'grant-temporal-5';
+      const grantPayload = Buffer.from(JSON.stringify({ permissionGrantId: grantId })).toString('base64url');
+
+      // Message at 2025-06-01, revocation at 2025-09-01 (after message → grant was valid at message time).
+      const msg = mockMessage({
+        protocol         : 'https://example.com/proto',
+        dateCreated      : '2025-01-01T00:00:00.000000Z',
+        messageTimestamp : '2025-06-01T00:00:00.000000Z',
+      });
+      (msg as any).authorization = { signature: { payload: grantPayload, signatures: [{ protected: grantPayload, signature: 'fake' }] } };
+
+      const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+      const grantRecord = mockGrantRecord(grantId, '2025-01-01T00:00:00.000000Z', '2027-01-01T00:00:00.000000Z');
+      const revocationRecord = mockMessage({
+        interface        : 'Records',
+        method           : 'Write',
+        messageTimestamp : '2025-09-01T00:00:00.000000Z',
+      });
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+          [`recordId:${grantId}`, [grantRecord]],
+        ]),
+      });
+
+      const ctx = createClosureContext('did:example:alice');
+      ctx.grantCache.set(grantId, grantRecord);
+      ctx.grantCache.set(`revocation:${grantId}`, revocationRecord);
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, ctx);
+
+      // Grant was valid at the message's timestamp — revocation came later.
+      expect(result.complete).toBe(true);
+    });
+  });
+
   describe('Class 2: Context ancestry closure', () => {
     it('should require context root when contextId differs from recordId', async () => {
       const msg = mockMessage({
@@ -1038,8 +1227,8 @@ describe('evaluateClosure', () => {
       });
 
       const ctx = createClosureContext('did:example:alice');
-      // Pre-populate the satisfied set with composite key format.
-      ctx.satisfiedDeps.add('protocol:https://example.com/proto');
+      // Pre-populate the satisfied set with the label:identifierType:identifier key format.
+      ctx.satisfiedDeps.add('protocolsConfigure:protocol:https://example.com/proto');
 
       const msg = mockMessage({ protocol: 'https://example.com/proto', dateCreated: '2025-01-01T00:00:00.000000Z' });
       const result = await evaluateClosure(msg, store, {
@@ -1071,7 +1260,7 @@ describe('evaluateClosure', () => {
     it('should invalidate grantCache when a grant write is processed', () => {
       const ctx = createClosureContext('did:example:alice');
       ctx.grantCache.set('grant-1', mockMessage());
-      ctx.satisfiedDeps.add('grantId:grant-1');
+      ctx.satisfiedDeps.add('permissionGrant:grantId:grant-1');
 
       const grantMsg = mockMessage({
         interface    : 'Records',
@@ -1084,13 +1273,14 @@ describe('evaluateClosure', () => {
       invalidateClosureCache(ctx, grantMsg);
 
       expect(ctx.grantCache.has('grant-1')).toBe(false);
-      expect(ctx.satisfiedDeps.has('grantId:grant-1')).toBe(false);
+      expect(ctx.satisfiedDeps.has('permissionGrant:grantId:grant-1')).toBe(false);
     });
 
     it('should invalidate grantCache revocation entry when a revocation is processed', () => {
       const ctx = createClosureContext('did:example:alice');
       ctx.grantCache.set('revocation:grant-1', mockMessage());
-      ctx.satisfiedDeps.add('grantId:grant-1');
+      ctx.satisfiedDeps.add('grantRevocation:grantId:grant-1');
+      ctx.satisfiedDeps.add('permissionGrant:grantId:grant-1');
 
       const revocationMsg = mockMessage({
         interface    : 'Records',
@@ -1103,7 +1293,8 @@ describe('evaluateClosure', () => {
       invalidateClosureCache(ctx, revocationMsg);
 
       expect(ctx.grantCache.has('revocation:grant-1')).toBe(false);
-      expect(ctx.satisfiedDeps.has('grantId:grant-1')).toBe(false);
+      expect(ctx.satisfiedDeps.has('grantRevocation:grantId:grant-1')).toBe(false);
+      expect(ctx.satisfiedDeps.has('permissionGrant:grantId:grant-1')).toBe(false);
     });
 
     it('should invalidate recordId-based satisfied/missing entries on any Records message', () => {

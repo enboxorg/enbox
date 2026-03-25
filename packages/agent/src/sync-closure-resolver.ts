@@ -497,6 +497,20 @@ export async function evaluateClosure(
           if (protoResult) { return protoResult; }
         }
       }
+
+      // Phase 3: Validate grant temporal ordering (causal grant check).
+      // After all edges are resolved, if this message uses a grant, verify
+      // that the grant is temporally valid at the message's commit point:
+      //   - grant.dateGranted <= message.messageTimestamp < grant.dateExpires
+      //   - no revocation exists with revocation.messageTimestamp <= message.messageTimestamp
+      // This runs only for the root message (currentDepth === 0) to avoid
+      // redundant checks on transitive dependencies.
+      if (currentDepth === 0) {
+        const grantCheckResult = validateGrantTemporal(
+          current, allEdges, context, rootCid, currentDepth
+        );
+        if (grantCheckResult) { return grantCheckResult; }
+      }
     }
 
     currentDepth++;
@@ -532,6 +546,103 @@ export async function evaluateClosureBatch(
 }
 
 // ---------------------------------------------------------------------------
+// Causal grant ordering validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates that any permission grant used by the message is temporally valid
+ * at the message's commit point. Returns a failure result if the grant is
+ * expired or revoked at the message's timestamp, null if valid or no grant used.
+ *
+ * Temporal model (from grant-authorization.ts):
+ *   grant.dateGranted <= message.messageTimestamp < grant.dateExpires
+ *   AND (no revocation OR revocation.messageTimestamp > message.messageTimestamp)
+ */
+function validateGrantTemporal(
+  message: GenericMessage,
+  allEdges: ClosureDependencyEdge[],
+  context: ClosureEvaluationContext,
+  rootCid: string,
+  currentDepth: number,
+): ClosureResult | null {
+  // Check if this message has a grant dependency.
+  const grantEdge = allEdges.find(e => e.label === 'permissionGrant');
+  if (!grantEdge) { return null; } // No grant used.
+
+  const messageTimestamp = (message.descriptor as any).messageTimestamp as string;
+  if (!messageTimestamp) { return null; }
+
+  // Look up the resolved grant record from the cache.
+  const grantRecord = context.grantCache.get(grantEdge.identifier);
+  if (!grantRecord) { return null; } // Grant wasn't resolved (would have failed earlier).
+
+  // Extract grant temporal bounds.
+  // dateGranted = descriptor.dateCreated (set by PermissionGrant constructor)
+  const dateGranted = (grantRecord.descriptor as any).dateCreated as string | undefined;
+  // dateExpires is in the encoded data payload (base64url JSON).
+  let dateExpires: string | undefined;
+  const encodedData = (grantRecord as any).encodedData as string | undefined;
+  if (encodedData) {
+    try {
+      const grantData = JSON.parse(Buffer.from(encodedData, 'base64url').toString('utf-8'));
+      dateExpires = grantData.dateExpires;
+    } catch { /* ignore parse errors */ }
+  }
+
+  // Check: grant not yet active.
+  if (dateGranted && messageTimestamp < dateGranted) {
+    return {
+      complete       : false,
+      rootMessageCid : rootCid,
+      edges          : allEdges,
+      failure        : {
+        code   : ClosureFailureCode.GrantNotYetActive,
+        edge   : grantEdge,
+        detail : `grant '${grantEdge.identifier}' is not yet active at message timestamp ${messageTimestamp} (dateGranted: ${dateGranted})`,
+      },
+      depth: currentDepth,
+    };
+  }
+
+  // Check: grant expired.
+  if (dateExpires && messageTimestamp >= dateExpires) {
+    return {
+      complete       : false,
+      rootMessageCid : rootCid,
+      edges          : allEdges,
+      failure        : {
+        code   : ClosureFailureCode.GrantExpired,
+        edge   : grantEdge,
+        detail : `grant '${grantEdge.identifier}' expired at ${dateExpires}, message timestamp is ${messageTimestamp}`,
+      },
+      depth: currentDepth,
+    };
+  }
+
+  // Check: grant revoked at or before message timestamp.
+  const revocationCacheKey = `revocation:${grantEdge.identifier}`;
+  const revocationRecord = context.grantCache.get(revocationCacheKey);
+  if (revocationRecord && (revocationRecord.descriptor as any).interface !== 'Synthetic') {
+    const revocationTimestamp = (revocationRecord.descriptor as any).messageTimestamp as string;
+    if (revocationTimestamp && revocationTimestamp <= messageTimestamp) {
+      return {
+        complete       : false,
+        rootMessageCid : rootCid,
+        edges          : allEdges,
+        failure        : {
+          code   : ClosureFailureCode.GrantRevocationMissing,
+          edge   : allEdges.find(e => e.label === 'grantRevocation') ?? grantEdge,
+          detail : `grant '${grantEdge.identifier}' was revoked at ${revocationTimestamp}, before message timestamp ${messageTimestamp}`,
+        },
+        depth: currentDepth,
+      };
+    }
+  }
+
+  return null; // Grant is temporally valid.
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -552,7 +663,10 @@ async function resolveEdges(
   for (const edge of edges) {
     allEdges.push(edge);
 
-    const depKey = `${edge.identifierType}:${edge.identifier}`;
+    // Include label in dep key to distinguish edges with the same identifier
+    // but different semantics (e.g., permissionGrant vs grantRevocation both
+    // use identifierType:'grantId' with the same grantId).
+    const depKey = `${edge.label}:${edge.identifierType}:${edge.identifier}`;
     if (context.satisfiedDeps.has(depKey)) { continue; }
     if (context.missingDeps.has(depKey)) {
       return {
@@ -586,10 +700,20 @@ async function resolveEdges(
 
     context.satisfiedDeps.add(depKey);
 
-    const resolvedCid = await Message.getCid(resolved);
-    if (!visited.has(resolvedCid)) {
-      visited.add(resolvedCid);
-      queue.push(resolved);
+    // Add resolved record to the BFS queue for transitive dependency evaluation,
+    // but skip leaf dependency types that don't have their own closure requirements:
+    // - grantId: grant/revocation records are leaf nodes
+    // - filter: filter-resolved records (e.g., role records) are leaf nodes
+    // - messageCid with contextKeyRecord label: key-delivery records are leaf nodes
+    const isLeafDep = edge.identifierType === 'grantId' ||
+                      edge.identifierType === 'filter' ||
+                      edge.label === 'contextKeyRecord';
+    if (!isLeafDep) {
+      const resolvedCid = await Message.getCid(resolved);
+      if (!visited.has(resolvedCid)) {
+        visited.add(resolvedCid);
+        queue.push(resolved);
+      }
     }
   }
 
@@ -689,15 +813,25 @@ async function resolveDependency(
           protocolPath      : 'grant/revocation',
           isLatestBaseState : true,
         }]);
-        // If no revocation exists, the dependency is still satisfied (grant is active).
-        // Store whatever we found (or the grant itself as a sentinel) so we don't re-query.
-        const grantForSentinel = context.grantCache.get(edge.identifier);
-        const result = revocations.length > 0 ? revocations[0] : (grantForSentinel ?? null);
+        // Store the result. If no revocation exists, store an explicit synthetic
+        // sentinel — never use the grant record as a sentinel, because
+        // validateGrantTemporal checks descriptor.interface !== 'Synthetic' to
+        // distinguish real revocations from "no revocation" markers.
+        // Select the oldest revocation (matching SDK's Message.getOldestMessage logic).
+        // The oldest revocation determines the temporal boundary — messages at or after
+        // its timestamp are rejected.
+        let oldestRevocation: GenericMessage | undefined;
+        for (const rev of revocations) {
+          const revTs = (rev.descriptor as any).messageTimestamp as string;
+          if (!oldestRevocation || revTs < (oldestRevocation.descriptor as any).messageTimestamp) {
+            oldestRevocation = rev;
+          }
+        }
+
+        const noRevocationSentinel = { descriptor: { interface: 'Synthetic', method: 'NoRevocation' } } as any;
+        const result = oldestRevocation ?? noRevocationSentinel;
         context.grantCache.set(cacheKey, result);
-        // Revocation presence or absence is always satisfiable — the closure
-        // question is "can we evaluate grant validity?" and we can as long as
-        // we have the grant record (already a separate edge).
-        return result ?? { descriptor: { interface: 'Synthetic', method: 'NoRevocation' } } as any;
+        return result;
       }
 
       // Grant record lookup.
