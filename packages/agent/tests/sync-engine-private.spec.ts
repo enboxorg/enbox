@@ -2178,4 +2178,95 @@ describe('SyncEngineLevel — private methods', () => {
       expect(setStatusStub.calledWith(link, 'live')).toBe(false);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // closeLinkSubscriptions
+  // ---------------------------------------------------------------------------
+
+  describe('closeLinkSubscriptions', () => {
+    it('should close both pull and push subscriptions for a link', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const pullClose = sinon.stub().resolves();
+      const pushClose = sinon.stub().resolves();
+
+      (engine as any)._liveSubscriptions = [
+        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: undefined, close: pullClose },
+        { did: 'did:example:bob', dwnUrl: 'https://other.com', close: sinon.stub().resolves() },
+      ];
+      (engine as any)._localSubscriptions = [
+        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: undefined, close: pushClose },
+      ];
+
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        protocol       : undefined,
+      } as any;
+
+      await (engine as any).closeLinkSubscriptions(link);
+
+      expect(pullClose.calledOnce).toBe(true);
+      expect(pushClose.calledOnce).toBe(true);
+      // Other links' subscriptions should remain.
+      expect((engine as any)._liveSubscriptions.length).toBe(1);
+      expect((engine as any)._liveSubscriptions[0].did).toBe('did:example:bob');
+    });
+
+    it('should handle missing subscriptions gracefully', async () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._liveSubscriptions = [];
+      (engine as any)._localSubscriptions = [];
+
+      const link = {
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com',
+      } as any;
+
+      // Should not throw.
+      await (engine as any).closeLinkSubscriptions(link);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // scheduleRepairRetry backoff
+  // ---------------------------------------------------------------------------
+
+  describe('scheduleRepairRetry', () => {
+    it('should not schedule if link is in degraded_poll', () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      (engine as any)._activeLinks.set(linkKey, { status: 'degraded_poll' });
+
+      (engine as any).scheduleRepairRetry(linkKey);
+
+      expect((engine as any)._repairRetryTimers.has(linkKey)).toBe(false);
+    });
+
+    it('should not schedule if retry is already pending', () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      (engine as any)._activeLinks.set(linkKey, { status: 'repairing' });
+      const existingTimer = setTimeout(() => {}, 60000);
+      (engine as any)._repairRetryTimers.set(linkKey, existingTimer);
+
+      (engine as any).scheduleRepairRetry(linkKey);
+
+      // Should still be the same timer.
+      expect((engine as any)._repairRetryTimers.get(linkKey)).toBe(existingTimer);
+      clearTimeout(existingTimer);
+    });
+
+    it('should schedule a timer for repairing links without existing timer', () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      (engine as any)._activeLinks.set(linkKey, { status: 'repairing' });
+      (engine as any)._repairAttempts.set(linkKey, 1);
+
+      (engine as any).scheduleRepairRetry(linkKey);
+
+      expect((engine as any)._repairRetryTimers.has(linkKey)).toBe(true);
+      clearTimeout((engine as any)._repairRetryTimers.get(linkKey));
+    });
+  });
 });
