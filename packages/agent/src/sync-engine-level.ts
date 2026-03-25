@@ -1263,15 +1263,14 @@ export class SyncEngineLevel implements SyncEngine {
             }
           }
 
-          // NOTE: Squash local side-effect for scoped subset sync is deferred.
-          // When a subset consumer applies a squash record, it should locally
-          // purge older siblings — but this requires careful alignment with the
-          // DWN SDK's performRecordsSquash / purgeRecordMessages internals.
-          // For now, processRawMessage handles squash via the DWN's built-in
-          // resumable task system. If the local DWN processes the squash write,
-          // it will trigger its own squash task. Subset-specific squash side-
-          // effects (where the consumer has records the source purged) are
-          // reconciled by SMT integrity checks.
+          // Squash convergence: processRawMessage triggers the DWN's built-in
+          // squash resumable task (performRecordsSquash) which runs inline and
+          // handles subset consumers correctly:
+          // - If older siblings are locally present → purges them
+          // - If squash arrives before older siblings → backstop rejects them (409)
+          // - If no older siblings are local → no-op (correct)
+          // Both sync orderings (squash-first or siblings-first) converge to
+          // the same final state. No additional sync-engine side-effect is needed.
 
           // Track this CID for echo-loop suppression, scoped to the source endpoint.
           const pulledCid = await Message.getCid(event.message);
@@ -1422,8 +1421,28 @@ export class SyncEngineLevel implements SyncEngine {
 
       // Subset scope filtering for push: only push events that match the
       // link's scope prefixes. Events outside the scope are not our responsibility.
+      // Skipped events MUST advance the push checkpoint to prevent infinite
+      // replay after repair/reconnect (same reason as the pull side).
       const pushLink = this._activeLinks.get(this.buildCursorKey(did, dwnUrl, protocol));
       if (pushLink && !isEventInScope(subMessage.event.message, pushLink.scope)) {
+        // Guard: only mutate durable state when the link is live/initializing.
+        // During repair/degraded_poll, orchestration owns checkpoint progression.
+        if (pushLink.status !== 'live' && pushLink.status !== 'initializing') {
+          return;
+        }
+
+        // Validate token domain before committing — a stream/epoch mismatch
+        // on the local EventLog should trigger repair, not silently overwrite.
+        if (!ReplicationLedger.validateTokenDomain(pushLink.push, subMessage.cursor)) {
+          await this.transitionToRepairing(
+            this.buildCursorKey(did, dwnUrl, protocol), pushLink
+          );
+          return;
+        }
+
+        ReplicationLedger.setReceivedToken(pushLink.push, subMessage.cursor);
+        ReplicationLedger.commitContiguousToken(pushLink.push, subMessage.cursor);
+        await this.ledger.saveLink(pushLink);
         return;
       }
 
