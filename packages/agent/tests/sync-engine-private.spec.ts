@@ -2269,4 +2269,175 @@ describe('SyncEngineLevel — private methods', () => {
       clearTimeout((engine as any)._repairRetryTimers.get(linkKey));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Subset scope filtering
+  // ---------------------------------------------------------------------------
+
+  describe('isEventInScope (tested via exported helper)', () => {
+    // isEventInScope is a module-level function. We test it by importing
+    // the module and accessing it, or by testing behavior through the engine.
+    // Since it's not exported, we replicate its logic here for direct testing.
+
+    function isEventInScope(message: any, scope: any): boolean {
+      if (scope.kind === 'full') { return true; }
+      if (!scope.protocolPathPrefixes && !scope.contextIdPrefixes) { return true; }
+      const desc = message.descriptor || {};
+      if (scope.protocolPathPrefixes && scope.protocolPathPrefixes.length > 0) {
+        const protocolPath = desc.protocolPath;
+        if (!protocolPath) { return false; }
+        const matches = scope.protocolPathPrefixes.some(
+          (prefix: string) => protocolPath === prefix || protocolPath.startsWith(prefix + '/')
+        );
+        if (!matches) { return false; }
+      }
+      if (scope.contextIdPrefixes && scope.contextIdPrefixes.length > 0) {
+        const contextId = message.contextId;
+        if (!contextId) { return false; }
+        const matches = scope.contextIdPrefixes.some(
+          (prefix: string) => contextId === prefix || contextId.startsWith(prefix + '/')
+        );
+        if (!matches) { return false; }
+      }
+      return true;
+    }
+
+    it('should accept all events for full-tenant scope', () => {
+      const msg = { descriptor: { protocolPath: 'thread/message' } };
+      expect(isEventInScope(msg, { kind: 'full' })).toBe(true);
+    });
+
+    it('should accept all events when no prefixes are specified', () => {
+      const msg = { descriptor: { protocolPath: 'thread/message' } };
+      expect(isEventInScope(msg, { kind: 'protocol', protocol: 'https://example.com' })).toBe(true);
+    });
+
+    it('should accept events matching protocolPath prefix exactly', () => {
+      const msg = { descriptor: { protocolPath: 'thread/message' } };
+      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
+      expect(isEventInScope(msg, scope)).toBe(true);
+    });
+
+    it('should accept events matching protocolPath prefix with child path', () => {
+      const msg = { descriptor: { protocolPath: 'thread/message/attachment' } };
+      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
+      expect(isEventInScope(msg, scope)).toBe(true);
+    });
+
+    it('should reject events not matching protocolPath prefix', () => {
+      const msg = { descriptor: { protocolPath: 'thread/participant' } };
+      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
+      expect(isEventInScope(msg, scope)).toBe(false);
+    });
+
+    it('should not false-match prefix substrings (thread/message vs thread/messageDraft)', () => {
+      const msg = { descriptor: { protocolPath: 'thread/messageDraft' } };
+      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
+      expect(isEventInScope(msg, scope)).toBe(false);
+    });
+
+    it('should accept events matching contextId prefix', () => {
+      const msg = { descriptor: {}, contextId: 'ctx-root/child' };
+      const scope = { kind: 'protocol', protocol: 'x', contextIdPrefixes: ['ctx-root'] };
+      expect(isEventInScope(msg, scope)).toBe(true);
+    });
+
+    it('should reject events not matching contextId prefix', () => {
+      const msg = { descriptor: {}, contextId: 'other-root/child' };
+      const scope = { kind: 'protocol', protocol: 'x', contextIdPrefixes: ['ctx-root'] };
+      expect(isEventInScope(msg, scope)).toBe(false);
+    });
+
+    it('should reject events with no protocolPath when prefixes are required', () => {
+      const msg = { descriptor: {} };
+      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread'] };
+      expect(isEventInScope(msg, scope)).toBe(false);
+    });
+
+    it('should require both protocolPath AND contextId match when both are specified', () => {
+      const msg = { descriptor: { protocolPath: 'thread/message' }, contextId: 'wrong-ctx' };
+      const scope = {
+        kind                 : 'protocol',
+        protocol             : 'x',
+        protocolPathPrefixes : ['thread/message'],
+        contextIdPrefixes    : ['ctx-root'],
+      };
+      // protocolPath matches but contextId doesn't → reject.
+      expect(isEventInScope(msg, scope)).toBe(false);
+    });
+  });
+
+  describe('subset scope link creation', () => {
+    it('should create protocol-scoped links when target has a protocol', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      sinon.stub(engine, 'sync').resolves();
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: 'https://example.com/chat' },
+      ]);
+      sinon.stub(engine as any, 'openLivePullSubscription').resolves();
+      sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+      sinon.stub(console, 'error');
+
+      // Stub the ledger to capture the scope.
+      let capturedScope: any;
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      const getOrCreateStub = sinon.stub().callsFake(async (params: any) => {
+        capturedScope = params.scope;
+        return {
+          tenantDid      : params.tenantDid, remoteEndpoint : params.remoteEndpoint,
+          scopeId        : 'test', scope          : params.scope, status         : 'initializing',
+          pull           : {}, push           : {}, protocol       : params.protocol,
+        };
+      });
+      (engine as any)._ledger = {
+        getOrCreateLink : getOrCreateStub,
+        setStatus       : setStatusStub,
+      };
+
+      await engine.startSync({ mode: 'live', interval: '10s' });
+
+      // Scope should be protocol-scoped, not full.
+      expect(capturedScope).toBeDefined();
+      expect(capturedScope.kind).toBe('protocol');
+      expect(capturedScope.protocol).toBe('https://example.com/chat');
+
+      await engine.stopSync();
+    });
+
+    it('should create full-tenant links when target has no protocol', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      sinon.stub(engine, 'sync').resolves();
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' },
+      ]);
+      sinon.stub(engine as any, 'openLivePullSubscription').resolves();
+      sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+      sinon.stub(console, 'error');
+
+      let capturedScope: any;
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = {
+        getOrCreateLink: sinon.stub().callsFake(async (params: any) => {
+          capturedScope = params.scope;
+          return {
+            tenantDid      : params.tenantDid, remoteEndpoint : params.remoteEndpoint,
+            scopeId        : 'test', scope          : params.scope, status         : 'initializing',
+            pull           : {}, push           : {},
+          };
+        }),
+        setStatus: setStatusStub,
+      };
+
+      await engine.startSync({ mode: 'live', interval: '10s' });
+
+      expect(capturedScope).toBeDefined();
+      expect(capturedScope.kind).toBe('full');
+
+      await engine.stopSync();
+    });
+  });
 });

@@ -11,7 +11,7 @@ import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-j
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
-import type { PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode } from './types/sync.js';
+import type { PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { evaluateClosure } from './sync-closure-resolver.js';
 import { MAX_PENDING_TOKENS } from './types/sync.js';
@@ -94,6 +94,48 @@ type InFlightCommit = {
   /** Whether processRawMessage has completed successfully. */
   committed: boolean;
 };
+
+/**
+ * Checks whether a message's protocolPath and contextId match the link's
+ * subset scope prefixes. Returns true if the message is in scope.
+ *
+ * When the scope has no prefixes (or is kind:'full'), all messages match.
+ * When protocolPathPrefixes or contextIdPrefixes are specified, the message
+ * must match at least one prefix in each specified set.
+ *
+ * This is agent-side filtering for subset scopes. The underlying
+ * MessagesSubscribe filter only supports protocol-level scoping today —
+ * protocolPath/contextId prefix filtering at the EventLog level is a
+ * follow-up (requires dwn-sdk-js MessagesFilter extension).
+ */
+function isEventInScope(message: GenericMessage, scope: SyncScope): boolean {
+  if (scope.kind === 'full') { return true; }
+  if (!scope.protocolPathPrefixes && !scope.contextIdPrefixes) { return true; }
+
+  const desc = message.descriptor as Record<string, unknown>;
+
+  // Check protocolPath prefix.
+  if (scope.protocolPathPrefixes && scope.protocolPathPrefixes.length > 0) {
+    const protocolPath = desc.protocolPath as string | undefined;
+    if (!protocolPath) { return false; }
+    const matches = scope.protocolPathPrefixes.some(
+      prefix => protocolPath === prefix || protocolPath.startsWith(prefix + '/')
+    );
+    if (!matches) { return false; }
+  }
+
+  // Check contextId prefix.
+  if (scope.contextIdPrefixes && scope.contextIdPrefixes.length > 0) {
+    const contextId = (message as any).contextId as string | undefined;
+    if (!contextId) { return false; }
+    const matches = scope.contextIdPrefixes.some(
+      prefix => contextId === prefix || contextId.startsWith(prefix + '/')
+    );
+    if (!matches) { return false; }
+  }
+
+  return true;
+}
 
 /**
  * Per-link runtime state held in memory. Not persisted — on crash,
@@ -547,10 +589,14 @@ export class SyncEngineLevel implements SyncEngine {
       let link: ReplicationLinkState | undefined;
       try {
         // Get or create the link in the durable ledger.
+        // Use protocol-scoped scope when a protocol is specified, otherwise full-tenant.
+        const linkScope: SyncScope = target.protocol
+          ? { kind: 'protocol', protocol: target.protocol }
+          : { kind: 'full' };
         link = await this.ledger.getOrCreateLink({
           tenantDid      : target.did,
           remoteEndpoint : target.dwnUrl,
-          scope          : { kind: 'full' },
+          scope          : linkScope,
           delegateDid    : target.delegateDid,
           protocol       : target.protocol,
         });
@@ -1139,6 +1185,21 @@ export class SyncEngineLevel implements SyncEngine {
           return;
         }
 
+        // Subset scope filtering: if the link has protocolPath/contextId prefixes,
+        // skip events that don't match. This is agent-side filtering because
+        // MessagesSubscribe only supports protocol-level filtering today.
+        //
+        // Skipped events MUST advance contiguousAppliedToken — otherwise the
+        // link would replay the same filtered-out events indefinitely after
+        // reconnect/repair. This is safe because the event is intentionally
+        // excluded from this scope and doesn't need processing.
+        if (link && !isEventInScope(event.message, link.scope)) {
+          ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
+          ReplicationLedger.commitContiguousToken(link.pull, subMessage.cursor);
+          await this.ledger.saveLink(link);
+          return;
+        }
+
         // Assign a delivery ordinal BEFORE async processing begins.
         // This captures the delivery order even if processing completes out of order.
         const rt = link ? this.getOrCreateRuntime(cursorKey) : undefined;
@@ -1356,6 +1417,13 @@ export class SyncEngineLevel implements SyncEngine {
     // Subscribe to the local DWN's EventLog.
     const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
       if (subMessage.type !== 'event') {
+        return;
+      }
+
+      // Subset scope filtering for push: only push events that match the
+      // link's scope prefixes. Events outside the scope are not our responsibility.
+      const pushLink = this._activeLinks.get(this.buildCursorKey(did, dwnUrl, protocol));
+      if (pushLink && !isEventInScope(subMessage.event.message, pushLink.scope)) {
         return;
       }
 
