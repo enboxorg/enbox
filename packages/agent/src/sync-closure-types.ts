@@ -227,14 +227,15 @@ export function invalidateClosureCache(
     }
 
     // Invalidate filter-based role record deps that match this protocol + protocolPath.
-    // These are keyed like "filter:protocol|protocolPath|author|context".
+    // Dep keys are "label:filter:protocol|protocolPath|author|context".
+    // We match any key containing "filter:protocol|protocolPath".
     if (protocol && protocolPath) {
-      const filterPrefix = `filter:${protocol}|${protocolPath}`;
+      const filterFragment = `filter:${protocol}|${protocolPath}`;
       for (const key of context.satisfiedDeps) {
-        if (key.startsWith(filterPrefix)) { context.satisfiedDeps.delete(key); }
+        if (key.includes(filterFragment)) { context.satisfiedDeps.delete(key); }
       }
       for (const key of context.missingDeps) {
-        if (key.startsWith(filterPrefix)) { context.missingDeps.delete(key); }
+        if (key.includes(filterFragment)) { context.missingDeps.delete(key); }
       }
     }
 
@@ -248,23 +249,21 @@ export function invalidateClosureCache(
       const tags = (message as any).descriptor?.tags as Record<string, string> | undefined;
       const sourceProtocol = tags?.protocol;
       if (sourceProtocol) {
-        const ctxKeyPrefix = `messageCid:${sourceProtocol}|`;
+        const ctxKeyFragment = `messageCid:${sourceProtocol}|`;
         for (const key of context.satisfiedDeps) {
-          if (key.startsWith(ctxKeyPrefix)) { context.satisfiedDeps.delete(key); }
+          if (key.includes(ctxKeyFragment)) { context.satisfiedDeps.delete(key); }
         }
         for (const key of context.missingDeps) {
-          if (key.startsWith(ctxKeyPrefix)) { context.missingDeps.delete(key); }
+          if (key.includes(ctxKeyFragment)) { context.missingDeps.delete(key); }
         }
       }
     } else if (protocol) {
-      // For non-key-delivery protocols, invalidate contextKeyRecord entries
-      // keyed by this protocol (e.g., if a record write changes the context).
-      const ctxKeyPrefix = `messageCid:${protocol}|`;
+      const ctxKeyFragment = `messageCid:${protocol}|`;
       for (const key of context.satisfiedDeps) {
-        if (key.startsWith(ctxKeyPrefix)) { context.satisfiedDeps.delete(key); }
+        if (key.includes(ctxKeyFragment)) { context.satisfiedDeps.delete(key); }
       }
       for (const key of context.missingDeps) {
-        if (key.startsWith(ctxKeyPrefix)) { context.missingDeps.delete(key); }
+        if (key.includes(ctxKeyFragment)) { context.missingDeps.delete(key); }
       }
     }
   }
