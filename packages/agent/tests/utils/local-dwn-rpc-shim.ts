@@ -2,25 +2,29 @@
  * A local DWN RPC shim that routes sendDwnRequest calls to an in-process
  * DWN instance instead of over the network. Used for testing live sync
  * flows (subscriptions, repair, degraded_poll) without external infrastructure.
+ *
+ * Handles both regular requests and subscription requests by routing them
+ * to the in-process DWN's processMessage with the appropriate options.
  */
 import type { EnboxRpc } from '@enbox/dwn-clients';
-import type { Dwn, GenericMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, SubscriptionListener } from '@enbox/dwn-sdk-js';
+import type { DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
 
 /**
  * Creates an EnboxRpc implementation that routes all requests to the given
- * in-process DWN. Subscriptions are handled via the DWN's EventLog.
+ * in-process DWN. Subscriptions are handled via the DWN's EventLog
+ * subscribe mechanism — the handler receives real ProgressToken events.
  */
 export function createLocalDwnRpc(dwn: Dwn): EnboxRpc {
   return {
-    async sendDwnRequest(params: {
-      targetDid: string;
-      dwnUrl: string;
-      message: GenericMessage;
-      data?: any;
-    }): Promise<UnionMessageReply> {
-      const { targetDid, message, data } = params;
+    get transportProtocols(): string[] {
+      return ['http:', 'https:', 'ws:', 'wss:'];
+    },
 
-      // Convert data to ReadableStream if it's a Blob/ArrayBuffer.
+    async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
+      const { targetDid, message, data, subscription } = request;
+
+      // Convert data to ReadableStream if needed.
       let dataStream: ReadableStream<Uint8Array> | undefined;
       if (data instanceof Blob) {
         dataStream = data.stream() as ReadableStream<Uint8Array>;
@@ -35,15 +39,32 @@ export function createLocalDwnRpc(dwn: Dwn): EnboxRpc {
         });
       }
 
-      const reply = await dwn.processMessage(targetDid, message, { dataStream });
-      return reply as UnionMessageReply;
+      // Extract subscription handler if present.
+      // The DWN SDK's processMessage accepts subscriptionHandler as an option.
+      const subscriptionHandler: SubscriptionListener | undefined = subscription?.handler
+        ? (msg): void => { subscription.handler(msg); }
+        : undefined;
+
+      const reply = await dwn.processMessage(
+        targetDid,
+        message as GenericMessage,
+        { dataStream, subscriptionHandler },
+      );
+
+      return reply as DwnRpcResponse;
+    },
+
+    // DidRpc — not used by the sync engine. Throws so accidental DID-RPC use
+    // fails loudly instead of silently succeeding with a nonsense shape.
+    async sendDidRequest(): Promise<never> {
+      throw new Error('LocalDwnRpcShim: sendDidRequest is not supported — this shim only handles DWN requests');
     },
 
     async getServerInfo(_dwnUrl: string): Promise<any> {
       return {
         registrationRequirements : [],
         maxFileSize              : 10_000_000,
-        webSocketSupport         : false,
+        webSocketSupport         : true,
       };
     },
   } as EnboxRpc;
