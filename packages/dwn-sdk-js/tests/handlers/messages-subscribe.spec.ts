@@ -819,8 +819,9 @@ export function testMessagesSubscribeHandler(): void {
             expect((await dwn.processMessage(alice.did, attachMsg, { dataStream: attachDs })).status.code).toBe(202);
 
             await Poller.pollUntilSuccessOrTimeout(async () => {
-              // only the attachment record should be received, plus the ProtocolsConfigure
-              // from the shadow filter
+              // only the attachment record should be received (ProtocolsConfigure
+              // was installed before the subscription was opened, so it's not
+              // delivered as a live event)
               expect(childCids.length).toBe(1);
               expect(childCids[0]).toBe(await Message.getCid(attachMsg));
             });
