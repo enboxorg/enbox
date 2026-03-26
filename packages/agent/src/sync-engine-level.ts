@@ -765,8 +765,8 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState,
     options?: { resumeToken?: ProgressToken },
   ): Promise<void> {
-    await this.ledger.setStatus(link, 'repairing');
     link.connectivity = 'offline';
+    await this.ledger.setStatus(link, 'repairing');
 
     if (options?.resumeToken) {
       this._repairContext.set(linkKey, { resumeToken: options.resumeToken });
