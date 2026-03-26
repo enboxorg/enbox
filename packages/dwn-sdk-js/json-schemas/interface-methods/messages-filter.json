@@ -24,6 +24,9 @@
     "protocol": {
       "type": "string"
     },
+    "protocolPathPrefix": {
+      "type": "string"
+    },
     "messageTimestamp": {
       "type": "object",
       "minProperties": 1,

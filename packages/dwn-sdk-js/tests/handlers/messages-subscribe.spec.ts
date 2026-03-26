@@ -598,6 +598,235 @@ export function testMessagesSubscribeHandler(): void {
 
           });
 
+          it('allows subscribe of protocolPathPrefix filtered messages including protocol metadata', async () => {
+            // scenario: Alice installs a protocol with two paths (post, post/attachment).
+            // She subscribes with a protocolPathPrefix filter for 'post'.
+            // Expected behavior:
+            //   - Both 'post' and 'post/attachment' records are received (prefix semantics)
+            //   - The ProtocolsConfigure event IS also received (shadow filter for metadata)
+            //   - Records from an unrelated protocol are NOT received
+
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            // subscribe with protocolPathPrefix filter for 'post' BEFORE installing
+            // the protocol, so we can verify the ProtocolsConfigure event is received.
+            const prefixMessageCids: string[] = [];
+            const prefixHandler = async (msg: SubscriptionMessage):Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              const { message } = msg.event;
+              const messageCid = await Message.getCid(message);
+              prefixMessageCids.push(messageCid);
+            };
+
+            const { message: prefixSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
+              author  : alice,
+              filters : [{ protocol: freeForAll.protocol, protocolPathPrefix: 'post' }],
+            });
+            const prefixReply = await dwn.processMessage(alice.did, prefixSubscribe, { subscriptionHandler: prefixHandler });
+            expect(prefixReply.status.code).toBe(200);
+
+            // install the freeForAll protocol — this ProtocolsConfigure event should
+            // be received by the prefix subscription via the shadow metadata filter.
+            const { message: freeForAllConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+              author             : alice,
+              protocolDefinition : freeForAll,
+            });
+            const { status: freeForAllReplyStatus } = await dwn.processMessage(alice.did, freeForAllConfigure);
+            expect(freeForAllReplyStatus.code).toBe(202);
+
+            // install a second unrelated protocol — its ProtocolsConfigure should NOT
+            // be received by the prefix subscription.
+            const unrelatedProtocol: ProtocolDefinition = { ...freeForAll, protocol: 'http://unrelated-protocol' };
+            const { message: unrelatedConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+              author             : alice,
+              protocolDefinition : unrelatedProtocol,
+            });
+            const { status: unrelatedReplyStatus } = await dwn.processMessage(alice.did, unrelatedConfigure);
+            expect(unrelatedReplyStatus.code).toBe(202);
+
+            // write a record at 'post' path
+            const { message: postMessage, dataStream: postDataStream } = await TestDataGenerator.generateRecordsWrite({
+              protocol     : freeForAll.protocol,
+              protocolPath : 'post',
+              schema       : freeForAll.types.post.schema,
+              author       : alice,
+            });
+            const postWriteReply = await dwn.processMessage(alice.did, postMessage, { dataStream: postDataStream });
+            expect(postWriteReply.status.code).toBe(202);
+
+            // write a record at 'post/attachment' path (child of a post)
+            const { message: attachmentMessage, dataStream: attachmentDataStream } = await TestDataGenerator.generateRecordsWrite({
+              protocol        : freeForAll.protocol,
+              protocolPath    : 'post/attachment',
+              parentContextId : postMessage.recordId,
+              author          : alice,
+            });
+            const attachmentWriteReply = await dwn.processMessage(alice.did, attachmentMessage, { dataStream: attachmentDataStream });
+            expect(attachmentWriteReply.status.code).toBe(202);
+
+            // write a record to the unrelated protocol — should NOT be received
+            const { message: unrelatedMessage, dataStream: unrelatedDataStream } = await TestDataGenerator.generateRecordsWrite({
+              protocol     : unrelatedProtocol.protocol,
+              protocolPath : 'post',
+              schema       : unrelatedProtocol.types.post.schema,
+              author       : alice,
+            });
+            const unrelatedWriteReply = await dwn.processMessage(alice.did, unrelatedMessage, { dataStream: unrelatedDataStream });
+            expect(unrelatedWriteReply.status.code).toBe(202);
+
+            // verify: prefix subscription received the ProtocolsConfigure + both records
+            // but NOT the unrelated protocol's ProtocolsConfigure or record.
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              expect(prefixMessageCids.length).toBe(3); // ProtocolsConfigure + post + post/attachment
+              const expectedCids = [
+                await Message.getCid(freeForAllConfigure),
+                await Message.getCid(postMessage),
+                await Message.getCid(attachmentMessage),
+              ];
+              expect(prefixMessageCids.sort()).toEqual(expectedCids.sort());
+            });
+          });
+
+          it('protocolPathPrefix excludes sibling paths that share a string prefix but not a path prefix', async () => {
+            // Verifies that 'post' prefix does NOT match 'poster' — the range
+            // filter gte:'post', lt:'post/\uffff' correctly uses '/' as the
+            // boundary character, not naive string prefix matching.
+
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            // Define a protocol with paths 'post', 'post/attachment', and 'poster'
+            const siblingProtocol: ProtocolDefinition = {
+              protocol  : 'http://sibling-path-test',
+              published : true,
+              types     : {
+                post       : { schema: 'post', dataFormats: ['application/json'] },
+                attachment : {},
+                poster     : { schema: 'poster', dataFormats: ['application/json'] },
+              },
+              structure: {
+                post: {
+                  $actions   : [{ who: 'anyone', can: ['create', 'read'] }],
+                  attachment : {
+                    $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+                  },
+                },
+                poster: {
+                  $actions: [{ who: 'anyone', can: ['create', 'read'] }],
+                },
+              },
+            };
+
+            const { message: siblingConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+              author             : alice,
+              protocolDefinition : siblingProtocol,
+            });
+            const { status: siblingConfigureStatus } = await dwn.processMessage(alice.did, siblingConfigure);
+            expect(siblingConfigureStatus.code).toBe(202);
+
+            // subscribe with protocolPathPrefix 'post' — should get 'post' and
+            // 'post/attachment' but NOT 'poster'
+            const prefixCids: string[] = [];
+            const prefixHandler = async (msg: SubscriptionMessage):Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              prefixCids.push(await Message.getCid(msg.event.message));
+            };
+
+            const { message: prefixSub } = await TestDataGenerator.generateMessagesSubscribe({
+              author  : alice,
+              filters : [{ protocol: siblingProtocol.protocol, protocolPathPrefix: 'post' }],
+            });
+            const prefixReply = await dwn.processMessage(alice.did, prefixSub, { subscriptionHandler: prefixHandler });
+            expect(prefixReply.status.code).toBe(200);
+
+            // write to 'post'
+            const { message: postMsg, dataStream: postDs } = await TestDataGenerator.generateRecordsWrite({
+              protocol     : siblingProtocol.protocol,
+              protocolPath : 'post',
+              schema       : 'post',
+              author       : alice,
+            });
+            expect((await dwn.processMessage(alice.did, postMsg, { dataStream: postDs })).status.code).toBe(202);
+
+            // write to 'post/attachment'
+            const { message: attachMsg, dataStream: attachDs } = await TestDataGenerator.generateRecordsWrite({
+              protocol        : siblingProtocol.protocol,
+              protocolPath    : 'post/attachment',
+              parentContextId : postMsg.recordId,
+              author          : alice,
+            });
+            expect((await dwn.processMessage(alice.did, attachMsg, { dataStream: attachDs })).status.code).toBe(202);
+
+            // write to 'poster' — this should NOT match the 'post' prefix
+            const { message: posterMsg, dataStream: posterDs } = await TestDataGenerator.generateRecordsWrite({
+              protocol     : siblingProtocol.protocol,
+              protocolPath : 'poster',
+              schema       : 'poster',
+              author       : alice,
+            });
+            expect((await dwn.processMessage(alice.did, posterMsg, { dataStream: posterDs })).status.code).toBe(202);
+
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              // prefix subscription should receive 'post' and 'post/attachment' but NOT 'poster'
+              expect(prefixCids.length).toBe(2);
+              const expectedCids = [
+                await Message.getCid(postMsg),
+                await Message.getCid(attachMsg),
+              ];
+              expect(prefixCids.sort()).toEqual(expectedCids.sort());
+            });
+          });
+
+          it('protocolPathPrefix for a child path does not include parent records', async () => {
+            // Subscribing with protocolPathPrefix 'post/attachment' should receive
+            // only 'post/attachment' records, NOT 'post' records.
+
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            const { message: freeForAllConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+              author             : alice,
+              protocolDefinition : freeForAll,
+            });
+            expect((await dwn.processMessage(alice.did, freeForAllConfigure)).status.code).toBe(202);
+
+            const childCids: string[] = [];
+            const childHandler = async (msg: SubscriptionMessage):Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              childCids.push(await Message.getCid(msg.event.message));
+            };
+
+            const { message: childSub } = await TestDataGenerator.generateMessagesSubscribe({
+              author  : alice,
+              filters : [{ protocol: freeForAll.protocol, protocolPathPrefix: 'post/attachment' }],
+            });
+            expect((await dwn.processMessage(alice.did, childSub, { subscriptionHandler: childHandler })).status.code).toBe(200);
+
+            // write a 'post' record — should NOT match 'post/attachment' prefix
+            const { message: postMsg, dataStream: postDs } = await TestDataGenerator.generateRecordsWrite({
+              protocol     : freeForAll.protocol,
+              protocolPath : 'post',
+              schema       : freeForAll.types.post.schema,
+              author       : alice,
+            });
+            expect((await dwn.processMessage(alice.did, postMsg, { dataStream: postDs })).status.code).toBe(202);
+
+            // write a 'post/attachment' record — should match
+            const { message: attachMsg, dataStream: attachDs } = await TestDataGenerator.generateRecordsWrite({
+              protocol        : freeForAll.protocol,
+              protocolPath    : 'post/attachment',
+              parentContextId : postMsg.recordId,
+              author          : alice,
+            });
+            expect((await dwn.processMessage(alice.did, attachMsg, { dataStream: attachDs })).status.code).toBe(202);
+
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              // only the attachment record should be received (ProtocolsConfigure
+              // was installed before the subscription was opened, so it's not
+              // delivered as a live event)
+              expect(childCids.length).toBe(1);
+              expect(childCids[0]).toBe(await Message.getCid(attachMsg));
+            });
+          });
+
           it('rejects subscribe of protocol filtered messages with mismatching protocol grant scopes', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
