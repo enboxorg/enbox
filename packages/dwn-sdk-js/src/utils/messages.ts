@@ -67,6 +67,18 @@ export class Messages {
       }
 
       messagesQueryFilters.push(this.convertFilter(filter));
+
+      // When protocolPathPrefix is used with a protocol, inject a shadow filter
+      // for ProtocolsConfigure events. Without this, protocol metadata updates
+      // would be excluded (ProtocolsConfigure indexes have no protocolPath).
+      // This mirrors the core-protocol additional-filter pattern above.
+      if (filter.protocolPathPrefix !== undefined && filter.protocol !== undefined) {
+        messagesQueryFilters.push({
+          interface : 'Protocols',
+          method    : 'Configure',
+          protocol  : filter.protocol,
+        } as Filter);
+      }
     }
 
     return messagesQueryFilters;
