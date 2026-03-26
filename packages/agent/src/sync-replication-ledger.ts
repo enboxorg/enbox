@@ -76,6 +76,7 @@ export class ReplicationLedger {
       scopeId,
       scope          : params.scope,
       status         : 'initializing',
+      connectivity   : 'unknown',
       pull           : {},
       push           : {},
       delegateDid    : params.delegateDid,
