@@ -74,7 +74,7 @@ export class Messages {
       // This mirrors the existing core-protocol additional-filter pattern above.
       // The messageTimestamp constraint is carried over so time-bounded queries
       // (including cursor-based subscriptions) also apply to the shadow filter.
-      if (filter.protocolPathPrefix !== undefined && filter.protocol !== undefined) {
+      if ((filter.protocolPathPrefix !== undefined || filter.contextIdPrefix !== undefined) && filter.protocol !== undefined) {
         const metadataFilter: Filter = {
           interface : 'Protocols',
           method    : 'Configure',
