@@ -1,5 +1,15 @@
 # @enbox/agent
 
+## 0.5.12
+
+### Patch Changes
+
+- [#789](https://github.com/enboxorg/enbox/pull/789) [`43d805e`](https://github.com/enboxorg/enbox/commit/43d805e51b63c358f1c9c1a51623d0c5f44446fe) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: don't retry permanent push failures (400/401/403)
+
+  Prevents infinite retry loop for protocol-scoped singleton records
+  (profile, avatar, hero, wallet) that get 400 RecordLimitExceeded from
+  the remote. PushResult now distinguishes transient vs permanent failures.
+
 ## 0.5.11
 
 ### Patch Changes
