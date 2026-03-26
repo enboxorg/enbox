@@ -114,6 +114,8 @@ function matchSingleValue(filterValue: unknown, indexValue: string | number | bo
 type NatsEventPayload = {
   event : MessageEvent;
   indexes : KeyValues;
+  /** The CID of the message that triggered this event. Added in v0.0.16. */
+  messageCid? : string;
 };
 
 function encodePayload(payload: NatsEventPayload): Uint8Array {
@@ -291,7 +293,7 @@ export default class NatsEventLog implements EventLog {
     this.#assertOpen();
 
     const subject = this.#tenantSubject(tenant);
-    const data = encodePayload({ event, indexes });
+    const data = encodePayload({ event, indexes, messageCid });
     const ack = await this.#js!.publish(subject, data);
     return this.#buildToken(tenant, ack.seq, messageCid);
   }
@@ -348,8 +350,9 @@ export default class NatsEventLog implements EventLog {
         });
 
         lastSeq = msg.seq;
-        // Extract messageCid from the event's message if available.
-        lastMessageCid = (payload.indexes['messageCid'] as string) ?? '';
+        // Prefer the dedicated messageCid field (v0.0.16+), fall back to indexes for older payloads,
+        // then a deterministic placeholder so pre-upgrade messages never produce empty-string tokens.
+        lastMessageCid = payload.messageCid || (payload.indexes['messageCid'] as string) || `legacy-seq-${msg.seq}`;
 
         if (events.length >= maxResults) {
           break;
@@ -365,7 +368,7 @@ export default class NatsEventLog implements EventLog {
     }
 
     if (lastSeq !== undefined) {
-      const lastToken = await this.#buildToken(tenant, lastSeq, lastMessageCid ?? '');
+      const lastToken = await this.#buildToken(tenant, lastSeq, lastMessageCid || `legacy-seq-${lastSeq}`);
       return { events, cursor: lastToken };
     }
 
@@ -439,7 +442,9 @@ export default class NatsEventLog implements EventLog {
             continue;
           }
 
-          const msgCid = (payload.indexes['messageCid'] as string) ?? '';
+          // Prefer the dedicated messageCid field (v0.0.16+), fall back to indexes for older payloads,
+          // then a deterministic placeholder so pre-upgrade messages never produce empty-string tokens.
+          const msgCid = payload.messageCid || (payload.indexes['messageCid'] as string) || `legacy-seq-${msg.seq}`;
           const eventToken = await this.#buildToken(tenant, msg.seq, msgCid);
           listener({ type: 'event', cursor: eventToken, event: payload.event });
           msg.ack();

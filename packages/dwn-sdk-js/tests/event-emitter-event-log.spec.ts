@@ -566,4 +566,83 @@ describe('EventEmitterEventLog', () => {
       await smallLog.close();
     });
   });
+
+  describe('messageCid propagation', () => {
+    it('should carry non-empty messageCid in live subscription tokens', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      const received: SubscriptionMessage[] = [];
+      await eventLog.subscribe(tenant, 'sub-cid', (msg) => { received.push(msg); });
+
+      // Emit events — the live handler should receive tokens with the original messageCid.
+      await eventLog.emit(tenant, event, {}, cid(1));
+      await eventLog.emit(tenant, event, {}, cid(2));
+
+      // Allow microtasks (tokenFromPayload is async).
+      await new Promise((r) => setTimeout(r, 20));
+
+      const events = received.filter((m): m is SubscriptionMessage & { type: 'event' } => m.type === 'event');
+      expect(events.length).toBe(2);
+      expect(events[0].cursor.messageCid).toBe(cid(1));
+      expect(events[1].cursor.messageCid).toBe(cid(2));
+    });
+
+    it('should carry non-empty messageCid in catch-up subscription tokens', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      // Emit some events to create a cursor.
+      const cursor1 = await eventLog.emit(tenant, event, {}, cid(1));
+      await eventLog.emit(tenant, event, {}, cid(2));
+      await eventLog.emit(tenant, event, {}, cid(3));
+
+      // Subscribe with cursor — should get catch-up events with valid messageCids.
+      const received: SubscriptionMessage[] = [];
+      await eventLog.subscribe(tenant, 'sub-catchup-cid', (msg) => { received.push(msg); }, { cursor: cursor1! });
+
+      const events = received.filter((m): m is SubscriptionMessage & { type: 'event' } => m.type === 'event');
+      expect(events.length).toBe(2); // cid(2) and cid(3)
+      expect(events[0].cursor.messageCid).toBe(cid(2));
+      expect(events[1].cursor.messageCid).toBe(cid(3));
+
+      // EOSE should also have a valid messageCid.
+      const eose = received.find(m => m.type === 'eose');
+      expect(eose).toBeDefined();
+      expect(eose!.cursor.messageCid).toBeTruthy();
+    });
+
+    it('should never produce empty messageCid even under eviction pressure', async () => {
+      // Use a very small log to maximize eviction.
+      const smallLog = new EventEmitterEventLog({ maxEventsPerTenant: 3 });
+      await smallLog.open();
+
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      // Fill the log to capacity.
+      const cursor0 = await smallLog.emit(tenant, event, {}, cid(1));
+      await smallLog.emit(tenant, event, {}, cid(2));
+      await smallLog.emit(tenant, event, {}, cid(3));
+
+      // Subscribe with cursor from the first event.
+      const received: SubscriptionMessage[] = [];
+      await smallLog.subscribe(tenant, 'sub-eviction', (msg) => { received.push(msg); }, { cursor: cursor0! });
+
+      // Emit more events (triggers eviction of oldest entries).
+      await smallLog.emit(tenant, event, {}, cid(4));
+      await smallLog.emit(tenant, event, {}, cid(5));
+
+      await new Promise((r) => setTimeout(r, 20));
+
+      // Every event token should have a non-empty messageCid.
+      for (const msg of received) {
+        if (msg.type === 'event' || msg.type === 'eose') {
+          expect(msg.cursor.messageCid.length).toBeGreaterThan(0);
+        }
+      }
+
+      await smallLog.close();
+    });
+  });
 });

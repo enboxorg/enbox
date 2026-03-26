@@ -24,7 +24,7 @@ const EVENTS_LISTENER_CHANNEL = 'events';
  * Payload shape used internally by mitt. We bundle the three EventListener
  * arguments into a single object because mitt emits one value per event.
  */
-type EmitterPayload = { tenant: string; event: MessageEvent; indexes: KeyValues; seq: number };
+type EmitterPayload = { tenant: string; event: MessageEvent; indexes: KeyValues; seq: number; messageCid: string };
 
 /**
  * mitt event map — every channel name maps to an `EmitterPayload`.
@@ -213,7 +213,7 @@ export class EventEmitterEventLog implements EventLog {
 
     // Notify in-process subscribers.
     const channel = `${tenant}_${EVENTS_LISTENER_CHANNEL}`;
-    this.emitter.emit(channel, { tenant, event, indexes, seq });
+    this.emitter.emit(channel, { tenant, event, indexes, seq, messageCid });
 
     return this.buildToken(tenant, seq, messageCid);
   }
@@ -247,8 +247,9 @@ export class EventEmitterEventLog implements EventLog {
 
       results.push({
         seq,
-        event   : entry.event,
-        indexes : entry.indexes,
+        event      : entry.event,
+        indexes    : entry.indexes,
+        messageCid : entry.messageCid,
       });
 
       if (results.length >= maxResults) { break; }
@@ -256,8 +257,9 @@ export class EventEmitterEventLog implements EventLog {
 
     if (results.length > 0) {
       const lastEntry = results[results.length - 1];
-      const lastStoredEntry = log.get(lastEntry.seq);
-      const lastToken = await this.buildToken(tenant, lastEntry.seq, lastStoredEntry!.messageCid);
+      // Use the messageCid captured during the synchronous iteration above —
+      // no re-lookup needed, so eviction during the await cannot lose it.
+      const lastToken = await this.buildToken(tenant, lastEntry.seq, lastEntry.messageCid!);
       return { events: results, cursor: lastToken };
     }
 
@@ -297,10 +299,7 @@ export class EventEmitterEventLog implements EventLog {
 
     // Helper to build a token from a live emitter payload.
     const tokenFromPayload = async (payload: EmitterPayload): Promise<ProgressToken> => {
-      const log = this.tenantLogs.get(tenant);
-      const stored = log?.get(payload.seq);
-      const cid = stored?.messageCid ?? '';
-      return this.buildToken(tenant, payload.seq, cid);
+      return this.buildToken(tenant, payload.seq, payload.messageCid);
     };
 
     if (cursor !== undefined) {
@@ -311,7 +310,7 @@ export class EventEmitterEventLog implements EventLog {
       const cursorSeq = EventEmitterEventLog.parsePosition(cursor.position);
 
       // Buffer live events that arrive during catch-up to avoid losing them.
-      type BufferedEvent = { event: MessageEvent; seq: number };
+      type BufferedEvent = { event: MessageEvent; seq: number; messageCid: string };
       const pendingLiveEvents: BufferedEvent[] = [];
       let catchUpComplete = false;
 
@@ -321,7 +320,7 @@ export class EventEmitterEventLog implements EventLog {
           if (!FilterUtility.matchAnyFilter(payload.indexes, filters)) { return; }
         }
         if (!catchUpComplete) {
-          pendingLiveEvents.push({ event: payload.event, seq: payload.seq });
+          pendingLiveEvents.push({ event: payload.event, seq: payload.seq, messageCid: payload.messageCid });
         } else {
           void tokenFromPayload(payload).then((token) => {
             listener({ type: 'event', cursor: token, event: payload.event });
@@ -339,20 +338,20 @@ export class EventEmitterEventLog implements EventLog {
         ? EventEmitterEventLog.parsePosition(readResult.cursor.position)
         : cursorSeq;
 
+      // Use the messageCid captured by read() during its synchronous iteration.
+      // This eliminates re-lookup races: read() populates entry.messageCid before
+      // any async yield, so eviction during read()'s buildToken() cannot lose it.
       for (const entry of readResult.events) {
-        const log = this.tenantLogs.get(tenant);
-        const stored = log?.get(entry.seq);
-        const token = await this.buildToken(tenant, entry.seq, stored?.messageCid ?? '');
+        const token = await this.buildToken(tenant, entry.seq, entry.messageCid ?? '');
         listener({ type: 'event', cursor: token, event: entry.event });
       }
 
       // Step 3: Deliver any live events that arrived during catch-up (with seq > lastCatchUpSeq).
+      // messageCid was captured at buffer time from the EmitterPayload.
       catchUpComplete = true;
       for (const liveEvent of pendingLiveEvents) {
         if (liveEvent.seq > lastCatchUpSeq) {
-          const log = this.tenantLogs.get(tenant);
-          const stored = log?.get(liveEvent.seq);
-          const token = await this.buildToken(tenant, liveEvent.seq, stored?.messageCid ?? '');
+          const token = await this.buildToken(tenant, liveEvent.seq, liveEvent.messageCid);
           listener({ type: 'event', cursor: token, event: liveEvent.event });
         }
       }
