@@ -766,6 +766,7 @@ export class SyncEngineLevel implements SyncEngine {
     options?: { resumeToken?: ProgressToken },
   ): Promise<void> {
     await this.ledger.setStatus(link, 'repairing');
+    link.connectivity = 'offline';
 
     if (options?.resumeToken) {
       this._repairContext.set(linkKey, { resumeToken: options.resumeToken });
@@ -999,6 +1000,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async enterDegradedPoll(linkKey: string): Promise<void> {
     const link = this._activeLinks.get(linkKey);
     if (!link) { return; }
+    link.connectivity = 'offline';
 
     await this.ledger.setStatus(link, 'degraded_poll');
     this._repairAttempts.delete(linkKey);

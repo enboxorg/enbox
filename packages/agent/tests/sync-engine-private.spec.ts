@@ -451,6 +451,51 @@ describe('SyncEngineLevel — private methods', () => {
       expect(engine.connectivityState).toBe('offline');
     });
 
+    it('should aggregate per-link connectivity: online if any link is online', () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._activeLinks.set('link-1', { connectivity: 'online' });
+      (engine as any)._activeLinks.set('link-2', { connectivity: 'offline' });
+
+      expect(engine.connectivityState).toBe('online');
+    });
+
+    it('should aggregate per-link connectivity: offline if all links are offline', () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._activeLinks.set('link-1', { connectivity: 'offline' });
+      (engine as any)._activeLinks.set('link-2', { connectivity: 'offline' });
+
+      expect(engine.connectivityState).toBe('offline');
+    });
+
+    it('should aggregate per-link connectivity: unknown if all links are unknown', () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._activeLinks.set('link-1', { connectivity: 'unknown' });
+
+      expect(engine.connectivityState).toBe('unknown');
+    });
+
+    it('should fall back to global state when no active links exist', () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._connectivityState = 'offline';
+
+      expect(engine.connectivityState).toBe('offline');
+    });
+
+    it('should set link connectivity to offline on transitionToRepairing', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const link = { status: 'live', connectivity: 'online', pull: {}, push: {} } as any;
+      const linkKey = 'test-link';
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = { setStatus: setStatusStub };
+      sinon.stub(engine as any, 'repairLink').resolves();
+
+      await (engine as any).transitionToRepairing(linkKey, link);
+
+      expect(link.connectivity).toBe('offline');
+    });
+
     it('should reset consecutive failures on success', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
