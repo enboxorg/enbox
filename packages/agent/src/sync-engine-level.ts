@@ -1173,7 +1173,19 @@ export class SyncEngineLevel implements SyncEngine {
     // Resolve the cursor from the link's pull checkpoint (preferred) or legacy storage.
     const cursorKey = this.buildCursorKey(did, dwnUrl, protocol);
     const link = this._activeLinks.get(cursorKey);
-    const cursor = link?.pull.contiguousAppliedToken ?? await this.getCursor(cursorKey);
+    let cursor = link?.pull.contiguousAppliedToken ?? await this.getCursor(cursorKey);
+
+    // Guard against corrupted tokens with empty fields — these would fail
+    // MessagesSubscribe JSON schema validation (minLength: 1). Discard and
+    // start from the beginning rather than crash the subscription.
+    if (cursor && (!cursor.streamId || !cursor.messageCid || !cursor.epoch || !cursor.position)) {
+      console.warn(`SyncEngineLevel: Discarding stored cursor with empty field(s) for ${did} -> ${dwnUrl}`);
+      cursor = undefined;
+      if (link) {
+        ReplicationLedger.resetCheckpoint(link.pull);
+        await this.ledger.saveLink(link);
+      }
+    }
 
     // Build the MessagesSubscribe filters.
     // When the link has protocolPathPrefixes, include them in the filter so the
@@ -1426,7 +1438,11 @@ export class SyncEngineLevel implements SyncEngine {
     // a fresh cursor-stamped message after reconnection.
     const resubscribeFactory: ResubscribeFactory = async (resumeCursor?: ProgressToken) => {
       // On reconnect, use the latest durable checkpoint position if available.
-      const effectiveCursor = resumeCursor ?? link?.pull.contiguousAppliedToken ?? cursor;
+      // Discard tokens with empty fields to avoid schema validation failures.
+      let effectiveCursor = resumeCursor ?? link?.pull.contiguousAppliedToken ?? cursor;
+      if (effectiveCursor && (!effectiveCursor.streamId || !effectiveCursor.messageCid || !effectiveCursor.epoch || !effectiveCursor.position)) {
+        effectiveCursor = undefined;
+      }
       const resumeRequest = {
         ...subscribeRequest,
         messageParams: { ...subscribeRequest.messageParams, cursor: effectiveCursor },
@@ -1723,10 +1739,10 @@ export class SyncEngineLevel implements SyncEngine {
       try {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object' &&
-            typeof parsed.streamId === 'string' &&
-            typeof parsed.epoch === 'string' &&
-            typeof parsed.position === 'string' &&
-            typeof parsed.messageCid === 'string') {
+            typeof parsed.streamId === 'string' && parsed.streamId.length > 0 &&
+            typeof parsed.epoch === 'string' && parsed.epoch.length > 0 &&
+            typeof parsed.position === 'string' && parsed.position.length > 0 &&
+            typeof parsed.messageCid === 'string' && parsed.messageCid.length > 0) {
           return parsed as ProgressToken;
         }
       } catch {

@@ -75,6 +75,26 @@ describe('SyncEngineLevel — private methods', () => {
       expect(cursor).toBeUndefined();
     });
 
+    it('should return undefined for tokens with empty messageCid', async () => {
+      // A corrupted token with empty messageCid should be discarded —
+      // it would fail MessagesSubscribe JSON schema validation (minLength: 1).
+      const cursors = db.sublevel('syncCursors');
+      await cursors.put('bad-cid-key', JSON.stringify({
+        streamId: 's1', epoch: 'e1', position: '5', messageCid: '',
+      }));
+      const cursor = await (syncEngine as any).getCursor('bad-cid-key');
+      expect(cursor).toBeUndefined();
+    });
+
+    it('should return undefined for tokens with empty streamId', async () => {
+      const cursors = db.sublevel('syncCursors');
+      await cursors.put('bad-stream-key', JSON.stringify({
+        streamId: '', epoch: 'e1', position: '5', messageCid: 'cid-5',
+      }));
+      const cursor = await (syncEngine as any).getCursor('bad-stream-key');
+      expect(cursor).toBeUndefined();
+    });
+
     it('should rethrow non-LEVEL_NOT_FOUND errors from getCursor', async () => {
       const ioError = new Error('IO error') as Error & { code: string };
       ioError.code = 'LEVEL_IO_ERROR';
@@ -767,14 +787,15 @@ describe('SyncEngineLevel — private methods', () => {
     it('should use existing cursor when available', async () => {
       const { agent, processRequestStub } = createPullMockAgent();
       const engine = new SyncEngineLevel({ db, agent });
-      sinon.stub(engine as any, 'getCursor').resolves('saved-cursor-value');
+      const savedCursor = { streamId: 's1', epoch: 'e1', position: '42', messageCid: 'cid-42' };
+      sinon.stub(engine as any, 'getCursor').resolves(savedCursor);
 
       await (engine as any).openLivePullSubscription({
         did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
       });
 
       const callArgs = processRequestStub.firstCall.args[0];
-      expect(callArgs.messageParams.cursor).toBe('saved-cursor-value');
+      expect(callArgs.messageParams.cursor).toEqual(savedCursor);
       (engine as any)._liveSubscriptions = [];
     });
 
