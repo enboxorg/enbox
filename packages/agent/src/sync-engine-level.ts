@@ -658,6 +658,7 @@ export class SyncEngineLevel implements SyncEngine {
           throw pushError;
         }
 
+        this.emitEvent({ type: 'link:status-change', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, from: 'initializing', to: 'live' });
         await this.ledger.setStatus(link!, 'live');
       } catch (error: any) {
         const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
@@ -736,15 +737,8 @@ export class SyncEngineLevel implements SyncEngine {
       rt.inflight.delete(rt.nextCommitOrdinal);
       rt.nextCommitOrdinal++;
       drained++;
-
-      this.emitEvent({
-        type           : 'checkpoint:pull-advance',
-        tenantDid      : link.tenantDid,
-        remoteEndpoint : link.remoteEndpoint,
-        protocol       : link.protocol,
-        position       : entry.token.position,
-        messageCid     : entry.token.messageCid,
-      });
+      // Note: checkpoint:pull-advance event is emitted AFTER saveLink succeeds
+      // in the caller, not here. "Advanced" means durably persisted.
     }
 
     return drained;
@@ -986,9 +980,13 @@ export class SyncEngineLevel implements SyncEngine {
       this._repairAttempts.delete(linkKey);
       const retryTimer = this._repairRetryTimers.get(linkKey);
       if (retryTimer) { clearTimeout(retryTimer); this._repairRetryTimers.delete(linkKey); }
+      const prevRepairConnectivity = link.connectivity;
       link.connectivity = 'online';
       await this.ledger.setStatus(link, 'live');
       this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
+      if (prevRepairConnectivity !== 'online') {
+        this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevRepairConnectivity, to: 'online' });
+      }
       this.emitEvent({ type: 'link:status-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: 'repairing', to: 'live' });
 
     } catch (error: any) {
@@ -1044,8 +1042,10 @@ export class SyncEngineLevel implements SyncEngine {
     if (!link) { return; }
     link.connectivity = 'offline';
 
+    const prevDegradedStatus = link.status;
     await this.ledger.setStatus(link, 'degraded_poll');
     this._repairAttempts.delete(linkKey);
+    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, protocol: link.protocol, from: prevDegradedStatus, to: 'degraded_poll' });
     this.emitEvent({ type: 'degraded-poll:entered', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, protocol: link.protocol });
 
     // Clear any existing timer for this link.
@@ -1236,7 +1236,11 @@ export class SyncEngineLevel implements SyncEngine {
         }
         // Transport is reachable — set connectivity to online.
         if (link) {
+          const prevEoseConnectivity = link.connectivity;
           link.connectivity = 'online';
+          if (prevEoseConnectivity !== 'online') {
+            this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevEoseConnectivity, to: 'online' });
+          }
         } else {
           this._connectivityState = 'online';
         }
@@ -1365,6 +1369,17 @@ export class SyncEngineLevel implements SyncEngine {
             const drained = this.drainCommittedPull(cursorKey);
             if (drained > 0) {
               await this.ledger.saveLink(link);
+              // Emit after durable save — "advanced" means persisted.
+              if (link.pull.contiguousAppliedToken) {
+                this.emitEvent({
+                  type           : 'checkpoint:pull-advance',
+                  tenantDid      : link.tenantDid,
+                  remoteEndpoint : link.remoteEndpoint,
+                  protocol       : link.protocol,
+                  position       : link.pull.contiguousAppliedToken.position,
+                  messageCid     : link.pull.contiguousAppliedToken.messageCid,
+                });
+              }
             }
 
             // Overflow: too many in-flight ordinals without draining.
@@ -1458,7 +1473,13 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Set per-link connectivity to online after successful subscription setup.
     const pullLink = this._activeLinks.get(this.buildCursorKey(did, dwnUrl, protocol));
-    if (pullLink) { pullLink.connectivity = 'online'; }
+    if (pullLink) {
+      const prevPullConnectivity = pullLink.connectivity;
+      pullLink.connectivity = 'online';
+      if (prevPullConnectivity !== 'online') {
+        this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevPullConnectivity, to: 'online' });
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------

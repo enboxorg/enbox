@@ -2633,7 +2633,10 @@ describe('SyncEngineLevel — private methods', () => {
       expect(connectivityEvent.to).toBe('offline');
     });
 
-    it('should emit checkpoint:pull-advance when draining committed ordinals', () => {
+    it('should emit checkpoint:pull-advance only after durable save, not on drain alone', () => {
+      // checkpoint:pull-advance is emitted AFTER saveLink succeeds in the
+      // subscription handler, not in drainCommittedPull itself. This ensures
+      // "advanced" means durably persisted.
       const engine = new SyncEngineLevel({ db });
       const events: any[] = [];
       engine.on((event) => { events.push(event); });
@@ -2657,10 +2660,9 @@ describe('SyncEngineLevel — private methods', () => {
 
       (engine as any).drainCommittedPull(linkKey);
 
+      // No event yet — drain only advances in-memory state.
       const pullEvent = events.find(e => e.type === 'checkpoint:pull-advance');
-      expect(pullEvent).toBeDefined();
-      expect(pullEvent.position).toBe('42');
-      expect(pullEvent.messageCid).toBe('cid-42');
+      expect(pullEvent).toBeUndefined();
     });
 
     it('should return an unsubscribe function from on()', () => {
