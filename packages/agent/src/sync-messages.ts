@@ -38,6 +38,20 @@ export function syncMessageReplyIsSuccessful(reply: UnionMessageReply): boolean 
 }
 
 /**
+ * Determines whether a failed push reply represents a permanent failure that
+ * should NOT be retried. Permanent failures include protocol violations (400),
+ * authorization errors (401/403), and schema validation errors that will never
+ * succeed regardless of retry.
+ *
+ * Transient failures (5xx, network errors) are worth retrying.
+ */
+export function isPermanentPushFailure(reply: UnionMessageReply): boolean {
+  return reply.status.code === 400 ||
+    reply.status.code === 401 ||
+    reply.status.code === 403;
+}
+
+/**
  * Helper to get the CID of a message for logging purposes.
  */
 export async function getMessageCid(message: GenericMessage): Promise<string> {
@@ -313,6 +327,7 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
 }): Promise<PushResult> {
   const succeeded: string[] = [];
   const failed: string[] = [];
+  const permanentlyFailed: string[] = [];
 
   // Step 1: Fetch all local messages (streams are pull-based, not yet consumed).
   const fetched: SyncMessageEntry[] = [];
@@ -342,17 +357,25 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
 
       if (syncMessageReplyIsSuccessful(reply)) {
         succeeded.push(cid);
+      } else if (isPermanentPushFailure(reply)) {
+        // Permanent failures (400/401/403) will never succeed — do NOT retry.
+        // These include protocol violations (RecordLimitExceeded), auth errors,
+        // and schema validation failures.
+        console.warn(`SyncEngineLevel: push permanently failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
+        permanentlyFailed.push(cid);
       } else {
+        // Transient failures (5xx, etc.) — worth retrying.
         console.error(`SyncEngineLevel: push failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
         failed.push(cid);
       }
     } catch (error: any) {
+      // Network errors — transient, worth retrying.
       console.error(`SyncEngineLevel: push error for ${cid}: ${error.message ?? error}`);
       failed.push(cid);
     }
   }
 
-  return { succeeded, failed };
+  return { succeeded, failed, permanentlyFailed };
 }
 
 /**

@@ -194,8 +194,10 @@ export type ReplicationLinkState = {
 export type PushResult = {
   /** messageCids that were accepted (202/204/409 — idempotent success). */
   succeeded: string[];
-  /** messageCids that failed (retryable or hard error). */
+  /** messageCids that failed with a transient error (5xx, network) — worth retrying. */
   failed: string[];
+  /** messageCids that failed permanently (400/401/403) — will never succeed, do NOT retry. */
+  permanentlyFailed: string[];
 };
 
 /**
