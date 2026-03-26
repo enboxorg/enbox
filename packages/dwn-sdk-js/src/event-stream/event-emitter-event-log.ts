@@ -247,8 +247,9 @@ export class EventEmitterEventLog implements EventLog {
 
       results.push({
         seq,
-        event   : entry.event,
-        indexes : entry.indexes,
+        event      : entry.event,
+        indexes    : entry.indexes,
+        messageCid : entry.messageCid,
       });
 
       if (results.length >= maxResults) { break; }
@@ -256,8 +257,9 @@ export class EventEmitterEventLog implements EventLog {
 
     if (results.length > 0) {
       const lastEntry = results[results.length - 1];
-      const lastStoredEntry = log.get(lastEntry.seq);
-      const lastToken = await this.buildToken(tenant, lastEntry.seq, lastStoredEntry!.messageCid);
+      // Use the messageCid captured during the synchronous iteration above —
+      // no re-lookup needed, so eviction during the await cannot lose it.
+      const lastToken = await this.buildToken(tenant, lastEntry.seq, lastEntry.messageCid!);
       return { events: results, cursor: lastToken };
     }
 
@@ -336,17 +338,11 @@ export class EventEmitterEventLog implements EventLog {
         ? EventEmitterEventLog.parsePosition(readResult.cursor.position)
         : cursorSeq;
 
-      // Capture messageCids synchronously before any async work to avoid
-      // eviction races — the `await buildToken()` yield could allow new
-      // emit() calls that evict older entries from the log.
-      const log = this.tenantLogs.get(tenant);
-      const catchUpEntries = readResult.events.map((entry) => {
-        const stored = log?.get(entry.seq);
-        return { entry, messageCid: stored?.messageCid ?? '' };
-      });
-
-      for (const { entry, messageCid } of catchUpEntries) {
-        const token = await this.buildToken(tenant, entry.seq, messageCid);
+      // Use the messageCid captured by read() during its synchronous iteration.
+      // This eliminates re-lookup races: read() populates entry.messageCid before
+      // any async yield, so eviction during read()'s buildToken() cannot lose it.
+      for (const entry of readResult.events) {
+        const token = await this.buildToken(tenant, entry.seq, entry.messageCid ?? '');
         listener({ type: 'event', cursor: token, event: entry.event });
       }
 

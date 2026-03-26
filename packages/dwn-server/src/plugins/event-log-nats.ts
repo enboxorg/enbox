@@ -350,8 +350,9 @@ export default class NatsEventLog implements EventLog {
         });
 
         lastSeq = msg.seq;
-        // Prefer the dedicated messageCid field (v0.0.16+), fall back to indexes for older payloads.
-        lastMessageCid = payload.messageCid || (payload.indexes['messageCid'] as string) || '';
+        // Prefer the dedicated messageCid field (v0.0.16+), fall back to indexes for older payloads,
+        // then a deterministic placeholder so pre-upgrade messages never produce empty-string tokens.
+        lastMessageCid = payload.messageCid || (payload.indexes['messageCid'] as string) || `legacy-seq-${msg.seq}`;
 
         if (events.length >= maxResults) {
           break;
@@ -367,7 +368,7 @@ export default class NatsEventLog implements EventLog {
     }
 
     if (lastSeq !== undefined) {
-      const lastToken = await this.#buildToken(tenant, lastSeq, lastMessageCid || '');
+      const lastToken = await this.#buildToken(tenant, lastSeq, lastMessageCid || `legacy-seq-${lastSeq}`);
       return { events, cursor: lastToken };
     }
 
@@ -441,8 +442,9 @@ export default class NatsEventLog implements EventLog {
             continue;
           }
 
-          // Prefer the dedicated messageCid field (v0.0.16+), fall back to indexes for older payloads.
-          const msgCid = payload.messageCid || (payload.indexes['messageCid'] as string) || '';
+          // Prefer the dedicated messageCid field (v0.0.16+), fall back to indexes for older payloads,
+          // then a deterministic placeholder so pre-upgrade messages never produce empty-string tokens.
+          const msgCid = payload.messageCid || (payload.indexes['messageCid'] as string) || `legacy-seq-${msg.seq}`;
           const eventToken = await this.#buildToken(tenant, msg.seq, msgCid);
           listener({ type: 'event', cursor: eventToken, event: payload.event });
           msg.ack();

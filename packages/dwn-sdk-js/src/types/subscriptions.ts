@@ -160,6 +160,14 @@ export type EventLogEntry = {
 
   /** Indexes associated with the event (used for filter matching). */
   indexes: KeyValues;
+
+  /**
+   * The CID of the message that produced this event. Populated by
+   * implementations that track it (e.g. {@link EventEmitterEventLog}).
+   * Consumers should fall back to computing the CID from the message
+   * if this is absent.
+   */
+  messageCid?: string;
 };
 
 /**

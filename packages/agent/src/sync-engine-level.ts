@@ -1512,6 +1512,19 @@ export class SyncEngineLevel implements SyncEngine {
   }): Promise<void> {
     const { did, delegateDid, dwnUrl, protocol } = target;
 
+    // Guard against corrupted push cursors — same validation as the pull side.
+    let pushCursor = target.pushCursor;
+    if (pushCursor && (!pushCursor.streamId || !pushCursor.messageCid || !pushCursor.epoch || !pushCursor.position)) {
+      console.warn(`SyncEngineLevel: Discarding stored push cursor with empty field(s) for ${did} -> ${dwnUrl}`);
+      pushCursor = undefined;
+      const cursorKey = this.buildCursorKey(did, dwnUrl, protocol);
+      const link = this._activeLinks.get(cursorKey);
+      if (link) {
+        ReplicationLedger.resetCheckpoint(link.push);
+        await this.ledger.saveLink(link);
+      }
+    }
+
     // Build filters scoped to the protocol (if any).
     const filters = protocol ? [{ protocol }] : [];
 
@@ -1600,7 +1613,7 @@ export class SyncEngineLevel implements SyncEngine {
       target              : did,
       messageType         : DwnInterface.MessagesSubscribe,
       granteeDid          : delegateDid,
-      messageParams       : { filters, permissionGrantId, cursor: target.pushCursor },
+      messageParams       : { filters, permissionGrantId, cursor: pushCursor },
       subscriptionHandler : subscriptionHandler as any,
     });
 
