@@ -1655,10 +1655,13 @@ export class SyncEngineLevel implements SyncEngine {
           await this.ledger.saveLink(link);
         }
 
-        // Re-queue failed entries so they are retried on the next debounce
-        // cycle (or picked up by the SMT integrity check).
+        // Re-queue only TRANSIENT failures for retry. Permanent failures (400/401/403)
+        // are dropped — they will never succeed regardless of retry.
         if (result.failed.length > 0) {
-          console.error(`SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}: ${result.failed.length} of ${cids.length} messages failed`);
+          console.error(
+            `SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}: ` +
+            `${result.failed.length} transient failures of ${cids.length} messages`
+          );
           const failedSet = new Set(result.failed);
           const failedEntries = pushEntries.filter(e => failedSet.has(e.cid));
           let requeued = this._pendingPushCids.get(targetKey);
@@ -1672,9 +1675,12 @@ export class SyncEngineLevel implements SyncEngine {
           if (!this._pushDebounceTimer) {
             this._pushDebounceTimer = setTimeout((): void => {
               void this.flushPendingPushes();
-            }, PUSH_DEBOUNCE_MS * 4); // Back off: 1 second instead of 250ms.
+            }, PUSH_DEBOUNCE_MS * 4);
           }
         }
+        // Permanent failures are logged by pushMessages but NOT re-queued.
+        // They will be rediscovered by the next SMT integrity check if the
+        // local/remote state has changed, but won't spin in a retry loop.
       } catch (error: any) {
         // Truly unexpected error (not per-message failure). Re-queue entire
         // batch so entries aren't silently dropped from the debounce queue.
