@@ -1115,7 +1115,18 @@ export class SyncEngineLevel implements SyncEngine {
     const cursor = link?.pull.contiguousAppliedToken ?? await this.getCursor(cursorKey);
 
     // Build the MessagesSubscribe filters.
-    const filters = protocol ? [{ protocol }] : [];
+    // When the link has protocolPathPrefixes, include them in the filter so the
+    // EventLog delivers only matching events (server-side filtering). This replaces
+    // the less efficient agent-side isEventInScope filtering for the pull path.
+    // Note: only the first prefix is used as the MessagesFilter field because
+    // MessagesFilter.protocolPathPrefix is a single string. Multiple prefixes
+    // would need multiple filters (OR semantics) — for now we use the first one.
+    const protocolPathPrefix = link?.scope.kind === 'protocol'
+      ? link.scope.protocolPathPrefixes?.[0]
+      : undefined;
+    const filters = protocol
+      ? [{ protocol, ...(protocolPathPrefix ? { protocolPathPrefix } : {}) }]
+      : [];
 
     // Look up permission grant for MessagesSubscribe if using a delegate.
     // The unified scope matching in AgentPermissionsApi accepts a

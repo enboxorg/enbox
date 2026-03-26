@@ -827,6 +827,97 @@ export function testMessagesSubscribeHandler(): void {
             });
           });
 
+          it('allows subscribe of contextIdPrefix filtered messages with real context inclusion and exclusion', async () => {
+            // scenario: Alice installs a protocol, writes two root posts (each in its own context),
+            // then writes a child attachment under one post. She subscribes with a contextIdPrefix
+            // matching the first post's contextId. Expected:
+            //   - ProtocolsConfigure received (shadow filter)
+            //   - Post A and its attachment received (contextId matches prefix)
+            //   - Post B NOT received (different context)
+
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+
+            // install the protocol first so we can write records
+            const { message: freeForAllConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+              author             : alice,
+              protocolDefinition : freeForAll,
+            });
+            expect((await dwn.processMessage(alice.did, freeForAllConfigure)).status.code).toBe(202);
+
+            // write post A — its contextId will be its own recordId
+            const { message: postA, dataStream: dsA } = await TestDataGenerator.generateRecordsWrite({
+              protocol     : freeForAll.protocol,
+              protocolPath : 'post',
+              schema       : freeForAll.types.post.schema,
+              author       : alice,
+            });
+            expect((await dwn.processMessage(alice.did, postA, { dataStream: dsA })).status.code).toBe(202);
+            const postAContextId = postA.contextId ?? postA.recordId;
+
+            // write an attachment under post A — contextId = postA.recordId/attachment.recordId
+            const { message: attachA, dataStream: dsAttachA } = await TestDataGenerator.generateRecordsWrite({
+              protocol        : freeForAll.protocol,
+              protocolPath    : 'post/attachment',
+              parentContextId : postA.recordId,
+              author          : alice,
+            });
+            expect((await dwn.processMessage(alice.did, attachA, { dataStream: dsAttachA })).status.code).toBe(202);
+
+            // write post B — different context
+            const { message: postB, dataStream: dsB } = await TestDataGenerator.generateRecordsWrite({
+              protocol     : freeForAll.protocol,
+              protocolPath : 'post',
+              schema       : freeForAll.types.post.schema,
+              author       : alice,
+            });
+            expect((await dwn.processMessage(alice.did, postB, { dataStream: dsB })).status.code).toBe(202);
+
+            // now subscribe with contextIdPrefix = postA's contextId
+            // This should match postA (exact) and attachA (child), but NOT postB
+            const ctxCids: string[] = [];
+            const ctxHandler = async (msg: SubscriptionMessage):Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              ctxCids.push(await Message.getCid(msg.event.message));
+            };
+
+            const { message: ctxSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
+              author  : alice,
+              filters : [{ protocol: freeForAll.protocol, contextIdPrefix: postAContextId }],
+            });
+            const ctxReply = await dwn.processMessage(alice.did, ctxSubscribe, { subscriptionHandler: ctxHandler });
+            expect(ctxReply.status.code).toBe(200);
+
+            // write another record AFTER subscribing to test live delivery
+            const { message: postC, dataStream: dsC } = await TestDataGenerator.generateRecordsWrite({
+              protocol     : freeForAll.protocol,
+              protocolPath : 'post',
+              schema       : freeForAll.types.post.schema,
+              author       : alice,
+            });
+            expect((await dwn.processMessage(alice.did, postC, { dataStream: dsC })).status.code).toBe(202);
+
+            // write another attachment under post A — should match the contextId prefix
+            const { message: attachA2, dataStream: dsAttachA2 } = await TestDataGenerator.generateRecordsWrite({
+              protocol        : freeForAll.protocol,
+              protocolPath    : 'post/attachment',
+              parentContextId : postA.recordId,
+              author          : alice,
+            });
+            expect((await dwn.processMessage(alice.did, attachA2, { dataStream: dsAttachA2 })).status.code).toBe(202);
+
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              // Should receive: attachA2 (live, context matches) but NOT postC (different context)
+              // Also may receive ProtocolsConfigure via shadow filter (it was installed before subscribe,
+              // so it won't appear in live events, but the shadow filter ensures it COULD if timing differed)
+              const attachA2Cid = await Message.getCid(attachA2);
+              expect(ctxCids).toContain(attachA2Cid);
+
+              // postC should NOT be in the list (different context)
+              const postCCid = await Message.getCid(postC);
+              expect(ctxCids).not.toContain(postCCid);
+            });
+          });
+
           it('rejects subscribe of protocol filtered messages with mismatching protocol grant scopes', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();

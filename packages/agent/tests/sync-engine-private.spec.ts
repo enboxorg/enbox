@@ -684,6 +684,41 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._liveSubscriptions = [];
     });
 
+    it('should include protocolPathPrefix in subscription filters when link scope has it', async () => {
+      const { agent, processRequestStub } = createPullMockAgent();
+      const engine = new SyncEngineLevel({ db, agent });
+      sinon.stub(engine as any, 'getCursor').resolves(undefined);
+
+      // Set up a link with protocolPathPrefixes in the scope.
+      const linkKey = (engine as any).buildCursorKey('did:example:alice', 'https://dwn.example.com', 'https://proto.example.com');
+      (engine as any)._activeLinks.set(linkKey, {
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : {
+          kind                 : 'protocol',
+          protocol             : 'https://proto.example.com',
+          protocolPathPrefixes : ['thread/message'],
+        },
+        status   : 'live',
+        pull     : {},
+        push     : {},
+        protocol : 'https://proto.example.com',
+      });
+
+      await (engine as any).openLivePullSubscription({
+        did      : 'did:example:alice',
+        dwnUrl   : 'https://dwn.example.com',
+        protocol : 'https://proto.example.com',
+      });
+
+      const callArgs = processRequestStub.firstCall.args[0];
+      expect(callArgs.messageParams.filters).toEqual([{
+        protocol           : 'https://proto.example.com',
+        protocolPathPrefix : 'thread/message',
+      }]);
+      (engine as any)._liveSubscriptions = [];
+    });
+
     it('should use existing cursor when available', async () => {
       const { agent, processRequestStub } = createPullMockAgent();
       const engine = new SyncEngineLevel({ db, agent });

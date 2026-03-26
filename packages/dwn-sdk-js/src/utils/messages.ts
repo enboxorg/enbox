@@ -74,7 +74,7 @@ export class Messages {
       // This mirrors the existing core-protocol additional-filter pattern above.
       // The messageTimestamp constraint is carried over so time-bounded queries
       // (including cursor-based subscriptions) also apply to the shadow filter.
-      if (filter.protocolPathPrefix !== undefined && filter.protocol !== undefined) {
+      if ((filter.protocolPathPrefix !== undefined || filter.contextIdPrefix !== undefined) && filter.protocol !== undefined) {
         const metadataFilter: Filter = {
           interface : 'Protocols',
           method    : 'Configure',
@@ -101,7 +101,7 @@ export class Messages {
   private static convertFilter(filter: MessagesFilter): Filter {
     const filterCopy = { ...filter } as Filter;
 
-    const { messageTimestamp, protocolPathPrefix } = filter;
+    const { messageTimestamp, protocolPathPrefix, contextIdPrefix } = filter;
     const messageTimestampFilter = messageTimestamp ? FilterUtility.convertRangeCriterion(messageTimestamp) : undefined;
     if (messageTimestampFilter) {
       filterCopy.messageTimestamp = messageTimestampFilter;
@@ -118,6 +118,15 @@ export class Messages {
       filterCopy.protocolPath = {
         gte : protocolPathPrefix,
         lt  : protocolPathPrefix + '/\uffff',
+      };
+    }
+
+    // Convert contextIdPrefix into a contextId range filter (same pattern).
+    if (contextIdPrefix !== undefined) {
+      delete (filterCopy as any).contextIdPrefix;
+      filterCopy.contextId = {
+        gte : contextIdPrefix,
+        lt  : contextIdPrefix + '/\uffff',
       };
     }
 
