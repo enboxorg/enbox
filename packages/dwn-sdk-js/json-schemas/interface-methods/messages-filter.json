@@ -27,6 +27,9 @@
     "protocolPathPrefix": {
       "type": "string"
     },
+    "contextIdPrefix": {
+      "type": "string"
+    },
     "messageTimestamp": {
       "type": "object",
       "minProperties": 1,

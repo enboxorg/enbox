@@ -13,6 +13,9 @@ export type MessagesFilter = {
   /** Prefix filter for protocolPath. Matches records whose protocolPath equals
    *  the prefix or starts with the prefix followed by '/'. */
   protocolPathPrefix?: string;
+  /** Prefix filter for contextId. Matches records whose contextId equals
+   *  the prefix or starts with the prefix followed by '/'. */
+  contextIdPrefix?: string;
   messageTimestamp?: RangeCriterion;
 };
 

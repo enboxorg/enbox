@@ -101,7 +101,7 @@ export class Messages {
   private static convertFilter(filter: MessagesFilter): Filter {
     const filterCopy = { ...filter } as Filter;
 
-    const { messageTimestamp, protocolPathPrefix } = filter;
+    const { messageTimestamp, protocolPathPrefix, contextIdPrefix } = filter;
     const messageTimestampFilter = messageTimestamp ? FilterUtility.convertRangeCriterion(messageTimestamp) : undefined;
     if (messageTimestampFilter) {
       filterCopy.messageTimestamp = messageTimestampFilter;
@@ -118,6 +118,15 @@ export class Messages {
       filterCopy.protocolPath = {
         gte : protocolPathPrefix,
         lt  : protocolPathPrefix + '/\uffff',
+      };
+    }
+
+    // Convert contextIdPrefix into a contextId range filter (same pattern).
+    if (contextIdPrefix !== undefined) {
+      delete (filterCopy as any).contextIdPrefix;
+      filterCopy.contextId = {
+        gte : contextIdPrefix,
+        lt  : contextIdPrefix + '/\uffff',
       };
     }
 
