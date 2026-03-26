@@ -1,67 +1,45 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+
+import sinon from 'sinon';
+
+import { DwnPermissionGrant } from '@enbox/agent';
 
 import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
+import { WalletConnect } from '../src/wallet-connect-client.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
+import { processConnectedGrants, walletConnect } from '../src/connect/wallet.js';
 
-// ── Module-level mocks ──────────────────────────────────────────
-// We must preserve ALL original exports from @enbox/agent because
-// mock.module() replaces the module globally for the entire test
-// process. Only override the specific items we need to control.
-//
-// IMPORTANT: Do NOT mock @enbox/common — spreading a class (Convert)
-// into a plain object loses its static methods, breaking downstream
-// code that depends on Convert.uint8Array, Convert.hex, etc.
+function createInitClientResult(delegateGrants: any[] = []): any {
+  return {
+    delegatePortableDid : { uri: 'did:dht:delegate123' },
+    connectedDid        : 'did:dht:connected456',
+    delegateGrants,
+  };
+}
 
-const actualAgent = await import('@enbox/agent');
+let initClientStub: sinon.SinonStub;
 
-const mockInitClient = mock((): any => Promise.resolve({
-  delegatePortableDid : { uri: 'did:dht:delegate123' },
-  connectedDid        : 'did:dht:connected456',
-  delegateGrants      : [],
-}));
-
-const mockParseGrant = mock((message: any) => ({
-  scope: message._scope ?? {},
-}));
-
-const actualWalletConnectClient = await import('../src/wallet-connect-client.js');
-
-mock.module('../src/wallet-connect-client.js', () => ({
-  ...actualWalletConnectClient,
-  WalletConnect: {
-    ...actualWalletConnectClient.WalletConnect,
-    initClient: mockInitClient,
-  },
-}));
-
-mock.module('@enbox/agent', () => ({
-  ...actualAgent,
-  DwnPermissionGrant: {
-    ...actualAgent.DwnPermissionGrant,
-    parse: mockParseGrant,
-  },
-}));
-
-// Import module-under-test lazily. Bun resolves mock.module
-// registrations before any import() calls in the same file.
-let _walletConnect: any;
-let _processConnectedGrants: any;
-
-async function load(): Promise<void> {
-  if (!_walletConnect) {
-    const mod = await import('../src/connect/wallet.js');
-    _walletConnect = mod.walletConnect;
-    _processConnectedGrants = mod.processConnectedGrants;
-  }
+function setupStubs(): void {
+  initClientStub = sinon.stub(WalletConnect, 'initClient').resolves(createInitClientResult());
+  sinon.stub(DwnPermissionGrant, 'parse').callsFake(((message: any): any => ({
+    scope: message._scope ?? {},
+  })) as any);
 }
 
 describe('processConnectedGrants', () => {
+  beforeEach((): void => {
+    setupStubs();
+  });
+
+  afterEach((): void => {
+    sinon.restore();
+  });
+
   test('returns empty array for no grants', async () => {
-    await load();
     const agent = createMockAgent();
-    const result = await _processConnectedGrants({
+    const result = await processConnectedGrants({
       agent,
       connectedDid : 'did:dht:connected',
       delegateDid  : 'did:dht:delegate',
@@ -71,7 +49,6 @@ describe('processConnectedGrants', () => {
   });
 
   test('processes grants and returns protocol URIs', async () => {
-    await load();
     const processCalls: any[] = [];
     const agent = createMockAgent({
       processDwnRequest: async (params: any) => {
@@ -104,7 +81,7 @@ describe('processConnectedGrants', () => {
       },
     ] as any;
 
-    const result = await _processConnectedGrants({
+    const result = await processConnectedGrants({
       agent,
       connectedDid : 'did:dht:connected',
       delegateDid  : 'did:dht:delegate',
@@ -126,7 +103,6 @@ describe('processConnectedGrants', () => {
   });
 
   test('deduplicates protocol URIs', async () => {
-    await load();
     const agent = createMockAgent({
       processDwnRequest: async () => ({
         reply: { status: { code: 202, detail: 'Accepted' } },
@@ -148,7 +124,7 @@ describe('processConnectedGrants', () => {
       },
     ] as any;
 
-    const result = await _processConnectedGrants({
+    const result = await processConnectedGrants({
       agent,
       connectedDid : 'did:dht:connected',
       delegateDid  : 'did:dht:delegate',
@@ -159,7 +135,6 @@ describe('processConnectedGrants', () => {
   });
 
   test('throws when grant processing fails', async () => {
-    await load();
     const agent = createMockAgent({
       processDwnRequest: async () => ({
         reply: { status: { code: 401, detail: 'Unauthorized' } },
@@ -176,7 +151,7 @@ describe('processConnectedGrants', () => {
     ] as any;
 
     await expect(
-      _processConnectedGrants({
+      processConnectedGrants({
         agent,
         connectedDid : 'did:dht:connected',
         delegateDid  : 'did:dht:delegate',
@@ -187,8 +162,15 @@ describe('processConnectedGrants', () => {
 });
 
 describe('walletConnect', () => {
+  beforeEach((): void => {
+    setupStubs();
+  });
+
+  afterEach((): void => {
+    sinon.restore();
+  });
+
   test('allows sync off without throwing', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const identity = createMockIdentity({
@@ -201,14 +183,10 @@ describe('walletConnect', () => {
       identityImport : async () => identity,
     });
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
     // Should not throw — sync: 'off' is now allowed.
-    const session = await _walletConnect(
+    const session = await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: 'off' },
       {
         displayName        : 'Test App',
@@ -223,15 +201,14 @@ describe('walletConnect', () => {
   });
 
   test('throws when initClient returns undefined/null', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const agent = createMockAgent({ firstLaunch: async () => false });
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve(undefined));
+    initClientStub.onFirstCall().resolves(undefined);
 
     await expect(
-      _walletConnect(
+      walletConnect(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
         {
           displayName        : 'Test App',
@@ -245,7 +222,6 @@ describe('walletConnect', () => {
   });
 
   test('successful wallet connect creates session', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const identity = createMockIdentity({
@@ -262,13 +238,9 @@ describe('walletConnect', () => {
       identityImport : async () => identity,
     });
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
-    const session = await _walletConnect(
+    const session = await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       {
         displayName        : 'Test App',
@@ -291,7 +263,6 @@ describe('walletConnect', () => {
   });
 
   test('passes correct options to initClient', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const identity = createMockIdentity({
@@ -305,16 +276,12 @@ describe('walletConnect', () => {
     });
 
     let capturedOptions: any;
-    mockInitClient.mockImplementationOnce((...args: any[]): any => {
+    initClientStub.onFirstCall().callsFake((...args: any[]): any => {
       capturedOptions = args[0];
-      return Promise.resolve({
-        delegatePortableDid : { uri: 'did:dht:delegate123' },
-        connectedDid        : 'did:dht:connected456',
-        delegateGrants      : [],
-      });
+      return Promise.resolve(createInitClientResult());
     });
 
-    await _walletConnect(
+    await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       {
         displayName        : 'Test App',
@@ -331,7 +298,6 @@ describe('walletConnect', () => {
   });
 
   test('uses custom walletUri when provided', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const identity = createMockIdentity({
@@ -345,16 +311,12 @@ describe('walletConnect', () => {
     });
 
     let capturedOptions: any;
-    mockInitClient.mockImplementationOnce((...args: any[]): any => {
+    initClientStub.onFirstCall().callsFake((...args: any[]): any => {
       capturedOptions = args[0];
-      return Promise.resolve({
-        delegatePortableDid : { uri: 'did:dht:delegate123' },
-        connectedDid        : 'did:dht:connected456',
-        delegateGrants      : [],
-      });
+      return Promise.resolve(createInitClientResult());
     });
 
-    await _walletConnect(
+    await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       {
         displayName        : 'Test App',
@@ -370,7 +332,6 @@ describe('walletConnect', () => {
   });
 
   test('live sync mode when no interval specified', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const syncCalls: any[] = [];
@@ -385,13 +346,9 @@ describe('walletConnect', () => {
       syncStartSync  : async (params: any) => { syncCalls.push(params); },
     });
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
-    await _walletConnect(
+    await walletConnect(
       { userAgent: agent, emitter, storage }, // no defaultSync = live mode
       {
         displayName        : 'Test App',
@@ -408,7 +365,6 @@ describe('walletConnect', () => {
   });
 
   test('poll sync mode when interval specified', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const syncCalls: any[] = [];
@@ -423,13 +379,9 @@ describe('walletConnect', () => {
       syncStartSync  : async (params: any) => { syncCalls.push(params); },
     });
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
-    await _walletConnect(
+    await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '30s' },
       {
         displayName        : 'Test App',
@@ -446,7 +398,6 @@ describe('walletConnect', () => {
   });
 
   test('processes grants with identity import', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const processCalls: any[] = [];
@@ -473,13 +424,9 @@ describe('walletConnect', () => {
       },
     ];
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : grantData,
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
-    const session = await _walletConnect(
+    const session = await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       {
         displayName        : 'Test App',
@@ -497,7 +444,6 @@ describe('walletConnect', () => {
   });
 
   test('cleans up on identity import failure', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
 
@@ -506,14 +452,10 @@ describe('walletConnect', () => {
       identityImport : async () => { throw new Error('import failed'); },
     });
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
     await expect(
-      _walletConnect(
+      walletConnect(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
         {
           displayName        : 'Test App',
@@ -527,7 +469,6 @@ describe('walletConnect', () => {
   });
 
   test('cleans up identity on post-import failure', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const deletedDids: string[] = [];
@@ -545,14 +486,10 @@ describe('walletConnect', () => {
       syncRegisterIdentity : async () => { throw new Error('sync reg failed'); },
     });
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
     await expect(
-      _walletConnect(
+      walletConnect(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
         {
           displayName        : 'Test App',
@@ -569,7 +506,6 @@ describe('walletConnect', () => {
   });
 
   test('cleanup handles DID delete failure gracefully', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const identity = createMockIdentity({
@@ -585,15 +521,11 @@ describe('walletConnect', () => {
       syncRegisterIdentity : async () => { throw new Error('trigger cleanup'); },
     });
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
     // Should not throw from cleanup — only from the original error
     await expect(
-      _walletConnect(
+      walletConnect(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
         {
           displayName        : 'Test App',
@@ -607,7 +539,6 @@ describe('walletConnect', () => {
   });
 
   test('option sync overrides context defaultSync', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const syncCalls: any[] = [];
@@ -622,13 +553,9 @@ describe('walletConnect', () => {
       syncStartSync  : async (params: any) => { syncCalls.push(params); },
     });
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
-    await _walletConnect(
+    await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       {
         displayName        : 'Test App',
@@ -645,7 +572,6 @@ describe('walletConnect', () => {
   });
 
   test('does not call sync.sync pull after registering identity (deferred to startSync)', async () => {
-    await load();
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const syncCalls: string[] = [];
@@ -660,13 +586,9 @@ describe('walletConnect', () => {
       syncSync       : async (dir: string) => { syncCalls.push(dir); },
     });
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
-    await _walletConnect(
+    await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       {
         displayName        : 'Test App',
@@ -685,12 +607,8 @@ describe('walletConnect', () => {
   test('calls registration when registration options are provided', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    mockInitClient.mockClear();
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.resetHistory();
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
     let registrationSucceeded = false;
     const agent = createMockAgent({
@@ -704,7 +622,7 @@ describe('walletConnect', () => {
       }),
     });
 
-    await _walletConnect(
+    await walletConnect(
       {
         userAgent    : agent,
         emitter,

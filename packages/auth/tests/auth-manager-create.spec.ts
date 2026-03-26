@@ -1,62 +1,45 @@
 /**
  * Tests for AuthManager.create() and walletConnect() — the two uncovered methods.
- *
- * These need module-level mocking of EnboxUserAgent.create() because the
- * private constructor is not directly accessible. We use a dedicated test
- * file so mock.module() does not pollute other test files.
  */
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
+import sinon from 'sinon';
+
+import { EnboxUserAgent } from '@enbox/agent';
+
+import { AuthManager } from '../src/auth-manager.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { WalletConnect } from '../src/wallet-connect-client.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
-// ── Module-level mocks ──────────────────────────────────────────
-// Preserve all actual agent exports, only mock EnboxUserAgent.create and
-// WalletConnect.initClient.
-//
-// IMPORTANT: Do NOT mock @enbox/common — spreading a class (Convert)
-// into a plain object loses its static methods, breaking downstream
-// code that depends on Convert.uint8Array, Convert.hex, etc.
+function createInitClientResult(): any {
+  return {
+    delegatePortableDid : { uri: 'did:dht:delegate123' },
+    connectedDid        : 'did:dht:connected456',
+    delegateGrants      : [],
+  };
+}
 
-const actualAgent = await import('@enbox/agent');
+let initClientStub: sinon.SinonStub;
+let userAgentCreateStub: sinon.SinonStub;
 
-const mockUserAgentCreate = mock((): any => Promise.resolve(createMockAgent()));
-
-const mockInitClient = mock((): any => Promise.resolve({
-  delegatePortableDid : { uri: 'did:dht:delegate123' },
-  connectedDid        : 'did:dht:connected456',
-  delegateGrants      : [],
-}));
-
-const actualWalletConnectClient = await import('../src/wallet-connect-client.js');
-
-mock.module('../src/wallet-connect-client.js', () => ({
-  ...actualWalletConnectClient,
-  WalletConnect: {
-    ...actualWalletConnectClient.WalletConnect,
-    initClient: mockInitClient,
-  },
-}));
-
-mock.module('@enbox/agent', () => ({
-  ...actualAgent,
-  EnboxUserAgent: {
-    ...actualAgent.EnboxUserAgent,
-    create: mockUserAgentCreate,
-  },
-  DwnPermissionGrant: {
-    ...actualAgent.DwnPermissionGrant,
-    parse: (message: any): { scope: any } => ({ scope: message._scope ?? {} }),
-  },
-}));
-
-// Import AuthManager AFTER mocks are registered.
-const { AuthManager } = await import('../src/auth-manager.js');
+function setupStubs(): void {
+  initClientStub = sinon.stub(WalletConnect, 'initClient').resolves(createInitClientResult());
+  userAgentCreateStub = sinon.stub(EnboxUserAgent, 'create').resolves(createMockAgent() as any);
+}
 
 describe('AuthManager.create()', () => {
+  beforeEach((): void => {
+    setupStubs();
+  });
+
+  afterEach((): void => {
+    sinon.restore();
+  });
+
   test('creates instance with default options', async () => {
     const agent = createMockAgent({ vaultIsInitialized: async () => false });
-    mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
 
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
@@ -68,7 +51,7 @@ describe('AuthManager.create()', () => {
   test('creates instance with custom options', async () => {
     const storage = new MemoryStorage();
     const agent = createMockAgent({ vaultIsInitialized: async () => false });
-    mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
 
     const manager = await AuthManager.create({
       storage,
@@ -87,7 +70,7 @@ describe('AuthManager.create()', () => {
       vaultIsInitialized : async () => true,
       vaultIsLocked      : () => true,
     });
-    mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
 
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
@@ -99,7 +82,7 @@ describe('AuthManager.create()', () => {
       vaultIsInitialized : async () => true,
       vaultIsLocked      : () => false,
     });
-    mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
 
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
@@ -108,7 +91,7 @@ describe('AuthManager.create()', () => {
 
   test('passes dataPath to EnboxUserAgent.create', async () => {
     let capturedOptions: any;
-    mockUserAgentCreate.mockImplementationOnce((...args: any[]): any => {
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
       capturedOptions = args[0];
       return Promise.resolve(createMockAgent());
     });
@@ -120,7 +103,7 @@ describe('AuthManager.create()', () => {
 
   test('uses pre-built agent when provided', async () => {
     const customAgent = createMockAgent({ vaultIsInitialized: async () => false });
-    const callsBefore = mockUserAgentCreate.mock.calls.length;
+    const callsBefore = userAgentCreateStub.callCount;
 
     const manager = await AuthManager.create({
       agent   : customAgent as any,
@@ -128,14 +111,14 @@ describe('AuthManager.create()', () => {
     });
 
     // EnboxUserAgent.create() should NOT have been called.
-    expect(mockUserAgentCreate.mock.calls.length).toBe(callsBefore);
+    expect(userAgentCreateStub.callCount).toBe(callsBefore);
     expect(manager.agent).toBe(customAgent);
     expect(manager.state).toBe('uninitialized');
   });
 
   test('agent option ignores dataPath, agentVault, and localDwnStrategy', async () => {
     const customAgent = createMockAgent({ vaultIsInitialized: async () => true, vaultIsLocked: () => false });
-    const callsBefore = mockUserAgentCreate.mock.calls.length;
+    const callsBefore = userAgentCreateStub.callCount;
 
     const manager = await AuthManager.create({
       agent            : customAgent as any,
@@ -146,14 +129,14 @@ describe('AuthManager.create()', () => {
     });
 
     // EnboxUserAgent.create() should NOT have been called.
-    expect(mockUserAgentCreate.mock.calls.length).toBe(callsBefore);
+    expect(userAgentCreateStub.callCount).toBe(callsBefore);
     expect(manager.agent).toBe(customAgent);
     expect(manager.state).toBe('unlocked');
   });
 
   test('passes agentVault to EnboxUserAgent.create', async () => {
     let capturedOptions: any;
-    mockUserAgentCreate.mockImplementationOnce((...args: any[]): any => {
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
       capturedOptions = args[0];
       return Promise.resolve(createMockAgent());
     });
@@ -166,7 +149,7 @@ describe('AuthManager.create()', () => {
 
   test('passes localDwnStrategy to EnboxUserAgent.create', async () => {
     let capturedOptions: any;
-    mockUserAgentCreate.mockImplementationOnce((...args: any[]): any => {
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
       capturedOptions = args[0];
       return Promise.resolve(createMockAgent());
     });
@@ -178,7 +161,7 @@ describe('AuthManager.create()', () => {
 
   test('passes all agent creation options together', async () => {
     let capturedOptions: any;
-    mockUserAgentCreate.mockImplementationOnce((...args: any[]): any => {
+    userAgentCreateStub.onFirstCall().callsFake((...args: any[]): any => {
       capturedOptions = args[0];
       return Promise.resolve(createMockAgent());
     });
@@ -198,6 +181,14 @@ describe('AuthManager.create()', () => {
 });
 
 describe('AuthManager.walletConnect()', () => {
+  beforeEach((): void => {
+    setupStubs();
+  });
+
+  afterEach((): void => {
+    sinon.restore();
+  });
+
   test('initializes agent on first launch', async () => {
     const initCalls: any[] = [];
     const startCalls: any[] = [];
@@ -212,13 +203,9 @@ describe('AuthManager.walletConnect()', () => {
       start          : async (params) => { startCalls.push(params); },
       identityImport : async () => identity,
     });
-    mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
     const session = await manager.walletConnect({
@@ -249,13 +236,9 @@ describe('AuthManager.walletConnect()', () => {
       initialize     : async (params) => { initCalls.push(params); return 'phrase'; },
       identityImport : async () => identity,
     });
-    mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
     await manager.walletConnect({
@@ -281,13 +264,9 @@ describe('AuthManager.walletConnect()', () => {
       initialize     : async (params) => { initCalls.push(params); return 'phrase'; },
       identityImport : async () => identity,
     });
-    mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
     const manager = await AuthManager.create({ password: 'my-password', storage: new MemoryStorage() });
     await manager.walletConnect({
@@ -312,13 +291,9 @@ describe('AuthManager.walletConnect()', () => {
       firstLaunch    : async () => false,
       identityImport : async () => identity,
     });
-    mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
     manager.on('vault-unlocked', () => { events.push('vault-unlocked'); });
@@ -345,13 +320,9 @@ describe('AuthManager.walletConnect()', () => {
       start          : async () => { await new Promise((r) => setTimeout(r, 50)); },
       identityImport : async () => identity,
     });
-    mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
@@ -381,7 +352,7 @@ describe('AuthManager.walletConnect()', () => {
       firstLaunch : async () => false,
       start       : async () => { throw new Error('start failed'); },
     });
-    mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
 
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
@@ -410,13 +381,9 @@ describe('AuthManager.walletConnect()', () => {
       identityImport : async () => identity,
       syncStartSync  : async (params) => { syncCalls.push(params); },
     });
-    mockUserAgentCreate.mockImplementationOnce((): any => Promise.resolve(agent));
+    userAgentCreateStub.onFirstCall().resolves(agent as any);
 
-    mockInitClient.mockImplementationOnce((): any => Promise.resolve({
-      delegatePortableDid : { uri: 'did:dht:delegate123' },
-      connectedDid        : 'did:dht:connected456',
-      delegateGrants      : [],
-    }));
+    initClientStub.onFirstCall().resolves(createInitClientResult());
 
     const manager = await AuthManager.create({ sync: '20s', storage: new MemoryStorage() });
     await manager.walletConnect({
