@@ -71,13 +71,24 @@ export class Messages {
       // When protocolPathPrefix is used with a protocol, inject a shadow filter
       // for ProtocolsConfigure events. Without this, protocol metadata updates
       // would be excluded (ProtocolsConfigure indexes have no protocolPath).
-      // This mirrors the core-protocol additional-filter pattern above.
+      // This mirrors the existing core-protocol additional-filter pattern above.
+      // The messageTimestamp constraint is carried over so time-bounded queries
+      // (including cursor-based subscriptions) also apply to the shadow filter.
       if (filter.protocolPathPrefix !== undefined && filter.protocol !== undefined) {
-        messagesQueryFilters.push({
+        const metadataFilter: Filter = {
           interface : 'Protocols',
           method    : 'Configure',
           protocol  : filter.protocol,
-        } as Filter);
+        };
+
+        if (filter.messageTimestamp !== undefined) {
+          const timestampFilter = FilterUtility.convertRangeCriterion(filter.messageTimestamp);
+          if (timestampFilter) {
+            metadataFilter.messageTimestamp = timestampFilter;
+          }
+        }
+
+        messagesQueryFilters.push(metadataFilter);
       }
     }
 
