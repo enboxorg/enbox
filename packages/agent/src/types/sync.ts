@@ -227,6 +227,28 @@ export type StartSyncParams = {
   interval?: string;
 };
 
+// ---------------------------------------------------------------------------
+// Sync observability events
+// ---------------------------------------------------------------------------
+
+/**
+ * Events emitted by the sync engine at key state transitions.
+ * Consumers subscribe via `SyncEngine.on('event', handler)` and can
+ * hook these into metrics, logging, or UI state.
+ */
+export type SyncEvent =
+  | { type: 'link:status-change'; tenantDid: string; remoteEndpoint: string; protocol?: string; from: LinkStatus; to: LinkStatus }
+  | { type: 'link:connectivity-change'; tenantDid: string; remoteEndpoint: string; protocol?: string; from: SyncConnectivityState; to: SyncConnectivityState }
+  | { type: 'checkpoint:pull-advance'; tenantDid: string; remoteEndpoint: string; protocol?: string; position: string; messageCid: string }
+  | { type: 'checkpoint:push-advance'; tenantDid: string; remoteEndpoint: string; protocol?: string; position: string; messageCid: string }
+  | { type: 'repair:started'; tenantDid: string; remoteEndpoint: string; protocol?: string; attempt: number }
+  | { type: 'repair:completed'; tenantDid: string; remoteEndpoint: string; protocol?: string }
+  | { type: 'repair:failed'; tenantDid: string; remoteEndpoint: string; protocol?: string; attempt: number; error: string }
+  | { type: 'degraded-poll:entered'; tenantDid: string; remoteEndpoint: string; protocol?: string }
+  | { type: 'gap:detected'; tenantDid: string; remoteEndpoint: string; protocol?: string; reason: string };
+
+export type SyncEventListener = (event: SyncEvent) => void;
+
 export interface SyncEngine {
   /**
    * The agent that the SyncEngine is attached to.
@@ -279,6 +301,13 @@ export interface SyncEngine {
    * @throws {Error} if the sync operation fails to stop before the timeout.
    */
   stopSync(timeout?: number): Promise<void>;
+
+  /**
+   * Subscribe to sync engine events. Returns an unsubscribe function.
+   * Events are emitted at key state transitions: checkpoint advancement,
+   * link status changes, repair, degraded_poll, gap detection.
+   */
+  on(listener: SyncEventListener): () => void;
 
   /**
    * Release all resources held by the sync engine (LevelDB handles, timers,

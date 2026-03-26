@@ -2593,4 +2593,98 @@ describe('SyncEngineLevel — private methods', () => {
       // In real code, this would trigger transitionToRepairing.
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Observability events
+  // ---------------------------------------------------------------------------
+
+  describe('sync event emission', () => {
+    it('should emit link:status-change when transitioning to repairing', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      const link = {
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        status         : 'live',
+        connectivity   : 'online',
+        pull           : {},
+        push           : {},
+        protocol       : 'https://example.com/chat',
+      } as any;
+      const linkKey = 'test-link';
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = { setStatus: setStatusStub };
+      sinon.stub(engine as any, 'repairLink').resolves();
+
+      await (engine as any).transitionToRepairing(linkKey, link);
+
+      const statusEvent = events.find(e => e.type === 'link:status-change');
+      expect(statusEvent).toBeDefined();
+      expect(statusEvent.from).toBe('live');
+      expect(statusEvent.to).toBe('repairing');
+
+      const connectivityEvent = events.find(e => e.type === 'link:connectivity-change');
+      expect(connectivityEvent).toBeDefined();
+      expect(connectivityEvent.from).toBe('online');
+      expect(connectivityEvent.to).toBe('offline');
+    });
+
+    it('should emit checkpoint:pull-advance when draining committed ordinals', () => {
+      const engine = new SyncEngineLevel({ db });
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = {
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        pull           : {},
+        push           : {},
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      const rt = (engine as any).getOrCreateRuntime(linkKey);
+      rt.inflight.set(0, {
+        ordinal   : 0,
+        token     : { streamId: 's', epoch: 'e', position: '42', messageCid: 'cid-42' },
+        committed : true,
+      });
+      rt.nextDeliveryOrdinal = 1;
+
+      (engine as any).drainCommittedPull(linkKey);
+
+      const pullEvent = events.find(e => e.type === 'checkpoint:pull-advance');
+      expect(pullEvent).toBeDefined();
+      expect(pullEvent.position).toBe('42');
+      expect(pullEvent.messageCid).toBe('cid-42');
+    });
+
+    it('should return an unsubscribe function from on()', () => {
+      const engine = new SyncEngineLevel({ db });
+      const events: any[] = [];
+      const unsubscribe = engine.on((event) => { events.push(event); });
+
+      (engine as any).emitEvent({ type: 'gap:detected', tenantDid: 'x', remoteEndpoint: 'y', reason: 'test' });
+      expect(events.length).toBe(1);
+
+      unsubscribe();
+
+      (engine as any).emitEvent({ type: 'gap:detected', tenantDid: 'x', remoteEndpoint: 'y', reason: 'test2' });
+      expect(events.length).toBe(1); // No new event after unsubscribe.
+    });
+
+    it('should not propagate listener errors into sync engine', () => {
+      const engine = new SyncEngineLevel({ db });
+      engine.on(() => { throw new Error('listener crash'); });
+
+      // Should not throw.
+      expect(() => {
+        (engine as any).emitEvent({ type: 'gap:detected', tenantDid: 'x', remoteEndpoint: 'y', reason: 'test' });
+      }).not.toThrow();
+    });
+  });
 });
