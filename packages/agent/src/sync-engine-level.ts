@@ -11,7 +11,7 @@ import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-j
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
-import type { PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
+import type { PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { evaluateClosure } from './sync-closure-resolver.js';
 import { MAX_PENDING_TOKENS } from './types/sync.js';
@@ -225,6 +225,9 @@ export class SyncEngineLevel implements SyncEngine {
   /** Debounce timer for batched push-on-write. */
   private _pushDebounceTimer?: ReturnType<typeof setTimeout>;
 
+  /** Registered event listeners for observability. */
+  private _eventListeners: Set<SyncEventListener> = new Set();
+
   /** Entry in the pending push queue — a message CID with its local EventLog token. */
   private _pendingPushCids: Map<string, {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
@@ -312,6 +315,22 @@ export class SyncEngineLevel implements SyncEngine {
     if (hasOnline) { return 'online'; }
     if (hasOffline) { return 'offline'; }
     return 'unknown';
+  }
+
+  public on(listener: SyncEventListener): () => void {
+    this._eventListeners.add(listener);
+    return (): void => { this._eventListeners.delete(listener); };
+  }
+
+  /** Emit a sync event to all registered listeners. */
+  private emitEvent(event: SyncEvent): void {
+    for (const listener of this._eventListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Don't let listener errors propagate into sync engine logic.
+      }
+    }
   }
 
   public async clear(): Promise<void> {
@@ -639,6 +658,7 @@ export class SyncEngineLevel implements SyncEngine {
           throw pushError;
         }
 
+        this.emitEvent({ type: 'link:status-change', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, from: 'initializing', to: 'live' });
         await this.ledger.setStatus(link!, 'live');
       } catch (error: any) {
         const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
@@ -646,6 +666,7 @@ export class SyncEngineLevel implements SyncEngine {
         // Detect ProgressGap (410) — the cursor is stale, link needs SMT repair.
         if ((error as any).isProgressGap && link) {
           console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
+          this.emitEvent({ type: 'gap:detected', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, reason: 'ProgressGap' });
           const gapInfo = (error as any).gapInfo;
           await this.transitionToRepairing(linkKey, link, {
             resumeToken: gapInfo?.latestAvailable,
@@ -716,6 +737,8 @@ export class SyncEngineLevel implements SyncEngine {
       rt.inflight.delete(rt.nextCommitOrdinal);
       rt.nextCommitOrdinal++;
       drained++;
+      // Note: checkpoint:pull-advance event is emitted AFTER saveLink succeeds
+      // in the caller, not here. "Advanced" means durably persisted.
     }
 
     return drained;
@@ -765,8 +788,15 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState,
     options?: { resumeToken?: ProgressToken },
   ): Promise<void> {
+    const prevStatus = link.status;
+    const prevConnectivity = link.connectivity;
     link.connectivity = 'offline';
     await this.ledger.setStatus(link, 'repairing');
+
+    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, protocol: link.protocol, from: prevStatus, to: 'repairing' });
+    if (prevConnectivity !== 'offline') {
+      this.emitEvent({ type: 'link:connectivity-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, protocol: link.protocol, from: prevConnectivity, to: 'offline' });
+    }
 
     if (options?.resumeToken) {
       this._repairContext.set(linkKey, { resumeToken: options.resumeToken });
@@ -859,6 +889,8 @@ export class SyncEngineLevel implements SyncEngine {
     const generation = this._syncGeneration;
 
     const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, protocol } = link;
+
+    this.emitEvent({ type: 'repair:started', tenantDid: did, remoteEndpoint: dwnUrl, protocol, attempt: (this._repairAttempts.get(linkKey) ?? 0) + 1 });
     const attempts = (this._repairAttempts.get(linkKey) ?? 0) + 1;
     this._repairAttempts.set(linkKey, attempts);
 
@@ -948,13 +980,21 @@ export class SyncEngineLevel implements SyncEngine {
       this._repairAttempts.delete(linkKey);
       const retryTimer = this._repairRetryTimers.get(linkKey);
       if (retryTimer) { clearTimeout(retryTimer); this._repairRetryTimers.delete(linkKey); }
+      const prevRepairConnectivity = link.connectivity;
+      link.connectivity = 'online';
       await this.ledger.setStatus(link, 'live');
+      this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
+      if (prevRepairConnectivity !== 'online') {
+        this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevRepairConnectivity, to: 'online' });
+      }
+      this.emitEvent({ type: 'link:status-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: 'repairing', to: 'live' });
 
     } catch (error: any) {
       // If teardown occurred during repair, don't retry or enter degraded_poll.
       if (this._syncGeneration !== generation) { return; }
 
       console.error(`SyncEngineLevel: Repair failed for ${did} -> ${dwnUrl} (attempt ${attempts})`, error);
+      this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, protocol, attempt: attempts, error: String(error.message ?? error) });
 
       if (attempts >= SyncEngineLevel.MAX_REPAIR_ATTEMPTS) {
         console.warn(`SyncEngineLevel: Max repair attempts reached for ${did} -> ${dwnUrl}, entering degraded_poll`);
@@ -1002,8 +1042,11 @@ export class SyncEngineLevel implements SyncEngine {
     if (!link) { return; }
     link.connectivity = 'offline';
 
+    const prevDegradedStatus = link.status;
     await this.ledger.setStatus(link, 'degraded_poll');
     this._repairAttempts.delete(linkKey);
+    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, protocol: link.protocol, from: prevDegradedStatus, to: 'degraded_poll' });
+    this.emitEvent({ type: 'degraded-poll:entered', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, protocol: link.protocol });
 
     // Clear any existing timer for this link.
     const existing = this._degradedPollTimers.get(linkKey);
@@ -1193,7 +1236,11 @@ export class SyncEngineLevel implements SyncEngine {
         }
         // Transport is reachable — set connectivity to online.
         if (link) {
+          const prevEoseConnectivity = link.connectivity;
           link.connectivity = 'online';
+          if (prevEoseConnectivity !== 'online') {
+            this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevEoseConnectivity, to: 'online' });
+          }
         } else {
           this._connectivityState = 'online';
         }
@@ -1322,6 +1369,17 @@ export class SyncEngineLevel implements SyncEngine {
             const drained = this.drainCommittedPull(cursorKey);
             if (drained > 0) {
               await this.ledger.saveLink(link);
+              // Emit after durable save — "advanced" means persisted.
+              if (link.pull.contiguousAppliedToken) {
+                this.emitEvent({
+                  type           : 'checkpoint:pull-advance',
+                  tenantDid      : link.tenantDid,
+                  remoteEndpoint : link.remoteEndpoint,
+                  protocol       : link.protocol,
+                  position       : link.pull.contiguousAppliedToken.position,
+                  messageCid     : link.pull.contiguousAppliedToken.messageCid,
+                });
+              }
             }
 
             // Overflow: too many in-flight ordinals without draining.
@@ -1415,7 +1473,13 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Set per-link connectivity to online after successful subscription setup.
     const pullLink = this._activeLinks.get(this.buildCursorKey(did, dwnUrl, protocol));
-    if (pullLink) { pullLink.connectivity = 'online'; }
+    if (pullLink) {
+      const prevPullConnectivity = pullLink.connectivity;
+      pullLink.connectivity = 'online';
+      if (prevPullConnectivity !== 'online') {
+        this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevPullConnectivity, to: 'online' });
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
