@@ -499,7 +499,7 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # Coverage: parse lcov reports, enforce 90% threshold, comment on PR
+  # Coverage: parse lcov reports, enforce threshold, comment on PR
   # ---------------------------------------------------------------------------
   coverage:
     name: Coverage Check
@@ -552,7 +552,7 @@ jobs:
           browsers="chromium firefox webkit"
           failed=false
           found_any=false
-          threshold=95  # Temporarily lowered during sync redesign effort; restore to 98 when complete
+          threshold=98
           mkdir -p coverage-badges
 
           # Temp files: node rows and a TSV of (pkg, browser, coverage) for
