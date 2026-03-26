@@ -827,7 +827,7 @@ export function testMessagesSubscribeHandler(): void {
             });
           });
 
-          it('allows subscribe of contextIdPrefix filtered messages and includes ProtocolsConfigure', async () => {
+          it('allows subscribe of contextIdPrefix filtered messages with real context inclusion and exclusion', async () => {
             // scenario: Alice installs a protocol, writes two root posts (each in its own context),
             // then writes a child attachment under one post. She subscribes with a contextIdPrefix
             // matching the first post's contextId. Expected:
