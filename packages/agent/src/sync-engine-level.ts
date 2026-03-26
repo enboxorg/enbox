@@ -295,7 +295,23 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   get connectivityState(): SyncConnectivityState {
-    return this._connectivityState;
+    // Aggregate per-link connectivity: if any link is online, report online.
+    // If all are offline, report offline. If all unknown, report unknown.
+    // Falls back to the global _connectivityState for poll-mode (no active links).
+    if (this._activeLinks.size === 0) {
+      return this._connectivityState;
+    }
+
+    let hasOnline = false;
+    let hasOffline = false;
+    for (const link of this._activeLinks.values()) {
+      if (link.connectivity === 'online') { hasOnline = true; }
+      if (link.connectivity === 'offline') { hasOffline = true; }
+    }
+
+    if (hasOnline) { return 'online'; }
+    if (hasOffline) { return 'offline'; }
+    return 'unknown';
   }
 
   public async clear(): Promise<void> {
@@ -749,6 +765,7 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState,
     options?: { resumeToken?: ProgressToken },
   ): Promise<void> {
+    link.connectivity = 'offline';
     await this.ledger.setStatus(link, 'repairing');
 
     if (options?.resumeToken) {
@@ -983,6 +1000,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async enterDegradedPoll(linkKey: string): Promise<void> {
     const link = this._activeLinks.get(linkKey);
     if (!link) { return; }
+    link.connectivity = 'offline';
 
     await this.ledger.setStatus(link, 'degraded_poll');
     this._repairAttempts.delete(linkKey);
@@ -1174,7 +1192,11 @@ export class SyncEngineLevel implements SyncEngine {
           await this.setCursor(cursorKey, subMessage.cursor);
         }
         // Transport is reachable — set connectivity to online.
-        this._connectivityState = 'online';
+        if (link) {
+          link.connectivity = 'online';
+        } else {
+          this._connectivityState = 'online';
+        }
         return;
       }
 
@@ -1391,7 +1413,9 @@ export class SyncEngineLevel implements SyncEngine {
       close: async (): Promise<void> => { await reply.subscription!.close(); },
     });
 
-    this._connectivityState = 'online';
+    // Set per-link connectivity to online after successful subscription setup.
+    const pullLink = this._activeLinks.get(this.buildCursorKey(did, dwnUrl, protocol));
+    if (pullLink) { pullLink.connectivity = 'online'; }
   }
 
   // ---------------------------------------------------------------------------

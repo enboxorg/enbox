@@ -164,6 +164,9 @@ export type ReplicationLinkState = {
   /** Push-direction replication checkpoint (local → remote). */
   push: DirectionCheckpoint;
 
+  /** Per-link connectivity state. Used to compute the aggregate engine-level state. */
+  connectivity: SyncConnectivityState;
+
   /** Delegate DID used to sign sync messages, if any. */
   delegateDid?: string;
 

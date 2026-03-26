@@ -61,7 +61,11 @@ export class ReplicationLedger {
 
     try {
       const raw = await this.sublevel.get(key);
-      return JSON.parse(raw) as ReplicationLinkState;
+      const link = JSON.parse(raw) as ReplicationLinkState;
+      // connectivity is runtime state — always reset to 'unknown' on load
+      // so stale 'online' from a previous session doesn't give false positives.
+      link.connectivity = 'unknown';
+      return link;
     } catch (error) {
       const e = error as { code: string };
       if (e.code !== 'LEVEL_NOT_FOUND') {
@@ -76,6 +80,7 @@ export class ReplicationLedger {
       scopeId,
       scope          : params.scope,
       status         : 'initializing',
+      connectivity   : 'unknown',
       pull           : {},
       push           : {},
       delegateDid    : params.delegateDid,
