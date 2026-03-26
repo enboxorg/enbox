@@ -499,7 +499,7 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # Coverage: parse lcov reports, enforce 90% threshold, comment on PR
+  # Coverage: parse lcov reports, enforce threshold, comment on PR
   # ---------------------------------------------------------------------------
   coverage:
     name: Coverage Check
