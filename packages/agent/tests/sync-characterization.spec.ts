@@ -9,15 +9,27 @@ type CapturedSubscriptionHandler = ((msg: any) => Promise<void>) | undefined;
 
 type LiveMockAgent = {
   agent: any;
+  getLocalHandler: () => CapturedSubscriptionHandler;
   getRemoteHandler: () => CapturedSubscriptionHandler;
   processRequestStub: sinon.SinonStub;
   rpcStub: sinon.SinonStub;
 };
 
 function createLiveMockAgent(): LiveMockAgent {
+  let localHandler: CapturedSubscriptionHandler;
   let remoteHandler: CapturedSubscriptionHandler;
 
-  const processRequestStub = sinon.stub().resolves({ message: { descriptor: {} } });
+  const processRequestStub = sinon.stub().callsFake(async (request: any) => {
+    if (request.subscriptionHandler) {
+      localHandler = request.subscriptionHandler;
+      return {
+        reply   : { status: { code: 200, detail: 'OK' }, subscription: { close: sinon.stub().resolves() } },
+        message : { descriptor: {} },
+      };
+    }
+
+    return { message: { descriptor: {} } };
+  });
   const rpcStub = sinon.stub().callsFake(async (request: any) => {
     remoteHandler = request.subscription?.handler;
     return {
@@ -35,7 +47,8 @@ function createLiveMockAgent(): LiveMockAgent {
       },
       rpc: { sendDwnRequest: rpcStub },
     } as any,
-    getRemoteHandler: (): CapturedSubscriptionHandler => remoteHandler,
+    getLocalHandler  : (): CapturedSubscriptionHandler => localHandler,
+    getRemoteHandler : (): CapturedSubscriptionHandler => remoteHandler,
     processRequestStub,
     rpcStub,
   };
@@ -106,6 +119,52 @@ describe('SyncEngineLevel — characterization tests', () => {
 
     expect(saveLinkStub.callCount).toBe(savesBeforeStop);
     expect((engine as any)._connectivityState).not.toBe('online');
+  });
+
+  it('does not enqueue push work when a late local callback fires after stopSync()', async () => {
+    const { agent, getLocalHandler } = createLiveMockAgent();
+    const engine = new SyncEngineLevel({ db, agent });
+
+    const link = {
+      tenantDid      : 'did:example:alice',
+      remoteEndpoint : 'https://dwn.example.com',
+      scopeId        : 'scope-1',
+      scope          : { kind: 'protocol', protocol: 'https://proto.example.com' },
+      status         : 'initializing',
+      pull           : {},
+      connectivity   : 'unknown',
+      needsReconcile : false,
+      protocol       : 'https://proto.example.com',
+    } as any;
+
+    sinon.stub(engine, 'sync').resolves();
+    sinon.stub(engine as any, 'getSyncTargets').resolves([
+      { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: 'https://proto.example.com' },
+    ]);
+    sinon.stub(engine as any, 'openLivePullSubscription').resolves();
+    (engine as any)._ledger = {
+      getOrCreateLink : sinon.stub().resolves(link),
+      saveLink        : sinon.stub().resolves(),
+      setStatus       : sinon.stub().callsFake(async (l: any, status: string): Promise<void> => {
+        l.status = status;
+      }),
+    };
+
+    await engine.startSync({ mode: 'live', interval: '30s' });
+
+    const handler = getLocalHandler();
+    expect(handler).toBeDefined();
+
+    await engine.stopSync();
+
+    await handler!({
+      type   : 'event',
+      cursor : { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' },
+      event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+    });
+
+    expect((engine as any)._pendingPushCids.size).toBe(0);
+    expect((engine as any)._pushDebounceTimer).toBeUndefined();
   });
 
   it('schedules reconciliation on startup when a link is already marked needsReconcile', async () => {
