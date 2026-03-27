@@ -882,6 +882,15 @@ export class SyncEngineLevel implements SyncEngine {
 
     const promise = this.doRepairLink(linkKey).finally(() => {
       this._activeRepairs.delete(linkKey);
+
+      // Post-repair reconcile: if doRepairLink() marked needsReconcile
+      // (to close the gap between diff snapshot and new push subscription),
+      // schedule reconciliation NOW — after _activeRepairs is cleared so
+      // scheduleReconcile() won't skip it.
+      const link = this._activeLinks.get(linkKey);
+      if (link?.needsReconcile && link.status === 'live') {
+        this.scheduleReconcile(linkKey, 500);
+      }
     });
     this._activeRepairs.set(linkKey, promise);
     return promise;
@@ -1004,8 +1013,10 @@ export class SyncEngineLevel implements SyncEngine {
       }
       if (this._engineGeneration !== generation) { return; }
 
-      // Schedule immediate post-reopen reconcile to close the repair-window gap.
-      this.scheduleReconcile(linkKey, 500);
+      // Note: post-repair reconcile to close the repair-window gap is
+      // scheduled by repairLink() AFTER _activeRepairs is cleared — not
+      // here, because scheduleReconcile() would skip it while _activeRepairs
+      // still contains this link.
 
       // Step 6: Clean up repair context and transition to live.
       this._repairContext.delete(linkKey);

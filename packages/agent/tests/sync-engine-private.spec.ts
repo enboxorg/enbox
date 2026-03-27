@@ -2276,6 +2276,48 @@ describe('SyncEngineLevel — private methods', () => {
       // Link should NOT have been set to live.
       expect(setStatusStub.calledWith(link, 'live')).toBe(false);
     });
+
+    it('should schedule post-repair reconcile after _activeRepairs is cleared', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
+        pull           : {},
+        needsReconcile : false,
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+
+      sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
+      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-a');
+      sinon.stub(engine as any, 'openLivePullSubscription').resolves();
+      sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+
+      const saveStub = sinon.stub().resolves();
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+
+      // Run repair through the repairLink() wrapper (not doRepairLink directly)
+      // so _activeRepairs lifecycle is exercised.
+      await (engine as any).repairLink(linkKey);
+
+      // After repair completes:
+      // 1. _activeRepairs should be cleared
+      expect((engine as any)._activeRepairs.has(linkKey)).toBe(false);
+      // 2. needsReconcile should have been set (by doRepairLink before reopen)
+      expect(link.needsReconcile).toBe(true);
+      // 3. Link should be live
+      expect(link.status).toBe('live');
+      // 4. A reconcile timer should be scheduled (the main assertion)
+      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(true);
+
+      // Clean up the timer.
+      const timer = (engine as any)._reconcileTimers.get(linkKey);
+      if (timer) { clearTimeout(timer); }
+    });
   });
 
   // ---------------------------------------------------------------------------
