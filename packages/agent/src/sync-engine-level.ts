@@ -1286,11 +1286,17 @@ export class SyncEngineLevel implements SyncEngine {
       permissionGrantId = grant.grant.id;
     }
 
+    const handlerGeneration = this._engineGeneration;
+
     // Define the subscription handler that processes incoming events.
     // NOTE: The WebSocket client fires handlers without awaiting (fire-and-forget),
     // so multiple handlers can be in-flight concurrently. The ordinal tracker
     // ensures the checkpoint advances only when all earlier deliveries are committed.
     const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
+      if (this._engineGeneration !== handlerGeneration) {
+        return;
+      }
+
       if (subMessage.type === 'eose') {
         // End-of-stored-events — catch-up complete.
         if (link) {
@@ -1596,8 +1602,14 @@ export class SyncEngineLevel implements SyncEngine {
       permissionGrantId = grant.grant.id;
     }
 
+    const handlerGeneration = this._engineGeneration;
+
     // Subscribe to the local DWN's EventLog.
     const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
+      if (this._engineGeneration !== handlerGeneration) {
+        return;
+      }
+
       if (subMessage.type !== 'event') {
         return;
       }
