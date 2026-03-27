@@ -51,7 +51,7 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // getCursor / setCursor
+  // getCursor (legacy migration helper)
   // ---------------------------------------------------------------------------
 
   describe('cursor persistence', () => {
@@ -60,23 +60,19 @@ describe('SyncEngineLevel — private methods', () => {
       expect(cursor).toBeUndefined();
     });
 
-    it('should persist and retrieve a ProgressToken', async () => {
-      const token = { streamId: 's1', epoch: 'e1', position: '99', messageCid: 'cid-99' };
-      await (syncEngine as any).setCursor('test-key', token);
-      const cursor = await (syncEngine as any).getCursor('test-key');
-      expect(cursor).toEqual(token);
-    });
-
-    it('should return undefined for legacy string cursors (migration fallback)', async () => {
+    it('should return undefined and delete legacy string cursors', async () => {
       // Simulate an old-format string cursor stored before the ProgressToken migration.
       const cursors = db.sublevel('syncCursors');
       await cursors.put('legacy-key', 'old-string-cursor-42');
       const cursor = await (syncEngine as any).getCursor('legacy-key');
       expect(cursor).toBeUndefined();
+      // The invalid entry should have been deleted so it is not re-checked on
+      // every subsequent startup.
+      await expect(cursors.get('legacy-key')).rejects.toMatchObject({ code: 'LEVEL_NOT_FOUND' });
     });
 
-    it('should return undefined for tokens with empty messageCid', async () => {
-      // A corrupted token with empty messageCid should be discarded —
+    it('should return undefined and delete tokens with empty messageCid', async () => {
+      // A corrupted token with empty messageCid should be discarded and deleted —
       // it would fail MessagesSubscribe JSON schema validation (minLength: 1).
       const cursors = db.sublevel('syncCursors');
       await cursors.put('bad-cid-key', JSON.stringify({
@@ -84,15 +80,17 @@ describe('SyncEngineLevel — private methods', () => {
       }));
       const cursor = await (syncEngine as any).getCursor('bad-cid-key');
       expect(cursor).toBeUndefined();
+      await expect(cursors.get('bad-cid-key')).rejects.toMatchObject({ code: 'LEVEL_NOT_FOUND' });
     });
 
-    it('should return undefined for tokens with empty streamId', async () => {
+    it('should return undefined and delete tokens with empty streamId', async () => {
       const cursors = db.sublevel('syncCursors');
       await cursors.put('bad-stream-key', JSON.stringify({
         streamId: '', epoch: 'e1', position: '5', messageCid: 'cid-5',
       }));
       const cursor = await (syncEngine as any).getCursor('bad-stream-key');
       expect(cursor).toBeUndefined();
+      await expect(cursors.get('bad-stream-key')).rejects.toMatchObject({ code: 'LEVEL_NOT_FOUND' });
     });
 
     it('should rethrow non-LEVEL_NOT_FOUND errors from getCursor', async () => {

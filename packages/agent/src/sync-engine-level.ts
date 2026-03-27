@@ -1640,10 +1640,9 @@ export class SyncEngineLevel implements SyncEngine {
       }, PUSH_DEBOUNCE_MS);
     };
 
-    // Process the local subscription request.
-    // When a push cursor is provided (e.g., after repair), the local subscription
-    // replays events from that position, closing the race window where local
-    // writes during repair would otherwise be missed by push-on-write.
+    // Subscribe to the local DWN EventLog from "now" — opportunistic push
+    // does not replay from a stored cursor. Any writes missed during outages
+    // are recovered by the post-repair reconciliation path.
     const response = await this.agent.dwn.processRequest({
       author              : did,
       target              : did,
@@ -1913,8 +1912,11 @@ export class SyncEngineLevel implements SyncEngine {
           return parsed as ProgressToken;
         }
       } catch {
-        // Not valid JSON (old string cursor) — treat as absent.
+        // Not valid JSON (old string cursor) — fall through to delete.
       }
+      // Entry exists but is unparseable or has invalid/empty fields. Delete it
+      // so subsequent startups don't re-check it on every launch.
+      await this.deleteLegacyCursor(key);
       return undefined;
     } catch (error) {
       const e = error as { code: string };
@@ -1925,11 +1927,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  /** @deprecated Used only by poll-mode sync. Live mode uses ReplicationLedger. */
-  private async setCursor(key: string, cursor: ProgressToken): Promise<void> {
-    const cursors = this._db.sublevel('syncCursors');
-    await cursors.put(key, JSON.stringify(cursor));
-  }
 
   /**
    * Delete a legacy cursor from the old syncCursors sublevel.
