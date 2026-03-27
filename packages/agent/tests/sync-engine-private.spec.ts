@@ -33,20 +33,20 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // buildCursorKey
+  // buildLinkKey
   // ---------------------------------------------------------------------------
 
-  describe('buildCursorKey', () => {
-    it('should build key without protocol', () => {
-      const key = (syncEngine as any).buildCursorKey('did:example:alice', 'https://dwn.example.com');
+  describe('buildLinkKey', () => {
+    it('should build key without scopeId/protocol', () => {
+      const key = (syncEngine as any).buildLinkKey('did:example:alice', 'https://dwn.example.com');
       expect(key).toBe('did:example:alice^https://dwn.example.com');
     });
 
-    it('should build key with protocol', () => {
-      const key = (syncEngine as any).buildCursorKey(
-        'did:example:alice', 'https://dwn.example.com', 'https://proto.example.com',
+    it('should build key with scopeId or protocol', () => {
+      const key = (syncEngine as any).buildLinkKey(
+        'did:example:alice', 'https://dwn.example.com', 'scope-hash-123',
       );
-      expect(key).toBe('did:example:alice^https://dwn.example.com^https://proto.example.com');
+      expect(key).toBe('did:example:alice^https://dwn.example.com^scope-hash-123');
     });
   });
 
@@ -755,7 +755,7 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       // Set up a link with protocolPathPrefixes in the scope.
-      const linkKey = (engine as any).buildCursorKey('did:example:alice', 'https://dwn.example.com', 'https://proto.example.com');
+      const linkKey = (engine as any).buildLinkKey('did:example:alice', 'https://dwn.example.com', 'https://proto.example.com');
       (engine as any)._activeLinks.set(linkKey, {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
@@ -1347,7 +1347,7 @@ describe('SyncEngineLevel — private methods', () => {
       await engine.startSync({ mode: 'live', interval: '10s' });
 
       // _activeLinks should not contain the failed link.
-      const linkKey = (engine as any).buildCursorKey('did:example:alice', 'https://dwn.example.com', undefined);
+      const linkKey = (engine as any).buildLinkKey('did:example:alice', 'https://dwn.example.com', undefined);
       expect((engine as any)._activeLinks.has(linkKey)).toBe(false);
       expect((engine as any)._linkRuntimes.has(linkKey)).toBe(false);
 
@@ -1388,7 +1388,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect((engine as any)._connectivityState).toBe('unknown');
       expect((engine as any)._liveSubscriptions.length).toBe(0);
 
-      const linkKey = (engine as any).buildCursorKey('did:example:alice', 'https://dwn.example.com', undefined);
+      const linkKey = (engine as any).buildLinkKey('did:example:alice', 'https://dwn.example.com', undefined);
       expect((engine as any)._activeLinks.has(linkKey)).toBe(false);
 
       await engine.stopSync();

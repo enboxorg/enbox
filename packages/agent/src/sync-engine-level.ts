@@ -643,17 +643,19 @@ export class SyncEngineLevel implements SyncEngine {
         });
 
         // Cache the link for fast access by subscription handlers.
-        const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
+        // Use scopeId from the link for consistent runtime identity.
+        const linkKey = this.buildLinkKey(target.did, target.dwnUrl, link.scopeId);
 
         // One-time migration: if the link has no pull checkpoint, check for
-        // a legacy cursor in the old syncCursors sublevel. Migrate it into
-        // the link's pull checkpoint, save, and delete the old entry.
+        // a legacy cursor in the old syncCursors sublevel. The legacy key
+        // used protocol, not scopeId, so we must build it the old way.
         if (!link.pull.contiguousAppliedToken) {
-          const legacyCursor = await this.getCursor(linkKey);
+          const legacyKey = this.buildLinkKey(target.did, target.dwnUrl, target.protocol);
+          const legacyCursor = await this.getCursor(legacyKey);
           if (legacyCursor) {
             ReplicationLedger.resetCheckpoint(link.pull, legacyCursor);
             await this.ledger.saveLink(link);
-            await this.deleteLegacyCursor(linkKey);
+            await this.deleteLegacyCursor(legacyKey);
           }
         }
 
@@ -662,9 +664,10 @@ export class SyncEngineLevel implements SyncEngine {
         // Open subscriptions — only transition to live if both succeed.
         // If pull succeeds but push fails, close the pull subscription to
         // avoid a resource leak with inconsistent state.
-        await this.openLivePullSubscription(target);
+        const targetWithKey = { ...target, linkKey };
+        await this.openLivePullSubscription(targetWithKey);
         try {
-          await this.openLocalPushSubscription(target);
+          await this.openLocalPushSubscription(targetWithKey);
         } catch (pushError) {
           // Close the already-opened pull subscription.
           const pullSub = this._liveSubscriptions.find(
@@ -683,11 +686,12 @@ export class SyncEngineLevel implements SyncEngine {
         // If the link was marked dirty in a previous session, schedule
         // immediate reconciliation now that subscriptions are open.
         if (link!.needsReconcile) {
-          const startupLinkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
-          this.scheduleReconcile(startupLinkKey, 1000);
+          this.scheduleReconcile(linkKey, 1000);
         }
       } catch (error: any) {
-        const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
+        const linkKey = link
+          ? this.buildLinkKey(target.did, target.dwnUrl, link.scopeId)
+          : this.buildLinkKey(target.did, target.dwnUrl, target.protocol);
 
         // Detect ProgressGap (410) — the cursor is stale, link needs SMT repair.
         if ((error as any).isProgressGap && link) {
@@ -996,7 +1000,7 @@ export class SyncEngineLevel implements SyncEngine {
       await this.ledger.saveLink(link);
       if (this._engineGeneration !== generation) { return; }
 
-      const target = { did, dwnUrl, delegateDid, protocol };
+      const target = { did, dwnUrl, delegateDid, protocol, linkKey };
       try {
         await this.openLivePullSubscription(target);
       } catch (pullErr: any) {
@@ -1230,12 +1234,13 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private async openLivePullSubscription(target: {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
+    linkKey?: string;
   }): Promise<void> {
     const { did, delegateDid, dwnUrl, protocol } = target;
 
     // Resolve the cursor from the link's durable pull checkpoint.
     // Legacy syncCursors migration happens at link load time in startLiveSync().
-    const cursorKey = this.buildCursorKey(did, dwnUrl, protocol);
+    const cursorKey = target.linkKey ?? this.buildLinkKey(did, dwnUrl, protocol);
     const link = this._activeLinks.get(cursorKey);
     let cursor = link?.pull.contiguousAppliedToken;
 
@@ -1551,7 +1556,7 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     // Set per-link connectivity to online after successful subscription setup.
-    const pullLink = this._activeLinks.get(this.buildCursorKey(did, dwnUrl, protocol));
+    const pullLink = this._activeLinks.get(cursorKey);
     if (pullLink) {
       const prevPullConnectivity = pullLink.connectivity;
       pullLink.connectivity = 'online';
@@ -1571,6 +1576,7 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private async openLocalPushSubscription(target: {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
+    linkKey?: string;
   }): Promise<void> {
     const { did, delegateDid, dwnUrl, protocol } = target;
 
@@ -1598,13 +1604,14 @@ export class SyncEngineLevel implements SyncEngine {
 
       // Subset scope filtering: only push events that match the link's
       // scope prefixes. Events outside the scope are not our responsibility.
-      const pushLink = this._activeLinks.get(this.buildCursorKey(did, dwnUrl, protocol));
+      const pushLinkKey = target.linkKey ?? this.buildLinkKey(did, dwnUrl, protocol);
+      const pushLink = this._activeLinks.get(pushLinkKey);
       if (pushLink && !isEventInScope(subMessage.event.message, pushLink.scope)) {
         return;
       }
 
       // Accumulate the message CID for a debounced push.
-      const targetKey = this.buildCursorKey(did, dwnUrl, protocol);
+      const targetKey = pushLinkKey;
       const cid = await Message.getCid(subMessage.event.message);
       if (cid === undefined) {
         return;
@@ -1873,9 +1880,16 @@ export class SyncEngineLevel implements SyncEngine {
   // Cursor persistence
   // ---------------------------------------------------------------------------
 
-  private buildCursorKey(did: string, dwnUrl: string, protocol?: string): string {
+  /**
+   * Build the runtime key for a replication link. Prefer `scopeId` (the
+   * deterministic hash from {@link computeScopeId}) over `protocol` — the
+   * `protocol` parameter is a legacy fallback used by poll-mode and cursor
+   * migration. Once all callers are migrated to pass `scopeId`, the
+   * `protocol` fallback can be removed.
+   */
+  private buildLinkKey(did: string, dwnUrl: string, scopeIdOrProtocol?: string): string {
     const base = `${did}${CURSOR_SEPARATOR}${dwnUrl}`;
-    return protocol ? `${base}${CURSOR_SEPARATOR}${protocol}` : base;
+    return scopeIdOrProtocol ? `${base}${CURSOR_SEPARATOR}${scopeIdOrProtocol}` : base;
   }
 
   /**
