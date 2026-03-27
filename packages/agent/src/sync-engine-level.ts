@@ -668,9 +668,16 @@ export class SyncEngineLevel implements SyncEngine {
           console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
           this.emitEvent({ type: 'gap:detected', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, reason: 'ProgressGap' });
           const gapInfo = (error as any).gapInfo;
-          await this.transitionToRepairing(linkKey, link, {
-            resumeToken: gapInfo?.latestAvailable,
-          });
+          // Only use latestAvailable as resume token if it has a DIFFERENT
+          // epoch/stream than the failed cursor — otherwise the server had no
+          // events and fell back to echoing the failed cursor, which would
+          // cause the same ProgressGap on the reopened subscription.
+          const failedCursor = link.pull.contiguousAppliedToken;
+          const latest = gapInfo?.latestAvailable;
+          const resumeToken = (latest && failedCursor &&
+            (latest.epoch !== failedCursor.epoch || latest.streamId !== failedCursor.streamId))
+            ? latest : undefined;
+          await this.transitionToRepairing(linkKey, link, { resumeToken });
           continue;
         }
 
@@ -955,23 +962,61 @@ export class SyncEngineLevel implements SyncEngine {
       if (this._syncGeneration !== generation) { return; }
 
       // Step 5: Reopen subscriptions with the repaired checkpoints.
+      // If the resume token is stale (e.g., server/local DWN restarted with a
+      // new epoch), the subscription will get a ProgressGap (410). In that case,
+      // discard the checkpoint entirely and start fresh with no cursor.
       const target = { did, dwnUrl, delegateDid, protocol };
-      await this.openLivePullSubscription(target);
+      try {
+        await this.openLivePullSubscription(target);
+      } catch (pullErr: any) {
+        if (pullErr.isProgressGap) {
+          console.warn(`SyncEngineLevel: Stale pull resume token for ${did} -> ${dwnUrl}, resetting to start fresh`);
+          ReplicationLedger.resetCheckpoint(link.pull);
+          await this.ledger.saveLink(link);
+          if (this._syncGeneration !== generation) { return; }
+          await this.openLivePullSubscription(target);
+        } else {
+          throw pullErr;
+        }
+      }
       if (this._syncGeneration !== generation) { return; }
       try {
         await this.openLocalPushSubscription({
           ...target,
           pushCursor: link.push.contiguousAppliedToken,
         });
-      } catch (pushError) {
-        const pullSub = this._liveSubscriptions.find(
-          s => s.did === did && s.dwnUrl === dwnUrl && s.protocol === protocol
-        );
-        if (pullSub) {
-          try { await pullSub.close(); } catch { /* best effort */ }
-          this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
+      } catch (pushError: any) {
+        // Handle stale push checkpoint (local DWN restarted with new epoch).
+        const is410 = pushError.isProgressGap ||
+          (pushError.message && pushError.message.includes('410'));
+        if (is410) {
+          console.warn(`SyncEngineLevel: Stale push checkpoint for ${did}, resetting to start fresh`);
+          ReplicationLedger.resetCheckpoint(link.push);
+          await this.ledger.saveLink(link);
+          if (this._syncGeneration !== generation) { return; }
+          try {
+            await this.openLocalPushSubscription(target);
+          } catch (retryPushError) {
+            // Clean up pull subscription on final failure.
+            const pullSub = this._liveSubscriptions.find(
+              s => s.did === did && s.dwnUrl === dwnUrl && s.protocol === protocol
+            );
+            if (pullSub) {
+              try { await pullSub.close(); } catch { /* best effort */ }
+              this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
+            }
+            throw retryPushError;
+          }
+        } else {
+          const pullSub = this._liveSubscriptions.find(
+            s => s.did === did && s.dwnUrl === dwnUrl && s.protocol === protocol
+          );
+          if (pullSub) {
+            try { await pullSub.close(); } catch { /* best effort */ }
+            this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
+          }
+          throw pushError;
         }
-        throw pushError;
       }
       if (this._syncGeneration !== generation) { return; }
 
