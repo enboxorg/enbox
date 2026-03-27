@@ -45,7 +45,7 @@ describe('ReplicationLedger', () => {
       expect(link.scopeId.length).toBeGreaterThan(0);
       expect(link.status).toBe('initializing');
       expect(link.pull.contiguousAppliedToken).toBeUndefined();
-      expect(link.push.contiguousAppliedToken).toBeUndefined();
+      expect(link.needsReconcile).toBe(false);
     });
 
     it('should return existing link on second call', async () => {

@@ -503,7 +503,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should set link connectivity to offline on transitionToRepairing', async () => {
       const engine = new SyncEngineLevel({ db });
-      const link = { status: 'live', connectivity: 'online', pull: {}, push: {} } as any;
+      const link = { status: 'live', connectivity: 'online', pull: {} } as any;
       const linkKey = 'test-link';
       (engine as any)._activeLinks.set(linkKey, link);
 
@@ -766,7 +766,6 @@ describe('SyncEngineLevel — private methods', () => {
         },
         status   : 'live',
         pull     : {},
-        push     : {},
         protocol : 'https://proto.example.com',
       });
 
@@ -1790,7 +1789,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {}, push           : {},
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       const rt = (engine as any).getOrCreateRuntime(linkKey);
@@ -1825,7 +1824,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {}, push           : {},
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       const rt = (engine as any).getOrCreateRuntime(linkKey);
@@ -1851,7 +1850,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {}, push           : {},
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       const rt = (engine as any).getOrCreateRuntime(linkKey);
@@ -1902,7 +1901,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {}, push           : {},
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -1930,7 +1929,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {}, push           : {},
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 
@@ -1963,7 +1962,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {}, push           : {},
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2023,7 +2022,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : { contiguousAppliedToken: token(1) }, push           : {},
+        pull           : { contiguousAppliedToken: token(1) },
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       const rt = (engine as any).getOrCreateRuntime(linkKey);
@@ -2049,7 +2048,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {}, push           : {},
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 
@@ -2077,7 +2076,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {}, push           : {},
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2123,7 +2122,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {}, push           : {},
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 
@@ -2150,7 +2149,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {}, push           : {},
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2184,7 +2183,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : { contiguousAppliedToken: existingToken }, push           : {},
+        pull           : { contiguousAppliedToken: existingToken },
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2207,15 +2206,14 @@ describe('SyncEngineLevel — private methods', () => {
       expect(link.status).toBe('live');
     });
 
-    it('should reopen local push subscription with push checkpoint cursor', async () => {
+    it('should reopen local push subscription without a cursor (opportunistic push)', async () => {
       const engine = new SyncEngineLevel({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
-      const pushToken = { streamId: 's1', epoch: 'e1', position: '50', messageCid: 'cid-50' };
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {}, push           : { contiguousAppliedToken: pushToken },
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2234,10 +2232,10 @@ describe('SyncEngineLevel — private methods', () => {
 
       await (engine as any).doRepairLink(linkKey);
 
-      // Verify push subscription was reopened with the push checkpoint as cursor.
+      // Verify push subscription was reopened without a cursor (no pushCursor parameter).
       expect(pushSubStub.calledOnce).toBe(true);
       const pushTarget = pushSubStub.firstCall.args[0];
-      expect(pushTarget.pushCursor).toEqual(pushToken);
+      expect(pushTarget.pushCursor).toBeUndefined();
     });
 
     it('should bail if teardown occurs during repair (generation check)', async () => {
@@ -2247,7 +2245,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
         scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {}, push           : {},
+        pull           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2257,7 +2255,7 @@ describe('SyncEngineLevel — private methods', () => {
       // Stub getLocalRoot to simulate an async operation during which teardown occurs.
       sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
         // Simulate teardown by incrementing the generation.
-        (engine as any)._syncGeneration++;
+        (engine as any)._engineGeneration++;
         return 'root-a';
       });
 
@@ -2489,7 +2487,7 @@ describe('SyncEngineLevel — private methods', () => {
         return {
           tenantDid      : params.tenantDid, remoteEndpoint : params.remoteEndpoint,
           scopeId        : 'test', scope          : params.scope, status         : 'initializing',
-          pull           : {}, push           : {}, protocol       : params.protocol,
+          pull           : {}, protocol       : params.protocol,
         };
       });
       (engine as any)._ledger = {
@@ -2527,7 +2525,7 @@ describe('SyncEngineLevel — private methods', () => {
           return {
             tenantDid      : params.tenantDid, remoteEndpoint : params.remoteEndpoint,
             scopeId        : 'test', scope          : params.scope, status         : 'initializing',
-            pull           : {}, push           : {},
+            pull           : {},
           };
         }),
         setStatus: setStatusStub,
@@ -2543,75 +2541,69 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Push-side subset checkpoint guards
+  // Push simplification — opportunistic push + needsReconcile
   // ---------------------------------------------------------------------------
 
-  describe('push-side subset scope checkpoint', () => {
-    function pushToken(pos: number): any {
-      return { streamId: 'local-stream', epoch: 'epoch-1', position: String(pos), messageCid: `push-cid-${pos}` };
-    }
-
-    it('should advance push checkpoint for skipped out-of-scope events when link is live', async () => {
+  describe('opportunistic push + needsReconcile', () => {
+    it('should mark link needsReconcile when push retries are exhausted', () => {
       const engine = new SyncEngineLevel({ db });
-      const linkKey = 'did:example:alice^https://dwn.example.com^https://example.com/chat';
+      const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test',
-        scope          : { kind: 'protocol', protocol: 'https://example.com/chat', protocolPathPrefixes: ['thread/message'] },
         status         : 'live',
         pull           : {},
-        push           : { contiguousAppliedToken: pushToken(1) },
-        protocol       : 'https://example.com/chat',
+        needsReconcile : false,
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 
       const saveStub = sinon.stub().resolves();
       (engine as any)._ledger = { saveLink: saveStub };
 
-      // Simulate: out-of-scope event advances checkpoint.
-      const cursor = pushToken(5);
+      // Call requeueOrReconcile with retryCount >= max retries (4).
+      (engine as any).requeueOrReconcile(linkKey, {
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [{ cid: 'cid-1' }],
+        retryCount : 4, // exceeds PUSH_RETRY_BACKOFF_MS.length (4)
+      });
 
-      // Call the scope check logic directly (replicate what the handler does).
-      const { ReplicationLedger: RL } = await import('../src/sync-replication-ledger.js');
-      if (link.status === 'live' || link.status === 'initializing') {
-        if (RL.validateTokenDomain(link.push, cursor)) {
-          RL.setReceivedToken(link.push, cursor);
-          RL.commitContiguousToken(link.push, cursor);
-        }
-      }
+      // Link should be marked as needing reconciliation.
+      expect(link.needsReconcile).toBe(true);
 
-      expect(link.push.contiguousAppliedToken).toEqual(pushToken(5));
+      // Should NOT have been re-queued to _pendingPushCids.
+      expect((engine as any)._pendingPushCids.has(linkKey)).toBe(false);
     });
 
-    it('should NOT mutate push checkpoint when link is repairing', () => {
-      const link = {
-        status : 'repairing',
-        push   : { contiguousAppliedToken: { streamId: 's', epoch: 'e', position: '1', messageCid: 'c1' } },
-      } as any;
+    it('should re-queue push entries when retries remain', () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
 
-      // When status is repairing, the guard returns before mutation.
-      const shouldMutate = link.status === 'live' || link.status === 'initializing';
-      expect(shouldMutate).toBe(false);
-      // Checkpoint unchanged.
-      expect(link.push.contiguousAppliedToken.position).toBe('1');
+      (engine as any).requeueOrReconcile(linkKey, {
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [{ cid: 'cid-1' }],
+        retryCount : 1, // within retry budget
+      });
+
+      // Should have been re-queued.
+      expect((engine as any)._pendingPushCids.has(linkKey)).toBe(true);
+      const requeued = (engine as any)._pendingPushCids.get(linkKey);
+      expect(requeued.retryCount).toBe(1);
     });
 
-    it('should transition to repairing on push token domain mismatch', async () => {
-      const { ReplicationLedger: RL } = await import('../src/sync-replication-ledger.js');
-
+    it('should not have push checkpoint on ReplicationLinkState', () => {
+      // Verify the type change — link should not have a push property.
       const link = {
-        status : 'live',
-        push   : { contiguousAppliedToken: { streamId: 'stream-A', epoch: 'epoch-1', position: '1', messageCid: 'c1' } },
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        status         : 'live',
+        pull           : {},
+        needsReconcile : false,
       } as any;
 
-      // Token from a different stream/epoch.
-      const mismatchedToken = { streamId: 'stream-B', epoch: 'epoch-2', position: '5', messageCid: 'c5' };
-
-      const isValid = RL.validateTokenDomain(link.push, mismatchedToken);
-      expect(isValid).toBe(false);
-      // In real code, this would trigger transitionToRepairing.
+      expect(link.push).toBeUndefined();
     });
   });
 
@@ -2631,7 +2623,6 @@ describe('SyncEngineLevel — private methods', () => {
         status         : 'live',
         connectivity   : 'online',
         pull           : {},
-        push           : {},
         protocol       : 'https://example.com/chat',
       } as any;
       const linkKey = 'test-link';
@@ -2667,7 +2658,6 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
         pull           : {},
-        push           : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 

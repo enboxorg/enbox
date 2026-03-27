@@ -62,6 +62,7 @@ export class ReplicationLedger {
     try {
       const raw = await this.sublevel.get(key);
       const link = JSON.parse(raw) as ReplicationLinkState;
+      delete (link as any).push; // strip legacy push field from old persisted links
       // connectivity is runtime state — always reset to 'unknown' on load
       // so stale 'online' from a previous session doesn't give false positives.
       link.connectivity = 'unknown';
@@ -82,7 +83,7 @@ export class ReplicationLedger {
       status         : 'initializing',
       connectivity   : 'unknown',
       pull           : {},
-      push           : {},
+      needsReconcile : false,
       delegateDid    : params.delegateDid,
       protocol       : params.protocol,
     };
@@ -192,6 +193,31 @@ export class ReplicationLedger {
   public static resetCheckpoint(checkpoint: DirectionCheckpoint, token?: ProgressToken): void {
     checkpoint.contiguousAppliedToken = token;
     checkpoint.receivedToken = token;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reconciliation helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Mark a link as needing SMT reconciliation and persist.
+   * Idempotent — no-op if already set.
+   */
+  public async markNeedsReconcile(link: ReplicationLinkState, _reason?: string): Promise<void> {
+    if (!link.needsReconcile) {
+      link.needsReconcile = true;
+      await this.saveLink(link);
+    }
+  }
+
+  /**
+   * Clear the reconciliation flag after successful SMT reconciliation.
+   */
+  public async clearNeedsReconcile(link: ReplicationLinkState): Promise<void> {
+    if (link.needsReconcile) {
+      link.needsReconcile = false;
+      await this.saveLink(link);
+    }
   }
 }
 
