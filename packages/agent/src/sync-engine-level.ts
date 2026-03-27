@@ -953,24 +953,42 @@ export class SyncEngineLevel implements SyncEngine {
         }
       }
 
-      // Step 4: Determine the post-repair resume token.
+      // Step 4: Determine the post-repair pull resume token.
       // - If repair was triggered by ProgressGap, use the stored resumeToken
       //   (from gapInfo.latestAvailable) so the reopened subscription replays
       //   from a valid boundary, closing the race window between SMT and resubscribe.
       // - Otherwise, use the existing contiguousAppliedToken if still valid.
-      // - Push checkpoint is NOT reset during repair: push frontier tracks what
-      //   the local EventLog has delivered to the remote. SMT repair handles
-      //   pull-side convergence; push-side convergence is handled by the diff's
-      //   onlyLocal push. The push checkpoint remains the local authority.
+      // Push is opportunistic — no push checkpoint to reset.
       const repairCtx = this._repairContext.get(linkKey);
       const resumeToken = repairCtx?.resumeToken ?? link.pull.contiguousAppliedToken;
       ReplicationLedger.resetCheckpoint(link.pull, resumeToken);
       await this.ledger.saveLink(link);
       if (this._engineGeneration !== generation) { return; }
 
-      // Step 5: Reopen subscriptions with the repaired checkpoints.
+      // Step 5: Reopen subscriptions.
+      // Mark needsReconcile BEFORE reopening — local push starts from "now",
+      // so any writes between the diff snapshot (step 3) and the new push
+      // subscription are invisible to both mechanisms. A short post-reopen
+      // reconcile will close this gap (cheap: SMT root comparison short-circuits
+      // if roots already match).
+      link.needsReconcile = true;
+      await this.ledger.saveLink(link);
+      if (this._engineGeneration !== generation) { return; }
+
       const target = { did, dwnUrl, delegateDid, protocol };
-      await this.openLivePullSubscription(target);
+      try {
+        await this.openLivePullSubscription(target);
+      } catch (pullErr: any) {
+        if (pullErr.isProgressGap) {
+          console.warn(`SyncEngineLevel: Stale pull resume token for ${did} -> ${dwnUrl}, resetting to start fresh`);
+          ReplicationLedger.resetCheckpoint(link.pull);
+          await this.ledger.saveLink(link);
+          if (this._engineGeneration !== generation) { return; }
+          await this.openLivePullSubscription(target);
+        } else {
+          throw pullErr;
+        }
+      }
       if (this._engineGeneration !== generation) { return; }
       try {
         await this.openLocalPushSubscription(target);
@@ -985,6 +1003,9 @@ export class SyncEngineLevel implements SyncEngine {
         throw pushError;
       }
       if (this._engineGeneration !== generation) { return; }
+
+      // Schedule immediate post-reopen reconcile to close the repair-window gap.
+      this.scheduleReconcile(linkKey, 500);
 
       // Step 6: Clean up repair context and transition to live.
       this._repairContext.delete(linkKey);
@@ -1165,7 +1186,7 @@ export class SyncEngineLevel implements SyncEngine {
       clearTimeout(timer);
     }
     this._reconcileTimers.clear();
-    // Note: _reconcileInFlight promises will bail via generation check.
+    this._reconcileInFlight.clear();
 
     // Clear closure evaluation contexts.
     this._closureContexts.clear();
@@ -1556,10 +1577,8 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
 
-      // Subset scope filtering for push: only push events that match the
-      // link's scope prefixes. Events outside the scope are not our responsibility.
-      // Skipped events MUST advance the push checkpoint to prevent infinite
-      // replay after repair/reconnect (same reason as the pull side).
+      // Subset scope filtering: only push events that match the link's
+      // scope prefixes. Events outside the scope are not our responsibility.
       const pushLink = this._activeLinks.get(this.buildCursorKey(did, dwnUrl, protocol));
       if (pushLink && !isEventInScope(subMessage.event.message, pushLink.scope)) {
         return;
@@ -1726,6 +1745,7 @@ export class SyncEngineLevel implements SyncEngine {
   private scheduleReconcile(linkKey: string, delayMs: number = 1500): void {
     if (this._reconcileTimers.has(linkKey)) { return; }
     if (this._reconcileInFlight.has(linkKey)) { return; }
+    if (this._activeRepairs.has(linkKey)) { return; }
 
     const generation = this._engineGeneration;
     const timer = setTimeout((): void => {
@@ -1758,6 +1778,17 @@ export class SyncEngineLevel implements SyncEngine {
   private async doReconcileLink(linkKey: string): Promise<void> {
     const link = this._activeLinks.get(linkKey);
     if (!link) { return; }
+
+    // Only reconcile live links — repairing/degraded links have their own
+    // recovery path. Reconciling during repair would race with SMT diff.
+    if (link.status !== 'live') {
+      return;
+    }
+
+    // Skip if a repair is in progress for this link.
+    if (this._activeRepairs.has(linkKey)) {
+      return;
+    }
 
     const generation = this._engineGeneration;
     const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, protocol } = link;
@@ -1794,9 +1825,24 @@ export class SyncEngineLevel implements SyncEngine {
         }
       }
 
-      // Reconciliation succeeded — clear the flag.
-      await this.ledger.clearNeedsReconcile(link);
-      this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
+      // Verify convergence by re-reading roots. Only clear needsReconcile
+      // if roots actually match — partial failures (pullMessages returning
+      // incomplete results, pushMessages returning permanentlyFailed) should
+      // not prematurely clear the flag.
+      const postLocalRoot = await this.getLocalRoot(did, delegateDid, protocol);
+      if (this._engineGeneration !== generation) { return; }
+      const postRemoteRoot = await this.getRemoteRoot(did, dwnUrl, delegateDid, protocol);
+      if (this._engineGeneration !== generation) { return; }
+
+      if (postLocalRoot === postRemoteRoot) {
+        await this.ledger.clearNeedsReconcile(link);
+        this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
+      } else {
+        // Roots still differ — retry after a delay. This can happen when
+        // pushMessages() had permanent failures, pullMessages() partially
+        // failed, or new writes arrived during reconciliation.
+        this.scheduleReconcile(linkKey, 5000);
+      }
     } catch (error: any) {
       console.error(`SyncEngineLevel: Reconciliation failed for ${did} -> ${dwnUrl}`, error);
       // Schedule retry with longer delay.
