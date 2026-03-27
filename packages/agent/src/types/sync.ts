@@ -161,8 +161,13 @@ export type ReplicationLinkState = {
   /** Pull-direction replication checkpoint (remote → local). */
   pull: DirectionCheckpoint;
 
-  /** Push-direction replication checkpoint (local → remote). */
-  push: DirectionCheckpoint;
+  /**
+   * Whether this link needs SMT reconciliation. Set when push fails after
+   * retry exhaustion, when the link reconnects after an outage, or when
+   * the remote epoch changes. Cleared after successful reconciliation.
+   * Persisted so recovery survives app/browser restart.
+   */
+  needsReconcile?: boolean;
 
   /** Per-link connectivity state. Used to compute the aggregate engine-level state. */
   connectivity: SyncConnectivityState;
@@ -242,7 +247,8 @@ export type SyncEvent =
   | { type: 'link:status-change'; tenantDid: string; remoteEndpoint: string; protocol?: string; from: LinkStatus; to: LinkStatus }
   | { type: 'link:connectivity-change'; tenantDid: string; remoteEndpoint: string; protocol?: string; from: SyncConnectivityState; to: SyncConnectivityState }
   | { type: 'checkpoint:pull-advance'; tenantDid: string; remoteEndpoint: string; protocol?: string; position: string; messageCid: string }
-  | { type: 'checkpoint:push-advance'; tenantDid: string; remoteEndpoint: string; protocol?: string; position: string; messageCid: string }
+  | { type: 'reconcile:needed'; tenantDid: string; remoteEndpoint: string; protocol?: string; reason: string }
+  | { type: 'reconcile:completed'; tenantDid: string; remoteEndpoint: string; protocol?: string }
   | { type: 'repair:started'; tenantDid: string; remoteEndpoint: string; protocol?: string; attempt: number }
   | { type: 'repair:completed'; tenantDid: string; remoteEndpoint: string; protocol?: string }
   | { type: 'repair:failed'; tenantDid: string; remoteEndpoint: string; protocol?: string; attempt: number; error: string }

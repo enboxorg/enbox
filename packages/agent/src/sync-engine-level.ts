@@ -211,7 +211,7 @@ export class SyncEngineLevel implements SyncEngine {
    * and bail if it has changed — this prevents stale work from mutating
    * state after teardown or mode switch.
    */
-  private _syncGeneration = 0;
+  private _engineGeneration = 0;
 
   /** Active live pull subscriptions (remote -> local via MessagesSubscribe). */
   private _liveSubscriptions: LiveSubscription[] = [];
@@ -228,10 +228,11 @@ export class SyncEngineLevel implements SyncEngine {
   /** Registered event listeners for observability. */
   private _eventListeners: Set<SyncEventListener> = new Set();
 
-  /** Entry in the pending push queue — a message CID with its local EventLog token. */
+  /** Entry in the pending push queue — a message CID for debounced push. */
   private _pendingPushCids: Map<string, {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
-    entries: { cid: string; localToken?: ProgressToken }[];
+    entries: { cid: string }[];
+    retryCount?: number;
   }> = new Map();
 
   /**
@@ -334,11 +335,13 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async clear(): Promise<void> {
+    await this.teardownLiveSync();
     await this._permissionsApi.clear();
     await this._db.clear();
   }
 
   public async close(): Promise<void> {
+    await this.teardownLiveSync();
     await this._db.close();
   }
 
@@ -535,6 +538,7 @@ export class SyncEngineLevel implements SyncEngine {
    * and tearing down any live subscriptions.
    */
   public async stopSync(timeout: number = 2000): Promise<void> {
+    this._engineGeneration++;
     let elapsedTimeout = 0;
 
     while (this._syncLock) {
@@ -559,7 +563,9 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   private async startPollSync(intervalMilliseconds: number): Promise<void> {
+    const generation = this._engineGeneration;
     const intervalSync = async (): Promise<void> => {
+      if (this._engineGeneration !== generation) { return; }
       if (this._syncLock) {
         return;
       }
@@ -582,6 +588,7 @@ export class SyncEngineLevel implements SyncEngine {
         ? intervalMilliseconds * backoffMultiplier
         : intervalMilliseconds;
 
+      if (this._engineGeneration !== generation) { return; }
       if (!this._syncIntervalId) {
         this._syncIntervalId = setInterval(intervalSync, effectiveInterval);
       }
@@ -660,6 +667,13 @@ export class SyncEngineLevel implements SyncEngine {
 
         this.emitEvent({ type: 'link:status-change', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, from: 'initializing', to: 'live' });
         await this.ledger.setStatus(link!, 'live');
+
+        // If the link was marked dirty in a previous session, schedule
+        // immediate reconciliation now that subscriptions are open.
+        if (link!.needsReconcile) {
+          const startupLinkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
+          this.scheduleReconcile(startupLinkKey, 1000);
+        }
       } catch (error: any) {
         const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
 
@@ -833,12 +847,12 @@ export class SyncEngineLevel implements SyncEngine {
     const backoff = SyncEngineLevel.REPAIR_BACKOFF_MS;
     const delayMs = backoff[Math.min(attempts - 1, backoff.length - 1)];
 
-    const timerGeneration = this._syncGeneration;
+    const timerGeneration = this._engineGeneration;
     const timer = setTimeout(async (): Promise<void> => {
       this._repairRetryTimers.delete(linkKey);
 
       // Bail if teardown occurred since this timer was scheduled.
-      if (this._syncGeneration !== timerGeneration) { return; }
+      if (this._engineGeneration !== timerGeneration) { return; }
 
       // Verify link still exists and is still repairing.
       const currentLink = this._activeLinks.get(linkKey);
@@ -868,6 +882,15 @@ export class SyncEngineLevel implements SyncEngine {
 
     const promise = this.doRepairLink(linkKey).finally(() => {
       this._activeRepairs.delete(linkKey);
+
+      // Post-repair reconcile: if doRepairLink() marked needsReconcile
+      // (to close the gap between diff snapshot and new push subscription),
+      // schedule reconciliation NOW — after _activeRepairs is cleared so
+      // scheduleReconcile() won't skip it.
+      const link = this._activeLinks.get(linkKey);
+      if (link?.needsReconcile && link.status === 'live') {
+        this.scheduleReconcile(linkKey, 500);
+      }
     });
     this._activeRepairs.set(linkKey, promise);
     return promise;
@@ -886,7 +909,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Capture the sync generation at repair start. If teardown occurs during
     // any await, the generation will have incremented and we bail before
     // mutating state — preventing the race where repair continues after teardown.
-    const generation = this._syncGeneration;
+    const generation = this._engineGeneration;
 
     const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, protocol } = link;
 
@@ -897,7 +920,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Step 1: Close existing subscriptions FIRST to stop old events from
     // mutating local state while repair runs.
     await this.closeLinkSubscriptions(link);
-    if (this._syncGeneration !== generation) { return; } // Teardown occurred.
+    if (this._engineGeneration !== generation) { return; } // Teardown occurred.
 
     // Step 2: Clear runtime ordinals immediately — stale state must not
     // persist across repair attempts (successful or failed).
@@ -909,13 +932,13 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       // Step 3: Run SMT reconciliation for this link.
       const localRoot = await this.getLocalRoot(did, delegateDid, protocol);
-      if (this._syncGeneration !== generation) { return; }
+      if (this._engineGeneration !== generation) { return; }
       const remoteRoot = await this.getRemoteRoot(did, dwnUrl, delegateDid, protocol);
-      if (this._syncGeneration !== generation) { return; }
+      if (this._engineGeneration !== generation) { return; }
 
       if (localRoot !== remoteRoot) {
         const diff = await this.diffWithRemote({ did, dwnUrl, delegateDid, protocol });
-        if (this._syncGeneration !== generation) { return; }
+        if (this._engineGeneration !== generation) { return; }
 
         if (diff.onlyRemote.length > 0) {
           const prefetched: (MessagesSyncDiffEntry & { message: GenericMessage })[] = [];
@@ -930,39 +953,54 @@ export class SyncEngineLevel implements SyncEngine {
             }
           }
           await this.pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids: needsFetchCids, prefetched });
-          if (this._syncGeneration !== generation) { return; }
+          if (this._engineGeneration !== generation) { return; }
         }
 
         if (diff.onlyLocal.length > 0) {
           await this.pushMessages({ did, dwnUrl, delegateDid, protocol, messageCids: diff.onlyLocal });
-          if (this._syncGeneration !== generation) { return; }
+          if (this._engineGeneration !== generation) { return; }
         }
       }
 
-      // Step 4: Determine the post-repair resume token.
+      // Step 4: Determine the post-repair pull resume token.
       // - If repair was triggered by ProgressGap, use the stored resumeToken
       //   (from gapInfo.latestAvailable) so the reopened subscription replays
       //   from a valid boundary, closing the race window between SMT and resubscribe.
       // - Otherwise, use the existing contiguousAppliedToken if still valid.
-      // - Push checkpoint is NOT reset during repair: push frontier tracks what
-      //   the local EventLog has delivered to the remote. SMT repair handles
-      //   pull-side convergence; push-side convergence is handled by the diff's
-      //   onlyLocal push. The push checkpoint remains the local authority.
+      // Push is opportunistic — no push checkpoint to reset.
       const repairCtx = this._repairContext.get(linkKey);
       const resumeToken = repairCtx?.resumeToken ?? link.pull.contiguousAppliedToken;
       ReplicationLedger.resetCheckpoint(link.pull, resumeToken);
       await this.ledger.saveLink(link);
-      if (this._syncGeneration !== generation) { return; }
+      if (this._engineGeneration !== generation) { return; }
 
-      // Step 5: Reopen subscriptions with the repaired checkpoints.
+      // Step 5: Reopen subscriptions.
+      // Mark needsReconcile BEFORE reopening — local push starts from "now",
+      // so any writes between the diff snapshot (step 3) and the new push
+      // subscription are invisible to both mechanisms. A short post-reopen
+      // reconcile will close this gap (cheap: SMT root comparison short-circuits
+      // if roots already match).
+      link.needsReconcile = true;
+      await this.ledger.saveLink(link);
+      if (this._engineGeneration !== generation) { return; }
+
       const target = { did, dwnUrl, delegateDid, protocol };
-      await this.openLivePullSubscription(target);
-      if (this._syncGeneration !== generation) { return; }
       try {
-        await this.openLocalPushSubscription({
-          ...target,
-          pushCursor: link.push.contiguousAppliedToken,
-        });
+        await this.openLivePullSubscription(target);
+      } catch (pullErr: any) {
+        if (pullErr.isProgressGap) {
+          console.warn(`SyncEngineLevel: Stale pull resume token for ${did} -> ${dwnUrl}, resetting to start fresh`);
+          ReplicationLedger.resetCheckpoint(link.pull);
+          await this.ledger.saveLink(link);
+          if (this._engineGeneration !== generation) { return; }
+          await this.openLivePullSubscription(target);
+        } else {
+          throw pullErr;
+        }
+      }
+      if (this._engineGeneration !== generation) { return; }
+      try {
+        await this.openLocalPushSubscription(target);
       } catch (pushError) {
         const pullSub = this._liveSubscriptions.find(
           s => s.did === did && s.dwnUrl === dwnUrl && s.protocol === protocol
@@ -973,7 +1011,12 @@ export class SyncEngineLevel implements SyncEngine {
         }
         throw pushError;
       }
-      if (this._syncGeneration !== generation) { return; }
+      if (this._engineGeneration !== generation) { return; }
+
+      // Note: post-repair reconcile to close the repair-window gap is
+      // scheduled by repairLink() AFTER _activeRepairs is cleared — not
+      // here, because scheduleReconcile() would skip it while _activeRepairs
+      // still contains this link.
 
       // Step 6: Clean up repair context and transition to live.
       this._repairContext.delete(linkKey);
@@ -991,7 +1034,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     } catch (error: any) {
       // If teardown occurred during repair, don't retry or enter degraded_poll.
-      if (this._syncGeneration !== generation) { return; }
+      if (this._engineGeneration !== generation) { return; }
 
       console.error(`SyncEngineLevel: Repair failed for ${did} -> ${dwnUrl} (attempt ${attempts})`, error);
       this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, protocol, attempt: attempts, error: String(error.message ?? error) });
@@ -1057,10 +1100,10 @@ export class SyncEngineLevel implements SyncEngine {
     const jitter = Math.floor(Math.random() * 15_000);
     const interval = baseInterval + jitter;
 
-    const pollGeneration = this._syncGeneration;
+    const pollGeneration = this._engineGeneration;
     const timer = setInterval(async (): Promise<void> => {
       // Bail if teardown occurred since this timer was created.
-      if (this._syncGeneration !== pollGeneration) {
+      if (this._engineGeneration !== pollGeneration) {
         clearInterval(timer);
         this._degradedPollTimers.delete(linkKey);
         return;
@@ -1105,7 +1148,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Increment generation to invalidate all in-flight async operations
     // (repairs, retry timers, degraded-poll ticks). Any async work that
     // captured the previous generation will bail on its next checkpoint.
-    this._syncGeneration++;
+    this._engineGeneration++;
 
     // Clear the push debounce timer.
     if (this._pushDebounceTimer) {
@@ -1149,8 +1192,16 @@ export class SyncEngineLevel implements SyncEngine {
     this._repairRetryTimers.clear();
     this._repairContext.clear();
 
+    // Clear reconcile timers and in-flight operations.
+    for (const timer of this._reconcileTimers.values()) {
+      clearTimeout(timer);
+    }
+    this._reconcileTimers.clear();
+    this._reconcileInFlight.clear();
+
     // Clear closure evaluation contexts.
     this._closureContexts.clear();
+    this._recentlyPulledCids.clear();
 
     // Clear the in-memory link and runtime state.
     this._activeLinks.clear();
@@ -1252,6 +1303,10 @@ export class SyncEngineLevel implements SyncEngine {
           link.connectivity = 'online';
           if (prevEoseConnectivity !== 'online') {
             this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevEoseConnectivity, to: 'online' });
+          }
+          // If the link was marked dirty, schedule reconciliation now that it's healthy.
+          if (link.needsReconcile) {
+            this.scheduleReconcile(cursorKey, 500);
           }
         } else {
           this._connectivityState = 'online';
@@ -1508,22 +1563,8 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private async openLocalPushSubscription(target: {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
-    pushCursor?: ProgressToken;
   }): Promise<void> {
     const { did, delegateDid, dwnUrl, protocol } = target;
-
-    // Guard against corrupted push cursors — same validation as the pull side.
-    let pushCursor = target.pushCursor;
-    if (pushCursor && (!pushCursor.streamId || !pushCursor.messageCid || !pushCursor.epoch || !pushCursor.position)) {
-      console.warn(`SyncEngineLevel: Discarding stored push cursor with empty field(s) for ${did} -> ${dwnUrl}`);
-      pushCursor = undefined;
-      const cursorKey = this.buildCursorKey(did, dwnUrl, protocol);
-      const link = this._activeLinks.get(cursorKey);
-      if (link) {
-        ReplicationLedger.resetCheckpoint(link.push);
-        await this.ledger.saveLink(link);
-      }
-    }
 
     // Build filters scoped to the protocol (if any).
     const filters = protocol ? [{ protocol }] : [];
@@ -1547,30 +1588,10 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
 
-      // Subset scope filtering for push: only push events that match the
-      // link's scope prefixes. Events outside the scope are not our responsibility.
-      // Skipped events MUST advance the push checkpoint to prevent infinite
-      // replay after repair/reconnect (same reason as the pull side).
+      // Subset scope filtering: only push events that match the link's
+      // scope prefixes. Events outside the scope are not our responsibility.
       const pushLink = this._activeLinks.get(this.buildCursorKey(did, dwnUrl, protocol));
       if (pushLink && !isEventInScope(subMessage.event.message, pushLink.scope)) {
-        // Guard: only mutate durable state when the link is live/initializing.
-        // During repair/degraded_poll, orchestration owns checkpoint progression.
-        if (pushLink.status !== 'live' && pushLink.status !== 'initializing') {
-          return;
-        }
-
-        // Validate token domain before committing — a stream/epoch mismatch
-        // on the local EventLog should trigger repair, not silently overwrite.
-        if (!ReplicationLedger.validateTokenDomain(pushLink.push, subMessage.cursor)) {
-          await this.transitionToRepairing(
-            this.buildCursorKey(did, dwnUrl, protocol), pushLink
-          );
-          return;
-        }
-
-        ReplicationLedger.setReceivedToken(pushLink.push, subMessage.cursor);
-        ReplicationLedger.commitContiguousToken(pushLink.push, subMessage.cursor);
-        await this.ledger.saveLink(pushLink);
         return;
       }
 
@@ -1593,7 +1614,7 @@ export class SyncEngineLevel implements SyncEngine {
         pending = { did, dwnUrl, delegateDid, protocol, entries: [] };
         this._pendingPushCids.set(targetKey, pending);
       }
-      pending.entries.push({ cid, localToken: subMessage.cursor });
+      pending.entries.push({ cid });
 
       // Debounce the push.
       if (this._pushDebounceTimer) {
@@ -1613,7 +1634,7 @@ export class SyncEngineLevel implements SyncEngine {
       target              : did,
       messageType         : DwnInterface.MessagesSubscribe,
       granteeDid          : delegateDid,
-      messageParams       : { filters, permissionGrantId, cursor: pushCursor },
+      messageParams       : { filters, permissionGrantId },
       subscriptionHandler : subscriptionHandler as any,
     });
 
@@ -1648,6 +1669,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       const cids = pushEntries.map(e => e.cid);
+      const retryAttempts = pending.retryCount ?? 0;
 
       try {
         const result = await pushMessages({
@@ -1657,77 +1679,186 @@ export class SyncEngineLevel implements SyncEngine {
           permissionsApi : this._permissionsApi,
         });
 
-        // Advance the push checkpoint for successfully pushed entries.
-        // Push is sequential (single batch, in-order processing) so we can
-        // commit directly without ordinal tracking — there's no concurrent
-        // completion to reorder.
-        const link = this._activeLinks.get(targetKey);
-        if (link) {
-          const succeededSet = new Set(result.succeeded);
-          // Track highest contiguous success: if a CID fails, we stop advancing.
-          let hitFailure = false;
-          for (const entry of pushEntries) {
-            if (hitFailure) { break; }
-            if (succeededSet.has(entry.cid) && entry.localToken) {
-              if (!ReplicationLedger.validateTokenDomain(link.push, entry.localToken)) {
-                console.warn(`SyncEngineLevel: Push checkpoint domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
-                await this.transitionToRepairing(targetKey, link);
-                break;
-              }
-              ReplicationLedger.setReceivedToken(link.push, entry.localToken);
-              ReplicationLedger.commitContiguousToken(link.push, entry.localToken);
-            } else {
-              // This CID failed or had no token — stop advancing.
-              hitFailure = true;
-            }
-          }
-          await this.ledger.saveLink(link);
-        }
-
-        // Re-queue only TRANSIENT failures for retry. Permanent failures (400/401/403)
-        // are dropped — they will never succeed regardless of retry.
+        // Re-queue only transient failures for bounded retry.
         if (result.failed.length > 0) {
-          console.error(
-            `SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}: ` +
-            `${result.failed.length} transient failures of ${cids.length} messages`
-          );
           const failedSet = new Set(result.failed);
           const failedEntries = pushEntries.filter(e => failedSet.has(e.cid));
-          let requeued = this._pendingPushCids.get(targetKey);
-          if (!requeued) {
-            requeued = { did, dwnUrl, delegateDid, protocol, entries: [] };
-            this._pendingPushCids.set(targetKey, requeued);
-          }
-          requeued.entries.push(...failedEntries);
-
-          // Schedule a retry after a short delay.
-          if (!this._pushDebounceTimer) {
-            this._pushDebounceTimer = setTimeout((): void => {
-              void this.flushPendingPushes();
-            }, PUSH_DEBOUNCE_MS * 4);
-          }
+          this.requeueOrReconcile(targetKey, {
+            did, dwnUrl, delegateDid, protocol,
+            entries    : failedEntries,
+            retryCount : retryAttempts + 1,
+          });
         }
-        // Permanent failures are logged by pushMessages but NOT re-queued.
-        // They will be rediscovered by the next SMT integrity check if the
-        // local/remote state has changed, but won't spin in a retry loop.
+        // Permanent failures (400/401/403) are NOT re-queued or reconciled.
       } catch (error: any) {
-        // Truly unexpected error (not per-message failure). Re-queue entire
-        // batch so entries aren't silently dropped from the debounce queue.
-        console.error(`SyncEngineLevel: Push-on-write failed for ${did} -> ${dwnUrl}`, error);
-        let requeued = this._pendingPushCids.get(targetKey);
-        if (!requeued) {
-          requeued = { did, dwnUrl, delegateDid, protocol, entries: [] };
-          this._pendingPushCids.set(targetKey, requeued);
-        }
-        requeued.entries.push(...pushEntries);
-
-        if (!this._pushDebounceTimer) {
-          this._pushDebounceTimer = setTimeout((): void => {
-            void this.flushPendingPushes();
-          }, PUSH_DEBOUNCE_MS * 4);
-        }
+        // Whole-batch failure (network error, etc). Re-queue for retry.
+        console.error(`SyncEngineLevel: Push batch failed for ${did} -> ${dwnUrl}`, error);
+        this.requeueOrReconcile(targetKey, {
+          ...pending,
+          retryCount: retryAttempts + 1,
+        });
       }
     }));
+  }
+
+  /** Push retry backoff schedule: immediate, 250ms, 1s, 2s, then give up. */
+  private static readonly PUSH_RETRY_BACKOFF_MS = [0, 250, 1000, 2000];
+
+  /**
+   * Re-queues a failed push batch for retry, or marks the link
+   * `needsReconcile` if retries are exhausted. Bounded to prevent
+   * infinite retry loops.
+   */
+  private requeueOrReconcile(targetKey: string, pending: {
+    did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
+    entries: { cid: string }[];
+    retryCount: number;
+  }): void {
+    const maxRetries = SyncEngineLevel.PUSH_RETRY_BACKOFF_MS.length;
+    if (pending.retryCount >= maxRetries) {
+      // Retry budget exhausted — mark link dirty for reconciliation.
+      const link = this._activeLinks.get(targetKey);
+      if (link && !link.needsReconcile) {
+        link.needsReconcile = true;
+        void this.ledger.saveLink(link).then(() => {
+          this.emitEvent({ type: 'reconcile:needed', tenantDid: pending.did, remoteEndpoint: pending.dwnUrl, protocol: pending.protocol, reason: 'push-retry-exhausted' });
+          this.scheduleReconcile(targetKey);
+        });
+      }
+      return;
+    }
+
+    // Re-queue with incremented retry count.
+    this._pendingPushCids.set(targetKey, pending);
+
+    const delayMs = SyncEngineLevel.PUSH_RETRY_BACKOFF_MS[pending.retryCount] ?? 2000;
+    if (!this._pushDebounceTimer) {
+      this._pushDebounceTimer = setTimeout((): void => {
+        void this.flushPendingPushes();
+      }, delayMs);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Per-link reconciliation
+  // ---------------------------------------------------------------------------
+
+  /** Active reconcile timers, keyed by link key. */
+  private _reconcileTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+  /** Active reconcile operations, keyed by link key (dedup). */
+  private _reconcileInFlight: Map<string, Promise<void>> = new Map();
+
+  /**
+   * Schedule a per-link reconciliation after a short debounce. Coalesces
+   * repeated requests for the same link.
+   */
+  private scheduleReconcile(linkKey: string, delayMs: number = 1500): void {
+    if (this._reconcileTimers.has(linkKey)) { return; }
+    if (this._reconcileInFlight.has(linkKey)) { return; }
+    if (this._activeRepairs.has(linkKey)) { return; }
+
+    const generation = this._engineGeneration;
+    const timer = setTimeout((): void => {
+      this._reconcileTimers.delete(linkKey);
+      if (this._engineGeneration !== generation) { return; }
+      void this.reconcileLink(linkKey);
+    }, delayMs);
+    this._reconcileTimers.set(linkKey, timer);
+  }
+
+  /**
+   * Run SMT reconciliation for a single link. Deduplicates concurrent calls.
+   * On success, clears `needsReconcile`. On failure, schedules retry.
+   */
+  private async reconcileLink(linkKey: string): Promise<void> {
+    const existing = this._reconcileInFlight.get(linkKey);
+    if (existing) { return existing; }
+
+    const promise = this.doReconcileLink(linkKey).finally(() => {
+      this._reconcileInFlight.delete(linkKey);
+    });
+    this._reconcileInFlight.set(linkKey, promise);
+    return promise;
+  }
+
+  /**
+   * Internal reconciliation implementation for a single link. Runs the
+   * same SMT diff + pull/push that `sync()` does, but scoped to one link.
+   */
+  private async doReconcileLink(linkKey: string): Promise<void> {
+    const link = this._activeLinks.get(linkKey);
+    if (!link) { return; }
+
+    // Only reconcile live links — repairing/degraded links have their own
+    // recovery path. Reconciling during repair would race with SMT diff.
+    if (link.status !== 'live') {
+      return;
+    }
+
+    // Skip if a repair is in progress for this link.
+    if (this._activeRepairs.has(linkKey)) {
+      return;
+    }
+
+    const generation = this._engineGeneration;
+    const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, protocol } = link;
+
+    try {
+      const localRoot = await this.getLocalRoot(did, delegateDid, protocol);
+      if (this._engineGeneration !== generation) { return; }
+      const remoteRoot = await this.getRemoteRoot(did, dwnUrl, delegateDid, protocol);
+      if (this._engineGeneration !== generation) { return; }
+
+      if (localRoot !== remoteRoot) {
+        const diff = await this.diffWithRemote({ did, dwnUrl, delegateDid, protocol });
+        if (this._engineGeneration !== generation) { return; }
+
+        if (diff.onlyRemote.length > 0) {
+          const prefetched: (MessagesSyncDiffEntry & { message: GenericMessage })[] = [];
+          const needsFetchCids: string[] = [];
+          for (const entry of diff.onlyRemote) {
+            if (!entry.message || (entry.message.descriptor.interface === 'Records' &&
+                entry.message.descriptor.method === 'Write' &&
+                (entry.message.descriptor as any).dataCid && !entry.encodedData)) {
+              needsFetchCids.push(entry.messageCid);
+            } else {
+              prefetched.push(entry as MessagesSyncDiffEntry & { message: GenericMessage });
+            }
+          }
+          await this.pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids: needsFetchCids, prefetched });
+          if (this._engineGeneration !== generation) { return; }
+        }
+
+        if (diff.onlyLocal.length > 0) {
+          await this.pushMessages({ did, dwnUrl, delegateDid, protocol, messageCids: diff.onlyLocal });
+          if (this._engineGeneration !== generation) { return; }
+        }
+      }
+
+      // Verify convergence by re-reading roots. Only clear needsReconcile
+      // if roots actually match — partial failures (pullMessages returning
+      // incomplete results, pushMessages returning permanentlyFailed) should
+      // not prematurely clear the flag.
+      const postLocalRoot = await this.getLocalRoot(did, delegateDid, protocol);
+      if (this._engineGeneration !== generation) { return; }
+      const postRemoteRoot = await this.getRemoteRoot(did, dwnUrl, delegateDid, protocol);
+      if (this._engineGeneration !== generation) { return; }
+
+      if (postLocalRoot === postRemoteRoot) {
+        await this.ledger.clearNeedsReconcile(link);
+        this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
+      } else {
+        // Roots still differ — retry after a delay. This can happen when
+        // pushMessages() had permanent failures, pullMessages() partially
+        // failed, or new writes arrived during reconciliation.
+        this.scheduleReconcile(linkKey, 5000);
+      }
+    } catch (error: any) {
+      console.error(`SyncEngineLevel: Reconciliation failed for ${did} -> ${dwnUrl}`, error);
+      // Schedule retry with longer delay.
+      this.scheduleReconcile(linkKey, 5000);
+    }
   }
 
   // ---------------------------------------------------------------------------
