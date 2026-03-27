@@ -1937,7 +1937,9 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       await cursors.del(key);
     } catch {
-      // Ignore errors — the key may not exist.
+      // Best-effort — ignore LEVEL_NOT_FOUND and transient I/O errors alike.
+      // A failed delete leaves the bad entry for one more re-check on the
+      // next startup, which is harmless.
     }
   }
 
