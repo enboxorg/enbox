@@ -783,11 +783,19 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should use existing cursor when available', async () => {
+    it('should use existing cursor from link pull checkpoint', async () => {
       const { agent, processRequestStub } = createPullMockAgent();
       const engine = new SyncEngineLevel({ db, agent });
       const savedCursor = { streamId: 's1', epoch: 'e1', position: '42', messageCid: 'cid-42' };
-      sinon.stub(engine as any, 'getCursor').resolves(savedCursor);
+
+      // Set cursor on the link's pull checkpoint (not legacy getCursor).
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : { contiguousAppliedToken: savedCursor },
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
 
       await (engine as any).openLivePullSubscription({
         did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
@@ -1421,11 +1429,22 @@ describe('SyncEngineLevel — private methods', () => {
       };
     }
 
-    it('should process eose events by persisting cursor', async () => {
+    it('should process eose events by updating link checkpoint and connectivity', async () => {
       const { agent, getHandler } = createCallbackMockAgent();
       const engine = new SyncEngineLevel({ db, agent });
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
-      const setCursorStub = sinon.stub(engine as any, 'setCursor').resolves();
+
+      // Set up a link so the EOSE handler uses the link path.
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : {}, connectivity   : 'unknown', needsReconcile : false,
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+
+      const saveStub = sinon.stub().resolves();
+      (engine as any)._ledger = { saveLink: saveStub };
 
       await (engine as any).openLivePullSubscription({
         did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
@@ -1434,21 +1453,34 @@ describe('SyncEngineLevel — private methods', () => {
       const handler = getHandler();
       expect(handler).toBeDefined();
 
-      await handler({ type: 'eose', cursor: 'eose-cursor-1' });
+      const eoseCursor = { streamId: 's1', epoch: 'e1', position: '10', messageCid: 'cid-eose' };
+      await handler({ type: 'eose', cursor: eoseCursor });
 
-      expect(setCursorStub.calledOnce).toBe(true);
-      expect(setCursorStub.firstCall.args[1]).toBe('eose-cursor-1');
-      expect((engine as any)._connectivityState).toBe('online');
+      // EOSE should set connectivity to online.
+      expect(link.connectivity).toBe('online');
+      // receivedToken should be set from the EOSE cursor.
+      expect(link.pull.receivedToken).toEqual(eoseCursor);
 
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should process event messages by calling processMessage', async () => {
+    it('should process event messages by calling processRawMessage', async () => {
       const processMessageStub = sinon.stub().resolves({ status: { code: 202 } });
       const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
       const engine = new SyncEngineLevel({ db, agent });
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
-      const setCursorStub = sinon.stub(engine as any, 'setCursor').resolves();
+
+      // Set up a link so the event handler uses the link path.
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : {}, connectivity   : 'online', needsReconcile : false,
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+
+      const saveStub = sinon.stub().resolves();
+      (engine as any)._ledger = { saveLink: saveStub };
 
       await (engine as any).openLivePullSubscription({
         did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
@@ -1456,16 +1488,16 @@ describe('SyncEngineLevel — private methods', () => {
 
       const handler = getHandler();
 
+      const eventCursor = { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' };
       await handler({
         type   : 'event',
-        cursor : 'event-cursor-1',
+        cursor : eventCursor,
         event  : {
           message: { descriptor: { interface: 'Protocols', method: 'Configure' } },
         },
       });
 
       expect(processMessageStub.calledOnce).toBe(true);
-      expect(setCursorStub.calledOnce).toBe(true);
 
       (engine as any)._liveSubscriptions = [];
     });
@@ -1474,8 +1506,6 @@ describe('SyncEngineLevel — private methods', () => {
       const processMessageStub = sinon.stub().rejects(new Error('process failed'));
       const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
       const engine = new SyncEngineLevel({ db, agent });
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
-      sinon.stub(engine as any, 'setCursor').resolves();
       const consoleStub = sinon.stub(console, 'error');
 
       await (engine as any).openLivePullSubscription({
@@ -2646,6 +2676,266 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
 
       expect(link.push).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Per-link reconciliation (doReconcileLink, reconcileLink, scheduleReconcile)
+  // ---------------------------------------------------------------------------
+
+  describe('per-link reconciliation', () => {
+    function makeLiveLink(overrides: any = {}): any {
+      return {
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test',
+        scope          : { kind: 'full' },
+        status         : 'live',
+        pull           : {},
+        needsReconcile : true,
+        ...overrides,
+      };
+    }
+
+    it('should clear needsReconcile when roots converge after reconciliation', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      // Roots initially differ, then converge after diff+pull+push.
+      let rootCallCount = 0;
+      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
+        rootCallCount++;
+        return rootCallCount <= 1 ? 'root-A' : 'root-converged';
+      });
+      sinon.stub(engine as any, 'getRemoteRoot').callsFake(async () => {
+        return rootCallCount <= 1 ? 'root-B' : 'root-converged';
+      });
+      sinon.stub(engine as any, 'diffWithRemote').resolves({ onlyRemote: [], onlyLocal: [] });
+      sinon.stub(engine as any, 'pullMessages').resolves();
+      sinon.stub(engine as any, 'pushMessages').resolves();
+
+      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
+      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      expect(link.needsReconcile).toBe(false);
+      expect(clearStub.calledOnce).toBe(true);
+      expect(events.some(e => e.type === 'reconcile:completed')).toBe(true);
+    });
+
+    it('should NOT clear needsReconcile when roots still differ after reconciliation', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      // Roots always differ — simulates permanent push failures.
+      sinon.stub(engine as any, 'getLocalRoot').resolves('root-local');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-remote');
+      sinon.stub(engine as any, 'diffWithRemote').resolves({ onlyRemote: [], onlyLocal: ['cid-1'] });
+      sinon.stub(engine as any, 'pullMessages').resolves();
+      sinon.stub(engine as any, 'pushMessages').resolves();
+
+      const clearStub = sinon.stub().resolves();
+      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      // Flag should NOT be cleared since roots still diverge.
+      expect(link.needsReconcile).toBe(true);
+      expect(clearStub.called).toBe(false);
+
+      // A retry reconcile should be scheduled.
+      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(true);
+      clearTimeout((engine as any)._reconcileTimers.get(linkKey));
+    });
+
+    it('should skip reconciliation when link is not live', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink({ status: 'repairing' });
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      const getLocalRootStub = sinon.stub(engine as any, 'getLocalRoot');
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      // Should have bailed before any root computation.
+      expect(getLocalRootStub.called).toBe(false);
+    });
+
+    it('should skip reconciliation when _activeRepairs contains the link', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any)._activeRepairs.set(linkKey, Promise.resolve());
+
+      const getLocalRootStub = sinon.stub(engine as any, 'getLocalRoot');
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      expect(getLocalRootStub.called).toBe(false);
+    });
+
+    it('should skip reconciliation when roots already match (short-circuit)', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      // Roots match from the start — no diff needed.
+      sinon.stub(engine as any, 'getLocalRoot').resolves('same-root');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('same-root');
+      const diffStub = sinon.stub(engine as any, 'diffWithRemote');
+
+      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
+      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      // diff should not have been called (roots matched).
+      expect(diffStub.called).toBe(false);
+      // But needsReconcile should still be cleared (convergence confirmed).
+      expect(link.needsReconcile).toBe(false);
+    });
+
+    it('should bail on generation mismatch during reconciliation', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
+        (engine as any)._engineGeneration++;
+        return 'root-A';
+      });
+
+      const getRemoteRootStub = sinon.stub(engine as any, 'getRemoteRoot');
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      // Should have bailed after getLocalRoot incremented generation.
+      expect(getRemoteRootStub.called).toBe(false);
+      // needsReconcile should still be set (not cleared due to bail).
+      expect(link.needsReconcile).toBe(true);
+    });
+
+    it('should schedule retry on reconciliation error', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      sinon.stub(engine as any, 'getLocalRoot').rejects(new Error('network error'));
+      sinon.stub(console, 'error');
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      // Should schedule a retry reconcile.
+      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(true);
+      expect(link.needsReconcile).toBe(true);
+      clearTimeout((engine as any)._reconcileTimers.get(linkKey));
+    });
+
+    it('reconcileLink should deduplicate concurrent calls', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      let callCount = 0;
+      sinon.stub(engine as any, 'doReconcileLink').callsFake(async () => {
+        callCount++;
+        await new Promise(r => setTimeout(r, 50));
+      });
+
+      // Launch two concurrent reconcileLink calls.
+      const p1 = (engine as any).reconcileLink(linkKey);
+      const p2 = (engine as any).reconcileLink(linkKey);
+
+      await Promise.all([p1, p2]);
+
+      // doReconcileLink should only have been called once.
+      expect(callCount).toBe(1);
+    });
+
+    it('scheduleReconcile should not schedule if timer already exists', () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      (engine as any).scheduleReconcile(linkKey, 10000);
+      const firstTimer = (engine as any)._reconcileTimers.get(linkKey);
+      expect(firstTimer).toBeDefined();
+
+      // Second call should be a no-op.
+      (engine as any).scheduleReconcile(linkKey, 10000);
+      const secondTimer = (engine as any)._reconcileTimers.get(linkKey);
+      expect(secondTimer).toBe(firstTimer); // Same timer reference.
+
+      clearTimeout(firstTimer);
+    });
+
+    it('scheduleReconcile should not schedule if _activeRepairs contains the link', () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      (engine as any)._activeRepairs.set(linkKey, Promise.resolve());
+
+      (engine as any).scheduleReconcile(linkKey, 100);
+
+      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(false);
+    });
+
+    it('scheduleReconcile should not schedule if reconcile is already in-flight', () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      (engine as any)._reconcileInFlight.set(linkKey, Promise.resolve());
+
+      (engine as any).scheduleReconcile(linkKey, 100);
+
+      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(false);
+    });
+
+    it('doReconcileLink should pull onlyRemote and push onlyLocal', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      let rootCallCount = 0;
+      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
+        rootCallCount++;
+        return rootCallCount <= 1 ? 'root-A' : 'root-converged';
+      });
+      sinon.stub(engine as any, 'getRemoteRoot').callsFake(async () => {
+        return rootCallCount <= 1 ? 'root-B' : 'root-converged';
+      });
+
+      const diffStub = sinon.stub(engine as any, 'diffWithRemote').resolves({
+        onlyRemote : [{ messageCid: 'remote-cid-1' }],
+        onlyLocal  : ['local-cid-1'],
+      });
+      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
+
+      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
+      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      expect(diffStub.calledOnce).toBe(true);
+      expect(pullStub.calledOnce).toBe(true);
+      expect(pushStub.calledOnce).toBe(true);
+
+      // Verify push was called with the onlyLocal CIDs.
+      const pushArgs = pushStub.firstCall.args[0];
+      expect(pushArgs.messageCids).toEqual(['local-cid-1']);
     });
   });
 

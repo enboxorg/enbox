@@ -170,8 +170,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Durable replication ledger — persists per-link checkpoint state.
-   * Used by live sync to track pull/push progression independently per link.
-   * Poll-mode sync still uses the legacy `getCursor`/`setCursor` path.
+   * Used by live sync to track pull progression per link.
    * Lazily initialized on first use to avoid sublevel() calls on mock dbs.
    */
   private _ledger?: ReplicationLedger;
@@ -645,6 +644,19 @@ export class SyncEngineLevel implements SyncEngine {
 
         // Cache the link for fast access by subscription handlers.
         const linkKey = this.buildCursorKey(target.did, target.dwnUrl, target.protocol);
+
+        // One-time migration: if the link has no pull checkpoint, check for
+        // a legacy cursor in the old syncCursors sublevel. Migrate it into
+        // the link's pull checkpoint, save, and delete the old entry.
+        if (!link.pull.contiguousAppliedToken) {
+          const legacyCursor = await this.getCursor(linkKey);
+          if (legacyCursor) {
+            ReplicationLedger.resetCheckpoint(link.pull, legacyCursor);
+            await this.ledger.saveLink(link);
+            await this.deleteLegacyCursor(linkKey);
+          }
+        }
+
         this._activeLinks.set(linkKey, link);
 
         // Open subscriptions — only transition to live if both succeed.
@@ -1221,10 +1233,11 @@ export class SyncEngineLevel implements SyncEngine {
   }): Promise<void> {
     const { did, delegateDid, dwnUrl, protocol } = target;
 
-    // Resolve the cursor from the link's pull checkpoint (preferred) or legacy storage.
+    // Resolve the cursor from the link's durable pull checkpoint.
+    // Legacy syncCursors migration happens at link load time in startLiveSync().
     const cursorKey = this.buildCursorKey(did, dwnUrl, protocol);
     const link = this._activeLinks.get(cursorKey);
-    let cursor = link?.pull.contiguousAppliedToken ?? await this.getCursor(cursorKey);
+    let cursor = link?.pull.contiguousAppliedToken;
 
     // Guard against corrupted tokens with empty fields — these would fail
     // MessagesSubscribe JSON schema validation (minLength: 1). Discard and
@@ -1294,8 +1307,6 @@ export class SyncEngineLevel implements SyncEngine {
           // far as the contiguous drain reaches.
           this.drainCommittedPull(cursorKey);
           await this.ledger.saveLink(link);
-        } else {
-          await this.setCursor(cursorKey, subMessage.cursor);
         }
         // Transport is reachable — set connectivity to online.
         if (link) {
@@ -1454,9 +1465,6 @@ export class SyncEngineLevel implements SyncEngine {
               console.warn(`SyncEngineLevel: Pull in-flight overflow for ${did} -> ${dwnUrl}, transitioning to repairing`);
               await this.transitionToRepairing(cursorKey, link);
             }
-          } else if (!link) {
-            // Legacy path: no link available, use simple cursor persistence.
-            await this.setCursor(cursorKey, subMessage.cursor);
           }
         } catch (error: any) {
           console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
@@ -1871,7 +1879,8 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Retrieves a stored progress token. Handles migration from old string cursors:
+   * @deprecated Used by poll-mode sync and one-time migration only. Live mode
+   * uses ReplicationLedger checkpoints. Handles migration from old string cursors:
    * if the stored value is a bare string (pre-ProgressToken format), it is treated
    * as absent — the sync engine will do a full SMT reconciliation on first startup
    * after upgrade, which is correct and safe.
@@ -1902,9 +1911,23 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  /** @deprecated Used only by poll-mode sync. Live mode uses ReplicationLedger. */
   private async setCursor(key: string, cursor: ProgressToken): Promise<void> {
     const cursors = this._db.sublevel('syncCursors');
     await cursors.put(key, JSON.stringify(cursor));
+  }
+
+  /**
+   * Delete a legacy cursor from the old syncCursors sublevel.
+   * Called as part of one-time migration to ReplicationLedger.
+   */
+  private async deleteLegacyCursor(key: string): Promise<void> {
+    const cursors = this._db.sublevel('syncCursors');
+    try {
+      await cursors.del(key);
+    } catch {
+      // Ignore errors — the key may not exist.
+    }
   }
 
   // ---------------------------------------------------------------------------
