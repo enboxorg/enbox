@@ -1,5 +1,11 @@
 # @enbox/dwn-sdk-js
 
+## 0.3.2
+
+### Patch Changes
+
+- [#792](https://github.com/enboxorg/enbox/pull/792) [`f268675`](https://github.com/enboxorg/enbox/commit/f268675af32dc383795c94841d163e25f881186e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: prevent empty messageCid in ProgressToken across EventLog and sync engine
+
 ## 0.3.1
 
 ### Patch Changes
