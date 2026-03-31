@@ -361,7 +361,14 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
         // Permanent failures (400/401/403) will never succeed — do NOT retry.
         // These include protocol violations (RecordLimitExceeded), auth errors,
         // and schema validation failures.
-        console.warn(`SyncEngineLevel: push permanently failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
+        if (reply.status.code === 400 && reply.status.detail?.includes('record limit')) {
+          // Expected for singleton convergence in multi-device scenarios:
+          // one device created a singleton record, this device has a
+          // different one, and the remote rejects the duplicate.
+          console.debug(`SyncEngineLevel: singleton already exists on remote, skipping push for ${cid}`);
+        } else {
+          console.warn(`SyncEngineLevel: push permanently failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
+        }
         permanentlyFailed.push(cid);
       } else {
         // Transient failures (5xx, etc.) — worth retrying.

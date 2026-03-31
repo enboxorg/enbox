@@ -423,7 +423,7 @@ export type ProtocolRequest =
 export type Permission = 'write' | 'read' | 'delete' | 'query' | 'subscribe' | 'configure';
 
 /** Default permissions granted when only a protocol definition is provided. */
-export const DEFAULT_PERMISSIONS: Permission[] = ['read', 'write', 'query', 'subscribe', 'configure'];
+export const DEFAULT_PERMISSIONS: Permission[] = ['read', 'write', 'delete', 'query', 'subscribe', 'configure'];
 
 /**
  * Options for a handler-based (delegated) connect flow.
