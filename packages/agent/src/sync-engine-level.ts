@@ -48,10 +48,12 @@ const MAX_DIFF_DEPTH = 16;
 const BATCHED_DIFF_DEPTH = 8;
 
 /**
- * Debounce window for push-on-write. When the local EventLog emits events,
- * we batch them and push after this delay to avoid a push per individual write.
+ * Debounce window for batching writes that arrive while a push is in flight.
+ * The first write in a quiet window triggers an immediate push; subsequent
+ * writes arriving during the push are batched and flushed after this delay
+ * once the in-flight push completes.
  */
-const PUSH_DEBOUNCE_MS = 250;
+const PUSH_DEBOUNCE_MS = 100;
 
 /** Tracks a live subscription to a remote DWN for one sync target. */
 type LiveSubscription = {
@@ -155,6 +157,8 @@ type PushRuntimeState = {
   entries: { cid: string }[];
   retryCount: number;
   timer?: ReturnType<typeof setTimeout>;
+  /** True while a push HTTP request is in flight for this link. */
+  flushing?: boolean;
 };
 
 export class SyncEngineLevel implements SyncEngine {
@@ -407,45 +411,61 @@ export class SyncEngineLevel implements SyncEngine {
 
     this._syncLock = true;
     try {
-      // Iterate over all registered identities and their DWN endpoints.
+      // Group targets by remote endpoint so each URL group can be reconciled
+      // concurrently. Within a group, targets are processed sequentially so
+      // that a single network failure skips the rest of that group.
       const syncTargets = await this.getSyncTargets();
-      const errored = new Set<string>();
-      let hadFailure = false;
-
+      const byUrl = new Map<string, typeof syncTargets>();
       for (const target of syncTargets) {
-        const { did, delegateDid, dwnUrl, protocol } = target;
-
-        if (errored.has(dwnUrl)) {
-          continue;
+        let group = byUrl.get(target.dwnUrl);
+        if (!group) {
+          group = [];
+          byUrl.set(target.dwnUrl, group);
         }
+        group.push(target);
+      }
 
-        try {
-          const outcome = await this.createLinkReconciler().reconcile({
-            did, dwnUrl, delegateDid, protocol,
-          }, { direction });
+      let groupsSucceeded = 0;
+      let groupsFailed = 0;
 
-          if (!outcome.changed) {
-            continue;
+      const results = await Promise.allSettled([...byUrl.entries()].map(async ([dwnUrl, targets]) => {
+        for (const target of targets) {
+          const { did, delegateDid, protocol } = target;
+          try {
+            await this.createLinkReconciler().reconcile({
+              did, dwnUrl, delegateDid, protocol,
+            }, { direction });
+          } catch (error: any) {
+            // Skip remaining targets for this DWN endpoint.
+            groupsFailed++;
+            console.error(`SyncEngineLevel: Error syncing ${did} with ${dwnUrl}`, error);
+            return;
           }
-        } catch (error: any) {
-          // Skip this DWN endpoint for remaining targets and log the real cause.
-          errored.add(dwnUrl);
-          hadFailure = true;
-          console.error(`SyncEngineLevel: Error syncing ${did} with ${dwnUrl}`, error);
+        }
+        groupsSucceeded++;
+      }));
+
+      // Check for unexpected rejections (should not happen given inner try/catch).
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          groupsFailed++;
         }
       }
 
-      // Track consecutive failures for backoff in poll mode.
-      if (hadFailure) {
+      // Track connectivity based on per-group outcomes. If at least one
+      // group succeeded, stay online — partial reachability is still online.
+      if (groupsSucceeded > 0) {
+        this._consecutiveFailures = 0;
+        this._connectivityState = 'online';
+      } else if (groupsFailed > 0) {
         this._consecutiveFailures++;
         if (this._connectivityState === 'online') {
           this._connectivityState = 'offline';
         }
-      } else {
+      } else if (syncTargets.length > 0) {
+        // All targets had matching roots (no reconciliation needed).
         this._consecutiveFailures = 0;
-        if (syncTargets.length > 0) {
-          this._connectivityState = 'online';
-        }
+        this._connectivityState = 'online';
       }
     } finally {
       this._syncLock = false;
@@ -572,8 +592,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Step 2: Initialize replication links and open live subscriptions.
+    // Each target's link initialization is independent — process concurrently.
     const syncTargets = await this.getSyncTargets();
-    for (const target of syncTargets) {
+    await Promise.allSettled(syncTargets.map(async (target) => {
       let link: ReplicationLinkState | undefined;
       try {
         // Get or create the link in the durable ledger.
@@ -646,7 +667,7 @@ export class SyncEngineLevel implements SyncEngine {
           await this.transitionToRepairing(linkKey, link, {
             resumeToken: gapInfo?.latestAvailable,
           });
-          continue;
+          return;
         }
 
         console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
@@ -661,7 +682,7 @@ export class SyncEngineLevel implements SyncEngine {
           this._connectivityState = 'unknown';
         }
       }
-    }
+    }));
 
     // Step 3: Schedule infrequent SMT integrity check.
     const integrityCheck = async (): Promise<void> => {
@@ -1555,13 +1576,12 @@ export class SyncEngineLevel implements SyncEngine {
       });
       pushRuntime.entries.push({ cid });
 
-      if (pushRuntime.timer) {
-        clearTimeout(pushRuntime.timer);
-      }
-      pushRuntime.timer = setTimeout((): void => {
-        pushRuntime.timer = undefined;
+      // Immediate-first: if no push is in flight and no batch timer is
+      // pending, push immediately. Otherwise, the pending batch timer
+      // or the post-flush drain will pick up the new entry.
+      if (!pushRuntime.flushing && !pushRuntime.timer) {
         void this.flushPendingPushesForLink(targetKey);
-      }, PUSH_DEBOUNCE_MS);
+      }
     };
 
     // Subscribe to the local DWN EventLog from "now" — opportunistic push
@@ -1610,13 +1630,14 @@ export class SyncEngineLevel implements SyncEngine {
     pushRuntime.entries = [];
 
     if (pushEntries.length === 0) {
-      if (!pushRuntime.timer && retryCount === 0) {
+      if (!pushRuntime.timer && !pushRuntime.flushing && retryCount === 0) {
         this._pushRuntimes.delete(linkKey);
       }
       return;
     }
 
     const cids = pushEntries.map((entry) => entry.cid);
+    pushRuntime.flushing = true;
 
     try {
       const result = await pushMessages({
@@ -1649,6 +1670,19 @@ export class SyncEngineLevel implements SyncEngine {
         entries    : pushEntries,
         retryCount : retryCount + 1,
       });
+    } finally {
+      pushRuntime.flushing = false;
+
+      // If new entries accumulated while this push was in flight, schedule
+      // a short drain to flush them. This gives a brief batching window
+      // for burst writes while keeping single-write latency low.
+      const rt = this._pushRuntimes.get(linkKey);
+      if (rt && rt.entries.length > 0 && !rt.timer) {
+        rt.timer = setTimeout((): void => {
+          rt.timer = undefined;
+          void this.flushPendingPushesForLink(linkKey);
+        }, PUSH_DEBOUNCE_MS);
+      }
     }
   }
 
