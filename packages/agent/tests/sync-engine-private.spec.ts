@@ -994,6 +994,89 @@ describe('SyncEngineLevel — private methods', () => {
       expect((engine as any)._pushRuntimes.size).toBe(0);
     });
 
+    it('should reset retryCount to 0 after a successful push', async () => {
+      // processRequest returns a RecordsRead-like response so pushMessages
+      // can read local messages and send them via rpc.
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status : { code: 200 },
+              entry  : { message: { descriptor: { interface: 'Records', method: 'Write' } } },
+            },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
+
+      // Simulate a push runtime left over from a previously retried batch
+      // that eventually succeeded — retryCount is stale at 2.
+      (engine as any)._pushRuntimes.set('key1', {
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [{ cid: 'cid-new' }],
+        retryCount : 2,
+      });
+
+      await (engine as any).flushPendingPushesForLink('key1');
+
+      // Runtime should be cleaned up (success + no pending entries + no timer).
+      // retryCount was reset to 0, enabling deletion.
+      expect((engine as any)._pushRuntimes.has('key1')).toBe(false);
+    });
+
+    it('should not let stale retryCount leak to subsequent batches', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status : { code: 200 },
+              entry  : { message: { descriptor: { interface: 'Records', method: 'Write' } } },
+            },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
+
+      // Simulate a runtime with stale retryCount from a prior batch,
+      // plus new entries waiting. The batch-A entries will be flushed;
+      // batch-B entries arrive while flush is in progress.
+      const pushRuntime = {
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [{ cid: 'cid-batch-a' }],
+        retryCount : 2,
+      };
+      (engine as any)._pushRuntimes.set('key1', pushRuntime);
+
+      // Simulate batch B arriving after entries are snapshotted but before
+      // the flush completes: add entries directly to the runtime.
+      mockAgent.rpc.sendDwnRequest.callsFake(async () => {
+        pushRuntime.entries.push({ cid: 'cid-batch-b' });
+        return { status: { code: 202 } };
+      });
+
+      await (engine as any).flushPendingPushesForLink('key1');
+
+      // Runtime should still exist (batch B pending), but retryCount must
+      // be 0 — not the stale 2 from batch A's retries.
+      const runtime = (engine as any)._pushRuntimes.get('key1');
+      expect(runtime).toBeDefined();
+      expect(runtime.retryCount).toBe(0);
+      expect(runtime.entries).toHaveLength(1);
+      expect(runtime.entries[0].cid).toBe('cid-batch-b');
+    });
+
     it('should handle push errors gracefully', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',

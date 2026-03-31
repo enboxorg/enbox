@@ -1634,8 +1634,13 @@ export class SyncEngineLevel implements SyncEngine {
           entries    : failedEntries,
           retryCount : retryCount + 1,
         });
-      } else if (!pushRuntime.timer && pushRuntime.retryCount === 0 && pushRuntime.entries.length === 0) {
-        this._pushRuntimes.delete(linkKey);
+      } else {
+        // Successful push — reset retry count so subsequent unrelated
+        // batches on this link start with a fresh budget.
+        pushRuntime.retryCount = 0;
+        if (!pushRuntime.timer && pushRuntime.entries.length === 0) {
+          this._pushRuntimes.delete(linkKey);
+        }
       }
     } catch (error: any) {
       console.error(`SyncEngineLevel: Push batch failed for ${did} -> ${dwnUrl}`, error);
