@@ -407,31 +407,42 @@ export class SyncEngineLevel implements SyncEngine {
 
     this._syncLock = true;
     try {
-      // Iterate over all registered identities and their DWN endpoints.
+      // Group targets by remote endpoint so each URL group can be reconciled
+      // concurrently. Within a group, targets are processed sequentially so
+      // that a single network failure skips the rest of that group.
       const syncTargets = await this.getSyncTargets();
-      const errored = new Set<string>();
+      const byUrl = new Map<string, typeof syncTargets>();
+      for (const target of syncTargets) {
+        let group = byUrl.get(target.dwnUrl);
+        if (!group) {
+          group = [];
+          byUrl.set(target.dwnUrl, group);
+        }
+        group.push(target);
+      }
+
       let hadFailure = false;
 
-      for (const target of syncTargets) {
-        const { did, delegateDid, dwnUrl, protocol } = target;
-
-        if (errored.has(dwnUrl)) {
-          continue;
-        }
-
-        try {
-          const outcome = await this.createLinkReconciler().reconcile({
-            did, dwnUrl, delegateDid, protocol,
-          }, { direction });
-
-          if (!outcome.changed) {
-            continue;
+      const results = await Promise.allSettled([...byUrl.entries()].map(async ([dwnUrl, targets]) => {
+        for (const target of targets) {
+          const { did, delegateDid, protocol } = target;
+          try {
+            await this.createLinkReconciler().reconcile({
+              did, dwnUrl, delegateDid, protocol,
+            }, { direction });
+          } catch (error: any) {
+            // Skip remaining targets for this DWN endpoint.
+            hadFailure = true;
+            console.error(`SyncEngineLevel: Error syncing ${did} with ${dwnUrl}`, error);
+            return;
           }
-        } catch (error: any) {
-          // Skip this DWN endpoint for remaining targets and log the real cause.
-          errored.add(dwnUrl);
+        }
+      }));
+
+      // Check for unexpected rejections (should not happen given inner try/catch).
+      for (const result of results) {
+        if (result.status === 'rejected') {
           hadFailure = true;
-          console.error(`SyncEngineLevel: Error syncing ${did} with ${dwnUrl}`, error);
         }
       }
 
@@ -572,8 +583,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Step 2: Initialize replication links and open live subscriptions.
+    // Each target's link initialization is independent — process concurrently.
     const syncTargets = await this.getSyncTargets();
-    for (const target of syncTargets) {
+    await Promise.allSettled(syncTargets.map(async (target) => {
       let link: ReplicationLinkState | undefined;
       try {
         // Get or create the link in the durable ledger.
@@ -646,7 +658,7 @@ export class SyncEngineLevel implements SyncEngine {
           await this.transitionToRepairing(linkKey, link, {
             resumeToken: gapInfo?.latestAvailable,
           });
-          continue;
+          return;
         }
 
         console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
@@ -661,7 +673,7 @@ export class SyncEngineLevel implements SyncEngine {
           this._connectivityState = 'unknown';
         }
       }
-    }
+    }));
 
     // Step 3: Schedule infrequent SMT integrity check.
     const integrityCheck = async (): Promise<void> => {
