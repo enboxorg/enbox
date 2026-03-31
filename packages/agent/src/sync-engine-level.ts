@@ -425,7 +425,8 @@ export class SyncEngineLevel implements SyncEngine {
         group.push(target);
       }
 
-      let hadFailure = false;
+      let groupsSucceeded = 0;
+      let groupsFailed = 0;
 
       const results = await Promise.allSettled([...byUrl.entries()].map(async ([dwnUrl, targets]) => {
         for (const target of targets) {
@@ -436,31 +437,35 @@ export class SyncEngineLevel implements SyncEngine {
             }, { direction });
           } catch (error: any) {
             // Skip remaining targets for this DWN endpoint.
-            hadFailure = true;
+            groupsFailed++;
             console.error(`SyncEngineLevel: Error syncing ${did} with ${dwnUrl}`, error);
             return;
           }
         }
+        groupsSucceeded++;
       }));
 
       // Check for unexpected rejections (should not happen given inner try/catch).
       for (const result of results) {
         if (result.status === 'rejected') {
-          hadFailure = true;
+          groupsFailed++;
         }
       }
 
-      // Track consecutive failures for backoff in poll mode.
-      if (hadFailure) {
+      // Track connectivity based on per-group outcomes. If at least one
+      // group succeeded, stay online — partial reachability is still online.
+      if (groupsSucceeded > 0) {
+        this._consecutiveFailures = 0;
+        this._connectivityState = 'online';
+      } else if (groupsFailed > 0) {
         this._consecutiveFailures++;
         if (this._connectivityState === 'online') {
           this._connectivityState = 'offline';
         }
-      } else {
+      } else if (syncTargets.length > 0) {
+        // All targets had matching roots (no reconciliation needed).
         this._consecutiveFailures = 0;
-        if (syncTargets.length > 0) {
-          this._connectivityState = 'online';
-        }
+        this._connectivityState = 'online';
       }
     } finally {
       this._syncLock = false;
