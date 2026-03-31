@@ -1011,9 +1011,9 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       (engine as any)._pushRuntimes.set('key1', {
-        did     : 'did:example:alice',
-        dwnUrl  : 'https://dwn.example.com',
-        entries : [{ cid: 'cid-1' }],
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [{ cid: 'cid-1' }],
         retryCount : 0,
       });
 
