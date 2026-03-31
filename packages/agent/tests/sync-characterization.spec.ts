@@ -163,8 +163,7 @@ describe('SyncEngineLevel — characterization tests', () => {
       event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
     });
 
-    expect((engine as any)._pendingPushCids.size).toBe(0);
-    expect((engine as any)._pushDebounceTimer).toBeUndefined();
+    expect((engine as any)._pushRuntimes.size).toBe(0);
   });
 
   it('schedules reconciliation on startup when a link is already marked needsReconcile', async () => {

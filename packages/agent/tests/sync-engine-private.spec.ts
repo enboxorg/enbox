@@ -21,9 +21,14 @@ describe('SyncEngineLevel — private methods', () => {
       clearInterval((syncEngine as any)._syncIntervalId);
       (syncEngine as any)._syncIntervalId = undefined;
     }
-    if ((syncEngine as any)._pushDebounceTimer) {
-      clearTimeout((syncEngine as any)._pushDebounceTimer);
-      (syncEngine as any)._pushDebounceTimer = undefined;
+    const pushRuntimes = (syncEngine as any)._pushRuntimes as Map<string, { timer?: ReturnType<typeof setTimeout> }> | undefined;
+    if (pushRuntimes) {
+      for (const runtime of pushRuntimes.values()) {
+        if (runtime.timer) {
+          clearTimeout(runtime.timer);
+        }
+      }
+      pushRuntimes.clear();
     }
     await db.clear();
   });
@@ -660,16 +665,20 @@ describe('SyncEngineLevel — private methods', () => {
       expect((syncEngine as any)._localSubscriptions).toEqual([]);
     });
 
-    it('should clear push debounce timer and pending CIDs', async () => {
-      (syncEngine as any)._pushDebounceTimer = setTimeout((): void => {}, 10000);
-      (syncEngine as any)._pendingPushCids.set('key', { cids: ['cid1'] });
+    it('should clear per-link push runtime state', async () => {
+      (syncEngine as any)._pushRuntimes.set('key', {
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [{ cid: 'cid1' }],
+        retryCount : 0,
+        timer      : setTimeout((): void => {}, 10000),
+      });
       (syncEngine as any)._liveSubscriptions = [];
       (syncEngine as any)._localSubscriptions = [];
 
       await (syncEngine as any).teardownLiveSync();
 
-      expect((syncEngine as any)._pushDebounceTimer).toBeUndefined();
-      expect((syncEngine as any)._pendingPushCids.size).toBe(0);
+      expect((syncEngine as any)._pushRuntimes.size).toBe(0);
     });
   });
 
@@ -771,6 +780,7 @@ describe('SyncEngineLevel — private methods', () => {
         did      : 'did:example:alice',
         dwnUrl   : 'https://dwn.example.com',
         protocol : 'https://proto.example.com',
+        linkKey,
       });
 
       const callArgs = processRequestStub.firstCall.args[0];
@@ -796,7 +806,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
 
       await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
       });
 
       const callArgs = processRequestStub.firstCall.args[0];
@@ -956,14 +966,16 @@ describe('SyncEngineLevel — private methods', () => {
   describe('flushPendingPushes', () => {
     it('should clear pending push entries after flushing', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._pendingPushCids.set('key1', {
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', entries: [],
+      (engine as any)._pushRuntimes.set('key1', {
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [],
+        retryCount : 0,
       });
 
       await (engine as any).flushPendingPushes();
 
-      expect((engine as any)._pendingPushCids.size).toBe(0);
-      expect((engine as any)._pushDebounceTimer).toBeUndefined();
+      expect((engine as any)._pushRuntimes.size).toBe(0);
     });
 
     it('should skip targets with empty entries array', async () => {
@@ -971,13 +983,99 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
-      (engine as any)._pendingPushCids.set('key1', {
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', entries: [],
+      (engine as any)._pushRuntimes.set('key1', {
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [],
+        retryCount : 0,
       });
 
       // Should not throw or call pushMessages
       await (engine as any).flushPendingPushes();
-      expect((engine as any)._pendingPushCids.size).toBe(0);
+      expect((engine as any)._pushRuntimes.size).toBe(0);
+    });
+
+    it('should reset retryCount to 0 after a successful push', async () => {
+      // processRequest returns a RecordsRead-like response so pushMessages
+      // can read local messages and send them via rpc.
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status : { code: 200 },
+              entry  : { message: { descriptor: { interface: 'Records', method: 'Write' } } },
+            },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
+
+      // Simulate a push runtime left over from a previously retried batch
+      // that eventually succeeded — retryCount is stale at 2.
+      (engine as any)._pushRuntimes.set('key1', {
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [{ cid: 'cid-new' }],
+        retryCount : 2,
+      });
+
+      await (engine as any).flushPendingPushesForLink('key1');
+
+      // Runtime should be cleaned up (success + no pending entries + no timer).
+      // retryCount was reset to 0, enabling deletion.
+      expect((engine as any)._pushRuntimes.has('key1')).toBe(false);
+    });
+
+    it('should not let stale retryCount leak to subsequent batches', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status : { code: 200 },
+              entry  : { message: { descriptor: { interface: 'Records', method: 'Write' } } },
+            },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
+
+      // Simulate a runtime with stale retryCount from a prior batch,
+      // plus new entries waiting. The batch-A entries will be flushed;
+      // batch-B entries arrive while flush is in progress.
+      const pushRuntime = {
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [{ cid: 'cid-batch-a' }],
+        retryCount : 2,
+      };
+      (engine as any)._pushRuntimes.set('key1', pushRuntime);
+
+      // Simulate batch B arriving after entries are snapshotted but before
+      // the flush completes: add entries directly to the runtime.
+      mockAgent.rpc.sendDwnRequest.callsFake(async () => {
+        pushRuntime.entries.push({ cid: 'cid-batch-b' });
+        return { status: { code: 202 } };
+      });
+
+      await (engine as any).flushPendingPushesForLink('key1');
+
+      // Runtime should still exist (batch B pending), but retryCount must
+      // be 0 — not the stale 2 from batch A's retries.
+      const runtime = (engine as any)._pushRuntimes.get('key1');
+      expect(runtime).toBeDefined();
+      expect(runtime.retryCount).toBe(0);
+      expect(runtime.entries).toHaveLength(1);
+      expect(runtime.entries[0].cid).toBe('cid-batch-b');
     });
 
     it('should handle push errors gracefully', async () => {
@@ -996,10 +1094,11 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
-      (engine as any)._pendingPushCids.set('key1', {
-        did     : 'did:example:alice',
-        dwnUrl  : 'https://dwn.example.com',
-        entries : [{ cid: 'cid-1' }],
+      (engine as any)._pushRuntimes.set('key1', {
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [{ cid: 'cid-1' }],
+        retryCount : 0,
       });
 
       const consoleStub = sinon.stub(console, 'error');
@@ -1445,7 +1544,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._ledger = { saveLink: saveStub };
 
       await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
       });
 
       const handler = getHandler();
@@ -1559,18 +1658,17 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       // Check that CID was accumulated in pending pushes
-      const pendingMap = (engine as any)._pendingPushCids;
-      expect(pendingMap.size).toBeGreaterThanOrEqual(1);
+      const pushRuntimes = (engine as any)._pushRuntimes;
+      expect(pushRuntimes.size).toBeGreaterThanOrEqual(1);
 
-      // Check debounce timer was set
-      expect((engine as any)._pushDebounceTimer).toBeDefined();
+      const runtime = [...pushRuntimes.values()][0];
+      expect(runtime.timer).toBeDefined();
 
       // Cleanup
-      if ((engine as any)._pushDebounceTimer) {
-        clearTimeout((engine as any)._pushDebounceTimer);
-        (engine as any)._pushDebounceTimer = undefined;
+      if (runtime?.timer) {
+        clearTimeout(runtime.timer);
       }
-      (engine as any)._pendingPushCids.clear();
+      (engine as any)._pushRuntimes.clear();
       (engine as any)._localSubscriptions = [];
     });
 
@@ -1598,7 +1696,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       capturedHandler({ type: 'eose', cursor: 'some-cursor' });
 
-      expect((engine as any)._pendingPushCids.size).toBe(0);
+      expect((engine as any)._pushRuntimes.size).toBe(0);
 
       (engine as any)._localSubscriptions = [];
     });
@@ -1632,7 +1730,7 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       // CID is undefined, so nothing should be accumulated
-      expect((engine as any)._pendingPushCids.size).toBe(0);
+      expect((engine as any)._pushRuntimes.size).toBe(0);
 
       (engine as any)._localSubscriptions = [];
     });
@@ -1664,7 +1762,8 @@ describe('SyncEngineLevel — private methods', () => {
         type  : 'event',
         event : { message: { descriptor: { interface: 'Records', method: 'Write', messageTimestamp: '2026-01-01T00:00:00.000000Z' } } },
       });
-      const _firstTimer = (engine as any)._pushDebounceTimer;
+      const firstRuntime = [...((engine as any)._pushRuntimes as Map<string, any>).values()][0];
+      const _firstTimer = firstRuntime?.timer;
 
       // Send second event — should reset timer
       await capturedHandler({
@@ -1673,14 +1772,14 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       // Timer reference may have changed (cleared and reset)
-      expect((engine as any)._pushDebounceTimer).toBeDefined();
+      const secondRuntime = [...((engine as any)._pushRuntimes as Map<string, any>).values()][0];
+      expect(secondRuntime?.timer).toBeDefined();
 
       // Cleanup
-      if ((engine as any)._pushDebounceTimer) {
-        clearTimeout((engine as any)._pushDebounceTimer);
-        (engine as any)._pushDebounceTimer = undefined;
+      if (secondRuntime?.timer) {
+        clearTimeout(secondRuntime.timer);
       }
-      (engine as any)._pendingPushCids.clear();
+      (engine as any)._pushRuntimes.clear();
       (engine as any)._localSubscriptions = [];
     });
   });
@@ -2359,15 +2458,16 @@ describe('SyncEngineLevel — private methods', () => {
       const pushClose = sinon.stub().resolves();
 
       (engine as any)._liveSubscriptions = [
-        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: undefined, close: pullClose },
-        { did: 'did:example:bob', dwnUrl: 'https://other.com', close: sinon.stub().resolves() },
+        { linkKey: 'did:example:alice^https://dwn.example.com^scope-a', did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: undefined, close: pullClose },
+        { linkKey: 'did:example:bob^https://other.com^scope-b', did: 'did:example:bob', dwnUrl: 'https://other.com', close: sinon.stub().resolves() },
       ];
       (engine as any)._localSubscriptions = [
-        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: undefined, close: pushClose },
+        { linkKey: 'did:example:alice^https://dwn.example.com^scope-a', did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: undefined, close: pushClose },
       ];
 
       const link = {
         tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'scope-a',
         protocol       : undefined,
       } as any;
 
@@ -2386,7 +2486,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._localSubscriptions = [];
 
       const link = {
-        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com',
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scopeId: 'scope-a',
       } as any;
 
       // Should not throw.
@@ -2642,8 +2742,8 @@ describe('SyncEngineLevel — private methods', () => {
       // Link should be marked as needing reconciliation.
       expect(link.needsReconcile).toBe(true);
 
-      // Should NOT have been re-queued to _pendingPushCids.
-      expect((engine as any)._pendingPushCids.has(linkKey)).toBe(false);
+      // Should NOT have remained in per-link push runtime state.
+      expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
     });
 
     it('should re-queue push entries when retries remain', () => {
@@ -2658,8 +2758,8 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       // Should have been re-queued.
-      expect((engine as any)._pendingPushCids.has(linkKey)).toBe(true);
-      const requeued = (engine as any)._pendingPushCids.get(linkKey);
+      expect((engine as any)._pushRuntimes.has(linkKey)).toBe(true);
+      const requeued = (engine as any)._pushRuntimes.get(linkKey);
       expect(requeued.retryCount).toBe(1);
     });
 
