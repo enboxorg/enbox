@@ -1,5 +1,18 @@
 # @enbox/agent
 
+## 0.5.16
+
+### Patch Changes
+
+- [#806](https://github.com/enboxorg/enbox/pull/806) [`1c567c0`](https://github.com/enboxorg/enbox/commit/1c567c008e60738e7fbbba5f511cf201c96f183e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: exempt built-in permissions protocol from sync closure validation
+
+  The permissions protocol (`https://identity.foundation/dwn/permissions`)
+  is a core protocol handled natively by every DWN — it never has a
+  `ProtocolsConfigure` message. The closure resolver was requiring one for
+  permission grant records, causing `ClosureProtocolMetadataMissing`
+  failures and cascading `ProtocolAuthorizationProtocolNotFound` errors
+  during delegated connect flows.
+
 ## 0.5.15
 
 ### Patch Changes
