@@ -1,5 +1,17 @@
 # @enbox/agent
 
+## 0.5.15
+
+### Patch Changes
+
+- [#804](https://github.com/enboxorg/enbox/pull/804) [`98eb9be`](https://github.com/enboxorg/enbox/commit/98eb9be0c616da886db5d43e3186874e050d44c2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: add delete to default connect permissions and quiet singleton push warnings
+
+  Adds `'delete'` to `DEFAULT_PERMISSIONS` in `@enbox/auth` so apps using
+  bare protocol definitions in `auth.connect()` get `Records.Delete` grants
+  by default. Downgrades `RecordLimitExceeded` sync push warnings to debug
+  level in `@enbox/agent` — these are expected in multi-device singleton
+  convergence scenarios.
+
 ## 0.5.14
 
 ### Patch Changes
