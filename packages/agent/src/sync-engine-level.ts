@@ -48,10 +48,12 @@ const MAX_DIFF_DEPTH = 16;
 const BATCHED_DIFF_DEPTH = 8;
 
 /**
- * Debounce window for push-on-write. When the local EventLog emits events,
- * we batch them and push after this delay to avoid a push per individual write.
+ * Debounce window for batching writes that arrive while a push is in flight.
+ * The first write in a quiet window triggers an immediate push; subsequent
+ * writes arriving during the push are batched and flushed after this delay
+ * once the in-flight push completes.
  */
-const PUSH_DEBOUNCE_MS = 250;
+const PUSH_DEBOUNCE_MS = 100;
 
 /** Tracks a live subscription to a remote DWN for one sync target. */
 type LiveSubscription = {
@@ -155,6 +157,8 @@ type PushRuntimeState = {
   entries: { cid: string }[];
   retryCount: number;
   timer?: ReturnType<typeof setTimeout>;
+  /** True while a push HTTP request is in flight for this link. */
+  flushing?: boolean;
 };
 
 export class SyncEngineLevel implements SyncEngine {
@@ -1567,13 +1571,12 @@ export class SyncEngineLevel implements SyncEngine {
       });
       pushRuntime.entries.push({ cid });
 
-      if (pushRuntime.timer) {
-        clearTimeout(pushRuntime.timer);
-      }
-      pushRuntime.timer = setTimeout((): void => {
-        pushRuntime.timer = undefined;
+      // Immediate-first: if no push is in flight and no batch timer is
+      // pending, push immediately. Otherwise, the pending batch timer
+      // or the post-flush drain will pick up the new entry.
+      if (!pushRuntime.flushing && !pushRuntime.timer) {
         void this.flushPendingPushesForLink(targetKey);
-      }, PUSH_DEBOUNCE_MS);
+      }
     };
 
     // Subscribe to the local DWN EventLog from "now" — opportunistic push
@@ -1622,13 +1625,14 @@ export class SyncEngineLevel implements SyncEngine {
     pushRuntime.entries = [];
 
     if (pushEntries.length === 0) {
-      if (!pushRuntime.timer && retryCount === 0) {
+      if (!pushRuntime.timer && !pushRuntime.flushing && retryCount === 0) {
         this._pushRuntimes.delete(linkKey);
       }
       return;
     }
 
     const cids = pushEntries.map((entry) => entry.cid);
+    pushRuntime.flushing = true;
 
     try {
       const result = await pushMessages({
@@ -1661,6 +1665,19 @@ export class SyncEngineLevel implements SyncEngine {
         entries    : pushEntries,
         retryCount : retryCount + 1,
       });
+    } finally {
+      pushRuntime.flushing = false;
+
+      // If new entries accumulated while this push was in flight, schedule
+      // a short drain to flush them. This gives a brief batching window
+      // for burst writes while keeping single-write latency low.
+      const rt = this._pushRuntimes.get(linkKey);
+      if (rt && rt.entries.length > 0 && !rt.timer) {
+        rt.timer = setTimeout((): void => {
+          rt.timer = undefined;
+          void this.flushPendingPushesForLink(linkKey);
+        }, PUSH_DEBOUNCE_MS);
+      }
     }
   }
 
