@@ -1900,8 +1900,11 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Check for inline base64url-encoded data (small records from EventLog).
+    // Delete the transport-level field so the DWN schema validator does not
+    // reject the message for having unevaluated properties.
     const encodedData = (event.message as any).encodedData as string | undefined;
     if (encodedData) {
+      delete (event.message as any).encodedData;
       const bytes = Encoder.base64UrlToBytes(encodedData);
       return new ReadableStream<Uint8Array>({
         start(controller): void {
