@@ -6,7 +6,7 @@ import type {
 } from './sync-closure-types.js';
 import type { GenericMessage, MessageStore } from '@enbox/dwn-sdk-js';
 
-import { Message } from '@enbox/dwn-sdk-js';
+import { Message, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 import { isMultiPartyContext } from './protocol-utils.js';
 import { ClosureFailureCode, createClosureContext } from './sync-closure-types.js';
@@ -24,6 +24,12 @@ function extractProtocolDeps(message: GenericMessage): ClosureDependencyEdge[] {
   const desc = message.descriptor as Record<string, unknown>;
   const protocol = desc.protocol as string | undefined;
   if (!protocol) { return []; }
+
+  // The permissions protocol is a built-in core protocol handled natively
+  // by every DWN — it never has a ProtocolsConfigure message. Exempt it
+  // from protocol metadata closure to avoid spurious failures when pushing
+  // permission grant records created during delegated connect flows.
+  if (protocol === PermissionsProtocol.uri) { return []; }
 
   return [{
     dependencyClass : 1,
