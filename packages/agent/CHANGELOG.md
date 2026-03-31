@@ -1,5 +1,15 @@
 # @enbox/agent
 
+## 0.5.14
+
+### Patch Changes
+
+- [#801](https://github.com/enboxorg/enbox/pull/801) [`6b77eee`](https://github.com/enboxorg/enbox/commit/6b77eeed4d0ae4b99b14631b41eb7ebaf0dd9587) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: strip encodedData from live pull events before DWN processing, parallelize sync targets, and immediate-first push debounce
+
+  - Fix live WebSocket sync delivery: `extractDataStream()` now deletes the transport-level `encodedData` field after extracting inline data, preventing the DWN schema validator from rejecting every `RecordsWrite` received via subscription.
+  - Parallelize sync targets: `sync()` reconciles URL groups concurrently; `startLiveSync()` initializes all replication links concurrently. Partial failure keeps the agent online if at least one remote succeeds.
+  - Immediate-first push debounce: the first write in a quiet window triggers an immediate push (~0ms latency). Burst writes batch via a short 100ms drain timer.
+
 ## 0.5.13
 
 ### Patch Changes
