@@ -780,6 +780,7 @@ describe('SyncEngineLevel — private methods', () => {
         did      : 'did:example:alice',
         dwnUrl   : 'https://dwn.example.com',
         protocol : 'https://proto.example.com',
+        linkKey,
       });
 
       const callArgs = processRequestStub.firstCall.args[0];
@@ -805,7 +806,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
 
       await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
       });
 
       const callArgs = processRequestStub.firstCall.args[0];
@@ -1543,7 +1544,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._ledger = { saveLink: saveStub };
 
       await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
       });
 
       const handler = getHandler();

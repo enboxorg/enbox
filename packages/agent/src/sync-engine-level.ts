@@ -1147,13 +1147,13 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private async openLivePullSubscription(target: {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
-    linkKey?: string;
+    linkKey: string;
   }): Promise<void> {
     const { did, delegateDid, dwnUrl, protocol } = target;
 
     // Resolve the cursor from the link's durable pull checkpoint.
     // Legacy syncCursors migration happens at link load time in startLiveSync().
-    const cursorKey = target.linkKey ?? this.buildLinkKey(did, dwnUrl, protocol);
+    const cursorKey = target.linkKey;
     const link = this._activeLinks.get(cursorKey);
     let cursor = link?.pull.contiguousAppliedToken;
 
@@ -1496,7 +1496,7 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private async openLocalPushSubscription(target: {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
-    linkKey?: string;
+    linkKey: string;
   }): Promise<void> {
     const { did, delegateDid, dwnUrl, protocol } = target;
 
@@ -1530,7 +1530,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       // Subset scope filtering: only push events that match the link's
       // scope prefixes. Events outside the scope are not our responsibility.
-      const pushLinkKey = target.linkKey ?? this.buildLinkKey(did, dwnUrl, protocol);
+      const pushLinkKey = target.linkKey;
       const pushLink = this._activeLinks.get(pushLinkKey);
       if (pushLink && !isEventInScope(subMessage.event.message, pushLink.scope)) {
         return;
@@ -1819,11 +1819,15 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   /**
-   * Build the runtime key for a replication link. Prefer `scopeId` (the
-   * deterministic hash from {@link computeScopeId}) over `protocol` — the
-   * `protocol` parameter is a legacy fallback used by poll-mode and cursor
-   * migration. Once all callers are migrated to pass `scopeId`, the
-   * `protocol` fallback can be removed.
+   * Build the runtime key for a replication link.
+   *
+   * Live-mode subscription methods (`openLivePullSubscription`,
+   * `openLocalPushSubscription`) receive `linkKey` directly and never
+   * call this. The remaining callers are poll-mode `sync()` and the
+   * live-mode startup/error paths that already have `link.scopeId`.
+   *
+   * The `undefined` fallback (which produces a legacy cursor key) exists
+   * only for the no-protocol full-tenant targets in poll mode.
    */
   private buildLinkKey(did: string, dwnUrl: string, scopeIdOrProtocol?: string): string {
     return scopeIdOrProtocol ? buildLinkId(did, dwnUrl, scopeIdOrProtocol) : buildLegacyCursorKey(did, dwnUrl);
