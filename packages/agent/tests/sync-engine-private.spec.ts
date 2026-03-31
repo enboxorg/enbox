@@ -132,6 +132,33 @@ describe('SyncEngineLevel — private methods', () => {
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } };
       expect((syncEngine as any).extractDataStream(event)).toBeUndefined();
     });
+
+    it('should decode inline encodedData and delete it from the message', async () => {
+      // Simulate a subscription event with inline base64url-encoded data
+      // (records <= 30 KB arrive this way from the EventLog).
+      const originalData = 'hello world';
+      const { Encoder } = await import('@enbox/dwn-sdk-js');
+      const encoded = Encoder.bytesToBase64Url(new TextEncoder().encode(originalData));
+
+      const event = {
+        message: {
+          descriptor  : { interface: 'Records', method: 'Write' },
+          encodedData : encoded,
+        },
+      };
+
+      const stream = (syncEngine as any).extractDataStream(event);
+      expect(stream).toBeInstanceOf(ReadableStream);
+
+      // encodedData must be deleted so the DWN schema validator does not
+      // reject the message for having unevaluated properties.
+      expect((event.message as any).encodedData).toBeUndefined();
+
+      // Verify the stream yields the original data.
+      const reader = stream.getReader();
+      const { value } = await reader.read();
+      expect(new TextDecoder().decode(value)).toBe(originalData);
+    });
   });
 
   // ---------------------------------------------------------------------------

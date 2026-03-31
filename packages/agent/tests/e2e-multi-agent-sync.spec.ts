@@ -154,6 +154,14 @@ async function createAndDistributeGrant(
 // Tests
 // ---------------------------------------------------------------------------
 
+// NOTE — Remote DWN state isolation:
+// The external DWN server at localhost:3000 accumulates state across all
+// tests (there is no API to clear a tenant). Tests compensate by asserting
+// record presence via recordId containment rather than exact counts. If
+// more isolated fixtures are needed in the future, each describe block
+// could create a fresh Alice identity (unique DID = clean remote tenant),
+// at the cost of a DID:DHT publish round-trip per block.
+
 describe('E2E Multi-Agent Sync', () => {
   /** Primary harness — the "canonical" agent that owns Alice's keys directly. */
   let primaryHarness: PlatformAgentTestHarness;
