@@ -82,7 +82,7 @@ export async function pullMessages({ did, dwnUrl, delegateDid, protocol, message
   prefetched?: MessagesSyncDiffEntry[];
   agent: EnboxPlatformAgent;
   permissionsApi: PermissionsApi;
-}): Promise<void> {
+}): Promise<string[]> {
   // Convert prefetched diff entries into SyncMessageEntry format.
   const prefetchedEntries: SyncMessageEntry[] = [];
   if (prefetched) {
@@ -166,6 +166,14 @@ export async function pullMessages({ did, dwnUrl, delegateDid, protocol, message
       pending = [];
     }
   }
+
+  // Return CIDs that permanently failed after all retry passes.
+  const permanentlyFailed: string[] = [];
+  for (const entry of pending) {
+    const cid = await getMessageCid(entry.message);
+    permanentlyFailed.push(cid);
+  }
+  return permanentlyFailed;
 }
 
 /**

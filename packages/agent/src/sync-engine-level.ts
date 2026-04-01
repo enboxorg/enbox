@@ -1479,10 +1479,25 @@ export class SyncEngineLevel implements SyncEngine {
             );
 
             if (!closureResult.complete) {
+              const failureCode = closureResult.failure!.code;
+              const failureDetail = closureResult.failure!.detail;
               console.warn(
                 `SyncEngineLevel: Closure incomplete for ${did} -> ${dwnUrl}: ` +
-                `${closureResult.failure!.code} — ${closureResult.failure!.detail}`
+                `${failureCode} — ${failureDetail}`
               );
+
+              // Record the message that triggered the closure failure.
+              const closureCid = await Message.getCid(event.message);
+              void this.recordDeadLetter({
+                messageCid     : closureCid,
+                tenantDid      : did,
+                remoteEndpoint : dwnUrl,
+                protocol,
+                category       : 'closure',
+                errorCode      : failureCode,
+                errorDetail    : failureDetail,
+              });
+
               await this.transitionToRepairing(cursorKey, link);
               return;
             }
@@ -1535,6 +1550,24 @@ export class SyncEngineLevel implements SyncEngine {
           }
         } catch (error: any) {
           console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
+
+          // Record the failing message in the dead letter store before
+          // transitioning to repair. The CID identifies which specific
+          // message caused the transition.
+          try {
+            const failedCid = await Message.getCid(event.message);
+            void this.recordDeadLetter({
+              messageCid     : failedCid,
+              tenantDid      : did,
+              remoteEndpoint : dwnUrl,
+              protocol,
+              category       : 'pull-processing',
+              errorDetail    : error.message ?? String(error),
+            });
+          } catch {
+            // Best effort — don't let dead letter recording block repair.
+          }
+
           // A failed processRawMessage means local state is incomplete.
           // Transition to repairing immediately — do NOT advance the checkpoint
           // past this failure or let later ordinals commit past it. SMT
@@ -1838,7 +1871,18 @@ export class SyncEngineLevel implements SyncEngine {
     const pushRuntime = this.getOrCreatePushRuntime(targetKey, pending);
 
     if (pending.retryCount >= maxRetries) {
-      // Retry budget exhausted — mark link dirty for reconciliation.
+      // Retry budget exhausted — record each CID as a dead letter and mark
+      // the link dirty for reconciliation.
+      for (const entry of pending.entries) {
+        void this.recordDeadLetter({
+          messageCid     : entry.cid,
+          tenantDid      : pending.did,
+          remoteEndpoint : pending.dwnUrl,
+          protocol       : pending.protocol,
+          category       : 'push-exhausted',
+          errorDetail    : `push retries exhausted after ${maxRetries} attempts`,
+        });
+      }
       if (pushRuntime.timer) {
         clearTimeout(pushRuntime.timer);
       }
@@ -2417,11 +2461,23 @@ export class SyncEngineLevel implements SyncEngine {
     messageCids: string[];
     prefetched?: MessagesSyncDiffEntry[];
   }): Promise<void> {
-    return pullMessages({
+    const failedCids = await pullMessages({
       did, dwnUrl, delegateDid, protocol, messageCids, prefetched,
       agent          : this.agent,
       permissionsApi : this._permissionsApi,
     });
+
+    // Record permanently failed pull entries in the dead letter store.
+    for (const cid of failedCids) {
+      await this.recordDeadLetter({
+        messageCid     : cid,
+        tenantDid      : did,
+        remoteEndpoint : dwnUrl,
+        protocol,
+        category       : 'pull-processing',
+        errorDetail    : 'pull processing failed after retry passes exhausted',
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
