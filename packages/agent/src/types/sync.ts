@@ -381,11 +381,12 @@ export interface SyncEngine {
   getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]>;
 
   /**
-   * Remove a dead letter entry (e.g., after the user has acknowledged it or
-   * the underlying issue has been resolved). Returns `true` if the entry
-   * existed and was removed.
+   * Remove dead letter entries for a CID. When `remoteEndpoint` is provided,
+   * only the entry for that specific CID + remote pair is removed. Without
+   * it, all entries for the CID (across all remotes) are removed. Returns
+   * `true` if at least one entry was found and removed.
    */
-  clearFailedMessage(messageCid: string): Promise<boolean>;
+  clearFailedMessage(messageCid: string, remoteEndpoint?: string): Promise<boolean>;
 
   /**
    * Clear all dead letter entries, optionally scoped to a tenant.

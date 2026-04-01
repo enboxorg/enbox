@@ -3745,16 +3745,57 @@ describe('SyncEngineLevel — private methods', () => {
       expect(remaining[0].tenantDid).toBe('did:keep');
     });
 
-    it('should overwrite an existing dead letter for the same CID', async () => {
+    it('should store separate entries for the same CID on different remotes', async () => {
       const engine = new SyncEngineLevel({ db });
 
-      await engine.recordDeadLetter({ messageCid: 'dl-overwrite', tenantDid: 'did:x', category: 'push-permanent', errorDetail: 'first' });
-      await engine.recordDeadLetter({ messageCid: 'dl-overwrite', tenantDid: 'did:x', category: 'closure', errorDetail: 'second' });
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-multi',
+        tenantDid      : 'did:x',
+        remoteEndpoint : 'https://a.com',
+        category       : 'push-permanent',
+        errorCode      : '400',
+        errorDetail    : 'ProtocolNotFound on A',
+      });
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-multi',
+        tenantDid      : 'did:x',
+        remoteEndpoint : 'https://b.com',
+        category       : 'push-permanent',
+        errorCode      : '401',
+        errorDetail    : 'Unauthorized on B',
+      });
 
       const entries = await engine.getFailedMessages();
-      expect(entries.length).toBe(1);
-      expect(entries[0].category).toBe('closure');
-      expect(entries[0].errorDetail).toBe('second');
+      expect(entries.length).toBe(2);
+      expect(entries.map(e => e.remoteEndpoint).sort()).toEqual(['https://a.com', 'https://b.com']);
+    });
+
+    it('should clear a specific CID+remote pair without affecting other remotes', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({ messageCid: 'dl-pair', tenantDid: 'did:x', remoteEndpoint: 'https://a.com', category: 'push-permanent', errorDetail: 'a' });
+      await engine.recordDeadLetter({ messageCid: 'dl-pair', tenantDid: 'did:x', remoteEndpoint: 'https://b.com', category: 'push-permanent', errorDetail: 'b' });
+
+      // Clear only the A entry.
+      const removed = await engine.clearFailedMessage('dl-pair', 'https://a.com');
+      expect(removed).toBe(true);
+
+      const remaining = await engine.getFailedMessages();
+      expect(remaining.length).toBe(1);
+      expect(remaining[0].remoteEndpoint).toBe('https://b.com');
+    });
+
+    it('should clear all entries for a CID across remotes when no remote is specified', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({ messageCid: 'dl-all-remotes', tenantDid: 'did:x', remoteEndpoint: 'https://a.com', category: 'push-permanent', errorDetail: 'a' });
+      await engine.recordDeadLetter({ messageCid: 'dl-all-remotes', tenantDid: 'did:x', remoteEndpoint: 'https://b.com', category: 'push-permanent', errorDetail: 'b' });
+
+      const removed = await engine.clearFailedMessage('dl-all-remotes');
+      expect(removed).toBe(true);
+
+      const entries = await engine.getFailedMessages();
+      expect(entries.length).toBe(0);
     });
 
     it('should return sync health summary', async () => {
@@ -3769,13 +3810,28 @@ describe('SyncEngineLevel — private methods', () => {
       expect(health.degradedLinkCount).toBe(0);
     });
 
-    it('should count degraded links in sync health', async () => {
+    it('should count degraded links from durable ledger, not just in-memory state', async () => {
       const engine = new SyncEngineLevel({ db });
 
-      // Simulate degraded links.
-      (engine as any)._activeLinks.set('link-1', { status: 'repairing', connectivity: 'offline' });
-      (engine as any)._activeLinks.set('link-2', { status: 'degraded_poll', connectivity: 'offline' });
-      (engine as any)._activeLinks.set('link-3', { status: 'live', connectivity: 'online' });
+      // Create links via the ledger (durable) — these survive restart.
+      const ledger = (engine as any).ledger;
+      const link1 = await ledger.getOrCreateLink({
+        tenantDid: 'did:degraded-test', remoteEndpoint: 'https://a.com', scope: { kind: 'full' },
+      });
+      await ledger.setStatus(link1, 'degraded_poll');
+
+      const link2 = await ledger.getOrCreateLink({
+        tenantDid: 'did:degraded-test', remoteEndpoint: 'https://b.com', scope: { kind: 'full' },
+      });
+      await ledger.setStatus(link2, 'repairing');
+
+      const link3 = await ledger.getOrCreateLink({
+        tenantDid: 'did:degraded-test', remoteEndpoint: 'https://c.com', scope: { kind: 'full' },
+      });
+      await ledger.setStatus(link3, 'live');
+
+      // _activeLinks is empty — simulates a fresh restart.
+      expect((engine as any)._activeLinks.size).toBe(0);
 
       const health = await engine.getSyncHealth();
       expect(health.degradedLinkCount).toBe(2);

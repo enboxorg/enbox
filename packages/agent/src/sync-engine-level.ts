@@ -2510,6 +2510,14 @@ export class SyncEngineLevel implements SyncEngine {
    * Record a permanently failed message in the dead letter store.
    * Called internally by push and pull paths when a message cannot be synced.
    */
+  /**
+   * Build a compound dead letter key. Different remotes can fail the same CID
+   * for different reasons, so the key includes the remote endpoint.
+   */
+  private static deadLetterKey(messageCid: string, remoteEndpoint?: string): string {
+    return remoteEndpoint ? `${messageCid}|${remoteEndpoint}` : messageCid;
+  }
+
   public async recordDeadLetter(params: {
     messageCid : string;
     tenantDid : string;
@@ -2523,7 +2531,8 @@ export class SyncEngineLevel implements SyncEngine {
       ...params,
       failedAt: new Date().toISOString(),
     };
-    await this._deadLetters.put(params.messageCid, JSON.stringify(entry));
+    const key = SyncEngineLevel.deadLetterKey(params.messageCid, params.remoteEndpoint);
+    await this._deadLetters.put(key, JSON.stringify(entry));
   }
 
   public async getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]> {
@@ -2537,16 +2546,35 @@ export class SyncEngineLevel implements SyncEngine {
     return entries;
   }
 
-  public async clearFailedMessage(messageCid: string): Promise<boolean> {
-    try {
-      await this._deadLetters.get(messageCid);
-      await this._deadLetters.del(messageCid);
-      return true;
-    } catch (error) {
-      const e = error as { code?: string };
-      if (e.code === 'LEVEL_NOT_FOUND') { return false; }
-      throw error;
+  public async clearFailedMessage(messageCid: string, remoteEndpoint?: string): Promise<boolean> {
+    if (remoteEndpoint) {
+      // Clear a specific CID + remote pair.
+      const key = SyncEngineLevel.deadLetterKey(messageCid, remoteEndpoint);
+      try {
+        await this._deadLetters.get(key);
+        await this._deadLetters.del(key);
+        return true;
+      } catch (error) {
+        const e = error as { code?: string };
+        if (e.code === 'LEVEL_NOT_FOUND') { return false; }
+        throw error;
+      }
     }
+
+    // No remote specified — clear ALL entries for this CID (any remote).
+    let found = false;
+    const batch: { type: 'del'; key: string }[] = [];
+    for await (const [key, value] of this._deadLetters.iterator()) {
+      const entry = JSON.parse(value) as DeadLetterEntry;
+      if (entry.messageCid === messageCid) {
+        batch.push({ type: 'del', key });
+        found = true;
+      }
+    }
+    if (batch.length > 0) {
+      await this._deadLetters.batch(batch);
+    }
+    return found;
   }
 
   public async clearAllFailedMessages(tenantDid?: string): Promise<void> {
@@ -2555,7 +2583,6 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    // Scoped clear: iterate and delete matching entries.
     const batch: { type: 'del'; key: string }[] = [];
     for await (const [key, value] of this._deadLetters.iterator()) {
       const entry = JSON.parse(value) as DeadLetterEntry;
@@ -2574,8 +2601,12 @@ export class SyncEngineLevel implements SyncEngine {
       failedMessageCount++;
     }
 
+    // Count degraded links from the durable ledger, not just in-memory
+    // _activeLinks. Links persist across restarts; a repairing/degraded_poll
+    // link from a previous session must still be reported.
     let degradedLinkCount = 0;
-    for (const link of this._activeLinks.values()) {
+    const allLinks = await this.ledger.getAllLinks();
+    for (const link of allLinks) {
       if (link.status === 'repairing' || link.status === 'degraded_poll') {
         degradedLinkCount++;
       }
