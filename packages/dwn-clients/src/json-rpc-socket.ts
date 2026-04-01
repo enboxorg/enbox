@@ -400,7 +400,7 @@ export class JsonRpcSocket {
 
       this._awaitingPong = true;
 
-      // Send a lightweight JSON-RPC notification as the ping.
+      // Send a lightweight JSON-RPC request as the ping.
       const pingId = `hb-${Date.now()}`;
       const pingRequest: JsonRpcRequest = {
         jsonrpc : '2.0',
