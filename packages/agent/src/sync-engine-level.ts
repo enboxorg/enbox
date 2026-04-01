@@ -2584,7 +2584,11 @@ export class SyncEngineLevel implements SyncEngine {
       failedAt: new Date().toISOString(),
     };
     const key = SyncEngineLevel.deadLetterKey(params.messageCid, params.remoteEndpoint);
-    await this._deadLetters.put(key, JSON.stringify(entry));
+    try {
+      await this._deadLetters.put(key, JSON.stringify(entry));
+    } catch {
+      // Best effort — the database may have been closed during teardown.
+    }
   }
 
   public async getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]> {
