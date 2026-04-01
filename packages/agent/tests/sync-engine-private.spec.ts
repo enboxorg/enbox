@@ -3317,12 +3317,37 @@ describe('SyncEngineLevel — private methods', () => {
 
       (engine as any).startBrowserConnectivityListeners();
 
-      // Fire the offline handler.
       const offlineHandler = registeredListeners.get('offline');
       expect(offlineHandler).toBeDefined();
       offlineHandler!({} as Event);
 
       expect((engine as any)._connectivityState).toBe('offline');
+    });
+
+    it('should transition all active links to offline and update public connectivityState', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+
+      // Simulate two active links that are online.
+      const linkA: Record<string, unknown> = { tenantDid: 'did:a', remoteEndpoint: 'https://a.com', protocol: undefined, connectivity: 'online', scope: { kind: 'full' } };
+      const linkB: Record<string, unknown> = { tenantDid: 'did:b', remoteEndpoint: 'https://b.com', protocol: 'proto', connectivity: 'online', scope: { kind: 'protocol', protocol: 'proto' } };
+      (engine as any)._activeLinks.set('a', linkA);
+      (engine as any)._activeLinks.set('b', linkB);
+
+      // With active links online, public getter should report online.
+      expect(engine.connectivityState).toBe('online');
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      const offlineHandler = registeredListeners.get('offline');
+      offlineHandler!({} as Event);
+
+      // Both links should now be offline.
+      expect(linkA.connectivity).toBe('offline');
+      expect(linkB.connectivity).toBe('offline');
+
+      // Public getter aggregates per-link state — should now report offline.
+      expect(engine.connectivityState).toBe('offline');
     });
 
     it('should set _connectivityState to online and trigger sync on online event', async () => {

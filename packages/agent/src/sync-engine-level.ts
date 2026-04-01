@@ -1142,6 +1142,24 @@ export class SyncEngineLevel implements SyncEngine {
       if (this._engineGeneration !== generation) { return; }
       console.info('SyncEngineLevel: browser offline');
       this._connectivityState = 'offline';
+
+      // Transition every active link to offline so the public
+      // connectivityState getter (which aggregates per-link state)
+      // reflects the browser's network status immediately.
+      for (const link of this._activeLinks.values()) {
+        const prev = link.connectivity;
+        if (prev !== 'offline') {
+          link.connectivity = 'offline';
+          this.emitEvent({
+            type           : 'link:connectivity-change',
+            tenantDid      : link.tenantDid,
+            remoteEndpoint : link.remoteEndpoint,
+            protocol       : link.protocol,
+            from           : prev,
+            to             : 'offline',
+          });
+        }
+      }
     };
 
     this._onVisibilityChange = (): void => {

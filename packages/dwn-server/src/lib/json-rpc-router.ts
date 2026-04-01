@@ -8,6 +8,8 @@ import type { SocketConnection } from '../connection/socket-connection.js';
 import type { Dwn, SubscriptionListener } from '@enbox/dwn-sdk-js';
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from '@enbox/dwn-clients';
 
+import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+
 export type RequestContext = {
   transport: 'http' | 'ws';
   dwn: Dwn;
@@ -61,6 +63,15 @@ export class JsonRpcRouter {
     context: RequestContext,
   ): Promise<HandlerResponse> {
     const handler = this.methodHandlers[rpcRequest.method];
+    if (!handler) {
+      return {
+        jsonRpcResponse: createJsonRpcErrorResponse(
+          rpcRequest.id!,
+          JsonRpcErrorCodes.MethodNotFound,
+          `Method not found: ${rpcRequest.method}`,
+        ),
+      };
+    }
 
     return await handler(rpcRequest, context);
   }
