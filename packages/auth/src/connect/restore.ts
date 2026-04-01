@@ -102,6 +102,7 @@ export async function restoreSession(
       await storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
       await storage.remove(STORAGE_KEYS.DELEGATE_DID);
       await storage.remove(STORAGE_KEYS.CONNECTED_DID);
+      await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       return undefined;
     }
 
@@ -117,6 +118,19 @@ export async function restoreSession(
   const { connectedDid, delegateDid } = resolveIdentityDids(
     identity, storedDelegateDid ?? undefined,
   );
+
+  // Restore delegate decryption keys if persisted.
+  if (delegateDid && connectedDid) {
+    const keysJson = await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
+    if (keysJson) {
+      try {
+        const keys = JSON.parse(keysJson);
+        if (Array.isArray(keys) && keys.length > 0) {
+          userAgent.dwn.importDelegateDecryptionKeys(connectedDid, keys);
+        }
+      } catch { /* best effort — keys will be refreshed on next connect */ }
+    }
+  }
 
   // Persist session info, build AuthSession, and emit lifecycle events.
   // Session restore does not emit `identity-added` (identity was already added in the original flow).

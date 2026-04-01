@@ -13,7 +13,9 @@
  * and ECDH (Ed25519 → X25519 + HKDF) for key agreement.
  */
 
+import type { DerivedPrivateJwk } from '@enbox/dwn-sdk-js';
 import type { EnboxPlatformAgent } from './types/agent.js';
+import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { RequireOnly } from '@enbox/common';
 import type { DidDocument, PortableDid } from '@enbox/dids';
 import type { DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition } from './types/dwn.js';
@@ -31,6 +33,31 @@ export type ConnectPermissionRequest = {
   /** The scope of the permissions being requested for the given protocol */
   permissionScopes: DwnPermissionScope[];
 };
+
+/**
+ * A protocol-wide decryption key delivered to delegates during the connect flow.
+ *
+ * Delivered only when ALL of these conditions hold:
+ * 1. The protocol has `encryptionRequired: true` types (single-party only)
+ * 2. The delegate has at least one protocol-wide read-like scope
+ *    (Records.Read / Records.Query / Records.Subscribe without `protocolPath`
+ *    or `contextId` restrictions)
+ * 3. The protocol does NOT use multi-party / role-based access patterns
+ *
+ * Scope: `[ProtocolPath, protocolUri]` — can derive leaf keys for any type
+ * path within the protocol via `Records.derivePrivateKey()`.
+ *
+ * Out of scope for this version (fail closed):
+ * - `protocolPath`-scoped encrypted delegate reads
+ * - `contextId`-scoped encrypted delegate reads
+ * - multi-party / ProtocolContext encrypted delegate reads
+ */
+export type DelegateDecryptionKey = {
+  /** The protocol URI this key is scoped to. */
+  protocol: string;
+  /** The derived private key material for ProtocolPath decryption. */
+  derivedPrivateKey: DerivedPrivateJwk;
+};
 import type {
   JoseHeaderParams,
   Jwk } from '@enbox/crypto';
@@ -45,11 +72,13 @@ import {
   X25519,
   XChaCha20Poly1305,
 } from '@enbox/crypto';
-import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { concatenateUrl } from './utils.js';
 import { DwnInterface } from './types/dwn.js';
+import { getEncryptionKeyInfo } from './dwn-encryption.js';
+import { isMultiPartyContext } from './protocol-utils.js';
 import { isRecordPermissionScope } from './dwn-api.js';
 
 // ---------------------------------------------------------------------------
@@ -143,6 +172,15 @@ export type EnboxConnectResponse = {
 
   /** The delegate DID's full portable form, including private keys. */
   delegatePortableDid: PortableDid;
+
+  /**
+   * Scope-aware decryption keys for encrypted protocols.
+   *
+   * Derived only for read-like permission scopes (Read/Query/Subscribe) on
+   * protocols with `encryptionRequired: true` types. Write-only delegates
+   * receive no decryption keys.
+   */
+  delegateDecryptionKeys?: DelegateDecryptionKey[];
 };
 
 /** The connect server endpoint types. */
@@ -604,12 +642,22 @@ async function createPermissionGrants(
 /**
  * Installs a DWN protocol on the provider's DWN if it doesn't already exist.
  * Ensures the protocol is available on both the local and remote DWN.
+ *
+ * When the protocol definition contains types with `encryptionRequired: true`,
+ * the protocol is installed with `encryption: true` so that the agent injects
+ * `$encryption` keys (derived from the owner's X25519 root key) into the
+ * protocol definition. This ensures the protocol is immediately usable for
+ * encrypted record operations by both the owner and any delegates.
  */
 async function prepareProtocol(
   selectedDid: string,
   agent: EnboxPlatformAgent,
   protocolDefinition: DwnProtocolDefinition
 ): Promise<void> {
+  // Detect whether any type in the protocol requires encryption.
+  const needsEncryption = Object.values(protocolDefinition.types ?? {})
+    .some((type: any) => type?.encryptionRequired === true);
+
   const queryMessage = await agent.processDwnRequest({
     author        : selectedDid,
     messageType   : DwnInterface.ProtocolsQuery,
@@ -627,6 +675,7 @@ async function prepareProtocol(
       target        : selectedDid,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: protocolDefinition },
+      encryption    : needsEncryption || undefined,
     });
 
     if (sendReply.status.code !== 202 && sendReply.status.code !== 409) {
@@ -656,6 +705,126 @@ async function prepareProtocol(
   }
 }
 
+/**
+ * Derives a protocol-wide decryption key for the delegate, if and only if
+ * the permission scopes justify it.
+ *
+ * This version intentionally supports **only** the safe, well-understood case:
+ *   - single-party ProtocolPath encryption
+ *   - protocol-wide read access (no `protocolPath` / `contextId` restrictions)
+ *
+ * All other encrypted delegate access patterns fail closed:
+ *   - Write / Delete / Count only → no decryption key (correct — writes use public keys)
+ *   - `protocolPath`-scoped encrypted read → error (tracked for future PR)
+ *   - `contextId`-scoped encrypted read → error (tracked for future PR)
+ *   - Multi-party / role-based protocol with encrypted types → error
+ *
+ * @param agent - The platform agent (must hold the owner's KMS keys)
+ * @param ownerDid - The DID of the protocol owner
+ * @param protocolUri - The protocol URI
+ * @param scopes - The permission scopes for this protocol
+ * @param protocolDefinition - The protocol definition (for multi-party detection)
+ * @returns An array of `DelegateDecryptionKey` — zero or one element
+ */
+async function deriveScopedDecryptionKeys(
+  agent: EnboxPlatformAgent,
+  ownerDid: string,
+  protocolUri: string,
+  scopes: DwnPermissionScope[],
+  protocolDefinition: DwnProtocolDefinition,
+): Promise<DelegateDecryptionKey[]> {
+  const readMethods = new Set([
+    DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
+  ]);
+
+  // Collect read-like scopes only.
+  const readScopes = scopes.filter(
+    (s): s is DwnPermissionScope & { method: string } =>
+      isRecordPermissionScope(s) && readMethods.has(s.method as DwnMethodName),
+  );
+
+  if (readScopes.length === 0) {
+    return []; // write/delete only → no decryption keys
+  }
+
+  // Fail closed: reject contextId-scoped encrypted reads.
+  for (const scope of readScopes) {
+    if ('contextId' in scope && (scope as any).contextId) {
+      throw new Error(
+        `Encrypted delegate access scoped by contextId is not supported ` +
+        `yet; use protocol-wide permissions for protocol '${protocolUri}'.`,
+      );
+    }
+  }
+
+  // Fail closed: reject protocolPath-scoped encrypted reads.
+  for (const scope of readScopes) {
+    if ('protocolPath' in scope && (scope as any).protocolPath) {
+      throw new Error(
+        `Encrypted delegate access scoped by protocolPath is not supported ` +
+        `yet; use protocol-wide permissions for protocol '${protocolUri}'.`,
+      );
+    }
+  }
+
+  // Fail closed: reject multi-party encrypted protocols.
+  // Uses the canonical isMultiPartyContext() from protocol-utils which
+  // checks for $role: true descendants AND relational who/of read rules.
+  if (protocolHasMultiPartyEncryption(protocolDefinition)) {
+    throw new Error(
+      `Encrypted delegate access for multi-party protocols is not supported ` +
+      `yet. Protocol '${protocolUri}' contains multi-party access patterns ` +
+      `($role records or relational who/of read rules) which may require ` +
+      `ProtocolContext encryption.`,
+    );
+  }
+
+  // All read scopes are protocol-wide for a single-party protocol.
+  // Derive one protocol-level key.
+  const { keyId, keyUri } = await getEncryptionKeyInfo(agent, ownerDid);
+  const derivationPath = [KeyDerivationScheme.ProtocolPath, protocolUri];
+  const derivedBytes = await agent.keyManager.derivePrivateKeyBytes({
+    keyUri, derivationPath,
+  });
+  const derivedJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedBytes });
+
+  return [{
+    protocol          : protocolUri,
+    derivedPrivateKey : {
+      rootKeyId         : keyId,
+      derivationScheme  : KeyDerivationScheme.ProtocolPath,
+      derivationPath,
+      derivedPrivateKey : derivedJwk as PrivateKeyJwk,
+    },
+  }];
+}
+
+/**
+ * Detects whether a protocol definition has any root-level type whose subtree
+ * triggers multi-party semantics. Delegates to the canonical
+ * `isMultiPartyContext()` from `protocol-utils.ts` which checks:
+ *
+ *   - `$role: true` descendants in the subtree
+ *   - Relational `who`/`of` `$actions` rules that grant `read` access
+ *
+ * These patterns cause the DWN agent to use ProtocolContext encryption at
+ * write time, which is not supported in delegate sessions yet.
+ */
+function protocolHasMultiPartyEncryption(
+  definition: DwnProtocolDefinition,
+): boolean {
+  const structure = definition.structure;
+  if (!structure) { return false; }
+
+  for (const rootTypeName of Object.keys(structure)) {
+    if (rootTypeName.startsWith('$')) { continue; }
+    if (isMultiPartyContext(definition, rootTypeName)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Full wallet-side flow (provider submits response)
 // ---------------------------------------------------------------------------
@@ -682,6 +851,11 @@ async function submitConnectResponse(
   const delegateBearerDid = await DidJwk.create();
   const delegatePortableDid = await delegateBearerDid.export();
 
+  // Derive scope-aware decryption keys for encrypted protocols.
+  // Keys are derived only for read-like scopes (Read/Query/Subscribe).
+  // Write-only delegates receive no decryption capability.
+  const delegateDecryptionKeys: DelegateDecryptionKey[] = [];
+
   const delegateGrantPromises = connectRequest.permissionRequests.map(
     async (permissionRequest) => {
       const { protocolDefinition, permissionScopes } = permissionRequest;
@@ -694,6 +868,24 @@ async function submitConnectResponse(
       }
 
       await prepareProtocol(selectedDid, agent, protocolDefinition);
+
+      // Derive scoped decryption keys for encrypted protocols.
+      // Only protocols with encryptionRequired types AND read-like
+      // permission scopes receive decryption keys.
+      const hasEncryptedTypes = Object.values(protocolDefinition.types ?? {})
+        .some((type: any) => type?.encryptionRequired === true);
+
+      if (hasEncryptedTypes) {
+        // deriveScopedDecryptionKeys throws for unsupported scopes
+        // (protocolPath-scoped, contextId-scoped, multi-party).
+        // Let the error propagate — the connect flow must abort rather
+        // than silently issuing grants without decryption capability.
+        const keys = await deriveScopedDecryptionKeys(
+          agent, selectedDid, protocolDefinition.protocol,
+          permissionScopes, protocolDefinition,
+        );
+        delegateDecryptionKeys.push(...keys);
+      }
 
       return EnboxConnectProtocol.createPermissionGrants(
         selectedDid,
@@ -708,12 +900,13 @@ async function submitConnectResponse(
 
   logger.log('Building connect response...');
   const responseObject = await EnboxConnectProtocol.createConnectResponse({
-    providerDid : selectedDid,
-    delegateDid : delegateBearerDid.uri,
-    aud         : connectRequest.clientDid,
-    nonce       : connectRequest.nonce,
+    providerDid            : selectedDid,
+    delegateDid            : delegateBearerDid.uri,
+    aud                    : connectRequest.clientDid,
+    nonce                  : connectRequest.nonce,
     delegateGrants,
     delegatePortableDid,
+    delegateDecryptionKeys : delegateDecryptionKeys.length > 0 ? delegateDecryptionKeys : undefined,
   });
 
   logger.log('Signing connect response...');
@@ -771,4 +964,5 @@ export const EnboxConnectProtocol = {
   createConnectResponse,
   createPermissionGrants,
   submitConnectResponse,
+  deriveScopedDecryptionKeys,
 };

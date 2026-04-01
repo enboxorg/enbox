@@ -15,7 +15,7 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { BearerIdentity, DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope, EnboxUserAgent } from '@enbox/agent';
+import type { BearerIdentity, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope, EnboxUserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
@@ -337,9 +337,10 @@ export async function importDelegateAndSetupSync(params: {
   delegatePortableDid: PortableDid;
   connectedDid: string;
   delegateGrants: DwnDataEncodedRecordsWriteMessage[];
+  delegateDecryptionKeys?: DelegateDecryptionKey[];
   flowName: string;
 }): Promise<BearerIdentity> {
-  const { userAgent, delegatePortableDid, connectedDid, delegateGrants, flowName } = params;
+  const { userAgent, delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys, flowName } = params;
 
   let identity: BearerIdentity | undefined;
   try {
@@ -362,6 +363,13 @@ export async function importDelegateAndSetupSync(params: {
       grants      : delegateGrants,
     });
 
+    // Import delegate protocol path decryption keys if the wallet provided
+    // them. These enable the delegate to decrypt ProtocolPath-encrypted
+    // records without possessing the owner's root X25519 private key.
+    if (delegateDecryptionKeys && delegateDecryptionKeys.length > 0) {
+      userAgent.dwn.importDelegateDecryptionKeys(connectedDid, delegateDecryptionKeys);
+    }
+
     await userAgent.sync.registerIdentity({
       did     : connectedDid,
       options : {
@@ -374,6 +382,11 @@ export async function importDelegateAndSetupSync(params: {
     // runs an immediate sync cycle (both pull and push) when it starts.
     // Doing a manual pull first would double the startup burst and can
     // trigger rate limits on the remote DWN.
+
+    // Store protocol keys on the identity for finalize to persist.
+    if (delegateDecryptionKeys && delegateDecryptionKeys.length > 0) {
+      (identity as any)._delegateDecryptionKeys = delegateDecryptionKeys;
+    }
 
     return identity;
   } catch (error: unknown) {
@@ -418,6 +431,17 @@ export async function finalizeDelegateSession(params: {
 
   await startSyncIfEnabled(userAgent, sync);
 
+  // Persist protocol path keys alongside the delegate session markers
+  // so they survive agent restarts.
+  const delegateDecryptionKeys = (identity as any)._delegateDecryptionKeys as DelegateDecryptionKey[] | undefined;
+  const extraStorageKeys: Record<string, string> = {
+    [STORAGE_KEYS.DELEGATE_DID]  : delegateDid,
+    [STORAGE_KEYS.CONNECTED_DID] : connectedDid,
+  };
+  if (delegateDecryptionKeys && delegateDecryptionKeys.length > 0) {
+    extraStorageKeys[STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS] = JSON.stringify(delegateDecryptionKeys);
+  }
+
   return finalizeSession({
     userAgent,
     emitter,
@@ -426,10 +450,7 @@ export async function finalizeDelegateSession(params: {
     delegateDid,
     identityName         : identity.metadata.name,
     identityConnectedDid : identity.metadata.connectedDid,
-    extraStorageKeys     : {
-      [STORAGE_KEYS.DELEGATE_DID]  : delegateDid,
-      [STORAGE_KEYS.CONNECTED_DID] : connectedDid,
-    },
+    extraStorageKeys,
   });
 }
 

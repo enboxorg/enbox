@@ -464,6 +464,9 @@ export class AuthManager {
 
     this._session = undefined;
 
+    // Always clear the in-memory delegate decryption key cache on disconnect.
+    this._userAgent.dwn.clearDelegateDecryptionKeys();
+
     if (clearStorage) {
       // Nuclear wipe: clear all persisted auth data.
       await this._storage.clear();
@@ -490,6 +493,7 @@ export class AuthManager {
       await this._storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_DID);
       await this._storage.remove(STORAGE_KEYS.CONNECTED_DID);
+      await this._storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
     }
 
     this._setState('unlocked');
@@ -834,9 +838,10 @@ export class AuthManager {
     }
 
     // 5. Import delegate DID, process grants, set up sync.
-    const { delegatePortableDid, connectedDid, delegateGrants } = result;
+    const { delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys } = result;
     const identity = await importDelegateAndSetupSync({
       userAgent, delegatePortableDid, connectedDid, delegateGrants,
+      delegateDecryptionKeys,
       flowName: 'Connect',
     });
 
