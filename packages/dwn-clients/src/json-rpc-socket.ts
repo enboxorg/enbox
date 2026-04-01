@@ -31,6 +31,10 @@ const DEFAULT_BASE_RECONNECT_DELAY = 1_000;
 const DEFAULT_MAX_RECONNECT_DELAY = 30_000;
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = Infinity;
 
+/** Default heartbeat settings. */
+const DEFAULT_HEARTBEAT_INTERVAL = 30_000;
+const DEFAULT_HEARTBEAT_TIMEOUT = 10_000;
+
 export interface JsonRpcSocketOptions {
   /** socket connection timeout in milliseconds */
   connectTimeout?: number;
@@ -61,6 +65,18 @@ export interface JsonRpcSocketOptions {
 
   /** Called when the socket has successfully reconnected. */
   onreconnected?: () => void;
+
+  /**
+   * Interval in ms between heartbeat pings. Set to `0` to disable.
+   * Default 30000 (30s).
+   */
+  heartbeatInterval?: number;
+
+  /**
+   * How long in ms to wait for a pong before considering the connection dead.
+   * Default 10000 (10s).
+   */
+  heartbeatTimeout?: number;
 }
 
 /**
@@ -100,6 +116,15 @@ export class JsonRpcSocket {
   /** Whether the socket is currently connected. */
   private _isConnected = false;
 
+  /** Heartbeat interval timer. */
+  private _heartbeatInterval: ReturnType<typeof setInterval> | undefined;
+
+  /** Heartbeat timeout timer — fires when a pong is not received in time. */
+  private _heartbeatTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  /** Whether a heartbeat pong is pending. */
+  private _awaitingPong = false;
+
   private constructor(
     private socket: WebSocket,
     private responseTimeout: number,
@@ -130,6 +155,7 @@ export class JsonRpcSocket {
 
     const jsonRpcSocket = new JsonRpcSocket(socket, responseTimeout, url, options);
     jsonRpcSocket.wireSocket(socket);
+    jsonRpcSocket.startHeartbeat();
 
     return jsonRpcSocket;
   }
@@ -140,6 +166,7 @@ export class JsonRpcSocket {
   public close(): void {
     this.closedByUser = true;
     this._isConnected = false;
+    this.stopHeartbeat();
     this.socket.close();
   }
 
@@ -306,6 +333,7 @@ export class JsonRpcSocket {
 
     ws.addEventListener('close', () => {
       this._isConnected = false;
+      this.stopHeartbeat();
 
       if (this.closedByUser) {
         this.options.onclose?.();
@@ -348,6 +376,88 @@ export class JsonRpcSocket {
       }
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Internal: application-level heartbeat (ping/pong)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Starts the heartbeat interval. Sends a JSON-RPC `rpc.ping` every
+   * `heartbeatInterval` ms. If no `rpc.pong` response arrives within
+   * `heartbeatTimeout` ms, the socket is considered dead and closed
+   * (which triggers reconnection via the `close` handler).
+   */
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+
+    const interval = this.options.heartbeatInterval ?? DEFAULT_HEARTBEAT_INTERVAL;
+    if (interval <= 0) { return; }
+
+    const timeout = this.options.heartbeatTimeout ?? DEFAULT_HEARTBEAT_TIMEOUT;
+
+    this._heartbeatInterval = setInterval(() => {
+      if (!this._isConnected || this._awaitingPong) { return; }
+
+      this._awaitingPong = true;
+
+      // Send a lightweight JSON-RPC notification as the ping.
+      const pingId = `hb-${Date.now()}`;
+      const pingRequest: JsonRpcRequest = {
+        jsonrpc : '2.0',
+        id      : pingId,
+        method  : 'rpc.ping',
+      };
+
+      // Register a one-shot handler for the pong response.
+      this.messageHandlers.set(pingId, () => {
+        this._awaitingPong = false;
+        this.messageHandlers.delete(pingId);
+        if (this._heartbeatTimeout) {
+          clearTimeout(this._heartbeatTimeout);
+          this._heartbeatTimeout = undefined;
+        }
+      });
+
+      try {
+        this.send(pingRequest);
+      } catch {
+        // Socket may already be closing — the close handler will deal with it.
+        this.messageHandlers.delete(pingId);
+        this._awaitingPong = false;
+        return;
+      }
+
+      // If the pong doesn't arrive in time, force-close and reconnect.
+      this._heartbeatTimeout = setTimeout(() => {
+        this._heartbeatTimeout = undefined;
+        this.messageHandlers.delete(pingId);
+        this._awaitingPong = false;
+
+        if (!this.closedByUser && this._isConnected) {
+          console.warn('JsonRpcSocket: heartbeat timeout — closing dead connection');
+          this._isConnected = false;
+          try { this.socket.close(); } catch { /* best effort */ }
+        }
+      }, timeout);
+    }, interval);
+  }
+
+  /** Stops the heartbeat timer and clears any pending timeout. */
+  private stopHeartbeat(): void {
+    if (this._heartbeatInterval) {
+      clearInterval(this._heartbeatInterval);
+      this._heartbeatInterval = undefined;
+    }
+    if (this._heartbeatTimeout) {
+      clearTimeout(this._heartbeatTimeout);
+      this._heartbeatTimeout = undefined;
+    }
+    this._awaitingPong = false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internal: reconnection
+  // ---------------------------------------------------------------------------
 
   /**
    * Exponential backoff reconnection loop with jitter.
@@ -394,6 +504,7 @@ export class JsonRpcSocket {
         this._isConnected = true;
         this.reconnecting = false;
         this.wireSocket(newSocket);
+        this.startHeartbeat();
         this.options.onreconnected?.();
       } catch {
         // Connection failed — retry.
