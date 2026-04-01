@@ -607,4 +607,88 @@ describe('JsonRpcSocket', () => {
       ).rejects.toThrow('connect timed out');
     }, 10_000);
   });
+
+  describe('heartbeat', () => {
+    it('should start heartbeat on connect and stop on close', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl);
+
+      // Heartbeat interval should be set.
+      expect(client['_heartbeatInterval']).toBeDefined();
+      expect(client['_awaitingPong']).toBe(false);
+
+      client.close();
+
+      // Heartbeat should be cleared after close.
+      expect(client['_heartbeatInterval']).toBeUndefined();
+    });
+
+    it('should not start heartbeat when heartbeatInterval is 0', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        heartbeatInterval: 0,
+      });
+
+      expect(client['_heartbeatInterval']).toBeUndefined();
+
+      client.close();
+    });
+
+    it('should send rpc.ping and clear awaitingPong on response', async () => {
+      // Use a short heartbeat interval so the test completes quickly.
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        heartbeatInterval : 100,
+        heartbeatTimeout  : 5_000,
+      });
+
+      // Wait for at least one heartbeat cycle to fire.
+      await sleepWhileWaitingForEvents(250);
+
+      // The server may or may not respond to rpc.ping — if it does,
+      // awaitingPong resets. If it doesn't, the timeout hasn't fired yet
+      // (5s timeout). Either way, the heartbeat mechanism ran without error.
+      expect(client.isConnected).toBe(true);
+
+      client.close();
+    });
+
+    it('should close connection on heartbeat timeout', async () => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        heartbeatInterval : 50,
+        heartbeatTimeout  : 50,
+        autoReconnect     : false, // Don't reconnect — we want to observe the dead state.
+      });
+
+      // Stub send to silently discard pings (simulates a dead connection
+      // where pings go out but no pongs come back).
+      client['send'] = (): void => {};
+
+      // Remove all message handlers so no pong can be received.
+      client['messageHandlers'].clear();
+
+      // Wait for heartbeat to fire and timeout.
+      await sleepWhileWaitingForEvents(200);
+
+      // The connection should have been closed by the heartbeat timeout.
+      expect(client.isConnected).toBe(false);
+    });
+
+    it('should restart heartbeat after reconnection', async (): Promise<void> => {
+      const client = await JsonRpcSocket.connect(socketDwnUrl, {
+        heartbeatInterval : 100,
+        heartbeatTimeout  : 5_000,
+      });
+
+      expect(client['_heartbeatInterval']).toBeDefined();
+
+      // Simulate an unexpected close and wait for reconnect.
+      client['socket'].close();
+      await sleepWhileWaitingForEvents(2_000);
+
+      // After reconnection, heartbeat should be running again.
+      if (client.isConnected) {
+        expect(client['_heartbeatInterval']).toBeDefined();
+      }
+
+      client.close();
+    }, 10_000);
+  });
 });

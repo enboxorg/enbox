@@ -3238,4 +3238,190 @@ describe('SyncEngineLevel — private methods', () => {
       }).not.toThrow();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Browser connectivity listeners
+  // ---------------------------------------------------------------------------
+
+  describe('browser connectivity listeners', () => {
+    // Save and restore globalThis.addEventListener / removeEventListener
+    // since the sync engine guards on their existence.
+    let origAddEventListener: typeof globalThis.addEventListener;
+    let origRemoveEventListener: typeof globalThis.removeEventListener;
+    let registeredListeners: Map<string, EventListener>;
+
+    beforeAll(() => {
+      origAddEventListener = globalThis.addEventListener;
+      origRemoveEventListener = globalThis.removeEventListener;
+    });
+
+    afterEach(() => {
+      globalThis.addEventListener = origAddEventListener;
+      globalThis.removeEventListener = origRemoveEventListener;
+      registeredListeners = new Map();
+    });
+
+    function installBrowserStubs(): void {
+      registeredListeners = new Map();
+      globalThis.addEventListener = ((type: string, listener: EventListener) => {
+        registeredListeners.set(type, listener);
+      }) as any;
+      globalThis.removeEventListener = ((type: string, _listener: EventListener) => {
+        registeredListeners.delete(type);
+      }) as any;
+    }
+
+    it('should register online, offline, and visibilitychange listeners when browser APIs are available', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      expect(registeredListeners.has('online')).toBe(true);
+      expect(registeredListeners.has('offline')).toBe(true);
+      // visibilitychange requires `document` — may or may not be set in test env.
+    });
+
+    it('should remove listeners on stopBrowserConnectivityListeners', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+
+      (engine as any).startBrowserConnectivityListeners();
+      expect(registeredListeners.has('online')).toBe(true);
+
+      (engine as any).stopBrowserConnectivityListeners();
+      expect(registeredListeners.has('online')).toBe(false);
+      expect(registeredListeners.has('offline')).toBe(false);
+    });
+
+    it('should be a no-op when globalThis.addEventListener is not a function', () => {
+      // Simulate a Node-like environment without addEventListener.
+      const saved = globalThis.addEventListener;
+      delete (globalThis as any).addEventListener;
+
+      const engine = new SyncEngineLevel({ db });
+
+      // Should not throw.
+      expect(() => {
+        (engine as any).startBrowserConnectivityListeners();
+      }).not.toThrow();
+
+      // Restore.
+      globalThis.addEventListener = saved;
+    });
+
+    it('should set _connectivityState to offline on offline event', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._connectivityState = 'online';
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      // Fire the offline handler.
+      const offlineHandler = registeredListeners.get('offline');
+      expect(offlineHandler).toBeDefined();
+      offlineHandler!({} as Event);
+
+      expect((engine as any)._connectivityState).toBe('offline');
+    });
+
+    it('should set _connectivityState to online and trigger sync on online event', async () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._connectivityState = 'offline';
+
+      // Stub sync() to track whether it was called.
+      let syncCalled = false;
+      (engine as any).sync = async (): Promise<void> => { syncCalled = true; };
+      (engine as any)._syncLock = false;
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      const onlineHandler = registeredListeners.get('online');
+      expect(onlineHandler).toBeDefined();
+      onlineHandler!({} as Event);
+
+      expect((engine as any)._connectivityState).toBe('online');
+
+      // sync() is called asynchronously — wait a tick.
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(syncCalled).toBe(true);
+    });
+
+    it('should not trigger sync on online event when _syncLock is held', async () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+
+      let syncCalled = false;
+      (engine as any).sync = async (): Promise<void> => { syncCalled = true; };
+      (engine as any)._syncLock = true;
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      const onlineHandler = registeredListeners.get('online');
+      onlineHandler!({} as Event);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(syncCalled).toBe(false);
+    });
+
+    it('should ignore events after engine generation changes (teardown)', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._connectivityState = 'online';
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      // Simulate teardown by incrementing generation.
+      (engine as any)._engineGeneration++;
+
+      const offlineHandler = registeredListeners.get('offline');
+      offlineHandler!({} as Event);
+
+      // State should NOT have changed — the handler is stale.
+      expect((engine as any)._connectivityState).toBe('online');
+    });
+
+    it('should clean up on repeated startBrowserConnectivityListeners calls', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+
+      (engine as any).startBrowserConnectivityListeners();
+      const firstOnline = registeredListeners.get('online');
+
+      // Call again — should remove old listeners and register new ones.
+      (engine as any).startBrowserConnectivityListeners();
+      const secondOnline = registeredListeners.get('online');
+
+      // The handler reference should be different (new closure).
+      expect(firstOnline).not.toBe(secondOnline);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // unregisterIdentity
+  // ---------------------------------------------------------------------------
+
+  describe('unregisterIdentity', () => {
+    it('should remove a registered identity', async () => {
+      const engine = new SyncEngineLevel({ db });
+      await engine.registerIdentity({ did: 'did:example:unreg-test' });
+
+      const before = await engine.getIdentityOptions('did:example:unreg-test');
+      expect(before).toBeDefined();
+
+      await engine.unregisterIdentity('did:example:unreg-test');
+
+      const after = await engine.getIdentityOptions('did:example:unreg-test');
+      expect(after).toBeUndefined();
+    });
+
+    it('should throw when unregistering an identity that is not registered', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await expect(
+        engine.unregisterIdentity('did:example:not-registered')
+      ).rejects.toThrow('not registered');
+    });
+  });
 });
