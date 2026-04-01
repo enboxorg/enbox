@@ -1001,8 +1001,8 @@ export class SyncEngineLevel implements SyncEngine {
       // Auto-clear dead letters for this link — repair has verified
       // convergence via SMT reconciliation so any previously recorded
       // failures (closure, push-exhausted, pull-processing) for this
-      // (tenantDid, remoteEndpoint) pair are no longer current.
-      void this.clearDeadLettersForLink(did, dwnUrl);
+      // specific link are no longer current.
+      void this.clearDeadLettersForLink(did, dwnUrl, protocol);
       this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
       if (prevRepairConnectivity !== 'online') {
         this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevRepairConnectivity, to: 'online' });
@@ -2010,9 +2010,9 @@ export class SyncEngineLevel implements SyncEngine {
 
       if (reconcileOutcome.converged) {
         await this.ledger.clearNeedsReconcile(link);
-        // SMT roots match — this link is converged. Clear any dead letters
-        // that were recorded for this (tenantDid, remoteEndpoint) pair.
-        void this.clearDeadLettersForLink(did, dwnUrl);
+        // SMT roots match — this link is converged. Clear dead letters
+        // scoped to this specific link (tenantDid, remoteEndpoint, protocol).
+        void this.clearDeadLettersForLink(did, dwnUrl, protocol);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
       } else {
         // Roots still differ — retry after a delay. This can happen when
@@ -2582,16 +2582,20 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   /**
-   * Clear all dead letter entries for a specific (tenantDid, remoteEndpoint)
-   * pair. Called after successful repair — SMT convergence means all
-   * previously recorded failures for this link are resolved.
+   * Clear dead letter entries scoped to a specific sync link. Matches on
+   * (tenantDid, remoteEndpoint, protocol) so that repairing protocol A
+   * does not erase still-valid failures for protocol B on the same remote.
+   * When `protocol` is undefined (full-tenant link), clears entries that
+   * also have no protocol.
    */
-  private async clearDeadLettersForLink(tenantDid: string, remoteEndpoint: string): Promise<void> {
+  private async clearDeadLettersForLink(tenantDid: string, remoteEndpoint: string, protocol?: string): Promise<void> {
     const batch: { type: 'del'; key: string }[] = [];
     try {
       for await (const [key, value] of this._deadLetters.iterator()) {
         const entry = JSON.parse(value) as DeadLetterEntry;
-        if (entry.tenantDid === tenantDid && entry.remoteEndpoint === remoteEndpoint) {
+        if (entry.tenantDid === tenantDid &&
+            entry.remoteEndpoint === remoteEndpoint &&
+            entry.protocol === protocol) {
           batch.push({ type: 'del', key });
         }
       }
