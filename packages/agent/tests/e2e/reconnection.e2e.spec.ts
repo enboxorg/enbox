@@ -1,14 +1,16 @@
 /**
- * E2E: Sync recovery after WebSocket connection drop.
+ * E2E: Pull subscription recovery after WebSocket drop.
  *
- * Simulates a network interruption by force-closing the underlying
- * WebSocket while sync remains logically live. Verifies:
- *   - JsonRpcSocket reconnect fires
- *   - Live subscriptions re-establish
- *   - Records written during the outage are pushed via SMT reconciliation
- *   - getSyncHealth() reports healthy state after recovery
+ * Verifies the real reconnection path for the PULL side of live sync:
+ *   1. Agent has a live pull subscription via WebSocket
+ *   2. WebSocket is force-closed (simulating network interruption)
+ *   3. A record is written directly to the REMOTE DWN (bypassing this agent)
+ *   4. JsonRpcSocket auto-reconnect fires, pull subscription re-establishes
+ *   5. The remote-only record appears in the local DWN via the recovered
+ *      pull subscription (or the SMT integrity check that follows)
  *
- * This exercises the real reconnection path, not just stop/start catch-up.
+ * This isolates the pull reconnection path — the push path uses HTTP and
+ * is unaffected by WebSocket drops.
  *
  * Requires: DWN server running on localhost:3000 (or TEST_DWN_URL),
  *           Pkarr relay on localhost:7527 (or DID_DHT_GATEWAY_URI).
@@ -46,8 +48,6 @@ const todoProtocol: ProtocolDefinition = {
 function killAllWebSockets(): void {
   const connections = (WebSocketDwnRpcClient as any).connections as Map<string, { socket: any }>;
   for (const [, conn] of connections) {
-    // Access the underlying WebSocket on JsonRpcSocket and close it
-    // WITHOUT setting closedByUser — this triggers the reconnect path.
     const ws = conn.socket['socket'] as WebSocket;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.close();
@@ -55,7 +55,7 @@ function killAllWebSockets(): void {
   }
 }
 
-describe('E2E: sync recovery after WebSocket drop', () => {
+describe('E2E: pull subscription recovery after WebSocket drop', () => {
   let harness: PlatformAgentTestHarness;
   let did: string;
 
@@ -92,9 +92,9 @@ describe('E2E: sync recovery after WebSocket drop', () => {
       options: { protocols: [todoProtocol.protocol] },
     });
 
-    // Start live sync and let it settle.
+    // Start live sync and let it settle (establishes pull WebSocket subscription).
     harness.agent.sync.startSync({ mode: 'live', interval: '30s' });
-    await new Promise(r => setTimeout(r, 2_000));
+    await new Promise(r => setTimeout(r, 3_000));
   }, 30_000);
 
   afterAll(async () => {
@@ -103,10 +103,11 @@ describe('E2E: sync recovery after WebSocket drop', () => {
     await harness?.closeStorage();
   });
 
-  it('should recover from a dropped WebSocket and push outage records', async () => {
-    // Phase 1: Verify sync is working — write a record and confirm it pushes.
+  it('should recover the pull subscription and deliver a remote-only record locally', async () => {
+    // Phase 1: Verify pull subscription is working — write directly to
+    // the remote and confirm it arrives locally via the live subscription.
     const data1 = Convert.string('before drop').toUint8Array();
-    const write1 = await harness.agent.dwn.processRequest({
+    const remoteWrite1 = await harness.agent.dwn.sendRequest({
       author        : did,
       target        : did,
       messageType   : DwnInterface.RecordsWrite,
@@ -118,29 +119,35 @@ describe('E2E: sync recovery after WebSocket drop', () => {
       },
       dataStream: new Blob([data1]),
     });
-    expect(write1.reply.status.code).toBe(202);
+    expect(remoteWrite1.reply.status.code).toBe(202);
+    const preDropRecordId = remoteWrite1.message!.recordId;
 
+    // Poll LOCAL DWN for the record (delivered via pull subscription).
     let deadline = Date.now() + 10_000;
     let found = false;
     while (Date.now() < deadline) {
-      const q = await harness.agent.dwn.sendRequest({
+      const local = await harness.agent.dwn.processRequest({
         author        : did,
         target        : did,
         messageType   : DwnInterface.RecordsQuery,
-        messageParams : { filter: { protocol: todoProtocol.protocol, recordId: write1.message!.recordId } },
+        messageParams : { filter: { protocol: todoProtocol.protocol, recordId: preDropRecordId } },
       });
-      if (q.reply.entries?.length) { found = true; break; }
-      await new Promise(r => setTimeout(r, 500));
+      if (local.reply.entries?.length) { found = true; break; }
+      await new Promise(r => setTimeout(r, 250));
     }
     expect(found).toBe(true);
 
-    // Phase 2: Kill the WebSocket while sync stays logically live.
+    // Phase 2: Kill the WebSocket — the pull subscription is now dead.
     killAllWebSockets();
 
-    // Write a record during the outage — the local push subscription is
-    // dead, but the record is in the EventLog.
-    const data2 = Convert.string('during drop').toUint8Array();
-    const write2 = await harness.agent.dwn.processRequest({
+    // Brief pause to let the close propagate.
+    await new Promise(r => setTimeout(r, 500));
+
+    // Write a new record directly to the remote AFTER the socket drop.
+    // This record can only reach the local DWN if the pull subscription
+    // recovers (reconnect + re-subscribe) or the SMT integrity check runs.
+    const data2 = Convert.string('after drop').toUint8Array();
+    const remoteWrite2 = await harness.agent.dwn.sendRequest({
       author        : did,
       target        : did,
       messageType   : DwnInterface.RecordsWrite,
@@ -152,29 +159,38 @@ describe('E2E: sync recovery after WebSocket drop', () => {
       },
       dataStream: new Blob([data2]),
     });
-    expect(write2.reply.status.code).toBe(202);
-    const outageRecordId = write2.message!.recordId;
+    expect(remoteWrite2.reply.status.code).toBe(202);
+    const postDropRecordId = remoteWrite2.message!.recordId;
 
-    // Phase 3: Wait for auto-reconnect + SMT reconciliation to push
-    // the outage record. JsonRpcSocket reconnect fires after ~1s
-    // (exponential backoff), then the re-subscription triggers or the
-    // integrity check reconciles.
-    deadline = Date.now() + 15_000;
+    // Verify it does NOT exist locally yet (pull subscription is dead).
+    const immediate = await harness.agent.dwn.processRequest({
+      author        : did,
+      target        : did,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : { filter: { protocol: todoProtocol.protocol, recordId: postDropRecordId } },
+    });
+    expect(immediate.reply.entries?.length ?? 0).toBe(0);
+
+    // Phase 3: Wait for auto-reconnect to re-establish the pull
+    // subscription and deliver the post-drop record locally.
+    // JsonRpcSocket reconnect fires after ~1s, then re-subscription
+    // delivers the record (or the integrity check reconciles it).
+    deadline = Date.now() + 20_000;
     found = false;
     while (Date.now() < deadline) {
-      const q = await harness.agent.dwn.sendRequest({
+      const local = await harness.agent.dwn.processRequest({
         author        : did,
         target        : did,
         messageType   : DwnInterface.RecordsQuery,
-        messageParams : { filter: { protocol: todoProtocol.protocol, recordId: outageRecordId } },
+        messageParams : { filter: { protocol: todoProtocol.protocol, recordId: postDropRecordId } },
       });
-      if (q.reply.entries?.length) { found = true; break; }
+      if (local.reply.entries?.length) { found = true; break; }
       await new Promise(r => setTimeout(r, 500));
     }
     expect(found).toBe(true);
-  }, 40_000);
+  }, 45_000);
 
-  it('should report healthy sync after reconnection recovery', async () => {
+  it('should report healthy sync after pull subscription recovery', async () => {
     const health = await harness.agent.sync.getSyncHealth();
     expect(health.failedMessageCount).toBe(0);
   });
