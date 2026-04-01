@@ -1,4 +1,4 @@
-import type { JsonRpcId, JsonRpcRequest, JsonRpcSuccessResponse } from '@enbox/dwn-clients';
+import type { JsonRpcId, JsonRpcRequest, JsonRpcSocketOptions, JsonRpcSuccessResponse } from '@enbox/dwn-clients';
 
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocketServer } from 'ws';
@@ -8,6 +8,16 @@ import {
   createJsonRpcErrorResponse, createJsonRpcRequest, createJsonRpcSubscriptionRequest,
   createJsonRpcSuccessResponse, JsonRpcErrorCodes, JsonRpcSocket,
 } from '@enbox/dwn-clients';
+
+/** Connect to the test WS server with heartbeat disabled.
+ *  The mock server doesn't handle rpc.ping — heartbeat pings would crash
+ *  handlers that destructure `request.params` unconditionally. */
+const TEST_WS_URL = 'ws://127.0.0.1:9003';
+function connectToTestServer(
+  opts: JsonRpcSocketOptions = {},
+): Promise<JsonRpcSocket> {
+  return JsonRpcSocket.connect(TEST_WS_URL, { heartbeatInterval: 0, ...opts });
+}
 
 describe('JsonRpcSocket', () => {
   let wsServer: WebSocketServer;
@@ -30,7 +40,7 @@ describe('JsonRpcSocket', () => {
   });
 
   it('connects to a url', async () => {
-    const client = await JsonRpcSocket.connect('ws://127.0.0.1:9003');
+    const client = await connectToTestServer();
     expect(wsServer.clients.size).toBe(1);
     client.close();
 
@@ -53,7 +63,7 @@ describe('JsonRpcSocket', () => {
       });
     });
 
-    const client = await JsonRpcSocket.connect('ws://127.0.0.1:9003');
+    const client = await connectToTestServer();
     const requestId = uuidv4();
     const request = createJsonRpcRequest(requestId, 'test.method', { param1: 'test-param1', param2: 'test-param2' });
     const response = await client.request(request);
@@ -62,7 +72,7 @@ describe('JsonRpcSocket', () => {
 
   it('request times out', async () => {
     // time out after 1 ms
-    const client = await JsonRpcSocket.connect('ws://127.0.0.1:9003', { responseTimeout: 1 });
+    const client = await connectToTestServer({ responseTimeout: 1 });
     const requestId = uuidv4();
     const request = createJsonRpcRequest(requestId, 'test.method', { param1: 'test-param1', param2: 'test-param2' });
     const requestPromise = client.request(request);
@@ -80,7 +90,7 @@ describe('JsonRpcSocket', () => {
       });
     });
 
-    const client = await JsonRpcSocket.connect('ws://127.0.0.1:9003', { responseTimeout: 100 });
+    const client = await connectToTestServer({ responseTimeout: 100 });
     const requestId = uuidv4();
     const subscribeId = uuidv4();
     const request = createJsonRpcSubscriptionRequest(
@@ -113,7 +123,7 @@ describe('JsonRpcSocket', () => {
       });
     });
 
-    const client = await JsonRpcSocket.connect('ws://127.0.0.1:9003', { responseTimeout: 100 });
+    const client = await connectToTestServer({ responseTimeout: 100 });
     const requestId = uuidv4();
     const subscribeId = uuidv4();
     const request = createJsonRpcSubscriptionRequest(
@@ -152,7 +162,7 @@ describe('JsonRpcSocket', () => {
         });
       });
     });
-    const client = await JsonRpcSocket.connect('ws://127.0.0.1:9003');
+    const client = await connectToTestServer();
     const requestId = uuidv4();
     const request = createJsonRpcRequest(requestId, 'test.method', { param1: 'test-param1', param2: 'test-param2' });
     client.send(request);
@@ -189,7 +199,7 @@ describe('JsonRpcSocket', () => {
       });
     });
 
-    const client = await JsonRpcSocket.connect('ws://127.0.0.1:9003', { responseTimeout: 100 });
+    const client = await connectToTestServer({ responseTimeout: 100 });
     const requestId = uuidv4();
     const subscribeId = uuidv4();
     const request = createJsonRpcSubscriptionRequest(
@@ -223,7 +233,7 @@ describe('JsonRpcSocket', () => {
   });
 
   it('only JSON RPC Methods prefixed with `rpc.subscribe.` are accepted for a subscription', async () => {
-    const client = await JsonRpcSocket.connect('ws://127.0.0.1:9003');
+    const client = await connectToTestServer();
     const requestId = uuidv4();
     const request = createJsonRpcRequest(requestId, 'test.method', { param1: 'test-param1', param2: 'test-param2' });
     const subscribePromise = client.subscribe(request, () => {});
@@ -231,7 +241,7 @@ describe('JsonRpcSocket', () => {
   });
 
   it('subscribe methods must contain a subscribe object within the request which contains the subscription JsonRpcId', async () => {
-    const client = await JsonRpcSocket.connect('ws://127.0.0.1:9003');
+    const client = await connectToTestServer();
     const requestId = uuidv4();
     const request = createJsonRpcRequest(requestId, 'rpc.subscribe.test.method', { param1: 'test-param1', param2: 'test-param2' });
     const subscribePromise = client.subscribe(request, () => {});
@@ -242,7 +252,7 @@ describe('JsonRpcSocket', () => {
     // test injected handler
     const onCloseHandler = { onclose: ():void => {} };
     const onCloseSpy = spyOn(onCloseHandler, 'onclose');
-    const client = await JsonRpcSocket.connect('ws://127.0.0.1:9003', { onclose: onCloseHandler.onclose });
+    const client = await connectToTestServer({ onclose: onCloseHandler.onclose });
     client.close();
 
     await new Promise((resolve) => setTimeout(resolve, 5)); // wait for close event to arrive
@@ -250,7 +260,7 @@ describe('JsonRpcSocket', () => {
 
     // when no onclose handler is provided, close should succeed silently
     const consoleInfoSpy = spyOn(console, 'info');
-    const defaultClient = await JsonRpcSocket.connect('ws://127.0.0.1:9003');
+    const defaultClient = await connectToTestServer();
     defaultClient.close();
 
     await new Promise((resolve) => setTimeout(resolve, 5)); // wait for close event to arrive
