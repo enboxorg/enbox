@@ -2507,10 +2507,6 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   /**
-   * Record a permanently failed message in the dead letter store.
-   * Called internally by push and pull paths when a message cannot be synced.
-   */
-  /**
    * Build a compound dead letter key. Different remotes can fail the same CID
    * for different reasons, so the key includes the remote endpoint.
    */
@@ -2543,6 +2539,8 @@ export class SyncEngineLevel implements SyncEngine {
         entries.push(entry);
       }
     }
+    // Deterministic ordering: newest first so apps see the most recent failures.
+    entries.sort((a, b) => b.failedAt.localeCompare(a.failedAt));
     return entries;
   }
 
