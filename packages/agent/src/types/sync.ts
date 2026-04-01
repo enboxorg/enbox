@@ -291,11 +291,20 @@ export type DeadLetterEntry = {
   failedAt: string;
 };
 
-/** Sync health summary returned by `getSyncHealth()`. */
+/**
+ * Sync health summary returned by `getSyncHealth()`.
+ *
+ * `failedMessageCount` reflects messages that are currently failing — entries
+ * are auto-cleared when the same CID later succeeds via push or pull, so the
+ * count decreases as the engine self-heals through reconciliation and repair.
+ */
 export type SyncHealthSummary = {
   /** Current connectivity state. */
   connectivity: SyncConnectivityState;
-  /** Total number of permanently failed messages across all tenants. */
+  /**
+   * Number of messages currently in the dead letter store. Decreases as
+   * the engine self-heals — entries are auto-cleared on later success.
+   */
   failedMessageCount: number;
   /** Number of links currently in 'repairing' or 'degraded_poll' status. */
   degradedLinkCount: number;
@@ -373,10 +382,10 @@ export interface SyncEngine {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns all permanently failed messages, optionally filtered by tenant.
-   * These are messages that the sync engine has given up on — they will not
-   * be retried automatically. Apps should surface these to users so they can
-   * take corrective action (e.g., re-create the record, check permissions).
+   * Returns messages that are currently failing to sync, optionally filtered
+   * by tenant. Entries are auto-cleared when the same CID later succeeds
+   * (via push or pull), so the list reflects current health — not historical
+   * incidents. Sorted newest-first by `failedAt`.
    */
   getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]>;
 

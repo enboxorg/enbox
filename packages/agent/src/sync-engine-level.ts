@@ -997,6 +997,12 @@ export class SyncEngineLevel implements SyncEngine {
       const prevRepairConnectivity = link.connectivity;
       link.connectivity = 'online';
       await this.ledger.setStatus(link, 'live');
+
+      // Auto-clear dead letters for this link — repair has verified
+      // convergence via SMT reconciliation so any previously recorded
+      // failures (closure, push-exhausted, pull-processing) for this
+      // specific link are no longer current.
+      void this.clearDeadLettersForLink(did, dwnUrl, protocol);
       this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
       if (prevRepairConnectivity !== 'online') {
         this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevRepairConnectivity, to: 'online' });
@@ -1479,10 +1485,25 @@ export class SyncEngineLevel implements SyncEngine {
             );
 
             if (!closureResult.complete) {
+              const failureCode = closureResult.failure!.code;
+              const failureDetail = closureResult.failure!.detail;
               console.warn(
                 `SyncEngineLevel: Closure incomplete for ${did} -> ${dwnUrl}: ` +
-                `${closureResult.failure!.code} — ${closureResult.failure!.detail}`
+                `${failureCode} — ${failureDetail}`
               );
+
+              // Record the message that triggered the closure failure.
+              const closureCid = await Message.getCid(event.message);
+              void this.recordDeadLetter({
+                messageCid     : closureCid,
+                tenantDid      : did,
+                remoteEndpoint : dwnUrl,
+                protocol,
+                category       : 'closure',
+                errorCode      : failureCode,
+                errorDetail    : failureDetail,
+              });
+
               await this.transitionToRepairing(cursorKey, link);
               return;
             }
@@ -1501,6 +1522,10 @@ export class SyncEngineLevel implements SyncEngine {
           const pulledCid = await Message.getCid(event.message);
           this._recentlyPulledCids.set(`${pulledCid}|${dwnUrl}`, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
           this.evictExpiredEchoEntries();
+
+          // Auto-clear any dead letter for this CID — it was processed
+          // successfully, so a previous failure has been self-healed.
+          this.clearFailedMessage(pulledCid, dwnUrl).catch(() => { /* teardown race */ });
 
           // Mark this ordinal as committed and drain the checkpoint.
           // Guard: if the link transitioned to repairing while this handler was
@@ -1535,6 +1560,24 @@ export class SyncEngineLevel implements SyncEngine {
           }
         } catch (error: any) {
           console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
+
+          // Record the failing message in the dead letter store before
+          // transitioning to repair. The CID identifies which specific
+          // message caused the transition.
+          try {
+            const failedCid = await Message.getCid(event.message);
+            void this.recordDeadLetter({
+              messageCid     : failedCid,
+              tenantDid      : did,
+              remoteEndpoint : dwnUrl,
+              protocol,
+              category       : 'pull-processing',
+              errorDetail    : error.message ?? String(error),
+            });
+          } catch {
+            // Best effort — don't let dead letter recording block repair.
+          }
+
           // A failed processRawMessage means local state is incomplete.
           // Transition to repairing immediately — do NOT advance the checkpoint
           // past this failure or let later ordinals commit past it. SMT
@@ -1769,6 +1812,12 @@ export class SyncEngineLevel implements SyncEngine {
         permissionsApi : this._permissionsApi,
       });
 
+      // Auto-clear dead letters for CIDs that succeeded — a previously
+      // failed message may have been repaired by reconciliation.
+      for (const cid of result.succeeded) {
+        this.clearFailedMessage(cid, dwnUrl).catch(() => { /* teardown race */ });
+      }
+
       // Record permanently failed messages in the dead letter store.
       for (const entry of result.permanentlyFailed) {
         await this.recordDeadLetter({
@@ -1838,7 +1887,18 @@ export class SyncEngineLevel implements SyncEngine {
     const pushRuntime = this.getOrCreatePushRuntime(targetKey, pending);
 
     if (pending.retryCount >= maxRetries) {
-      // Retry budget exhausted — mark link dirty for reconciliation.
+      // Retry budget exhausted — record each CID as a dead letter and mark
+      // the link dirty for reconciliation.
+      for (const entry of pending.entries) {
+        void this.recordDeadLetter({
+          messageCid     : entry.cid,
+          tenantDid      : pending.did,
+          remoteEndpoint : pending.dwnUrl,
+          protocol       : pending.protocol,
+          category       : 'push-exhausted',
+          errorDetail    : `push retries exhausted after ${maxRetries} attempts`,
+        });
+      }
       if (pushRuntime.timer) {
         clearTimeout(pushRuntime.timer);
       }
@@ -1950,6 +2010,9 @@ export class SyncEngineLevel implements SyncEngine {
 
       if (reconcileOutcome.converged) {
         await this.ledger.clearNeedsReconcile(link);
+        // SMT roots match — this link is converged. Clear dead letters
+        // scoped to this specific link (tenantDid, remoteEndpoint, protocol).
+        void this.clearDeadLettersForLink(did, dwnUrl, protocol);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
       } else {
         // Roots still differ — retry after a delay. This can happen when
@@ -2417,11 +2480,23 @@ export class SyncEngineLevel implements SyncEngine {
     messageCids: string[];
     prefetched?: MessagesSyncDiffEntry[];
   }): Promise<void> {
-    return pullMessages({
+    const failedCids = await pullMessages({
       did, dwnUrl, delegateDid, protocol, messageCids, prefetched,
       agent          : this.agent,
       permissionsApi : this._permissionsApi,
     });
+
+    // Record permanently failed pull entries in the dead letter store.
+    for (const cid of failedCids) {
+      await this.recordDeadLetter({
+        messageCid     : cid,
+        tenantDid      : did,
+        remoteEndpoint : dwnUrl,
+        protocol,
+        category       : 'pull-processing',
+        errorDetail    : 'pull processing failed after retry passes exhausted',
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -2507,6 +2582,33 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   /**
+   * Clear dead letter entries scoped to a specific sync link. Matches on
+   * (tenantDid, remoteEndpoint, protocol) so that repairing protocol A
+   * does not erase still-valid failures for protocol B on the same remote.
+   * When `protocol` is undefined (full-tenant link), clears entries that
+   * also have no protocol.
+   */
+  private async clearDeadLettersForLink(tenantDid: string, remoteEndpoint: string, protocol?: string): Promise<void> {
+    const batch: { type: 'del'; key: string }[] = [];
+    try {
+      for await (const [key, value] of this._deadLetters.iterator()) {
+        const entry = JSON.parse(value) as DeadLetterEntry;
+        if (entry.tenantDid === tenantDid &&
+            entry.remoteEndpoint === remoteEndpoint &&
+            entry.protocol === protocol) {
+          batch.push({ type: 'del', key });
+        }
+      }
+      if (batch.length > 0) {
+        await this._deadLetters.batch(batch);
+      }
+    } catch (error) {
+      const e = error as { code?: string };
+      if (e.code !== 'LEVEL_DATABASE_NOT_OPEN') { throw error; }
+    }
+  }
+
+  /**
    * Build a compound dead letter key. Different remotes can fail the same CID
    * for different reasons, so the key includes the remote endpoint.
    */
@@ -2528,7 +2630,15 @@ export class SyncEngineLevel implements SyncEngine {
       failedAt: new Date().toISOString(),
     };
     const key = SyncEngineLevel.deadLetterKey(params.messageCid, params.remoteEndpoint);
-    await this._deadLetters.put(key, JSON.stringify(entry));
+    try {
+      await this._deadLetters.put(key, JSON.stringify(entry));
+    } catch (error) {
+      // Suppress only the expected teardown race — any other error surfaces.
+      const e = error as { code?: string };
+      if (e.code !== 'LEVEL_DATABASE_NOT_OPEN') {
+        throw error;
+      }
+    }
   }
 
   public async getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]> {
