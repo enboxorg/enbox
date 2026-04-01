@@ -138,14 +138,12 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
     expect(found).toBe(true);
 
     // Phase 2: Kill the WebSocket — the pull subscription is now dead.
+    // Write the post-drop record IMMEDIATELY (no pause) so it lands on
+    // the remote while the subscription is definitively unavailable.
+    // The reconnect backoff floor is ~500ms, so writing immediately
+    // guarantees the record exists on the remote before any reconnect.
     killAllWebSockets();
 
-    // Brief pause to let the close propagate.
-    await new Promise(r => setTimeout(r, 500));
-
-    // Write a new record directly to the remote AFTER the socket drop.
-    // This record can only reach the local DWN if the pull subscription
-    // recovers (reconnect + re-subscribe) or the SMT integrity check runs.
     const data2 = Convert.string('after drop').toUint8Array();
     const remoteWrite2 = await harness.agent.dwn.sendRequest({
       author        : did,
@@ -162,19 +160,24 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
     expect(remoteWrite2.reply.status.code).toBe(202);
     const postDropRecordId = remoteWrite2.message!.recordId;
 
-    // Verify it does NOT exist locally yet (pull subscription is dead).
-    const immediate = await harness.agent.dwn.processRequest({
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { protocol: todoProtocol.protocol, recordId: postDropRecordId } },
-    });
-    expect(immediate.reply.entries?.length ?? 0).toBe(0);
+    // Verify the record does NOT exist locally — the subscription was
+    // dead when the record was written to the remote. Poll for 300ms
+    // to confirm it stays absent (not just a point-in-time check).
+    for (let i = 0; i < 3; i++) {
+      const local = await harness.agent.dwn.processRequest({
+        author        : did,
+        target        : did,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: todoProtocol.protocol, recordId: postDropRecordId } },
+      });
+      expect(local.reply.entries?.length ?? 0).toBe(0);
+      await new Promise(r => setTimeout(r, 100));
+    }
 
     // Phase 3: Wait for auto-reconnect to re-establish the pull
     // subscription and deliver the post-drop record locally.
-    // JsonRpcSocket reconnect fires after ~1s, then re-subscription
-    // delivers the record (or the integrity check reconciles it).
+    // JsonRpcSocket reconnect fires after ~500-1000ms (backoff + jitter),
+    // then re-subscription replays from the cursor and delivers the record.
     deadline = Date.now() + 20_000;
     found = false;
     while (Date.now() < deadline) {
