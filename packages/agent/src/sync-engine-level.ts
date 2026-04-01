@@ -997,6 +997,12 @@ export class SyncEngineLevel implements SyncEngine {
       const prevRepairConnectivity = link.connectivity;
       link.connectivity = 'online';
       await this.ledger.setStatus(link, 'live');
+
+      // Auto-clear dead letters for this link — repair has verified
+      // convergence via SMT reconciliation so any previously recorded
+      // failures (closure, push-exhausted, pull-processing) for this
+      // (tenantDid, remoteEndpoint) pair are no longer current.
+      void this.clearDeadLettersForLink(did, dwnUrl);
       this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
       if (prevRepairConnectivity !== 'online') {
         this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevRepairConnectivity, to: 'online' });
@@ -2004,6 +2010,9 @@ export class SyncEngineLevel implements SyncEngine {
 
       if (reconcileOutcome.converged) {
         await this.ledger.clearNeedsReconcile(link);
+        // SMT roots match — this link is converged. Clear any dead letters
+        // that were recorded for this (tenantDid, remoteEndpoint) pair.
+        void this.clearDeadLettersForLink(did, dwnUrl);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
       } else {
         // Roots still differ — retry after a delay. This can happen when
@@ -2571,6 +2580,29 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
   // Dead letter tracking
   // ---------------------------------------------------------------------------
+
+  /**
+   * Clear all dead letter entries for a specific (tenantDid, remoteEndpoint)
+   * pair. Called after successful repair — SMT convergence means all
+   * previously recorded failures for this link are resolved.
+   */
+  private async clearDeadLettersForLink(tenantDid: string, remoteEndpoint: string): Promise<void> {
+    const batch: { type: 'del'; key: string }[] = [];
+    try {
+      for await (const [key, value] of this._deadLetters.iterator()) {
+        const entry = JSON.parse(value) as DeadLetterEntry;
+        if (entry.tenantDid === tenantDid && entry.remoteEndpoint === remoteEndpoint) {
+          batch.push({ type: 'del', key });
+        }
+      }
+      if (batch.length > 0) {
+        await this._deadLetters.batch(batch);
+      }
+    } catch (error) {
+      const e = error as { code?: string };
+      if (e.code !== 'LEVEL_DATABASE_NOT_OPEN') { throw error; }
+    }
+  }
 
   /**
    * Build a compound dead letter key. Different remotes can fail the same CID
