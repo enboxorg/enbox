@@ -3810,6 +3810,124 @@ describe('SyncEngineLevel — private methods', () => {
       expect(health.degradedLinkCount).toBe(0);
     });
 
+    it('should clear dead letters scoped to protocol — sibling protocol failures survive', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      // Two failures for the same (tenantDid, remoteEndpoint) but different protocols.
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-proto-a',
+        tenantDid      : 'did:example:multi-proto',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol       : 'https://example.com/proto-a',
+        category       : 'closure',
+        errorCode      : 'ClosureProtocolMetadataMissing',
+        errorDetail    : 'missing protocol config for proto-a',
+      });
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-proto-b',
+        tenantDid      : 'did:example:multi-proto',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol       : 'https://example.com/proto-b',
+        category       : 'push-exhausted',
+        errorDetail    : 'push retries exhausted for proto-b',
+      });
+
+      expect((await engine.getFailedMessages()).length).toBe(2);
+
+      // Simulate repair succeeding for proto-a only.
+      await (engine as any).clearDeadLettersForLink(
+        'did:example:multi-proto',
+        'https://dwn.example.com',
+        'https://example.com/proto-a',
+      );
+
+      // Proto-a's failure should be cleared; proto-b's should survive.
+      const remaining = await engine.getFailedMessages();
+      expect(remaining.length).toBe(1);
+      expect(remaining[0].messageCid).toBe('dl-proto-b');
+      expect(remaining[0].protocol).toBe('https://example.com/proto-b');
+    });
+
+    it('should clear dead letters for full-tenant link without affecting protocol-scoped entries', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      // Full-tenant failure (no protocol).
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-full-tenant',
+        tenantDid      : 'did:example:mixed',
+        remoteEndpoint : 'https://dwn.example.com',
+        category       : 'pull-processing',
+        errorDetail    : 'full-tenant pull failure',
+      });
+      // Protocol-scoped failure on the same remote.
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-scoped',
+        tenantDid      : 'did:example:mixed',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol       : 'https://example.com/proto',
+        category       : 'push-permanent',
+        errorCode      : '400',
+        errorDetail    : 'protocol-scoped push failure',
+      });
+
+      expect((await engine.getFailedMessages()).length).toBe(2);
+
+      // Clear only the full-tenant link (protocol = undefined).
+      await (engine as any).clearDeadLettersForLink(
+        'did:example:mixed',
+        'https://dwn.example.com',
+        undefined,
+      );
+
+      const remaining = await engine.getFailedMessages();
+      expect(remaining.length).toBe(1);
+      expect(remaining[0].protocol).toBe('https://example.com/proto');
+    });
+
+    it('should auto-clear dead letter when same CID later succeeds on push', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-auto-push',
+        tenantDid      : 'did:example:auto',
+        remoteEndpoint : 'https://dwn.example.com',
+        category       : 'push-exhausted',
+        errorDetail    : 'retries exhausted',
+      });
+
+      expect((await engine.getFailedMessages()).length).toBe(1);
+
+      // Simulate successful push clearing the entry.
+      await engine.clearFailedMessage('dl-auto-push', 'https://dwn.example.com');
+
+      expect((await engine.getFailedMessages()).length).toBe(0);
+    });
+
+    it('should only suppress LEVEL_DATABASE_NOT_OPEN in recordDeadLetter', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      // Stub _deadLetters.put to throw a non-DB-closed error.
+      const origDeadLetters = (engine as any)._deadLetters;
+      const fakeStore = {
+        put: async (): Promise<void> => {
+          const err = new Error('disk full') as Error & { code: string };
+          err.code = 'LEVEL_IO_ERROR';
+          throw err;
+        },
+        iterator: (): ReturnType<typeof origDeadLetters.iterator> => origDeadLetters.iterator(),
+      };
+      Object.defineProperty(engine, '_deadLetters', { get: () => fakeStore });
+
+      await expect(
+        engine.recordDeadLetter({
+          messageCid  : 'dl-io-error',
+          tenantDid   : 'did:x',
+          category    : 'push-permanent',
+          errorDetail : 'test',
+        })
+      ).rejects.toThrow('disk full');
+    });
+
     it('should count degraded links from durable ledger, not just in-memory state', async () => {
       const engine = new SyncEngineLevel({ db });
 
