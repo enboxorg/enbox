@@ -58,10 +58,14 @@ describe('JsonRpcSocket', () => {
   });
 
   it('request times out', async () => {
-    // time out after 1 ms
     const client = await JsonRpcSocket.connect(socketDwnUrl, { responseTimeout: 1 });
     const requestId = CryptoUtils.randomUuid();
-    const request = createJsonRpcRequest(requestId, 'down.processMessage', { param1: 'test-param1', param2: 'test-param2' });
+    const request = createJsonRpcRequest(requestId, 'dwn.processMessage', { param1: 'test-param1', param2: 'test-param2' });
+
+    // Stub send so the request never reaches the server — guarantees the
+    // 1ms timeout fires regardless of how fast the server responds.
+    client['send'] = (): void => {};
+
     try {
       await client.request(request);
       throw new Error('Expected an error to be thrown');
