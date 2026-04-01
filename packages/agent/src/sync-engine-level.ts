@@ -1517,6 +1517,10 @@ export class SyncEngineLevel implements SyncEngine {
           this._recentlyPulledCids.set(`${pulledCid}|${dwnUrl}`, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
           this.evictExpiredEchoEntries();
 
+          // Auto-clear any dead letter for this CID — it was processed
+          // successfully, so a previous failure has been self-healed.
+          void this.clearFailedMessage(pulledCid, dwnUrl);
+
           // Mark this ordinal as committed and drain the checkpoint.
           // Guard: if the link transitioned to repairing while this handler was
           // in-flight (e.g., an earlier ordinal's handler failed concurrently),
@@ -1801,6 +1805,12 @@ export class SyncEngineLevel implements SyncEngine {
         agent          : this.agent,
         permissionsApi : this._permissionsApi,
       });
+
+      // Auto-clear dead letters for CIDs that succeeded — a previously
+      // failed message may have been repaired by reconciliation.
+      for (const cid of result.succeeded) {
+        void this.clearFailedMessage(cid, dwnUrl);
+      }
 
       // Record permanently failed messages in the dead letter store.
       for (const entry of result.permanentlyFailed) {
@@ -2586,8 +2596,12 @@ export class SyncEngineLevel implements SyncEngine {
     const key = SyncEngineLevel.deadLetterKey(params.messageCid, params.remoteEndpoint);
     try {
       await this._deadLetters.put(key, JSON.stringify(entry));
-    } catch {
-      // Best effort — the database may have been closed during teardown.
+    } catch (error) {
+      // Suppress only the expected teardown race — any other error surfaces.
+      const e = error as { code?: string };
+      if (e.code !== 'LEVEL_DATABASE_NOT_OPEN') {
+        throw error;
+      }
     }
   }
 
