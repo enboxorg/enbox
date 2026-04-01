@@ -1525,7 +1525,7 @@ export class SyncEngineLevel implements SyncEngine {
 
           // Auto-clear any dead letter for this CID — it was processed
           // successfully, so a previous failure has been self-healed.
-          void this.clearFailedMessage(pulledCid, dwnUrl);
+          this.clearFailedMessage(pulledCid, dwnUrl).catch(() => { /* teardown race */ });
 
           // Mark this ordinal as committed and drain the checkpoint.
           // Guard: if the link transitioned to repairing while this handler was
@@ -1815,7 +1815,7 @@ export class SyncEngineLevel implements SyncEngine {
       // Auto-clear dead letters for CIDs that succeeded — a previously
       // failed message may have been repaired by reconciliation.
       for (const cid of result.succeeded) {
-        void this.clearFailedMessage(cid, dwnUrl);
+        this.clearFailedMessage(cid, dwnUrl).catch(() => { /* teardown race */ });
       }
 
       // Record permanently failed messages in the dead letter store.
