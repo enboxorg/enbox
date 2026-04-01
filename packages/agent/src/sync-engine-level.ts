@@ -10,8 +10,8 @@ import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-j
 
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { PermissionsApi } from './types/permissions.js';
+import type { DeadLetterCategory, DeadLetterEntry, PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
-import type { PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { evaluateClosure } from './sync-closure-resolver.js';
 import { MAX_PENDING_TOKENS } from './types/sync.js';
@@ -288,6 +288,11 @@ export class SyncEngineLevel implements SyncEngine {
       this._ledger = new ReplicationLedger(this._db);
     }
     return this._ledger;
+  }
+
+  /** LevelDB sublevel for permanently failed messages (dead letters). */
+  private get _deadLetters(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
+    return this._db.sublevel('deadLetters') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
   }
 
   /**
@@ -1764,6 +1769,19 @@ export class SyncEngineLevel implements SyncEngine {
         permissionsApi : this._permissionsApi,
       });
 
+      // Record permanently failed messages in the dead letter store.
+      for (const entry of result.permanentlyFailed) {
+        await this.recordDeadLetter({
+          messageCid     : entry.cid,
+          tenantDid      : did,
+          remoteEndpoint : dwnUrl,
+          protocol,
+          category       : 'push-permanent',
+          errorCode      : String(entry.statusCode ?? ''),
+          errorDetail    : entry.detail ?? 'permanent push failure',
+        });
+      }
+
       if (result.failed.length > 0) {
         const failedSet = new Set(result.failed);
         const failedEntries = pushEntries.filter((entry) => failedSet.has(entry.cid));
@@ -2483,6 +2501,96 @@ export class SyncEngineLevel implements SyncEngine {
   ): T[] {
     return topologicalSort(messages);
   }
+
+  // ---------------------------------------------------------------------------
+  // Dead letter tracking
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Record a permanently failed message in the dead letter store.
+   * Called internally by push and pull paths when a message cannot be synced.
+   */
+  public async recordDeadLetter(params: {
+    messageCid : string;
+    tenantDid : string;
+    remoteEndpoint? : string;
+    protocol? : string;
+    category : DeadLetterCategory;
+    errorCode? : string;
+    errorDetail : string;
+  }): Promise<void> {
+    const entry: DeadLetterEntry = {
+      ...params,
+      failedAt: new Date().toISOString(),
+    };
+    await this._deadLetters.put(params.messageCid, JSON.stringify(entry));
+  }
+
+  public async getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]> {
+    const entries: DeadLetterEntry[] = [];
+    for await (const [, value] of this._deadLetters.iterator()) {
+      const entry = JSON.parse(value) as DeadLetterEntry;
+      if (!tenantDid || entry.tenantDid === tenantDid) {
+        entries.push(entry);
+      }
+    }
+    return entries;
+  }
+
+  public async clearFailedMessage(messageCid: string): Promise<boolean> {
+    try {
+      await this._deadLetters.get(messageCid);
+      await this._deadLetters.del(messageCid);
+      return true;
+    } catch (error) {
+      const e = error as { code?: string };
+      if (e.code === 'LEVEL_NOT_FOUND') { return false; }
+      throw error;
+    }
+  }
+
+  public async clearAllFailedMessages(tenantDid?: string): Promise<void> {
+    if (!tenantDid) {
+      await this._deadLetters.clear();
+      return;
+    }
+
+    // Scoped clear: iterate and delete matching entries.
+    const batch: { type: 'del'; key: string }[] = [];
+    for await (const [key, value] of this._deadLetters.iterator()) {
+      const entry = JSON.parse(value) as DeadLetterEntry;
+      if (entry.tenantDid === tenantDid) {
+        batch.push({ type: 'del', key });
+      }
+    }
+    if (batch.length > 0) {
+      await this._deadLetters.batch(batch);
+    }
+  }
+
+  public async getSyncHealth(): Promise<SyncHealthSummary> {
+    let failedMessageCount = 0;
+    for await (const _ of this._deadLetters.iterator()) {
+      failedMessageCount++;
+    }
+
+    let degradedLinkCount = 0;
+    for (const link of this._activeLinks.values()) {
+      if (link.status === 'repairing' || link.status === 'degraded_poll') {
+        degradedLinkCount++;
+      }
+    }
+
+    return {
+      connectivity: this.connectivityState,
+      failedMessageCount,
+      degradedLinkCount,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sync targets
+  // ---------------------------------------------------------------------------
 
   /**
    * Returns the list of sync targets: (did, dwnUrl, delegateDid?, protocol?) tuples.

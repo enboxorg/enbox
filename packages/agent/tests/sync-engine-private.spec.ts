@@ -3649,4 +3649,136 @@ describe('SyncEngineLevel — private methods', () => {
       expect(checkpoint.receivedToken).toEqual(baseline);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Dead letter tracking
+  // ---------------------------------------------------------------------------
+
+  describe('dead letter tracking', () => {
+    it('should record and retrieve a dead letter entry', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({
+        messageCid     : 'bafyrei-dead-1',
+        tenantDid      : 'did:example:tenant1',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol       : 'https://example.com/protocol',
+        category       : 'push-permanent',
+        errorCode      : '400',
+        errorDetail    : 'ProtocolAuthorizationProtocolNotFound',
+      });
+
+      const entries = await engine.getFailedMessages();
+      expect(entries.length).toBe(1);
+      expect(entries[0].messageCid).toBe('bafyrei-dead-1');
+      expect(entries[0].tenantDid).toBe('did:example:tenant1');
+      expect(entries[0].category).toBe('push-permanent');
+      expect(entries[0].failedAt).toBeDefined();
+    });
+
+    it('should filter dead letters by tenant', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({
+        messageCid  : 'bafyrei-dead-a',
+        tenantDid   : 'did:example:alice',
+        category    : 'push-permanent',
+        errorDetail : 'test',
+      });
+      await engine.recordDeadLetter({
+        messageCid  : 'bafyrei-dead-b',
+        tenantDid   : 'did:example:bob',
+        category    : 'push-permanent',
+        errorDetail : 'test',
+      });
+
+      const alice = await engine.getFailedMessages('did:example:alice');
+      expect(alice.length).toBe(1);
+      expect(alice[0].messageCid).toBe('bafyrei-dead-a');
+
+      const all = await engine.getFailedMessages();
+      expect(all.length).toBe(2);
+    });
+
+    it('should clear a single dead letter entry', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({
+        messageCid  : 'bafyrei-dead-clear',
+        tenantDid   : 'did:example:x',
+        category    : 'push-permanent',
+        errorDetail : 'test',
+      });
+
+      const removed = await engine.clearFailedMessage('bafyrei-dead-clear');
+      expect(removed).toBe(true);
+
+      const entries = await engine.getFailedMessages();
+      expect(entries.length).toBe(0);
+
+      // Clearing a non-existent entry returns false.
+      const notFound = await engine.clearFailedMessage('bafyrei-does-not-exist');
+      expect(notFound).toBe(false);
+    });
+
+    it('should clear all dead letter entries', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({ messageCid: 'dl-1', tenantDid: 'did:a', category: 'push-permanent', errorDetail: 'x' });
+      await engine.recordDeadLetter({ messageCid: 'dl-2', tenantDid: 'did:b', category: 'closure', errorDetail: 'y' });
+
+      await engine.clearAllFailedMessages();
+      const entries = await engine.getFailedMessages();
+      expect(entries.length).toBe(0);
+    });
+
+    it('should clear dead letters scoped to a tenant', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({ messageCid: 'dl-scoped-1', tenantDid: 'did:keep', category: 'push-permanent', errorDetail: 'x' });
+      await engine.recordDeadLetter({ messageCid: 'dl-scoped-2', tenantDid: 'did:remove', category: 'push-permanent', errorDetail: 'y' });
+
+      await engine.clearAllFailedMessages('did:remove');
+
+      const remaining = await engine.getFailedMessages();
+      expect(remaining.length).toBe(1);
+      expect(remaining[0].tenantDid).toBe('did:keep');
+    });
+
+    it('should overwrite an existing dead letter for the same CID', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({ messageCid: 'dl-overwrite', tenantDid: 'did:x', category: 'push-permanent', errorDetail: 'first' });
+      await engine.recordDeadLetter({ messageCid: 'dl-overwrite', tenantDid: 'did:x', category: 'closure', errorDetail: 'second' });
+
+      const entries = await engine.getFailedMessages();
+      expect(entries.length).toBe(1);
+      expect(entries[0].category).toBe('closure');
+      expect(entries[0].errorDetail).toBe('second');
+    });
+
+    it('should return sync health summary', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({ messageCid: 'dl-health-1', tenantDid: 'did:x', category: 'push-permanent', errorDetail: 'x' });
+      await engine.recordDeadLetter({ messageCid: 'dl-health-2', tenantDid: 'did:y', category: 'closure', errorDetail: 'y' });
+
+      const health = await engine.getSyncHealth();
+      expect(health.failedMessageCount).toBe(2);
+      expect(health.connectivity).toBeDefined();
+      expect(health.degradedLinkCount).toBe(0);
+    });
+
+    it('should count degraded links in sync health', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      // Simulate degraded links.
+      (engine as any)._activeLinks.set('link-1', { status: 'repairing', connectivity: 'offline' });
+      (engine as any)._activeLinks.set('link-2', { status: 'degraded_poll', connectivity: 'offline' });
+      (engine as any)._activeLinks.set('link-3', { status: 'live', connectivity: 'online' });
+
+      const health = await engine.getSyncHealth();
+      expect(health.degradedLinkCount).toBe(2);
+    });
+  });
 });

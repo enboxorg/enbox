@@ -196,13 +196,20 @@ export type ReplicationLinkState = {
  * Result of a batch push operation. Replaces the previous throw-on-first-failure
  * pattern so callers can advance the push replication checkpoint incrementally.
  */
+/** A permanently failed push entry with diagnostic info. */
+export type PermanentPushFailure = {
+  cid : string;
+  statusCode : number;
+  detail : string;
+};
+
 export type PushResult = {
   /** messageCids that were accepted (202/204/409 — idempotent success). */
   succeeded: string[];
   /** messageCids that failed with a transient error (5xx, network) — worth retrying. */
   failed: string[];
-  /** messageCids that failed permanently (400/401/403) — will never succeed, do NOT retry. */
-  permanentlyFailed: string[];
+  /** Messages that failed permanently (400/401/403) — will never succeed, do NOT retry. */
+  permanentlyFailed: PermanentPushFailure[];
 };
 
 /**
@@ -256,6 +263,43 @@ export type SyncEvent =
   | { type: 'gap:detected'; tenantDid: string; remoteEndpoint: string; protocol?: string; reason: string };
 
 export type SyncEventListener = (event: SyncEvent) => void;
+
+// ---------------------------------------------------------------------------
+// Dead letter tracking
+// ---------------------------------------------------------------------------
+
+/** Category of sync failure for dead letter entries. */
+export type DeadLetterCategory = 'push-permanent' | 'push-exhausted' | 'pull-processing' | 'closure';
+
+/** A message that permanently failed to sync. */
+export type DeadLetterEntry = {
+  /** The message CID that failed. */
+  messageCid: string;
+  /** The tenant DID the message belongs to. */
+  tenantDid: string;
+  /** The remote DWN endpoint involved (for push failures). */
+  remoteEndpoint?: string;
+  /** The protocol URI, if applicable. */
+  protocol?: string;
+  /** What kind of failure occurred. */
+  category: DeadLetterCategory;
+  /** Machine-readable error code (e.g., HTTP status or ClosureFailureCode). */
+  errorCode?: string;
+  /** Human-readable error detail. */
+  errorDetail: string;
+  /** ISO-8601 timestamp of when the failure was recorded. */
+  failedAt: string;
+};
+
+/** Sync health summary returned by `getSyncHealth()`. */
+export type SyncHealthSummary = {
+  /** Current connectivity state. */
+  connectivity: SyncConnectivityState;
+  /** Total number of permanently failed messages across all tenants. */
+  failedMessageCount: number;
+  /** Number of links currently in 'repairing' or 'degraded_poll' status. */
+  degradedLinkCount: number;
+};
 
 export interface SyncEngine {
   /**
@@ -323,4 +367,34 @@ export interface SyncEngine {
    * be reused.
    */
   close(): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // Dead letter / sync health
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns all permanently failed messages, optionally filtered by tenant.
+   * These are messages that the sync engine has given up on — they will not
+   * be retried automatically. Apps should surface these to users so they can
+   * take corrective action (e.g., re-create the record, check permissions).
+   */
+  getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]>;
+
+  /**
+   * Remove a dead letter entry (e.g., after the user has acknowledged it or
+   * the underlying issue has been resolved). Returns `true` if the entry
+   * existed and was removed.
+   */
+  clearFailedMessage(messageCid: string): Promise<boolean>;
+
+  /**
+   * Clear all dead letter entries, optionally scoped to a tenant.
+   */
+  clearAllFailedMessages(tenantDid?: string): Promise<void>;
+
+  /**
+   * Returns a summary of sync health: connectivity, failed message count,
+   * and degraded link count.
+   */
+  getSyncHealth(): Promise<SyncHealthSummary>;
 }
