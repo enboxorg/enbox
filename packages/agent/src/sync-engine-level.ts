@@ -268,6 +268,14 @@ export class SyncEngineLevel implements SyncEngine {
   /** Backoff multiplier for consecutive failures (caps at 4x the configured interval). */
   private static readonly MAX_BACKOFF_MULTIPLIER = 4;
 
+  /**
+   * Bound browser event handlers so they can be added and removed.
+   * Set in `startBrowserConnectivityListeners`, cleared in `stopBrowserConnectivityListeners`.
+   */
+  private _onOnline?: () => void;
+  private _onOffline?: () => void;
+  private _onVisibilityChange?: () => void;
+
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
@@ -584,6 +592,10 @@ export class SyncEngineLevel implements SyncEngine {
    * 4. Schedules an infrequent SMT integrity check at `interval`.
    */
   private async startLiveSync(intervalMilliseconds: number): Promise<void> {
+    // Step 0: Register browser connectivity listeners for instant recovery
+    // on network switch, sleep/wake, or tab foregrounding. No-op in Node.
+    this.startBrowserConnectivityListeners();
+
     // Step 1: Initial SMT catch-up.
     try {
       await this.sync();
@@ -1095,7 +1107,112 @@ export class SyncEngineLevel implements SyncEngine {
   /**
    * Tears down all live subscriptions and push listeners.
    */
+  // ---------------------------------------------------------------------------
+  // Browser connectivity: online/offline + visibilitychange
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Registers browser `online`, `offline`, and `visibilitychange` event
+   * listeners to detect connectivity changes that WebSocket `close` events
+   * miss (NAT timeout, network switch, sleep/wake). Safe to call in Node —
+   * the guards skip registration when browser APIs are unavailable.
+   */
+  private startBrowserConnectivityListeners(): void {
+    this.stopBrowserConnectivityListeners();
+
+    // Guard: only run in browser environments with the required APIs.
+    if (typeof globalThis.addEventListener !== 'function') { return; }
+
+    const generation = this._engineGeneration;
+
+    this._onOnline = (): void => {
+      if (this._engineGeneration !== generation) { return; }
+      console.info('SyncEngineLevel: browser online — triggering immediate integrity check');
+      // Don't set _connectivityState here — individual links will transition
+      // to online as their WebSocket connections actually recover during the
+      // sync below. The public getter uses per-link aggregation.
+
+      // Kick off an immediate SMT reconciliation to catch up after being offline.
+      if (!this._syncLock) {
+        this.sync().catch((err) => {
+          console.error('SyncEngineLevel: post-online sync failed', err);
+        });
+      }
+    };
+
+    this._onOffline = (): void => {
+      if (this._engineGeneration !== generation) { return; }
+      console.info('SyncEngineLevel: browser offline');
+      this._connectivityState = 'offline';
+
+      // Transition every active link to offline so the public
+      // connectivityState getter (which aggregates per-link state)
+      // reflects the browser's network status immediately.
+      for (const link of this._activeLinks.values()) {
+        const prev = link.connectivity;
+        if (prev !== 'offline') {
+          link.connectivity = 'offline';
+          this.emitEvent({
+            type           : 'link:connectivity-change',
+            tenantDid      : link.tenantDid,
+            remoteEndpoint : link.remoteEndpoint,
+            protocol       : link.protocol,
+            from           : prev,
+            to             : 'offline',
+          });
+        }
+      }
+    };
+
+    this._onVisibilityChange = (): void => {
+      if (this._engineGeneration !== generation) { return; }
+
+      // Only act when the page becomes visible again — the user is back.
+      if (typeof document === 'undefined' || document.visibilityState !== 'visible') { return; }
+
+      console.info('SyncEngineLevel: page became visible — triggering integrity check');
+
+      // The device may have slept and WebSockets may be dead. An immediate
+      // sync via SMT reconciliation detects and repairs any divergence.
+      if (!this._syncLock) {
+        this.sync().catch((err) => {
+          console.error('SyncEngineLevel: post-visibility sync failed', err);
+        });
+      }
+    };
+
+    globalThis.addEventListener('online', this._onOnline);
+    globalThis.addEventListener('offline', this._onOffline);
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this._onVisibilityChange);
+    }
+  }
+
+  /** Removes browser connectivity listeners if they were registered. */
+  private stopBrowserConnectivityListeners(): void {
+    if (this._onOnline) {
+      globalThis.removeEventListener('online', this._onOnline);
+      this._onOnline = undefined;
+    }
+    if (this._onOffline) {
+      globalThis.removeEventListener('offline', this._onOffline);
+      this._onOffline = undefined;
+    }
+    if (this._onVisibilityChange && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this._onVisibilityChange);
+      this._onVisibilityChange = undefined;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Teardown
+  // ---------------------------------------------------------------------------
+
   private async teardownLiveSync(): Promise<void> {
+    // Remove browser connectivity listeners before tearing down.
+    this.stopBrowserConnectivityListeners();
+
     // Increment generation to invalidate all in-flight async operations
     // (repairs, retry timers, degraded-poll ticks). Any async work that
     // captured the previous generation will bail on its next checkpoint.

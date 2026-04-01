@@ -3,6 +3,7 @@ import sinon from 'sinon';
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
+import { ReplicationLedger } from '../src/sync-replication-ledger.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 describe('SyncEngineLevel — private methods', () => {
@@ -3236,6 +3237,416 @@ describe('SyncEngineLevel — private methods', () => {
       expect(() => {
         (engine as any).emitEvent({ type: 'gap:detected', tenantDid: 'x', remoteEndpoint: 'y', reason: 'test' });
       }).not.toThrow();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Browser connectivity listeners
+  // ---------------------------------------------------------------------------
+
+  describe('browser connectivity listeners', () => {
+    // Save and restore globalThis.addEventListener / removeEventListener
+    // since the sync engine guards on their existence.
+    let origAddEventListener: typeof globalThis.addEventListener;
+    let origRemoveEventListener: typeof globalThis.removeEventListener;
+    let registeredListeners: Map<string, EventListener>;
+
+    beforeAll(() => {
+      origAddEventListener = globalThis.addEventListener;
+      origRemoveEventListener = globalThis.removeEventListener;
+    });
+
+    afterEach(() => {
+      globalThis.addEventListener = origAddEventListener;
+      globalThis.removeEventListener = origRemoveEventListener;
+      registeredListeners = new Map();
+    });
+
+    function installBrowserStubs(): void {
+      registeredListeners = new Map();
+      globalThis.addEventListener = ((type: string, listener: EventListener) => {
+        registeredListeners.set(type, listener);
+      }) as any;
+      globalThis.removeEventListener = ((type: string, _listener: EventListener) => {
+        registeredListeners.delete(type);
+      }) as any;
+    }
+
+    it('should register online, offline, and visibilitychange listeners when browser APIs are available', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      expect(registeredListeners.has('online')).toBe(true);
+      expect(registeredListeners.has('offline')).toBe(true);
+      // visibilitychange requires `document` — may or may not be set in test env.
+    });
+
+    it('should remove listeners on stopBrowserConnectivityListeners', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+
+      (engine as any).startBrowserConnectivityListeners();
+      expect(registeredListeners.has('online')).toBe(true);
+
+      (engine as any).stopBrowserConnectivityListeners();
+      expect(registeredListeners.has('online')).toBe(false);
+      expect(registeredListeners.has('offline')).toBe(false);
+    });
+
+    it('should be a no-op when globalThis.addEventListener is not a function', () => {
+      // Simulate a Node-like environment without addEventListener.
+      const saved = globalThis.addEventListener;
+      delete (globalThis as any).addEventListener;
+
+      const engine = new SyncEngineLevel({ db });
+
+      // Should not throw.
+      expect(() => {
+        (engine as any).startBrowserConnectivityListeners();
+      }).not.toThrow();
+
+      // Restore.
+      globalThis.addEventListener = saved;
+    });
+
+    it('should set _connectivityState to offline on offline event', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._connectivityState = 'online';
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      const offlineHandler = registeredListeners.get('offline');
+      expect(offlineHandler).toBeDefined();
+      offlineHandler!({} as Event);
+
+      expect((engine as any)._connectivityState).toBe('offline');
+    });
+
+    it('should transition all active links to offline and update public connectivityState', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+
+      // Simulate two active links that are online.
+      const linkA: Record<string, unknown> = { tenantDid: 'did:a', remoteEndpoint: 'https://a.com', protocol: undefined, connectivity: 'online', scope: { kind: 'full' } };
+      const linkB: Record<string, unknown> = { tenantDid: 'did:b', remoteEndpoint: 'https://b.com', protocol: 'proto', connectivity: 'online', scope: { kind: 'protocol', protocol: 'proto' } };
+      (engine as any)._activeLinks.set('a', linkA);
+      (engine as any)._activeLinks.set('b', linkB);
+
+      // With active links online, public getter should report online.
+      expect(engine.connectivityState).toBe('online');
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      const offlineHandler = registeredListeners.get('offline');
+      offlineHandler!({} as Event);
+
+      // Both links should now be offline.
+      expect(linkA.connectivity).toBe('offline');
+      expect(linkB.connectivity).toBe('offline');
+
+      // Public getter aggregates per-link state — should now report offline.
+      expect(engine.connectivityState).toBe('offline');
+    });
+
+    it('should trigger sync on online event without prematurely setting connectivity', async () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._connectivityState = 'offline';
+
+      // Stub sync() to track whether it was called.
+      let syncCalled = false;
+      (engine as any).sync = async (): Promise<void> => { syncCalled = true; };
+      (engine as any)._syncLock = false;
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      const onlineHandler = registeredListeners.get('online');
+      expect(onlineHandler).toBeDefined();
+      onlineHandler!({} as Event);
+
+      // The global fallback should NOT be set to online — individual links
+      // transition to online as their connections actually recover.
+      expect((engine as any)._connectivityState).toBe('offline');
+
+      // sync() is called asynchronously — wait a tick.
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(syncCalled).toBe(true);
+    });
+
+    it('should not trigger sync on online event when _syncLock is held', async () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+
+      let syncCalled = false;
+      (engine as any).sync = async (): Promise<void> => { syncCalled = true; };
+      (engine as any)._syncLock = true;
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      const onlineHandler = registeredListeners.get('online');
+      onlineHandler!({} as Event);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(syncCalled).toBe(false);
+    });
+
+    it('should ignore events after engine generation changes (teardown)', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._connectivityState = 'online';
+
+      (engine as any).startBrowserConnectivityListeners();
+
+      // Simulate teardown by incrementing generation.
+      (engine as any)._engineGeneration++;
+
+      const offlineHandler = registeredListeners.get('offline');
+      offlineHandler!({} as Event);
+
+      // State should NOT have changed — the handler is stale.
+      expect((engine as any)._connectivityState).toBe('online');
+    });
+
+    it('should clean up on repeated startBrowserConnectivityListeners calls', () => {
+      installBrowserStubs();
+      const engine = new SyncEngineLevel({ db });
+
+      (engine as any).startBrowserConnectivityListeners();
+      const firstOnline = registeredListeners.get('online');
+
+      // Call again — should remove old listeners and register new ones.
+      (engine as any).startBrowserConnectivityListeners();
+      const secondOnline = registeredListeners.get('online');
+
+      // The handler reference should be different (new closure).
+      expect(firstOnline).not.toBe(secondOnline);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // unregisterIdentity
+  // ---------------------------------------------------------------------------
+
+  describe('unregisterIdentity', () => {
+    it('should remove a registered identity', async () => {
+      const engine = new SyncEngineLevel({ db });
+      await engine.registerIdentity({ did: 'did:example:unreg-test' });
+
+      const before = await engine.getIdentityOptions('did:example:unreg-test');
+      expect(before).toBeDefined();
+
+      await engine.unregisterIdentity('did:example:unreg-test');
+
+      const after = await engine.getIdentityOptions('did:example:unreg-test');
+      expect(after).toBeUndefined();
+    });
+
+    it('should throw when unregistering an identity that is not registered', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await expect(
+        engine.unregisterIdentity('did:example:not-registered')
+      ).rejects.toThrow('not registered');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // ReplicationLedger
+  // ---------------------------------------------------------------------------
+
+  describe('ReplicationLedger', () => {
+    let ledger: ReplicationLedger;
+
+    beforeAll(() => {
+      ledger = new ReplicationLedger(db);
+    });
+
+    it('should create and retrieve a link via getOrCreateLink', async () => {
+      const link = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:ledger-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      expect(link.tenantDid).toBe('did:example:ledger-test');
+      expect(link.remoteEndpoint).toBe('https://dwn.example.com');
+      expect(link.status).toBe('initializing');
+      expect(link.connectivity).toBe('unknown');
+
+      // Second call should return the same link (not create a new one).
+      const same = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:ledger-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+      expect(same.tenantDid).toBe(link.tenantDid);
+    });
+
+    it('should persist changes via saveLink and set lastActivityAt', async () => {
+      const link = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:save-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      expect(link.lastActivityAt).toBeUndefined();
+
+      await ledger.setStatus(link, 'live');
+      await ledger.saveLink(link);
+
+      // getOrCreateLink resets connectivity to 'unknown' on load (it's runtime
+      // state), but persisted fields like status and lastActivityAt survive.
+      const retrieved = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:save-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+      expect(retrieved.status).toBe('live');
+      expect(retrieved.lastActivityAt).toBeDefined();
+      expect(retrieved.connectivity).toBe('unknown'); // Always reset on load.
+    });
+
+    it('should delete a link', async () => {
+      const link = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:delete-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      await ledger.deleteLink(link.tenantDid, link.remoteEndpoint, link.scopeId);
+
+      // After deletion, getOrCreateLink should create a fresh link.
+      const fresh = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:delete-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+      expect(fresh.status).toBe('initializing');
+    });
+
+    it('should list links for a tenant', async () => {
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:list-test',
+        remoteEndpoint : 'https://a.com',
+        scope          : { kind: 'full' },
+      });
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:list-test',
+        remoteEndpoint : 'https://b.com',
+        scope          : { kind: 'full' },
+      });
+
+      const links = await ledger.getLinksForTenant('did:example:list-test');
+      expect(links.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should list all links', async () => {
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:all-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      const all = await ledger.getAllLinks();
+      expect(all.length).toBeGreaterThan(0);
+    });
+
+    it('should transition link status via setStatus', async () => {
+      const link = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:status-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      expect(link.status).toBe('initializing');
+
+      await ledger.setStatus(link, 'repairing');
+      expect(link.status).toBe('repairing');
+    });
+
+    it('should mark and clear needsReconcile', async () => {
+      const link = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:reconcile-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      expect(link.needsReconcile).toBe(false);
+
+      await ledger.markNeedsReconcile(link, 'test reason');
+      expect(link.needsReconcile).toBe(true);
+
+      // Idempotent — second call should be a no-op.
+      await ledger.markNeedsReconcile(link);
+      expect(link.needsReconcile).toBe(true);
+
+      await ledger.clearNeedsReconcile(link);
+      expect(link.needsReconcile).toBe(false);
+
+      // Idempotent — second clear should be a no-op.
+      await ledger.clearNeedsReconcile(link);
+      expect(link.needsReconcile).toBe(false);
+    });
+
+    it('should compare token positions correctly', () => {
+      const a = { streamId: 's', epoch: 'e', position: '10', messageCid: 'a' };
+      const b = { streamId: 's', epoch: 'e', position: '20', messageCid: 'b' };
+      const c = { streamId: 's', epoch: 'e', position: '10', messageCid: 'c' };
+
+      expect(ReplicationLedger.comparePosition(a, b)).toBe(-1);
+      expect(ReplicationLedger.comparePosition(b, a)).toBe(1);
+      expect(ReplicationLedger.comparePosition(a, c)).toBe(0);
+    });
+
+    it('should validate token domain against checkpoint', () => {
+      const checkpoint = { contiguousAppliedToken: { streamId: 's1', epoch: 'e1', position: '5', messageCid: 'x' } };
+
+      expect(ReplicationLedger.validateTokenDomain(checkpoint, { streamId: 's1', epoch: 'e1', position: '10', messageCid: 'y' })).toBe(true);
+      expect(ReplicationLedger.validateTokenDomain(checkpoint, { streamId: 's2', epoch: 'e1', position: '10', messageCid: 'y' })).toBe(false);
+      expect(ReplicationLedger.validateTokenDomain(checkpoint, { streamId: 's1', epoch: 'e2', position: '10', messageCid: 'y' })).toBe(false);
+
+      // Empty checkpoint accepts any token.
+      expect(ReplicationLedger.validateTokenDomain({}, { streamId: 's1', epoch: 'e1', position: '10', messageCid: 'y' })).toBe(true);
+    });
+
+    it('should set and commit tokens', () => {
+      const checkpoint: Record<string, unknown> = {};
+      const token = { streamId: 's', epoch: 'e', position: '10', messageCid: 'x' };
+
+      ReplicationLedger.setReceivedToken(checkpoint, token);
+      expect(checkpoint.receivedToken).toEqual(token);
+
+      // Higher position updates it.
+      const higher = { streamId: 's', epoch: 'e', position: '20', messageCid: 'y' };
+      ReplicationLedger.setReceivedToken(checkpoint, higher);
+      expect(checkpoint.receivedToken).toEqual(higher);
+
+      // Lower position does not update.
+      ReplicationLedger.setReceivedToken(checkpoint, token);
+      expect(checkpoint.receivedToken).toEqual(higher);
+
+      ReplicationLedger.commitContiguousToken(checkpoint, higher);
+      expect(checkpoint.contiguousAppliedToken).toEqual(higher);
+    });
+
+    it('should reset checkpoint', () => {
+      const checkpoint: Record<string, unknown> = {
+        contiguousAppliedToken : { streamId: 's', epoch: 'e', position: '10', messageCid: 'x' },
+        receivedToken          : { streamId: 's', epoch: 'e', position: '20', messageCid: 'y' },
+      };
+
+      ReplicationLedger.resetCheckpoint(checkpoint);
+      expect(checkpoint.contiguousAppliedToken).toBeUndefined();
+      expect(checkpoint.receivedToken).toBeUndefined();
+
+      // Reset with a baseline token.
+      const baseline = { streamId: 's', epoch: 'e', position: '5', messageCid: 'z' };
+      ReplicationLedger.resetCheckpoint(checkpoint, baseline);
+      expect(checkpoint.contiguousAppliedToken).toEqual(baseline);
+      expect(checkpoint.receivedToken).toEqual(baseline);
     });
   });
 });
