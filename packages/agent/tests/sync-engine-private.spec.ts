@@ -3649,4 +3649,192 @@ describe('SyncEngineLevel — private methods', () => {
       expect(checkpoint.receivedToken).toEqual(baseline);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Dead letter tracking
+  // ---------------------------------------------------------------------------
+
+  describe('dead letter tracking', () => {
+    it('should record and retrieve a dead letter entry', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({
+        messageCid     : 'bafyrei-dead-1',
+        tenantDid      : 'did:example:tenant1',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol       : 'https://example.com/protocol',
+        category       : 'push-permanent',
+        errorCode      : '400',
+        errorDetail    : 'ProtocolAuthorizationProtocolNotFound',
+      });
+
+      const entries = await engine.getFailedMessages();
+      expect(entries.length).toBe(1);
+      expect(entries[0].messageCid).toBe('bafyrei-dead-1');
+      expect(entries[0].tenantDid).toBe('did:example:tenant1');
+      expect(entries[0].category).toBe('push-permanent');
+      expect(entries[0].failedAt).toBeDefined();
+    });
+
+    it('should filter dead letters by tenant', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({
+        messageCid  : 'bafyrei-dead-a',
+        tenantDid   : 'did:example:alice',
+        category    : 'push-permanent',
+        errorDetail : 'test',
+      });
+      await engine.recordDeadLetter({
+        messageCid  : 'bafyrei-dead-b',
+        tenantDid   : 'did:example:bob',
+        category    : 'push-permanent',
+        errorDetail : 'test',
+      });
+
+      const alice = await engine.getFailedMessages('did:example:alice');
+      expect(alice.length).toBe(1);
+      expect(alice[0].messageCid).toBe('bafyrei-dead-a');
+
+      const all = await engine.getFailedMessages();
+      expect(all.length).toBe(2);
+    });
+
+    it('should clear a single dead letter entry', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({
+        messageCid  : 'bafyrei-dead-clear',
+        tenantDid   : 'did:example:x',
+        category    : 'push-permanent',
+        errorDetail : 'test',
+      });
+
+      const removed = await engine.clearFailedMessage('bafyrei-dead-clear');
+      expect(removed).toBe(true);
+
+      const entries = await engine.getFailedMessages();
+      expect(entries.length).toBe(0);
+
+      // Clearing a non-existent entry returns false.
+      const notFound = await engine.clearFailedMessage('bafyrei-does-not-exist');
+      expect(notFound).toBe(false);
+    });
+
+    it('should clear all dead letter entries', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({ messageCid: 'dl-1', tenantDid: 'did:a', category: 'push-permanent', errorDetail: 'x' });
+      await engine.recordDeadLetter({ messageCid: 'dl-2', tenantDid: 'did:b', category: 'closure', errorDetail: 'y' });
+
+      await engine.clearAllFailedMessages();
+      const entries = await engine.getFailedMessages();
+      expect(entries.length).toBe(0);
+    });
+
+    it('should clear dead letters scoped to a tenant', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({ messageCid: 'dl-scoped-1', tenantDid: 'did:keep', category: 'push-permanent', errorDetail: 'x' });
+      await engine.recordDeadLetter({ messageCid: 'dl-scoped-2', tenantDid: 'did:remove', category: 'push-permanent', errorDetail: 'y' });
+
+      await engine.clearAllFailedMessages('did:remove');
+
+      const remaining = await engine.getFailedMessages();
+      expect(remaining.length).toBe(1);
+      expect(remaining[0].tenantDid).toBe('did:keep');
+    });
+
+    it('should store separate entries for the same CID on different remotes', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-multi',
+        tenantDid      : 'did:x',
+        remoteEndpoint : 'https://a.com',
+        category       : 'push-permanent',
+        errorCode      : '400',
+        errorDetail    : 'ProtocolNotFound on A',
+      });
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-multi',
+        tenantDid      : 'did:x',
+        remoteEndpoint : 'https://b.com',
+        category       : 'push-permanent',
+        errorCode      : '401',
+        errorDetail    : 'Unauthorized on B',
+      });
+
+      const entries = await engine.getFailedMessages();
+      expect(entries.length).toBe(2);
+      expect(entries.map(e => e.remoteEndpoint).sort()).toEqual(['https://a.com', 'https://b.com']);
+    });
+
+    it('should clear a specific CID+remote pair without affecting other remotes', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({ messageCid: 'dl-pair', tenantDid: 'did:x', remoteEndpoint: 'https://a.com', category: 'push-permanent', errorDetail: 'a' });
+      await engine.recordDeadLetter({ messageCid: 'dl-pair', tenantDid: 'did:x', remoteEndpoint: 'https://b.com', category: 'push-permanent', errorDetail: 'b' });
+
+      // Clear only the A entry.
+      const removed = await engine.clearFailedMessage('dl-pair', 'https://a.com');
+      expect(removed).toBe(true);
+
+      const remaining = await engine.getFailedMessages();
+      expect(remaining.length).toBe(1);
+      expect(remaining[0].remoteEndpoint).toBe('https://b.com');
+    });
+
+    it('should clear all entries for a CID across remotes when no remote is specified', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({ messageCid: 'dl-all-remotes', tenantDid: 'did:x', remoteEndpoint: 'https://a.com', category: 'push-permanent', errorDetail: 'a' });
+      await engine.recordDeadLetter({ messageCid: 'dl-all-remotes', tenantDid: 'did:x', remoteEndpoint: 'https://b.com', category: 'push-permanent', errorDetail: 'b' });
+
+      const removed = await engine.clearFailedMessage('dl-all-remotes');
+      expect(removed).toBe(true);
+
+      const entries = await engine.getFailedMessages();
+      expect(entries.length).toBe(0);
+    });
+
+    it('should return sync health summary', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      await engine.recordDeadLetter({ messageCid: 'dl-health-1', tenantDid: 'did:x', category: 'push-permanent', errorDetail: 'x' });
+      await engine.recordDeadLetter({ messageCid: 'dl-health-2', tenantDid: 'did:y', category: 'closure', errorDetail: 'y' });
+
+      const health = await engine.getSyncHealth();
+      expect(health.failedMessageCount).toBe(2);
+      expect(health.connectivity).toBeDefined();
+      expect(health.degradedLinkCount).toBe(0);
+    });
+
+    it('should count degraded links from durable ledger, not just in-memory state', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      // Create links via the ledger (durable) — these survive restart.
+      const ledger = (engine as any).ledger;
+      const link1 = await ledger.getOrCreateLink({
+        tenantDid: 'did:degraded-test', remoteEndpoint: 'https://a.com', scope: { kind: 'full' },
+      });
+      await ledger.setStatus(link1, 'degraded_poll');
+
+      const link2 = await ledger.getOrCreateLink({
+        tenantDid: 'did:degraded-test', remoteEndpoint: 'https://b.com', scope: { kind: 'full' },
+      });
+      await ledger.setStatus(link2, 'repairing');
+
+      const link3 = await ledger.getOrCreateLink({
+        tenantDid: 'did:degraded-test', remoteEndpoint: 'https://c.com', scope: { kind: 'full' },
+      });
+      await ledger.setStatus(link3, 'live');
+
+      // _activeLinks is empty — simulates a fresh restart.
+      expect((engine as any)._activeLinks.size).toBe(0);
+
+      const health = await engine.getSyncHealth();
+      expect(health.degradedLinkCount).toBe(2);
+    });
+  });
 });

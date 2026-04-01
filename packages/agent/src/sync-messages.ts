@@ -1,7 +1,8 @@
+import type { GenericMessage, MessagesReadReply, MessagesSyncDiffEntry, UnionMessageReply } from '@enbox/dwn-sdk-js';
+
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
-import type { PushResult } from './types/sync.js';
-import type { GenericMessage, MessagesReadReply, MessagesSyncDiffEntry, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { PermanentPushFailure, PushResult } from './types/sync.js';
 
 import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 
@@ -327,7 +328,7 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
 }): Promise<PushResult> {
   const succeeded: string[] = [];
   const failed: string[] = [];
-  const permanentlyFailed: string[] = [];
+  const permanentlyFailed: PermanentPushFailure[] = [];
 
   // Step 1: Fetch all local messages (streams are pull-based, not yet consumed).
   const fetched: SyncMessageEntry[] = [];
@@ -369,7 +370,7 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
         } else {
           console.warn(`SyncEngineLevel: push permanently failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
         }
-        permanentlyFailed.push(cid);
+        permanentlyFailed.push({ cid, statusCode: reply.status.code, detail: reply.status.detail ?? '' });
       } else {
         // Transient failures (5xx, etc.) — worth retrying.
         console.error(`SyncEngineLevel: push failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
