@@ -12,8 +12,8 @@
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:node": "bun test --timeout 10000 tests/*.spec.ts",
-    "test:node:coverage": "bun test --timeout 10000 --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage tests/*.spec.ts",
+    "test:node": "bun test --timeout 10000 $(find tests -name '*.spec.ts' -not -path 'tests/e2e/*')",
+    "test:node:coverage": "bun test --timeout 10000 --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage $(find tests -name '*.spec.ts' -not -path 'tests/e2e/*')",
     "test:e2e": "bun test --timeout 120000 tests/e2e/*.e2e.spec.ts",
     "test:browser": "bunx --bun vitest --config vitest.browser.config.ts --run",
     "test:browser:coverage": "bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul"

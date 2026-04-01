@@ -124,31 +124,53 @@ describe('E2E: live sync convergence', () => {
     expect(found).toBe(true);
   }, 20_000);
 
-  it('should pull the remote record back via SMT reconciliation', async () => {
-    // Stop sync and delete the local record to simulate a fresh device.
+  it('should pull a remote-only record to local via SMT reconciliation', async () => {
+    // Stop sync so we can create a record on the remote that the local
+    // agent doesn't know about — then verify pull brings it down.
     await harness.agent.sync.stopSync();
 
-    await harness.agent.dwn.processRequest({
+    // Write a new record directly to the remote (bypassing local DWN).
+    const pullTestData = Convert.string('pull convergence test').toUint8Array();
+    const remoteWrite = await harness.agent.dwn.sendRequest({
       author        : aliceDid,
       target        : aliceDid,
-      messageType   : DwnInterface.RecordsDelete,
-      messageParams : { recordId },
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'message',
+        schema       : chatProtocol.types.message.schema,
+        dataFormat   : 'text/plain',
+      },
+      dataStream: new Blob([pullTestData]),
     });
+    expect(remoteWrite.reply.status.code).toBe(202);
+    const pullRecordId = remoteWrite.message!.recordId;
 
-    // Run a one-shot pull to fetch from remote.
-    await harness.agent.sync.sync('pull');
-
-    // The pull should have brought back the record (or its delete — either
-    // way the reconciliation ran successfully against the remote).
-    const queryResult = await harness.agent.dwn.processRequest({
+    // Verify it does NOT exist locally yet.
+    const beforePull = await harness.agent.dwn.processRequest({
       author        : aliceDid,
       target        : aliceDid,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
-        filter: { protocol: chatProtocol.protocol },
+        filter: { protocol: chatProtocol.protocol, recordId: pullRecordId },
       },
     });
-    expect(queryResult.reply.status.code).toBe(200);
+    expect(beforePull.reply.entries?.length ?? 0).toBe(0);
+
+    // Pull from remote via SMT reconciliation.
+    await harness.agent.sync.sync('pull');
+
+    // The record should now exist locally.
+    const afterPull = await harness.agent.dwn.processRequest({
+      author        : aliceDid,
+      target        : aliceDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: { protocol: chatProtocol.protocol, recordId: pullRecordId },
+      },
+    });
+    expect(afterPull.reply.status.code).toBe(200);
+    expect(afterPull.reply.entries?.length).toBe(1);
   }, 20_000);
 
   it('should report healthy sync with zero failed messages', async () => {
