@@ -335,6 +335,108 @@ jobs:
           docker rm -f pkarr-relay || true
 
   # ---------------------------------------------------------------------------
+  # E2E: long-running sync integration tests (heartbeat, convergence)
+  # ---------------------------------------------------------------------------
+
+  test-e2e:
+    name: 'Test: e2e (long-running)'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: setup
+    if: needs.changes.outputs.src == 'true'
+
+    services:
+      postgres-e2e:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: dwn
+          POSTGRES_USER: dwn_user
+          POSTGRES_PASSWORD: dwn_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Restore bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: workspace-build
+          path: packages
+
+      - name: Start Pkarr relay
+        run: |
+          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr pkarr-relay --testnet
+          echo "Waiting for Pkarr relay..."
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:7527/ >/dev/null 2>&1 || [ $? -eq 22 ]; then
+              echo "Pkarr relay is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Start dwn-server
+        run: |
+          export DS_PORT=3000
+          export DWN_BASE_URL=http://localhost:3000
+          export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_STATE_INDEX=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
+          export DID_DHT_GATEWAY_URI=http://localhost:7527
+          export DWN_RATE_LIMIT_REQUESTS_PER_SECOND=0
+          export DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND=0
+
+          bun packages/dwn-server/dist/esm/src/main.js &
+          echo "DWN_SERVER_PID=$!" >> $GITHUB_ENV
+
+          echo "Waiting for dwn-server..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/info >/dev/null 2>&1; then
+              echo "dwn-server is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run e2e tests
+        run: |
+          export DID_DHT_GATEWAY_URI=http://localhost:7527
+          bun run --filter @enbox/agent test:e2e
+
+      - name: Stop services
+        if: always()
+        run: |
+          if [ -n "$DWN_SERVER_PID" ]; then
+            kill "$DWN_SERVER_PID" || true
+          fi
+          docker rm -f pkarr-relay || true
+
+  # ---------------------------------------------------------------------------
   # SQL Store: needs Postgres + MySQL for dialect-specific tests
   # ---------------------------------------------------------------------------
   test-sql-store:
@@ -505,7 +607,7 @@ jobs:
     name: Coverage Check
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, test-browser]
+    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser]
     if: always() && !cancelled() && needs.changes.outputs.src == 'true'
 
     steps:
@@ -927,7 +1029,7 @@ jobs:
     name: CI Passed
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-sql-store, test-dwn-server, test-browser, coverage]
+    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage]
     if: always()
     steps:
       - name: Check results
@@ -949,6 +1051,10 @@ jobs:
           fi
           if [ "${{ needs.test-agent-api.result }}" != "success" ]; then
             echo "::error::test-agent-api failed"
+            exit 1
+          fi
+          if [ "${{ needs.test-e2e.result }}" != "success" ] && [ "${{ needs.test-e2e.result }}" != "skipped" ]; then
+            echo "::error::test-e2e failed"
             exit 1
           fi
           if [ "${{ needs.test-sql-store.result }}" != "success" ]; then
