@@ -3,6 +3,7 @@ import sinon from 'sinon';
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
+import { ReplicationLedger } from '../src/sync-replication-ledger.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 describe('SyncEngineLevel — private methods', () => {
@@ -3350,7 +3351,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(engine.connectivityState).toBe('offline');
     });
 
-    it('should set _connectivityState to online and trigger sync on online event', async () => {
+    it('should trigger sync on online event without prematurely setting connectivity', async () => {
       installBrowserStubs();
       const engine = new SyncEngineLevel({ db });
       (engine as any)._connectivityState = 'offline';
@@ -3366,7 +3367,9 @@ describe('SyncEngineLevel — private methods', () => {
       expect(onlineHandler).toBeDefined();
       onlineHandler!({} as Event);
 
-      expect((engine as any)._connectivityState).toBe('online');
+      // The global fallback should NOT be set to online — individual links
+      // transition to online as their connections actually recover.
+      expect((engine as any)._connectivityState).toBe('offline');
 
       // sync() is called asynchronously — wait a tick.
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -3447,6 +3450,203 @@ describe('SyncEngineLevel — private methods', () => {
       await expect(
         engine.unregisterIdentity('did:example:not-registered')
       ).rejects.toThrow('not registered');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // ReplicationLedger
+  // ---------------------------------------------------------------------------
+
+  describe('ReplicationLedger', () => {
+    let ledger: ReplicationLedger;
+
+    beforeAll(() => {
+      ledger = new ReplicationLedger(db);
+    });
+
+    it('should create and retrieve a link via getOrCreateLink', async () => {
+      const link = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:ledger-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      expect(link.tenantDid).toBe('did:example:ledger-test');
+      expect(link.remoteEndpoint).toBe('https://dwn.example.com');
+      expect(link.status).toBe('initializing');
+      expect(link.connectivity).toBe('unknown');
+
+      // Second call should return the same link (not create a new one).
+      const same = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:ledger-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+      expect(same.tenantDid).toBe(link.tenantDid);
+    });
+
+    it('should persist changes via saveLink and set lastActivityAt', async () => {
+      const link = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:save-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      expect(link.lastActivityAt).toBeUndefined();
+
+      await ledger.setStatus(link, 'live');
+      await ledger.saveLink(link);
+
+      // getOrCreateLink resets connectivity to 'unknown' on load (it's runtime
+      // state), but persisted fields like status and lastActivityAt survive.
+      const retrieved = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:save-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+      expect(retrieved.status).toBe('live');
+      expect(retrieved.lastActivityAt).toBeDefined();
+      expect(retrieved.connectivity).toBe('unknown'); // Always reset on load.
+    });
+
+    it('should delete a link', async () => {
+      const link = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:delete-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      await ledger.deleteLink(link.tenantDid, link.remoteEndpoint, link.scopeId);
+
+      // After deletion, getOrCreateLink should create a fresh link.
+      const fresh = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:delete-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+      expect(fresh.status).toBe('initializing');
+    });
+
+    it('should list links for a tenant', async () => {
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:list-test',
+        remoteEndpoint : 'https://a.com',
+        scope          : { kind: 'full' },
+      });
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:list-test',
+        remoteEndpoint : 'https://b.com',
+        scope          : { kind: 'full' },
+      });
+
+      const links = await ledger.getLinksForTenant('did:example:list-test');
+      expect(links.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should list all links', async () => {
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:all-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      const all = await ledger.getAllLinks();
+      expect(all.length).toBeGreaterThan(0);
+    });
+
+    it('should transition link status via setStatus', async () => {
+      const link = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:status-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      expect(link.status).toBe('initializing');
+
+      await ledger.setStatus(link, 'repairing');
+      expect(link.status).toBe('repairing');
+    });
+
+    it('should mark and clear needsReconcile', async () => {
+      const link = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:reconcile-test',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      expect(link.needsReconcile).toBe(false);
+
+      await ledger.markNeedsReconcile(link, 'test reason');
+      expect(link.needsReconcile).toBe(true);
+
+      // Idempotent — second call should be a no-op.
+      await ledger.markNeedsReconcile(link);
+      expect(link.needsReconcile).toBe(true);
+
+      await ledger.clearNeedsReconcile(link);
+      expect(link.needsReconcile).toBe(false);
+
+      // Idempotent — second clear should be a no-op.
+      await ledger.clearNeedsReconcile(link);
+      expect(link.needsReconcile).toBe(false);
+    });
+
+    it('should compare token positions correctly', () => {
+      const a = { streamId: 's', epoch: 'e', position: '10', messageCid: 'a' };
+      const b = { streamId: 's', epoch: 'e', position: '20', messageCid: 'b' };
+      const c = { streamId: 's', epoch: 'e', position: '10', messageCid: 'c' };
+
+      expect(ReplicationLedger.comparePosition(a, b)).toBe(-1);
+      expect(ReplicationLedger.comparePosition(b, a)).toBe(1);
+      expect(ReplicationLedger.comparePosition(a, c)).toBe(0);
+    });
+
+    it('should validate token domain against checkpoint', () => {
+      const checkpoint = { contiguousAppliedToken: { streamId: 's1', epoch: 'e1', position: '5', messageCid: 'x' } };
+
+      expect(ReplicationLedger.validateTokenDomain(checkpoint, { streamId: 's1', epoch: 'e1', position: '10', messageCid: 'y' })).toBe(true);
+      expect(ReplicationLedger.validateTokenDomain(checkpoint, { streamId: 's2', epoch: 'e1', position: '10', messageCid: 'y' })).toBe(false);
+      expect(ReplicationLedger.validateTokenDomain(checkpoint, { streamId: 's1', epoch: 'e2', position: '10', messageCid: 'y' })).toBe(false);
+
+      // Empty checkpoint accepts any token.
+      expect(ReplicationLedger.validateTokenDomain({}, { streamId: 's1', epoch: 'e1', position: '10', messageCid: 'y' })).toBe(true);
+    });
+
+    it('should set and commit tokens', () => {
+      const checkpoint: Record<string, unknown> = {};
+      const token = { streamId: 's', epoch: 'e', position: '10', messageCid: 'x' };
+
+      ReplicationLedger.setReceivedToken(checkpoint, token);
+      expect(checkpoint.receivedToken).toEqual(token);
+
+      // Higher position updates it.
+      const higher = { streamId: 's', epoch: 'e', position: '20', messageCid: 'y' };
+      ReplicationLedger.setReceivedToken(checkpoint, higher);
+      expect(checkpoint.receivedToken).toEqual(higher);
+
+      // Lower position does not update.
+      ReplicationLedger.setReceivedToken(checkpoint, token);
+      expect(checkpoint.receivedToken).toEqual(higher);
+
+      ReplicationLedger.commitContiguousToken(checkpoint, higher);
+      expect(checkpoint.contiguousAppliedToken).toEqual(higher);
+    });
+
+    it('should reset checkpoint', () => {
+      const checkpoint: Record<string, unknown> = {
+        contiguousAppliedToken : { streamId: 's', epoch: 'e', position: '10', messageCid: 'x' },
+        receivedToken          : { streamId: 's', epoch: 'e', position: '20', messageCid: 'y' },
+      };
+
+      ReplicationLedger.resetCheckpoint(checkpoint);
+      expect(checkpoint.contiguousAppliedToken).toBeUndefined();
+      expect(checkpoint.receivedToken).toBeUndefined();
+
+      // Reset with a baseline token.
+      const baseline = { streamId: 's', epoch: 'e', position: '5', messageCid: 'z' };
+      ReplicationLedger.resetCheckpoint(checkpoint, baseline);
+      expect(checkpoint.contiguousAppliedToken).toEqual(baseline);
+      expect(checkpoint.receivedToken).toEqual(baseline);
     });
   });
 });

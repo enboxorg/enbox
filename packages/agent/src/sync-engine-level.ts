@@ -1128,7 +1128,9 @@ export class SyncEngineLevel implements SyncEngine {
     this._onOnline = (): void => {
       if (this._engineGeneration !== generation) { return; }
       console.info('SyncEngineLevel: browser online — triggering immediate integrity check');
-      this._connectivityState = 'online';
+      // Don't set _connectivityState here — individual links will transition
+      // to online as their WebSocket connections actually recover during the
+      // sync below. The public getter uses per-link aggregation.
 
       // Kick off an immediate SMT reconciliation to catch up after being offline.
       if (!this._syncLock) {
