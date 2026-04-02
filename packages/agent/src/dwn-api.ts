@@ -171,12 +171,13 @@ export class AgentDwnApi {
    * delegates to decrypt encrypted records without possessing the owner's
    * root X25519 private key.
    *
-   * Keyed by `ddk~${connectedDid}`. Each entry is an array covering all
-   * granted read scopes for that connected DID.
+   * Keyed by `ddk~${delegateDid}`. Each entry is an array covering all
+   * granted read scopes for that delegate session.
    * TTL 24 hours (keys are re-populated on session restore).
    */
   private _delegateDecryptionKeyCache = new TtlCache<string, {
     protocol: string;
+    scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'exact' };
     derivedPrivateKey: DerivedPrivateJwk;
   }[]>({
     ttl: 24 * 60 * 60 * 1000
@@ -1481,17 +1482,18 @@ export class AgentDwnApi {
    * records when the delegate does not possess the owner's root X25519
    * private key.
    *
-   * @param connectedDid - The DID of the wallet owner (the DID the delegate acts on behalf of)
-   * @param keys - Array of protocol-wide decryption key entries
+   * @param delegateDid - The delegate DID for this session (unique per connect)
+   * @param keys - Array of scope-aware decryption key entries
    */
   public importDelegateDecryptionKeys(
-    connectedDid: string,
+    delegateDid: string,
     keys: {
       protocol: string;
+      scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'exact' };
       derivedPrivateKey: DerivedPrivateJwk;
     }[],
   ): void {
-    const cacheKey = `ddk~${connectedDid}`;
+    const cacheKey = `ddk~${delegateDid}`;
     this._delegateDecryptionKeyCache.set(cacheKey, keys);
   }
 
@@ -1500,12 +1502,12 @@ export class AgentDwnApi {
    * Called on disconnect/reconnect to prevent stale keys from persisting
    * across sessions.
    *
-   * @param connectedDid - If provided, clears keys for that DID only.
-   *                       If omitted, clears all delegate decryption keys.
+   * @param delegateDid - If provided, clears keys for that delegate session only.
+   *                      If omitted, clears all delegate decryption keys.
    */
-  public clearDelegateDecryptionKeys(connectedDid?: string): void {
-    if (connectedDid) {
-      this._delegateDecryptionKeyCache.delete(`ddk~${connectedDid}`);
+  public clearDelegateDecryptionKeys(delegateDid?: string): void {
+    if (delegateDid) {
+      this._delegateDecryptionKeyCache.delete(`ddk~${delegateDid}`);
     } else {
       this._delegateDecryptionKeyCache.clear();
     }

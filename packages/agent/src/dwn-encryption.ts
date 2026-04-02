@@ -7,7 +7,7 @@ import type {
   RecordsReadReply,
   RecordsWriteMessage,
 } from '@enbox/dwn-sdk-js';
-import type { KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
+import type { Jwk, KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type {
@@ -295,11 +295,43 @@ export function buildContextKeyDecrypter(
   };
 }
 
-/** Cache entry shape for delegate decryption keys (protocol-wide only). */
+/** Cache entry shape for scope-aware delegate decryption keys. */
 export type DelegateDecryptionKeyEntry = {
   protocol: string;
+  scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'exact' };
   derivedPrivateKey: DerivedPrivateJwk;
 };
+
+/**
+ * Builds a KeyDecrypter for an exact-path delegate key that enforces the
+ * record's full derivation path matches the key's path exactly — siblings
+ * and descendants are NOT accessible.
+ */
+export function buildExactProtocolPathDecrypter(
+  key: DerivedPrivateJwk,
+): KeyDecrypter {
+  return {
+    rootKeyId        : key.rootKeyId,
+    derivationScheme : key.derivationScheme,
+    decrypt          : async (
+      fullDerivationPath: string[],
+      jwePayload: { ephemeralPublicKey: Jwk; encryptedKey: Uint8Array },
+    ): Promise<Uint8Array> => {
+      const keyPath = key.derivationPath ?? [];
+      if (keyPath.length !== fullDerivationPath.length ||
+          !keyPath.every((seg: string, i: number) => seg === fullDerivationPath[i])) {
+        throw new Error(
+          'Delegate decryption key is out of scope for this protocol path. ' +
+          `Key path: [${keyPath.join(', ')}], ` +
+          `record path: [${fullDerivationPath.join(', ')}].`
+        );
+      }
+      const leafPrivateKeyBytes = await Records.derivePrivateKey(key, fullDerivationPath);
+      const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
+      return Encryption.ecdhEsUnwrapKey(leafPrivateKeyJwk, jwePayload.ephemeralPublicKey, jwePayload.encryptedKey);
+    },
+  };
+}
 
 /**
  * Resolves the appropriate KeyDecrypter for a record's encryption scheme.
@@ -307,7 +339,8 @@ export type DelegateDecryptionKeyEntry = {
  *
  * For ProtocolPath records:
  *   - Owner: derives key directly from KMS
- *   - Delegate: uses protocol-wide key delivered during the connect flow
+ *   - Delegate with protocol-wide key: uses ancestor-prefix derivation
+ *   - Delegate with exact-path key: enforces exact path match
  *
  * For ProtocolContext records:
  *   - Context creator: derives key directly from KMS
@@ -319,7 +352,8 @@ export type DelegateDecryptionKeyEntry = {
  * @param targetDid - The target DID (DWN owner), if known
  * @param contextDerivedKeyCache - Cache for context-derived private keys
  * @param fetchContextKeyRecordFn - Function to fetch context key records from key-delivery protocol
- * @param delegateDecryptionKeyCache - Cache for delegate decryption keys
+ * @param delegateDecryptionKeyCache - Cache for scope-aware delegate decryption keys
+ * @param granteeDid - The delegate DID (if this is a delegated request)
  */
 export async function resolveKeyDecrypter(
   agent: EnboxPlatformAgent,
@@ -334,6 +368,7 @@ export async function resolveKeyDecrypter(
     sourceContextId: string;
   }) => Promise<DerivedPrivateJwk | undefined>,
   delegateDecryptionKeyCache?: { get(key: string): DelegateDecryptionKeyEntry[] | undefined },
+  granteeDid?: string,
 ): Promise<KeyDecrypter> {
   const { encryption } = recordsWrite;
 
@@ -344,17 +379,31 @@ export async function resolveKeyDecrypter(
 
   if (!hasContextKey || !recordsWrite.contextId) {
     // Single-party protocol-path encryption.
-    // Check for a delegate-delivered protocol-wide key first — this enables
+    // Check for scope-aware delegate decryption keys first — this enables
     // delegates to decrypt without the owner's root X25519 private key.
-    if (delegateDecryptionKeyCache) {
+    if (delegateDecryptionKeyCache && granteeDid) {
       const protocol = recordsWrite.descriptor.protocol;
+      const protocolPath = recordsWrite.descriptor.protocolPath;
       if (protocol) {
-        const cacheKey = `ddk~${authorDid}`;
+        const cacheKey = `ddk~${granteeDid}`;
         const allKeys = delegateDecryptionKeyCache.get(cacheKey);
         if (allKeys) {
-          const match = allKeys.find((k) => k.protocol === protocol);
-          if (match) {
-            return buildContextKeyDecrypter(match.derivedPrivateKey);
+          const keysForProtocol = allKeys.filter((k) => k.protocol === protocol);
+
+          // Priority 1: exact-path key matching this record's protocolPath.
+          if (protocolPath) {
+            const exactKey = keysForProtocol.find(
+              (k) => k.scope.kind === 'protocolPath' && k.scope.protocolPath === protocolPath
+            );
+            if (exactKey) {
+              return buildExactProtocolPathDecrypter(exactKey.derivedPrivateKey);
+            }
+          }
+
+          // Priority 2: protocol-wide key (ancestor-prefix derivation).
+          const wideKey = keysForProtocol.find((k) => k.scope.kind === 'protocol');
+          if (wideKey) {
+            return buildContextKeyDecrypter(wideKey.derivedPrivateKey);
           }
         }
       }
@@ -461,6 +510,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
       const keyDecrypter = await resolveKeyDecrypter(
         agent, request.author, readReply.entry.recordsWrite, request.target,
         contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
+        (request as any).granteeDid,
       );
 
       try {
@@ -488,6 +538,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
           const keyDecrypter = await resolveKeyDecrypter(
             agent, request.author, entry as RecordsWriteMessage, request.target,
             contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
+            (request as any).granteeDid,
           );
 
           try {

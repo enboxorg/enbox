@@ -126,7 +126,7 @@ export async function restoreSession(
       try {
         const keys = JSON.parse(keysJson);
         if (Array.isArray(keys) && keys.length > 0) {
-          userAgent.dwn.importDelegateDecryptionKeys(connectedDid, keys);
+          userAgent.dwn.importDelegateDecryptionKeys(delegateDid, keys);
         }
       } catch { /* best effort — keys will be refreshed on next connect */ }
     }
