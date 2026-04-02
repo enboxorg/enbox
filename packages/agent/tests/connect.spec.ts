@@ -784,62 +784,6 @@ describe('enbox connect', () => {
       expect((configureCall!.args[0] as any).encryption).toBe(true);
     });
 
-    it('should abort the connect flow when encrypted protocol has protocolPath-scoped read', async () => {
-      // Full submitConnectResponse call — not just the helper.
-      // The protocolPath check fires before KMS access, so stubs are fine.
-      const encryptedProtocol: DwnProtocolDefinition = {
-        protocol  : 'http://encrypted-abort.xyz',
-        published : true,
-        types     : {
-          secret: {
-            schema             : 'http://encrypted-abort.xyz/schema/secret',
-            dataFormats        : ['application/json'],
-            encryptionRequired : true,
-          },
-        },
-        structure: { secret: {} },
-      };
-
-      const pathScopedScopes: RecordsPermissionScope[] = [{
-        interface    : 'Records' as any,
-        method       : 'Read' as any,
-        protocol     : 'http://encrypted-abort.xyz',
-        protocolPath : 'secret',
-      }];
-
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
-      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
-      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
-
-      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
-        baseURL  : 'http://localhost:3000',
-        endpoint : 'callback',
-      });
-
-      const options = {
-        appName            : 'Sample App',
-        clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: pathScopedScopes }],
-        callbackUrl        : callbackUrl,
-      };
-      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
-
-      // Stub DWN as if protocol is already installed (entries cast to any for stub)
-      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
-        messageCid : '',
-        reply      : { status: { code: 202, detail: 'OK' } }
-      });
-      sinon.stub(testHarness.agent, 'processDwnRequest')
-        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [{}] as any } });
-
-      // The entire connect flow must abort — error propagates from deriveScopedDecryptionKeys
-      await expect(
-        EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri, connectRequest, randomPin, testHarness.agent,
-        )
-      ).rejects.toThrow('protocolPath is not supported');
-    });
-
     it('should abort the connect flow when encrypted protocol has contextId-scoped read', async () => {
       const encryptedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://encrypted-abort-ctx.xyz',

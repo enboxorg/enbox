@@ -35,29 +35,45 @@ export type ConnectPermissionRequest = {
 };
 
 /**
- * A protocol-wide decryption key delivered to delegates during the connect flow.
+ * A scope-aware decryption key delivered to delegates during the connect flow.
  *
- * Delivered only when ALL of these conditions hold:
+ * Two scope kinds:
+ *
+ * - **`protocol`** — protocol-wide key at depth `[ProtocolPath, protocolUri]`.
+ *   Can derive leaf keys for any type path within the protocol.
+ *   Issued when the grant covers the entire protocol (no `protocolPath`).
+ *
+ * - **`protocolPath`** — exact-path key at depth
+ *   `[ProtocolPath, protocolUri, ...pathSegments]`.
+ *   Can only decrypt records at that exact path — not siblings or descendants.
+ *   Issued when the grant is narrowed to a specific `protocolPath`.
+ *
+ * Common conditions (both kinds):
  * 1. The protocol has `encryptionRequired: true` types (single-party only)
- * 2. The delegate has at least one protocol-wide read-like scope
- *    (Records.Read / Records.Query / Records.Subscribe without `protocolPath`
- *    or `contextId` restrictions)
+ * 2. The delegate has at least one read-like scope (Read/Query/Subscribe)
  * 3. The protocol does NOT use multi-party / role-based access patterns
  *
- * Scope: `[ProtocolPath, protocolUri]` — can derive leaf keys for any type
- * path within the protocol via `Records.derivePrivateKey()`.
- *
- * Out of scope for this version (fail closed):
- * - `protocolPath`-scoped encrypted delegate reads
+ * Out of scope (fail closed):
  * - `contextId`-scoped encrypted delegate reads
  * - multi-party / ProtocolContext encrypted delegate reads
  */
-export type DelegateDecryptionKey = {
-  /** The protocol URI this key is scoped to. */
-  protocol: string;
-  /** The derived private key material for ProtocolPath decryption. */
-  derivedPrivateKey: DerivedPrivateJwk;
-};
+export type DelegateDecryptionKey =
+  | {
+    /** The protocol URI this key is scoped to. */
+    protocol: string;
+    /** Protocol-wide decryption scope. */
+    scope: { kind: 'protocol' };
+    /** The derived private key material for ProtocolPath decryption. */
+    derivedPrivateKey: DerivedPrivateJwk;
+  }
+  | {
+    /** The protocol URI this key is scoped to. */
+    protocol: string;
+    /** Exact-path decryption scope — siblings and descendants are NOT accessible. */
+    scope: { kind: 'protocolPath'; protocolPath: string; match: 'exact' };
+    /** The derived private key material for ProtocolPath decryption. */
+    derivedPrivateKey: DerivedPrivateJwk;
+  };
 import type {
   JoseHeaderParams,
   Jwk } from '@enbox/crypto';
@@ -706,25 +722,24 @@ async function prepareProtocol(
 }
 
 /**
- * Derives a protocol-wide decryption key for the delegate, if and only if
- * the permission scopes justify it.
+ * Derives the minimal set of decryption keys implied by read-like permission
+ * scopes for a single-party encrypted protocol.
  *
- * This version intentionally supports **only** the safe, well-understood case:
- *   - single-party ProtocolPath encryption
- *   - protocol-wide read access (no `protocolPath` / `contextId` restrictions)
- *
- * All other encrypted delegate access patterns fail closed:
- *   - Write / Delete / Count only → no decryption key (correct — writes use public keys)
- *   - `protocolPath`-scoped encrypted read → error (tracked for future PR)
- *   - `contextId`-scoped encrypted read → error (tracked for future PR)
- *   - Multi-party / role-based protocol with encrypted types → error
+ * Rules:
+ *   - Only Records.Read / Records.Query / Records.Subscribe scopes contribute.
+ *   - Write / Delete / Count scopes produce no decryption keys.
+ *   - If any unrestricted (no `protocolPath`) read scope exists, one
+ *     protocol-wide key is emitted and narrower keys are dropped.
+ *   - Otherwise one exact-path key is emitted per unique `protocolPath`.
+ *   - Scopes with `contextId` cause a fail-closed error.
+ *   - Multi-party protocols cause a fail-closed error.
  *
  * @param agent - The platform agent (must hold the owner's KMS keys)
  * @param ownerDid - The DID of the protocol owner
  * @param protocolUri - The protocol URI
  * @param scopes - The permission scopes for this protocol
  * @param protocolDefinition - The protocol definition (for multi-party detection)
- * @returns An array of `DelegateDecryptionKey` — zero or one element
+ * @returns An array of `DelegateDecryptionKey` (may be empty)
  */
 async function deriveScopedDecryptionKeys(
   agent: EnboxPlatformAgent,
@@ -757,19 +772,7 @@ async function deriveScopedDecryptionKeys(
     }
   }
 
-  // Fail closed: reject protocolPath-scoped encrypted reads.
-  for (const scope of readScopes) {
-    if ('protocolPath' in scope && (scope as any).protocolPath) {
-      throw new Error(
-        `Encrypted delegate access scoped by protocolPath is not supported ` +
-        `yet; use protocol-wide permissions for protocol '${protocolUri}'.`,
-      );
-    }
-  }
-
   // Fail closed: reject multi-party encrypted protocols.
-  // Uses the canonical isMultiPartyContext() from protocol-utils which
-  // checks for $role: true descendants AND relational who/of read rules.
   if (protocolHasMultiPartyEncryption(protocolDefinition)) {
     throw new Error(
       `Encrypted delegate access for multi-party protocols is not supported ` +
@@ -779,24 +782,64 @@ async function deriveScopedDecryptionKeys(
     );
   }
 
-  // All read scopes are protocol-wide for a single-party protocol.
-  // Derive one protocol-level key.
-  const { keyId, keyUri } = await getEncryptionKeyInfo(agent, ownerDid);
-  const derivationPath = [KeyDerivationScheme.ProtocolPath, protocolUri];
-  const derivedBytes = await agent.keyManager.derivePrivateKeyBytes({
-    keyUri, derivationPath,
-  });
-  const derivedJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedBytes });
+  // Check if any scope is protocol-wide (no protocolPath).
+  const hasProtocolWideRead = readScopes.some(
+    (s) => !('protocolPath' in s) || !(s as any).protocolPath,
+  );
 
-  return [{
-    protocol          : protocolUri,
-    derivedPrivateKey : {
-      rootKeyId         : keyId,
-      derivationScheme  : KeyDerivationScheme.ProtocolPath,
-      derivationPath,
-      derivedPrivateKey : derivedJwk as PrivateKeyJwk,
-    },
-  }];
+  const { keyId, keyUri } = await getEncryptionKeyInfo(agent, ownerDid);
+
+  // If any unrestricted read scope exists, emit one protocol-wide key
+  // and skip narrower keys (the protocol-wide key subsumes them).
+  if (hasProtocolWideRead) {
+    const derivationPath = [KeyDerivationScheme.ProtocolPath, protocolUri];
+    const derivedBytes = await agent.keyManager.derivePrivateKeyBytes({
+      keyUri, derivationPath,
+    });
+    const derivedJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedBytes });
+
+    return [{
+      protocol          : protocolUri,
+      scope             : { kind: 'protocol' },
+      derivedPrivateKey : {
+        rootKeyId         : keyId,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivationPath,
+        derivedPrivateKey : derivedJwk as PrivateKeyJwk,
+      },
+    }];
+  }
+
+  // All read scopes are protocolPath-scoped.
+  // Emit one exact-path key per unique protocolPath.
+  const uniquePaths = new Set<string>();
+  for (const scope of readScopes) {
+    const pp = (scope as any).protocolPath as string | undefined;
+    if (pp) { uniquePaths.add(pp); }
+  }
+
+  const keys: DelegateDecryptionKey[] = [];
+  for (const protocolPath of uniquePaths) {
+    const pathSegments = protocolPath.split('/');
+    const derivationPath = [KeyDerivationScheme.ProtocolPath, protocolUri, ...pathSegments];
+    const derivedBytes = await agent.keyManager.derivePrivateKeyBytes({
+      keyUri, derivationPath,
+    });
+    const derivedJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: derivedBytes });
+
+    keys.push({
+      protocol          : protocolUri,
+      scope             : { kind: 'protocolPath', protocolPath, match: 'exact' },
+      derivedPrivateKey : {
+        rootKeyId         : keyId,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivationPath,
+        derivedPrivateKey : derivedJwk as PrivateKeyJwk,
+      },
+    });
+  }
+
+  return keys;
 }
 
 /**

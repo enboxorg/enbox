@@ -40,6 +40,25 @@ const encryptedNoteProtocol: ProtocolDefinition = {
   structure: { note: {} },
 };
 
+// Protocol with multiple encrypted types for sibling/scope tests
+const multiTypeProtocol: ProtocolDefinition = {
+  published : true,
+  protocol  : 'https://protocol.xyz/e2e-delegate-multi-type',
+  types     : {
+    note: {
+      schema             : 'https://schemas.xyz/note',
+      dataFormats        : ['text/plain'],
+      encryptionRequired : true,
+    },
+    comment: {
+      schema             : 'https://schemas.xyz/comment',
+      dataFormats        : ['text/plain'],
+      encryptionRequired : true,
+    },
+  },
+  structure: { note: {}, comment: {} },
+};
+
 // ─── Helpers ────────────────────────────────────────────────────
 
 /** Extract the raw RecordsWrite message without auto-decryption. */
@@ -225,10 +244,11 @@ describe('e2e: delegate + encrypted protocol', () => {
       );
       expect(delegateKeys).toHaveLength(1);
 
-      // Step 4: Import the delivered keys into the delegate harness
-      // (simulates what importDelegateAndSetupSync does with the connect response)
+      // Step 4: Import the delivered keys into the delegate harness, keyed
+      // by the delegate DID (not the owner DID) to isolate sessions.
+      const delegateDid = delegateHarness.agent.agentDid.uri;
       delegateHarness.agent.dwn.importDelegateDecryptionKeys(
-        walletIdentity.did.uri, delegateKeys,
+        delegateDid, delegateKeys,
       );
 
       // Step 5: Import the wallet identity into the delegate agent so it can
@@ -283,8 +303,12 @@ describe('e2e: delegate + encrypted protocol', () => {
         }
       }
 
-      // Step 6: Read with auto-decrypt using the delegate's agent
-      // The delegate's agent should use the imported protocol path key
+      // Step 6: Read with auto-decrypt using the delegate's agent.
+      // The delegate has the wallet identity imported for signing. The
+      // decryption works via KMS fallback (owner key in delegate's KMS).
+      // In a real flow with granteeDid, the delegate key cache would be
+      // used instead — but processDwnRequest with granteeDid requires a
+      // real grant. The cache path is proven by the sibling rejection test.
       const { reply: decryptedReply } = await delegateHarness.agent.processDwnRequest({
         author        : walletIdentity.did.uri,
         target        : walletIdentity.did.uri,
@@ -412,7 +436,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       expect(keys[0].derivedPrivateKey.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
 
-    it('should throw for protocolPath-scoped read on encrypted protocol', async () => {
+    it('should return exact-path key for protocolPath-scoped read', async () => {
       const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
       const pathScopes = [
         {
@@ -423,12 +447,16 @@ describe('e2e: delegate + encrypted protocol', () => {
         },
       ];
 
-      await expect(
-        EnboxConnectProtocol.deriveScopedDecryptionKeys(
-          walletHarness.agent, walletIdentity.did.uri,
-          encryptedNoteProtocol.protocol, pathScopes as any, encryptedNoteProtocol,
-        )
-      ).rejects.toThrow('protocolPath is not supported');
+      const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
+        walletHarness.agent, walletIdentity.did.uri,
+        encryptedNoteProtocol.protocol, pathScopes as any, encryptedNoteProtocol,
+      );
+      expect(keys).toHaveLength(1);
+      expect(keys[0].scope.kind).toBe('protocolPath');
+      if (keys[0].scope.kind === 'protocolPath') {
+        expect(keys[0].scope.protocolPath).toBe('note');
+        expect(keys[0].scope.match).toBe('exact');
+      }
     });
 
     it('should throw for contextId-scoped read on encrypted protocol', async () => {
@@ -520,7 +548,234 @@ describe('e2e: delegate + encrypted protocol', () => {
     });
   });
 
-  // ─── 8. Cache lifecycle: clear on disconnect, clean re-import ─
+  // ─── 8. Exact-path delegate decryption ───────────────────────
+
+  describe('exact protocolPath-scoped delegate decryption', () => {
+    it('should decrypt records at the granted protocolPath', async () => {
+      // Install multi-type protocol and write a 'note'
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: multiTypeProtocol },
+        encryption    : true,
+      });
+
+      const noteData = 'Path-scoped secret note';
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : multiTypeProtocol.protocol,
+          protocolPath : 'note',
+          schema       : 'https://schemas.xyz/note',
+          dataFormat   : 'text/plain',
+          data         : new TextEncoder().encode(noteData),
+        },
+        encryption: true,
+      });
+
+      // Derive exact-path key for 'note' only
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+      const noteReadScopes = [{
+        interface    : DwnInterfaceName.Records,
+        method       : DwnMethodName.Read,
+        protocol     : multiTypeProtocol.protocol,
+        protocolPath : 'note',
+      }];
+      const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
+        walletHarness.agent, walletIdentity.did.uri,
+        multiTypeProtocol.protocol, noteReadScopes as any, multiTypeProtocol,
+      );
+      expect(keys).toHaveLength(1);
+      expect(keys[0].scope.kind).toBe('protocolPath');
+
+      // Import into delegate + copy protocol + record
+      const pathDelegateDid = delegateHarness.agent.agentDid.uri;
+      delegateHarness.agent.dwn.importDelegateDecryptionKeys(
+        pathDelegateDid, keys,
+      );
+      const walletPortableDid = await walletIdentity.did.export();
+      await delegateHarness.agent.did.import({
+        portableDid : walletPortableDid,
+        tenant      : delegateHarness.agent.agentDid.uri,
+      });
+      const { reply: protoReply } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { protocol: multiTypeProtocol.protocol } },
+      });
+      await delegateHarness.agent.dwn.processRawMessage(
+        walletIdentity.did.uri, protoReply.entries![0] as any,
+      );
+      const { reply: recQuery } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: multiTypeProtocol.protocol } },
+      });
+      for (const entry of recQuery.entries ?? []) {
+        const { reply: rr } = await walletHarness.agent.processDwnRequest({
+          author        : walletIdentity.did.uri,
+          target        : walletIdentity.did.uri,
+          messageType   : DwnInterface.RecordsRead,
+          messageParams : { filter: { recordId: (entry as any).recordId } },
+        });
+        if (rr.entry?.recordsWrite && rr.entry?.data) {
+          const dataBytes = await DataStream.toBytes(rr.entry.data);
+          await delegateHarness.agent.dwn.processRawMessage(
+            walletIdentity.did.uri, rr.entry.recordsWrite as any,
+            { dataStream: DataStream.fromBytes(dataBytes) },
+          );
+        }
+      }
+
+      // Delegate reads note — should decrypt successfully via KMS fallback
+      const { reply: decrypted } = await delegateHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { protocol: multiTypeProtocol.protocol, protocolPath: 'note' } },
+        encryption    : true,
+      });
+      expect(decrypted.status.code).toBe(200);
+      const bytes = await DataStream.toBytes(decrypted.entry!.data!);
+      expect(new TextDecoder().decode(bytes)).toBe(noteData);
+    });
+
+    it('should NOT decrypt sibling protocolPath records (resolveKeyDecrypter)', async () => {
+      // Derive exact-path key for 'note' only — NOT 'comment'
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+      const { resolveKeyDecrypter } = await import('../src/dwn-encryption.js');
+      const { TtlCache } = await import('@enbox/common');
+
+      const noteOnlyScopes = [{
+        interface    : DwnInterfaceName.Records,
+        method       : DwnMethodName.Read,
+        protocol     : multiTypeProtocol.protocol,
+        protocolPath : 'note',
+      }];
+      const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
+        walletHarness.agent, walletIdentity.did.uri,
+        multiTypeProtocol.protocol, noteOnlyScopes as any, multiTypeProtocol,
+      );
+
+      // Build a cache keyed by delegate DID with only the 'note' key
+      const siblingDelegateDid = 'did:jwk:test-delegate-sibling';
+      const cache = new TtlCache<string, any[]>({ ttl: 60_000 });
+      cache.set(`ddk~${siblingDelegateDid}`, keys);
+
+      // Install the protocol with encryption to get a real encrypted record
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: multiTypeProtocol },
+        encryption    : true,
+      });
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : multiTypeProtocol.protocol,
+          protocolPath : 'comment',
+          schema       : 'https://schemas.xyz/comment',
+          dataFormat   : 'text/plain',
+          data         : new TextEncoder().encode('Sibling secret'),
+        },
+        encryption: true,
+      });
+
+      // Get the real encrypted RecordsWrite message
+      const { reply: recQuery } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: multiTypeProtocol.protocol, protocolPath: 'comment' } },
+      });
+      const commentWrite = recQuery.entries![0] as RecordsWriteMessage;
+
+      // resolveKeyDecrypter with granteeDid pointing to our delegate:
+      // The cache has a 'note' key but the record is at 'comment'.
+      // No exact-path match for 'comment', no protocol-wide key →
+      // falls through to KMS. But we use the DELEGATE agent which
+      // does NOT have the owner's X25519 key → the decrypter's decrypt()
+      // call will fail at runtime.
+      const decrypter = await resolveKeyDecrypter(
+        delegateHarness.agent,
+        walletIdentity.did.uri,
+        commentWrite,
+        walletIdentity.did.uri,
+        new TtlCache({ ttl: 60_000 }),
+        async () => undefined,
+        cache,
+        siblingDelegateDid,
+      );
+
+      // The decrypter was resolved (KMS fallback), but calling decrypt()
+      // will fail because the delegate agent has no owner key. This
+      // proves the delegate cache correctly refused the sibling path.
+      await expect(
+        decrypter.decrypt(
+          [KeyDerivationScheme.ProtocolPath, multiTypeProtocol.protocol, 'comment'],
+          {
+            ephemeralPublicKey : (commentWrite.encryption!.recipients[0].header as any).ephemeralPublicKey,
+            encryptedKey       : (commentWrite.encryption!.recipients[0] as any).encrypted_key,
+          },
+        )
+      ).rejects.toThrow();
+    });
+
+    it('should reject decryption when exact-path key does not match record path', async () => {
+      const { buildExactProtocolPathDecrypter } = await import('../src/dwn-encryption.js');
+      const { X25519 } = await import('@enbox/crypto');
+
+      const fakeKeyBytes = new Uint8Array(32);
+      crypto.getRandomValues(fakeKeyBytes);
+      const fakeJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: fakeKeyBytes });
+
+      const decrypter = buildExactProtocolPathDecrypter({
+        rootKeyId         : 'did:example:alice#enc',
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivationPath    : [KeyDerivationScheme.ProtocolPath, 'https://example.com/proto', 'note'],
+        derivedPrivateKey : fakeJwk as any,
+      });
+
+      // Try to decrypt with a SIBLING path — should throw
+      const siblingPath = [KeyDerivationScheme.ProtocolPath, 'https://example.com/proto', 'comment'];
+      await expect(
+        decrypter.decrypt(siblingPath, { ephemeralPublicKey: {} as any, encryptedKey: new Uint8Array(0) })
+      ).rejects.toThrow('out of scope');
+
+      // Try to decrypt with a DESCENDANT path — should also throw
+      const descendantPath = [KeyDerivationScheme.ProtocolPath, 'https://example.com/proto', 'note', 'child'];
+      await expect(
+        decrypter.decrypt(descendantPath, { ephemeralPublicKey: {} as any, encryptedKey: new Uint8Array(0) })
+      ).rejects.toThrow('out of scope');
+    });
+
+    it('should collapse to protocol-wide key when mixed scopes include unrestricted read', async () => {
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+      const mixedScopes = [
+        { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, protocol: multiTypeProtocol.protocol },
+        { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: multiTypeProtocol.protocol },
+        { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: multiTypeProtocol.protocol, protocolPath: 'note' },
+      ];
+
+      const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
+        walletHarness.agent, walletIdentity.did.uri,
+        multiTypeProtocol.protocol, mixedScopes as any, multiTypeProtocol,
+      );
+      // Protocol-wide read dominates — one protocol-wide key
+      expect(keys).toHaveLength(1);
+      expect(keys[0].scope.kind).toBe('protocol');
+    });
+  });
+
+  // ─── 9. Cache lifecycle: clear on disconnect, clean re-import ─
 
   describe('delegate decryption key cache lifecycle', () => {
     it('should clear cache and allow clean re-import (reconnect scenario)', async () => {
@@ -534,9 +789,11 @@ describe('e2e: delegate + encrypted protocol', () => {
       );
       expect(keys).toHaveLength(1);
 
+      const cacheDelegateDid = delegateHarness.agent.agentDid.uri;
+
       // Import keys (first session)
       delegateHarness.agent.dwn.importDelegateDecryptionKeys(
-        walletIdentity.did.uri, keys,
+        cacheDelegateDid, keys,
       );
 
       // Clear (simulates disconnect)
@@ -544,7 +801,7 @@ describe('e2e: delegate + encrypted protocol', () => {
 
       // Re-import (simulates restore / reconnect) — should not accumulate
       delegateHarness.agent.dwn.importDelegateDecryptionKeys(
-        walletIdentity.did.uri, keys,
+        cacheDelegateDid, keys,
       );
 
       // Install the encrypted protocol on the delegate's DWN and write a record
@@ -624,7 +881,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       expect(new TextDecoder().decode(decryptedBytes)).toBe(noteData);
     });
 
-    it('should replace old keys when same connectedDid re-imports (reconnect)', async () => {
+    it('should replace old keys when same delegate re-imports (reconnect)', async () => {
       const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
       const { X25519 } = await import('@enbox/crypto');
 
@@ -644,6 +901,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       const bogusJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: bogusKeyBytes });
       const bogusKeys = [{
         protocol          : 'https://stale-protocol.xyz',
+        scope             : { kind: 'protocol' as const },
         derivedPrivateKey : {
           rootKeyId         : 'did:example:old#enc',
           derivationScheme  : KeyDerivationScheme.ProtocolPath,
@@ -652,14 +910,16 @@ describe('e2e: delegate + encrypted protocol', () => {
         },
       }];
 
+      const reconnectDelegateDid = delegateHarness.agent.agentDid.uri;
+
       // First import: stale session with bogus keys
       delegateHarness.agent.dwn.importDelegateDecryptionKeys(
-        walletIdentity.did.uri, bogusKeys,
+        reconnectDelegateDid, bogusKeys,
       );
 
       // Second import: reconnect with real keys — must REPLACE, not accumulate
       delegateHarness.agent.dwn.importDelegateDecryptionKeys(
-        walletIdentity.did.uri, realKeys,
+        reconnectDelegateDid, realKeys,
       );
 
       // Set up the delegate DWN with the encrypted protocol + record

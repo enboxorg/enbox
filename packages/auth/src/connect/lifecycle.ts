@@ -367,7 +367,7 @@ export async function importDelegateAndSetupSync(params: {
     // them. These enable the delegate to decrypt ProtocolPath-encrypted
     // records without possessing the owner's root X25519 private key.
     if (delegateDecryptionKeys && delegateDecryptionKeys.length > 0) {
-      userAgent.dwn.importDelegateDecryptionKeys(connectedDid, delegateDecryptionKeys);
+      userAgent.dwn.importDelegateDecryptionKeys(delegatePortableDid.uri, delegateDecryptionKeys);
     }
 
     await userAgent.sync.registerIdentity({

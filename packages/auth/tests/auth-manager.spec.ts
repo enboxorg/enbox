@@ -369,7 +369,8 @@ describe('AuthManager', () => {
       let importedKeys: any[] | undefined;
       let importedDid: string | undefined;
       const delegateIdentity = createMockIdentity({
-        metadata: { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+        did      : { uri: 'did:jwk:delegate' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
       });
       const agent = createMockAgent({
         firstLaunch                     : async () => false,
@@ -383,7 +384,7 @@ describe('AuthManager', () => {
 
       const session = await manager.restoreSession();
       expect(session).toBeDefined();
-      expect(importedDid).toBe('did:dht:owner');
+      expect(importedDid).toBe('did:jwk:delegate');
       expect(importedKeys).toEqual(keysPayload);
     });
   });
