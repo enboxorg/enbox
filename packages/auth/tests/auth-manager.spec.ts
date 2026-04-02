@@ -357,6 +357,35 @@ describe('AuthManager', () => {
       expect(session).toBeDefined();
       expect(manager.state).toBe('connected');
     });
+
+    test('restores delegate decryption keys from storage on session restore', async () => {
+      const keysPayload = [{ protocol: 'https://test.xyz', derivedPrivateKey: { rootKeyId: 'k1' } }];
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate');
+      await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
+      await storage.set(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, JSON.stringify(keysPayload));
+
+      let importedKeys: any[] | undefined;
+      let importedDid: string | undefined;
+      const delegateIdentity = createMockIdentity({
+        metadata: { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+      });
+      const agent = createMockAgent({
+        firstLaunch                     : async () => false,
+        identityList                    : async () => [delegateIdentity],
+        dwnImportDelegateDecryptionKeys : (did: string, keys: any[]): void => {
+          importedDid = did;
+          importedKeys = keys;
+        },
+      });
+      const manager = createTestManager(agent, { storage });
+
+      const session = await manager.restoreSession();
+      expect(session).toBeDefined();
+      expect(importedDid).toBe('did:dht:owner');
+      expect(importedKeys).toEqual(keysPayload);
+    });
   });
 
   describe('disconnect()', () => {
@@ -380,6 +409,41 @@ describe('AuthManager', () => {
       expect(manager.session).toBeUndefined();
       expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
       expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBeNull();
+    });
+
+    test('clean disconnect clears delegate decryption keys from storage and memory', async () => {
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await storage.set(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, JSON.stringify([{ protocol: 'test' }]));
+
+      let clearCalled = false;
+      const agent = createMockAgent({
+        firstLaunch                    : async () => false,
+        identityList                   : async () => [createMockIdentity()],
+        dwnClearDelegateDecryptionKeys : () => { clearCalled = true; },
+      });
+      const manager = createTestManager(agent, { storage });
+      await manager.connect({ password: 'test' });
+
+      await manager.disconnect();
+
+      expect(await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBeNull();
+      expect(clearCalled).toBe(true);
+    });
+
+    test('nuclear disconnect clears delegate decryption key cache', async () => {
+      let clearCalled = false;
+      const agent = createMockAgent({
+        firstLaunch                    : async () => false,
+        identityList                   : async () => [createMockIdentity()],
+        dwnClearDelegateDecryptionKeys : () => { clearCalled = true; },
+      });
+      const manager = createTestManager(agent);
+      await manager.connect({ password: 'test' });
+
+      await manager.disconnect({ clearStorage: true });
+
+      expect(clearCalled).toBe(true);
     });
 
     test('nuclear disconnect clears all storage', async () => {

@@ -166,6 +166,23 @@ export class AgentDwnApi {
   });
 
   /**
+   * Delegate decryption key cache — stores scope-aware decryption keys
+   * delivered to delegates during the connect flow. These keys enable
+   * delegates to decrypt encrypted records without possessing the owner's
+   * root X25519 private key.
+   *
+   * Keyed by `ddk~${connectedDid}`. Each entry is an array covering all
+   * granted read scopes for that connected DID.
+   * TTL 24 hours (keys are re-populated on session restore).
+   */
+  private _delegateDecryptionKeyCache = new TtlCache<string, {
+    protocol: string;
+    derivedPrivateKey: DerivedPrivateJwk;
+  }[]>({
+    ttl: 24 * 60 * 60 * 1000
+  });
+
+  /**
    * Cache of locally-managed DIDs (agent DID + identities). Used to decide
    * whether a target DID should be routed through the local DWN server.
    */
@@ -1369,6 +1386,7 @@ export class AgentDwnApi {
       request, reply, this.agent,
       this._contextDerivedKeyCache,
       this.fetchContextKeyRecord.bind(this),
+      this._delegateDecryptionKeyCache,
     );
   }
 
@@ -1450,6 +1468,47 @@ export class AgentDwnApi {
       this._keyDeliveryProtocolInstalledCache,
       this._protocolDefinitionCache,
     );
+  }
+
+  /**
+   * Imports scope-aware decryption keys for delegate sessions.
+   *
+   * Called during the connect flow when the wallet delivers decryption keys
+   * for encrypted protocols. Keys are derived only for read-like scopes
+   * (Read/Query/Subscribe) — write-only delegates receive no keys.
+   *
+   * The keys are cached and used by `resolveKeyDecrypter()` to decrypt
+   * records when the delegate does not possess the owner's root X25519
+   * private key.
+   *
+   * @param connectedDid - The DID of the wallet owner (the DID the delegate acts on behalf of)
+   * @param keys - Array of protocol-wide decryption key entries
+   */
+  public importDelegateDecryptionKeys(
+    connectedDid: string,
+    keys: {
+      protocol: string;
+      derivedPrivateKey: DerivedPrivateJwk;
+    }[],
+  ): void {
+    const cacheKey = `ddk~${connectedDid}`;
+    this._delegateDecryptionKeyCache.set(cacheKey, keys);
+  }
+
+  /**
+   * Clears delegate decryption keys from the in-memory cache.
+   * Called on disconnect/reconnect to prevent stale keys from persisting
+   * across sessions.
+   *
+   * @param connectedDid - If provided, clears keys for that DID only.
+   *                       If omitted, clears all delegate decryption keys.
+   */
+  public clearDelegateDecryptionKeys(connectedDid?: string): void {
+    if (connectedDid) {
+      this._delegateDecryptionKeyCache.delete(`ddk~${connectedDid}`);
+    } else {
+      this._delegateDecryptionKeyCache.clear();
+    }
   }
 
   /**

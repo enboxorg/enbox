@@ -639,11 +639,24 @@ export class TypedEnbox<
     }
 
     // Not installed or definition has changed — configure the new version.
-    // Auto-enable encryption if any type in the definition requires it.
-    // Skip encryption key derivation when operating as a delegate — the
-    // wallet already configured the protocol with encryption keys.
-    const needsEncryption = !this._dwn.isDelegate && Object.values(this._definition.types)
+    // In delegate mode, the wallet is responsible for installing encrypted
+    // protocols during the connect flow. The delegate cannot derive the
+    // owner's encryption keys, so configuring here would install the
+    // protocol WITHOUT $encryption keys — breaking all encrypted writes.
+    const hasEncryptedTypes = Object.values(this._definition.types)
       .some((type) => (type as ProtocolType)?.encryptionRequired === true);
+
+    if (this._dwn.isDelegate && hasEncryptedTypes) {
+      throw new Error(
+        `TypedEnbox: Protocol '${this._definition.protocol}' requires ` +
+        `encryption but is not installed or has changed. In delegate mode, ` +
+        `encrypted protocols must be installed by the wallet during the ` +
+        `connect flow. Ensure the sync engine has completed its initial ` +
+        `sync before performing record operations.`,
+      );
+    }
+
+    const needsEncryption = !this._dwn.isDelegate && hasEncryptedTypes;
 
     const result = await this._dwn.protocols.configure({
       definition : this._definition,
@@ -766,12 +779,26 @@ export class TypedEnbox<
     }
 
     // Not installed — configure it now.
-    // Auto-enable encryption if any type in the definition requires it.
-    // Skip encryption key derivation when operating as a delegate — the
-    // wallet already configured the protocol with encryption keys. The
-    // delegate can't derive the owner's keys.
-    const needsEncryption = !this._dwn.isDelegate && Object.values(this._definition.types)
+    // In delegate mode, the wallet is responsible for installing encrypted
+    // protocols during the connect flow.  The delegate cannot derive the
+    // owner's encryption keys, so attempting to configure an encrypted
+    // protocol here would install it WITHOUT $encryption keys — causing
+    // all subsequent encrypted writes to be rejected by the DWN.
+    // Fail fast with a clear message instead.
+    const hasEncryptedTypes = Object.values(this._definition.types)
       .some((type) => (type as ProtocolType)?.encryptionRequired === true);
+
+    if (this._dwn.isDelegate && hasEncryptedTypes) {
+      throw new Error(
+        `TypedEnbox: Protocol '${this._definition.protocol}' requires ` +
+        `encryption but is not yet installed. In delegate mode, encrypted ` +
+        `protocols must be installed by the wallet during the connect flow. ` +
+        `Ensure the sync engine has completed its initial sync before ` +
+        `performing record operations.`,
+      );
+    }
+
+    const needsEncryption = !this._dwn.isDelegate && hasEncryptedTypes;
 
     const result = await this._dwn.protocols.configure({
       definition : this._definition,
@@ -869,10 +896,11 @@ export class TypedEnbox<
         const typeName = lastSegment(normalizedPath);
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
-        // Auto-enable encryption when the type requires it, but skip for
-        // delegates — they don't have the owner's keys to derive encryption
-        // keys. The owner's DWN handles encryption on the remote side.
-        const autoEncryption = !this._dwn.isDelegate && typeEntry?.encryptionRequired === true
+        // Auto-enable encryption when the type requires it.
+        // Delegates CAN encrypt because the $encryption public keys in the
+        // synced protocol definition are sufficient for ProtocolPath
+        // encryption — no private key access is needed for writes.
+        const autoEncryption = typeEntry?.encryptionRequired === true
           ? true : undefined;
 
         const { status, record } = await this._dwn.records.write({
@@ -942,7 +970,10 @@ export class TypedEnbox<
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
         const queryFilter = mapParentContextId(request?.filter);
-        const autoEncryption = !this._dwn.isDelegate && typeEntry?.encryptionRequired === true
+        // Auto-enable decryption when the type requires it. Delegates use
+        // delivered ProtocolPath keys from the connect flow; the agent layer
+        // resolves the correct key decrypter automatically.
+        const autoEncryption = typeEntry?.encryptionRequired === true
           ? true : undefined;
 
         const { status, records, cursor } = await this._dwn.records.query({
@@ -998,7 +1029,9 @@ export class TypedEnbox<
         const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
 
         const readFilter = mapParentContextId(request.filter);
-        const autoEncryption = !this._dwn.isDelegate && typeEntry?.encryptionRequired === true
+        // Auto-enable decryption when the type requires it. See query()
+        // comment for delegate decryption details.
+        const autoEncryption = typeEntry?.encryptionRequired === true
           ? true : undefined;
 
         const { status, record } = await this._dwn.records.read({
@@ -1145,14 +1178,43 @@ function mapParentContextId<T extends Record<string, unknown>>(
 }
 
 /**
- * Compares two protocol definitions for deep equality using deterministic
- * JSON serialization.
+ * Compares two protocol definitions for **logical** equality using
+ * deterministic JSON serialization with `$encryption` blocks stripped.
+ *
+ * When a protocol is installed with `encryption: true`, the agent injects
+ * `$encryption` blocks into the `structure` containing derived public keys.
+ * These blocks are operational metadata — not part of the developer-authored
+ * definition — so they must be ignored during equality checks. Otherwise,
+ * the installed definition (with `$encryption`) would always differ from
+ * the source definition (without `$encryption`), causing false drift
+ * detection and spurious reconfigure warnings.
  *
  * Keys are sorted recursively so that semantically identical definitions
  * with different key ordering are treated as equal.
  */
-function definitionsEqual(a: unknown, b: unknown): boolean {
-  return stableStringify(a) === stableStringify(b);
+export function definitionsEqual(a: unknown, b: unknown): boolean {
+  return stableStringify(stripEncryptionBlocks(a)) === stableStringify(stripEncryptionBlocks(b));
+}
+
+/**
+ * Recursively removes `$encryption` keys from an object tree.
+ * Returns a new object — the original is not mutated.
+ */
+function stripEncryptionBlocks(value: unknown): unknown {
+  if (value === null || value === undefined || typeof value !== 'object') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => stripEncryptionBlocks(item));
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    if (key === '$encryption') { continue; }
+    result[key] = stripEncryptionBlocks(val);
+  }
+  return result;
 }
 
 /**

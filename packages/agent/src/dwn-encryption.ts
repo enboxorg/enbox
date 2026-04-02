@@ -295,9 +295,19 @@ export function buildContextKeyDecrypter(
   };
 }
 
+/** Cache entry shape for delegate decryption keys (protocol-wide only). */
+export type DelegateDecryptionKeyEntry = {
+  protocol: string;
+  derivedPrivateKey: DerivedPrivateJwk;
+};
+
 /**
  * Resolves the appropriate KeyDecrypter for a record's encryption scheme.
  * Handles both single-party (ProtocolPath) and multi-party (ProtocolContext).
+ *
+ * For ProtocolPath records:
+ *   - Owner: derives key directly from KMS
+ *   - Delegate: uses protocol-wide key delivered during the connect flow
  *
  * For ProtocolContext records:
  *   - Context creator: derives key directly from KMS
@@ -309,6 +319,7 @@ export function buildContextKeyDecrypter(
  * @param targetDid - The target DID (DWN owner), if known
  * @param contextDerivedKeyCache - Cache for context-derived private keys
  * @param fetchContextKeyRecordFn - Function to fetch context key records from key-delivery protocol
+ * @param delegateDecryptionKeyCache - Cache for delegate decryption keys
  */
 export async function resolveKeyDecrypter(
   agent: EnboxPlatformAgent,
@@ -322,6 +333,7 @@ export async function resolveKeyDecrypter(
     sourceProtocol: string;
     sourceContextId: string;
   }) => Promise<DerivedPrivateJwk | undefined>,
+  delegateDecryptionKeyCache?: { get(key: string): DelegateDecryptionKeyEntry[] | undefined },
 ): Promise<KeyDecrypter> {
   const { encryption } = recordsWrite;
 
@@ -331,7 +343,23 @@ export async function resolveKeyDecrypter(
   );
 
   if (!hasContextKey || !recordsWrite.contextId) {
-    // Single-party protocol-path encryption
+    // Single-party protocol-path encryption.
+    // Check for a delegate-delivered protocol-wide key first — this enables
+    // delegates to decrypt without the owner's root X25519 private key.
+    if (delegateDecryptionKeyCache) {
+      const protocol = recordsWrite.descriptor.protocol;
+      if (protocol) {
+        const cacheKey = `ddk~${authorDid}`;
+        const allKeys = delegateDecryptionKeyCache.get(cacheKey);
+        if (allKeys) {
+          const match = allKeys.find((k) => k.protocol === protocol);
+          if (match) {
+            return buildContextKeyDecrypter(match.derivedPrivateKey);
+          }
+        }
+      }
+    }
+
     return getKeyDecrypter(agent, authorDid);
   }
 
@@ -405,6 +433,7 @@ export async function resolveKeyDecrypter(
  * @param agent - The platform agent
  * @param contextDerivedKeyCache - Cache for context-derived private keys
  * @param fetchContextKeyRecordFn - Function to fetch context key records
+ * @param delegateDecryptionKeyCache - Cache for scope-aware delegate decryption keys
  */
 export async function maybeDecryptReply<T extends DwnInterface>(
   request: ProcessDwnRequest<T> | SendDwnRequest<T>,
@@ -417,6 +446,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
     sourceProtocol: string;
     sourceContextId: string;
   }) => Promise<DerivedPrivateJwk | undefined>,
+  delegateDecryptionKeyCache?: { get(key: string): DelegateDecryptionKeyEntry[] | undefined },
 ): Promise<void> {
   if (!('encryption' in request) || !request.encryption) {
     return;
@@ -430,7 +460,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
         && readReply.entry?.data) {
       const keyDecrypter = await resolveKeyDecrypter(
         agent, request.author, readReply.entry.recordsWrite, request.target,
-        contextDerivedKeyCache, fetchContextKeyRecordFn,
+        contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
       );
 
       try {
@@ -457,7 +487,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
         if (entry.encryption && entry.encodedData) {
           const keyDecrypter = await resolveKeyDecrypter(
             agent, request.author, entry as RecordsWriteMessage, request.target,
-            contextDerivedKeyCache, fetchContextKeyRecordFn,
+            contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
           );
 
           try {

@@ -4,12 +4,12 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+import type { ConnectPermissionRequest, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 import type { PasswordProvider } from './password-provider.js';
 
 // Re-export types that consumers will need
-export type { ConnectPermissionRequest, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+export type { ConnectPermissionRequest, DelegateDecryptionKey, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 // Re-export EnboxUserAgent so consumers don't need a direct @enbox/agent dep
 export type { EnboxUserAgent } from '@enbox/agent';
@@ -229,6 +229,15 @@ export interface ConnectResult {
 
   /** The DID of the identity the user approved (the wallet owner's DID). */
   connectedDid: string;
+
+  /**
+   * Scope-aware decryption keys for encrypted protocols.
+   *
+   * Derived only for read-like permission scopes (Read/Query/Subscribe) on
+   * protocols with `encryptionRequired: true` types. Write-only delegates
+   * receive no decryption keys.
+   */
+  delegateDecryptionKeys?: DelegateDecryptionKey[];
 }
 
 /**
@@ -647,6 +656,13 @@ export const STORAGE_KEYS = {
 
   /** The connected DID (for wallet-connected sessions). */
   CONNECTED_DID: 'enbox:auth:connectedDid',
+
+  /**
+   * JSON-serialised `DelegateDecryptionKey[]` for delegate decryption of
+   * encrypted protocol records. Persisted so session restore can re-populate
+   * the delegate decryption key cache without requiring a new connect flow.
+   */
+  DELEGATE_DECRYPTION_KEYS: 'enbox:auth:delegateDecryptionKeys',
 
   /**
    * The base URL of the local DWN server discovered via the `dwn://connect`
