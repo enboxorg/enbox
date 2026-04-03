@@ -96,6 +96,7 @@ async function initClient({
   connectedDid: string;
   delegateDecryptionKeys?: EnboxConnectResponse['delegateDecryptionKeys'];
   delegateContextKeys?: EnboxConnectResponse['delegateContextKeys'];
+  delegateMultiPartyProtocols?: EnboxConnectResponse['delegateMultiPartyProtocols'];
 } | undefined> {
   // ephemeral client did for ECDH, signing, verification
   const clientDid = await DidJwk.create();
@@ -189,11 +190,12 @@ async function initClient({
     })) as unknown as EnboxConnectResponse;
 
     return {
-      delegateGrants         : verifiedResponse.delegateGrants,
-      delegatePortableDid    : verifiedResponse.delegatePortableDid,
-      connectedDid           : verifiedResponse.providerDid,
-      delegateDecryptionKeys : verifiedResponse.delegateDecryptionKeys,
-      delegateContextKeys    : verifiedResponse.delegateContextKeys,
+      delegateGrants              : verifiedResponse.delegateGrants,
+      delegatePortableDid         : verifiedResponse.delegatePortableDid,
+      connectedDid                : verifiedResponse.providerDid,
+      delegateDecryptionKeys      : verifiedResponse.delegateDecryptionKeys,
+      delegateContextKeys         : verifiedResponse.delegateContextKeys,
+      delegateMultiPartyProtocols : verifiedResponse.delegateMultiPartyProtocols,
     };
   }
 }

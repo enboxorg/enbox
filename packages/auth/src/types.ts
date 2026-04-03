@@ -244,6 +244,12 @@ export interface ConnectResult {
    * Each key unlocks one rootContextId for records using ProtocolContext encryption.
    */
   delegateContextKeys?: DelegateContextKey[];
+
+  /**
+   * Protocol URIs that have multi-party encrypted access patterns.
+   * Delivered even when no contexts exist yet (cold-start).
+   */
+  delegateMultiPartyProtocols?: string[];
 }
 
 /**
@@ -675,6 +681,13 @@ export const STORAGE_KEYS = {
    * records. Persisted for session restore.
    */
   DELEGATE_CONTEXT_KEYS: 'enbox:auth:delegateContextKeys',
+
+  /**
+   * JSON-serialised `string[]` of multi-party protocol URIs for delegate
+   * context key eligibility. Persisted for session restore so cold-start
+   * delegates (who connected with zero contexts) still receive future keys.
+   */
+  DELEGATE_MULTI_PARTY_PROTOCOLS: 'enbox:auth:delegateMultiPartyProtocols',
 
   /**
    * The base URL of the local DWN server discovered via the `dwn://connect`

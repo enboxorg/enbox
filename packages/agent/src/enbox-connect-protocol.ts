@@ -230,10 +230,20 @@ export type EnboxConnectResponse = {
    * Each key is scoped to `[ProtocolContext, rootContextId]` and can decrypt
    * all records within that context domain.
    *
-   * New contexts created after connect are NOT covered — the delegate must
-   * reconnect to receive keys for newly created contexts.
+   * Contexts created after connect are delivered automatically by
+   * `postWriteKeyDelivery()` when the owner creates a new multi-party root
+   * record on the same agent instance (same-process delivery).
+   * Cross-device delivery is a documented follow-up.
    */
   delegateContextKeys?: DelegateContextKey[];
+
+  /**
+   * Protocol URIs that have multi-party encrypted access patterns.
+   *
+   * Delivered even when no contexts exist yet (cold-start), so the
+   * delegate's agent can register for future context key delivery.
+   */
+  delegateMultiPartyProtocols?: string[];
 };
 
 /** The connect server endpoint types. */
@@ -1061,6 +1071,7 @@ async function submitConnectResponse(
   // Write-only delegates receive no decryption capability.
   const delegateDecryptionKeys: DelegateDecryptionKey[] = [];
   const delegateContextKeys: DelegateContextKey[] = [];
+  const delegateMultiPartyProtocols: string[] = [];
 
   const delegateGrantPromises = connectRequest.permissionRequests.map(
     async (permissionRequest) => {
@@ -1100,6 +1111,19 @@ async function submitConnectResponse(
             agent, selectedDid, protocolDefinition, permissionScopes,
           );
           delegateContextKeys.push(...ctxKeys);
+
+          // Only register the protocol for post-connect delivery if the
+          // delegate has at least one read-like scope. Write-only delegates
+          // must NOT receive context keys — they have no decryption need.
+          const readMethods = new Set([
+            DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
+          ]);
+          const hasReadLikeScope = permissionScopes.some(
+            (s): boolean => isRecordPermissionScope(s) && readMethods.has(s.method as DwnMethodName),
+          );
+          if (hasReadLikeScope) {
+            delegateMultiPartyProtocols.push(protocolDefinition.protocol);
+          }
         } else {
           // Pure single-party: derive ProtocolPath keys.
           // Unsupported scope shapes (contextId) throw.
@@ -1124,14 +1148,15 @@ async function submitConnectResponse(
 
   logger.log('Building connect response...');
   const responseObject = await EnboxConnectProtocol.createConnectResponse({
-    providerDid            : selectedDid,
-    delegateDid            : delegateBearerDid.uri,
-    aud                    : connectRequest.clientDid,
-    nonce                  : connectRequest.nonce,
+    providerDid                 : selectedDid,
+    delegateDid                 : delegateBearerDid.uri,
+    aud                         : connectRequest.clientDid,
+    nonce                       : connectRequest.nonce,
     delegateGrants,
     delegatePortableDid,
-    delegateDecryptionKeys : delegateDecryptionKeys.length > 0 ? delegateDecryptionKeys : undefined,
-    delegateContextKeys    : delegateContextKeys.length > 0 ? delegateContextKeys : undefined,
+    delegateDecryptionKeys      : delegateDecryptionKeys.length > 0 ? delegateDecryptionKeys : undefined,
+    delegateContextKeys         : delegateContextKeys.length > 0 ? delegateContextKeys : undefined,
+    delegateMultiPartyProtocols : delegateMultiPartyProtocols.length > 0 ? delegateMultiPartyProtocols : undefined,
   });
 
   logger.log('Signing connect response...');
