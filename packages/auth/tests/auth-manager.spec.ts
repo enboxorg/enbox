@@ -266,6 +266,83 @@ describe('AuthManager', () => {
       ).rejects.toThrow('denied or cancelled');
     });
 
+    test('passes delegateMultiPartyProtocols through to importDelegateContextKeys', async () => {
+      let importedProtocols: string[] | undefined;
+      let importedKeys: any[] | undefined;
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate-mp' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner-mp' },
+      });
+
+      const agent = createMockAgent({
+        firstLaunch                  : async () => false,
+        identityList                 : async () => [],
+        identityImport               : async () => delegateIdentity,
+        syncSync                     : async () => {},
+        dwnImportDelegateContextKeys : (_did: string, keys: any[], protocols?: string[]): void => {
+          importedKeys = keys;
+          importedProtocols = protocols;
+        },
+      });
+
+      const mockHandler = {
+        requestAccess: async (): Promise<any> => ({
+          delegatePortableDid         : { uri: 'did:jwk:delegate-mp', document: {}, privateKeys: [] },
+          delegateGrants              : [],
+          connectedDid                : 'did:dht:owner-mp',
+          delegateMultiPartyProtocols : ['https://multi-party.example/chat'],
+        }),
+      };
+
+      const manager = createTestManager(agent);
+      (manager as any)._connectHandler = mockHandler;
+
+      const session = await manager.connect({ protocols: [] });
+
+      expect(session.did).toBe('did:dht:owner-mp');
+      expect(importedKeys).toEqual([]);
+      expect(importedProtocols).toEqual(['https://multi-party.example/chat']);
+    });
+
+    test('passes delegateContextKeys and delegateMultiPartyProtocols together', async () => {
+      let importedProtocols: string[] | undefined;
+      let importedKeys: any[] | undefined;
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate-both' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner-both' },
+      });
+
+      const agent = createMockAgent({
+        firstLaunch                  : async () => false,
+        identityList                 : async () => [],
+        identityImport               : async () => delegateIdentity,
+        syncSync                     : async () => {},
+        dwnImportDelegateContextKeys : (_did: string, keys: any[], protocols?: string[]): void => {
+          importedKeys = keys;
+          importedProtocols = protocols;
+        },
+      });
+
+      const ctxKeys = [{ protocol: 'https://proto.example', contextId: 'ctx-1', derivedPrivateKey: { rootKeyId: 'k1' } }];
+      const mockHandler = {
+        requestAccess: async (): Promise<any> => ({
+          delegatePortableDid         : { uri: 'did:jwk:delegate-both', document: {}, privateKeys: [] },
+          delegateGrants              : [],
+          connectedDid                : 'did:dht:owner-both',
+          delegateContextKeys         : ctxKeys,
+          delegateMultiPartyProtocols : ['https://proto.example'],
+        }),
+      };
+
+      const manager = createTestManager(agent);
+      (manager as any)._connectHandler = mockHandler;
+
+      await manager.connect({ protocols: [] });
+
+      expect(importedKeys).toEqual(ctxKeys);
+      expect(importedProtocols).toEqual(['https://proto.example']);
+    });
+
     test('allows sync off for handler connect without throwing', async () => {
       const delegateIdentity = createMockIdentity({
         did      : { uri: 'did:jwk:delegate123' },
@@ -522,6 +599,25 @@ describe('AuthManager', () => {
 
       expect(await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBeNull();
       expect(clearCalled).toBe(true);
+    });
+
+    test('clean disconnect removes delegate context keys and multi-party protocols from storage', async () => {
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, JSON.stringify([{ protocol: 'test', contextId: 'c1' }]));
+      await storage.set(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS, JSON.stringify(['https://test.xyz']));
+
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity()],
+      });
+      const manager = createTestManager(agent, { storage });
+      await manager.connect({ password: 'test' });
+
+      await manager.disconnect();
+
+      expect(await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS)).toBeNull();
+      expect(await storage.get(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS)).toBeNull();
     });
 
     test('nuclear disconnect clears delegate decryption key cache', async () => {
