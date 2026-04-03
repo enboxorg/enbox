@@ -775,7 +775,212 @@ describe('e2e: delegate + encrypted protocol', () => {
     });
   });
 
-  // ─── 9. Cache lifecycle: clear on disconnect, clean re-import ─
+  // ─── 9. resolveKeyDecrypter delegate cache hit paths ─────────
+
+  describe('resolveKeyDecrypter delegate cache hits', () => {
+    it('should use protocol-wide delegate key for ProtocolPath-encrypted record', async () => {
+      const { resolveKeyDecrypter } = await import('../src/dwn-encryption.js');
+      const { TtlCache } = await import('@enbox/common');
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+
+      // Install protocol and write an encrypted record
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: encryptedNoteProtocol },
+        encryption    : true,
+      });
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : encryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+          schema       : 'https://schemas.xyz/note',
+          dataFormat   : 'text/plain',
+          data         : new TextEncoder().encode('protocol-wide test'),
+        },
+        encryption: true,
+      });
+
+      // Get the real encrypted RecordsWrite
+      const { reply: q } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: encryptedNoteProtocol.protocol } },
+      });
+      const recordsWrite = q.entries![0] as RecordsWriteMessage;
+
+      // Derive a protocol-wide key
+      const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
+        walletHarness.agent, walletIdentity.did.uri,
+        encryptedNoteProtocol.protocol,
+        [{ interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: encryptedNoteProtocol.protocol }] as any,
+        encryptedNoteProtocol,
+      );
+      expect(keys).toHaveLength(1);
+
+      // Build cache with the protocol-wide key
+      const delegateDid = 'did:jwk:test-resolve-wide';
+      const pathCache = new TtlCache<string, any[]>({ ttl: 60_000 });
+      pathCache.set(`ddk~${delegateDid}`, keys);
+
+      // resolveKeyDecrypter should return the protocol-wide decrypter
+      const decrypter = await resolveKeyDecrypter(
+        delegateHarness.agent, walletIdentity.did.uri,
+        recordsWrite, walletIdentity.did.uri,
+        new TtlCache({ ttl: 60_000 }), async () => undefined,
+        pathCache, delegateDid,
+      );
+      expect(decrypter.rootKeyId).toBe(keys[0].derivedPrivateKey.rootKeyId);
+      expect(decrypter.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+    });
+
+    it('should use exact-path delegate key for matching ProtocolPath-encrypted record', async () => {
+      const { resolveKeyDecrypter } = await import('../src/dwn-encryption.js');
+      const { TtlCache } = await import('@enbox/common');
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+
+      // Install multi-type protocol and write a 'note'
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: multiTypeProtocol },
+        encryption    : true,
+      });
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : multiTypeProtocol.protocol,
+          protocolPath : 'note',
+          schema       : 'https://schemas.xyz/note',
+          dataFormat   : 'text/plain',
+          data         : new TextEncoder().encode('exact-path cache test'),
+        },
+        encryption: true,
+      });
+
+      const { reply: q } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: multiTypeProtocol.protocol, protocolPath: 'note' } },
+      });
+      const recordsWrite = q.entries![0] as RecordsWriteMessage;
+
+      // Derive exact-path key for 'note'
+      const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
+        walletHarness.agent, walletIdentity.did.uri,
+        multiTypeProtocol.protocol,
+        [{
+          interface    : DwnInterfaceName.Records,
+          method       : DwnMethodName.Read,
+          protocol     : multiTypeProtocol.protocol,
+          protocolPath : 'note',
+        }] as any,
+        multiTypeProtocol,
+      );
+      expect(keys).toHaveLength(1);
+      expect(keys[0].scope.kind).toBe('protocolPath');
+
+      // Build cache
+      const delegateDid = 'did:jwk:test-resolve-exact';
+      const pathCache = new TtlCache<string, any[]>({ ttl: 60_000 });
+      pathCache.set(`ddk~${delegateDid}`, keys);
+
+      const decrypter = await resolveKeyDecrypter(
+        delegateHarness.agent, walletIdentity.did.uri,
+        recordsWrite, walletIdentity.did.uri,
+        new TtlCache({ ttl: 60_000 }), async () => undefined,
+        pathCache, delegateDid,
+      );
+      // The exact-path decrypter has the key's rootKeyId
+      expect(decrypter.rootKeyId).toBe(keys[0].derivedPrivateKey.rootKeyId);
+    });
+  });
+
+  // ─── 10. buildExactProtocolPathDecrypter happy path ──────────
+
+  describe('buildExactProtocolPathDecrypter decrypt success', () => {
+    it('should successfully decrypt when path matches exactly', async () => {
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+      const { buildExactProtocolPathDecrypter } = await import('../src/dwn-encryption.js');
+
+      // Install protocol and write encrypted note
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: encryptedNoteProtocol },
+        encryption    : true,
+      });
+      const noteData = 'exact-path decrypt test';
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : encryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+          schema       : 'https://schemas.xyz/note',
+          dataFormat   : 'text/plain',
+          data         : new TextEncoder().encode(noteData),
+        },
+        encryption: true,
+      });
+
+      // Get the real encrypted record
+      const { reply: q } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: encryptedNoteProtocol.protocol } },
+      });
+      const recordsWrite = q.entries![0] as RecordsWriteMessage;
+      expect(recordsWrite.encryption).toBeDefined();
+
+      // Derive exact-path key for 'note'
+      const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
+        walletHarness.agent, walletIdentity.did.uri,
+        encryptedNoteProtocol.protocol,
+        [{
+          interface    : DwnInterfaceName.Records,
+          method       : DwnMethodName.Read,
+          protocol     : encryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+        }] as any,
+        encryptedNoteProtocol,
+      );
+      expect(keys[0].scope.kind).toBe('protocolPath');
+
+      // Build the exact-path decrypter and call decrypt() with matching path
+      const decrypter = buildExactProtocolPathDecrypter(keys[0].derivedPrivateKey);
+      const recipient = recordsWrite.encryption!.recipients[0];
+      const fullPath = [
+        KeyDerivationScheme.ProtocolPath,
+        encryptedNoteProtocol.protocol,
+        'note',
+      ];
+
+      // This exercises the happy path of buildExactProtocolPathDecrypter:
+      // path matches → Records.derivePrivateKey → ecdhEsUnwrapKey
+      const { Encoder } = await import('@enbox/dwn-sdk-js');
+      const dek = await decrypter.decrypt(fullPath, {
+        ephemeralPublicKey : (recipient.header as any).epk,
+        encryptedKey       : Encoder.base64UrlToBytes((recipient as any).encrypted_key),
+      });
+      expect(dek).toBeInstanceOf(Uint8Array);
+      expect(dek.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ─── 11. Cache lifecycle: clear on disconnect, clean re-import ─
 
   describe('delegate decryption key cache lifecycle', () => {
     it('should clear cache and allow clean re-import (reconnect scenario)', async () => {

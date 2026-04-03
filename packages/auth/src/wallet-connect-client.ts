@@ -95,6 +95,7 @@ async function initClient({
   delegatePortableDid: EnboxConnectResponse['delegatePortableDid'];
   connectedDid: string;
   delegateDecryptionKeys?: EnboxConnectResponse['delegateDecryptionKeys'];
+  delegateContextKeys?: EnboxConnectResponse['delegateContextKeys'];
 } | undefined> {
   // ephemeral client did for ECDH, signing, verification
   const clientDid = await DidJwk.create();
@@ -192,6 +193,7 @@ async function initClient({
       delegatePortableDid    : verifiedResponse.delegatePortableDid,
       connectedDid           : verifiedResponse.providerDid,
       delegateDecryptionKeys : verifiedResponse.delegateDecryptionKeys,
+      delegateContextKeys    : verifiedResponse.delegateContextKeys,
     };
   }
 }

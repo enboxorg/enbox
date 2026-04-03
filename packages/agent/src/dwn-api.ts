@@ -184,6 +184,19 @@ export class AgentDwnApi {
   });
 
   /**
+   * Delegate context key cache — stores ProtocolContext decryption keys for
+   * multi-party encrypted protocols. Each key is scoped to one rootContextId.
+   * Keyed by `dctx~${delegateDid}~${protocol}~${rootContextId}`.
+   * TTL 24 hours (re-populated on session restore).
+   */
+  private _delegateContextKeyCache = new TtlCache<string, DerivedPrivateJwk>({
+    ttl: 24 * 60 * 60 * 1000
+  });
+
+  /** Tracks which context key cache entries belong to which delegate DID. */
+  private _delegateContextKeyCacheIndex = new Map<string, string[]>();
+
+  /**
    * Cache of locally-managed DIDs (agent DID + identities). Used to decide
    * whether a target DID should be routed through the local DWN server.
    */
@@ -1388,6 +1401,7 @@ export class AgentDwnApi {
       this._contextDerivedKeyCache,
       this.fetchContextKeyRecord.bind(this),
       this._delegateDecryptionKeyCache,
+      this._delegateContextKeyCache,
     );
   }
 
@@ -1498,18 +1512,57 @@ export class AgentDwnApi {
   }
 
   /**
-   * Clears delegate decryption keys from the in-memory cache.
-   * Called on disconnect/reconnect to prevent stale keys from persisting
-   * across sessions.
+   * Imports ProtocolContext decryption keys for multi-party encrypted protocols.
+   * Each key is scoped to one rootContextId within one protocol.
+   *
+   * @param delegateDid - The delegate DID for this session
+   * @param keys - Array of `{ protocol, contextId, derivedPrivateKey }` entries
+   */
+  public importDelegateContextKeys(
+    delegateDid: string,
+    keys: {
+      protocol: string;
+      contextId: string;
+      derivedPrivateKey: DerivedPrivateJwk;
+    }[],
+  ): void {
+    // Clear any previously indexed entries for this delegate first,
+    // so a re-import (e.g. session restore) doesn't leave stale entries.
+    const previousKeys = this._delegateContextKeyCacheIndex.get(delegateDid);
+    if (previousKeys) {
+      for (const ck of previousKeys) { this._delegateContextKeyCache.delete(ck); }
+    }
+
+    const cacheKeys: string[] = [];
+    for (const key of keys) {
+      const ck = `dctx~${delegateDid}~${key.protocol}~${key.contextId}`;
+      this._delegateContextKeyCache.set(ck, key.derivedPrivateKey);
+      cacheKeys.push(ck);
+    }
+    this._delegateContextKeyCacheIndex.set(delegateDid, cacheKeys);
+  }
+
+  /**
+   * Clears all delegate decryption keys (both ProtocolPath and ProtocolContext)
+   * from the in-memory cache. Called on disconnect to prevent stale keys from
+   * persisting across sessions.
    *
    * @param delegateDid - If provided, clears keys for that delegate session only.
-   *                      If omitted, clears all delegate decryption keys.
+   *                      If omitted, clears all delegate keys.
    */
   public clearDelegateDecryptionKeys(delegateDid?: string): void {
     if (delegateDid) {
       this._delegateDecryptionKeyCache.delete(`ddk~${delegateDid}`);
+      // Delete only context keys belonging to this delegate.
+      const cacheKeys = this._delegateContextKeyCacheIndex.get(delegateDid);
+      if (cacheKeys) {
+        for (const ck of cacheKeys) { this._delegateContextKeyCache.delete(ck); }
+        this._delegateContextKeyCacheIndex.delete(delegateDid);
+      }
     } else {
       this._delegateDecryptionKeyCache.clear();
+      this._delegateContextKeyCache.clear();
+      this._delegateContextKeyCacheIndex.clear();
     }
   }
 
