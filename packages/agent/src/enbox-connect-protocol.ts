@@ -236,6 +236,14 @@ export type EnboxConnectResponse = {
    * Cross-device delivery is a documented follow-up.
    */
   delegateContextKeys?: DelegateContextKey[];
+
+  /**
+   * Protocol URIs that have multi-party encrypted access patterns.
+   *
+   * Delivered even when no contexts exist yet (cold-start), so the
+   * delegate's agent can register for future context key delivery.
+   */
+  delegateMultiPartyProtocols?: string[];
 };
 
 /** The connect server endpoint types. */
@@ -1063,6 +1071,7 @@ async function submitConnectResponse(
   // Write-only delegates receive no decryption capability.
   const delegateDecryptionKeys: DelegateDecryptionKey[] = [];
   const delegateContextKeys: DelegateContextKey[] = [];
+  const delegateMultiPartyProtocols: string[] = [];
 
   const delegateGrantPromises = connectRequest.permissionRequests.map(
     async (permissionRequest) => {
@@ -1096,6 +1105,7 @@ async function submitConnectResponse(
         }
 
         if (multiParty.length > 0) {
+          delegateMultiPartyProtocols.push(protocolDefinition.protocol);
           // Pure multi-party: derive per-context keys for existing contexts.
           // Unsupported scope shapes (protocolPath, contextId) throw.
           const ctxKeys = await deriveContextKeysForDelegate(
@@ -1126,14 +1136,15 @@ async function submitConnectResponse(
 
   logger.log('Building connect response...');
   const responseObject = await EnboxConnectProtocol.createConnectResponse({
-    providerDid            : selectedDid,
-    delegateDid            : delegateBearerDid.uri,
-    aud                    : connectRequest.clientDid,
-    nonce                  : connectRequest.nonce,
+    providerDid                 : selectedDid,
+    delegateDid                 : delegateBearerDid.uri,
+    aud                         : connectRequest.clientDid,
+    nonce                       : connectRequest.nonce,
     delegateGrants,
     delegatePortableDid,
-    delegateDecryptionKeys : delegateDecryptionKeys.length > 0 ? delegateDecryptionKeys : undefined,
-    delegateContextKeys    : delegateContextKeys.length > 0 ? delegateContextKeys : undefined,
+    delegateDecryptionKeys      : delegateDecryptionKeys.length > 0 ? delegateDecryptionKeys : undefined,
+    delegateContextKeys         : delegateContextKeys.length > 0 ? delegateContextKeys : undefined,
+    delegateMultiPartyProtocols : delegateMultiPartyProtocols.length > 0 ? delegateMultiPartyProtocols : undefined,
   });
 
   logger.log('Signing connect response...');

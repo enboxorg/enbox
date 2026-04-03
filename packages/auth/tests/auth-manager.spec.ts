@@ -417,6 +417,68 @@ describe('AuthManager', () => {
       expect(importedCtxDid).toBe('did:jwk:delegate-ctx');
       expect(importedCtxKeys).toEqual(ctxKeysPayload);
     });
+
+    test('restores multi-party protocol registrations alongside context keys', async () => {
+      const ctxKeysPayload = [{ protocol: 'https://test.xyz', contextId: 'ctx-1', derivedPrivateKey: { rootKeyId: 'k2' } }];
+      const mpProtocols = ['https://test.xyz'];
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate-mp');
+      await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
+      await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, JSON.stringify(ctxKeysPayload));
+      await storage.set(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS, JSON.stringify(mpProtocols));
+
+      let importedCtxKeys: any[] | undefined;
+      let importedProtocols: string[] | undefined;
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate-mp' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+      });
+      const agent = createMockAgent({
+        firstLaunch                  : async () => false,
+        identityList                 : async () => [delegateIdentity],
+        dwnImportDelegateContextKeys : (did: string, keys: any[], protocols?: string[]): void => {
+          importedCtxKeys = keys;
+          importedProtocols = protocols;
+        },
+      });
+      const manager = createTestManager(agent, { storage });
+
+      const session = await manager.restoreSession();
+      expect(session).toBeDefined();
+      expect(importedCtxKeys).toEqual(ctxKeysPayload);
+      expect(importedProtocols).toEqual(mpProtocols);
+    });
+
+    test('restores cold-start delegate with protocols but no context keys', async () => {
+      const mpProtocols = ['https://cold-start.xyz'];
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:cold-start');
+      await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
+      await storage.set(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS, JSON.stringify(mpProtocols));
+
+      let importCalled = false;
+      let importedProtocols: string[] | undefined;
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:cold-start' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+      });
+      const agent = createMockAgent({
+        firstLaunch                  : async () => false,
+        identityList                 : async () => [delegateIdentity],
+        dwnImportDelegateContextKeys : (_did: string, _keys: any[], protocols?: string[]): void => {
+          importCalled = true;
+          importedProtocols = protocols;
+        },
+      });
+      const manager = createTestManager(agent, { storage });
+
+      const session = await manager.restoreSession();
+      expect(session).toBeDefined();
+      expect(importCalled).toBe(true);
+      expect(importedProtocols).toEqual(mpProtocols);
+    });
   });
 
   describe('disconnect()', () => {

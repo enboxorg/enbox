@@ -197,6 +197,24 @@ export class AgentDwnApi {
   private _delegateContextKeyCacheIndex = new Map<string, string[]>();
 
   /**
+   * Explicit registry of which multi-party protocols each delegate has
+   * protocol-wide read-like access to. Populated at connect time (even
+   * when zero contexts exist) and used by postWriteKeyDelivery() to
+   * decide whether to deliver new context keys.
+   *
+   * Keyed by delegateDid. Each entry is a Set of protocol URIs.
+   * Unlike the context key cache, this registry is NOT time-limited —
+   * it persists for the lifetime of the session.
+   */
+  private _delegateMultiPartyProtocols = new Map<string, Set<string>>();
+
+  /**
+   * Optional callback invoked when post-connect context keys are delivered
+   * to a delegate. The auth layer sets this to persist updated keys.
+   */
+  private _onDelegateContextKeysChanged?: (delegateDid: string) => void;
+
+  /**
    * Cache of locally-managed DIDs (agent DID + identities). Used to decide
    * whether a target DID should be routed through the local DWN server.
    */
@@ -1524,6 +1542,21 @@ export class AgentDwnApi {
    * @param delegateDid - The delegate DID for this session (unique per connect)
    * @param keys - Array of scope-aware decryption key entries
    */
+
+  /**
+   * Sets a callback invoked whenever post-connect context keys are
+   * delivered to a delegate. The auth layer uses this to persist
+   * updated context keys so they survive restart.
+   *
+   * @param callback - Called with the delegateDid that received new keys.
+   *                   Set to `undefined` to unregister.
+   */
+  public set onDelegateContextKeysChanged(
+    callback: ((delegateDid: string) => void) | undefined,
+  ) {
+    this._onDelegateContextKeysChanged = callback;
+  }
+
   public importDelegateDecryptionKeys(
     delegateDid: string,
     keys: {
@@ -1550,6 +1583,7 @@ export class AgentDwnApi {
       contextId: string;
       derivedPrivateKey: DerivedPrivateJwk;
     }[],
+    multiPartyProtocols?: string[],
   ): void {
     // Clear any previously indexed entries for this delegate first,
     // so a re-import (e.g. session restore) doesn't leave stale entries.
@@ -1565,6 +1599,14 @@ export class AgentDwnApi {
       cacheKeys.push(ck);
     }
     this._delegateContextKeyCacheIndex.set(delegateDid, cacheKeys);
+
+    // Populate the explicit multi-party protocol registry.
+    // Sources: explicit parameter (always wins) + protocols from delivered keys.
+    const protocols = new Set<string>(multiPartyProtocols ?? []);
+    for (const key of keys) { protocols.add(key.protocol); }
+    if (protocols.size > 0) {
+      this._delegateMultiPartyProtocols.set(delegateDid, protocols);
+    }
   }
 
   /**
@@ -1584,10 +1626,12 @@ export class AgentDwnApi {
         for (const ck of cacheKeys) { this._delegateContextKeyCache.delete(ck); }
         this._delegateContextKeyCacheIndex.delete(delegateDid);
       }
+      this._delegateMultiPartyProtocols.delete(delegateDid);
     } else {
       this._delegateDecryptionKeyCache.clear();
       this._delegateContextKeyCache.clear();
       this._delegateContextKeyCacheIndex.clear();
+      this._delegateMultiPartyProtocols.clear();
     }
   }
 
@@ -1633,14 +1677,22 @@ export class AgentDwnApi {
   }
 
   /**
+   * Exports the registered multi-party protocol URIs for a delegate.
+   * Used by the auth layer for persistence.
+   */
+  public exportDelegateMultiPartyProtocols(delegateDid: string): string[] {
+    const protocols = this._delegateMultiPartyProtocols.get(delegateDid);
+    return protocols ? [...protocols] : [];
+  }
+
+  /**
    * Checks whether any active delegate session has context keys for the
    * given protocol. Used by `postWriteKeyDelivery()` to determine if
    * delegate delivery is needed.
    */
   private hasEligibleDelegatesForProtocol(protocol: string): boolean {
-    for (const [delegateDid, cacheKeys] of this._delegateContextKeyCacheIndex) {
-      const protocolPrefix = `dctx~${delegateDid}~${protocol}~`;
-      if (cacheKeys.some((ck: string): boolean => ck.startsWith(protocolPrefix))) {
+    for (const [, protocols] of this._delegateMultiPartyProtocols) {
+      if (protocols.has(protocol)) {
         return true;
       }
     }
@@ -1667,22 +1719,20 @@ export class AgentDwnApi {
     rootContextId: string,
     contextKey: DerivedPrivateJwk,
   ): void {
-    for (const [delegateDid, cacheKeys] of this._delegateContextKeyCacheIndex) {
-      // Only deliver to delegates that already have context keys for this
-      // protocol — this confirms they had protocol-wide read-like access
-      // at connect time.
-      const protocolPrefix = `dctx~${delegateDid}~${protocol}~`;
-      const hasProtocolKeys = cacheKeys.some(
-        (ck: string): boolean => ck.startsWith(protocolPrefix),
-      );
-      if (!hasProtocolKeys) { continue; }
+    for (const [delegateDid, protocols] of this._delegateMultiPartyProtocols) {
+      if (!protocols.has(protocol)) { continue; }
 
       // Skip if this delegate already has a key for this context (idempotent).
       const newCacheKey = `dctx~${delegateDid}~${protocol}~${rootContextId}`;
       if (this._delegateContextKeyCache.get(newCacheKey)) { continue; }
 
       this._delegateContextKeyCache.set(newCacheKey, contextKey);
-      cacheKeys.push(newCacheKey);
+      const indexKeys = this._delegateContextKeyCacheIndex.get(delegateDid) ?? [];
+      indexKeys.push(newCacheKey);
+      this._delegateContextKeyCacheIndex.set(delegateDid, indexKeys);
+
+      // Notify the auth layer so it can persist the updated keys.
+      this._onDelegateContextKeysChanged?.(delegateDid);
     }
   }
 

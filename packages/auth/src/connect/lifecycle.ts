@@ -339,9 +339,13 @@ export async function importDelegateAndSetupSync(params: {
   delegateGrants: DwnDataEncodedRecordsWriteMessage[];
   delegateDecryptionKeys?: DelegateDecryptionKey[];
   delegateContextKeys?: DelegateContextKey[];
+  delegateMultiPartyProtocols?: string[];
   flowName: string;
 }): Promise<BearerIdentity> {
-  const { userAgent, delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys, delegateContextKeys, flowName } = params;
+  const {
+    userAgent, delegatePortableDid, connectedDid, delegateGrants,
+    delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols, flowName,
+  } = params;
 
   let identity: BearerIdentity | undefined;
   try {
@@ -372,8 +376,14 @@ export async function importDelegateAndSetupSync(params: {
     }
 
     // Import context-scoped decryption keys for multi-party encrypted protocols.
-    if (delegateContextKeys && delegateContextKeys.length > 0) {
-      userAgent.dwn.importDelegateContextKeys(delegatePortableDid.uri, delegateContextKeys);
+    // Always register multi-party protocols (even with zero keys) so the
+    // agent can deliver context keys for contexts created after connect.
+    if ((delegateContextKeys && delegateContextKeys.length > 0) || (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0)) {
+      userAgent.dwn.importDelegateContextKeys(
+        delegatePortableDid.uri,
+        delegateContextKeys ?? [],
+        delegateMultiPartyProtocols,
+      );
     }
 
     await userAgent.sync.registerIdentity({
@@ -395,6 +405,9 @@ export async function importDelegateAndSetupSync(params: {
     }
     if (delegateContextKeys && delegateContextKeys.length > 0) {
       (identity as any)._delegateContextKeys = delegateContextKeys;
+    }
+    if (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0) {
+      (identity as any)._delegateMultiPartyProtocols = delegateMultiPartyProtocols;
     }
 
     return identity;
@@ -454,6 +467,21 @@ export async function finalizeDelegateSession(params: {
   if (delegateContextKeys && delegateContextKeys.length > 0) {
     extraStorageKeys[STORAGE_KEYS.DELEGATE_CONTEXT_KEYS] = JSON.stringify(delegateContextKeys);
   }
+  const delegateMultiPartyProtocols = (identity as any)._delegateMultiPartyProtocols as string[] | undefined;
+  if (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0) {
+    extraStorageKeys[STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS] = JSON.stringify(delegateMultiPartyProtocols);
+  }
+
+  // Wire post-connect context key persistence: when the owner creates a
+  // new multi-party context, the agent injects the key into the delegate
+  // cache and fires this callback so we persist the updated keys.
+  userAgent.dwn.onDelegateContextKeysChanged = async (changedDelegateDid: string): Promise<void> => {
+    if (changedDelegateDid !== delegateDid) { return; }
+    try {
+      const keys = userAgent.dwn.exportDelegateContextKeys(delegateDid);
+      await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, JSON.stringify(keys));
+    } catch { /* best effort — keys will be re-derived on next connect */ }
+  };
 
   return finalizeSession({
     userAgent,

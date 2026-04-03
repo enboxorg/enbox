@@ -104,6 +104,7 @@ export async function restoreSession(
       await storage.remove(STORAGE_KEYS.CONNECTED_DID);
       await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+      await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
       return undefined;
     }
 
@@ -134,13 +135,25 @@ export async function restoreSession(
 
     // Restore context keys for multi-party encrypted protocols.
     const ctxKeysJson = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-    if (ctxKeysJson) {
+    // Restore multi-party protocol registrations.
+    const mpProtocolsJson = await storage.get(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
+    let multiPartyProtocols: string[] | undefined;
+    if (mpProtocolsJson) {
       try {
-        const ctxKeys = JSON.parse(ctxKeysJson);
-        if (Array.isArray(ctxKeys) && ctxKeys.length > 0) {
-          userAgent.dwn.importDelegateContextKeys(delegateDid, ctxKeys);
-        }
+        const parsed = JSON.parse(mpProtocolsJson);
+        if (Array.isArray(parsed)) { multiPartyProtocols = parsed; }
       } catch { /* best effort */ }
+    }
+
+    if (ctxKeysJson || multiPartyProtocols) {
+      try {
+        const ctxKeys = ctxKeysJson ? JSON.parse(ctxKeysJson) : [];
+        userAgent.dwn.importDelegateContextKeys(
+          delegateDid,
+          Array.isArray(ctxKeys) ? ctxKeys : [],
+          multiPartyProtocols,
+        );
+      } catch { /* best effort — keys will be refreshed on next connect */ }
     }
   }
 

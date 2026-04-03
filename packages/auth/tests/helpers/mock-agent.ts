@@ -44,7 +44,9 @@ export interface MockAgentOverrides {
   dwnProcessRawMessage?: (tenant: string, message: any, options?: any) => Promise<any>;
   dwnIsRemoteMode?: boolean;
   dwnImportDelegateDecryptionKeys?: (delegateDid: string, keys: any[]) => void;
-  dwnImportDelegateContextKeys?: (delegateDid: string, keys: any[]) => void;
+  dwnImportDelegateContextKeys?: (delegateDid: string, keys: any[], multiPartyProtocols?: string[]) => void;
+  dwnExportDelegateContextKeys?: (delegateDid: string) => any[];
+  dwnExportDelegateMultiPartyProtocols?: (delegateDid: string) => string[];
   dwnClearDelegateDecryptionKeys?: (delegateDid?: string) => void;
   syncRegisterIdentity?: (params: any) => Promise<void>;
   syncStartSync?: (params: any) => Promise<void>;
@@ -96,10 +98,12 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
         ?? (async (): Promise<boolean> => false),
       processRawMessage: overrides.dwnProcessRawMessage
         ?? (async (): Promise<any> => ({ status: { code: 202, detail: 'Accepted' } })),
-      isRemoteMode                 : overrides.dwnIsRemoteMode ?? false,
-      importDelegateDecryptionKeys : overrides.dwnImportDelegateDecryptionKeys ?? ((): void => {}),
-      importDelegateContextKeys    : overrides.dwnImportDelegateContextKeys ?? ((): void => {}),
-      clearDelegateDecryptionKeys  : overrides.dwnClearDelegateDecryptionKeys ?? ((): void => {}),
+      isRemoteMode                      : overrides.dwnIsRemoteMode ?? false,
+      importDelegateDecryptionKeys      : overrides.dwnImportDelegateDecryptionKeys ?? ((): void => {}),
+      importDelegateContextKeys         : overrides.dwnImportDelegateContextKeys ?? ((): void => {}),
+      exportDelegateContextKeys         : overrides.dwnExportDelegateContextKeys ?? ((): any[] => []),
+      exportDelegateMultiPartyProtocols : overrides.dwnExportDelegateMultiPartyProtocols ?? ((): string[] => []),
+      clearDelegateDecryptionKeys       : overrides.dwnClearDelegateDecryptionKeys ?? ((): void => {}),
     },
 
     sync: {

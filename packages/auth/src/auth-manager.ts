@@ -495,6 +495,7 @@ export class AuthManager {
       await this._storage.remove(STORAGE_KEYS.CONNECTED_DID);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+      await this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
     }
 
     this._setState('unlocked');
@@ -839,10 +840,10 @@ export class AuthManager {
     }
 
     // 5. Import delegate DID, process grants, set up sync.
-    const { delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys, delegateContextKeys } = result;
+    const { delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols } = result;
     const identity = await importDelegateAndSetupSync({
       userAgent, delegatePortableDid, connectedDid, delegateGrants,
-      delegateDecryptionKeys, delegateContextKeys,
+      delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols,
       flowName: 'Connect',
     });
 
