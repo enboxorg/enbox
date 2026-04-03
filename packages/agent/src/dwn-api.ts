@@ -31,7 +31,7 @@ import {
   ResumableTaskStoreLevel,
   StateIndexLevel,
 } from '@enbox/dwn-sdk-js';
-import { CryptoUtils, X25519 } from '@enbox/crypto';
+import { CryptoUtils, Ed25519, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -49,6 +49,7 @@ import type {
   SendDwnRequest,
 } from './types/dwn.js';
 
+import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnDiscoveryFile } from './dwn-discovery-file.js';
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 import { LocalDwnDiscovery } from './local-dwn.js';
@@ -802,19 +803,44 @@ export class AgentDwnApi {
         }
 
         // --- Post-connect delegate context key delivery (#824) ---
-        // When a new multi-party root record is created by the owner,
-        // deliver the context key to all active delegate sessions that
-        // have existing context keys for this protocol. This enables
-        // delegates to decrypt records in new contexts without reconnecting.
-        //
-        // This is same-process delivery: it works when the delegate cache
-        // is on the same agent instance that creates the root record.
-        // Cross-device DWN-based delivery is a documented follow-up.
+        // Same-process: direct cache injection (fast, no network).
         if (needsDelegateDelivery) {
           this.deliverContextKeyToDelegates(
             writeParams.protocol, rootContextId, contextKeyPayload,
           );
         }
+      }
+
+      // --- Cross-device delegate context key delivery (#826) ---
+      // Query grants to find ALL eligible delegates (including those on
+      // other agents) and write contextKey records to the DWN.
+      // This is separate from same-process delivery: it discovers delegates
+      // from the owner's DWN grants, not just in-memory caches. It must
+      // run even when no same-process delegates or participants exist.
+      if (isMultiParty && isRootRecord && !isExternallyAuthored) {
+        // Derive the context key if not already done above.
+        const { keyId: xdKeyId, keyUri: xdKeyUri } = await getEncryptionKeyInfoFn(this.agent, request.target);
+        const xdContextDerivationPath = [
+          KeyDerivationScheme.ProtocolContext,
+          rootContextId,
+        ];
+        const xdContextDerivedPrivateKeyBytes =
+          await this.agent.keyManager.derivePrivateKeyBytes({
+            keyUri         : xdKeyUri,
+            derivationPath : xdContextDerivationPath,
+          });
+        const xdContextDerivedPrivateJwk =
+          await X25519.bytesToPrivateKey({ privateKeyBytes: xdContextDerivedPrivateKeyBytes });
+        const xdContextKeyPayload: DerivedPrivateJwk = {
+          rootKeyId         : xdKeyId,
+          derivationScheme  : KeyDerivationScheme.ProtocolContext,
+          derivationPath    : xdContextDerivationPath,
+          derivedPrivateKey : xdContextDerivedPrivateJwk as PrivateKeyJwk,
+        };
+
+        await this.deliverContextKeyToDelegatesViaDwn(
+          request.target, writeParams.protocol, rootContextId, xdContextKeyPayload,
+        );
       }
     } catch (detectionError: any) {
       // Participant detection failure is non-fatal — the record is still stored.
@@ -1735,6 +1761,100 @@ export class AgentDwnApi {
 
       // Notify the auth layer so it can persist the updated keys.
       this._onDelegateContextKeysChanged?.(delegateDid);
+    }
+  }
+
+  /**
+   * Delivers a newly created multi-party context key to eligible delegates
+   * by writing `contextKey` records to the owner's DWN via the key-delivery
+   * protocol. This enables cross-device delivery: the delegate can later
+   * fetch the record from the owner's DWN and decrypt it.
+   *
+   * Eligible delegates are discovered by querying the owner's DWN for
+   * active permission grants with read-like scopes on the given protocol.
+   *
+   * The contextKey record is encrypted to the delegate's X25519 key
+   * (derived from the delegate DID's Ed25519 keyAgreement key).
+   *
+   * @param tenantDid - The owner's DID
+   * @param protocol - The protocol URI
+   * @param rootContextId - The root context ID of the new context
+   * @param contextKey - The derived context key (`DerivedPrivateJwk`)
+   */
+  private async deliverContextKeyToDelegatesViaDwn(
+    tenantDid: string,
+    protocol: string,
+    rootContextId: string,
+    contextKey: DerivedPrivateJwk,
+  ): Promise<void> {
+    try {
+      const permissionsApi = new AgentPermissionsApi({ agent: this.agent });
+      const grants = await permissionsApi.fetchGrants({
+        author       : tenantDid,
+        target       : tenantDid,
+        grantor      : tenantDid,
+        protocol,
+        checkRevoked : true,
+      });
+
+      const readMethods = new Set(['Read', 'Query', 'Subscribe']);
+
+      for (const grant of grants) {
+        const scope = grant.grant.scope as any;
+        if (!readMethods.has(scope.method)) { continue; }
+
+        // Narrow scopes (protocolPath, contextId) are not supported for
+        // multi-party delegate delivery — skip them silently.
+        if (scope.protocolPath || scope.contextId) { continue; }
+
+        const delegateDid = grant.grant.grantee;
+
+        try {
+          // Resolve the delegate's DID document to get their public key.
+          const { didDocument: delegateDidDoc } = await this.agent.did.resolve(delegateDid);
+          if (!delegateDidDoc?.verificationMethod?.[0]?.publicKeyJwk) { continue; }
+
+          const delegateEdPublicKey = delegateDidDoc.verificationMethod[0].publicKeyJwk;
+
+          // Convert Ed25519 → X25519 for encryption. If the key is already
+          // X25519, use it directly.
+          let delegateX25519PublicKey: any;
+          if (delegateEdPublicKey.crv === 'Ed25519') {
+            delegateX25519PublicKey = await Ed25519.convertPublicKeyToX25519({
+              publicKey: delegateEdPublicKey,
+            });
+          } else if (delegateEdPublicKey.crv === 'X25519') {
+            delegateX25519PublicKey = delegateEdPublicKey;
+          } else {
+            continue; // Unsupported key type — skip silently
+          }
+
+          await this.writeContextKeyRecord({
+            tenantDid,
+            recipientDid                  : delegateDid,
+            contextKeyData                : contextKey,
+            sourceProtocol                : protocol,
+            sourceContextId               : rootContextId,
+            recipientKeyDeliveryPublicKey : {
+              rootKeyId    : delegateDidDoc.verificationMethod[0].id,
+              publicKeyJwk : delegateX25519PublicKey as PublicKeyJwk,
+            },
+          });
+        } catch (delegateError: any) {
+          console.warn(
+            `AgentDwnApi: Cross-device key delivery to delegate ` +
+            `'${delegateDid}' for context '${rootContextId}' failed: ` +
+            `${delegateError.message}. The delegate may need to reconnect.`
+          );
+        }
+      }
+    } catch (discoveryError: any) {
+      // Grant discovery failure is non-fatal — same-process delivery may
+      // still have succeeded, and sync will eventually deliver the record.
+      console.warn(
+        `AgentDwnApi: Delegate grant discovery for protocol ` +
+        `'${protocol}' failed: ${discoveryError.message}`
+      );
     }
   }
 

@@ -16,7 +16,6 @@ import type {
   SendDwnRequest,
 } from './types/dwn.js';
 
-import { X25519 } from '@enbox/crypto';
 import {
   Cid,
   ContentEncryptionAlgorithm,
@@ -26,6 +25,7 @@ import {
   KeyDerivationScheme,
   Records,
 } from '@enbox/dwn-sdk-js';
+import { Ed25519, X25519 } from '@enbox/crypto';
 
 import { DwnInterface } from './types/dwn.js';
 import { isDwnRequest } from './dwn-type-guards.js';
@@ -140,22 +140,33 @@ export async function getEncryptionKeyInfo(
     );
   }
 
-  // 4. Verify it's an X25519 key
-  const publicKeyJwk = verificationMethod.publicKeyJwk;
-  if (publicKeyJwk.crv !== 'X25519') {
+  // 4. Resolve or derive the X25519 key for encryption.
+  // Standard case: the keyAgreement VM already has an X25519 key.
+  // Delegate case: did:jwk with Ed25519 only — convert to X25519.
+  // The Ed25519→X25519 conversion is a standard cryptographic operation
+  // (RFC 8032 / libsodium). The converted X25519 key must already be
+  // present in the agent's KMS (imported via the delegate PortableDid).
+  let resolvedPublicKeyJwk = verificationMethod.publicKeyJwk;
+
+  if (resolvedPublicKeyJwk.crv === 'Ed25519') {
+    resolvedPublicKeyJwk = await Ed25519.convertPublicKeyToX25519({
+      publicKey: resolvedPublicKeyJwk,
+    });
+  } else if (resolvedPublicKeyJwk.crv !== 'X25519') {
     throw new Error(
       `AgentDwnApi: keyAgreement key for '${didUri}' uses curve ` +
-      `'${publicKeyJwk.crv}', but DWN encryption requires 'X25519'.`
+      `'${resolvedPublicKeyJwk.crv}', but DWN encryption requires ` +
+      `'X25519' (or 'Ed25519' which is auto-converted).`
     );
   }
 
   // 5. Compute the KMS key URI (does NOT export the key)
-  const keyUri = await agent.keyManager.getKeyUri({ key: publicKeyJwk });
+  const keyUri = await agent.keyManager.getKeyUri({ key: resolvedPublicKeyJwk });
 
   return {
     keyId        : verificationMethod.id,
     keyUri,
-    publicKeyJwk : publicKeyJwk as PublicKeyJwk,
+    publicKeyJwk : resolvedPublicKeyJwk as PublicKeyJwk,
   };
 }
 
@@ -370,7 +381,7 @@ export async function resolveKeyDecrypter(
   }) => Promise<DerivedPrivateJwk | undefined>,
   delegateDecryptionKeyCache?: { get(key: string): DelegateDecryptionKeyEntry[] | undefined },
   granteeDid?: string,
-  delegateContextKeyCache?: { get(key: string): DerivedPrivateJwk | undefined },
+  delegateContextKeyCache?: { get(key: string): DerivedPrivateJwk | undefined; set(key: string, value: DerivedPrivateJwk): void },
 ): Promise<KeyDecrypter> {
   const { encryption } = recordsWrite;
 
@@ -421,7 +432,10 @@ export async function resolveKeyDecrypter(
 
   const rootContextId = recordsWrite.contextId.split('/')[0];
 
-  // Case 0: Delegate with a delivered context key for this rootContextId
+  // Case 0: Delegate with a delivered context key for this rootContextId.
+  // First check the in-memory cache (same-process delivery).
+  // On cache miss, try to fetch a contextKey record from the owner's DWN
+  // (cross-device delivery via the key-delivery protocol).
   if (delegateContextKeyCache && granteeDid) {
     const protocol = recordsWrite.descriptor.protocol;
     if (protocol) {
@@ -429,6 +443,25 @@ export async function resolveKeyDecrypter(
       const delegateCtxKey = delegateContextKeyCache.get(ctxCacheKey);
       if (delegateCtxKey) {
         return buildContextKeyDecrypter(delegateCtxKey);
+      }
+
+      // Cache miss — try fetching a delivered contextKey record.
+      // The owner may have written one addressed to this delegate
+      // after the initial connect (cross-device delivery).
+      try {
+        const ownerDid = authorDid;
+        const fetchedKey = await fetchContextKeyRecordFn({
+          ownerDid,
+          requesterDid    : granteeDid,
+          sourceProtocol  : protocol,
+          sourceContextId : rootContextId,
+        });
+        if (fetchedKey) {
+          delegateContextKeyCache.set(ctxCacheKey, fetchedKey);
+          return buildContextKeyDecrypter(fetchedKey);
+        }
+      } catch {
+        // Delegate fetch failed — fall through to other decrypt paths.
       }
     }
   }
@@ -510,7 +543,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
     sourceContextId: string;
   }) => Promise<DerivedPrivateJwk | undefined>,
   delegateDecryptionKeyCache?: { get(key: string): DelegateDecryptionKeyEntry[] | undefined },
-  delegateContextKeyCache?: { get(key: string): DerivedPrivateJwk | undefined },
+  delegateContextKeyCache?: { get(key: string): DerivedPrivateJwk | undefined; set(key: string, value: DerivedPrivateJwk): void },
 ): Promise<void> {
   if (!('encryption' in request) || !request.encryption) {
     return;

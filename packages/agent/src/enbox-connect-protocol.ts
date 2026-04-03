@@ -1065,6 +1065,18 @@ async function submitConnectResponse(
   const delegateBearerDid = await DidJwk.create();
   const delegatePortableDid = await delegateBearerDid.export();
 
+  // Add X25519 key derived from the delegate's Ed25519 key.
+  // did:jwk only supports one verification method, but DWN encryption
+  // requires X25519 for key agreement. Including the derived X25519
+  // private key in the PortableDid ensures the delegate agent's KMS
+  // has both keys after import. The Ed25519→X25519 conversion is a
+  // standard cryptographic operation (RFC 8032 / libsodium).
+  const delegateEdPrivateKey = delegatePortableDid.privateKeys![0];
+  const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+    privateKey: delegateEdPrivateKey,
+  });
+  delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
+
   // Derive scope-aware decryption keys for encrypted protocols.
   // Single-party: ProtocolPath keys (protocol-wide or exact-path).
   // Multi-party: ProtocolContext keys (per rootContextId).
