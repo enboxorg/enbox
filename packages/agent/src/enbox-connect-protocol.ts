@@ -1105,13 +1105,25 @@ async function submitConnectResponse(
         }
 
         if (multiParty.length > 0) {
-          delegateMultiPartyProtocols.push(protocolDefinition.protocol);
           // Pure multi-party: derive per-context keys for existing contexts.
           // Unsupported scope shapes (protocolPath, contextId) throw.
           const ctxKeys = await deriveContextKeysForDelegate(
             agent, selectedDid, protocolDefinition, permissionScopes,
           );
           delegateContextKeys.push(...ctxKeys);
+
+          // Only register the protocol for post-connect delivery if the
+          // delegate has at least one read-like scope. Write-only delegates
+          // must NOT receive context keys — they have no decryption need.
+          const readMethods = new Set([
+            DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
+          ]);
+          const hasReadLikeScope = permissionScopes.some(
+            (s): boolean => isRecordPermissionScope(s) && readMethods.has(s.method as DwnMethodName),
+          );
+          if (hasReadLikeScope) {
+            delegateMultiPartyProtocols.push(protocolDefinition.protocol);
+          }
         } else {
           // Pure single-party: derive ProtocolPath keys.
           // Unsupported scope shapes (contextId) throw.

@@ -556,6 +556,82 @@ describe('AuthManager', () => {
       expect(importCalled).toBe(true);
       expect(importedProtocols).toEqual(mpProtocols);
     });
+
+    test('wires onDelegateContextKeysChanged callback after restore', async () => {
+      const mpProtocols = ['https://test.xyz'];
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:restore-cb');
+      await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
+      await storage.set(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS, JSON.stringify(mpProtocols));
+
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:restore-cb' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+      });
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => [delegateIdentity],
+      });
+      const manager = createTestManager(agent, { storage });
+
+      const session = await manager.restoreSession();
+      expect(session).toBeDefined();
+
+      // The callback should be wired on the dwn object
+      const callback = (agent.dwn as any).onDelegateContextKeysChanged;
+      expect(callback).toBeDefined();
+      expect(typeof callback).toBe('function');
+    });
+
+    test('post-connect keys delivered after restore survive next re-restore', async () => {
+      const mpProtocols = ['https://test.xyz'];
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:persist-restore');
+      await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
+      await storage.set(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS, JSON.stringify(mpProtocols));
+
+      const newContextKey = { protocol: 'https://test.xyz', contextId: 'new-ctx-1', derivedPrivateKey: { rootKeyId: 'k3' } };
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:persist-restore' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+      });
+      const agent = createMockAgent({
+        firstLaunch                  : async () => false,
+        identityList                 : async () => [delegateIdentity],
+        dwnExportDelegateContextKeys : () => [newContextKey],
+      });
+      const manager = createTestManager(agent, { storage });
+
+      // First restore — wires the callback
+      await manager.restoreSession();
+
+      // Simulate post-connect delivery: invoke the callback
+      const callback = (agent.dwn as any).onDelegateContextKeysChanged;
+      expect(callback).toBeDefined();
+      await callback('did:jwk:persist-restore');
+
+      // Verify the new key was persisted to storage
+      const persistedJson = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+      expect(persistedJson).toBeDefined();
+      const persisted = JSON.parse(persistedJson!);
+      expect(persisted).toEqual([newContextKey]);
+
+      // Verify a second restore would pick up the persisted keys
+      let secondRestoreKeys: any[] | undefined;
+      const agent2 = createMockAgent({
+        firstLaunch                  : async () => false,
+        identityList                 : async () => [delegateIdentity],
+        dwnImportDelegateContextKeys : (_did: string, keys: any[]): void => {
+          secondRestoreKeys = keys;
+        },
+      });
+      const manager2 = createTestManager(agent2, { storage });
+      await manager2.restoreSession();
+
+      expect(secondRestoreKeys).toEqual([newContextKey]);
+    });
   });
 
   describe('disconnect()', () => {

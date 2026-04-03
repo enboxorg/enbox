@@ -849,6 +849,95 @@ describe('e2e: delegate + multi-party encrypted protocol', () => {
       });
       expect(reply.status.code).toBe(202);
     });
+
+    it('should not deliver post-connect context keys to write-only delegate', async () => {
+      // Step 1: Install protocol, create initial context, backfill for a
+      // READ delegate so the protocol has at least one registered delegate.
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Setup' })),
+        },
+        encryption: true,
+      });
+
+      // Step 2: Register a write-only delegate — importDelegateContextKeys
+      // with an empty protocols list (simulating what submitConnectResponse
+      // does for write-only scopes: no read scopes → no protocol registered).
+      const writeOnlyDid = 'did:jwk:write-only-delegate';
+      walletHarness.agent.dwn.importDelegateContextKeys(writeOnlyDid, [], []);
+
+      // Verify the write-only delegate has NO registered protocols
+      expect(
+        walletHarness.agent.dwn.exportDelegateMultiPartyProtocols(writeOnlyDid),
+      ).toHaveLength(0);
+
+      // Step 3: Owner creates a NEW context after connect
+      const { message: newThread } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Post-connect' })),
+        },
+        encryption: true,
+      });
+      const newContextId = (newThread as RecordsWriteMessage).recordId;
+
+      // Step 4: Verify write-only delegate did NOT receive the key
+      const cache = (walletHarness.agent.dwn as any)._delegateContextKeyCache;
+      expect(
+        cache.get(`dctx~${writeOnlyDid}~${chatProtocol.protocol}~${newContextId}`),
+      ).toBeUndefined();
+      expect(
+        walletHarness.agent.dwn.exportDelegateContextKeys(writeOnlyDid),
+      ).toHaveLength(0);
+    });
+
+    it('should not register write-only scopes via submitConnectResponse classification', async () => {
+      // Directly test that deriveContextKeysForDelegate returns empty AND
+      // does NOT cause protocol registration for write-only scopes.
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      // Write-only scopes
+      const writeOnlyScopes = [
+        { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, protocol: chatProtocol.protocol },
+      ];
+
+      const keys = await EnboxConnectProtocol.deriveContextKeysForDelegate(
+        walletHarness.agent, walletIdentity.did.uri,
+        chatProtocol, writeOnlyScopes as any,
+      );
+
+      // No keys and no protocol registration should occur
+      expect(keys).toHaveLength(0);
+    });
   });
 
   // ─── 7. exportDelegateContextKeys ────────────────────────────

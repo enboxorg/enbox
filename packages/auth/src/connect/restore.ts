@@ -155,6 +155,17 @@ export async function restoreSession(
         );
       } catch { /* best effort — keys will be refreshed on next connect */ }
     }
+
+    // Wire post-connect context key persistence so keys delivered after
+    // restore survive the next restart. Same callback as finalizeDelegateSession.
+    const restoreDelegateDid = delegateDid;
+    userAgent.dwn.onDelegateContextKeysChanged = async (changedDelegateDid: string): Promise<void> => {
+      if (changedDelegateDid !== restoreDelegateDid) { return; }
+      try {
+        const keys = userAgent.dwn.exportDelegateContextKeys(restoreDelegateDid);
+        await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, JSON.stringify(keys));
+      } catch { /* best effort — keys will be re-derived on next connect */ }
+    };
   }
 
   // Persist session info, build AuthSession, and emit lifecycle events.
