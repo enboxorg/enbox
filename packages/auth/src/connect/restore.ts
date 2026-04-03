@@ -103,6 +103,7 @@ export async function restoreSession(
       await storage.remove(STORAGE_KEYS.DELEGATE_DID);
       await storage.remove(STORAGE_KEYS.CONNECTED_DID);
       await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
+      await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       return undefined;
     }
 
@@ -129,6 +130,17 @@ export async function restoreSession(
           userAgent.dwn.importDelegateDecryptionKeys(delegateDid, keys);
         }
       } catch { /* best effort — keys will be refreshed on next connect */ }
+    }
+
+    // Restore context keys for multi-party encrypted protocols.
+    const ctxKeysJson = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+    if (ctxKeysJson) {
+      try {
+        const ctxKeys = JSON.parse(ctxKeysJson);
+        if (Array.isArray(ctxKeys) && ctxKeys.length > 0) {
+          userAgent.dwn.importDelegateContextKeys(delegateDid, ctxKeys);
+        }
+      } catch { /* best effort */ }
     }
   }
 

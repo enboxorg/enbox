@@ -4,12 +4,12 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { ConnectPermissionRequest, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+import type { ConnectPermissionRequest, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 import type { PasswordProvider } from './password-provider.js';
 
 // Re-export types that consumers will need
-export type { ConnectPermissionRequest, DelegateDecryptionKey, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+export type { ConnectPermissionRequest, DelegateContextKey, DelegateDecryptionKey, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 // Re-export EnboxUserAgent so consumers don't need a direct @enbox/agent dep
 export type { EnboxUserAgent } from '@enbox/agent';
@@ -238,6 +238,12 @@ export interface ConnectResult {
    * receive no decryption keys.
    */
   delegateDecryptionKeys?: DelegateDecryptionKey[];
+
+  /**
+   * Context-scoped decryption keys for multi-party encrypted protocols.
+   * Each key unlocks one rootContextId for records using ProtocolContext encryption.
+   */
+  delegateContextKeys?: DelegateContextKey[];
 }
 
 /**
@@ -663,6 +669,12 @@ export const STORAGE_KEYS = {
    * the delegate decryption key cache without requiring a new connect flow.
    */
   DELEGATE_DECRYPTION_KEYS: 'enbox:auth:delegateDecryptionKeys',
+
+  /**
+   * JSON-serialised `DelegateContextKey[]` for multi-party encrypted protocol
+   * records. Persisted for session restore.
+   */
+  DELEGATE_CONTEXT_KEYS: 'enbox:auth:delegateContextKeys',
 
   /**
    * The base URL of the local DWN server discovered via the `dwn://connect`

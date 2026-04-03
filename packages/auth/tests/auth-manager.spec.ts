@@ -387,6 +387,36 @@ describe('AuthManager', () => {
       expect(importedDid).toBe('did:jwk:delegate');
       expect(importedKeys).toEqual(keysPayload);
     });
+
+    test('restores delegate context keys from storage on session restore', async () => {
+      const ctxKeysPayload = [{ protocol: 'https://test.xyz', contextId: 'ctx-1', derivedPrivateKey: { rootKeyId: 'k2' } }];
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate-ctx');
+      await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
+      await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, JSON.stringify(ctxKeysPayload));
+
+      let importedCtxKeys: any[] | undefined;
+      let importedCtxDid: string | undefined;
+      const delegateIdentity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate-ctx' },
+        metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+      });
+      const agent = createMockAgent({
+        firstLaunch                  : async () => false,
+        identityList                 : async () => [delegateIdentity],
+        dwnImportDelegateContextKeys : (did: string, keys: any[]): void => {
+          importedCtxDid = did;
+          importedCtxKeys = keys;
+        },
+      });
+      const manager = createTestManager(agent, { storage });
+
+      const session = await manager.restoreSession();
+      expect(session).toBeDefined();
+      expect(importedCtxDid).toBe('did:jwk:delegate-ctx');
+      expect(importedCtxKeys).toEqual(ctxKeysPayload);
+    });
   });
 
   describe('disconnect()', () => {

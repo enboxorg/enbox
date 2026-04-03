@@ -834,6 +834,60 @@ describe('enbox connect', () => {
       ).rejects.toThrow('contextId is not supported');
     });
 
+    it('should abort the connect flow for mixed single-party + multi-party encrypted protocol', async () => {
+      const mixedProtocol: DwnProtocolDefinition = {
+        protocol  : 'http://mixed-encrypted.xyz',
+        published : true,
+        types     : {
+          thread      : { schema: 'http://mixed-encrypted.xyz/thread', dataFormats: ['application/json'], encryptionRequired: true },
+          participant : { schema: 'http://mixed-encrypted.xyz/participant', dataFormats: ['application/json'] },
+          chat        : { schema: 'http://mixed-encrypted.xyz/chat', dataFormats: ['text/plain'], encryptionRequired: true },
+          note        : { schema: 'http://mixed-encrypted.xyz/note', dataFormats: ['text/plain'], encryptionRequired: true },
+        },
+        structure: {
+          thread: {
+            participant : { $role: true },
+            chat        : { $actions: [{ role: 'thread/participant', can: ['create', 'read'] }] },
+          },
+          note: {},
+        },
+      };
+
+      const readScopes: RecordsPermissionScope[] = [{
+        interface : 'Records' as any,
+        method    : 'Read' as any,
+        protocol  : 'http://mixed-encrypted.xyz',
+      }];
+
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      connectRequest = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        permissionRequests : [{ protocolDefinition: mixedProtocol, permissionScopes: readScopes }],
+        callbackUrl        : callbackUrl,
+      });
+
+      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
+        messageCid : '',
+        reply      : { status: { code: 202, detail: 'OK' } }
+      });
+      sinon.stub(testHarness.agent, 'processDwnRequest')
+        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [{}] as any } });
+
+      await expect(
+        EnboxConnectProtocol.submitConnectResponse(
+          providerIdentity.did.uri, connectRequest, randomPin, testHarness.agent,
+        )
+      ).rejects.toThrow('mixed single-party');
+    });
+
     it('should throw if a grant that is included in the request does not match the protocol definition', async () => {
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);

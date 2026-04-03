@@ -343,6 +343,7 @@ export function buildExactProtocolPathDecrypter(
  *   - Delegate with exact-path key: enforces exact path match
  *
  * For ProtocolContext records:
+ *   - Delegate: uses delivered context key from the connect flow
  *   - Context creator: derives key directly from KMS
  *   - Participant: fetches contextKey via key-delivery protocol, caches it
  *
@@ -369,6 +370,7 @@ export async function resolveKeyDecrypter(
   }) => Promise<DerivedPrivateJwk | undefined>,
   delegateDecryptionKeyCache?: { get(key: string): DelegateDecryptionKeyEntry[] | undefined },
   granteeDid?: string,
+  delegateContextKeyCache?: { get(key: string): DerivedPrivateJwk | undefined },
 ): Promise<KeyDecrypter> {
   const { encryption } = recordsWrite;
 
@@ -418,6 +420,18 @@ export async function resolveKeyDecrypter(
   )!;
 
   const rootContextId = recordsWrite.contextId.split('/')[0];
+
+  // Case 0: Delegate with a delivered context key for this rootContextId
+  if (delegateContextKeyCache && granteeDid) {
+    const protocol = recordsWrite.descriptor.protocol;
+    if (protocol) {
+      const ctxCacheKey = `dctx~${granteeDid}~${protocol}~${rootContextId}`;
+      const delegateCtxKey = delegateContextKeyCache.get(ctxCacheKey);
+      if (delegateCtxKey) {
+        return buildContextKeyDecrypter(delegateCtxKey);
+      }
+    }
+  }
 
   // Case 1: I am the context creator — rootKeyId matches my encryption key
   const { keyId, keyUri } = await getEncryptionKeyInfo(agent, authorDid);
@@ -496,6 +510,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
     sourceContextId: string;
   }) => Promise<DerivedPrivateJwk | undefined>,
   delegateDecryptionKeyCache?: { get(key: string): DelegateDecryptionKeyEntry[] | undefined },
+  delegateContextKeyCache?: { get(key: string): DerivedPrivateJwk | undefined },
 ): Promise<void> {
   if (!('encryption' in request) || !request.encryption) {
     return;
@@ -510,7 +525,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
       const keyDecrypter = await resolveKeyDecrypter(
         agent, request.author, readReply.entry.recordsWrite, request.target,
         contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
-        (request as any).granteeDid,
+        (request as any).granteeDid, delegateContextKeyCache,
       );
 
       try {
@@ -538,7 +553,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
           const keyDecrypter = await resolveKeyDecrypter(
             agent, request.author, entry as RecordsWriteMessage, request.target,
             contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
-            (request as any).granteeDid,
+            (request as any).granteeDid, delegateContextKeyCache,
           );
 
           try {

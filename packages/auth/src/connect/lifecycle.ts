@@ -15,7 +15,7 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { BearerIdentity, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope, EnboxUserAgent } from '@enbox/agent';
+import type { BearerIdentity, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope, EnboxUserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
@@ -338,9 +338,10 @@ export async function importDelegateAndSetupSync(params: {
   connectedDid: string;
   delegateGrants: DwnDataEncodedRecordsWriteMessage[];
   delegateDecryptionKeys?: DelegateDecryptionKey[];
+  delegateContextKeys?: DelegateContextKey[];
   flowName: string;
 }): Promise<BearerIdentity> {
-  const { userAgent, delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys, flowName } = params;
+  const { userAgent, delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys, delegateContextKeys, flowName } = params;
 
   let identity: BearerIdentity | undefined;
   try {
@@ -370,6 +371,11 @@ export async function importDelegateAndSetupSync(params: {
       userAgent.dwn.importDelegateDecryptionKeys(delegatePortableDid.uri, delegateDecryptionKeys);
     }
 
+    // Import context-scoped decryption keys for multi-party encrypted protocols.
+    if (delegateContextKeys && delegateContextKeys.length > 0) {
+      userAgent.dwn.importDelegateContextKeys(delegatePortableDid.uri, delegateContextKeys);
+    }
+
     await userAgent.sync.registerIdentity({
       did     : connectedDid,
       options : {
@@ -386,6 +392,9 @@ export async function importDelegateAndSetupSync(params: {
     // Store protocol keys on the identity for finalize to persist.
     if (delegateDecryptionKeys && delegateDecryptionKeys.length > 0) {
       (identity as any)._delegateDecryptionKeys = delegateDecryptionKeys;
+    }
+    if (delegateContextKeys && delegateContextKeys.length > 0) {
+      (identity as any)._delegateContextKeys = delegateContextKeys;
     }
 
     return identity;
@@ -440,6 +449,10 @@ export async function finalizeDelegateSession(params: {
   };
   if (delegateDecryptionKeys && delegateDecryptionKeys.length > 0) {
     extraStorageKeys[STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS] = JSON.stringify(delegateDecryptionKeys);
+  }
+  const delegateContextKeys = (identity as any)._delegateContextKeys as DelegateContextKey[] | undefined;
+  if (delegateContextKeys && delegateContextKeys.length > 0) {
+    extraStorageKeys[STORAGE_KEYS.DELEGATE_CONTEXT_KEYS] = JSON.stringify(delegateContextKeys);
   }
 
   return finalizeSession({
