@@ -11,6 +11,7 @@
  *   3. Write-only delegate receives no context keys
  *   4. protocolPath-scoped reads on multi-party → connect aborted
  *   5. Existing participant key delivery is not regressed
+ *   6. Post-connect delivery of new context keys (#824)
  */
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
@@ -554,6 +555,507 @@ describe('e2e: delegate + multi-party encrypted protocol', () => {
 
       // New entry present
       expect(cache.get(`dctx~${delegateDid}~https://test.xyz~ctx-new-1`)).toBeDefined();
+    });
+  });
+
+  // ─── 6. Post-connect delivery of new context keys (#824) ─────
+
+  describe('post-connect context key delivery', () => {
+    it('should deliver context key for new context created after connect', async () => {
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+
+      // Step 1: Install protocol and create an initial context
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      const { message: thread1Msg } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Pre-connect' })),
+        },
+        encryption: true,
+      });
+      const thread1ContextId = (thread1Msg as RecordsWriteMessage).recordId;
+
+      // Step 2: Derive context keys at "connect time" (backfill existing)
+      const contextKeys = await EnboxConnectProtocol.deriveContextKeysForDelegate(
+        walletHarness.agent, walletIdentity.did.uri,
+        chatProtocol, [
+          { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        ] as any,
+      );
+      expect(contextKeys).toHaveLength(1);
+      expect(contextKeys[0].contextId).toBe(thread1ContextId);
+
+      // Step 3: Import context keys into the WALLET agent's delegate cache
+      // (same-process delivery: both owner and delegate on the same agent)
+      const delegateDid = 'did:jwk:post-connect-delegate';
+      walletHarness.agent.dwn.importDelegateContextKeys(delegateDid, contextKeys);
+
+      // Step 4: Owner creates a NEW multi-party root record AFTER connect
+      const { reply: thread2Reply, message: thread2Msg } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Post-connect' })),
+        },
+        encryption: true,
+      });
+      expect(thread2Reply.status.code).toBe(202);
+      const thread2ContextId = (thread2Msg as RecordsWriteMessage).recordId;
+
+      // Step 5: Verify the new context key was injected into the delegate cache
+      const cache = (walletHarness.agent.dwn as any)._delegateContextKeyCache;
+      const newKey = cache.get(`dctx~${delegateDid}~${chatProtocol.protocol}~${thread2ContextId}`);
+      expect(newKey).toBeDefined();
+      expect(newKey.derivationScheme).toBe(KeyDerivationScheme.ProtocolContext);
+      expect(newKey.derivationPath).toEqual([
+        KeyDerivationScheme.ProtocolContext,
+        thread2ContextId,
+      ]);
+    });
+
+    it('should allow delegate to decrypt records in the new post-connect context', async () => {
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+
+      // Step 1: Install protocol, create initial context, simulate connect
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      // Create initial thread (for backfill)
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Initial' })),
+        },
+        encryption: true,
+      });
+
+      // Simulate connect: derive and import context keys
+      const contextKeys = await EnboxConnectProtocol.deriveContextKeysForDelegate(
+        walletHarness.agent, walletIdentity.did.uri,
+        chatProtocol, [
+          { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        ] as any,
+      );
+      const delegateDid = delegateHarness.agent.agentDid.uri;
+      walletHarness.agent.dwn.importDelegateContextKeys(delegateDid, contextKeys);
+
+      // Step 2: Owner creates a NEW thread after connect
+      const { message: newThreadMsg } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'New thread' })),
+        },
+        encryption: true,
+      });
+      const newThreadContextId = (newThreadMsg as RecordsWriteMessage).recordId;
+
+      // Step 3: Write an encrypted chat record in the new context
+      const chatData = 'Post-connect encrypted message';
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol        : chatProtocol.protocol,
+          protocolPath    : 'thread/chat',
+          schema          : 'https://schemas.xyz/chat',
+          dataFormat      : 'text/plain',
+          parentContextId : newThreadContextId,
+          data            : new TextEncoder().encode(chatData),
+        },
+        encryption: true,
+      });
+
+      // Step 4: Export the WALLET agent's context keys for this delegate
+      // (the new key should be present)
+      const exportedKeys = walletHarness.agent.dwn.exportDelegateContextKeys(delegateDid);
+      expect(exportedKeys.length).toBeGreaterThanOrEqual(2); // backfilled + new
+
+      // Step 5: Import ALL context keys (incl. post-connect) into delegate agent
+      delegateHarness.agent.dwn.importDelegateContextKeys(delegateDid, exportedKeys);
+
+      // Step 6: Copy protocol + records to delegate's DWN
+      const walletPortableDid = await walletIdentity.did.export();
+      await delegateHarness.agent.did.import({
+        portableDid : walletPortableDid,
+        tenant      : delegateHarness.agent.agentDid.uri,
+      });
+
+      const { reply: protoReply } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { protocol: chatProtocol.protocol } },
+      });
+      await delegateHarness.agent.dwn.processRawMessage(
+        walletIdentity.did.uri, protoReply.entries![0] as any,
+      );
+
+      // Copy all records
+      const { reply: allQuery } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: chatProtocol.protocol } },
+      });
+      for (const entry of allQuery.entries ?? []) {
+        const { reply: rr } = await walletHarness.agent.processDwnRequest({
+          author        : walletIdentity.did.uri,
+          target        : walletIdentity.did.uri,
+          messageType   : DwnInterface.RecordsRead,
+          messageParams : { filter: { recordId: (entry as any).recordId } },
+        });
+        if (rr.entry?.recordsWrite && rr.entry?.data) {
+          const dataBytes = await DataStream.toBytes(rr.entry.data);
+          await delegateHarness.agent.dwn.processRawMessage(
+            walletIdentity.did.uri, rr.entry.recordsWrite as any,
+            { dataStream: DataStream.fromBytes(dataBytes) },
+          );
+        }
+      }
+
+      // Step 7: Delegate reads the NEW chat record with auto-decrypt
+      const { reply: decrypted } = await delegateHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter: { protocol: chatProtocol.protocol, protocolPath: 'thread/chat', parentId: newThreadContextId },
+        },
+        encryption: true,
+      });
+
+      expect(decrypted.status.code).toBe(200);
+      expect(decrypted.entry?.data).toBeDefined();
+      const decryptedBytes = await DataStream.toBytes(decrypted.entry!.data!);
+      expect(new TextDecoder().decode(decryptedBytes)).toBe(chatData);
+    });
+
+    it('should not deliver context keys to delegates for a different protocol', async () => {
+      // Import context keys for chatProtocol only
+      const delegateDid = 'did:jwk:different-protocol-delegate';
+
+      const { X25519 } = await import('@enbox/crypto');
+      const fakeBytes = new Uint8Array(32);
+      crypto.getRandomValues(fakeBytes);
+      const fakeJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: fakeBytes });
+
+      walletHarness.agent.dwn.importDelegateContextKeys(delegateDid, [{
+        protocol          : 'https://other-protocol.xyz/not-chat',
+        contextId         : 'other-ctx',
+        derivedPrivateKey : {
+          rootKeyId         : 'k1',
+          derivationScheme  : KeyDerivationScheme.ProtocolContext,
+          derivationPath    : [KeyDerivationScheme.ProtocolContext, 'other-ctx'],
+          derivedPrivateKey : fakeJwk as any,
+        },
+      }]);
+
+      // Install chat protocol and create a root record
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      const { message: threadMsg } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Cross-proto test' })),
+        },
+        encryption: true,
+      });
+      const contextId = (threadMsg as RecordsWriteMessage).recordId;
+
+      // Delegate should NOT have received a key for chatProtocol
+      const cache = (walletHarness.agent.dwn as any)._delegateContextKeyCache;
+      expect(cache.get(`dctx~${delegateDid}~${chatProtocol.protocol}~${contextId}`)).toBeUndefined();
+    });
+
+    it('should not deliver context keys when no delegates are registered', async () => {
+      // Clear all delegate caches
+      walletHarness.agent.dwn.clearDelegateDecryptionKeys();
+
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      // This should succeed without errors (no delegates to deliver to)
+      const { reply } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'No delegates' })),
+        },
+        encryption: true,
+      });
+      expect(reply.status.code).toBe(202);
+    });
+  });
+
+  // ─── 7. exportDelegateContextKeys ────────────────────────────
+
+  describe('exportDelegateContextKeys', () => {
+    it('should export all context keys including post-connect keys', async () => {
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+
+      // Install protocol and create initial context
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Export test 1' })),
+        },
+        encryption: true,
+      });
+
+      // Backfill + import
+      const contextKeys = await EnboxConnectProtocol.deriveContextKeysForDelegate(
+        walletHarness.agent, walletIdentity.did.uri,
+        chatProtocol, [
+          { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        ] as any,
+      );
+      const delegateDid = 'did:jwk:export-test-delegate';
+      walletHarness.agent.dwn.importDelegateContextKeys(delegateDid, contextKeys);
+
+      // Create two more threads after connect
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Export test 2' })),
+        },
+        encryption: true,
+      });
+
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Export test 3' })),
+        },
+        encryption: true,
+      });
+
+      // Export should have 3 keys: 1 backfilled + 2 post-connect
+      const exported = walletHarness.agent.dwn.exportDelegateContextKeys(delegateDid);
+      expect(exported).toHaveLength(3);
+      for (const key of exported) {
+        expect(key.protocol).toBe(chatProtocol.protocol);
+        expect(key.contextId).toBeDefined();
+        expect(key.derivedPrivateKey.derivationScheme).toBe(KeyDerivationScheme.ProtocolContext);
+      }
+    });
+
+    it('should return empty for unknown delegate', () => {
+      const exported = walletHarness.agent.dwn.exportDelegateContextKeys('did:jwk:nonexistent');
+      expect(exported).toHaveLength(0);
+    });
+  });
+
+  // ─── 8. Disconnect clears post-connect keys ─────────────────
+
+  describe('disconnect clears post-connect keys', () => {
+    it('should clear all context keys on disconnect including post-connect', async () => {
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+
+      // Setup: install protocol, create context, backfill, create new context
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Disconnect test' })),
+        },
+        encryption: true,
+      });
+
+      const contextKeys = await EnboxConnectProtocol.deriveContextKeysForDelegate(
+        walletHarness.agent, walletIdentity.did.uri,
+        chatProtocol, [
+          { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        ] as any,
+      );
+      const delegateDid = 'did:jwk:disconnect-test-delegate';
+      walletHarness.agent.dwn.importDelegateContextKeys(delegateDid, contextKeys);
+
+      // Create a new context (triggers post-connect delivery)
+      const { message: newThreadMsg } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'After connect' })),
+        },
+        encryption: true,
+      });
+      const newContextId = (newThreadMsg as RecordsWriteMessage).recordId;
+
+      // Verify post-connect key exists
+      const cache = (walletHarness.agent.dwn as any)._delegateContextKeyCache;
+      expect(cache.get(`dctx~${delegateDid}~${chatProtocol.protocol}~${newContextId}`)).toBeDefined();
+
+      // Disconnect: clear all keys for this delegate
+      walletHarness.agent.dwn.clearDelegateDecryptionKeys(delegateDid);
+
+      // All keys (backfilled + post-connect) should be gone
+      expect(cache.get(`dctx~${delegateDid}~${chatProtocol.protocol}~${newContextId}`)).toBeUndefined();
+      expect(walletHarness.agent.dwn.exportDelegateContextKeys(delegateDid)).toHaveLength(0);
+    });
+
+    it('should not leak context keys across different delegates', async () => {
+      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
+
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Isolation test' })),
+        },
+        encryption: true,
+      });
+
+      const contextKeys = await EnboxConnectProtocol.deriveContextKeysForDelegate(
+        walletHarness.agent, walletIdentity.did.uri,
+        chatProtocol, [
+          { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        ] as any,
+      );
+
+      // Import keys for two different delegates
+      const delegateA = 'did:jwk:isolation-delegate-a';
+      const delegateB = 'did:jwk:isolation-delegate-b';
+      walletHarness.agent.dwn.importDelegateContextKeys(delegateA, contextKeys);
+      walletHarness.agent.dwn.importDelegateContextKeys(delegateB, contextKeys);
+
+      // Create a new context (both delegates should receive the key)
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Shared new' })),
+        },
+        encryption: true,
+      });
+
+      // Both delegates should have 2 keys (1 backfilled + 1 post-connect)
+      expect(walletHarness.agent.dwn.exportDelegateContextKeys(delegateA)).toHaveLength(2);
+      expect(walletHarness.agent.dwn.exportDelegateContextKeys(delegateB)).toHaveLength(2);
+
+      // Clear delegate A — delegate B should be unaffected
+      walletHarness.agent.dwn.clearDelegateDecryptionKeys(delegateA);
+      expect(walletHarness.agent.dwn.exportDelegateContextKeys(delegateA)).toHaveLength(0);
+      expect(walletHarness.agent.dwn.exportDelegateContextKeys(delegateB)).toHaveLength(2);
     });
   });
 });

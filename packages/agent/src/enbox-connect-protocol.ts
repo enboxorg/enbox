@@ -230,8 +230,10 @@ export type EnboxConnectResponse = {
    * Each key is scoped to `[ProtocolContext, rootContextId]` and can decrypt
    * all records within that context domain.
    *
-   * New contexts created after connect are NOT covered — the delegate must
-   * reconnect to receive keys for newly created contexts.
+   * Contexts created after connect are delivered automatically by
+   * `postWriteKeyDelivery()` when the owner creates a new multi-party root
+   * record on the same agent instance (same-process delivery).
+   * Cross-device delivery is a documented follow-up.
    */
   delegateContextKeys?: DelegateContextKey[];
 };

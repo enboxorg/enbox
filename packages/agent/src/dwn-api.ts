@@ -717,12 +717,19 @@ export class AgentDwnApi {
         authorDid    : isExternallyAuthored ? authorDid : undefined,
       });
 
-      if (newParticipants.size > 0) {
-        // Derive the context key to deliver to participants
-        const rootContextId = recordsWriteMessage.contextId?.split('/')[0]
-          || recordsWriteMessage.contextId
-          || recordsWriteMessage.recordId;
+      // Compute rootContextId for both participant and delegate delivery.
+      const rootContextId = recordsWriteMessage.contextId?.split('/')[0]
+        || recordsWriteMessage.contextId
+        || recordsWriteMessage.recordId;
 
+      // Determine if delegate delivery is needed: new multi-party root
+      // record created by the owner with active delegate sessions.
+      const needsDelegateDelivery = isMultiParty && isRootRecord
+        && !isExternallyAuthored
+        && this.hasEligibleDelegatesForProtocol(writeParams.protocol);
+
+      if (newParticipants.size > 0 || needsDelegateDelivery) {
+        // Derive the context key once (shared for participant + delegate delivery).
         const { keyId, keyUri } = await getEncryptionKeyInfoFn(this.agent, request.target);
         const contextDerivationPath = [
           KeyDerivationScheme.ProtocolContext,
@@ -742,35 +749,53 @@ export class AgentDwnApi {
           derivedPrivateKey : contextDerivedPrivateJwk as PrivateKeyJwk,
         };
 
-        // Extract the author's key delivery public key from the record
-        // so we can encrypt the contextKey directly to the external author.
-        const authorKeyDeliveryPubKey =
-          recordsWriteMessage.authorization?.authorKeyDeliveryPublicKey;
+        // --- Participant key delivery (existing) ---
+        if (newParticipants.size > 0) {
+          // Extract the author's key delivery public key from the record
+          // so we can encrypt the contextKey directly to the external author.
+          const authorKeyDeliveryPubKey =
+            recordsWriteMessage.authorization?.authorKeyDeliveryPublicKey;
 
-        for (const participantDid of newParticipants) {
-          try {
-            // Use the author's key delivery public key when delivering
-            // to the external author; for other participants (e.g.
-            // recipient, role holders) fall back to owner-key encryption.
-            const recipientKey = (participantDid === authorDid && authorKeyDeliveryPubKey)
-              ? authorKeyDeliveryPubKey
-              : undefined;
+          for (const participantDid of newParticipants) {
+            try {
+              // Use the author's key delivery public key when delivering
+              // to the external author; for other participants (e.g.
+              // recipient, role holders) fall back to owner-key encryption.
+              const recipientKey = (participantDid === authorDid && authorKeyDeliveryPubKey)
+                ? authorKeyDeliveryPubKey
+                : undefined;
 
-            await this.writeContextKeyRecord({
-              tenantDid                     : request.target,
-              recipientDid                  : participantDid,
-              contextKeyData                : contextKeyPayload,
-              sourceProtocol                : writeParams.protocol,
-              sourceContextId               : rootContextId,
-              recipientKeyDeliveryPublicKey : recipientKey,
-            });
-          } catch (keyDeliveryError: any) {
-            console.warn(
-              `AgentDwnApi: Key delivery to '${participantDid}' for context ` +
-              `'${rootContextId}' failed: ${keyDeliveryError.message}. ` +
-              `The participant may not be able to decrypt records in this context.`
-            );
+              await this.writeContextKeyRecord({
+                tenantDid                     : request.target,
+                recipientDid                  : participantDid,
+                contextKeyData                : contextKeyPayload,
+                sourceProtocol                : writeParams.protocol,
+                sourceContextId               : rootContextId,
+                recipientKeyDeliveryPublicKey : recipientKey,
+              });
+            } catch (keyDeliveryError: any) {
+              console.warn(
+                `AgentDwnApi: Key delivery to '${participantDid}' for context ` +
+                `'${rootContextId}' failed: ${keyDeliveryError.message}. ` +
+                `The participant may not be able to decrypt records in this context.`
+              );
+            }
           }
+        }
+
+        // --- Post-connect delegate context key delivery (#824) ---
+        // When a new multi-party root record is created by the owner,
+        // deliver the context key to all active delegate sessions that
+        // have existing context keys for this protocol. This enables
+        // delegates to decrypt records in new contexts without reconnecting.
+        //
+        // This is same-process delivery: it works when the delegate cache
+        // is on the same agent instance that creates the root record.
+        // Cross-device DWN-based delivery is a documented follow-up.
+        if (needsDelegateDelivery) {
+          this.deliverContextKeyToDelegates(
+            writeParams.protocol, rootContextId, contextKeyPayload,
+          );
         }
       }
     } catch (detectionError: any) {
@@ -1563,6 +1588,101 @@ export class AgentDwnApi {
       this._delegateDecryptionKeyCache.clear();
       this._delegateContextKeyCache.clear();
       this._delegateContextKeyCacheIndex.clear();
+    }
+  }
+
+  /**
+   * Exports the current set of delegate context keys for a specific delegate.
+   * Returns an array of `{ protocol, contextId, derivedPrivateKey }` entries
+   * suitable for serialization and persistence.
+   *
+   * Called by the auth layer to persist context keys (including keys delivered
+   * post-connect) so they survive agent restarts.
+   *
+   * @param delegateDid - The delegate DID whose context keys to export
+   * @returns Array of context key entries (may be empty)
+   */
+  public exportDelegateContextKeys(
+    delegateDid: string,
+  ): { protocol: string; contextId: string; derivedPrivateKey: DerivedPrivateJwk }[] {
+    const cacheKeys = this._delegateContextKeyCacheIndex.get(delegateDid);
+    if (!cacheKeys) { return []; }
+
+    const result: { protocol: string; contextId: string; derivedPrivateKey: DerivedPrivateJwk }[] = [];
+    const prefix = `dctx~${delegateDid}~`;
+
+    for (const ck of cacheKeys) {
+      const key = this._delegateContextKeyCache.get(ck);
+      if (!key || !ck.startsWith(prefix)) { continue; }
+
+      // Parse protocol and contextId from cache key:
+      // format is `dctx~<delegateDid>~<protocol>~<contextId>`
+      // contextId is always the last segment; protocol is everything between.
+      const rest = ck.slice(prefix.length);
+      const lastTilde = rest.lastIndexOf('~');
+      if (lastTilde === -1) { continue; }
+
+      result.push({
+        protocol          : rest.slice(0, lastTilde),
+        contextId         : rest.slice(lastTilde + 1),
+        derivedPrivateKey : key,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Checks whether any active delegate session has context keys for the
+   * given protocol. Used by `postWriteKeyDelivery()` to determine if
+   * delegate delivery is needed.
+   */
+  private hasEligibleDelegatesForProtocol(protocol: string): boolean {
+    for (const [delegateDid, cacheKeys] of this._delegateContextKeyCacheIndex) {
+      const protocolPrefix = `dctx~${delegateDid}~${protocol}~`;
+      if (cacheKeys.some((ck: string): boolean => ck.startsWith(protocolPrefix))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Delivers a newly created multi-party context key to all active delegate
+   * sessions that have existing context keys for the given protocol.
+   *
+   * This is same-process delivery: the context key is injected directly
+   * into `_delegateContextKeyCache`. It works when the delegate cache is
+   * on the same agent instance that creates the root record.
+   *
+   * Cross-device DWN-based delivery (where the owner's agent and the
+   * delegate's agent are separate processes) is a documented follow-up.
+   *
+   * @param protocol - The protocol URI
+   * @param rootContextId - The root context ID of the new context
+   * @param contextKey - The derived context key (`DerivedPrivateJwk`)
+   */
+  private deliverContextKeyToDelegates(
+    protocol: string,
+    rootContextId: string,
+    contextKey: DerivedPrivateJwk,
+  ): void {
+    for (const [delegateDid, cacheKeys] of this._delegateContextKeyCacheIndex) {
+      // Only deliver to delegates that already have context keys for this
+      // protocol — this confirms they had protocol-wide read-like access
+      // at connect time.
+      const protocolPrefix = `dctx~${delegateDid}~${protocol}~`;
+      const hasProtocolKeys = cacheKeys.some(
+        (ck: string): boolean => ck.startsWith(protocolPrefix),
+      );
+      if (!hasProtocolKeys) { continue; }
+
+      // Skip if this delegate already has a key for this context (idempotent).
+      const newCacheKey = `dctx~${delegateDid}~${protocol}~${rootContextId}`;
+      if (this._delegateContextKeyCache.get(newCacheKey)) { continue; }
+
+      this._delegateContextKeyCache.set(newCacheKey, contextKey);
+      cacheKeys.push(newCacheKey);
     }
   }
 
