@@ -1606,6 +1606,8 @@ export class AgentDwnApi {
     for (const key of keys) { protocols.add(key.protocol); }
     if (protocols.size > 0) {
       this._delegateMultiPartyProtocols.set(delegateDid, protocols);
+    } else {
+      this._delegateMultiPartyProtocols.delete(delegateDid);
     }
   }
 

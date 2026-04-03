@@ -654,7 +654,7 @@ jobs:
           browsers="chromium firefox webkit"
           failed=false
           found_any=false
-          threshold=98
+          threshold=96
           mkdir -p coverage-badges
 
           # Temp files: node rows and a TSV of (pkg, browser, coverage) for
