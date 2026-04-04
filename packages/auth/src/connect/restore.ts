@@ -10,6 +10,12 @@ import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
 import type { RestoreSessionOptions } from '../types.js';
 
+import type { StorageAdapter } from '../types.js';
+
+import type { EnboxUserAgent } from '@enbox/agent';
+
+import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
+
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
 import { ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
@@ -65,6 +71,11 @@ export async function restoreSession(
   if (!userAgent.dwn.isRemoteMode) {
     await applyLocalDwnDiscovery(userAgent, storage, emitter);
   }
+
+  // Retry any orphaned grant revocations from a previous partial disconnect.
+  // These are revocations that were written locally but not confirmed by the
+  // owner's remote DWN. We retry them now while sync is running.
+  await retryOrphanedRevocations(userAgent, storage);
 
   // Determine which identity to reconnect.
   const activeIdentityDid = await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY);
@@ -181,4 +192,112 @@ export async function restoreSession(
     identityConnectedDid : identity.metadata.connectedDid,
     emitIdentityAdded    : false,
   });
+}
+
+// ─── retryOrphanedRevocations ───────────────────────────────────
+
+/**
+ * Retry grant revocations that were not confirmed by the owner's remote
+ * DWN during a previous disconnect. This runs early in restoreSession()
+ * while sync is active, so the revocations have the best chance of
+ * reaching the remote DWN.
+ *
+ * On success, clears SESSION_REVOCATIONS and the preserved session
+ * context (DELEGATE_DID, CONNECTED_DID). On continued failure,
+ * preserves everything for the next attempt.
+ */
+async function retryOrphanedRevocations(
+  userAgent: EnboxUserAgent,
+  storage: StorageAdapter,
+): Promise<void> {
+  const revocationsJson = await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
+  if (!revocationsJson) { return; }
+
+  const delegateDid = await storage.get(STORAGE_KEYS.DELEGATE_DID);
+  const connectedDid = await storage.get(STORAGE_KEYS.CONNECTED_DID);
+  if (!delegateDid || !connectedDid) {
+    // No session context — can't retry. Clean up the orphaned data.
+    await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+    return;
+  }
+
+  let revocations: { grantId: string; revocationGrantId: string }[];
+  try {
+    revocations = JSON.parse(revocationsJson);
+  } catch {
+    await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+    return;
+  }
+
+  let dwnEndpointUrls: string[] = [];
+  try {
+    dwnEndpointUrls = await userAgent.dwn.getDwnEndpointUrlsForTarget(connectedDid);
+  } catch {
+    // No endpoints — can't send remotely. Leave for next attempt.
+    return;
+  }
+
+  const succeeded: string[] = [];
+  for (const { grantId, revocationGrantId } of revocations) {
+    try {
+      const { reply: readReply } = await userAgent.dwn.processRequest({
+        author        : connectedDid,
+        target        : connectedDid,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId: grantId } },
+      });
+      if (readReply.status.code !== 200 || !readReply.entry) { continue; }
+      const grant = DwnPermissionGrant.parse(readReply.entry.recordsWrite as any);
+
+      const { message: revocationMessage } = await userAgent.permissions.createRevocation({
+        author            : connectedDid,
+        store             : true,
+        grant,
+        granteeDid        : delegateDid,
+        permissionGrantId : revocationGrantId,
+      });
+
+      let remoteDelivered = false;
+      if (revocationMessage && dwnEndpointUrls.length > 0) {
+        const { encodedData, ...rawMessage } = revocationMessage as any;
+        const data = encodedData
+          ? new Blob([Uint8Array.from(atob(encodedData), (c: string): number => c.charCodeAt(0))])
+          : undefined;
+        for (const dwnUrl of dwnEndpointUrls) {
+          try {
+            const sendReply = await userAgent.rpc.sendDwnRequest({
+              dwnUrl,
+              targetDid : connectedDid,
+              message   : rawMessage as any,
+              data,
+            });
+            if (sendReply?.status?.code === 202 || sendReply?.status?.code === 409) {
+              remoteDelivered = true;
+            }
+          } catch {
+            // Per-endpoint failure — try the next one.
+          }
+        }
+      }
+
+      if (remoteDelivered) {
+        succeeded.push(grantId);
+      }
+    } catch {
+      // Individual failure — continue with others.
+    }
+  }
+
+  if (succeeded.length === revocations.length) {
+    // All revocations confirmed — clean up everything.
+    await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+    await storage.remove(STORAGE_KEYS.DELEGATE_DID);
+    await storage.remove(STORAGE_KEYS.CONNECTED_DID);
+    await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+  } else if (succeeded.length > 0) {
+    // Partial success — update storage with remaining.
+    const remaining = revocations.filter((r) => !succeeded.includes(r.grantId));
+    await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify(remaining));
+  }
+  // If nothing succeeded, leave everything for next attempt.
 }

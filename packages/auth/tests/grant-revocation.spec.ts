@@ -129,6 +129,37 @@ function mockGrantRecord(grantId: string): any {
 
 describe('grant revocation on disconnect', () => {
 
+  test('partial failure preserves session context for restoreSession retry', async () => {
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate');
+    await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
+    await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([
+      { grantId: 'grant-1', revocationGrantId: 'rev-grant-1' },
+    ]));
+
+    // Agent that fails all remote sends
+    const agent = buildRevocationAgent({
+      grantRecords : { 'grant-1': mockGrantRecord('grant-1') },
+      rpcError     : true,
+    });
+
+    const manager = createTestManager(agent, { storage });
+    await manager.connect({ password: 'test' });
+    await manager.disconnect();
+
+    // SESSION_REVOCATIONS preserved (remote send failed)
+    expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).not.toBeNull();
+
+    // Session context preserved for retry
+    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBe('did:jwk:delegate');
+    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBe('did:dht:owner');
+    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
+
+    // Crypto/session keys are cleared (not needed for retry)
+    expect(await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBeNull();
+  });
+
   test('disconnect creates per-grant revocations and sends to remote DWN', async () => {
     const storage = new MemoryStorage();
     await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -214,11 +245,12 @@ describe('grant revocation on disconnect', () => {
     expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBeNull();
   });
 
-  test('revocation failure does not prevent local cleanup', async () => {
+  test('revocation failure clears crypto keys but preserves retry context', async () => {
     const storage = new MemoryStorage();
     await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
     await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate');
     await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
+    await storage.set(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, JSON.stringify([{ test: true }]));
     await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([
       { grantId: 'grant-1', revocationGrantId: 'rev-grant-1' },
     ]));
@@ -232,10 +264,14 @@ describe('grant revocation on disconnect', () => {
     await manager.connect({ password: 'test' });
     await manager.disconnect();
 
-    // Local state cleared despite revocation failure
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBeNull();
-    // But SESSION_REVOCATIONS preserved for retry
+    // Crypto keys cleared (not needed for retry)
+    expect(await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBeNull();
+
+    // Retry context preserved
     expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).not.toBeNull();
+    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBe('did:jwk:delegate');
+    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBe('did:dht:owner');
+    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
   });
 
   test('second disconnect is idempotent', async () => {

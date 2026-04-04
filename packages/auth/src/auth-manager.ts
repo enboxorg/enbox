@@ -548,11 +548,9 @@ export class AuthManager {
             } else {
               await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
             }
-            // Known limitation: SESSION_REVOCATIONS is preserved for retry, but
-            // the rest of the session context (DELEGATE_DID, CONNECTED_DID) is
-            // cleared below. A future reconnect or manual cleanup path would
-            // need to read SESSION_REVOCATIONS independently to complete the
-            // revocations. This is still better than deleting the retry data.
+            // SESSION_REVOCATIONS, DELEGATE_DID, CONNECTED_DID, and
+            // PREVIOUSLY_CONNECTED are preserved below so restoreSession()
+            // can retry the failed revocations on next app launch.
             console.warn(
               `AuthManager: ${revocations.length - succeeded.length} of ${revocations.length} ` +
               `grant revocations failed. Unrevoked grants preserved in SESSION_REVOCATIONS for retry.`
@@ -596,15 +594,20 @@ export class AuthManager {
       }
     } else {
       // Clean disconnect: remove session markers but keep vault/identities.
-      await this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+      // If SESSION_REVOCATIONS still exists (partial failure), also preserve
+      // DELEGATE_DID, CONNECTED_DID, and PREVIOUSLY_CONNECTED so the retry
+      // path in restoreSession() has the context it needs.
+      const hasUnrevokedGrants = await this._storage.get(STORAGE_KEYS.SESSION_REVOCATIONS) !== null;
+      if (!hasUnrevokedGrants) {
+        await this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+        await this._storage.remove(STORAGE_KEYS.DELEGATE_DID);
+        await this._storage.remove(STORAGE_KEYS.CONNECTED_DID);
+      }
+      // Always clear these — they are not needed for revocation retry.
       await this._storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
-      await this._storage.remove(STORAGE_KEYS.DELEGATE_DID);
-      await this._storage.remove(STORAGE_KEYS.CONNECTED_DID);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
-      // SESSION_REVOCATIONS is cleared in the revocation block above.
-      // On partial failure it is preserved for future retry.
     }
 
     this._setState('unlocked');
