@@ -586,8 +586,9 @@ export class AuthManager {
       await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
     }
 
-    // Persist retry context for failed revocations (independent from session state).
-    if (failedRevocations.length > 0 && delegateDid && connectedDid) {
+    // Persist retry context for failed revocations — but NOT after a
+    // nuclear wipe. A clearStorage disconnect must not repopulate storage.
+    if (!clearStorage && failedRevocations.length > 0 && delegateDid && connectedDid) {
       const retryCtx = { delegateDid, connectedDid, revocations: failedRevocations };
       await this._storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(retryCtx));
       console.warn(

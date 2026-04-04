@@ -496,4 +496,32 @@ describe('grant revocation on disconnect', () => {
     const retryCtx = JSON.parse(retryCtxJson!);
     expect(retryCtx.delegateDid).toBe('did:jwk:old-delegate');
   });
+
+  test('clearStorage disconnect does not repersist retry context after wipe', async () => {
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate');
+    await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
+    await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([
+      { grantId: 'grant-1', revocationGrantId: 'rev-grant-1' },
+    ]));
+
+    // Revocations will fail (RPC error) — but clearStorage should prevent retry context
+    const agent = buildRevocationAgent({
+      grantRecords : { 'grant-1': mockGrantRecord('grant-1') },
+      rpcError     : true,
+    });
+
+    const manager = createTestManager(agent, { storage });
+    await manager.connect({ password: 'test' });
+
+    // Nuclear wipe disconnect
+    await manager.disconnect({ clearStorage: true });
+
+    // Storage should be completely empty — no retry context repersisted
+    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).toBeNull();
+  });
 });

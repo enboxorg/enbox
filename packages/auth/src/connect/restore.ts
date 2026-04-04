@@ -77,15 +77,20 @@ export async function restoreSession(
   }
 
   // --- Retry maintenance (independent from session restore) ---
-  // Start sync temporarily for remote delivery, run retry, then stop.
-  // This does NOT affect session restore — sync is started fresh for
-  // the normal restore path below if needed.
+  // Best-effort: start sync temporarily for remote delivery, run retry,
+  // then stop. Failures here must NOT break a legitimate restore path.
   if (retryContextJson) {
-    await startSyncIfEnabled(userAgent, ctx.defaultSync);
     try {
-      await retryOrphanedRevocations(userAgent, storage);
-    } finally {
-      await userAgent.sync.stopSync(2000);
+      await startSyncIfEnabled(userAgent, ctx.defaultSync);
+      try {
+        await retryOrphanedRevocations(userAgent, storage);
+      } finally {
+        await userAgent.sync.stopSync(2000);
+      }
+    } catch {
+      // Retry maintenance is best-effort. If sync startup or retry
+      // fails, the retry context remains in storage for next attempt.
+      // Do NOT let this block normal session restore below.
     }
   }
 
