@@ -1799,7 +1799,7 @@ export class AgentDwnApi {
       });
 
       const readMethods = new Set(['Read', 'Query', 'Subscribe']);
-      const now = new Date().toISOString();
+      const nowMs = Date.now();
 
       // Deduplicate: one contextKey per delegate, not per grant.
       // Multiple grants (Read, Query, Subscribe) for the same delegate
@@ -1815,8 +1815,8 @@ export class AgentDwnApi {
         if (!grant.grant.delegated) { continue; }
 
         // Filter expired grants. fetchGrants checks revocation but does
-        // NOT filter by dateExpires.
-        if (grant.grant.dateExpires <= now) { continue; }
+        // NOT filter by dateExpires. Use numeric comparison for safety.
+        if (new Date(grant.grant.dateExpires).getTime() <= nowMs) { continue; }
 
         const scope = grant.grant.scope as any;
         if (!readMethods.has(scope.method)) { continue; }
@@ -1842,7 +1842,7 @@ export class AgentDwnApi {
           continue;
         }
 
-        // NOW dedup — only after confirming the grant has valid tags.
+        // Dedup check — skip if already delivered via an earlier grant.
         if (deliveredDelegates.has(delegateDid)) { continue; }
 
         let leafPublicKeyJwk: PublicKeyJwk;
@@ -1851,9 +1851,6 @@ export class AgentDwnApi {
         } catch {
           continue; // Malformed tag — skip, don't dedup
         }
-
-        // Mark as delivered AFTER all validation passes.
-        deliveredDelegates.add(delegateDid);
 
         try {
           await this.writeContextKeyRecord({
@@ -1867,6 +1864,10 @@ export class AgentDwnApi {
               publicKeyJwk : leafPublicKeyJwk,
             },
           });
+
+          // Mark as delivered ONLY after the write succeeds. If the write
+          // fails, a later valid grant for the same delegate can still try.
+          deliveredDelegates.add(delegateDid);
         } catch (delegateError: any) {
           console.warn(
             `AgentDwnApi: Cross-device key delivery to delegate ` +
