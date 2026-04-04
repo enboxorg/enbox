@@ -463,6 +463,8 @@ export class AuthManager {
     // session grant it can revoke.
     const delegateDid = this._session?.delegateDid;
     const connectedDid = this._session?.did;
+    let failedRevocations: { grantId: string; revocationGrantId: string }[] = [];
+
     if (delegateDid && connectedDid) {
       try {
         const revocationsJson = await this._storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
@@ -474,7 +476,7 @@ export class AuthManager {
           try {
             dwnEndpointUrls = await this._userAgent.dwn.getDwnEndpointUrlsForTarget(connectedDid);
           } catch {
-            // Endpoint resolution failure — revocations will only be local.
+            // Endpoint resolution failure — revocations will be local-only.
           }
 
           const succeeded: string[] = [];
@@ -502,8 +504,7 @@ export class AuthManager {
               // Send the revocation to the owner's remote DWN endpoints.
               // A revocation is only considered successful if at least one
               // remote endpoint confirms it (202/409). Without remote
-              // delivery, the owner-side authority source won't see it
-              // and the grant stays in SESSION_REVOCATIONS for retry.
+              // delivery, the owner-side authority source won't see it.
               let remoteDelivered = false;
               if (revocationMessage && dwnEndpointUrls.length > 0) {
                 const { encodedData, ...rawMessage } = revocationMessage as any;
@@ -531,31 +532,11 @@ export class AuthManager {
                 succeeded.push(grantId);
               }
             } catch {
-              // Individual revocation failure — tracked below.
+              // Individual revocation failure.
             }
           }
 
-          // Only clear the revocation mapping if ALL revocations succeeded.
-          // On partial failure, preserve SESSION_REVOCATIONS for future retry.
-          if (succeeded.length === revocations.length) {
-            await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
-          } else {
-            // Update storage to remove successfully revoked entries,
-            // keeping only the ones that failed for future retry.
-            const remaining = revocations.filter((r) => !succeeded.includes(r.grantId));
-            if (remaining.length > 0) {
-              await this._storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify(remaining));
-            } else {
-              await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
-            }
-            // SESSION_REVOCATIONS, DELEGATE_DID, CONNECTED_DID, and
-            // PREVIOUSLY_CONNECTED are preserved below so restoreSession()
-            // can retry the failed revocations on next app launch.
-            console.warn(
-              `AuthManager: ${revocations.length - succeeded.length} of ${revocations.length} ` +
-              `grant revocations failed. Unrevoked grants preserved in SESSION_REVOCATIONS for retry.`
-            );
-          }
+          failedRevocations = revocations.filter((r) => !succeeded.includes(r.grantId));
         }
       } catch (error: any) {
         console.warn(`AuthManager: Grant revocation on disconnect failed: ${error.message}`);
@@ -593,26 +574,26 @@ export class AuthManager {
         }
       }
     } else {
-      // Clean disconnect: always honour the user's disconnect intent by
-      // clearing PREVIOUSLY_CONNECTED. The retry path uses a separate
-      // REVOCATION_RETRY_PENDING marker.
-      const hasUnrevokedGrants = await this._storage.get(STORAGE_KEYS.SESSION_REVOCATIONS) !== null;
+      // Clean disconnect: ALWAYS clear all session markers regardless
+      // of revocation outcome. Retry context is independent (step below).
       await this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
       await this._storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
+      await this._storage.remove(STORAGE_KEYS.DELEGATE_DID);
+      await this._storage.remove(STORAGE_KEYS.CONNECTED_DID);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
-      if (hasUnrevokedGrants) {
-        // Set the retry marker. DELEGATE_DID and CONNECTED_DID are
-        // preserved so retryOrphanedRevocations() has the context it needs.
-        // PREVIOUSLY_CONNECTED is cleared — the app will NOT auto-restore
-        // a session on next launch.
-        await this._storage.set(STORAGE_KEYS.REVOCATION_RETRY_PENDING, 'true');
-      } else {
-        await this._storage.remove(STORAGE_KEYS.DELEGATE_DID);
-        await this._storage.remove(STORAGE_KEYS.CONNECTED_DID);
-        await this._storage.remove(STORAGE_KEYS.REVOCATION_RETRY_PENDING);
-      }
+      await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+    }
+
+    // Persist retry context for failed revocations (independent from session state).
+    if (failedRevocations.length > 0 && delegateDid && connectedDid) {
+      const retryCtx = { delegateDid, connectedDid, revocations: failedRevocations };
+      await this._storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(retryCtx));
+      console.warn(
+        `AuthManager: ${failedRevocations.length} grant revocation(s) failed. ` +
+        `Retry context persisted in REVOCATION_RETRY_CONTEXT.`
+      );
     }
 
     this._setState('unlocked');

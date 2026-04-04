@@ -717,10 +717,13 @@ export const STORAGE_KEYS = {
   SESSION_REVOCATIONS: 'enbox:auth:sessionRevocations',
 
   /**
-   * Set to `'true'` when a disconnect had unconfirmed revocations.
-   * Drives the retry path in `restoreSession()` independently of
-   * `PREVIOUSLY_CONNECTED` — the user's disconnect intent is honoured
-   * even when revocations are still pending.
+   * Self-contained retry context for grant revocations that were not
+   * confirmed by the owner's remote DWN during a previous disconnect.
+   * JSON-serialised `RevocationRetryContext`.
+   *
+   * Completely independent from active session state — disconnect always
+   * clears session markers, and this blob is only used by the retry
+   * maintenance flow in `restoreSession()`.
    */
-  REVOCATION_RETRY_PENDING: 'enbox:auth:revocationRetryPending',
+  REVOCATION_RETRY_CONTEXT: 'enbox:auth:revocationRetryContext',
 } as const;

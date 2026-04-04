@@ -25,6 +25,11 @@ import { ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword
  *
  * Returns `undefined` if no previous session exists.
  * Returns an `AuthSession` if the session was successfully restored.
+ *
+ * Two independent concerns are handled here:
+ * 1. Revocation retry maintenance (from a previous partial disconnect)
+ * 2. Normal session restore
+ * They do NOT depend on each other. Both can run in the same call.
  */
 export async function restoreSession(
   ctx: FlowContext,
@@ -32,13 +37,13 @@ export async function restoreSession(
 ): Promise<AuthSession | undefined> {
   const { userAgent, emitter, storage } = ctx;
 
-  // Two independent reasons to enter restore:
+  // Two independent concerns:
   // 1. PREVIOUSLY_CONNECTED — normal session restore
-  // 2. REVOCATION_RETRY_PENDING — orphaned revocations from partial disconnect
+  // 2. REVOCATION_RETRY_CONTEXT — orphaned revocations from partial disconnect
   // If neither is set, nothing to do.
   const previouslyConnected = await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
-  const retryPending = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_PENDING);
-  if (previouslyConnected !== 'true' && retryPending !== 'true') {
+  const retryContextJson = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+  if (previouslyConnected !== 'true' && !retryContextJson) {
     return undefined;
   }
 
@@ -52,7 +57,7 @@ export async function restoreSession(
   const isFirstLaunch = await userAgent.firstLaunch();
   if (isFirstLaunch) {
     await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
-    await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_PENDING);
+    await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
     return undefined;
   }
 
@@ -71,22 +76,26 @@ export async function restoreSession(
     await applyLocalDwnDiscovery(userAgent, storage, emitter);
   }
 
-  // Start sync FIRST — retry needs sync active for remote delivery.
-  await startSyncIfEnabled(userAgent, ctx.defaultSync);
-
-  // If we're here only for revocation retry (not session restore),
-  // run the retry, tear down sync, and exit WITHOUT restoring a session.
-  if (retryPending === 'true') {
+  // --- Retry maintenance (independent from session restore) ---
+  // Start sync temporarily for remote delivery, run retry, then stop.
+  // This does NOT affect session restore — sync is started fresh for
+  // the normal restore path below if needed.
+  if (retryContextJson) {
+    await startSyncIfEnabled(userAgent, ctx.defaultSync);
     try {
       await retryOrphanedRevocations(userAgent, storage);
     } finally {
-      // Always stop sync — the retry path is a transient operation,
-      // not a persistent session. Leaving sync running with no _session
-      // would make disconnect() unable to stop it.
       await userAgent.sync.stopSync(2000);
     }
+  }
+
+  // --- Normal session restore ---
+  if (previouslyConnected !== 'true') {
     return undefined;
   }
+
+  // Start sync for the restored session.
+  await startSyncIfEnabled(userAgent, ctx.defaultSync);
 
   // Determine which identity to reconnect.
   const activeIdentityDid = await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY);
@@ -108,7 +117,7 @@ export async function restoreSession(
     }
   }
 
-  // Sync was already started above (before the retry check).
+  // Sync was already started above (for the restored session).
 
   if (!identity) {
     // No identity found — this is valid for agent-only sessions created
@@ -127,6 +136,7 @@ export async function restoreSession(
       await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
       await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+      await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
       return undefined;
     }
 
@@ -209,8 +219,9 @@ export async function restoreSession(
 type RevocationEntry = { grantId: string; revocationGrantId: string };
 
 /**
- * Load the retry context from storage. Returns `undefined` if
- * the context is incomplete or malformed (cleans up orphaned data).
+ * Load the retry context from the self-contained `REVOCATION_RETRY_CONTEXT`
+ * blob. Returns `undefined` if the context is missing or malformed
+ * (cleans up orphaned data).
  */
 async function loadRetryContext(
   userAgent: EnboxUserAgent,
@@ -221,23 +232,21 @@ async function loadRetryContext(
     revocations: RevocationEntry[];
     dwnEndpointUrls: string[];
   } | undefined> {
-  const revocationsJson = await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
-  if (!revocationsJson) {
-    await clearRetryState(storage);
+  const retryJson = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+  if (!retryJson) {
     return undefined;
   }
 
-  const delegateDid = await storage.get(STORAGE_KEYS.DELEGATE_DID);
-  const connectedDid = await storage.get(STORAGE_KEYS.CONNECTED_DID);
-  if (!delegateDid || !connectedDid) {
-    await clearRetryState(storage);
-    return undefined;
-  }
-
-  let revocations: RevocationEntry[];
+  let parsed: { delegateDid?: string; connectedDid?: string; revocations?: RevocationEntry[] };
   try {
-    revocations = JSON.parse(revocationsJson);
+    parsed = JSON.parse(retryJson);
   } catch {
+    await clearRetryState(storage);
+    return undefined;
+  }
+
+  const { delegateDid, connectedDid, revocations } = parsed;
+  if (!delegateDid || !connectedDid || !Array.isArray(revocations) || revocations.length === 0) {
     await clearRetryState(storage);
     return undefined;
   }
@@ -319,20 +328,20 @@ async function sendRevocationToEndpoints(
   return false;
 }
 
-/** Clear all revocation retry state from storage. */
+/** Clear the self-contained revocation retry context from storage. */
 async function clearRetryState(storage: StorageAdapter): Promise<void> {
-  await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
-  await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_PENDING);
-  await storage.remove(STORAGE_KEYS.DELEGATE_DID);
-  await storage.remove(STORAGE_KEYS.CONNECTED_DID);
+  await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
 }
 
 /**
  * Persist the outcome of a retry attempt. If all revocations succeeded,
- * clears everything. If some failed, updates the remaining set.
+ * clears the retry context. If some failed, rewrites the context with
+ * only the remaining entries.
  */
 async function persistRetryOutcome(
   storage: StorageAdapter,
+  delegateDid: string,
+  connectedDid: string,
   revocations: RevocationEntry[],
   succeeded: string[],
 ): Promise<void> {
@@ -340,15 +349,16 @@ async function persistRetryOutcome(
     await clearRetryState(storage);
   } else if (succeeded.length > 0) {
     const remaining = revocations.filter((r) => !succeeded.includes(r.grantId));
-    await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify(remaining));
+    const retryCtx = { delegateDid, connectedDid, revocations: remaining };
+    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(retryCtx));
   }
-  // If nothing succeeded, leave everything for next attempt.
+  // If nothing succeeded, leave the retry context for next attempt.
 }
 
 /**
  * Retry grant revocations that were not confirmed by the owner's remote
  * DWN during a previous disconnect. Called from `restoreSession()` AFTER
- * sync is started and only when `REVOCATION_RETRY_PENDING` is set.
+ * sync is started and only when `REVOCATION_RETRY_CONTEXT` exists.
  *
  * This function does NOT restore a session — the user explicitly
  * disconnected and the retry is purely a background cleanup.
@@ -374,5 +384,5 @@ async function retryOrphanedRevocations(
     }
   }
 
-  await persistRetryOutcome(storage, revocations, succeeded);
+  await persistRetryOutcome(storage, delegateDid, connectedDid, revocations, succeeded);
 }
