@@ -597,4 +597,59 @@ describe('grant revocation on disconnect', () => {
     // The new entry uses the session's delegateDid (from mock identity), not storage
     expect(entries.find((e: any) => e.delegateDid === 'did:jwk:delegate123')).toBeDefined();
   });
+
+  test('successful disconnect prunes stale retry entry for same delegate', async () => {
+    const storage = new MemoryStorage();
+
+    // Pre-existing retry context from a previous partial disconnect
+    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([
+      { delegateDid  : 'did:jwk:delegate123', connectedDid : 'did:dht:owner456', revocations  : [
+        { grantId: 'old-grant', revocationGrantId: 'old-rev' },
+      ] },
+      { delegateDid  : 'did:jwk:other-delegate', connectedDid : 'did:dht:other-owner', revocations  : [
+        { grantId: 'other-grant', revocationGrantId: 'other-rev' },
+      ] },
+    ]));
+
+    // Session with same delegateDid that will disconnect cleanly
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate123');
+    await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner456');
+    // No SESSION_REVOCATIONS — nothing to revoke, so disconnect succeeds fully
+
+    const agent = buildRevocationAgent({});
+    const manager = createTestManager(agent, { storage });
+    await manager.connect({ password: 'test' });
+    await manager.disconnect();
+
+    // The stale entry for did:jwk:delegate123 should be pruned
+    const ctxJson = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+    expect(ctxJson).not.toBeNull();
+    const remaining = JSON.parse(ctxJson!);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].delegateDid).toBe('did:jwk:other-delegate');
+  });
+
+  test('successful disconnect clears retry context entirely when last entry pruned', async () => {
+    const storage = new MemoryStorage();
+
+    // Only entry is for the same delegate that's disconnecting
+    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([
+      { delegateDid  : 'did:jwk:delegate123', connectedDid : 'did:dht:owner456', revocations  : [
+        { grantId: 'old-grant', revocationGrantId: 'old-rev' },
+      ] },
+    ]));
+
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate123');
+    await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner456');
+
+    const agent = buildRevocationAgent({});
+    const manager = createTestManager(agent, { storage });
+    await manager.connect({ password: 'test' });
+    await manager.disconnect();
+
+    // Entire retry context should be removed
+    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
+  });
 });

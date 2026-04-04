@@ -478,4 +478,105 @@ describe('e2e: grant revocation stops future delivery', () => {
     const afterKeys = (afterQ.entries ?? []).filter((e: any) => e.descriptor?.tags?.contextId === thread2Id);
     expect(afterKeys).toHaveLength(0);
   });
+
+  it('should block delivery when revoked via delegated authorization (AuthManager disconnect path)', async () => {
+    const ownerDid = ownerIdentity.did.uri;
+    const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
+    const { DidJwk } = await import('@enbox/dids');
+    const { Ed25519, X25519 } = await import('@enbox/crypto');
+    const { HdKey, KeyDerivationScheme, PermissionsProtocol } = await import('@enbox/dwn-sdk-js');
+
+    // 1. Install protocol + key-delivery
+    await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+    await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
+
+    // 2. Create delegate with session grant + per-grant revocation grant
+    const delegateBearerDid = await DidJwk.create();
+    const dp = await delegateBearerDid.export();
+    const edKey = dp.privateKeys![0];
+    const x25519Key = await Ed25519.convertPrivateKeyToX25519({ privateKey: edKey });
+    dp.privateKeys!.push(x25519Key);
+
+    // Import delegate keys into owner agent's KMS (needed for delegated signing)
+    await ownerHarness.agent.did.import({
+      portableDid : dp,
+      tenant      : ownerHarness.agent.agentDid.uri,
+    });
+
+    const x25519Bytes = await X25519.privateKeyToBytes({ privateKey: x25519Key });
+    const leafBytes = await HdKey.derivePrivateKeyBytes(x25519Bytes, [
+      KeyDerivationScheme.ProtocolPath,
+      'https://identity.foundation/protocols/key-delivery',
+      'contextKey',
+    ]);
+    const leafJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafBytes });
+    const leafPub = await X25519.getPublicKey({ key: leafJwk });
+
+    const sessionGrant = await permissionsApi.createGrant({
+      delegated           : true,
+      store               : true,
+      grantedTo           : delegateBearerDid.uri,
+      scope               : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+      dateExpires         : '2040-06-25T16:09:16.693356Z',
+      author              : ownerDid,
+      delegateKeyDelivery : { rootKeyId: delegateBearerDid.document.verificationMethod![0].id, publicKeyJwk: leafPub },
+    });
+
+    const revGrant = await permissionsApi.createGrant({
+      delegated : true,
+      store     : true,
+      grantedTo : delegateBearerDid.uri,
+      scope     : {
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Write,
+        protocol  : PermissionsProtocol.uri,
+        contextId : sessionGrant.message.recordId,
+      },
+      dateExpires : '2040-06-25T16:09:16.693356Z',
+      author      : ownerDid,
+    });
+
+    // 3. Revoke using DELEGATED authorization (same code path as AuthManager.disconnect)
+    await permissionsApi.createRevocation({
+      author            : ownerDid,
+      store             : true,
+      grant             : sessionGrant.grant,
+      granteeDid        : delegateBearerDid.uri,
+      permissionGrantId : revGrant.message.recordId,
+    });
+
+    // 4. Create new context after delegated revocation
+    const { message: thread } = await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'thread',
+        schema       : 'https://schemas.xyz/thread',
+        dataFormat   : 'application/json',
+        data         : new TextEncoder().encode(JSON.stringify({ topic: 'After delegated revocation' })),
+      },
+      encryption: true,
+    });
+    const threadId = (thread as RecordsWriteMessage).recordId;
+
+    // 5. Verify: no contextKey delivered for the revoked delegate
+    const { reply: q } = await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: { protocol: 'https://identity.foundation/protocols/key-delivery', protocolPath: 'contextKey', recipient: delegateBearerDid.uri },
+      },
+    });
+    const keys = (q.entries ?? []).filter((e: any) => e.descriptor?.tags?.contextId === threadId);
+    expect(keys).toHaveLength(0);
+  });
 });

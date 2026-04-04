@@ -616,11 +616,10 @@ export class AuthManager {
       await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
     }
 
-    // Persist retry context for failed revocations — but NOT after a
-    // nuclear wipe. A clearStorage disconnect must not repopulate storage.
-    // Merge into the existing collection so older sessions' retry entries
-    // are not overwritten.
-    if (!clearStorage && failedRevocations.length > 0 && delegateDid && connectedDid) {
+    // Update retry context — but NOT after a nuclear wipe.
+    // On failure: merge into existing collection.
+    // On success: prune any stale retry entry for this delegate.
+    if (!clearStorage && delegateDid && failedRevocations.length > 0 && connectedDid) {
       let entries: { delegateDid: string; connectedDid: string; revocations: { grantId: string; revocationGrantId: string }[] }[] = [];
       try {
         const existing = await this._storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
@@ -649,6 +648,22 @@ export class AuthManager {
         `AuthManager: ${failedRevocations.length} grant revocation(s) failed. ` +
         `Retry context persisted in REVOCATION_RETRY_CONTEXT.`
       );
+    } else if (!clearStorage && delegateDid && failedRevocations.length === 0) {
+      // All revocations succeeded — prune any stale retry entry for this
+      // delegate from a previous partial disconnect.
+      try {
+        const existing = await this._storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+        if (existing) {
+          const parsed = JSON.parse(existing);
+          const arr = Array.isArray(parsed) ? parsed : [];
+          const pruned = arr.filter((e: any) => e.delegateDid !== delegateDid);
+          if (pruned.length === 0) {
+            await this._storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+          } else if (pruned.length < arr.length) {
+            await this._storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(pruned));
+          }
+        }
+      } catch { /* best effort */ }
     }
 
     this._setState('unlocked');

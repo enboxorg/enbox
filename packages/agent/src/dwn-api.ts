@@ -13,7 +13,6 @@ import type {
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
-import { TtlCache } from '@enbox/common';
 import {
   Cid,
   ContentEncryptionAlgorithm,
@@ -31,6 +30,7 @@ import {
   ResumableTaskStoreLevel,
   StateIndexLevel,
 } from '@enbox/dwn-sdk-js';
+import { Convert, TtlCache } from '@enbox/common';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 
@@ -1215,8 +1215,29 @@ export class AgentDwnApi {
         await this.getSigner(request.granteeDid) :
         await this.getSigner(request.author);
 
+      // When signing as a delegate with a permissionGrantId, fetch the full
+      // grant message and pass it as `delegatedGrant` so the DWN SDK correctly
+      // sets `authorization.authorDelegatedGrant` and resolves the logical
+      // author to the grantor (owner) rather than the signer (delegate).
+      const params = { ...request.messageParams } as any;
+      if (request.granteeDid && params.permissionGrantId && !params.delegatedGrant) {
+        const { reply: grantReply } = await this.processRequest({
+          author        : request.author,
+          target        : request.author,
+          messageType   : DwnInterface.RecordsRead,
+          messageParams : { filter: { recordId: params.permissionGrantId } },
+        });
+        if (grantReply.status.code === 200 && grantReply.entry?.recordsWrite && grantReply.entry?.data) {
+          const grantDataBytes = await DataStream.toBytes(grantReply.entry.data);
+          params.delegatedGrant = {
+            ...grantReply.entry.recordsWrite,
+            encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
+          };
+        }
+      }
+
       dwnMessage = await dwnMessageConstructor.create({
-        ...request.messageParams,
+        ...params,
         signer
       });
 
