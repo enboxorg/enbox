@@ -112,7 +112,7 @@ import {
   X25519,
   XChaCha20Poly1305,
 } from '@enbox/crypto';
-import { DwnInterfaceName, DwnMethodName, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, HdKey, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { concatenateUrl } from './utils.js';
@@ -120,6 +120,7 @@ import { DwnInterface } from './types/dwn.js';
 import { getEncryptionKeyInfo } from './dwn-encryption.js';
 import { isMultiPartyContext } from './protocol-utils.js';
 import { isRecordPermissionScope } from './dwn-api.js';
+import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -631,6 +632,7 @@ async function createPermissionGrants(
   delegateBearerDid: BearerDid,
   agent: EnboxPlatformAgent,
   scopes: DwnPermissionScope[],
+  delegateKeyDeliveryTags?: Record<string, string>,
 ): Promise<DwnDataEncodedRecordsWriteMessage[]> {
   const permissionsApi = new AgentPermissionsApi({ agent });
 
@@ -638,6 +640,16 @@ async function createPermissionGrants(
   const permissionGrants = await Promise.all(
     scopes.map((scope) => {
       const delegated = shouldUseDelegatePermission(scope);
+
+      // Attach delegate key-delivery tags to read-like grants so the
+      // owner can encrypt future contextKey records to the delegate.
+      const readMethods = new Set([
+        DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
+      ]);
+      const isReadLike = isRecordPermissionScope(scope)
+        && readMethods.has(scope.method as DwnMethodName);
+      const tags = (isReadLike && delegateKeyDeliveryTags) ? delegateKeyDeliveryTags : undefined;
+
       return permissionsApi.createGrant({
         delegated,
         store       : true,
@@ -645,6 +657,7 @@ async function createPermissionGrants(
         scope,
         dateExpires : '2040-06-25T16:09:16.693356Z', // TODO: make dateExpires configurable
         author      : selectedDid,
+        tags,
       });
     })
   );
@@ -1077,6 +1090,36 @@ async function submitConnectResponse(
   });
   delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
 
+  // Derive the delegate's key-delivery ProtocolPath leaf public key.
+  // This is the pre-derived key that the owner will use later when writing
+  // contextKey records addressed to this delegate. The owner cannot derive
+  // this from the delegate's root public key alone (HKDF needs the private
+  // key), so we compute it now while we have temporary access to the
+  // delegate's private key material.
+  const delegateX25519PrivateKeyBytes = await X25519.privateKeyToBytes({
+    privateKey: delegateX25519PrivateKey,
+  });
+  const keyDeliveryDerivationPath = [
+    KeyDerivationScheme.ProtocolPath,
+    KeyDeliveryProtocolDefinition.protocol,
+    'contextKey',
+  ];
+  const delegateLeafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
+    delegateX25519PrivateKeyBytes, keyDeliveryDerivationPath,
+  );
+  const delegateLeafPrivateKeyJwk = await X25519.bytesToPrivateKey({
+    privateKeyBytes: delegateLeafPrivateKeyBytes,
+  });
+  const delegateKeyDeliveryLeafPublicKey = await X25519.getPublicKey({
+    key: delegateLeafPrivateKeyJwk,
+  });
+
+  const delegateKeyAgreementVmId = delegateBearerDid.document.verificationMethod![0].id;
+  const delegateKeyDeliveryTags = {
+    delegateKeyDeliveryRootKeyId    : delegateKeyAgreementVmId,
+    delegateKeyDeliveryPublicKeyJwk : JSON.stringify(delegateKeyDeliveryLeafPublicKey),
+  };
+
   // Derive scope-aware decryption keys for encrypted protocols.
   // Single-party: ProtocolPath keys (protocol-wide or exact-path).
   // Multi-party: ProtocolContext keys (per rootContextId).
@@ -1151,7 +1194,8 @@ async function submitConnectResponse(
         selectedDid,
         delegateBearerDid,
         agent,
-        permissionScopes
+        permissionScopes,
+        delegateKeyDeliveryTags,
       );
     }
   );

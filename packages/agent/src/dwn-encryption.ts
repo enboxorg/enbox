@@ -436,6 +436,11 @@ export async function resolveKeyDecrypter(
   // First check the in-memory cache (same-process delivery).
   // On cache miss, try to fetch a contextKey record from the owner's DWN
   // (cross-device delivery via the key-delivery protocol).
+  //
+  // IMPORTANT: If this is a delegated request (granteeDid is set), we must
+  // NOT fall through to Cases 1/2 which use authorDid (the owner). Delegates
+  // must decrypt via their own delivered context key — never via the owner's
+  // KMS. This is fail-closed by design.
   if (delegateContextKeyCache && granteeDid) {
     const protocol = recordsWrite.descriptor.protocol;
     if (protocol) {
@@ -448,10 +453,15 @@ export async function resolveKeyDecrypter(
       // Cache miss — try fetching a delivered contextKey record.
       // The owner may have written one addressed to this delegate
       // after the initial connect (cross-device delivery).
+      //
+      // fetchContextKeyRecord determines local/remote via ownerDid === requesterDid.
+      // For the delegate, ownerDid (connectedDid) !== requesterDid (delegateDid),
+      // so it uses the REMOTE path — queries the owner's DWN via RPC.
+      // If the contextKey was synced locally, the remote DWN still has it
+      // and can serve it to the delegate (who is the record's recipient).
       try {
-        const ownerDid = authorDid;
         const fetchedKey = await fetchContextKeyRecordFn({
-          ownerDid,
+          ownerDid        : authorDid,
           requesterDid    : granteeDid,
           sourceProtocol  : protocol,
           sourceContextId : rootContextId,
@@ -461,9 +471,18 @@ export async function resolveKeyDecrypter(
           return buildContextKeyDecrypter(fetchedKey);
         }
       } catch {
-        // Delegate fetch failed — fall through to other decrypt paths.
+        // Delegate fetch failed — fail closed below.
       }
     }
+
+    // Delegate path exhausted: no cached key, no delivered record.
+    // Fail closed — do NOT fall through to the owner KMS path.
+    throw new Error(
+      `AgentDwnApi: Delegate '${granteeDid}' does not have a context key ` +
+      `for context '${rootContextId}'. No delivered contextKey record was ` +
+      `found via the key-delivery protocol. The delegate may need to ` +
+      `reconnect or wait for sync.`
+    );
   }
 
   // Case 1: I am the context creator — rootKeyId matches my encryption key

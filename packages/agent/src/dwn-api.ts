@@ -31,7 +31,7 @@ import {
   ResumableTaskStoreLevel,
   StateIndexLevel,
 } from '@enbox/dwn-sdk-js';
-import { CryptoUtils, Ed25519, X25519 } from '@enbox/crypto';
+import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -1773,8 +1773,9 @@ export class AgentDwnApi {
    * Eligible delegates are discovered by querying the owner's DWN for
    * active permission grants with read-like scopes on the given protocol.
    *
-   * The contextKey record is encrypted to the delegate's X25519 key
-   * (derived from the delegate DID's Ed25519 keyAgreement key).
+   * The contextKey record is encrypted using the delegate's pre-derived
+   * key-delivery leaf public key, which is stored in the grant's tags
+   * during `submitConnectResponse()`.
    *
    * @param tenantDid - The owner's DID
    * @param protocol - The protocol URI
@@ -1799,6 +1800,11 @@ export class AgentDwnApi {
 
       const readMethods = new Set(['Read', 'Query', 'Subscribe']);
 
+      // Deduplicate: one contextKey per delegate, not per grant.
+      // Multiple grants (Read, Query, Subscribe) for the same delegate
+      // should produce exactly one contextKey record.
+      const deliveredDelegates = new Set<string>();
+
       for (const grant of grants) {
         const scope = grant.grant.scope as any;
         if (!readMethods.has(scope.method)) { continue; }
@@ -1808,25 +1814,29 @@ export class AgentDwnApi {
         if (scope.protocolPath || scope.contextId) { continue; }
 
         const delegateDid = grant.grant.grantee;
+        if (deliveredDelegates.has(delegateDid)) { continue; }
+        deliveredDelegates.add(delegateDid);
 
         try {
-          // Resolve the delegate's DID document to get their public key.
-          const { didDocument: delegateDidDoc } = await this.agent.did.resolve(delegateDid);
-          if (!delegateDidDoc?.verificationMethod?.[0]?.publicKeyJwk) { continue; }
+          // Read the pre-derived key-delivery leaf public key from the grant tags.
+          // This was computed during submitConnectResponse() and attached to
+          // each read-like grant so the owner can encrypt contextKey records
+          // to the delegate without needing the delegate's private key.
+          const grantTags = (grant.message as any).descriptor?.tags;
+          const leafRootKeyId = grantTags?.delegateKeyDeliveryRootKeyId;
+          const leafPublicKeyJwkStr = grantTags?.delegateKeyDeliveryPublicKeyJwk;
 
-          const delegateEdPublicKey = delegateDidDoc.verificationMethod[0].publicKeyJwk;
+          if (!leafRootKeyId || !leafPublicKeyJwkStr) {
+            // Grant was created before key-delivery tags were supported,
+            // or is not a read-like grant. Skip silently.
+            continue;
+          }
 
-          // Convert Ed25519 → X25519 for encryption. If the key is already
-          // X25519, use it directly.
-          let delegateX25519PublicKey: any;
-          if (delegateEdPublicKey.crv === 'Ed25519') {
-            delegateX25519PublicKey = await Ed25519.convertPublicKeyToX25519({
-              publicKey: delegateEdPublicKey,
-            });
-          } else if (delegateEdPublicKey.crv === 'X25519') {
-            delegateX25519PublicKey = delegateEdPublicKey;
-          } else {
-            continue; // Unsupported key type — skip silently
+          let leafPublicKeyJwk: PublicKeyJwk;
+          try {
+            leafPublicKeyJwk = JSON.parse(leafPublicKeyJwkStr) as PublicKeyJwk;
+          } catch {
+            continue; // Malformed tag — skip silently
           }
 
           await this.writeContextKeyRecord({
@@ -1836,8 +1846,8 @@ export class AgentDwnApi {
             sourceProtocol                : protocol,
             sourceContextId               : rootContextId,
             recipientKeyDeliveryPublicKey : {
-              rootKeyId    : delegateDidDoc.verificationMethod[0].id,
-              publicKeyJwk : delegateX25519PublicKey as PublicKeyJwk,
+              rootKeyId    : leafRootKeyId,
+              publicKeyJwk : leafPublicKeyJwk,
             },
           });
         } catch (delegateError: any) {

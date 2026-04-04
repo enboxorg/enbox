@@ -48,6 +48,8 @@ export type CreateGrantParams = {
   grantedTo: string;
   scope: DwnPermissionScope;
   delegated?: boolean;
+  /** Additional tags to attach to the grant record (merged with auto-computed tags). */
+  tags?: Record<string, string>;
 };
 
 export type CreateRequestParams = {

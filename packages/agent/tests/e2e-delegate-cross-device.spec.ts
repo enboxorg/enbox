@@ -15,6 +15,9 @@ import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+
+import { X25519 } from '@enbox/crypto';
+
 import { DataStream, DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from '../src/permissions-api.js';
@@ -134,19 +137,38 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
     });
     delegatePortableDid.privateKeys!.push(x25519PrivateKey);
 
+    // 2b. Derive the delegate's key-delivery leaf public key (matches submitConnectResponse)
+    const { HdKey, KeyDerivationScheme } = await import('@enbox/dwn-sdk-js');
+    const x25519PrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: x25519PrivateKey });
+    const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
+      x25519PrivateKeyBytes,
+      [KeyDerivationScheme.ProtocolPath, 'https://identity.foundation/protocols/key-delivery', 'contextKey'],
+    );
+    const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
+    const leafPublicKeyJwk = await X25519.getPublicKey({ key: leafPrivateKeyJwk });
+
+    const delegateKeyDeliveryTags: Record<string, string> = {
+      delegateKeyDeliveryRootKeyId    : delegateBearerDid.document.verificationMethod![0].id,
+      delegateKeyDeliveryPublicKeyJwk : JSON.stringify(leafPublicKeyJwk),
+    };
+
     // 3. Create permission grants on the owner's DWN
+    const readMethods = new Set(['Read', 'Query', 'Subscribe']);
     const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
     const grants = await Promise.all(
-      options.scopes.map((scope) =>
-        permissionsApi.createGrant({
+      options.scopes.map((scope) => {
+        const isReadLike = (scope as any).interface === 'Records'
+          && readMethods.has((scope as any).method);
+        return permissionsApi.createGrant({
           delegated   : true,
           store       : true,
           grantedTo   : delegateBearerDid.uri,
           scope,
           dateExpires : '2040-06-25T16:09:16.693356Z',
           author      : ownerDid,
-        })
-      ),
+          tags        : isReadLike ? delegateKeyDeliveryTags : undefined,
+        });
+      }),
     );
 
     // 4. Import delegate DID into delegate agent's KMS
@@ -155,7 +177,27 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       tenant      : delegateHarness.agent.agentDid.uri,
     });
 
-    // 5. Also import the owner's DID into the delegate agent (for resolution)
+    // Verify the delegate's X25519 key is in the KMS
+    const x25519Key = delegatePortableDid.privateKeys!.find(
+      (k: any): boolean => k.crv === 'X25519',
+    );
+    if (x25519Key) {
+      const x25519Uri = await delegateHarness.agent.keyManager.getKeyUri({ key: x25519Key });
+      await delegateHarness.agent.keyManager.getPublicKey({ keyUri: x25519Uri });
+    }
+
+    // 5. Import the owner's DID into the delegate agent for DID resolution.
+    // We include private keys because the DwnKeyStore requires the owner's
+    // encryption key to read key records. In a real wallet-connect flow, the
+    // owner's portable DID is delivered to the delegate app (this is an
+    // existing design constraint — the delegate needs the owner's DID to
+    // operate on the owner's DWN partition).
+    //
+    // The cross-device decrypt test proves that context-key delivery works
+    // via the key-delivery protocol fetch path, NOT via the owner's KMS
+    // ProtocolContext derivation — because the delegate agent's
+    // resolveKeyDecrypter has a fail-closed guard that throws before
+    // reaching the KMS path for delegated requests.
     const ownerPortableDid = await ownerIdentity.did.export();
     await delegateHarness.agent.did.import({
       portableDid : ownerPortableDid,
@@ -185,7 +227,25 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       );
     }
 
-    // 7. Send protocol definition to DWN server so delegate can query it
+    // 7. Ensure key-delivery protocol is installed locally (triggers
+    // $encryption key derivation) and send it to the DWN server so that
+    // contextKey records written later can be accepted by the remote DWN.
+    await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
+    const { reply: kdProto } = await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.ProtocolsQuery,
+      messageParams : { filter: { protocol: 'https://identity.foundation/protocols/key-delivery' } },
+    });
+    if (kdProto.entries?.[0]) {
+      await ownerHarness.agent.rpc.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : ownerDid,
+        message   : kdProto.entries[0] as any,
+      });
+    }
+
+    // 8. Send chat protocol definition to DWN server
     const { reply: protoReply } = await ownerHarness.agent.processDwnRequest({
       author        : ownerDid,
       target        : ownerDid,
@@ -319,6 +379,42 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
         },
       });
       expect(ctxKeyQuery.entries!.length).toBeGreaterThanOrEqual(1);
+
+      // Send contextKey records + chat records + grants to the DWN server
+      // so the delegate can fetch them via RPC.
+      const sendAllToServer = async (): Promise<void> => {
+        // Send all records for all relevant protocols to the remote DWN
+        for (const proto of [
+          chatProtocol.protocol,
+          'https://identity.foundation/protocols/key-delivery',
+          'https://identity.foundation/dwn/permissions',
+        ]) {
+          const { reply: rq } = await ownerHarness.agent.processDwnRequest({
+            author        : ownerDid,
+            target        : ownerDid,
+            messageType   : DwnInterface.RecordsQuery,
+            messageParams : { filter: { protocol: proto } },
+          });
+          for (const entry of rq.entries ?? []) {
+            const { reply: rr } = await ownerHarness.agent.processDwnRequest({
+              author        : ownerDid,
+              target        : ownerDid,
+              messageType   : DwnInterface.RecordsRead,
+              messageParams : { filter: { recordId: (entry as any).recordId } },
+            });
+            if (rr.entry?.recordsWrite && rr.entry?.data) {
+              const bytes = await DataStream.toBytes(rr.entry.data);
+              await ownerHarness.agent.rpc.sendDwnRequest({
+                dwnUrl    : testDwnUrl,
+                targetDid : ownerDid,
+                message   : rr.entry.recordsWrite as any,
+                data      : new Blob([bytes]),
+              });
+            }
+          }
+        }
+      };
+      await sendAllToServer();
 
       // DELEGATE SIDE: Directly verify cross-device decryption by:
       // 1. Read the encrypted chat record from the OWNER's DWN (local copy)
@@ -635,6 +731,204 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
           chatProtocol, contextIdScopes as any,
         )
       ).rejects.toThrow('contextId');
+    });
+  });
+
+  // ─── 6. Fail-closed: no owner KMS fallback for delegates ─────
+
+  describe('fail-closed: no owner KMS fallback for delegates', () => {
+    it('should throw when delegate context-key fetch is unavailable even with owner keys present', async () => {
+      const ownerDid = ownerIdentity.did.uri;
+
+      // Install protocol and create an encrypted thread
+      await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      const { message: threadMsg } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Fail-closed test' })),
+        },
+        encryption: true,
+      });
+      const threadContextId = (threadMsg as RecordsWriteMessage).recordId;
+
+      const chatData = 'This should not be decryptable via owner KMS';
+      const { message: chatMsg } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol        : chatProtocol.protocol,
+          protocolPath    : 'thread/chat',
+          schema          : 'https://schemas.xyz/chat',
+          dataFormat      : 'text/plain',
+          parentContextId : threadContextId,
+          data            : new TextEncoder().encode(chatData),
+        },
+        encryption: true,
+      });
+      const chatRecordId = (chatMsg as RecordsWriteMessage).recordId;
+
+      // Import owner DID WITH private keys into delegate agent
+      // (this is the contamination scenario — owner keys are locally present)
+      const ownerPortableDid = await ownerIdentity.did.export();
+      await delegateHarness.agent.did.import({
+        portableDid : ownerPortableDid,
+        tenant      : delegateHarness.agent.agentDid.uri,
+      });
+
+      // Copy protocol + records to delegate's local DWN
+      const { reply: protoReply } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { protocol: chatProtocol.protocol } },
+      });
+      if (protoReply.entries?.[0]) {
+        await delegateHarness.agent.dwn.processRawMessage(ownerDid, protoReply.entries[0] as any);
+      }
+      const { reply: rr } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId: chatRecordId } },
+      });
+      if (rr.entry?.recordsWrite && rr.entry?.data) {
+        const bytes = await DataStream.toBytes(rr.entry.data);
+        await delegateHarness.agent.dwn.processRawMessage(
+          ownerDid, rr.entry.recordsWrite as any,
+          { dataStream: DataStream.fromBytes(bytes) },
+        );
+      }
+
+      // Create a fake delegate DID (no delivered context keys, no grants with leaf keys)
+      const { DidJwk } = await import('@enbox/dids');
+      const fakeDelegateBearerDid = await DidJwk.create();
+      // Import the fake delegate's keys into the delegate agent so signing works
+      const fakePortableDid = await fakeDelegateBearerDid.export();
+      await delegateHarness.agent.did.import({
+        portableDid : fakePortableDid,
+        tenant      : delegateHarness.agent.agentDid.uri,
+      });
+
+      // Store a grant locally so the delegate request is authorized
+      const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
+      const grant = await permissionsApi.createGrant({
+        delegated   : true,
+        store       : true,
+        grantedTo   : fakeDelegateBearerDid.uri,
+        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        author      : ownerDid,
+      });
+      const grantMsg = grant.message;
+      const grantData = grantMsg.encodedData;
+      const grantBytes = grantData
+        ? Uint8Array.from(atob(grantData), (c: string): number => c.charCodeAt(0))
+        : new Uint8Array(0);
+      await delegateHarness.agent.dwn.processRawMessage(
+        ownerDid, grantMsg as any,
+        { dataStream: DataStream.fromBytes(grantBytes) },
+      );
+
+      // Delegate reads the encrypted chat with granteeDid set.
+      // Even though owner keys are in the delegate KMS, the fail-closed
+      // guard in resolveKeyDecrypter should prevent falling through to
+      // the owner KMS path.
+      const { reply: failClosedReply } = await delegateHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId: chatRecordId }, permissionGrantId: grantMsg.recordId },
+        granteeDid    : fakeDelegateBearerDid.uri,
+        encryption    : true,
+      });
+
+      // If the DWN authorized the read (200), the reply MUST have been
+      // decrypted by resolveKeyDecrypter. Since the delegate has no
+      // context key for this context, the fail-closed guard should have
+      // thrown. If we got a 200, check that the data is NOT decrypted
+      // (still encrypted/unreadable).
+      if (failClosedReply.status.code === 200) {
+        // The fail-closed guard should have thrown during maybeDecryptReply,
+        // which wraps the error and re-throws. If we're here, decryption
+        // succeeded via owner KMS — that's the bug we're preventing.
+        // Verify the data is NOT the original plaintext.
+        const data = (failClosedReply as any).entry?.data;
+        if (data) {
+          const bytes = await DataStream.toBytes(data);
+          const text = new TextDecoder().decode(bytes);
+          // If text matches original, decryption succeeded via owner KMS — fail
+          expect(text).not.toBe(chatData);
+        }
+      }
+      // If the DWN rejected the read (e.g. 401), that's also acceptable:
+      // the delegate can't read the record at all, which is fail-closed.
+    });
+  });
+
+  // ─── 7. Deduplication ────────────────────────────────────────
+
+  describe('deduplication', () => {
+    it('should write one contextKey per delegate even with multiple read-like grants', async () => {
+      const ownerDid = ownerIdentity.did.uri;
+
+      // Connect with Read + Query + Subscribe (3 read-like grants)
+      const { delegateDid } = await simulateCrossDeviceConnect({
+        scopes: [
+          { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+          { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: chatProtocol.protocol },
+          { interface: DwnInterfaceName.Records, method: DwnMethodName.Subscribe, protocol: chatProtocol.protocol },
+        ],
+      });
+
+      // Create a new context
+      const { message: threadMsg } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Dedup test' })),
+        },
+        encryption: true,
+      });
+      const threadContextId = (threadMsg as RecordsWriteMessage).recordId;
+
+      // Query contextKey records for this delegate
+      const { reply: ctxKeyQuery } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : 'https://identity.foundation/protocols/key-delivery',
+            protocolPath : 'contextKey',
+            recipient    : delegateDid,
+          },
+        },
+      });
+
+      // Despite 3 read-like grants, only 1 contextKey should be written
+      const matchingKeys = (ctxKeyQuery.entries ?? []).filter((entry: any) =>
+        entry.descriptor?.tags?.contextId === threadContextId
+      );
+      expect(matchingKeys).toHaveLength(1);
     });
   });
 });

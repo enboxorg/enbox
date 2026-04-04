@@ -234,9 +234,14 @@ export class AgentPermissionsApi implements PermissionsApi {
   async createGrant(params: CreateGrantParams): Promise<PermissionGrantEntry> {
     const { author, store = false, delegated = false, ...createGrantParams } = params;
 
-    let tags = undefined;
+    let tags: Record<string, any> | undefined = undefined;
     if (PermissionsProtocol.hasProtocolScope(createGrantParams.scope)) {
       tags = { protocol: createGrantParams.scope.protocol };
+    }
+
+    // Merge caller-provided tags (e.g. delegate key-delivery leaf keys).
+    if (createGrantParams.tags) {
+      tags = { ...tags, ...createGrantParams.tags };
     }
 
     const permissionGrantData: PermissionGrantData = {
