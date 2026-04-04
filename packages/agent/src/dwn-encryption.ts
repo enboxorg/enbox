@@ -454,11 +454,12 @@ export async function resolveKeyDecrypter(
       // The owner may have written one addressed to this delegate
       // after the initial connect (cross-device delivery).
       //
-      // fetchContextKeyRecord determines local/remote via ownerDid === requesterDid.
-      // For the delegate, ownerDid (connectedDid) !== requesterDid (delegateDid),
-      // so it uses the REMOTE path — queries the owner's DWN via RPC.
-      // If the contextKey was synced locally, the remote DWN still has it
-      // and can serve it to the delegate (who is the record's recipient).
+      // For cross-device (ownerDid !== requesterDid), fetchContextKeyRecord
+      // queries the owner's tenant on the delegate's local DWN via
+      // processRequest. The delegate identity's connectedDid metadata
+      // registers ownerDid as locally-managed, so the query routes locally
+      // (in-process node or local-server RPC) — not to the owner's remote
+      // endpoint. Sync must have brought the contextKey record locally.
       try {
         const fetchedKey = await fetchContextKeyRecordFn({
           ownerDid        : authorDid,
