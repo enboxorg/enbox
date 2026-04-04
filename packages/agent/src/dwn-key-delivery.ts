@@ -18,12 +18,12 @@ import {
   KeyDerivationScheme,
   Message,
   Protocols,
-  Records,
 } from '@enbox/dwn-sdk-js';
 
+import { DwnInterface } from './types/dwn.js';
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
-import { buildEncryptionInput, encryptAndComputeCid, getEncryptionKeyDeriver, getKeyDecrypter, ivLength } from './dwn-encryption.js';
-import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
+
+import { buildEncryptionInput, encryptAndComputeCid, getEncryptionKeyDeriver, ivLength } from './dwn-encryption.js';
 
 /**
  * Parameters for writeContextKeyRecord.
@@ -255,68 +255,53 @@ export async function eagerSendContextKeyRecord(
 }
 
 /**
- * Attempts a local DWN fetch for a contextKey record.
+ * Fetches a contextKey record from the owner's tenant via `processRequest`.
  *
- * Queries the owner's tenant on the LOCAL DWN directly (bypassing the
- * `processRequest` routing layer, which may route `target: ownerDid`
- * to a remote DWN when the owner DID is not in the identity store).
+ * This works in both agent modes:
+ * - In-process DWN node: `processRequest` routes locally via the DWN instance
+ * - Remote/local-server mode: `processRequest` routes via RPC to the local DWN server
  *
- * Works when sync has brought a copy of the contextKey record to the
- * owner's tenant on the requester's local DWN (cross-device scenario),
- * or when the requester IS the owner.
+ * The delegate identity's `connectedDid` metadata registers `ownerDid` as a
+ * locally-managed DID, so `processRequest` routes to the local DWN (not the
+ * owner's remote endpoint).
+ *
+ * Requires sync to have brought the contextKey record to the owner's tenant
+ * on the delegate's DWN before this is called.
  */
-async function tryLocalFetch(
-  agent: EnboxPlatformAgent,
-  getSigner: (author: string) => Promise<any>,
+async function fetchCrossDeviceContextKey(
+  processRequest: ProcessRequestFn,
   requesterDid: string,
   ownerDid: string,
   contextKeyFilter: Record<string, any>,
   parsePayload: (bytes: Uint8Array) => DerivedPrivateJwk,
 ): Promise<DerivedPrivateJwk | undefined> {
   try {
-    let dwn;
-    try { dwn = agent.dwn.node; } catch { return undefined; }
-    if (!dwn) { return undefined; }
-
-    // Build and sign a RecordsQuery directly against the local DWN.
-    const signer = await getSigner(requesterDid);
-    const recordsQuery = await dwnMessageConstructors[DwnInterface.RecordsQuery].create({
-      signer,
-      filter: contextKeyFilter,
+    const { reply } = await processRequest({
+      author        : requesterDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : { filter: contextKeyFilter },
     });
 
-    const queryResult = await dwn.processMessage(
-      ownerDid, recordsQuery.message,
-    );
-
-    if (queryResult.status.code !== 200 || !queryResult.entries?.length) {
+    if (reply.status.code !== 200 || !reply.entries?.length) {
       return undefined;
     }
 
-    // Read the full record.
-    const recordId = (queryResult.entries[0] as any).recordId;
-    const recordsRead = await dwnMessageConstructors[DwnInterface.RecordsRead].create({
-      signer,
-      filter: { recordId },
+    const recordId = reply.entries[0].recordId;
+    const { reply: readReply } = await processRequest({
+      author        : requesterDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId } },
+      encryption    : true,
     });
 
-    const readResult = await dwn.processMessage(
-      ownerDid, recordsRead.message,
-    ) as RecordsReadReply;
-
-    if (!readResult.entry?.data || !readResult.entry?.recordsWrite) {
+    const readResult = readReply as RecordsReadReply;
+    if (!readResult.entry?.data) {
       return undefined;
     }
 
-    // Decrypt using the requester's key-delivery protocol path key.
-    const keyDecrypter = await getKeyDecrypter(agent, requesterDid);
-    const decryptedStream = await Records.decrypt(
-      readResult.entry.recordsWrite,
-      keyDecrypter,
-      readResult.entry.data as ReadableStream<Uint8Array>,
-    );
-
-    return parsePayload(await DataStream.toBytes(decryptedStream));
+    return parsePayload(await DataStream.toBytes(readResult.entry.data));
   } catch {
     return undefined;
   }
@@ -332,14 +317,12 @@ async function tryLocalFetch(
  * @param agent - The platform agent
  * @param params - The fetch parameters
  * @param processRequest - The agent's processRequest method (bound)
- * @param getSigner - Function to get a signer for a DID
  * @returns The decrypted `DerivedPrivateJwk`, or `undefined` if no matching record found
  */
 export async function fetchContextKeyRecord(
-  agent: EnboxPlatformAgent,
+  _agent: EnboxPlatformAgent,
   params: FetchContextKeyParams,
   processRequest: ProcessRequestFn,
-  getSigner: (author: string) => Promise<any>,
 ): Promise<DerivedPrivateJwk | undefined> {
   const { ownerDid, requesterDid, sourceProtocol, sourceContextId } = params;
   const protocolUri = KeyDeliveryProtocolDefinition.protocol;
@@ -388,16 +371,15 @@ export async function fetchContextKeyRecord(
   }
 
   // Cross-device path: the requester is NOT the owner.
-  // Query the owner's tenant on the local DWN. Sync brings contextKey
-  // records locally before the delegate tries to decrypt, so the local
-  // DWN should have the record.
+  // Query the owner's tenant on the delegate's DWN via processRequest.
+  // The delegate identity's connectedDid metadata registers ownerDid as
+  // locally-managed, so processRequest routes locally (in-process or
+  // local-server RPC) rather than to the owner's remote DWN endpoint.
   //
-  // A remote RPC fallback is NOT provided here because the DWN server's
-  // protocol $encryption validation may reject contextKey records
-  // encrypted to a delegate's leaf key (the rootKeyId doesn't match
-  // the protocol's $encryption.rootKeyId). This is a DWN spec constraint.
-  // If local fetch fails, the caller's fail-closed guard will fire.
-  return tryLocalFetch(
-    agent, getSigner, requesterDid, ownerDid, contextKeyFilter, parsePayload,
+  // Sync must have brought the contextKey record to the owner's tenant
+  // on the delegate's DWN before this is called.
+  // If fetch fails, the caller's fail-closed guard will fire.
+  return fetchCrossDeviceContextKey(
+    processRequest, requesterDid, ownerDid, contextKeyFilter, parsePayload,
   );
 }

@@ -1931,7 +1931,6 @@ export class AgentDwnApi {
     return fetchContextKeyRecordFn(
       this.agent, params,
       this.processRequest.bind(this),
-      this.getSigner.bind(this),
     );
   }
 }

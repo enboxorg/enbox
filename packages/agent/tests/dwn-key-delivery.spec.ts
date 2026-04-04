@@ -306,7 +306,6 @@ describe('dwn-key-delivery', () => {
           sourceContextId : 'ctx-1',
         },
         processRequest,
-        sinon.stub(),
       );
 
       expect(result).toBeDefined();
@@ -327,7 +326,6 @@ describe('dwn-key-delivery', () => {
           sourceContextId : 'ctx-empty',
         },
         processRequest,
-        sinon.stub(),
       );
 
       expect(result).toBeUndefined();
@@ -357,7 +355,6 @@ describe('dwn-key-delivery', () => {
           sourceContextId : 'ctx-no-data',
         },
         processRequest,
-        sinon.stub(),
       );
 
       expect(result).toBeUndefined();
@@ -377,7 +374,6 @@ describe('dwn-key-delivery', () => {
           sourceProtocol  : 'https://proto.example.com',
           sourceContextId : 'ctx-cross-device',
         },
-        sinon.stub(),
         sinon.stub(),
       );
 
