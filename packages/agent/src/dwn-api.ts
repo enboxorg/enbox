@@ -1220,7 +1220,8 @@ export class AgentDwnApi {
       // sets `authorization.authorDelegatedGrant` and resolves the logical
       // author to the grantor (owner) rather than the signer (delegate).
       const params = { ...request.messageParams } as any;
-      if (request.granteeDid && params.permissionGrantId && !params.delegatedGrant) {
+      if (request.granteeDid && params.permissionGrantId && !params.delegatedGrant
+        && isDwnRequest(request, DwnInterface.RecordsWrite)) {
         const { reply: grantReply } = await this.processRequest({
           author        : request.author,
           target        : request.author,
