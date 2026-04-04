@@ -362,6 +362,15 @@ export class AgentDwnApi {
     return [...uniqueEndpoints];
   }
 
+  /**
+   * Returns only the DWN service endpoints from the DID document (no local
+   * discovery endpoint). Use this when you need to confirm that a message
+   * reached the owner's actual remote DWN, not just the delegate's local server.
+   */
+  public async getRemoteDwnEndpointUrls(targetDid: string): Promise<string[]> {
+    return getDwnServiceEndpointUrls(targetDid, this.agent.did);
+  }
+
   /** Lazily retrieves the local DWN server endpoint via discovery. */
   private async getLocalDwnEndpoint(): Promise<string | undefined> {
     // In remote mode, the endpoint is always known.

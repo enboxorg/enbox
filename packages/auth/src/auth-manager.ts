@@ -473,9 +473,11 @@ export class AuthManager {
           const revocations: { grantId: string; revocationGrantId: string }[] = JSON.parse(revocationsJson);
 
           // Resolve the owner's DWN endpoints for remote delivery.
-          let dwnEndpointUrls: string[] = [];
+          // Resolve REMOTE owner DWN endpoints (from DID document, not local
+          // discovery). Only remote endpoints count for revocation success.
+          let remoteDwnUrls: string[] = [];
           try {
-            dwnEndpointUrls = await this._userAgent.dwn.getDwnEndpointUrlsForTarget(connectedDid);
+            remoteDwnUrls = await this._userAgent.dwn.getRemoteDwnEndpointUrls(connectedDid);
           } catch {
             // Endpoint resolution failure — revocations will be local-only.
           }
@@ -483,9 +485,12 @@ export class AuthManager {
           const succeeded: string[] = [];
           for (const { grantId, revocationGrantId } of revocations) {
             try {
-              // Read the specific grant by recordId.
+              // Read the specific grant by recordId. Use the delegate DID
+              // as author since the delegate agent may not have the owner's
+              // signing key. The delegate is the grant's recipient, so the
+              // permissions protocol authorizes the read.
               const { reply: readReply } = await this._userAgent.dwn.processRequest({
-                author        : connectedDid,
+                author        : delegateDid,
                 target        : connectedDid,
                 messageType   : DwnInterface.RecordsRead,
                 messageParams : { filter: { recordId: grantId } },
@@ -495,10 +500,10 @@ export class AuthManager {
 
               // Self-healing: ensure the revocation grant is on the remote
               // DWN. The best-effort fanout at connect time may have failed.
-              if (dwnEndpointUrls.length > 0) {
+              if (remoteDwnUrls.length > 0) {
                 try {
                   const { reply: revGrantReply } = await this._userAgent.dwn.processRequest({
-                    author        : connectedDid,
+                    author        : delegateDid,
                     target        : connectedDid,
                     messageType   : DwnInterface.RecordsRead,
                     messageParams : { filter: { recordId: revocationGrantId } },
@@ -508,7 +513,7 @@ export class AuthManager {
                     const revGrantData = revGrantReply.entry.data
                       ? new Blob([await DataStream.toBytes(revGrantReply.entry.data) as BlobPart])
                       : undefined;
-                    for (const dwnUrl of dwnEndpointUrls) {
+                    for (const dwnUrl of remoteDwnUrls) {
                       try {
                         await this._userAgent.rpc.sendDwnRequest({
                           dwnUrl,
@@ -536,12 +541,12 @@ export class AuthManager {
               // remote endpoint confirms it (202/409). Without remote
               // delivery, the owner-side authority source won't see it.
               let remoteDelivered = false;
-              if (revocationMessage && dwnEndpointUrls.length > 0) {
+              if (revocationMessage && remoteDwnUrls.length > 0) {
                 const { encodedData, ...rawMessage } = revocationMessage as any;
                 const data = encodedData
                   ? new Blob([Uint8Array.from(atob(encodedData), (c: string): number => c.charCodeAt(0))])
                   : undefined;
-                for (const dwnUrl of dwnEndpointUrls) {
+                for (const dwnUrl of remoteDwnUrls) {
                   try {
                     const sendReply = await this._userAgent.rpc.sendDwnRequest({
                       dwnUrl,

@@ -414,9 +414,9 @@ async function retryOrphanedRevocations(
   }
 
   for (const entry of [...entries]) {
-    let dwnEndpointUrls: string[] = [];
+    let remoteDwnUrls: string[] = [];
     try {
-      dwnEndpointUrls = await userAgent.dwn.getDwnEndpointUrlsForTarget(entry.connectedDid);
+      remoteDwnUrls = await userAgent.dwn.getRemoteDwnEndpointUrls(entry.connectedDid);
     } catch {
       continue; // Can't resolve endpoints for this entry — try next.
     }
@@ -425,7 +425,7 @@ async function retryOrphanedRevocations(
     for (const revEntry of entry.revocations) {
       try {
         const confirmed = await revokeAndSendSingle(
-          userAgent, entry.connectedDid, entry.delegateDid, revEntry, dwnEndpointUrls,
+          userAgent, entry.connectedDid, entry.delegateDid, revEntry, remoteDwnUrls,
         );
         if (confirmed) { succeeded.push(revEntry.grantId); }
       } catch {
