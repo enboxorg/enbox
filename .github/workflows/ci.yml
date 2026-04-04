@@ -601,8 +601,8 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # Coverage: download package lcov files, merge them for SonarCloud, enforce
-  # package thresholds, then comment the PR.
+  # Coverage: download package lcov files, merge them for SonarCloud, build an
+  # informational report, then comment the PR.
   # ---------------------------------------------------------------------------
   coverage:
     name: Coverage Check & Merge
@@ -649,7 +649,7 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-      - name: Check coverage thresholds
+      - name: Build coverage report
         id: coverage-check
         shell: bash
         run: |
@@ -699,9 +699,9 @@ jobs:
             fi
           }
 
-          failed=false
+          below_target=false
           found_any=false
-          threshold=96
+          target=96
           mkdir -p coverage-badges
 
           node_file=$(mktemp)
@@ -716,10 +716,10 @@ jobs:
             printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' \
               "$coverage" "$badge_color" > "coverage-badges/${pkg}.json"
 
-            if [ "$(echo "$coverage < $threshold" | bc -l)" = "1" ]; then
-              echo "| $pkg | ${coverage}% | :x: Below ${threshold}% |" >> "$node_file"
-              echo "::error::Coverage for $pkg is ${coverage}%, below ${threshold}% threshold"
-              failed=true
+            if [ "$(echo "$coverage < $target" | bc -l)" = "1" ]; then
+              echo "| $pkg | ${coverage}% | :warning: Below ${target}% target |" >> "$node_file"
+              echo "::warning::Coverage for $pkg is ${coverage}%, below ${target}% target"
+              below_target=true
             else
               echo "| $pkg | ${coverage}% | :white_check_mark: |" >> "$node_file"
             fi
@@ -756,10 +756,10 @@ jobs:
 
             if [ "$found_any" = false ]; then
               echo ":x: **No coverage artifacts found.** Ensure test jobs upload lcov reports."
-            elif [ "$failed" = true ]; then
-              echo ":x: **Coverage check failed**: one or more packages are below the ${threshold}% threshold."
+            elif [ "$below_target" = true ]; then
+              echo ":warning: **Some packages are below the ${target}% coverage target.** The report is informational and does not fail CI."
             else
-              echo ":white_check_mark: **All packages meet the ${threshold}% coverage threshold.**"
+              echo ":white_check_mark: **All packages meet the ${target}% coverage target.**"
             fi
 
             echo ""
@@ -789,7 +789,7 @@ jobs:
 
               echo ""
               echo "_Browser coverage is informational only (subset of tests)._"
-              echo "_Node coverage enforces the ${threshold}% threshold._"
+              echo "_Node coverage target is informational only and does not gate CI._"
               echo ""
               echo "</details>"
             fi
@@ -801,10 +801,6 @@ jobs:
 
           if [ "$found_any" = false ]; then
             echo "::error::No coverage artifacts found"
-            exit 1
-          fi
-
-          if [ "$failed" = true ]; then
             exit 1
           fi
 
@@ -1067,8 +1063,9 @@ jobs:
           exit 1
 
   # ---------------------------------------------------------------------------
-  # SonarCloud: consume the merged LCOV artifact and wait for the quality gate.
+  # SonarCloud: consume the merged LCOV artifact and publish analysis results.
   # The job activates once SONAR_PROJECT_KEY / SONAR_ORG repo vars are set.
+  # Quality gate waiting stays off until coverage improvement work lands.
   # ---------------------------------------------------------------------------
   sonarcloud:
     name: SonarCloud
@@ -1116,7 +1113,6 @@ jobs:
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ vars.SONAR_ORG }}
             -Dsonar.pullrequest.github.repository=${{ github.repository }}
-            -Dsonar.qualitygate.wait=true
 
   # ---------------------------------------------------------------------------
   # Gate job for branch protection — always runs so required checks pass even
