@@ -1932,8 +1932,6 @@ export class AgentDwnApi {
       this.agent, params,
       this.processRequest.bind(this),
       this.getSigner.bind(this),
-      this.sendDwnRpcRequest.bind(this),
-      this.getDwnEndpointUrlsForTarget.bind(this),
     );
   }
 }

@@ -2,7 +2,6 @@ import type { PublicKeyJwk } from '@enbox/crypto';
 import type {
   DerivedPrivateJwk,
   EncryptionInput,
-  RecordsQueryReply,
   RecordsReadReply,
 } from '@enbox/dwn-sdk-js';
 
@@ -334,8 +333,6 @@ async function tryLocalFetch(
  * @param params - The fetch parameters
  * @param processRequest - The agent's processRequest method (bound)
  * @param getSigner - Function to get a signer for a DID
- * @param sendDwnRpcRequest - Function to send a DWN RPC request
- * @param getDwnEndpointUrlsForTarget - Function to resolve DWN endpoint URLs (with local discovery)
  * @returns The decrypted `DerivedPrivateJwk`, or `undefined` if no matching record found
  */
 export async function fetchContextKeyRecord(
@@ -343,8 +340,6 @@ export async function fetchContextKeyRecord(
   params: FetchContextKeyParams,
   processRequest: ProcessRequestFn,
   getSigner: (author: string) => Promise<any>,
-  sendDwnRpcRequest: (params: { targetDid: string; dwnEndpointUrls: string[]; message: any; data?: Blob }) => Promise<any>,
-  getDwnEndpointUrlsForTarget: (targetDid: string) => Promise<string[]>,
 ): Promise<DerivedPrivateJwk | undefined> {
   const { ownerDid, requesterDid, sourceProtocol, sourceContextId } = params;
   const protocolUri = KeyDeliveryProtocolDefinition.protocol;
@@ -393,60 +388,16 @@ export async function fetchContextKeyRecord(
   }
 
   // Cross-device path: the requester is NOT the owner.
-  // Try the local DWN first (sync may have brought a copy to the owner's
-  // tenant), then fall back to remote RPC.
-  const localResult = await tryLocalFetch(
+  // Query the owner's tenant on the local DWN. Sync brings contextKey
+  // records locally before the delegate tries to decrypt, so the local
+  // DWN should have the record.
+  //
+  // A remote RPC fallback is NOT provided here because the DWN server's
+  // protocol $encryption validation may reject contextKey records
+  // encrypted to a delegate's leaf key (the rootKeyId doesn't match
+  // the protocol's $encryption.rootKeyId). This is a DWN spec constraint.
+  // If local fetch fails, the caller's fail-closed guard will fire.
+  return tryLocalFetch(
     agent, getSigner, requesterDid, ownerDid, contextKeyFilter, parsePayload,
   );
-  if (localResult) {
-    return localResult;
-  }
-
-  {
-    // Remote query: participant queries the context owner's DWN
-    const signer = await getSigner(requesterDid);
-    const dwnEndpointUrls = await getDwnEndpointUrlsForTarget(ownerDid);
-
-    const recordsQuery = await dwnMessageConstructors[DwnInterface.RecordsQuery].create({
-      signer,
-      filter: contextKeyFilter,
-    });
-
-    const queryReply = await sendDwnRpcRequest({
-      targetDid : ownerDid,
-      dwnEndpointUrls,
-      message   : recordsQuery.message,
-    }) as RecordsQueryReply;
-
-    if (queryReply.status.code !== 200 || !queryReply.entries?.length) {
-      return undefined;
-    }
-
-    // Read the full record remotely
-    const recordId = queryReply.entries[0].recordId;
-    const recordsRead = await dwnMessageConstructors[DwnInterface.RecordsRead].create({
-      signer,
-      filter: { recordId },
-    });
-
-    const readReply = await sendDwnRpcRequest({
-      targetDid : ownerDid,
-      dwnEndpointUrls,
-      message   : recordsRead.message,
-    }) as RecordsReadReply;
-
-    if (!readReply.entry?.data || !readReply.entry?.recordsWrite) {
-      return undefined;
-    }
-
-    // Decrypt the contextKey payload using the requester's key-delivery protocol path key
-    const keyDecrypter = await getKeyDecrypter(agent, requesterDid);
-    const decryptedStream = await Records.decrypt(
-      readReply.entry.recordsWrite,
-      keyDecrypter,
-      readReply.entry.data as ReadableStream<Uint8Array>,
-    );
-
-    return parsePayload(await DataStream.toBytes(decryptedStream));
-  }
 }
