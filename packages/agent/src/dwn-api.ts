@@ -1819,7 +1819,7 @@ export class AgentDwnApi {
         if (new Date(grant.grant.dateExpires).getTime() <= nowMs) { continue; }
 
         const scope = grant.grant.scope as any;
-        if (!readMethods.has(scope.method)) { continue; }
+        if (scope.interface !== 'Records' || !readMethods.has(scope.method)) { continue; }
 
         // Narrow scopes (protocolPath, contextId) are not supported for
         // multi-party delegate delivery — skip them silently.

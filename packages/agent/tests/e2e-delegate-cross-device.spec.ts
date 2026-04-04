@@ -536,7 +536,169 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
     });
   });
 
-  // ─── 2. Write-only delegate exclusion ─────────────────────────
+  // ─── 2. Remote-only context key fetch ──────────────────────────
+
+  describe('remote-only context key fetch', () => {
+    it('should decrypt via remote fetch when contextKey is NOT synced locally', async () => {
+      const ownerDid = ownerIdentity.did.uri;
+
+      const { delegateDid } = await simulateCrossDeviceConnect({
+        scopes: [
+          { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+          { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: chatProtocol.protocol },
+        ],
+      });
+
+      // Owner creates thread + encrypted chat
+      const { message: threadMsg } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Remote-only test' })),
+        },
+        encryption: true,
+      });
+      const threadContextId = (threadMsg as RecordsWriteMessage).recordId;
+
+      const chatData = 'Remote-only encrypted message';
+      const { message: chatMsg } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol        : chatProtocol.protocol,
+          protocolPath    : 'thread/chat',
+          schema          : 'https://schemas.xyz/chat',
+          dataFormat      : 'text/plain',
+          parentContextId : threadContextId,
+          data            : new TextEncoder().encode(chatData),
+        },
+        encryption: true,
+      });
+      const chatRecordId = (chatMsg as RecordsWriteMessage).recordId;
+
+      // Send ALL records to the DWN server (protocols + grants + records + contextKeys)
+      for (const proto of [
+        chatProtocol.protocol,
+        'https://identity.foundation/protocols/key-delivery',
+        'https://identity.foundation/dwn/permissions',
+      ]) {
+        const { reply: rq } = await ownerHarness.agent.processDwnRequest({
+          author        : ownerDid,
+          target        : ownerDid,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { protocol: proto } },
+        });
+        for (const entry of rq.entries ?? []) {
+          const { reply: rr } = await ownerHarness.agent.processDwnRequest({
+            author        : ownerDid,
+            target        : ownerDid,
+            messageType   : DwnInterface.RecordsRead,
+            messageParams : { filter: { recordId: (entry as any).recordId } },
+          });
+          if (rr.entry?.recordsWrite && rr.entry?.data) {
+            const bytes = await DataStream.toBytes(rr.entry.data);
+            await ownerHarness.agent.rpc.sendDwnRequest({
+              dwnUrl    : testDwnUrl,
+              targetDid : ownerDid,
+              message   : rr.entry.recordsWrite as any,
+              data      : new Blob([bytes]),
+            });
+          }
+        }
+      }
+
+      // Sync to delegate: ONLY protocol definitions, chat records, and grants.
+      // Deliberately do NOT sync contextKey records — forcing remote fetch.
+      for (const protocolUri of [chatProtocol.protocol, 'https://identity.foundation/protocols/key-delivery']) {
+        const { reply: pq } = await ownerHarness.agent.processDwnRequest({
+          author        : ownerDid,
+          target        : ownerDid,
+          messageType   : DwnInterface.ProtocolsQuery,
+          messageParams : { filter: { protocol: protocolUri } },
+        });
+        for (const e of pq.entries ?? []) {
+          await delegateHarness.agent.dwn.processRawMessage(ownerDid, e as any);
+        }
+      }
+      // Chat records only (not key-delivery records)
+      const { reply: chatQuery } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: chatProtocol.protocol } },
+      });
+      for (const entry of chatQuery.entries ?? []) {
+        const { reply: rr } = await ownerHarness.agent.processDwnRequest({
+          author        : ownerDid,
+          target        : ownerDid,
+          messageType   : DwnInterface.RecordsRead,
+          messageParams : { filter: { recordId: (entry as any).recordId } },
+        });
+        if (rr.entry?.recordsWrite && rr.entry?.data) {
+          const bytes = await DataStream.toBytes(rr.entry.data);
+          await delegateHarness.agent.dwn.processRawMessage(
+            ownerDid, rr.entry.recordsWrite as any,
+            { dataStream: DataStream.fromBytes(bytes) },
+          );
+        }
+      }
+      // Grants
+      const { reply: grantQuery } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: 'https://identity.foundation/dwn/permissions', protocolPath: 'grant' } },
+      });
+      for (const entry of grantQuery.entries ?? []) {
+        const { reply: rr } = await ownerHarness.agent.processDwnRequest({
+          author        : ownerDid,
+          target        : ownerDid,
+          messageType   : DwnInterface.RecordsRead,
+          messageParams : { filter: { recordId: (entry as any).recordId } },
+        });
+        if (rr.entry?.recordsWrite && rr.entry?.data) {
+          const bytes = await DataStream.toBytes(rr.entry.data);
+          await delegateHarness.agent.dwn.processRawMessage(
+            ownerDid, rr.entry.recordsWrite as any,
+            { dataStream: DataStream.fromBytes(bytes) },
+          );
+        }
+      }
+
+      // Find the Read grant
+      const readGrant = (await (new AgentPermissionsApi({ agent: ownerHarness.agent })).fetchGrants({
+        author   : ownerDid,
+        target   : ownerDid,
+        grantor  : ownerDid,
+        grantee  : delegateDid,
+        protocol : chatProtocol.protocol,
+      })).find((g) => (g.grant.scope as any).method === 'Read');
+      expect(readGrant).toBeDefined();
+
+      // Delegate reads — contextKey MUST come from the remote DWN (not locally synced)
+      const { reply: decrypted } = await delegateHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : { filter: { recordId: chatRecordId }, permissionGrantId: readGrant!.message.recordId },
+        encryption    : true,
+        granteeDid    : delegateDid,
+      });
+
+      expect(decrypted.status.code).toBe(200);
+      expect(decrypted.entry?.data).toBeDefined();
+      const decryptedBytes = await DataStream.toBytes(decrypted.entry!.data!);
+      expect(new TextDecoder().decode(decryptedBytes)).toBe(chatData);
+    });
+  });
+
+  // ─── 3. Write-only delegate exclusion ─────────────────────────
 
   describe('write-only delegate exclusion', () => {
     it('should not write contextKey records for write-only delegates', async () => {
@@ -820,11 +982,18 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       // Create a fake delegate DID (no delivered context keys, no grants with leaf keys)
       const { DidJwk } = await import('@enbox/dids');
       const fakeDelegateBearerDid = await DidJwk.create();
-      // Import the fake delegate's keys into the delegate agent so signing works
+      // Import as identity with connectedDid so ownerDid routes locally
       const fakePortableDid = await fakeDelegateBearerDid.export();
-      await delegateHarness.agent.did.import({
-        portableDid : fakePortableDid,
-        tenant      : delegateHarness.agent.agentDid.uri,
+      await delegateHarness.agent.identity.import({
+        portableIdentity: {
+          portableDid : fakePortableDid,
+          metadata    : {
+            name         : 'FakeDelegate',
+            uri          : fakeDelegateBearerDid.uri,
+            tenant       : delegateHarness.agent.agentDid.uri,
+            connectedDid : ownerDid,
+          },
+        },
       });
 
       // Store a grant locally so the delegate request is authorized
@@ -848,38 +1017,32 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       );
 
       // Delegate reads the encrypted chat with granteeDid set.
-      // Even though owner keys are in the delegate KMS, the fail-closed
-      // guard in resolveKeyDecrypter should prevent falling through to
-      // the owner KMS path.
-      const { reply: failClosedReply } = await delegateHarness.agent.processDwnRequest({
-        author        : ownerDid,
-        target        : ownerDid,
-        messageType   : DwnInterface.RecordsRead,
-        messageParams : { filter: { recordId: chatRecordId }, permissionGrantId: grantMsg.recordId },
-        granteeDid    : fakeDelegateBearerDid.uri,
-        encryption    : true,
-      });
-
-      // If the DWN authorized the read (200), the reply MUST have been
-      // decrypted by resolveKeyDecrypter. Since the delegate has no
-      // context key for this context, the fail-closed guard should have
-      // thrown. If we got a 200, check that the data is NOT decrypted
-      // (still encrypted/unreadable).
-      if (failClosedReply.status.code === 200) {
-        // The fail-closed guard should have thrown during maybeDecryptReply,
-        // which wraps the error and re-throws. If we're here, decryption
-        // succeeded via owner KMS — that's the bug we're preventing.
-        // Verify the data is NOT the original plaintext.
-        const data = (failClosedReply as any).entry?.data;
-        if (data) {
-          const bytes = await DataStream.toBytes(data);
-          const text = new TextDecoder().decode(bytes);
-          // If text matches original, decryption succeeded via owner KMS — fail
-          expect(text).not.toBe(chatData);
-        }
+      // The fail-closed guard in resolveKeyDecrypter must either:
+      // 1. Throw "does not have a context key" (DWN authorized the read, but
+      //    delegate decrypt fails closed), or
+      // 2. Return a non-200 response (DWN rejected the delegated read).
+      // Either way, the delegate must NOT be able to read the plaintext.
+      let failClosedResult: any;
+      try {
+        failClosedResult = await delegateHarness.agent.processDwnRequest({
+          author        : ownerDid,
+          target        : ownerDid,
+          messageType   : DwnInterface.RecordsRead,
+          messageParams : { filter: { recordId: chatRecordId }, permissionGrantId: grantMsg.recordId },
+          granteeDid    : fakeDelegateBearerDid.uri,
+          encryption    : true,
+        });
+      } catch (e: any) {
+        // Path 1: fail-closed guard threw — the right outcome.
+        expect(e.message).toContain('does not have a context key');
+        return;
       }
-      // If the DWN rejected the read (e.g. 401), that's also acceptable:
-      // the delegate can't read the record at all, which is fail-closed.
+      // Path 2: DWN returned a response. If 200, the data must NOT be
+      // the original plaintext (encrypted data is unreadable as text).
+      if (failClosedResult.reply.status.code === 200 && failClosedResult.reply.entry?.data) {
+        const bytes = await DataStream.toBytes(failClosedResult.reply.entry.data);
+        expect(new TextDecoder().decode(bytes)).not.toBe(chatData);
+      }
     });
   });
 

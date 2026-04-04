@@ -240,8 +240,10 @@ export class AgentPermissionsApi implements PermissionsApi {
     }
 
     // Merge caller-provided tags (e.g. delegate key-delivery leaf keys).
+    // Auto-computed tags (like `protocol`) take precedence over caller tags
+    // to prevent accidental or malicious overrides of system-critical keys.
     if (createGrantParams.tags) {
-      tags = { ...tags, ...createGrantParams.tags };
+      tags = { ...createGrantParams.tags, ...tags };
     }
 
     const permissionGrantData: PermissionGrantData = {
