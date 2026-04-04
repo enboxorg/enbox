@@ -258,44 +258,66 @@ export async function eagerSendContextKeyRecord(
 /**
  * Attempts a local DWN fetch for a contextKey record.
  *
- * Works when the requester has the record on their local DWN — either
- * because they ARE the owner, or because sync brought a copy to the
- * owner's tenant on the requester's local DWN (cross-device scenario).
+ * Queries the owner's tenant on the LOCAL DWN directly (bypassing the
+ * `processRequest` routing layer, which may route `target: ownerDid`
+ * to a remote DWN when the owner DID is not in the identity store).
+ *
+ * Works when sync has brought a copy of the contextKey record to the
+ * owner's tenant on the requester's local DWN (cross-device scenario),
+ * or when the requester IS the owner.
  */
 async function tryLocalFetch(
-  processRequest: ProcessRequestFn,
+  agent: EnboxPlatformAgent,
+  getSigner: (author: string) => Promise<any>,
   requesterDid: string,
   ownerDid: string,
   contextKeyFilter: Record<string, any>,
   parsePayload: (bytes: Uint8Array) => DerivedPrivateJwk,
 ): Promise<DerivedPrivateJwk | undefined> {
   try {
-    const { reply } = await processRequest({
-      author        : requesterDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: contextKeyFilter },
+    let dwn;
+    try { dwn = agent.dwn.node; } catch { return undefined; }
+    if (!dwn) { return undefined; }
+
+    // Build and sign a RecordsQuery directly against the local DWN.
+    const signer = await getSigner(requesterDid);
+    const recordsQuery = await dwnMessageConstructors[DwnInterface.RecordsQuery].create({
+      signer,
+      filter: contextKeyFilter,
     });
 
-    if (reply.status.code !== 200 || !reply.entries?.length) {
+    const queryResult = await dwn.processMessage(
+      ownerDid, recordsQuery.message,
+    );
+
+    if (queryResult.status.code !== 200 || !queryResult.entries?.length) {
       return undefined;
     }
 
-    const recordId = reply.entries[0].recordId;
-    const { reply: readReply } = await processRequest({
-      author        : requesterDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsRead,
-      messageParams : { filter: { recordId } },
-      encryption    : true,
+    // Read the full record.
+    const recordId = (queryResult.entries[0] as any).recordId;
+    const recordsRead = await dwnMessageConstructors[DwnInterface.RecordsRead].create({
+      signer,
+      filter: { recordId },
     });
 
-    const readResult = readReply as RecordsReadReply;
-    if (!readResult.entry?.data) {
+    const readResult = await dwn.processMessage(
+      ownerDid, recordsRead.message,
+    ) as RecordsReadReply;
+
+    if (!readResult.entry?.data || !readResult.entry?.recordsWrite) {
       return undefined;
     }
 
-    return parsePayload(await DataStream.toBytes(readResult.entry.data));
+    // Decrypt using the requester's key-delivery protocol path key.
+    const keyDecrypter = await getKeyDecrypter(agent, requesterDid);
+    const decryptedStream = await Records.decrypt(
+      readResult.entry.recordsWrite,
+      keyDecrypter,
+      readResult.entry.data as ReadableStream<Uint8Array>,
+    );
+
+    return parsePayload(await DataStream.toBytes(decryptedStream));
   } catch {
     return undefined;
   }
@@ -340,21 +362,47 @@ export async function fetchContextKeyRecord(
   const parsePayload = (bytes: Uint8Array): DerivedPrivateJwk =>
     JSON.parse(new TextDecoder().decode(bytes)) as DerivedPrivateJwk;
 
-  // Try local first: the record may be on the local DWN either because
-  // the requester IS the owner (isLocal) or because sync brought a copy
-  // to the owner's tenant on the requester's local DWN (cross-device).
-  // Only fall back to remote RPC if the local query finds nothing.
+  if (isLocal) {
+    // Local query via processRequest: owner queries their own DWN.
+    const { reply } = await processRequest({
+      author        : requesterDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : { filter: contextKeyFilter },
+    });
+
+    if (reply.status.code !== 200 || !reply.entries?.length) {
+      return undefined;
+    }
+
+    const localRecordId = reply.entries[0].recordId;
+    const { reply: readReply } = await processRequest({
+      author        : requesterDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: localRecordId } },
+      encryption    : true,
+    });
+
+    const readResult = readReply as RecordsReadReply;
+    if (!readResult.entry?.data) {
+      return undefined;
+    }
+
+    return parsePayload(await DataStream.toBytes(readResult.entry.data));
+  }
+
+  // Cross-device path: the requester is NOT the owner.
+  // Try the local DWN first (sync may have brought a copy to the owner's
+  // tenant), then fall back to remote RPC.
   const localResult = await tryLocalFetch(
-    processRequest, requesterDid, ownerDid, contextKeyFilter, parsePayload,
+    agent, getSigner, requesterDid, ownerDid, contextKeyFilter, parsePayload,
   );
   if (localResult) {
     return localResult;
   }
 
-  if (isLocal) {
-    // Local-only callers never fall through to remote.
-    return undefined;
-  } else {
+  {
     // Remote query: participant queries the context owner's DWN
     const signer = await getSigner(requesterDid);
     const dwnEndpointUrls = await getDwnEndpointUrlsForTarget(ownerDid);
