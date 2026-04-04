@@ -596,7 +596,12 @@ export class AuthManager {
         const existing = await this._storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
         if (existing) {
           const parsed = JSON.parse(existing);
-          if (Array.isArray(parsed)) { entries = parsed; }
+          if (Array.isArray(parsed)) {
+            entries = parsed;
+          } else if (parsed?.delegateDid && parsed?.connectedDid && Array.isArray(parsed?.revocations)) {
+            // Legacy single-object format — migrate to array.
+            entries = [parsed];
+          }
         }
       } catch { /* ignore corrupt data — start fresh */ }
 

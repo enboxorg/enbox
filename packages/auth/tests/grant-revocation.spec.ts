@@ -563,4 +563,38 @@ describe('grant revocation on disconnect', () => {
     expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBeNull();
     expect(await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS)).toBeNull();
   });
+
+  test('legacy single-object retry context is migrated to array on load', async () => {
+    const storage = new MemoryStorage();
+    // Simulate a legacy single-object format
+    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify({
+      delegateDid  : 'did:jwk:legacy-delegate',
+      connectedDid : 'did:dht:legacy-owner',
+      revocations  : [{ grantId: 'g1', revocationGrantId: 'rg1' }],
+    }));
+
+    // Now a new disconnect with failures should MERGE, not overwrite
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:new-delegate');
+    await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:new-owner');
+    await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([
+      { grantId: 'g2', revocationGrantId: 'rg2' },
+    ]));
+
+    const agent = buildRevocationAgent({
+      grantRecords : { 'g2': mockGrantRecord('g2') },
+      rpcError     : true,
+    });
+
+    const manager = createTestManager(agent, { storage });
+    await manager.connect({ password: 'test' });
+    await manager.disconnect();
+
+    // Both entries should be preserved: legacy (migrated) + new
+    const entries = JSON.parse((await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT))!);
+    expect(entries).toHaveLength(2);
+    expect(entries.find((e: any) => e.delegateDid === 'did:jwk:legacy-delegate')).toBeDefined();
+    // The new entry uses the session's delegateDid (from mock identity), not storage
+    expect(entries.find((e: any) => e.delegateDid === 'did:jwk:delegate123')).toBeDefined();
+  });
 });

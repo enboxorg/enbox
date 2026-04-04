@@ -241,12 +241,22 @@ async function loadRetryEntries(
 
   try {
     const parsed = JSON.parse(json);
-    if (!Array.isArray(parsed)) {
+
+    // Handle legacy single-object format: wrap in array.
+    const entries = Array.isArray(parsed)
+      ? parsed
+      : (parsed?.delegateDid && parsed?.connectedDid && Array.isArray(parsed?.revocations))
+        ? [parsed]
+        : [];
+
+    if (entries.length === 0 && !Array.isArray(parsed)) {
+      // Truly malformed (not a valid legacy object either).
       await clearRetryState(storage);
       return [];
     }
+
     // Filter out malformed entries.
-    return parsed.filter(
+    return entries.filter(
       (e: any): e is RetryEntry => e?.delegateDid && e?.connectedDid && Array.isArray(e?.revocations),
     );
   } catch {
