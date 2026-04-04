@@ -309,4 +309,173 @@ describe('e2e: grant revocation stops future delivery', () => {
     );
     expect(keysB.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('should self-heal revocation grant to remote DWN when fanout was missed', async () => {
+    const ownerDid = ownerIdentity.did.uri;
+    const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
+    const testDwnUrl = 'http://localhost:3000';
+
+    // 1. Install protocol + key-delivery
+    await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+    await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
+
+    // Send protocols to remote DWN
+    for (const proto of [chatProtocol.protocol, 'https://identity.foundation/protocols/key-delivery']) {
+      const { reply: pq } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { protocol: proto } },
+      });
+      for (const e of pq.entries ?? []) {
+        await ownerHarness.agent.rpc.sendDwnRequest({
+          dwnUrl    : testDwnUrl,
+          targetDid : ownerDid,
+          message   : e as any,
+        });
+      }
+    }
+
+    // 2. Create delegate + session grant + revocation grant
+    const { DidJwk } = await import('@enbox/dids');
+    const { Ed25519, X25519 } = await import('@enbox/crypto');
+    const { DataStream, HdKey, KeyDerivationScheme, PermissionsProtocol } = await import('@enbox/dwn-sdk-js');
+
+    const delegateBearerDid = await DidJwk.create();
+    const dp = await delegateBearerDid.export();
+    const edKey = dp.privateKeys![0];
+    const x25519Key = await Ed25519.convertPrivateKeyToX25519({ privateKey: edKey });
+    const x25519Bytes = await X25519.privateKeyToBytes({ privateKey: x25519Key });
+    const leafBytes = await HdKey.derivePrivateKeyBytes(x25519Bytes, [
+      KeyDerivationScheme.ProtocolPath,
+      'https://identity.foundation/protocols/key-delivery',
+      'contextKey',
+    ]);
+    const leafJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafBytes });
+    const leafPub = await X25519.getPublicKey({ key: leafJwk });
+
+    // Session grant — sent to remote DWN
+    const sessionGrant = await permissionsApi.createGrant({
+      delegated           : true,
+      store               : true,
+      grantedTo           : delegateBearerDid.uri,
+      scope               : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+      dateExpires         : '2040-06-25T16:09:16.693356Z',
+      author              : ownerDid,
+      delegateKeyDelivery : { rootKeyId: delegateBearerDid.document.verificationMethod![0].id, publicKeyJwk: leafPub },
+    });
+
+    // Send session grant to remote
+    const { encodedData: sgEncoded, ...sgRaw } = sessionGrant.message;
+    await ownerHarness.agent.rpc.sendDwnRequest({
+      dwnUrl    : testDwnUrl,
+      targetDid : ownerDid,
+      message   : sgRaw as any,
+      data      : new Blob([Uint8Array.from(atob(sgEncoded), (c: string): number => c.charCodeAt(0))]),
+    });
+
+    // Revocation grant — stored locally ONLY (simulate fanout failure)
+    const revGrant = await permissionsApi.createGrant({
+      delegated : true,
+      store     : true,
+      grantedTo : delegateBearerDid.uri,
+      scope     : {
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Write,
+        protocol  : PermissionsProtocol.uri,
+        contextId : sessionGrant.message.recordId,
+      },
+      dateExpires : '2040-06-25T16:09:16.693356Z',
+      author      : ownerDid,
+    });
+    // Deliberately do NOT send revGrant to remote — simulates best-effort fanout failure
+
+    // 3. Verify delivery works before revocation
+    const { message: thread1 } = await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'thread',
+        schema       : 'https://schemas.xyz/thread',
+        dataFormat   : 'application/json',
+        data         : new TextEncoder().encode(JSON.stringify({ topic: 'Before self-heal' })),
+      },
+      encryption: true,
+    });
+    const thread1Id = (thread1 as RecordsWriteMessage).recordId;
+
+    const { reply: beforeQ } = await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: { protocol: 'https://identity.foundation/protocols/key-delivery', protocolPath: 'contextKey', recipient: delegateBearerDid.uri },
+      },
+    });
+    expect((beforeQ.entries ?? []).filter((e: any) => e.descriptor?.tags?.contextId === thread1Id).length).toBeGreaterThanOrEqual(1);
+
+    // 4. Self-healing step: read revocation grant locally and send to remote
+    // (This is what disconnect/retry does before each revocation attempt)
+    const { reply: revGrantRead } = await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: revGrant.message.recordId } },
+    });
+    expect(revGrantRead.status.code).toBe(200);
+
+    const { encodedData: _revEncoded, ...revRaw } = revGrantRead.entry!.recordsWrite as any;
+    const revData = revGrantRead.entry!.data
+      ? new Blob([await DataStream.toBytes(revGrantRead.entry!.data!) as BlobPart])
+      : undefined;
+    await ownerHarness.agent.rpc.sendDwnRequest({
+      dwnUrl    : testDwnUrl,
+      targetDid : ownerDid,
+      message   : revRaw as any,
+      data      : revData,
+    });
+
+    // 5. Now revoke the session grant (owner-authored for simplicity)
+    await permissionsApi.createRevocation({
+      author : ownerDid,
+      store  : true,
+      grant  : sessionGrant.grant,
+    });
+
+    // 6. Create another context AFTER revocation
+    const { message: thread2 } = await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'thread',
+        schema       : 'https://schemas.xyz/thread',
+        dataFormat   : 'application/json',
+        data         : new TextEncoder().encode(JSON.stringify({ topic: 'After self-heal revocation' })),
+      },
+      encryption: true,
+    });
+    const thread2Id = (thread2 as RecordsWriteMessage).recordId;
+
+    // 7. Verify: NO contextKey delivered for the revoked delegate
+    const { reply: afterQ } = await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: { protocol: 'https://identity.foundation/protocols/key-delivery', protocolPath: 'contextKey', recipient: delegateBearerDid.uri },
+      },
+    });
+    const afterKeys = (afterQ.entries ?? []).filter((e: any) => e.descriptor?.tags?.contextId === thread2Id);
+    expect(afterKeys).toHaveLength(0);
+  });
 });
