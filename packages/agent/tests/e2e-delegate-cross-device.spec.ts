@@ -171,10 +171,21 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       }),
     );
 
-    // 4. Import delegate DID into delegate agent's KMS
-    await delegateHarness.agent.did.import({
-      portableDid : delegatePortableDid,
-      tenant      : delegateHarness.agent.agentDid.uri,
+    // 4. Import delegate DID as an identity with connectedDid metadata.
+    // This mirrors what importDelegateAndSetupSync does in the real
+    // wallet-connect flow. The connectedDid metadata is critical: it
+    // registers ownerDid as a locally-managed DID on the delegate agent,
+    // so processRequest routes locally instead of to the remote DWN.
+    await delegateHarness.agent.identity.import({
+      portableIdentity: {
+        portableDid : delegatePortableDid,
+        metadata    : {
+          name         : 'Delegate',
+          uri          : delegateBearerDid.uri,
+          tenant       : delegateHarness.agent.agentDid.uri,
+          connectedDid : ownerDid,
+        },
+      },
     });
 
     // Verify the delegate's X25519 key is in the KMS
@@ -186,18 +197,11 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       await delegateHarness.agent.keyManager.getPublicKey({ keyUri: x25519Uri });
     }
 
-    // 5. Import the owner's DID into the delegate agent for DID resolution.
-    // We include private keys because the DwnKeyStore requires the owner's
-    // encryption key to read key records. In a real wallet-connect flow, the
-    // owner's portable DID is delivered to the delegate app (this is an
-    // existing design constraint — the delegate needs the owner's DID to
-    // operate on the owner's DWN partition).
-    //
-    // The cross-device decrypt test proves that context-key delivery works
-    // via the key-delivery protocol fetch path, NOT via the owner's KMS
-    // ProtocolContext derivation — because the delegate agent's
-    // resolveKeyDecrypter has a fail-closed guard that throws before
-    // reaching the KMS path for delegated requests.
+    // 5. Import the owner's DID into the delegate agent's KMS. The
+    // owner's private keys are needed because the DwnKeyStore encrypts
+    // records with the tenant's X25519 key. The fail-closed guard in
+    // resolveKeyDecrypter prevents using these keys for ProtocolContext
+    // decryption (delegate path throws before reaching the owner KMS).
     const ownerPortableDid = await ownerIdentity.did.export();
     await delegateHarness.agent.did.import({
       portableDid : ownerPortableDid,
