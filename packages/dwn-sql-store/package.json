@@ -31,7 +31,7 @@
     "interface-store": "5.1.2",
     "ipfs-unixfs-exporter": "13.1.5",
     "ipfs-unixfs-importer": "15.1.5",
-    "kysely": "0.26.3",
+    "kysely": "0.28.14",
     "multiformats": "11.0.2"
   },
   "devDependencies": {
