@@ -588,9 +588,28 @@ export class AuthManager {
 
     // Persist retry context for failed revocations — but NOT after a
     // nuclear wipe. A clearStorage disconnect must not repopulate storage.
+    // Merge into the existing collection so older sessions' retry entries
+    // are not overwritten.
     if (!clearStorage && failedRevocations.length > 0 && delegateDid && connectedDid) {
-      const retryCtx = { delegateDid, connectedDid, revocations: failedRevocations };
-      await this._storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(retryCtx));
+      let entries: { delegateDid: string; connectedDid: string; revocations: { grantId: string; revocationGrantId: string }[] }[] = [];
+      try {
+        const existing = await this._storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+        if (existing) {
+          const parsed = JSON.parse(existing);
+          if (Array.isArray(parsed)) { entries = parsed; }
+        }
+      } catch { /* ignore corrupt data — start fresh */ }
+
+      // Replace or append this session's entry (keyed by delegateDid).
+      const idx = entries.findIndex((e) => e.delegateDid === delegateDid);
+      const newEntry = { delegateDid, connectedDid, revocations: failedRevocations };
+      if (idx >= 0) {
+        entries[idx] = newEntry;
+      } else {
+        entries.push(newEntry);
+      }
+
+      await this._storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(entries));
       console.warn(
         `AuthManager: ${failedRevocations.length} grant revocation(s) failed. ` +
         `Retry context persisted in REVOCATION_RETRY_CONTEXT.`

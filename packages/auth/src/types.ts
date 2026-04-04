@@ -717,13 +717,12 @@ export const STORAGE_KEYS = {
   SESSION_REVOCATIONS: 'enbox:auth:sessionRevocations',
 
   /**
-   * Self-contained retry context for grant revocations that were not
-   * confirmed by the owner's remote DWN during a previous disconnect.
-   * JSON-serialised `RevocationRetryContext`.
+   * Self-contained collection of revocation retry entries from previous
+   * partial disconnects. JSON-serialised array of
+   * `{ delegateDid, connectedDid, revocations }` entries, one per
+   * session. Keyed by `delegateDid` (unique per session).
    *
-   * Completely independent from active session state — disconnect always
-   * clears session markers, and this blob is only used by the retry
-   * maintenance flow in `restoreSession()`.
+   * Completely independent from active session state.
    */
   REVOCATION_RETRY_CONTEXT: 'enbox:auth:revocationRetryContext',
 } as const;
