@@ -300,4 +300,41 @@ describe('grant revocation on disconnect', () => {
     await manager.disconnect();
     expect(revocationCount).toBe(1);
   });
+
+  test('retry-only restore returns undefined and stops sync', async () => {
+    const storage = new MemoryStorage();
+    // Simulate state left by a partial disconnect:
+    // - PREVIOUSLY_CONNECTED is cleared (user disconnected)
+    // - REVOCATION_RETRY_PENDING is set
+    // - SESSION_REVOCATIONS + session context preserved
+    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_PENDING, 'true');
+    await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:delegate');
+    await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:dht:owner');
+    await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([
+      { grantId: 'grant-1', revocationGrantId: 'rev-grant-1' },
+    ]));
+    // PREVIOUSLY_CONNECTED is NOT set
+
+    let syncStopped = false;
+    const agent = buildRevocationAgent({
+      grantRecords : { 'grant-1': mockGrantRecord('grant-1') },
+      rpcError     : true, // remote send fails — retry won't fully succeed
+    });
+    // Track sync lifecycle
+    (agent.sync as any).stopSync = async (): Promise<void> => { syncStopped = true; };
+
+    const manager = createTestManager(agent, { storage });
+
+    // restoreSession should enter retry-only path
+    const session = await manager.restoreSession();
+
+    // No session restored — user disconnected
+    expect(session).toBeUndefined();
+
+    // Sync was stopped after retry (not left running)
+    expect(syncStopped).toBe(true);
+
+    // Manager has no active session
+    expect((manager as any)._session).toBeUndefined();
+  });
 });

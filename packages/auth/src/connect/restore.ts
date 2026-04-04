@@ -75,10 +75,16 @@ export async function restoreSession(
   await startSyncIfEnabled(userAgent, ctx.defaultSync);
 
   // If we're here only for revocation retry (not session restore),
-  // run the retry and exit WITHOUT restoring a session.
+  // run the retry, tear down sync, and exit WITHOUT restoring a session.
   if (retryPending === 'true') {
-    await retryOrphanedRevocations(userAgent, storage);
-    // Do NOT restore a session — the user explicitly disconnected.
+    try {
+      await retryOrphanedRevocations(userAgent, storage);
+    } finally {
+      // Always stop sync — the retry path is a transient operation,
+      // not a persistent session. Leaving sync running with no _session
+      // would make disconnect() unable to stop it.
+      await userAgent.sync.stopSync(2000);
+    }
     return undefined;
   }
 
