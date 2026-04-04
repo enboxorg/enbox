@@ -250,6 +250,9 @@ export interface ConnectResult {
    * Delivered even when no contexts exist yet (cold-start).
    */
   delegateMultiPartyProtocols?: string[];
+
+  /** Record ID of the delegated revocation grant for self-revocation on disconnect. */
+  revocationGrantId?: string;
 }
 
 /**
@@ -706,4 +709,10 @@ export const STORAGE_KEYS = {
    * @see https://github.com/enboxorg/enbox/issues/690
    */
   REGISTRATION_TOKENS: 'enbox:auth:registrationTokens',
+
+  /**
+   * Record ID of the delegated revocation grant, used to revoke all session
+   * grants on disconnect.
+   */
+  REVOCATION_GRANT_ID: 'enbox:auth:revocationGrantId',
 } as const;

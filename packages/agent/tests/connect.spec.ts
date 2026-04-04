@@ -288,15 +288,17 @@ describe('enbox connect', () => {
     });
 
     it('should create permission grants for each selected did', async () => {
-      const results = await EnboxConnectProtocol.createPermissionGrants(
+      const { grants, revocationGrantId } = await EnboxConnectProtocol.createPermissionGrants(
         providerIdentity.did.uri,
         delegateBearerDid,
         testHarness.agent,
         permissionScopes
       );
+      // Session grants + 1 revocation grant
       const scopesRequested = permissionScopes.length;
-      expect(results).toHaveLength(scopesRequested);
-      expect(typeof results[0]).toBe('object');
+      expect(grants).toHaveLength(scopesRequested + 1);
+      expect(typeof grants[0]).toBe('object');
+      expect(typeof revocationGrantId).toBe('string');
     });
 
     it('should create the connect response which includes the permissionGrants, nonce, private key material', async () => {
@@ -362,7 +364,7 @@ describe('enbox connect', () => {
     });
 
     it('should send the encrypted JWE connect response to the server', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves({ grants: permissionGrants, revocationGrantId: 'mock-revocation-grant' } as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -458,7 +460,7 @@ describe('enbox connect', () => {
       // the wallet should not attempt to re-configure, but instead ensure that the protocol is
       // sent to the remote DWN for the requesting client to be able to sync it down later
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves({ grants: permissionGrants, revocationGrantId: 'mock-revocation-grant' } as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -511,7 +513,7 @@ describe('enbox connect', () => {
 
       // looks for a response of 404, empty entries array or missing entries array
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves({ grants: permissionGrants, revocationGrantId: 'mock-revocation-grant' } as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -581,7 +583,7 @@ describe('enbox connect', () => {
     });
 
     it('should fail if the send request fails for newly configured protocol', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves({ grants: permissionGrants, revocationGrantId: 'mock-revocation-grant' } as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -626,7 +628,7 @@ describe('enbox connect', () => {
     });
 
     it('should fail if the send request fails for existing protocol', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves({ grants: permissionGrants, revocationGrantId: 'mock-revocation-grant' } as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -675,7 +677,7 @@ describe('enbox connect', () => {
     });
 
     it('should throw if protocol could not be fetched at all', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves({ grants: permissionGrants, revocationGrantId: 'mock-revocation-grant' } as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -743,7 +745,7 @@ describe('enbox connect', () => {
         protocol  : 'http://encrypted-protocol.xyz',
       }];
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves({ grants: permissionGrants, revocationGrantId: 'mock-revocation-grant' } as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -805,7 +807,7 @@ describe('enbox connect', () => {
         contextId : 'some-context-id',
       }];
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves({ grants: permissionGrants, revocationGrantId: 'mock-revocation-grant' } as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -859,7 +861,7 @@ describe('enbox connect', () => {
         protocol  : 'http://mixed-encrypted.xyz',
       }];
 
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves({ grants: permissionGrants, revocationGrantId: 'mock-revocation-grant' } as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -889,7 +891,7 @@ describe('enbox connect', () => {
     });
 
     it('should throw if a grant that is included in the request does not match the protocol definition', async () => {
-      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves({ grants: permissionGrants, revocationGrantId: 'mock-revocation-grant' } as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 

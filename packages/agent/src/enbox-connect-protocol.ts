@@ -112,7 +112,7 @@ import {
   X25519,
   XChaCha20Poly1305,
 } from '@enbox/crypto';
-import { DwnInterfaceName, DwnMethodName, HdKey, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, HdKey, KeyDerivationScheme, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { concatenateUrl } from './utils.js';
@@ -245,6 +245,9 @@ export type EnboxConnectResponse = {
    * delegate's agent can register for future context key delivery.
    */
   delegateMultiPartyProtocols?: string[];
+
+  /** Record ID of the delegated revocation grant for self-revocation on disconnect. */
+  revocationGrantId?: string;
 };
 
 /** The connect server endpoint types. */
@@ -633,7 +636,7 @@ async function createPermissionGrants(
   agent: EnboxPlatformAgent,
   scopes: DwnPermissionScope[],
   delegateKeyDeliveryData?: { rootKeyId: string; publicKeyJwk: Record<string, any> },
-): Promise<DwnDataEncodedRecordsWriteMessage[]> {
+): Promise<{ grants: DwnDataEncodedRecordsWriteMessage[]; revocationGrantId: string }> {
   const permissionsApi = new AgentPermissionsApi({ agent });
 
   logger.log(`Creating permission grants for ${scopes.length} scopes...`);
@@ -703,12 +706,33 @@ async function createPermissionGrants(
     return grant.message;
   });
 
+  let grantMessages: DwnDataEncodedRecordsWriteMessage[];
   try {
-    return await Promise.all(messagePromises);
+    grantMessages = await Promise.all(messagePromises);
   } catch (error) {
     logger.error(`Error during batch-send of permission grants: ${error}`);
     throw error;
   }
+
+  // Create a delegated revocation grant so the delegate can self-revoke
+  // on disconnect. This grants the delegate permission to write
+  // `grant/revocation` records on the permissions protocol.
+  const revocationGrant = await permissionsApi.createGrant({
+    delegated : true,
+    store     : true,
+    grantedTo : delegateBearerDid.uri,
+    scope     : {
+      interface    : DwnInterfaceName.Records,
+      method       : DwnMethodName.Write,
+      protocol     : PermissionsProtocol.uri,
+      protocolPath : PermissionsProtocol.revocationPath,
+    },
+    dateExpires : '2040-06-25T16:09:16.693356Z',
+    author      : selectedDid,
+  });
+  grantMessages.push(revocationGrant.message);
+
+  return { grants: grantMessages, revocationGrantId: revocationGrant.message.recordId };
 }
 
 // ---------------------------------------------------------------------------
@@ -1206,7 +1230,12 @@ async function submitConnectResponse(
     }
   );
 
-  const delegateGrants = (await Promise.all(delegateGrantPromises)).flat();
+  const grantResults = await Promise.all(delegateGrantPromises);
+  const delegateGrants = grantResults.flatMap((r) => r.grants);
+  // Use the revocation grant ID from the last result (all results share
+  // the same delegate, so any revocationGrantId works — there's one per
+  // createPermissionGrants call, and the last one is fine).
+  const revocationGrantId = grantResults[grantResults.length - 1]?.revocationGrantId;
 
   logger.log('Building connect response...');
   const responseObject = await EnboxConnectProtocol.createConnectResponse({
@@ -1219,6 +1248,7 @@ async function submitConnectResponse(
     delegateDecryptionKeys      : delegateDecryptionKeys.length > 0 ? delegateDecryptionKeys : undefined,
     delegateContextKeys         : delegateContextKeys.length > 0 ? delegateContextKeys : undefined,
     delegateMultiPartyProtocols : delegateMultiPartyProtocols.length > 0 ? delegateMultiPartyProtocols : undefined,
+    revocationGrantId,
   });
 
   logger.log('Signing connect response...');
