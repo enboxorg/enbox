@@ -1231,8 +1231,12 @@ export class AgentDwnApi {
       const params = { ...request.messageParams } as any;
       if (request.granteeDid && params.permissionGrantId && !params.delegatedGrant
         && isDwnRequest(request, DwnInterface.RecordsWrite)) {
+        // Read as the grantee (delegate), not the owner. The delegate is
+        // the grant's recipient so the permissions protocol authorizes the
+        // read. The owner's signing key may not be available on the
+        // delegate agent in real wallet-connect flows.
         const { reply: grantReply } = await this.processRequest({
-          author        : request.author,
+          author        : request.granteeDid,
           target        : request.author,
           messageType   : DwnInterface.RecordsRead,
           messageParams : { filter: { recordId: params.permissionGrantId } },
