@@ -147,9 +147,9 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
     const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
     const leafPublicKeyJwk = await X25519.getPublicKey({ key: leafPrivateKeyJwk });
 
-    const delegateKeyDeliveryTags: Record<string, string> = {
-      delegateKeyDeliveryRootKeyId    : delegateBearerDid.document.verificationMethod![0].id,
-      delegateKeyDeliveryPublicKeyJwk : JSON.stringify(leafPublicKeyJwk),
+    const delegateKeyDeliveryData = {
+      rootKeyId    : delegateBearerDid.document.verificationMethod![0].id,
+      publicKeyJwk : leafPublicKeyJwk,
     };
 
     // 3. Create permission grants on the owner's DWN
@@ -160,13 +160,13 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
         const isReadLike = (scope as any).interface === 'Records'
           && readMethods.has((scope as any).method);
         return permissionsApi.createGrant({
-          delegated   : true,
-          store       : true,
-          grantedTo   : delegateBearerDid.uri,
+          delegated           : true,
+          store               : true,
+          grantedTo           : delegateBearerDid.uri,
           scope,
-          dateExpires : '2040-06-25T16:09:16.693356Z',
-          author      : ownerDid,
-          tags        : isReadLike ? delegateKeyDeliveryTags : undefined,
+          dateExpires         : '2040-06-25T16:09:16.693356Z',
+          author              : ownerDid,
+          delegateKeyDelivery : isReadLike ? delegateKeyDeliveryData : undefined,
         });
       }),
     );
@@ -1145,21 +1145,19 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       const leafJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafBytes });
       const leafPub = await X25519.getPublicKey({ key: leafJwk });
 
-      const tags = {
-        delegateKeyDeliveryRootKeyId    : delegateBearerDid.document.verificationMethod![0].id,
-        delegateKeyDeliveryPublicKeyJwk : JSON.stringify(leafPub),
-      };
-
       // Create an EXPIRED delegated grant
       const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
       await permissionsApi.createGrant({
-        delegated   : true,
-        store       : true,
-        grantedTo   : delegateBearerDid.uri,
-        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
-        dateExpires : '2020-01-01T00:00:00.000000Z', // already expired
-        author      : ownerDid,
-        tags,
+        delegated           : true,
+        store               : true,
+        grantedTo           : delegateBearerDid.uri,
+        scope               : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        dateExpires         : '2020-01-01T00:00:00.000000Z', // already expired
+        author              : ownerDid,
+        delegateKeyDelivery : {
+          rootKeyId    : delegateBearerDid.document.verificationMethod![0].id,
+          publicKeyJwk : leafPub,
+        },
       });
 
       // Owner creates a new context
@@ -1228,21 +1226,19 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       const leafJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafBytes });
       const leafPub = await X25519.getPublicKey({ key: leafJwk });
 
-      const tags = {
-        delegateKeyDeliveryRootKeyId    : directGrantee.document.verificationMethod![0].id,
-        delegateKeyDeliveryPublicKeyJwk : JSON.stringify(leafPub),
-      };
-
       // Non-delegated grant (delegated: false / undefined)
       const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
       await permissionsApi.createGrant({
-        delegated   : false,
-        store       : true,
-        grantedTo   : directGrantee.uri,
-        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
-        dateExpires : '2040-06-25T16:09:16.693356Z',
-        author      : ownerDid,
-        tags,
+        delegated           : false,
+        store               : true,
+        grantedTo           : directGrantee.uri,
+        scope               : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        dateExpires         : '2040-06-25T16:09:16.693356Z',
+        author              : ownerDid,
+        delegateKeyDelivery : {
+          rootKeyId    : directGrantee.document.verificationMethod![0].id,
+          publicKeyJwk : leafPub,
+        },
       });
 
       // Owner creates a new context
@@ -1311,14 +1307,9 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       const leafJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafBytes });
       const leafPub = await X25519.getPublicKey({ key: leafJwk });
 
-      const validTags = {
-        delegateKeyDeliveryRootKeyId    : delegateBearerDid.document.verificationMethod![0].id,
-        delegateKeyDeliveryPublicKeyJwk : JSON.stringify(leafPub),
-      };
-
       const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
 
-      // Grant 1: untagged (legacy / pre-feature), delegated, read-like
+      // Grant 1: no delegateKeyDelivery (legacy / pre-feature), delegated, read-like
       await permissionsApi.createGrant({
         delegated   : true,
         store       : true,
@@ -1326,18 +1317,21 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
         scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
         dateExpires : '2040-06-25T16:09:16.693356Z',
         author      : ownerDid,
-        // no tags — legacy grant
+        // no delegateKeyDelivery — legacy grant
       });
 
-      // Grant 2: properly tagged, delegated, read-like
+      // Grant 2: with delegateKeyDelivery, delegated, read-like
       await permissionsApi.createGrant({
-        delegated   : true,
-        store       : true,
-        grantedTo   : delegateBearerDid.uri,
-        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: chatProtocol.protocol },
-        dateExpires : '2040-06-25T16:09:16.693356Z',
-        author      : ownerDid,
-        tags        : validTags,
+        delegated           : true,
+        store               : true,
+        grantedTo           : delegateBearerDid.uri,
+        scope               : { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: chatProtocol.protocol },
+        dateExpires         : '2040-06-25T16:09:16.693356Z',
+        author              : ownerDid,
+        delegateKeyDelivery : {
+          rootKeyId    : delegateBearerDid.document.verificationMethod![0].id,
+          publicKeyJwk : leafPub,
+        },
       });
 
       // Owner creates a new context

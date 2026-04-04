@@ -48,8 +48,11 @@ export type CreateGrantParams = {
   grantedTo: string;
   scope: DwnPermissionScope;
   delegated?: boolean;
-  /** Additional tags to attach to the grant record (merged with auto-computed tags). */
-  tags?: Record<string, string>;
+  /** Delegate key-delivery metadata for cross-device context key delivery. */
+  delegateKeyDelivery?: {
+    rootKeyId: string;
+    publicKeyJwk: Record<string, any>;
+  };
 };
 
 export type CreateRequestParams = {

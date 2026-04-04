@@ -1827,30 +1827,20 @@ export class AgentDwnApi {
 
         const delegateDid = grant.grant.grantee;
 
-        // Read the pre-derived key-delivery leaf public key from the grant tags.
-        // This was computed during submitConnectResponse() and attached to
-        // each read-like grant so the owner can encrypt contextKey records
-        // to the delegate without needing the delegate's private key.
-        const grantTags = (grant.message as any).descriptor?.tags;
-        const leafRootKeyId = grantTags?.delegateKeyDeliveryRootKeyId;
-        const leafPublicKeyJwkStr = grantTags?.delegateKeyDeliveryPublicKeyJwk;
-
-        if (!leafRootKeyId || !leafPublicKeyJwkStr) {
-          // Grant was created before key-delivery tags were supported,
-          // or is missing tags. Skip — do NOT dedup this delegate yet,
-          // a later grant may have valid tags.
+        // Read the pre-derived key-delivery leaf public key from the
+        // grant data payload. This was computed during submitConnectResponse()
+        // and stored alongside the grant's standard fields.
+        const keyDelivery = grant.grant.delegateKeyDelivery;
+        if (!keyDelivery?.rootKeyId || !keyDelivery?.publicKeyJwk) {
+          // Grant was created before key-delivery was supported, or
+          // is not a read-like grant. Skip — do NOT dedup yet.
           continue;
         }
 
         // Dedup check — skip if already delivered via an earlier grant.
         if (deliveredDelegates.has(delegateDid)) { continue; }
 
-        let leafPublicKeyJwk: PublicKeyJwk;
-        try {
-          leafPublicKeyJwk = JSON.parse(leafPublicKeyJwkStr) as PublicKeyJwk;
-        } catch {
-          continue; // Malformed tag — skip, don't dedup
-        }
+        const leafPublicKeyJwk = keyDelivery.publicKeyJwk as PublicKeyJwk;
 
         try {
           await this.writeContextKeyRecord({
@@ -1860,7 +1850,7 @@ export class AgentDwnApi {
             sourceProtocol                : protocol,
             sourceContextId               : rootContextId,
             recipientKeyDeliveryPublicKey : {
-              rootKeyId    : leafRootKeyId,
+              rootKeyId    : keyDelivery.rootKeyId,
               publicKeyJwk : leafPublicKeyJwk,
             },
           });

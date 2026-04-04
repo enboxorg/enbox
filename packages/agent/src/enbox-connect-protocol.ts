@@ -632,7 +632,7 @@ async function createPermissionGrants(
   delegateBearerDid: BearerDid,
   agent: EnboxPlatformAgent,
   scopes: DwnPermissionScope[],
-  delegateKeyDeliveryTags?: Record<string, string>,
+  delegateKeyDeliveryData?: { rootKeyId: string; publicKeyJwk: Record<string, any> },
 ): Promise<DwnDataEncodedRecordsWriteMessage[]> {
   const permissionsApi = new AgentPermissionsApi({ agent });
 
@@ -648,7 +648,7 @@ async function createPermissionGrants(
       ]);
       const isReadLike = isRecordPermissionScope(scope)
         && readMethods.has(scope.method as DwnMethodName);
-      const tags = (isReadLike && delegateKeyDeliveryTags) ? delegateKeyDeliveryTags : undefined;
+      const delegateKeyDelivery = (isReadLike && delegateKeyDeliveryData) ? delegateKeyDeliveryData : undefined;
 
       return permissionsApi.createGrant({
         delegated,
@@ -657,7 +657,7 @@ async function createPermissionGrants(
         scope,
         dateExpires : '2040-06-25T16:09:16.693356Z', // TODO: make dateExpires configurable
         author      : selectedDid,
-        tags,
+        delegateKeyDelivery,
       });
     })
   );
@@ -1121,9 +1121,9 @@ async function submitConnectResponse(
   // the same id — which they do because both derive from verificationMethod.id
   // of the keyAgreement relationship.
   const delegateKeyAgreementVmId = delegateBearerDid.document.verificationMethod![0].id;
-  const delegateKeyDeliveryTags = {
-    delegateKeyDeliveryRootKeyId    : delegateKeyAgreementVmId,
-    delegateKeyDeliveryPublicKeyJwk : JSON.stringify(delegateKeyDeliveryLeafPublicKey),
+  const delegateKeyDeliveryData = {
+    rootKeyId    : delegateKeyAgreementVmId,
+    publicKeyJwk : delegateKeyDeliveryLeafPublicKey,
   };
 
   // Derive scope-aware decryption keys for encrypted protocols.
@@ -1201,7 +1201,7 @@ async function submitConnectResponse(
         delegateBearerDid,
         agent,
         permissionScopes,
-        delegateKeyDeliveryTags,
+        delegateKeyDeliveryData,
       );
     }
   );

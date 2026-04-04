@@ -234,16 +234,9 @@ export class AgentPermissionsApi implements PermissionsApi {
   async createGrant(params: CreateGrantParams): Promise<PermissionGrantEntry> {
     const { author, store = false, delegated = false, ...createGrantParams } = params;
 
-    let tags: Record<string, any> | undefined = undefined;
+    let tags = undefined;
     if (PermissionsProtocol.hasProtocolScope(createGrantParams.scope)) {
       tags = { protocol: createGrantParams.scope.protocol };
-    }
-
-    // Merge caller-provided tags (e.g. delegate key-delivery leaf keys).
-    // Auto-computed tags (like `protocol`) take precedence over caller tags
-    // to prevent accidental or malicious overrides of system-critical keys.
-    if (createGrantParams.tags) {
-      tags = { ...createGrantParams.tags, ...tags };
     }
 
     const permissionGrantData: PermissionGrantData = {
@@ -251,8 +244,15 @@ export class AgentPermissionsApi implements PermissionsApi {
       requestId   : createGrantParams.requestId,
       description : createGrantParams.description,
       delegated,
-      scope       : createGrantParams.scope
+      scope       : createGrantParams.scope,
     };
+
+    // Attach delegate key-delivery metadata to the grant data payload.
+    // This is stored in the grant's encoded data (not tags) to avoid
+    // SQL column size limits on tag values.
+    if (createGrantParams.delegateKeyDelivery) {
+      permissionGrantData.delegateKeyDelivery = createGrantParams.delegateKeyDelivery;
+    }
 
     const permissionsGrantBytes = Convert.object(permissionGrantData).toUint8Array();
 

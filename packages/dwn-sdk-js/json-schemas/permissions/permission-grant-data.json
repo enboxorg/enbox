@@ -25,6 +25,19 @@
     },
     "conditions": {
       "$ref": "https://identity.foundation/dwn/json-schemas/permissions/defs.json#/$defs/conditions"
+    },
+    "delegateKeyDelivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootKeyId", "publicKeyJwk"],
+      "properties": {
+        "rootKeyId": {
+          "type": "string"
+        },
+        "publicKeyJwk": {
+          "type": "object"
+        }
+      }
     }
   }
 }
