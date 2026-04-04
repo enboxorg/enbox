@@ -502,8 +502,9 @@ export class AuthManager {
               // Send the revocation to the owner's remote DWN endpoints.
               // A revocation is only considered successful if at least one
               // remote endpoint confirms it (202/409). Without remote
-              // delivery, the owner-side authority source won't see it.
-              let remoteDelivered = dwnEndpointUrls.length === 0;
+              // delivery, the owner-side authority source won't see it
+              // and the grant stays in SESSION_REVOCATIONS for retry.
+              let remoteDelivered = false;
               if (revocationMessage && dwnEndpointUrls.length > 0) {
                 const { encodedData, ...rawMessage } = revocationMessage as any;
                 const data = encodedData
@@ -547,9 +548,14 @@ export class AuthManager {
             } else {
               await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
             }
+            // Known limitation: SESSION_REVOCATIONS is preserved for retry, but
+            // the rest of the session context (DELEGATE_DID, CONNECTED_DID) is
+            // cleared below. A future reconnect or manual cleanup path would
+            // need to read SESSION_REVOCATIONS independently to complete the
+            // revocations. This is still better than deleting the retry data.
             console.warn(
               `AuthManager: ${revocations.length - succeeded.length} of ${revocations.length} ` +
-              `grant revocations failed. Unrevoked grants preserved for retry.`
+              `grant revocations failed. Unrevoked grants preserved in SESSION_REVOCATIONS for retry.`
             );
           }
         }
