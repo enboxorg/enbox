@@ -141,7 +141,9 @@ export async function restoreSession(
       await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
       await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
-      await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+      // Do NOT remove REVOCATION_RETRY_CONTEXT here — it has its own
+      // lifecycle managed by the retry maintenance path. Stale session
+      // cleanup must not silently drop pending revocations.
       return undefined;
     }
 
