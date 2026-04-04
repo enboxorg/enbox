@@ -105,7 +105,7 @@ export async function restoreSession(
       await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
-      await storage.remove(STORAGE_KEYS.REVOCATION_GRANT_ID);
+      await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
       return undefined;
     }
 

@@ -251,8 +251,8 @@ export interface ConnectResult {
    */
   delegateMultiPartyProtocols?: string[];
 
-  /** Record ID of the delegated revocation grant for self-revocation on disconnect. */
-  revocationGrantId?: string;
+  /** Per-grant revocation mappings for session-bound self-revocation on disconnect. */
+  sessionRevocations?: { grantId: string; revocationGrantId: string }[];
 }
 
 /**
@@ -711,8 +711,8 @@ export const STORAGE_KEYS = {
   REGISTRATION_TOKENS: 'enbox:auth:registrationTokens',
 
   /**
-   * Record ID of the delegated revocation grant, used to revoke all session
-   * grants on disconnect.
+   * JSON-serialised `SessionRevocationEntry[]` mapping session grant IDs to
+   * their corresponding revocation grant IDs for disconnect.
    */
-  REVOCATION_GRANT_ID: 'enbox:auth:revocationGrantId',
+  SESSION_REVOCATIONS: 'enbox:auth:sessionRevocations',
 } as const;

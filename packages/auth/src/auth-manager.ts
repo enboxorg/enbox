@@ -462,37 +462,37 @@ export class AuthManager {
       await this._userAgent.sync.stopSync(timeout);
     }
 
-    // Revoke delegated grants for this delegate session.
+    // Revoke delegated session grants using the stored per-grant
+    // revocation mappings. Each revocation grant is contextId-scoped
+    // to the specific session grant it can revoke.
     const delegateDid = this._session?.delegateDid;
     const connectedDid = this._session?.did;
     if (delegateDid && connectedDid) {
       try {
-        const revocationGrantId = await this._storage.get(STORAGE_KEYS.REVOCATION_GRANT_ID);
-        if (revocationGrantId) {
-          const permissionsApi = this._userAgent.permissions;
-
-          // Fetch all grants for this delegate (including already-revoked, to be safe)
-          const grants = await permissionsApi.fetchGrants({
-            author       : connectedDid,
-            target       : connectedDid,
-            grantor      : connectedDid,
-            grantee      : delegateDid,
-            checkRevoked : false,
-          });
-
-          // Revoke each grant using the delegated revocation grant
-          for (const grant of grants) {
+        const revocationsJson = await this._storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
+        if (revocationsJson) {
+          const revocations: { grantId: string; revocationGrantId: string }[] = JSON.parse(revocationsJson);
+          for (const { grantId, revocationGrantId } of revocations) {
             try {
-              await permissionsApi.createRevocation({
-                author            : connectedDid,
-                store             : true,
-                grant             : grant.grant,
-                granteeDid        : delegateDid,
-                permissionGrantId : revocationGrantId,
-                description       : 'Revoked on disconnect',
+              // Fetch the specific grant to get the parsed object for createRevocation
+              const grantEntries = await this._userAgent.permissions.fetchGrants({
+                author       : connectedDid,
+                target       : connectedDid,
+                grantor      : connectedDid,
+                checkRevoked : false,
               });
+              const grantEntry = grantEntries.find((g) => g.grant.id === grantId);
+              if (grantEntry) {
+                await this._userAgent.permissions.createRevocation({
+                  author            : connectedDid,
+                  store             : true,
+                  grant             : grantEntry.grant,
+                  granteeDid        : delegateDid,
+                  permissionGrantId : revocationGrantId,
+                });
+              }
             } catch {
-              // Individual revocation failure is non-fatal — continue with others
+              // Individual revocation failure is non-fatal
             }
           }
         }
@@ -535,7 +535,7 @@ export class AuthManager {
       await this._storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
-      await this._storage.remove(STORAGE_KEYS.REVOCATION_GRANT_ID);
+      await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
     }
 
     this._setState('unlocked');
@@ -882,12 +882,12 @@ export class AuthManager {
     // 5. Import delegate DID, process grants, set up sync.
     const {
       delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys,
-      delegateContextKeys, delegateMultiPartyProtocols, revocationGrantId,
+      delegateContextKeys, delegateMultiPartyProtocols, sessionRevocations,
     } = result;
     const identity = await importDelegateAndSetupSync({
       userAgent, delegatePortableDid, connectedDid, delegateGrants,
       delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols,
-      revocationGrantId,
+      sessionRevocations,
       flowName: 'Connect',
     });
 

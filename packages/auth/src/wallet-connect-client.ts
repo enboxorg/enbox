@@ -97,7 +97,7 @@ async function initClient({
   delegateDecryptionKeys?: EnboxConnectResponse['delegateDecryptionKeys'];
   delegateContextKeys?: EnboxConnectResponse['delegateContextKeys'];
   delegateMultiPartyProtocols?: EnboxConnectResponse['delegateMultiPartyProtocols'];
-  revocationGrantId?: EnboxConnectResponse['revocationGrantId'];
+  sessionRevocations?: EnboxConnectResponse['sessionRevocations'];
 } | undefined> {
   // ephemeral client did for ECDH, signing, verification
   const clientDid = await DidJwk.create();
@@ -197,7 +197,7 @@ async function initClient({
       delegateDecryptionKeys      : verifiedResponse.delegateDecryptionKeys,
       delegateContextKeys         : verifiedResponse.delegateContextKeys,
       delegateMultiPartyProtocols : verifiedResponse.delegateMultiPartyProtocols,
-      revocationGrantId           : verifiedResponse.revocationGrantId,
+      sessionRevocations          : verifiedResponse.sessionRevocations,
     };
   }
 }
