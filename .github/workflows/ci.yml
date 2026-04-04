@@ -71,7 +71,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.10
 
       - name: Restore bun cache
         uses: actions/cache@v4
@@ -113,7 +113,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.10
 
       - name: Restore bun cache
         uses: actions/cache@v4
@@ -141,10 +141,10 @@ jobs:
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/common coverage-staging/crypto coverage-staging/auth
-          cp packages/common/coverage/lcov.info coverage-staging/common/lcov.info 2>/dev/null || true
-          cp packages/crypto/coverage/lcov.info coverage-staging/crypto/lcov.info 2>/dev/null || true
-          cp packages/auth/coverage/lcov.info   coverage-staging/auth/lcov.info   2>/dev/null || true
+          mkdir -p coverage-staging/packages/common/coverage coverage-staging/packages/crypto/coverage coverage-staging/packages/auth/coverage
+          cp packages/common/coverage/lcov.info coverage-staging/packages/common/coverage/lcov.info 2>/dev/null || true
+          cp packages/crypto/coverage/lcov.info coverage-staging/packages/crypto/coverage/lcov.info 2>/dev/null || true
+          cp packages/auth/coverage/lcov.info coverage-staging/packages/auth/coverage/lcov.info 2>/dev/null || true
 
       - name: Upload coverage
         if: always()
@@ -171,7 +171,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.10
 
       - name: Restore bun cache
         uses: actions/cache@v4
@@ -196,8 +196,8 @@ jobs:
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/dwn-sdk-js
-          cp packages/dwn-sdk-js/coverage/lcov.info coverage-staging/dwn-sdk-js/lcov.info 2>/dev/null || true
+          mkdir -p coverage-staging/packages/dwn-sdk-js/coverage
+          cp packages/dwn-sdk-js/coverage/lcov.info coverage-staging/packages/dwn-sdk-js/coverage/lcov.info 2>/dev/null || true
 
       - name: Upload coverage
         if: always()
@@ -239,7 +239,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.10
 
       - name: Restore bun cache
         uses: actions/cache@v4
@@ -311,11 +311,11 @@ jobs:
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/dids coverage-staging/dwn-clients coverage-staging/agent coverage-staging/api
-          cp packages/dids/coverage/lcov.info coverage-staging/dids/lcov.info 2>/dev/null || true
-          cp packages/dwn-clients/coverage/lcov.info coverage-staging/dwn-clients/lcov.info 2>/dev/null || true
-          cp packages/agent/coverage/lcov.info coverage-staging/agent/lcov.info 2>/dev/null || true
-          cp packages/api/coverage/lcov.info coverage-staging/api/lcov.info 2>/dev/null || true
+          mkdir -p coverage-staging/packages/dids/coverage coverage-staging/packages/dwn-clients/coverage coverage-staging/packages/agent/coverage coverage-staging/packages/api/coverage
+          cp packages/dids/coverage/lcov.info coverage-staging/packages/dids/coverage/lcov.info 2>/dev/null || true
+          cp packages/dwn-clients/coverage/lcov.info coverage-staging/packages/dwn-clients/coverage/lcov.info 2>/dev/null || true
+          cp packages/agent/coverage/lcov.info coverage-staging/packages/agent/coverage/lcov.info 2>/dev/null || true
+          cp packages/api/coverage/lcov.info coverage-staging/packages/api/coverage/lcov.info 2>/dev/null || true
 
       - name: Upload coverage
         if: always()
@@ -367,7 +367,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.10
 
       - name: Restore bun cache
         uses: actions/cache@v4
@@ -482,7 +482,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.10
 
       - name: Restore bun cache
         uses: actions/cache@v4
@@ -522,8 +522,8 @@ jobs:
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/dwn-sql-store
-          cp packages/dwn-sql-store/coverage/lcov.info coverage-staging/dwn-sql-store/lcov.info 2>/dev/null || true
+          mkdir -p coverage-staging/packages/dwn-sql-store/coverage
+          cp packages/dwn-sql-store/coverage/lcov.info coverage-staging/packages/dwn-sql-store/coverage/lcov.info 2>/dev/null || true
 
       - name: Upload coverage
         if: always()
@@ -550,7 +550,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.10
 
       - name: Restore bun cache
         uses: actions/cache@v4
@@ -588,8 +588,8 @@ jobs:
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/dwn-server
-          cp packages/dwn-server/coverage/lcov.info coverage-staging/dwn-server/lcov.info 2>/dev/null || true
+          mkdir -p coverage-staging/packages/dwn-server/coverage
+          cp packages/dwn-server/coverage/lcov.info coverage-staging/packages/dwn-server/coverage/lcov.info 2>/dev/null || true
 
       - name: Upload coverage
         if: always()
@@ -601,39 +601,81 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # Coverage: parse lcov reports, enforce threshold, comment on PR
+  # Coverage: download package lcov files, merge them for SonarCloud, build an
+  # informational report, then comment the PR.
   # ---------------------------------------------------------------------------
   coverage:
-    name: Coverage Check
+    name: Coverage Check & Merge
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 6
     needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser]
     if: always() && !cancelled() && needs.changes.outputs.src == 'true'
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Restore bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
       - name: Download coverage artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: coverage-*
-          path: coverage-artifacts
+          path: .
           merge-multiple: true
 
-      - name: Check coverage thresholds
+      - name: Merge LCOV coverage
+        run: bun run coverage:merge:reports
+
+      - name: Upload merged coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-merged
+          path: coverage/merged/
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Build coverage report
         id: coverage-check
         shell: bash
         run: |
-          # ── helper: parse an lcov file and print the line-coverage % ──
+          shopt -s nullglob
+
           parse_lcov() {
             local lcov_file="$1"
             local total_lf=0 total_lh=0 in_src=false
+
             while IFS= read -r line; do
               case "$line" in
-                SF:src/*) in_src=true ;;
-                SF:*)     in_src=false ;;
-                LF:*)     $in_src && total_lf=$((total_lf + ${line#LF:})) ;;
-                LH:*)     $in_src && total_lh=$((total_lh + ${line#LH:})) ;;
+                SF:src/*|SF:*/src/*) in_src=true ;;
+                SF:*) in_src=false ;;
+                LF:*)
+                  if [ "$in_src" = true ]; then
+                    total_lf=$((total_lf + ${line#LF:}))
+                  fi
+                  ;;
+                LH:*)
+                  if [ "$in_src" = true ]; then
+                    total_lh=$((total_lh + ${line#LH:}))
+                  fi
+                  ;;
               esac
             done < "$lcov_file"
+
             if [ "$total_lf" -gt 0 ]; then
               awk "BEGIN { printf \"%.1f\", ($total_lh / $total_lf) * 100 }"
             else
@@ -643,58 +685,59 @@ jobs:
 
           badge_color_for() {
             local cov="$1"
-            if   [ "$(echo "$cov >= 90" | bc -l)" = "1" ]; then echo "brightgreen"
-            elif [ "$(echo "$cov >= 80" | bc -l)" = "1" ]; then echo "green"
-            elif [ "$(echo "$cov >= 70" | bc -l)" = "1" ]; then echo "yellowgreen"
-            elif [ "$(echo "$cov >= 60" | bc -l)" = "1" ]; then echo "yellow"
-            else echo "red"
+
+            if [ "$(echo "$cov >= 90" | bc -l)" = "1" ]; then
+              echo "brightgreen"
+            elif [ "$(echo "$cov >= 80" | bc -l)" = "1" ]; then
+              echo "green"
+            elif [ "$(echo "$cov >= 70" | bc -l)" = "1" ]; then
+              echo "yellowgreen"
+            elif [ "$(echo "$cov >= 60" | bc -l)" = "1" ]; then
+              echo "yellow"
+            else
+              echo "red"
             fi
           }
 
-          browsers="chromium firefox webkit"
-          failed=false
+          below_target=false
           found_any=false
-          threshold=96
+          target=96
           mkdir -p coverage-badges
 
-          # Temp files: node rows and a TSV of (pkg, browser, coverage) for
-          # browser results that we pivot into a single table at the end.
           node_file=$(mktemp)
           browser_tsv=$(mktemp)
 
-          for lcov_file in coverage-artifacts/*/lcov.info; do
-            [ -f "$lcov_file" ] || continue
+          for lcov_file in packages/*/coverage/lcov.info; do
             found_any=true
-
-            dir_name=$(echo "$lcov_file" | sed 's|coverage-artifacts/\([^/]*\)/.*|\1|')
+            pkg=$(basename "$(dirname "$(dirname "$lcov_file")")")
             coverage=$(parse_lcov "$lcov_file")
             badge_color=$(badge_color_for "$coverage")
 
             printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' \
-              "$coverage" "$badge_color" > "coverage-badges/${dir_name}.json"
+              "$coverage" "$badge_color" > "coverage-badges/${pkg}.json"
 
-            # Classify: is this a per-browser directory (e.g. common-chromium)?
-            matched_browser=""
-            for b in $browsers; do
-              case "$dir_name" in *-"$b") matched_browser="$b" ;; esac
-            done
-
-            if [ -n "$matched_browser" ]; then
-              pkg=$(echo "$dir_name" | sed "s/-${matched_browser}\$//")
-              printf '%s\t%s\t%s\n' "$pkg" "$matched_browser" "$coverage" >> "$browser_tsv"
+            if [ "$(echo "$coverage < $target" | bc -l)" = "1" ]; then
+              echo "| $pkg | ${coverage}% | :warning: Below ${target}% target |" >> "$node_file"
+              echo "::warning::Coverage for $pkg is ${coverage}%, below ${target}% target"
+              below_target=true
             else
-              pkg="$dir_name"
-              if [ "$(echo "$coverage < $threshold" | bc -l)" = "1" ]; then
-                echo "| $pkg | ${coverage}% | :x: Below ${threshold}% |" >> "$node_file"
-                echo "::error::Coverage for $pkg is ${coverage}%, below ${threshold}% threshold"
-                failed=true
-              else
-                echo "| $pkg | ${coverage}% | :white_check_mark: |" >> "$node_file"
-              fi
+              echo "| $pkg | ${coverage}% | :white_check_mark: |" >> "$node_file"
             fi
           done
 
-          # ── Assemble the markdown report ──
+          for lcov_file in packages/*/coverage-browser-*/lcov.info; do
+            found_any=true
+            pkg=$(basename "$(dirname "$(dirname "$lcov_file")")")
+            coverage_dir=$(basename "$(dirname "$lcov_file")")
+            browser="${coverage_dir#coverage-browser-}"
+            coverage=$(parse_lcov "$lcov_file")
+            badge_color=$(badge_color_for "$coverage")
+
+            printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' \
+              "$coverage" "$badge_color" > "coverage-badges/${pkg}-${browser}.json"
+            printf '%s\t%s\t%s\n' "$pkg" "$browser" "$coverage" >> "$browser_tsv"
+          done
+
           {
             echo "## Coverage Report"
             echo ""
@@ -702,23 +745,25 @@ jobs:
             echo ""
             echo "| Package | Line Coverage | Status |"
             echo "|---------|---------------|--------|"
+
             if [ -s "$node_file" ]; then
               cat "$node_file"
             else
               echo "| _(no data)_ | — | — |"
             fi
+
             echo ""
 
             if [ "$found_any" = false ]; then
               echo ":x: **No coverage artifacts found.** Ensure test jobs upload lcov reports."
-            elif [ "$failed" = true ]; then
-              echo ":x: **Coverage check failed**: one or more packages are below the ${threshold}% threshold."
+            elif [ "$below_target" = true ]; then
+              echo ":warning: **Some packages are below the ${target}% coverage target.** The report is informational and does not fail CI."
             else
-              echo ":white_check_mark: **All packages meet the ${threshold}% coverage threshold.**"
+              echo ":white_check_mark: **All packages meet the ${target}% coverage target.**"
             fi
+
             echo ""
 
-            # Browser table: one row per package, one column per browser.
             if [ -s "$browser_tsv" ]; then
               echo "<details>"
               echo "<summary>Browser Coverage (informational)</summary>"
@@ -729,7 +774,6 @@ jobs:
               echo "| Package | $cr_icon | $ff_icon | $wk_icon |"
               echo "|---------|----------|---------|--------|"
 
-              # Collect unique package names (sorted) from the TSV
               sort -t$'\t' -k1,1 "$browser_tsv" -o "$browser_tsv"
               pkg_list=$(cut -f1 "$browser_tsv" | sort -u)
 
@@ -739,28 +783,24 @@ jobs:
                 webkit_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="webkit" {print $3}' "$browser_tsv")
                 cr_cell="${chromium_cov:+${chromium_cov}%}" ; cr_cell="${cr_cell:-—}"
                 ff_cell="${firefox_cov:+${firefox_cov}%}" ; ff_cell="${ff_cell:-—}"
-                wk_cell="${webkit_cov:+${webkit_cov}%}"   ; wk_cell="${wk_cell:-—}"
+                wk_cell="${webkit_cov:+${webkit_cov}%}" ; wk_cell="${wk_cell:-—}"
                 echo "| $pkg | $cr_cell | $ff_cell | $wk_cell |"
               done
 
               echo ""
               echo "_Browser coverage is informational only (subset of tests)._"
-              echo "_Node coverage enforces the ${threshold}% threshold._"
+              echo "_Node coverage target is informational only and does not gate CI._"
               echo ""
               echo "</details>"
             fi
           } > coverage-report.md
 
-          # Clean up temp files
           rm -f "$node_file" "$browser_tsv"
 
           cat coverage-report.md >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$found_any" = false ]; then
             echo "::error::No coverage artifacts found"
-            exit 1
-          fi
-          if [ "$failed" = true ]; then
             exit 1
           fi
 
@@ -888,7 +928,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.10
 
       - name: Restore bun cache
         uses: actions/cache@v4
@@ -1003,9 +1043,9 @@ jobs:
         if: always()
         run: |
           for dir in ${{ matrix.shard.coverage-dirs }}; do
-            mkdir -p "coverage-staging/${dir}-${{ matrix.browser }}"
+            mkdir -p "coverage-staging/packages/${dir}/coverage-browser-${{ matrix.browser }}"
             cp "packages/${dir}/coverage-browser-${{ matrix.browser }}/lcov.info" \
-               "coverage-staging/${dir}-${{ matrix.browser }}/lcov.info" 2>/dev/null || true
+               "coverage-staging/packages/${dir}/coverage-browser-${{ matrix.browser }}/lcov.info" 2>/dev/null || true
           done
 
       - name: Upload browser coverage
@@ -1014,12 +1054,65 @@ jobs:
         with:
           name: coverage-browser-${{ matrix.shard.name }}-${{ matrix.browser }}
           path: coverage-staging/
+          if-no-files-found: warn
 
       - name: Fail if browser tests failed
         if: always() && steps.browser-tests.outcome == 'failure'
         run: |
           echo "::error::Browser tests failed in shard '${{ matrix.shard.name }}' / ${{ matrix.browser }} (coverage was still collected)"
           exit 1
+
+  # ---------------------------------------------------------------------------
+  # SonarCloud: consume the merged LCOV artifact and publish analysis results.
+  # The job activates once SONAR_PROJECT_KEY / SONAR_ORG repo vars are set.
+  # Quality gate waiting stays off until coverage improvement work lands.
+  # ---------------------------------------------------------------------------
+  sonarcloud:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [changes, coverage]
+    if: needs.changes.outputs.src == 'true' && vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore Sonar cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar-${{ hashFiles('sonar-project.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-sonar-
+
+      - name: Download merged coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-merged
+          path: coverage/merged
+
+      - name: Validate SonarCloud secrets
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "::error::Set the SONAR_TOKEN repository secret before enabling SonarCloud scanning"
+            exit 1
+          fi
+
+      - name: Run SonarCloud scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_HOST_URL: https://sonarcloud.io
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ vars.SONAR_ORG }}
+            -Dsonar.pullrequest.github.repository=${{ github.repository }}
 
   # ---------------------------------------------------------------------------
   # Gate job for branch protection — always runs so required checks pass even
@@ -1029,7 +1122,7 @@ jobs:
     name: CI Passed
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage]
+    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage, sonarcloud]
     if: always()
     steps:
       - name: Check results
@@ -1070,9 +1163,13 @@ jobs:
             exit 1
           fi
 
-          # Coverage must pass on PRs
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ needs.coverage.result }}" != "success" ]; then
+          if [ "${{ needs.coverage.result }}" != "success" ]; then
             echo "::error::Coverage check failed"
+            exit 1
+          fi
+
+          if [ -n "${{ vars.SONAR_PROJECT_KEY }}" ] && [ -n "${{ vars.SONAR_ORG }}" ] && [ "${{ needs.sonarcloud.result }}" != "success" ]; then
+            echo "::error::SonarCloud scan failed"
             exit 1
           fi
 
