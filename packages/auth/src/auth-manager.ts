@@ -32,7 +32,7 @@ import type {
   WalletConnectOptions,
 } from './types.js';
 
-import { EnboxUserAgent } from '@enbox/agent';
+import { DwnInterface, DwnPermissionGrant, EnboxUserAgent } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
@@ -457,14 +457,10 @@ export class AuthManager {
     const { clearStorage = false, timeout = 2000 } = options;
     const did = this._session?.did;
 
-    // Stop sync.
-    if (this._session) {
-      await this._userAgent.sync.stopSync(timeout);
-    }
-
-    // Revoke delegated session grants using the stored per-grant
-    // revocation mappings. Each revocation grant is contextId-scoped
-    // to the specific session grant it can revoke.
+    // Revoke delegated session grants BEFORE stopping sync so the
+    // revocations can be sent to the owner's remote DWN endpoints.
+    // Each revocation grant is contextId-scoped to the specific
+    // session grant it can revoke.
     const delegateDid = this._session?.delegateDid;
     const connectedDid = this._session?.did;
     if (delegateDid && connectedDid) {
@@ -472,33 +468,90 @@ export class AuthManager {
         const revocationsJson = await this._storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
         if (revocationsJson) {
           const revocations: { grantId: string; revocationGrantId: string }[] = JSON.parse(revocationsJson);
+
+          // Resolve the owner's DWN endpoints for remote delivery.
+          let dwnEndpointUrls: string[] = [];
+          try {
+            dwnEndpointUrls = await this._userAgent.dwn.getDwnEndpointUrlsForTarget(connectedDid);
+          } catch {
+            // Endpoint resolution failure is non-fatal — local revocation still proceeds.
+          }
+
+          const succeeded: string[] = [];
           for (const { grantId, revocationGrantId } of revocations) {
             try {
-              // Fetch the specific grant to get the parsed object for createRevocation
-              const grantEntries = await this._userAgent.permissions.fetchGrants({
-                author       : connectedDid,
-                target       : connectedDid,
-                grantor      : connectedDid,
-                checkRevoked : false,
+              // Read the specific grant by recordId using RecordsRead.
+              const { reply: readReply } = await this._userAgent.dwn.processRequest({
+                author        : connectedDid,
+                target        : connectedDid,
+                messageType   : DwnInterface.RecordsRead,
+                messageParams : { filter: { recordId: grantId } },
               });
-              const grantEntry = grantEntries.find((g) => g.grant.id === grantId);
-              if (grantEntry) {
-                await this._userAgent.permissions.createRevocation({
-                  author            : connectedDid,
-                  store             : true,
-                  grant             : grantEntry.grant,
-                  granteeDid        : delegateDid,
-                  permissionGrantId : revocationGrantId,
-                });
+              if (readReply.status.code !== 200 || !readReply.entry) { continue; }
+              const grant = DwnPermissionGrant.parse(readReply.entry.recordsWrite as any);
+
+              // Create the revocation locally.
+              const { message: revocationMessage } = await this._userAgent.permissions.createRevocation({
+                author            : connectedDid,
+                store             : true,
+                grant,
+                granteeDid        : delegateDid,
+                permissionGrantId : revocationGrantId,
+              });
+
+              // Send the revocation to the owner's remote DWN endpoints
+              // so future deliverContextKeyToDelegatesViaDwn sees it.
+              if (revocationMessage && dwnEndpointUrls.length > 0) {
+                const { encodedData, ...rawMessage } = revocationMessage as any;
+                const data = encodedData
+                  ? new Blob([Uint8Array.from(atob(encodedData), (c: string): number => c.charCodeAt(0))])
+                  : undefined;
+                for (const dwnUrl of dwnEndpointUrls) {
+                  try {
+                    await this._userAgent.rpc.sendDwnRequest({
+                      dwnUrl,
+                      targetDid : connectedDid,
+                      message   : rawMessage as any,
+                      data,
+                    });
+                  } catch {
+                    // Remote send failure for one endpoint is non-fatal.
+                  }
+                }
               }
+              succeeded.push(grantId);
             } catch {
-              // Individual revocation failure is non-fatal
+              // Individual revocation failure — tracked below.
             }
+          }
+
+          // Only clear the revocation mapping if ALL revocations succeeded.
+          // On partial failure, preserve SESSION_REVOCATIONS for future retry.
+          if (succeeded.length === revocations.length) {
+            await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+          } else {
+            // Update storage to remove successfully revoked entries,
+            // keeping only the ones that failed for future retry.
+            const remaining = revocations.filter((r) => !succeeded.includes(r.grantId));
+            if (remaining.length > 0) {
+              await this._storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify(remaining));
+            } else {
+              await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+            }
+            console.warn(
+              `AuthManager: ${revocations.length - succeeded.length} of ${revocations.length} ` +
+              `grant revocations failed. Unrevoked grants preserved for retry.`
+            );
           }
         }
       } catch (error: any) {
         console.warn(`AuthManager: Grant revocation on disconnect failed: ${error.message}`);
       }
+    }
+
+    // Stop sync AFTER revocations are sent to remote endpoints.
+    if (this._session) {
+      await this._userAgent.sync.stopSync(timeout);
     }
 
     this._session = undefined;
@@ -535,7 +588,8 @@ export class AuthManager {
       await this._storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
-      await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+      // SESSION_REVOCATIONS is cleared in the revocation block above.
+      // On partial failure it is preserved for future retry.
     }
 
     this._setState('unlocked');
