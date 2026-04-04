@@ -593,21 +593,26 @@ export class AuthManager {
         }
       }
     } else {
-      // Clean disconnect: remove session markers but keep vault/identities.
-      // If SESSION_REVOCATIONS still exists (partial failure), also preserve
-      // DELEGATE_DID, CONNECTED_DID, and PREVIOUSLY_CONNECTED so the retry
-      // path in restoreSession() has the context it needs.
+      // Clean disconnect: always honour the user's disconnect intent by
+      // clearing PREVIOUSLY_CONNECTED. The retry path uses a separate
+      // REVOCATION_RETRY_PENDING marker.
       const hasUnrevokedGrants = await this._storage.get(STORAGE_KEYS.SESSION_REVOCATIONS) !== null;
-      if (!hasUnrevokedGrants) {
-        await this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
-        await this._storage.remove(STORAGE_KEYS.DELEGATE_DID);
-        await this._storage.remove(STORAGE_KEYS.CONNECTED_DID);
-      }
-      // Always clear these — they are not needed for revocation retry.
+      await this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
       await this._storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
+      if (hasUnrevokedGrants) {
+        // Set the retry marker. DELEGATE_DID and CONNECTED_DID are
+        // preserved so retryOrphanedRevocations() has the context it needs.
+        // PREVIOUSLY_CONNECTED is cleared — the app will NOT auto-restore
+        // a session on next launch.
+        await this._storage.set(STORAGE_KEYS.REVOCATION_RETRY_PENDING, 'true');
+      } else {
+        await this._storage.remove(STORAGE_KEYS.DELEGATE_DID);
+        await this._storage.remove(STORAGE_KEYS.CONNECTED_DID);
+        await this._storage.remove(STORAGE_KEYS.REVOCATION_RETRY_PENDING);
+      }
     }
 
     this._setState('unlocked');

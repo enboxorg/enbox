@@ -715,4 +715,12 @@ export const STORAGE_KEYS = {
    * their corresponding revocation grant IDs for disconnect.
    */
   SESSION_REVOCATIONS: 'enbox:auth:sessionRevocations',
+
+  /**
+   * Set to `'true'` when a disconnect had unconfirmed revocations.
+   * Drives the retry path in `restoreSession()` independently of
+   * `PREVIOUSLY_CONNECTED` — the user's disconnect intent is honoured
+   * even when revocations are still pending.
+   */
+  REVOCATION_RETRY_PENDING: 'enbox:auth:revocationRetryPending',
 } as const;
