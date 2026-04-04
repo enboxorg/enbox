@@ -14,6 +14,7 @@ import type { StorageAdapter } from '../types.js';
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
+import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
@@ -271,6 +272,57 @@ async function loadRetryEntries(
  * Revoke a single grant and send the revocation to remote DWN endpoints.
  * Returns `true` if at least one remote endpoint confirmed (202/409).
  */
+/**
+ * Ensure the revocation grant exists on the owner's remote DWN before
+ * attempting to use it. Reads the grant locally by recordId and sends
+ * it to all remote endpoints. This closes the gap where best-effort
+ * fanout at connect time may have failed.
+ */
+async function ensureRevocationGrantOnRemote(
+  userAgent: EnboxUserAgent,
+  connectedDid: string,
+  revocationGrantId: string,
+  dwnEndpointUrls: string[],
+): Promise<void> {
+  if (dwnEndpointUrls.length === 0) { return; }
+
+  try {
+    const { reply } = await userAgent.dwn.processRequest({
+      author        : connectedDid,
+      target        : connectedDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: revocationGrantId } },
+    });
+    if (reply.status.code !== 200 || !reply.entry?.recordsWrite) { return; }
+
+    const { encodedData, ...rawMessage } = reply.entry.recordsWrite as any;
+    const data = reply.entry.data
+      ? new Blob([await DataStream.toBytes(reply.entry.data) as BlobPart])
+      : undefined;
+
+    for (const dwnUrl of dwnEndpointUrls) {
+      try {
+        await userAgent.rpc.sendDwnRequest({
+          dwnUrl,
+          targetDid : connectedDid,
+          message   : rawMessage,
+          data,
+        });
+      } catch {
+        // Per-endpoint failure — continue.
+      }
+    }
+  } catch {
+    // Best-effort — if the grant can't be read or sent, the revocation
+    // attempt will fail on auth and be retried next time.
+  }
+}
+
+/**
+ * Revoke a single grant and send the revocation to remote DWN endpoints.
+ * First ensures the revocation grant is on the remote DWN (self-healing).
+ * Returns `true` if at least one remote endpoint confirmed (202/409).
+ */
 async function revokeAndSendSingle(
   userAgent: EnboxUserAgent,
   connectedDid: string,
@@ -278,6 +330,11 @@ async function revokeAndSendSingle(
   entry: RevocationEntry,
   dwnEndpointUrls: string[],
 ): Promise<boolean> {
+  // Self-healing: ensure the revocation grant is on the remote DWN.
+  await ensureRevocationGrantOnRemote(
+    userAgent, connectedDid, entry.revocationGrantId, dwnEndpointUrls,
+  );
+
   const { reply: readReply } = await userAgent.dwn.processRequest({
     author        : connectedDid,
     target        : connectedDid,

@@ -32,6 +32,7 @@ import type {
   WalletConnectOptions,
 } from './types.js';
 
+import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant, EnboxUserAgent } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
@@ -491,6 +492,35 @@ export class AuthManager {
               });
               if (readReply.status.code !== 200 || !readReply.entry) { continue; }
               const grant = DwnPermissionGrant.parse(readReply.entry.recordsWrite as any);
+
+              // Self-healing: ensure the revocation grant is on the remote
+              // DWN. The best-effort fanout at connect time may have failed.
+              if (dwnEndpointUrls.length > 0) {
+                try {
+                  const { reply: revGrantReply } = await this._userAgent.dwn.processRequest({
+                    author        : connectedDid,
+                    target        : connectedDid,
+                    messageType   : DwnInterface.RecordsRead,
+                    messageParams : { filter: { recordId: revocationGrantId } },
+                  });
+                  if (revGrantReply.status.code === 200 && revGrantReply.entry?.recordsWrite) {
+                    const { encodedData: revGrantEncoded, ...revGrantRaw } = revGrantReply.entry.recordsWrite as any;
+                    const revGrantData = revGrantReply.entry.data
+                      ? new Blob([await DataStream.toBytes(revGrantReply.entry.data) as BlobPart])
+                      : undefined;
+                    for (const dwnUrl of dwnEndpointUrls) {
+                      try {
+                        await this._userAgent.rpc.sendDwnRequest({
+                          dwnUrl,
+                          targetDid : connectedDid,
+                          message   : revGrantRaw,
+                          data      : revGrantData,
+                        });
+                      } catch { /* per-endpoint failure */ }
+                    }
+                  }
+                } catch { /* best-effort */ }
+              }
 
               // Create the revocation locally.
               const { message: revocationMessage } = await this._userAgent.permissions.createRevocation({
