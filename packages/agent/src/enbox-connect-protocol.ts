@@ -1114,6 +1114,12 @@ async function submitConnectResponse(
     key: delegateLeafPrivateKeyJwk,
   });
 
+  // The rootKeyId is the delegate's keyAgreement VM id (e.g. `did:jwk:...#0`).
+  // For did:jwk this is the Ed25519 VM, but getEncryptionKeyInfo() also returns
+  // this same id after Ed25519→X25519 conversion. The DWN SDK matches the JWE
+  // `kid` header against the KeyDecrypter's `rootKeyId`, so both sides must use
+  // the same id — which they do because both derive from verificationMethod.id
+  // of the keyAgreement relationship.
   const delegateKeyAgreementVmId = delegateBearerDid.document.verificationMethod![0].id;
   const delegateKeyDeliveryTags = {
     delegateKeyDeliveryRootKeyId    : delegateKeyAgreementVmId,

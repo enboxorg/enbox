@@ -1799,13 +1799,25 @@ export class AgentDwnApi {
       });
 
       const readMethods = new Set(['Read', 'Query', 'Subscribe']);
+      const now = new Date().toISOString();
 
       // Deduplicate: one contextKey per delegate, not per grant.
       // Multiple grants (Read, Query, Subscribe) for the same delegate
       // should produce exactly one contextKey record.
+      // IMPORTANT: dedup happens AFTER tag validation so that an older
+      // untagged grant doesn't shadow a valid tagged grant for the same delegate.
       const deliveredDelegates = new Set<string>();
 
       for (const grant of grants) {
+        // Only delegated grants are eligible. Non-delegated grants (direct
+        // access without a delegate session) should not trigger cross-device
+        // context key delivery.
+        if (!grant.grant.delegated) { continue; }
+
+        // Filter expired grants. fetchGrants checks revocation but does
+        // NOT filter by dateExpires.
+        if (grant.grant.dateExpires <= now) { continue; }
+
         const scope = grant.grant.scope as any;
         if (!readMethods.has(scope.method)) { continue; }
 
@@ -1814,31 +1826,36 @@ export class AgentDwnApi {
         if (scope.protocolPath || scope.contextId) { continue; }
 
         const delegateDid = grant.grant.grantee;
+
+        // Read the pre-derived key-delivery leaf public key from the grant tags.
+        // This was computed during submitConnectResponse() and attached to
+        // each read-like grant so the owner can encrypt contextKey records
+        // to the delegate without needing the delegate's private key.
+        const grantTags = (grant.message as any).descriptor?.tags;
+        const leafRootKeyId = grantTags?.delegateKeyDeliveryRootKeyId;
+        const leafPublicKeyJwkStr = grantTags?.delegateKeyDeliveryPublicKeyJwk;
+
+        if (!leafRootKeyId || !leafPublicKeyJwkStr) {
+          // Grant was created before key-delivery tags were supported,
+          // or is missing tags. Skip — do NOT dedup this delegate yet,
+          // a later grant may have valid tags.
+          continue;
+        }
+
+        // NOW dedup — only after confirming the grant has valid tags.
         if (deliveredDelegates.has(delegateDid)) { continue; }
+
+        let leafPublicKeyJwk: PublicKeyJwk;
+        try {
+          leafPublicKeyJwk = JSON.parse(leafPublicKeyJwkStr) as PublicKeyJwk;
+        } catch {
+          continue; // Malformed tag — skip, don't dedup
+        }
+
+        // Mark as delivered AFTER all validation passes.
         deliveredDelegates.add(delegateDid);
 
         try {
-          // Read the pre-derived key-delivery leaf public key from the grant tags.
-          // This was computed during submitConnectResponse() and attached to
-          // each read-like grant so the owner can encrypt contextKey records
-          // to the delegate without needing the delegate's private key.
-          const grantTags = (grant.message as any).descriptor?.tags;
-          const leafRootKeyId = grantTags?.delegateKeyDeliveryRootKeyId;
-          const leafPublicKeyJwkStr = grantTags?.delegateKeyDeliveryPublicKeyJwk;
-
-          if (!leafRootKeyId || !leafPublicKeyJwkStr) {
-            // Grant was created before key-delivery tags were supported,
-            // or is not a read-like grant. Skip silently.
-            continue;
-          }
-
-          let leafPublicKeyJwk: PublicKeyJwk;
-          try {
-            leafPublicKeyJwk = JSON.parse(leafPublicKeyJwkStr) as PublicKeyJwk;
-          } catch {
-            continue; // Malformed tag — skip silently
-          }
-
           await this.writeContextKeyRecord({
             tenantDid,
             recipientDid                  : delegateDid,

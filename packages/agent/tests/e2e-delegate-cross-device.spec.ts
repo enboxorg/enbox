@@ -931,4 +931,281 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       expect(matchingKeys).toHaveLength(1);
     });
   });
+
+  // ─── 8. Expired grants must not receive context keys ─────────
+
+  describe('expired grants', () => {
+    it('should not deliver context keys to delegates with expired grants', async () => {
+      const ownerDid = ownerIdentity.did.uri;
+
+      // Install protocol
+      await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      // Ensure key-delivery protocol is on the DWN server
+      await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
+      const { reply: kdProto } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { protocol: 'https://identity.foundation/protocols/key-delivery' } },
+      });
+      if (kdProto.entries?.[0]) {
+        await ownerHarness.agent.rpc.sendDwnRequest({
+          dwnUrl    : testDwnUrl,
+          targetDid : ownerDid,
+          message   : kdProto.entries[0] as any,
+        });
+      }
+
+      // Create delegate DID with leaf key tags (same as simulateCrossDeviceConnect)
+      const { DidJwk } = await import('@enbox/dids');
+      const { Ed25519 } = await import('@enbox/crypto');
+      const { HdKey, KeyDerivationScheme } = await import('@enbox/dwn-sdk-js');
+      const delegateBearerDid = await DidJwk.create();
+      const delegatePortableDid = await delegateBearerDid.export();
+      const edPrivateKey = delegatePortableDid.privateKeys![0];
+      const x25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({ privateKey: edPrivateKey });
+      const x25519PrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: x25519PrivateKey });
+      const leafBytes = await HdKey.derivePrivateKeyBytes(x25519PrivateKeyBytes, [
+        KeyDerivationScheme.ProtocolPath, 'https://identity.foundation/protocols/key-delivery', 'contextKey',
+      ]);
+      const leafJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafBytes });
+      const leafPub = await X25519.getPublicKey({ key: leafJwk });
+
+      const tags = {
+        delegateKeyDeliveryRootKeyId    : delegateBearerDid.document.verificationMethod![0].id,
+        delegateKeyDeliveryPublicKeyJwk : JSON.stringify(leafPub),
+      };
+
+      // Create an EXPIRED delegated grant
+      const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
+      await permissionsApi.createGrant({
+        delegated   : true,
+        store       : true,
+        grantedTo   : delegateBearerDid.uri,
+        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        dateExpires : '2020-01-01T00:00:00.000000Z', // already expired
+        author      : ownerDid,
+        tags,
+      });
+
+      // Owner creates a new context
+      const { message: threadMsg } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Expired test' })),
+        },
+        encryption: true,
+      });
+      const threadContextId = (threadMsg as RecordsWriteMessage).recordId;
+
+      // No contextKey should be written for the expired delegate
+      const { reply: ctxKeyQuery } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : 'https://identity.foundation/protocols/key-delivery',
+            protocolPath : 'contextKey',
+            recipient    : delegateBearerDid.uri,
+          },
+        },
+      });
+      const matchingKeys = (ctxKeyQuery.entries ?? []).filter((entry: any) =>
+        entry.descriptor?.tags?.contextId === threadContextId
+      );
+      expect(matchingKeys).toHaveLength(0);
+    });
+  });
+
+  // ─── 9. Non-delegated grants must not receive context keys ───
+
+  describe('non-delegated grants', () => {
+    it('should not deliver context keys to non-delegated grants', async () => {
+      const ownerDid = ownerIdentity.did.uri;
+
+      await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
+
+      const { DidJwk } = await import('@enbox/dids');
+      const { Ed25519 } = await import('@enbox/crypto');
+      const { HdKey, KeyDerivationScheme } = await import('@enbox/dwn-sdk-js');
+      const directGrantee = await DidJwk.create();
+      const granteePortable = await directGrantee.export();
+      const edKey = granteePortable.privateKeys![0];
+      const x25519Key = await Ed25519.convertPrivateKeyToX25519({ privateKey: edKey });
+      const x25519Bytes = await X25519.privateKeyToBytes({ privateKey: x25519Key });
+      const leafBytes = await HdKey.derivePrivateKeyBytes(x25519Bytes, [
+        KeyDerivationScheme.ProtocolPath, 'https://identity.foundation/protocols/key-delivery', 'contextKey',
+      ]);
+      const leafJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafBytes });
+      const leafPub = await X25519.getPublicKey({ key: leafJwk });
+
+      const tags = {
+        delegateKeyDeliveryRootKeyId    : directGrantee.document.verificationMethod![0].id,
+        delegateKeyDeliveryPublicKeyJwk : JSON.stringify(leafPub),
+      };
+
+      // Non-delegated grant (delegated: false / undefined)
+      const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
+      await permissionsApi.createGrant({
+        delegated   : false,
+        store       : true,
+        grantedTo   : directGrantee.uri,
+        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        author      : ownerDid,
+        tags,
+      });
+
+      // Owner creates a new context
+      const { message: threadMsg } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Non-delegated test' })),
+        },
+        encryption: true,
+      });
+      const threadContextId = (threadMsg as RecordsWriteMessage).recordId;
+
+      // No contextKey for the non-delegated grantee
+      const { reply: ctxKeyQuery } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : 'https://identity.foundation/protocols/key-delivery',
+            protocolPath : 'contextKey',
+            recipient    : directGrantee.uri,
+          },
+        },
+      });
+      const matchingKeys = (ctxKeyQuery.entries ?? []).filter((entry: any) =>
+        entry.descriptor?.tags?.contextId === threadContextId
+      );
+      expect(matchingKeys).toHaveLength(0);
+    });
+  });
+
+  // ─── 10. Mixed tagged/untagged grants ────────────────────────
+
+  describe('mixed tagged/untagged grants', () => {
+    it('should deliver when a valid tagged grant exists alongside an older untagged one', async () => {
+      const ownerDid = ownerIdentity.did.uri;
+
+      await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+
+      await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
+
+      const { DidJwk } = await import('@enbox/dids');
+      const { Ed25519 } = await import('@enbox/crypto');
+      const { HdKey, KeyDerivationScheme } = await import('@enbox/dwn-sdk-js');
+      const delegateBearerDid = await DidJwk.create();
+      const dp = await delegateBearerDid.export();
+      const edKey = dp.privateKeys![0];
+      const x25519Key = await Ed25519.convertPrivateKeyToX25519({ privateKey: edKey });
+      const x25519Bytes = await X25519.privateKeyToBytes({ privateKey: x25519Key });
+      const leafBytes = await HdKey.derivePrivateKeyBytes(x25519Bytes, [
+        KeyDerivationScheme.ProtocolPath, 'https://identity.foundation/protocols/key-delivery', 'contextKey',
+      ]);
+      const leafJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafBytes });
+      const leafPub = await X25519.getPublicKey({ key: leafJwk });
+
+      const validTags = {
+        delegateKeyDeliveryRootKeyId    : delegateBearerDid.document.verificationMethod![0].id,
+        delegateKeyDeliveryPublicKeyJwk : JSON.stringify(leafPub),
+      };
+
+      const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
+
+      // Grant 1: untagged (legacy / pre-feature), delegated, read-like
+      await permissionsApi.createGrant({
+        delegated   : true,
+        store       : true,
+        grantedTo   : delegateBearerDid.uri,
+        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        author      : ownerDid,
+        // no tags — legacy grant
+      });
+
+      // Grant 2: properly tagged, delegated, read-like
+      await permissionsApi.createGrant({
+        delegated   : true,
+        store       : true,
+        grantedTo   : delegateBearerDid.uri,
+        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: chatProtocol.protocol },
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        author      : ownerDid,
+        tags        : validTags,
+      });
+
+      // Owner creates a new context
+      const { message: threadMsg } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : 'https://schemas.xyz/thread',
+          dataFormat   : 'application/json',
+          data         : new TextEncoder().encode(JSON.stringify({ topic: 'Mixed grants test' })),
+        },
+        encryption: true,
+      });
+      const threadContextId = (threadMsg as RecordsWriteMessage).recordId;
+
+      // The valid tagged grant should produce delivery despite the untagged one
+      const { reply: ctxKeyQuery } = await ownerHarness.agent.processDwnRequest({
+        author        : ownerDid,
+        target        : ownerDid,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : 'https://identity.foundation/protocols/key-delivery',
+            protocolPath : 'contextKey',
+            recipient    : delegateBearerDid.uri,
+          },
+        },
+      });
+      const matchingKeys = (ctxKeyQuery.entries ?? []).filter((entry: any) =>
+        entry.descriptor?.tags?.contextId === threadContextId
+      );
+      expect(matchingKeys).toHaveLength(1);
+    });
+  });
 });
