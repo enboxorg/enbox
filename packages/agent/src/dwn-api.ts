@@ -49,6 +49,7 @@ import type {
   SendDwnRequest,
 } from './types/dwn.js';
 
+import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnDiscoveryFile } from './dwn-discovery-file.js';
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 import { LocalDwnDiscovery } from './local-dwn.js';
@@ -802,19 +803,44 @@ export class AgentDwnApi {
         }
 
         // --- Post-connect delegate context key delivery (#824) ---
-        // When a new multi-party root record is created by the owner,
-        // deliver the context key to all active delegate sessions that
-        // have existing context keys for this protocol. This enables
-        // delegates to decrypt records in new contexts without reconnecting.
-        //
-        // This is same-process delivery: it works when the delegate cache
-        // is on the same agent instance that creates the root record.
-        // Cross-device DWN-based delivery is a documented follow-up.
+        // Same-process: direct cache injection (fast, no network).
         if (needsDelegateDelivery) {
           this.deliverContextKeyToDelegates(
             writeParams.protocol, rootContextId, contextKeyPayload,
           );
         }
+      }
+
+      // --- Cross-device delegate context key delivery (#826) ---
+      // Query grants to find ALL eligible delegates (including those on
+      // other agents) and write contextKey records to the DWN.
+      // This is separate from same-process delivery: it discovers delegates
+      // from the owner's DWN grants, not just in-memory caches. It must
+      // run even when no same-process delegates or participants exist.
+      if (isMultiParty && isRootRecord && !isExternallyAuthored) {
+        // Derive the context key if not already done above.
+        const { keyId: xdKeyId, keyUri: xdKeyUri } = await getEncryptionKeyInfoFn(this.agent, request.target);
+        const xdContextDerivationPath = [
+          KeyDerivationScheme.ProtocolContext,
+          rootContextId,
+        ];
+        const xdContextDerivedPrivateKeyBytes =
+          await this.agent.keyManager.derivePrivateKeyBytes({
+            keyUri         : xdKeyUri,
+            derivationPath : xdContextDerivationPath,
+          });
+        const xdContextDerivedPrivateJwk =
+          await X25519.bytesToPrivateKey({ privateKeyBytes: xdContextDerivedPrivateKeyBytes });
+        const xdContextKeyPayload: DerivedPrivateJwk = {
+          rootKeyId         : xdKeyId,
+          derivationScheme  : KeyDerivationScheme.ProtocolContext,
+          derivationPath    : xdContextDerivationPath,
+          derivedPrivateKey : xdContextDerivedPrivateJwk as PrivateKeyJwk,
+        };
+
+        await this.deliverContextKeyToDelegatesViaDwn(
+          request.target, writeParams.protocol, rootContextId, xdContextKeyPayload,
+        );
       }
     } catch (detectionError: any) {
       // Participant detection failure is non-fatal — the record is still stored.
@@ -1739,6 +1765,118 @@ export class AgentDwnApi {
   }
 
   /**
+   * Delivers a newly created multi-party context key to eligible delegates
+   * by writing `contextKey` records to the owner's DWN via the key-delivery
+   * protocol. This enables cross-device delivery: the delegate can later
+   * fetch the record from the owner's DWN and decrypt it.
+   *
+   * Eligible delegates are discovered by querying the owner's DWN for
+   * active permission grants with read-like scopes on the given protocol.
+   *
+   * The contextKey record is encrypted using the delegate's pre-derived
+   * key-delivery leaf public key, which is stored in the grant's tags
+   * during `submitConnectResponse()`.
+   *
+   * @param tenantDid - The owner's DID
+   * @param protocol - The protocol URI
+   * @param rootContextId - The root context ID of the new context
+   * @param contextKey - The derived context key (`DerivedPrivateJwk`)
+   */
+  private async deliverContextKeyToDelegatesViaDwn(
+    tenantDid: string,
+    protocol: string,
+    rootContextId: string,
+    contextKey: DerivedPrivateJwk,
+  ): Promise<void> {
+    try {
+      const permissionsApi = new AgentPermissionsApi({ agent: this.agent });
+      const grants = await permissionsApi.fetchGrants({
+        author       : tenantDid,
+        target       : tenantDid,
+        grantor      : tenantDid,
+        protocol,
+        checkRevoked : true,
+      });
+
+      const readMethods = new Set(['Read', 'Query', 'Subscribe']);
+      const nowMs = Date.now();
+
+      // Deduplicate: one contextKey per delegate, not per grant.
+      // Multiple grants (Read, Query, Subscribe) for the same delegate
+      // should produce exactly one contextKey record.
+      // IMPORTANT: dedup happens AFTER tag validation so that an older
+      // untagged grant doesn't shadow a valid tagged grant for the same delegate.
+      const deliveredDelegates = new Set<string>();
+
+      for (const grant of grants) {
+        // Only delegated grants are eligible. Non-delegated grants (direct
+        // access without a delegate session) should not trigger cross-device
+        // context key delivery.
+        if (!grant.grant.delegated) { continue; }
+
+        // Filter expired grants. fetchGrants checks revocation but does
+        // NOT filter by dateExpires. Use numeric comparison for safety.
+        if (new Date(grant.grant.dateExpires).getTime() <= nowMs) { continue; }
+
+        const scope = grant.grant.scope as any;
+        if (scope.interface !== 'Records' || !readMethods.has(scope.method)) { continue; }
+
+        // Narrow scopes (protocolPath, contextId) are not supported for
+        // multi-party delegate delivery — skip them silently.
+        if (scope.protocolPath || scope.contextId) { continue; }
+
+        const delegateDid = grant.grant.grantee;
+
+        // Read the pre-derived key-delivery leaf public key from the
+        // grant data payload. This was computed during submitConnectResponse()
+        // and stored alongside the grant's standard fields.
+        const keyDelivery = grant.grant.delegateKeyDelivery;
+        if (!keyDelivery?.rootKeyId || !keyDelivery?.publicKeyJwk) {
+          // Grant was created before key-delivery was supported, or
+          // is not a read-like grant. Skip — do NOT dedup yet.
+          continue;
+        }
+
+        // Dedup check — skip if already delivered via an earlier grant.
+        if (deliveredDelegates.has(delegateDid)) { continue; }
+
+        const leafPublicKeyJwk = keyDelivery.publicKeyJwk as PublicKeyJwk;
+
+        try {
+          await this.writeContextKeyRecord({
+            tenantDid,
+            recipientDid                  : delegateDid,
+            contextKeyData                : contextKey,
+            sourceProtocol                : protocol,
+            sourceContextId               : rootContextId,
+            recipientKeyDeliveryPublicKey : {
+              rootKeyId    : keyDelivery.rootKeyId,
+              publicKeyJwk : leafPublicKeyJwk,
+            },
+          });
+
+          // Mark as delivered ONLY after the write succeeds. If the write
+          // fails, a later valid grant for the same delegate can still try.
+          deliveredDelegates.add(delegateDid);
+        } catch (delegateError: any) {
+          console.warn(
+            `AgentDwnApi: Cross-device key delivery to delegate ` +
+            `'${delegateDid}' for context '${rootContextId}' failed: ` +
+            `${delegateError.message}. The delegate may need to reconnect.`
+          );
+        }
+      }
+    } catch (discoveryError: any) {
+      // Grant discovery failure is non-fatal — same-process delivery may
+      // still have succeeded, and sync will eventually deliver the record.
+      console.warn(
+        `AgentDwnApi: Delegate grant discovery for protocol ` +
+        `'${protocol}' failed: ${discoveryError.message}`
+      );
+    }
+  }
+
+  /**
    * Writes a `contextKey` record to the owner's DWN, delivering an encrypted
    * context key to a participant.
    *
@@ -1793,9 +1931,6 @@ export class AgentDwnApi {
     return fetchContextKeyRecordFn(
       this.agent, params,
       this.processRequest.bind(this),
-      this.getSigner.bind(this),
-      this.sendDwnRpcRequest.bind(this),
-      this.getDwnEndpointUrlsForTarget.bind(this),
     );
   }
 }

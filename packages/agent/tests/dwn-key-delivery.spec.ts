@@ -1,4 +1,4 @@
-import type { DerivedPrivateJwk, RecordsQueryReply, RecordsReadReply } from '@enbox/dwn-sdk-js';
+import type { DerivedPrivateJwk } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -306,9 +306,6 @@ describe('dwn-key-delivery', () => {
           sourceContextId : 'ctx-1',
         },
         processRequest,
-        sinon.stub(),
-        sinon.stub(),
-        sinon.stub(), // getDwnEndpointUrlsForTarget — not called in local path
       );
 
       expect(result).toBeDefined();
@@ -329,9 +326,6 @@ describe('dwn-key-delivery', () => {
           sourceContextId : 'ctx-empty',
         },
         processRequest,
-        sinon.stub(),
-        sinon.stub(),
-        sinon.stub(), // getDwnEndpointUrlsForTarget — not called in local path
       );
 
       expect(result).toBeUndefined();
@@ -361,167 +355,26 @@ describe('dwn-key-delivery', () => {
           sourceContextId : 'ctx-no-data',
         },
         processRequest,
-        sinon.stub(),
-        sinon.stub(),
-        sinon.stub(), // getDwnEndpointUrlsForTarget — not called in local path
       );
 
       expect(result).toBeUndefined();
     });
 
-    it('should fetch context key remotely when ownerDid !== requesterDid', async () => {
-      const contextKeyData: DerivedPrivateJwk = {
-        rootKeyId         : 'remote-root',
-        derivationScheme  : KeyDerivationScheme.ProtocolContext,
-        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
-      };
-      const encoded = new TextEncoder().encode(JSON.stringify(contextKeyData));
-      const dataStream = DataStream.fromBytes(encoded);
-
-      const mockAgent = {
-        did: {
-          resolve: sinon.stub().resolves({
-            didDocument: {
-              id                 : 'did:example:bob',
-              keyAgreement       : ['#enc'],
-              verificationMethod : [{
-                id           : 'did:example:bob#enc',
-                type         : 'JsonWebKey2020',
-                controller   : 'did:example:bob',
-                publicKeyJwk : { kty: 'OKP', crv: 'X25519', x: 'BBBB' },
-              }],
-            },
-            didResolutionMetadata: {},
-          }),
-        },
-        keyManager: {
-          getKeyUri    : sinon.stub().resolves('key-uri-bob'),
-          jweKeyUnwrap : sinon.stub().resolves(new Uint8Array(32)),
-        },
-      } as any;
-
-      // getSigner returns a signer for creating DWN messages
-      const mockSigner = { keyId: 'did:example:bob#sig', sign: sinon.stub().resolves(new Uint8Array(64)) };
-      const getSigner = sinon.stub().resolves(mockSigner);
-
-      // Remote query reply
-      const queryReply: RecordsQueryReply = {
-        status  : { code: 200, detail: 'OK' },
-        entries : [{ recordId: 'rec-remote' } as any],
-      };
-
-      // Remote read reply with encrypted data
-      const readReply: RecordsReadReply = {
-        status : { code: 200, detail: 'OK' },
-        entry  : {
-          recordsWrite: {
-            recordId   : 'rec-remote',
-            descriptor : { protocol: 'key-delivery' },
-            encryption : {
-              recipients: [{
-                header: {
-                  derivationScheme : KeyDerivationScheme.ProtocolPath,
-                  kid              : 'did:example:bob#enc',
-                },
-              }],
-            },
-          } as any,
-          data: dataStream as unknown as ReadableStream<Uint8Array>,
-        },
-      };
-
-      const sendDwnRpcRequest = sinon.stub();
-      sendDwnRpcRequest.onFirstCall().resolves(queryReply);
-      sendDwnRpcRequest.onSecondCall().resolves(readReply);
-
-      // Stub Records.decrypt to return plain data
-      const { Records } = await import('@enbox/dwn-sdk-js');
-      const plainStream = DataStream.fromBytes(encoded);
-      const decryptStub = sinon.stub(Records, 'decrypt').resolves(plainStream);
-
-      const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
-
-      const result = await fetchContextKeyRecord(
-        mockAgent,
-        {
-          ownerDid        : 'did:example:alice',
-          requesterDid    : 'did:example:bob', // different from owner — remote path
-          sourceProtocol  : 'https://proto.example.com',
-          sourceContextId : 'ctx-remote',
-        },
-        sinon.stub(), // processRequest not used in remote path
-        getSigner,
-        sendDwnRpcRequest,
-        getDwnEndpointUrls,
-      );
-
-      expect(result).toBeDefined();
-      expect(result!.rootKeyId).toBe('remote-root');
-      expect(sendDwnRpcRequest.callCount).toBe(2);
-
-      decryptStub.restore();
-    });
-
-    it('should return undefined when remote query finds no entries', async () => {
+    it('should return undefined for cross-device path when local DWN is unavailable', async () => {
+      // When ownerDid !== requesterDid, fetchContextKeyRecord uses tryLocalFetch
+      // which accesses agent.dwn.node. With a stub agent, this throws and
+      // tryLocalFetch catches it and returns undefined.
       const mockAgent = {} as any;
 
-      const mockSigner = { keyId: 'did:example:bob#sig', sign: sinon.stub().resolves(new Uint8Array(64)) };
-      const getSigner = sinon.stub().resolves(mockSigner);
-
-      const sendDwnRpcRequest = sinon.stub().resolves({
-        status  : { code: 200, detail: 'OK' },
-        entries : [],
-      } as RecordsQueryReply);
-
-      const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
-
       const result = await fetchContextKeyRecord(
         mockAgent,
         {
           ownerDid        : 'did:example:alice',
-          requesterDid    : 'did:example:bob',
+          requesterDid    : 'did:example:bob', // different from owner — cross-device path
           sourceProtocol  : 'https://proto.example.com',
-          sourceContextId : 'ctx-empty-remote',
+          sourceContextId : 'ctx-cross-device',
         },
         sinon.stub(),
-        getSigner,
-        sendDwnRpcRequest,
-        getDwnEndpointUrls,
-      );
-
-      expect(result).toBeUndefined();
-    });
-
-    it('should return undefined when remote read returns no data', async () => {
-      const mockAgent = {} as any;
-
-      const mockSigner = { keyId: 'did:example:bob#sig', sign: sinon.stub().resolves(new Uint8Array(64)) };
-      const getSigner = sinon.stub().resolves(mockSigner);
-
-      const sendDwnRpcRequest = sinon.stub();
-      sendDwnRpcRequest.onFirstCall().resolves({
-        status  : { code: 200, detail: 'OK' },
-        entries : [{ recordId: 'rec-no-remote-data' } as any],
-      } as RecordsQueryReply);
-      sendDwnRpcRequest.onSecondCall().resolves({
-        status : { code: 200, detail: 'OK' },
-        entry  : { data: undefined, recordsWrite: undefined },
-      } as RecordsReadReply);
-
-      const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
-
-      const result = await fetchContextKeyRecord(
-        mockAgent,
-        {
-          ownerDid        : 'did:example:alice',
-          requesterDid    : 'did:example:bob',
-          sourceProtocol  : 'https://proto.example.com',
-          sourceContextId : 'ctx-no-remote-data',
-        },
-        sinon.stub(),
-        getSigner,
-        sendDwnRpcRequest,
-        getDwnEndpointUrls,
       );
 
       expect(result).toBeUndefined();

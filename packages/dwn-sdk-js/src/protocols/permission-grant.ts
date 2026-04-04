@@ -62,6 +62,11 @@ export class PermissionGrant {
   public readonly conditions?: PermissionConditions;
 
   /**
+   * Optional delegate key-delivery metadata for cross-device context key delivery.
+   */
+  public readonly delegateKeyDelivery?: { rootKeyId: string; publicKeyJwk: Record<string, any> };
+
+  /**
    * Parses a `DataEncodedRecordsWriteMessage` into a `PermissionGrant`.
    * Validates that the message contains required structural fields:
    * `encodedData`, `authorization` (for grantor extraction), `descriptor.recipient` (grantee),
@@ -132,6 +137,7 @@ export class PermissionGrant {
     this.requestId = permissionGrant.requestId;
     this.scope = permissionGrant.scope;
     this.conditions = permissionGrant.conditions;
+    this.delegateKeyDelivery = permissionGrant.delegateKeyDelivery;
   }
 }
 

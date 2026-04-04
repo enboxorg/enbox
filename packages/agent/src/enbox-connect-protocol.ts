@@ -112,7 +112,7 @@ import {
   X25519,
   XChaCha20Poly1305,
 } from '@enbox/crypto';
-import { DwnInterfaceName, DwnMethodName, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, HdKey, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { concatenateUrl } from './utils.js';
@@ -120,6 +120,7 @@ import { DwnInterface } from './types/dwn.js';
 import { getEncryptionKeyInfo } from './dwn-encryption.js';
 import { isMultiPartyContext } from './protocol-utils.js';
 import { isRecordPermissionScope } from './dwn-api.js';
+import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -631,6 +632,7 @@ async function createPermissionGrants(
   delegateBearerDid: BearerDid,
   agent: EnboxPlatformAgent,
   scopes: DwnPermissionScope[],
+  delegateKeyDeliveryData?: { rootKeyId: string; publicKeyJwk: Record<string, any> },
 ): Promise<DwnDataEncodedRecordsWriteMessage[]> {
   const permissionsApi = new AgentPermissionsApi({ agent });
 
@@ -638,6 +640,16 @@ async function createPermissionGrants(
   const permissionGrants = await Promise.all(
     scopes.map((scope) => {
       const delegated = shouldUseDelegatePermission(scope);
+
+      // Attach delegate key-delivery tags to read-like grants so the
+      // owner can encrypt future contextKey records to the delegate.
+      const readMethods = new Set([
+        DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
+      ]);
+      const isReadLike = isRecordPermissionScope(scope)
+        && readMethods.has(scope.method as DwnMethodName);
+      const delegateKeyDelivery = (isReadLike && delegateKeyDeliveryData) ? delegateKeyDeliveryData : undefined;
+
       return permissionsApi.createGrant({
         delegated,
         store       : true,
@@ -645,6 +657,7 @@ async function createPermissionGrants(
         scope,
         dateExpires : '2040-06-25T16:09:16.693356Z', // TODO: make dateExpires configurable
         author      : selectedDid,
+        delegateKeyDelivery,
       });
     })
   );
@@ -1065,6 +1078,54 @@ async function submitConnectResponse(
   const delegateBearerDid = await DidJwk.create();
   const delegatePortableDid = await delegateBearerDid.export();
 
+  // Add X25519 key derived from the delegate's Ed25519 key.
+  // did:jwk only supports one verification method, but DWN encryption
+  // requires X25519 for key agreement. Including the derived X25519
+  // private key in the PortableDid ensures the delegate agent's KMS
+  // has both keys after import. The Ed25519→X25519 conversion is a
+  // standard cryptographic operation (RFC 8032 / libsodium).
+  const delegateEdPrivateKey = delegatePortableDid.privateKeys![0];
+  const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+    privateKey: delegateEdPrivateKey,
+  });
+  delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
+
+  // Derive the delegate's key-delivery ProtocolPath leaf public key.
+  // This is the pre-derived key that the owner will use later when writing
+  // contextKey records addressed to this delegate. The owner cannot derive
+  // this from the delegate's root public key alone (HKDF needs the private
+  // key), so we compute it now while we have temporary access to the
+  // delegate's private key material.
+  const delegateX25519PrivateKeyBytes = await X25519.privateKeyToBytes({
+    privateKey: delegateX25519PrivateKey,
+  });
+  const keyDeliveryDerivationPath = [
+    KeyDerivationScheme.ProtocolPath,
+    KeyDeliveryProtocolDefinition.protocol,
+    'contextKey',
+  ];
+  const delegateLeafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
+    delegateX25519PrivateKeyBytes, keyDeliveryDerivationPath,
+  );
+  const delegateLeafPrivateKeyJwk = await X25519.bytesToPrivateKey({
+    privateKeyBytes: delegateLeafPrivateKeyBytes,
+  });
+  const delegateKeyDeliveryLeafPublicKey = await X25519.getPublicKey({
+    key: delegateLeafPrivateKeyJwk,
+  });
+
+  // The rootKeyId is the delegate's keyAgreement VM id (e.g. `did:jwk:...#0`).
+  // For did:jwk this is the Ed25519 VM, but getEncryptionKeyInfo() also returns
+  // this same id after Ed25519→X25519 conversion. The DWN SDK matches the JWE
+  // `kid` header against the KeyDecrypter's `rootKeyId`, so both sides must use
+  // the same id — which they do because both derive from verificationMethod.id
+  // of the keyAgreement relationship.
+  const delegateKeyAgreementVmId = delegateBearerDid.document.verificationMethod![0].id;
+  const delegateKeyDeliveryData = {
+    rootKeyId    : delegateKeyAgreementVmId,
+    publicKeyJwk : delegateKeyDeliveryLeafPublicKey,
+  };
+
   // Derive scope-aware decryption keys for encrypted protocols.
   // Single-party: ProtocolPath keys (protocol-wide or exact-path).
   // Multi-party: ProtocolContext keys (per rootContextId).
@@ -1139,7 +1200,8 @@ async function submitConnectResponse(
         selectedDid,
         delegateBearerDid,
         agent,
-        permissionScopes
+        permissionScopes,
+        delegateKeyDeliveryData,
       );
     }
   );

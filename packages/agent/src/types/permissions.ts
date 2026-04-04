@@ -48,6 +48,11 @@ export type CreateGrantParams = {
   grantedTo: string;
   scope: DwnPermissionScope;
   delegated?: boolean;
+  /** Delegate key-delivery metadata for cross-device context key delivery. */
+  delegateKeyDelivery?: {
+    rootKeyId: string;
+    publicKeyJwk: Record<string, any>;
+  };
 };
 
 export type CreateRequestParams = {

@@ -464,15 +464,18 @@ describe('KeyStore', () => {
 
       it('should throw when generating a key with an Ed25519-only agent DID', async () => {
         // DwnKeyStore requires encryption. An Ed25519-only agent DID cannot
-        // derive encryption keys, so generateKey() must throw — not silently
-        // store the key in plaintext.
+        // derive encryption keys (the converted X25519 key is not in the KMS),
+        // so generateKey() must throw — not silently store the key in plaintext.
         try {
           await ed25519Harness.agent.keyManager.generateKey({
             algorithm: 'Ed25519'
           });
           throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).toContain('DWN encryption requires \'X25519\'');
+          // getEncryptionKeyInfo() now auto-converts Ed25519→X25519, but the
+          // converted key is not in the KMS. Error is "Key not found" rather
+          // than the original "DWN encryption requires 'X25519'".
+          expect(error.message).toContain('Key not found');
         }
       });
 
@@ -483,7 +486,9 @@ describe('KeyStore', () => {
           await (ed25519KeyStore as DwnDataStore<Jwk>)['initialize']({ agent: ed25519Harness.agent });
           throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).toContain('DWN encryption requires \'X25519\'');
+          // Same as above: Ed25519→X25519 conversion succeeds but the
+          // converted key is not in the KMS.
+          expect(error.message).toContain('Key not found');
         }
       });
     });

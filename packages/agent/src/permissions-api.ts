@@ -244,8 +244,15 @@ export class AgentPermissionsApi implements PermissionsApi {
       requestId   : createGrantParams.requestId,
       description : createGrantParams.description,
       delegated,
-      scope       : createGrantParams.scope
+      scope       : createGrantParams.scope,
     };
+
+    // Attach delegate key-delivery metadata to the grant data payload.
+    // This is stored in the grant's encoded data (not tags) to avoid
+    // SQL column size limits on tag values.
+    if (createGrantParams.delegateKeyDelivery) {
+      permissionGrantData.delegateKeyDelivery = createGrantParams.delegateKeyDelivery;
+    }
 
     const permissionsGrantBytes = Convert.object(permissionGrantData).toUint8Array();
 
