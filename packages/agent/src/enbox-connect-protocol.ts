@@ -1216,6 +1216,12 @@ async function submitConnectResponse(
   // ONLY for the specific session grant it corresponds to.
   const permissionsApi = new AgentPermissionsApi({ agent });
   const sessionRevocations: { grantId: string; revocationGrantId: string }[] = [];
+  let revGrantEndpoints: string[] = [];
+  try {
+    revGrantEndpoints = await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
+  } catch {
+    // Endpoint resolution failure — revocation grants will be local-only until sync.
+  }
 
   // Snapshot the current length — revocation grants are appended to delegateGrants
   // below, but we must NOT iterate over them (they are meta-grants, not session grants).
@@ -1239,6 +1245,25 @@ async function submitConnectResponse(
       grantId           : grantMessage.recordId,
       revocationGrantId : revGrant.message.recordId,
     });
+
+    // Fan out the revocation grant to all owner DWN endpoints (same
+    // as session grants) so that immediate disconnect can send a
+    // delegated revocation to a remote DWN that recognises the grant.
+    const { encodedData: revEncoded, ...revRawMessage } = revGrant.message;
+    const revData = Convert.base64Url(revEncoded).toUint8Array();
+    for (const dwnUrl of revGrantEndpoints) {
+      try {
+        await agent.rpc.sendDwnRequest({
+          dwnUrl,
+          targetDid : selectedDid,
+          message   : revRawMessage,
+          data      : new Blob([revData as BlobPart]),
+        });
+      } catch {
+        // Best-effort — sync will deliver eventually.
+      }
+    }
+
     // Include the revocation grant in the delegate grants for distribution
     delegateGrants.push(revGrant.message);
   }

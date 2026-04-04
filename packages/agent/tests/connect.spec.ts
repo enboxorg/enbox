@@ -366,7 +366,7 @@ describe('enbox connect', () => {
       // Stub per-grant revocation createGrant calls (created inside submitConnectResponse)
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id' } as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
@@ -467,7 +467,7 @@ describe('enbox connect', () => {
       // Stub per-grant revocation createGrant calls
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id' } as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
@@ -526,7 +526,7 @@ describe('enbox connect', () => {
       // Stub per-grant revocation createGrant calls
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id' } as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
@@ -763,7 +763,7 @@ describe('enbox connect', () => {
       // Stub per-grant revocation createGrant calls
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
-        message : { recordId: 'mock-revocation-grant-id' } as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
       });
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);

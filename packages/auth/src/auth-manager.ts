@@ -474,13 +474,13 @@ export class AuthManager {
           try {
             dwnEndpointUrls = await this._userAgent.dwn.getDwnEndpointUrlsForTarget(connectedDid);
           } catch {
-            // Endpoint resolution failure is non-fatal — local revocation still proceeds.
+            // Endpoint resolution failure — revocations will only be local.
           }
 
           const succeeded: string[] = [];
           for (const { grantId, revocationGrantId } of revocations) {
             try {
-              // Read the specific grant by recordId using RecordsRead.
+              // Read the specific grant by recordId.
               const { reply: readReply } = await this._userAgent.dwn.processRequest({
                 author        : connectedDid,
                 target        : connectedDid,
@@ -499,8 +499,11 @@ export class AuthManager {
                 permissionGrantId : revocationGrantId,
               });
 
-              // Send the revocation to the owner's remote DWN endpoints
-              // so future deliverContextKeyToDelegatesViaDwn sees it.
+              // Send the revocation to the owner's remote DWN endpoints.
+              // A revocation is only considered successful if at least one
+              // remote endpoint confirms it (202/409). Without remote
+              // delivery, the owner-side authority source won't see it.
+              let remoteDelivered = dwnEndpointUrls.length === 0;
               if (revocationMessage && dwnEndpointUrls.length > 0) {
                 const { encodedData, ...rawMessage } = revocationMessage as any;
                 const data = encodedData
@@ -508,18 +511,24 @@ export class AuthManager {
                   : undefined;
                 for (const dwnUrl of dwnEndpointUrls) {
                   try {
-                    await this._userAgent.rpc.sendDwnRequest({
+                    const sendReply = await this._userAgent.rpc.sendDwnRequest({
                       dwnUrl,
                       targetDid : connectedDid,
                       message   : rawMessage as any,
                       data,
                     });
+                    if (sendReply?.status?.code === 202 || sendReply?.status?.code === 409) {
+                      remoteDelivered = true;
+                    }
                   } catch {
-                    // Remote send failure for one endpoint is non-fatal.
+                    // Per-endpoint failure — try the next one.
                   }
                 }
               }
-              succeeded.push(grantId);
+
+              if (remoteDelivered) {
+                succeeded.push(grantId);
+              }
             } catch {
               // Individual revocation failure — tracked below.
             }
