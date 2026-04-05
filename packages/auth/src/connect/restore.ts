@@ -23,6 +23,27 @@ import { STORAGE_KEYS } from '../types.js';
 import { ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
+ * Decrypt a stored key blob.
+ *
+ * The stored value is either a compact JWE (encrypted with the vault CEK)
+ * or a plaintext JSON string (from sessions created before the encryption-
+ * at-rest fix). This function tries JWE decryption first, then falls back
+ * to treating the value as raw JSON for backward compatibility.
+ */
+async function decryptStoredKeys(
+  userAgent: EnboxUserAgent,
+  stored: string,
+): Promise<string> {
+  // JWE compact serialization has exactly 4 dots (5 segments).
+  if (stored.split('.').length === 5) {
+    const plaintext = await userAgent.vault.decryptData({ jwe: stored });
+    return Convert.uint8Array(plaintext).toString();
+  }
+  // Not a JWE — assume plaintext JSON (backward compat).
+  return stored;
+}
+
+/**
  * Attempt to restore a previous session.
  *
  * Returns `undefined` if no previous session exists.
@@ -163,10 +184,14 @@ export async function restoreSession(
   );
 
   // Restore delegate decryption keys if persisted.
+  // Keys are stored as compact JWE (encrypted with the vault CEK).
+  // Falls back to plaintext JSON for backward compatibility with sessions
+  // created before the encryption-at-rest fix.
   if (delegateDid && connectedDid) {
-    const keysJson = await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
-    if (keysJson) {
+    const storedKeys = await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
+    if (storedKeys) {
       try {
+        const keysJson = await decryptStoredKeys(userAgent, storedKeys);
         const keys = JSON.parse(keysJson);
         if (Array.isArray(keys) && keys.length > 0) {
           userAgent.dwn.importDelegateDecryptionKeys(delegateDid, keys);
@@ -175,8 +200,8 @@ export async function restoreSession(
     }
 
     // Restore context keys for multi-party encrypted protocols.
-    const ctxKeysJson = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-    // Restore multi-party protocol registrations.
+    const storedCtxKeys = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+    // Restore multi-party protocol registrations (not encrypted — no key material).
     const mpProtocolsJson = await storage.get(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
     let multiPartyProtocols: string[] | undefined;
     if (mpProtocolsJson) {
@@ -186,9 +211,12 @@ export async function restoreSession(
       } catch { /* best effort */ }
     }
 
-    if (ctxKeysJson || multiPartyProtocols) {
+    if (storedCtxKeys || multiPartyProtocols) {
       try {
-        const ctxKeys = ctxKeysJson ? JSON.parse(ctxKeysJson) : [];
+        const ctxKeysJson = storedCtxKeys
+          ? await decryptStoredKeys(userAgent, storedCtxKeys)
+          : '[]';
+        const ctxKeys = JSON.parse(ctxKeysJson);
         userAgent.dwn.importDelegateContextKeys(
           delegateDid,
           Array.isArray(ctxKeys) ? ctxKeys : [],
@@ -204,7 +232,9 @@ export async function restoreSession(
       if (changedDelegateDid !== restoreDelegateDid) { return; }
       try {
         const keys = userAgent.dwn.exportDelegateContextKeys(restoreDelegateDid);
-        await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, JSON.stringify(keys));
+        const pt = Convert.string(JSON.stringify(keys)).toUint8Array();
+        const encrypted = await userAgent.vault.encryptData({ plaintext: pt });
+        await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, encrypted);
       } catch { /* best effort — keys will be re-derived on next connect */ }
     };
   }

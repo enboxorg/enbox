@@ -117,6 +117,24 @@ export interface IdentityVault<T extends Record<string, any> = { InitializeResul
    * @throws An error if the password is incorrect.
    */
   unlock(params: { password: string }): Promise<void>;
+
+  /**
+   * Encrypts arbitrary data using the vault's content encryption key.
+   * The vault must be unlocked.
+   *
+   * @returns A compact JWE string that can be safely stored in untrusted storage.
+   * @throws An error if the vault is locked.
+   */
+  encryptData(params: { plaintext: Uint8Array }): Promise<string>;
+
+  /**
+   * Decrypts data that was previously encrypted with {@link encryptData}.
+   * The vault must be unlocked.
+   *
+   * @returns The original plaintext bytes.
+   * @throws An error if the vault is locked or the JWE is invalid.
+   */
+  decryptData(params: { jwe: string }): Promise<Uint8Array>;
 }
 
 export type IdentityVaultStatus = {

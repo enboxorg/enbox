@@ -28,6 +28,32 @@ export function createMockIdentity(overrides: Partial<MockIdentity> = {}): MockI
   };
 }
 
+/**
+ * A deterministic AES-256-GCM key for mock vault encrypt/decrypt.
+ * This simulates the real vault CEK without requiring password derivation.
+ */
+const MOCK_CEK = new Uint8Array(32); // all-zeros key — test-only
+
+async function mockEncryptData({ plaintext }: { plaintext: Uint8Array }): Promise<string> {
+  const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+  const key = await globalThis.crypto.subtle.importKey('raw', MOCK_CEK, 'AES-GCM', false, ['encrypt']);
+  const ct = new Uint8Array(await globalThis.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext.buffer as ArrayBuffer));
+  // Encode as a 5-segment "JWE-like" string so decryptStoredKeys detects it.
+  const b64url = (bytes: Uint8Array): string => Buffer.from(bytes).toString('base64url');
+  return `eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..${b64url(iv)}.${b64url(ct.slice(0, -16))}.${b64url(ct.slice(-16))}`;
+}
+
+async function mockDecryptData({ jwe }: { jwe: string }): Promise<Uint8Array> {
+  const parts = jwe.split('.');
+  const iv = Buffer.from(parts[2], 'base64url');
+  const ctBody = Buffer.from(parts[3], 'base64url');
+  const tag = Buffer.from(parts[4], 'base64url');
+  const ct = new Uint8Array([...ctBody, ...tag]);
+  const key = await globalThis.crypto.subtle.importKey('raw', MOCK_CEK, 'AES-GCM', false, ['decrypt']);
+  const pt = await globalThis.crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+  return new Uint8Array(pt);
+}
+
 export interface MockAgentOverrides {
   firstLaunch?: () => Promise<boolean>;
   initialize?: (params: any) => Promise<string>;
@@ -62,6 +88,8 @@ export interface MockAgentOverrides {
   vaultChangePassword?: (params: any) => Promise<void>;
   vaultBackup?: () => Promise<any>;
   vaultRestore?: (params: any) => Promise<void>;
+  vaultEncryptData?: (params: { plaintext: Uint8Array }) => Promise<string>;
+  vaultDecryptData?: (params: { jwe: string }) => Promise<Uint8Array>;
 }
 
 /**
@@ -138,6 +166,8 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       changePassword : overrides.vaultChangePassword ?? (async (): Promise<void> => {}),
       backup         : overrides.vaultBackup ?? (async (): Promise<any> => ({ data: 'backup' })),
       restore        : overrides.vaultRestore ?? (async (): Promise<void> => {}),
+      encryptData    : overrides.vaultEncryptData ?? mockEncryptData,
+      decryptData    : overrides.vaultDecryptData ?? mockDecryptData,
     },
   } as unknown as EnboxUserAgent;
 }
