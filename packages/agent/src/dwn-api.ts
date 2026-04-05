@@ -1462,10 +1462,29 @@ export class AgentDwnApi {
         throw error;
       }
     }
+    // When operating as a delegate, resolve the ProtocolsQuery grant so
+    // the local DWN authorises the query for unpublished protocols.
+    let permissionGrantId: string | undefined;
+    if (granteeDid) {
+      try {
+        const permissionsApi = new AgentPermissionsApi({ agent: this.agent });
+        const { grant } = await permissionsApi.getPermissionForRequest({
+          connectedDid : tenantDid,
+          delegateDid  : granteeDid,
+          protocol     : protocolUri,
+          cached       : true,
+          messageType  : DwnInterface.ProtocolsQuery,
+        });
+        permissionGrantId = grant.id;
+      } catch {
+        // No grant found — try without (works for published protocols).
+      }
+    }
+
     return getProtocolDefinitionFn(
       tenantDid, protocolUri, this._dwn,
       this.getSigner.bind(this), this._protocolDefinitionCache,
-      granteeDid,
+      granteeDid, permissionGrantId,
     );
   }
 

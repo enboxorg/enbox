@@ -815,7 +815,7 @@ export class TypedEnbox<
       // No encrypted types — safe to install the app-provided definition
       // as-is (no encryption keys needed).
       const result = await this._dwn.protocols.configure({
-        definition : this._definition,
+        definition: this._definition,
       });
       if (result.status.code === 202) {
         this._configured = true;
@@ -862,7 +862,7 @@ export class TypedEnbox<
       const remoteDefinition = remoteProtocols[0].definition;
 
       const result = await this._dwn.protocols.configure({
-        definition : remoteDefinition,
+        definition: remoteDefinition,
       });
 
       if (result.status.code === 202) {

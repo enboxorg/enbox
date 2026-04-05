@@ -28,26 +28,29 @@
  * for every write.
  */
 
-import type { BearerDid, PortableDid } from '@enbox/dids';
-import type { DwnProtocolDefinition } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { BearerDid, PortableDid } from '@enbox/dids';
+import type { ConnectHandler, ConnectResult } from '@enbox/auth';
+import type { DwnProtocolDefinition, EnboxPlatformAgent } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { processConnectedGrants, WalletConnect } from '@enbox/auth';
-import {
-  EnboxConnectProtocol,
-  EnboxUserAgent,
-  PlatformAgentTestHarness,
-} from '@enbox/agent';
+import { Ed25519 } from '@enbox/crypto';
 import { Jws } from '@enbox/dwn-sdk-js';
+import {
+  AuthManager, MemoryStorage, processConnectedGrants, WalletConnect,
+} from '@enbox/auth';
+
+import {
+  EnboxConnectProtocol, EnboxUserAgent, PlatformAgentTestHarness,
+} from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { Enbox } from '../src/enbox.js';
-import { testDwnUrl } from './utils/test-config.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
+import { testDwnUrl } from './utils/test-config.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -69,14 +72,14 @@ function createEncryptedProtocol(protocolUri: string): DwnProtocolDefinition {
         dataFormats : ['application/json'],
       },
       proof: {
-        schema              : `${protocolUri}/schemas/proof`,
-        dataFormats         : ['application/json'],
-        encryptionRequired  : true,
+        schema             : `${protocolUri}/schemas/proof`,
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
       },
       transaction: {
-        schema              : `${protocolUri}/schemas/transaction`,
-        dataFormats         : ['application/json'],
-        encryptionRequired  : true,
+        schema             : `${protocolUri}/schemas/transaction`,
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
       },
       preference: {
         schema      : `${protocolUri}/schemas/preference`,
@@ -95,10 +98,10 @@ function createEncryptedProtocol(protocolUri: string): DwnProtocolDefinition {
 
 // Type-checked schema map for the protocol.
 type EncryptedSchemaMap = {
-  mint        : { url: string; unit: string };
-  proof       : { amount: number; secret: string; C: string };
+  mint : { url: string; unit: string };
+  proof : { amount: number; secret: string; C: string };
   transaction : { type: string; amount: number };
-  preference  : { defaultMint: string };
+  preference : { defaultMint: string };
 };
 
 // ---------------------------------------------------------------------------
@@ -126,7 +129,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 
     // Create a did:dht identity with Ed25519 + X25519 keys (matches real wallets).
     const walletIdentity = await walletHarness.createIdentity({
-      name        : 'WalletOwner',
+      name: 'WalletOwner',
       testDwnUrls,
     });
     walletDid = walletIdentity.did;
@@ -278,7 +281,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 
       // Write a `mint` record (non-encrypted type) through the typed API.
       const { status, record } = await typed.records.create('mint', {
-        data : { url: 'https://mint.example', unit: 'sat' },
+        data: { url: 'https://mint.example', unit: 'sat' },
       });
 
       expect(status.code).toBe(202);
@@ -305,7 +308,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 
       // First create the parent `mint` record.
       const { status: mintStatus, record: mintRecord } = await typed.records.create('mint', {
-        data : { url: 'https://mint.example', unit: 'sat' },
+        data: { url: 'https://mint.example', unit: 'sat' },
       });
       expect(mintStatus.code).toBe(202);
       expect(mintRecord).toBeDefined();
@@ -348,7 +351,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 
       // Write a `transaction` record (top-level encrypted type).
       const { status, record } = await typed.records.create('transaction', {
-        data : { type: 'receive', amount: 500 },
+        data: { type: 'receive', amount: 500 },
       });
 
       expect(status.code).toBe(202);
@@ -377,7 +380,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 
       // Step 1: Create a mint (non-encrypted, with tags).
       const { record: mintRecord } = await typed.records.create('mint', {
-        data : { url: 'https://testnut.cash', unit: 'sat' },
+        data: { url: 'https://testnut.cash', unit: 'sat' },
       });
       expect(mintRecord).toBeDefined();
 
@@ -398,7 +401,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
 
       // Step 3: Create a transaction record (encrypted top-level).
       const { record: txnRecord } = await typed.records.create('transaction', {
-        data : { type: 'mint', amount: 300 },
+        data: { type: 'mint', amount: 300 },
       });
       expect(txnRecord).toBeDefined();
       expect((txnRecord!.rawMessage as any).encryption).toBeDefined();
@@ -438,7 +441,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const typed = dappEnbox.using(EncTestProtocol);
 
       const { record } = await typed.records.create('mint', {
-        data : { url: 'https://mint.example', unit: 'sat' },
+        data: { url: 'https://mint.example', unit: 'sat' },
       });
       expect(record).toBeDefined();
 
@@ -461,7 +464,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       const typed = dappEnbox.using(EncTestProtocol);
 
       const { record } = await typed.records.create('mint', {
-        data : { url: 'https://mint.example', unit: 'sat' },
+        data: { url: 'https://mint.example', unit: 'sat' },
       });
       expect(record).toBeDefined();
 
@@ -488,5 +491,210 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
         await liveQuery.close();
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Full AuthManager.connect() wallet-connect e2e test
+//
+// Unlike the tests above (which manually wire grants/imports), this test
+// drives the REAL AuthManager.connect() → ConnectHandler → session flow
+// that nutsd and every DWeb Connect dapp uses in production.
+// ---------------------------------------------------------------------------
+
+/**
+ * In-process ConnectHandler that acts as the wallet during tests.
+ *
+ * Performs the same operations as a real wallet's `submitConnectResponse`:
+ * installs the protocol with encryption, creates a delegate DID with
+ * Ed25519 + X25519 keys, creates permission grants, derives single-party
+ * scoped decryption keys, and returns a fully-formed ConnectResult.
+ */
+class InProcessWalletHandler implements ConnectHandler {
+  private walletDwn: DwnApi;
+
+  constructor(
+    private walletAgent: EnboxPlatformAgent,
+    private ownerDid: string,
+  ) {
+    this.walletDwn = new DwnApi({
+      agent: walletAgent, connectedDid: ownerDid,
+    });
+  }
+
+  async requestAccess(params: {
+    permissionRequests: any[];
+  }): Promise<ConnectResult | undefined> {
+    const delegateBearerDid = await this.walletAgent.did.create({
+      store: false, method: 'jwk',
+    });
+    const delegatePortableDid = await delegateBearerDid.export();
+
+    // Add X25519 private key derived from the delegate's Ed25519 key
+    // (same as submitConnectResponse does).
+    const delegateEdPrivateKey = delegatePortableDid.privateKeys![0];
+    const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+      privateKey: delegateEdPrivateKey,
+    });
+    delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
+
+    const allGrants: any[] = [];
+    const allDecryptionKeys: any[] = [];
+
+    for (const permissionRequest of params.permissionRequests) {
+      const { protocolDefinition, permissionScopes } = permissionRequest;
+
+      // Install the protocol with encryption on the wallet agent (local + remote).
+      const { status: configStatus, protocol: walletProtocol } =
+        await this.walletDwn.protocols.configure({
+          definition : protocolDefinition,
+          encryption : true,
+        });
+      if (configStatus.code !== 202) {
+        throw new Error(
+          `Failed to install protocol: ${configStatus.code} ${configStatus.detail}`
+        );
+      }
+
+      // Send to the wallet's remote DWN (same as a real wallet does).
+      await walletProtocol!.send(this.ownerDid);
+
+      // Derive scoped decryption keys for single-party encrypted protocols.
+      const hasEncryptedTypes = Object.values(protocolDefinition.types ?? {})
+        .some((type: any) => type?.encryptionRequired === true);
+
+      if (hasEncryptedTypes) {
+        const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
+          this.walletAgent, this.ownerDid,
+          protocolDefinition.protocol, permissionScopes, protocolDefinition,
+        );
+        allDecryptionKeys.push(...keys);
+      }
+
+      // Create permission grants.
+      const grants = await EnboxConnectProtocol.createPermissionGrants(
+        this.ownerDid, delegateBearerDid, this.walletAgent, permissionScopes,
+      );
+      allGrants.push(...grants);
+    }
+
+    return {
+      delegatePortableDid,
+      delegateGrants         : allGrants,
+      connectedDid           : this.ownerDid,
+      delegateDecryptionKeys : allDecryptionKeys.length > 0 ? allDecryptionKeys : undefined,
+    };
+  }
+}
+
+describe('E2E: AuthManager.connect() with encrypted protocol', () => {
+  let walletHarness: PlatformAgentTestHarness;
+  let walletDid: BearerDid;
+  let dappAgent: EnboxUserAgent;
+
+  beforeAll(async () => {
+    walletHarness = await PlatformAgentTestHarness.setup({
+      agentClass       : EnboxUserAgent,
+      agentStores      : 'memory',
+      testDataLocation : '__TESTDATA__/e2e-auth-connect-wallet',
+    });
+    await walletHarness.clearStorage();
+    await walletHarness.createAgentDid();
+
+    const walletIdentity = await walletHarness.createIdentity({
+      name: 'WalletOwner', testDwnUrls,
+    });
+    walletDid = walletIdentity.did;
+
+    // Create a separate dapp agent (no shared state with wallet).
+    const dappHarness = await PlatformAgentTestHarness.setup({
+      agentClass       : EnboxUserAgent,
+      agentStores      : 'memory',
+      testDataLocation : '__TESTDATA__/e2e-auth-connect-dapp',
+    });
+    await dappHarness.clearStorage();
+    await dappHarness.createAgentDid();
+    dappAgent = dappHarness.agent as EnboxUserAgent;
+  });
+
+  afterAll(async () => {
+    sinon.restore();
+    await walletHarness.clearStorage();
+    await walletHarness.closeStorage();
+  });
+
+  it('should write encrypted records through the full auth.connect() → Enbox.using() flow', async () => {
+    sinon.stub(console, 'warn');
+
+    const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+    const protocolDef = createEncryptedProtocol(protocolUri);
+
+    const EncTestProtocol = defineProtocol(
+      protocolDef as ProtocolDefinition,
+      {} as EncryptedSchemaMap,
+    );
+
+    // Create the auth manager with the dapp's agent and our in-process
+    // wallet handler — this is the same shape a real dapp would use with
+    // BrowserConnectHandler.
+    const auth = await AuthManager.create({
+      agent          : dappAgent,
+      password       : 'test-password',
+      storage        : new MemoryStorage(),
+      connectHandler : new InProcessWalletHandler(
+        walletHarness.agent, walletDid.uri,
+      ),
+    });
+
+    // Drive the full connect flow: normalizeProtocolRequests →
+    // handler.requestAccess → importDelegateAndSetupSync →
+    // finalizeDelegateSession → AuthSession.
+    const session = await auth.connect({
+      protocols: [protocolDef],
+    });
+
+    // Verify session shape.
+    expect(session.did).toBe(walletDid.uri);
+    expect(session.delegateDid).toBeDefined();
+    expect(session.delegateDid).not.toBe(walletDid.uri);
+
+    // Use the session exactly as a dapp would.
+    const enbox = Enbox.connect({ session });
+    const typed = enbox.using(EncTestProtocol);
+
+    // Write a non-encrypted record.
+    const { status: mintStatus, record: mintRecord } = await typed.records.create('mint', {
+      data: { url: 'https://testnut.cash', unit: 'sat' },
+    });
+    expect(mintStatus.code).toBe(202);
+    expect(mintRecord).toBeDefined();
+
+    // Write an encrypted child record (the exact nutsd failure path).
+    const { status: proofStatus, record: proofRecord } = await typed.records.create(
+      'mint/proof' as any,
+      {
+        data            : { amount: 100, secret: 'abc', C: 'def' },
+        parentContextId : mintRecord!.contextId,
+      },
+    );
+    expect(proofStatus.code).toBe(202);
+    expect(proofRecord).toBeDefined();
+    expect((proofRecord!.rawMessage as any).encryption).toBeDefined();
+
+    // Write a top-level encrypted record.
+    const { status: txnStatus, record: txnRecord } = await typed.records.create('transaction', {
+      data: { type: 'receive', amount: 500 },
+    });
+    expect(txnStatus.code).toBe(202);
+    expect(txnRecord).toBeDefined();
+    expect((txnRecord!.rawMessage as any).encryption).toBeDefined();
+
+    // All records are signed by the delegate, not the owner.
+    for (const rec of [mintRecord!, proofRecord!, txnRecord!]) {
+      const signer = Jws.getSignerDid(
+        rec.rawMessage.authorization.signature.signatures[0],
+      );
+      expect(signer).toBe(session.delegateDid);
+    }
   });
 });

@@ -72,6 +72,7 @@ export async function getProtocolDefinition(
   getSigner: GetSignerFn,
   cache: TtlCache<string, ProtocolDefinition>,
   granteeDid?: string,
+  permissionGrantId?: string,
 ): Promise<ProtocolDefinition | undefined> {
   const cacheKey = `${tenantDid}~${protocolUri}`;
 
@@ -82,8 +83,8 @@ export async function getProtocolDefinition(
 
   // When operating as a delegate, the tenant's private signing key is not
   // available locally. Sign the ProtocolsQuery with the delegate's key
-  // instead.  The local DWN accepts it because the delegate DID is
-  // a known identity in the agent.
+  // and include the permissionGrantId so the local DWN authorises the
+  // query against the unpublished protocol.
   const signerDid = granteeDid ?? tenantDid;
   const signer = await getSigner(signerDid);
   const protocolsQuery = await dwnMessageConstructors[
@@ -91,6 +92,7 @@ export async function getProtocolDefinition(
   ].create({
     filter: { protocol: protocolUri },
     signer,
+    ...(permissionGrantId ? { permissionGrantId } : {}),
   });
 
   const reply = await dwn.processMessage(
