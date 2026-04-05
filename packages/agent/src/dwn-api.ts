@@ -984,6 +984,20 @@ export class AgentDwnApi {
       );
     }
 
+    // When a ProtocolsConfigure is processed WITHOUT the encryption flag
+    // (e.g. a delegate installing the owner's protocol definition that
+    // already contains `$encryption` keys from the remote DWN), cache the
+    // definition so that subsequent RecordsWrite encryption can find it
+    // without re-querying the local DWN (which would fail for delegates
+    // because the query author doesn't match the unpublished protocol's
+    // tenant).
+    if (isDwnRequest(request, DwnInterface.ProtocolsConfigure) && !request.encryption && !rawMessage) {
+      const def = request.messageParams?.definition;
+      if (def?.protocol) {
+        this._protocolDefinitionCache.set(`${request.target}~${def.protocol}`, def);
+      }
+    }
+
     // Auto-encrypt data on RecordsWrite.
     //
     // Encryption scheme decision (unified key delivery):
@@ -1032,7 +1046,7 @@ export class AgentDwnApi {
           );
         } else {
           protocolDefinition = await this.getProtocolDefinition(
-            request.target, messageParams.protocol,
+            request.target, messageParams.protocol, request.granteeDid,
           );
         }
 
@@ -1428,6 +1442,7 @@ export class AgentDwnApi {
   private async getProtocolDefinition(
     tenantDid: string,
     protocolUri: string,
+    granteeDid?: string,
   ): Promise<ProtocolDefinition | undefined> {
     if (!this._dwn) {
       // Remote mode: query via RPC (same as fetchRemoteProtocolDefinition,
@@ -1447,9 +1462,29 @@ export class AgentDwnApi {
         throw error;
       }
     }
+    // When operating as a delegate, resolve the ProtocolsQuery grant so
+    // the local DWN authorises the query for unpublished protocols.
+    let permissionGrantId: string | undefined;
+    if (granteeDid) {
+      try {
+        const permissionsApi = new AgentPermissionsApi({ agent: this.agent });
+        const { grant } = await permissionsApi.getPermissionForRequest({
+          connectedDid : tenantDid,
+          delegateDid  : granteeDid,
+          protocol     : protocolUri,
+          cached       : true,
+          messageType  : DwnInterface.ProtocolsQuery,
+        });
+        permissionGrantId = grant.id;
+      } catch {
+        // No grant found — try without (works for published protocols).
+      }
+    }
+
     return getProtocolDefinitionFn(
       tenantDid, protocolUri, this._dwn,
       this.getSigner.bind(this), this._protocolDefinitionCache,
+      granteeDid, permissionGrantId,
     );
   }
 
