@@ -1,5 +1,17 @@
 # @enbox/browser
 
+## 0.1.26
+
+### Patch Changes
+
+- [#845](https://github.com/enboxorg/enbox/pull/845) [`18b9523`](https://github.com/enboxorg/enbox/commit/18b952381c23199a7ceb0b6dd4be018d7cfb14c5) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: browser DWeb Connect client now parses full ConnectResult including delegate encryption artifacts
+
+  The browser popup connect flow was only extracting delegateDid, connectedDid, and
+  grants from the wallet's postMessage response — missing delegateDecryptionKeys,
+  delegateContextKeys, delegateMultiPartyProtocols, and sessionRevocations. Without
+  these, the delegate session had no decryption material, causing encrypted records
+  to be unreadable after page refresh and key-delivery protocol closure failures.
+
 ## 0.1.25
 
 ### Patch Changes
