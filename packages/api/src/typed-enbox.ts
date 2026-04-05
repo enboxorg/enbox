@@ -778,27 +778,54 @@ export class TypedEnbox<
       return;
     }
 
-    // Not installed — configure it now.
-    // In delegate mode, the wallet is responsible for installing encrypted
-    // protocols during the connect flow.  The delegate cannot derive the
-    // owner's encryption keys, so attempting to configure an encrypted
-    // protocol here would install it WITHOUT $encryption keys — causing
-    // all subsequent encrypted writes to be rejected by the DWN.
-    // Fail fast with a clear message instead.
-    const hasEncryptedTypes = Object.values(this._definition.types)
-      .some((type) => (type as ProtocolType)?.encryptionRequired === true);
+    // Not installed locally — configure it now.
+    //
+    // For delegates: the wallet already installed the protocol with derived
+    // `$encryption` keys on the owner's remote DWN. We fetch that remote
+    // definition and install it locally so the delegate can encrypt records
+    // using the public keys from `$encryption`. This avoids the delegate
+    // needing the owner's private X25519 key — only the already-public
+    // derived keys are used for ProtocolPath encryption.
+    //
+    // For owners: derive encryption keys locally via the KMS.
+    if (this._dwn.isDelegate) {
+      const installed = await this._autoConfigureDelegateProtocol();
+      if (installed) {
+        return;
+      }
 
-    if (this._dwn.isDelegate && hasEncryptedTypes) {
-      throw new Error(
-        `TypedEnbox: Protocol '${this._definition.protocol}' requires ` +
-        `encryption but is not yet installed. In delegate mode, encrypted ` +
-        `protocols must be installed by the wallet during the connect flow. ` +
-        `Ensure the sync engine has completed its initial sync before ` +
-        `performing record operations.`,
-      );
+      // The remote definition could not be fetched. If this protocol has
+      // any types with `encryptionRequired: true`, we MUST fail — silently
+      // installing without `$encryption` keys would allow plaintext writes
+      // that the owner's remote DWN would later reject, or worse, persist
+      // unencrypted sensitive data.
+      const hasEncryptedTypes = Object.values(this._definition.types)
+        .some((type) => (type as ProtocolType)?.encryptionRequired === true);
+
+      if (hasEncryptedTypes) {
+        throw new Error(
+          `TypedEnbox: delegate cannot install protocol '${this._definition.protocol}' ` +
+          'because it contains types with encryptionRequired but the owner\'s ' +
+          'remote protocol definition (with $encryption keys) could not be fetched. ' +
+          'Ensure the owner has installed the protocol on their DWN and that the ' +
+          'delegate has network access to the owner\'s DWN endpoints.',
+        );
+      }
+
+      // No encrypted types — safe to install the app-provided definition
+      // as-is (no encryption keys needed).
+      const result = await this._dwn.protocols.configure({
+        definition : this._definition,
+      });
+      if (result.status.code === 202) {
+        this._configured = true;
+      }
+      return;
     }
 
-    const needsEncryption = !this._dwn.isDelegate && hasEncryptedTypes;
+    // Owner path: derive encryption keys locally when any type needs them.
+    const needsEncryption = Object.values(this._definition.types)
+      .some((type) => (type as ProtocolType)?.encryptionRequired === true);
 
     const result = await this._dwn.protocols.configure({
       definition : this._definition,
@@ -807,6 +834,46 @@ export class TypedEnbox<
 
     if (result.status.code === 202) {
       this._configured = true;
+    }
+  }
+
+  /**
+   * For delegates: fetch the owner's protocol definition (with `$encryption`
+   * keys) from the remote DWN and install it locally.
+   *
+   * Returns `true` if the remote definition was successfully installed.
+   */
+  private async _autoConfigureDelegateProtocol(): Promise<boolean> {
+    try {
+      const { protocols: remoteProtocols } = await this._dwn.protocols.query({
+        from   : this._dwn.connectedDid,
+        filter : { protocol: this._definition.protocol },
+      });
+
+      if (remoteProtocols.length === 0) {
+        return false;
+      }
+
+      // The remote definition includes `$encryption` keys injected by the
+      // owner's agent during their `protocols.configure({ encryption: true })`
+      // call. Install it as-is on the delegate's local DWN so that:
+      //   1. `encryptionRequired` is enforced locally (matching the remote)
+      //   2. `$encryption` public keys are available for record encryption
+      const remoteDefinition = remoteProtocols[0].definition;
+
+      const result = await this._dwn.protocols.configure({
+        definition : remoteDefinition,
+      });
+
+      if (result.status.code === 202) {
+        this._configured = true;
+        return true;
+      }
+
+      return false;
+    } catch {
+      // Network error or grant issue — fall back to local-only install.
+      return false;
     }
   }
 

@@ -243,8 +243,16 @@ export class DwnApi {
    */
   private agent: EnboxAgent;
 
-  /** The DID of the DWN tenant under which operations are being performed. */
-  private connectedDid: string;
+  /**
+   * The DID of the DWN tenant under which operations are being performed.
+   *
+   * Exposed as a public getter so that `TypedEnbox` can read it during
+   * delegate auto-configure (remote protocol fetch).
+   */
+  private _connectedDid: string;
+  get connectedDid(): string { return this._connectedDid; }
+  /** @internal — used by tests to reset state between runs. */
+  set connectedDid(did: string) { this._connectedDid = did; }
 
   /** (optional) The DID of the signer when signing with permissions */
   private delegateDid?: string;
@@ -254,7 +262,7 @@ export class DwnApi {
 
   constructor(options: { agent: EnboxAgent, connectedDid: string, delegateDid?: string }) {
     this.agent = options.agent;
-    this.connectedDid = options.connectedDid;
+    this._connectedDid = options.connectedDid;
     this.delegateDid = options.delegateDid;
     this.permissionsApi = new AgentPermissionsApi({ agent: this.agent });
   }

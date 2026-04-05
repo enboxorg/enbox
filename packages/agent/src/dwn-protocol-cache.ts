@@ -71,6 +71,7 @@ export async function getProtocolDefinition(
   dwn: DwnNode,
   getSigner: GetSignerFn,
   cache: TtlCache<string, ProtocolDefinition>,
+  granteeDid?: string,
 ): Promise<ProtocolDefinition | undefined> {
   const cacheKey = `${tenantDid}~${protocolUri}`;
 
@@ -79,7 +80,12 @@ export async function getProtocolDefinition(
     return cached;
   }
 
-  const signer = await getSigner(tenantDid);
+  // When operating as a delegate, the tenant's private signing key is not
+  // available locally. Sign the ProtocolsQuery with the delegate's key
+  // instead.  The local DWN accepts it because the delegate DID is
+  // a known identity in the agent.
+  const signerDid = granteeDid ?? tenantDid;
+  const signer = await getSigner(signerDid);
   const protocolsQuery = await dwnMessageConstructors[
     DwnInterfaceEnum.ProtocolsQuery
   ].create({
