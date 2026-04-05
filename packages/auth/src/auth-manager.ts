@@ -32,6 +32,7 @@ import type {
   WalletConnectOptions,
 } from './types.js';
 
+import { Convert } from '@enbox/common';
 import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant, EnboxUserAgent } from '@enbox/agent';
 
@@ -496,7 +497,16 @@ export class AuthManager {
                 messageParams : { filter: { recordId: grantId } },
               });
               if (readReply.status.code !== 200 || !readReply.entry) { continue; }
-              const grant = DwnPermissionGrant.parse(readReply.entry.recordsWrite as any);
+              // Reconstruct DwnDataEncodedRecordsWriteMessage: RecordsRead returns
+              // data as a stream, but PermissionGrant.parse needs encodedData.
+              const grantDataBytes = readReply.entry.data
+                ? await DataStream.toBytes(readReply.entry.data)
+                : new Uint8Array(0);
+              const grantMsgWithData = {
+                ...readReply.entry.recordsWrite,
+                encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
+              };
+              const grant = DwnPermissionGrant.parse(grantMsgWithData as any);
 
               // Self-healing: ensure the revocation grant is on the remote
               // DWN. The best-effort fanout at connect time may have failed.
@@ -544,7 +554,7 @@ export class AuthManager {
               if (revocationMessage && remoteDwnUrls.length > 0) {
                 const { encodedData, ...rawMessage } = revocationMessage as any;
                 const data = encodedData
-                  ? new Blob([Uint8Array.from(atob(encodedData), (c: string): number => c.charCodeAt(0))])
+                  ? new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart])
                   : undefined;
                 for (const dwnUrl of remoteDwnUrls) {
                   try {

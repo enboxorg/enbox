@@ -63,6 +63,12 @@ export {
 // Storage adapters
 export { BrowserStorage, LevelStorage, MemoryStorage, createDefaultStorage } from './storage/storage.js';
 
+// Revocation retry (exported for cross-package integration testing)
+export { retryOrphanedRevocations } from './connect/restore.js';
+
+// Storage keys (exported for cross-package integration testing)
+export { STORAGE_KEYS } from './types.js';
+
 // Types
 export type {
   AuthEvent,

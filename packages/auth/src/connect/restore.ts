@@ -14,6 +14,7 @@ import type { StorageAdapter } from '../types.js';
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
+import { Convert } from '@enbox/common';
 import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
@@ -346,7 +347,17 @@ async function revokeAndSendSingle(
   });
   if (readReply.status.code !== 200 || !readReply.entry) { return false; }
 
-  const grant = DwnPermissionGrant.parse(readReply.entry.recordsWrite as any);
+  // Reconstruct DwnDataEncodedRecordsWriteMessage: RecordsRead returns
+  // the data as a stream, but PermissionGrant.parse needs encodedData.
+  const grantDataBytes = readReply.entry.data
+    ? await DataStream.toBytes(readReply.entry.data)
+    : new Uint8Array(0);
+  const grantMessageWithData = {
+    ...readReply.entry.recordsWrite,
+    encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
+  };
+  const grant = DwnPermissionGrant.parse(grantMessageWithData as any);
+
   const { message } = await userAgent.permissions.createRevocation({
     author            : connectedDid,
     store             : true,
@@ -372,7 +383,7 @@ async function sendRevocationToEndpoints(
 
   const { encodedData, ...rawMessage } = revocationMessage;
   const data = encodedData
-    ? new Blob([Uint8Array.from(atob(encodedData), (c: string): number => c.charCodeAt(0))])
+    ? new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart])
     : undefined;
 
   for (const dwnUrl of dwnEndpointUrls) {
@@ -406,7 +417,7 @@ async function clearRetryState(storage: StorageAdapter): Promise<void> {
  * This function does NOT restore a session — the user explicitly
  * disconnected and the retry is purely a background cleanup.
  */
-async function retryOrphanedRevocations(
+export async function retryOrphanedRevocations(
   userAgent: EnboxUserAgent,
   storage: StorageAdapter,
 ): Promise<void> {

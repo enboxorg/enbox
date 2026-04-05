@@ -58,10 +58,23 @@ function buildRevocationAgent(opts: {
       const recordId = req.messageParams.filter.recordId;
       const record = opts.grantRecords[recordId];
       if (record) {
+        // Include data stream matching the grant's encodedData
+        const encodedData = record.encodedData;
+        const dataBytes = encodedData
+          ? Uint8Array.from(atob(encodedData), (c: string): number => c.charCodeAt(0))
+          : new Uint8Array(0);
         return {
           reply: {
             status : { code: 200 },
-            entry  : { recordsWrite: record },
+            entry  : {
+              recordsWrite : record,
+              data         : new ReadableStream({
+                start(controller: ReadableStreamDefaultController): void {
+                  controller.enqueue(dataBytes);
+                  controller.close();
+                },
+              }),
+            },
           },
         };
       }
