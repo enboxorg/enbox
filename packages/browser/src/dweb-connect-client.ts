@@ -126,7 +126,15 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
         clearInterval(pollClosed);
         cleanup();
 
-        const { delegateDid, connectedDid: walletConnectedDid, grants } = event.data;
+        const {
+          delegateDid,
+          connectedDid: walletConnectedDid,
+          grants,
+          delegateDecryptionKeys,
+          delegateContextKeys,
+          delegateMultiPartyProtocols,
+          sessionRevocations,
+        } = event.data;
 
         if (!delegateDid || !grants) {
           // User denied the request.
@@ -136,9 +144,13 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
 
         // connectedDid priority: wallet response > dapp-provided > delegate DID
         resolve({
-          delegatePortableDid : delegateDid as PortableDid,
-          delegateGrants      : grants as DwnDataEncodedRecordsWriteMessage[],
-          connectedDid        : walletConnectedDid ?? did ?? delegateDid.uri,
+          delegatePortableDid         : delegateDid as PortableDid,
+          delegateGrants              : grants as DwnDataEncodedRecordsWriteMessage[],
+          connectedDid                : walletConnectedDid ?? did ?? delegateDid.uri,
+          delegateDecryptionKeys      : delegateDecryptionKeys ?? undefined,
+          delegateContextKeys         : delegateContextKeys ?? undefined,
+          delegateMultiPartyProtocols : delegateMultiPartyProtocols ?? undefined,
+          sessionRevocations          : sessionRevocations ?? undefined,
         });
       }
     };
