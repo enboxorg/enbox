@@ -281,14 +281,16 @@ async function loadRetryEntries(
 async function ensureRevocationGrantOnRemote(
   userAgent: EnboxUserAgent,
   connectedDid: string,
+  delegateDid: string,
   revocationGrantId: string,
   dwnEndpointUrls: string[],
 ): Promise<void> {
   if (dwnEndpointUrls.length === 0) { return; }
 
   try {
+    // Read as the delegate (grant recipient), not the owner.
     const { reply } = await userAgent.dwn.processRequest({
-      author        : connectedDid,
+      author        : delegateDid,
       target        : connectedDid,
       messageType   : DwnInterface.RecordsRead,
       messageParams : { filter: { recordId: revocationGrantId } },
@@ -332,11 +334,12 @@ async function revokeAndSendSingle(
 ): Promise<boolean> {
   // Self-healing: ensure the revocation grant is on the remote DWN.
   await ensureRevocationGrantOnRemote(
-    userAgent, connectedDid, entry.revocationGrantId, dwnEndpointUrls,
+    userAgent, connectedDid, delegateDid, entry.revocationGrantId, dwnEndpointUrls,
   );
 
+  // Read as the delegate (grant recipient), not the owner.
   const { reply: readReply } = await userAgent.dwn.processRequest({
-    author        : connectedDid,
+    author        : delegateDid,
     target        : connectedDid,
     messageType   : DwnInterface.RecordsRead,
     messageParams : { filter: { recordId: entry.grantId } },
