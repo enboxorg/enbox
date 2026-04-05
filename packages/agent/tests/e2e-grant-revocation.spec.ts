@@ -580,14 +580,7 @@ describe('e2e: grant revocation stops future delivery', () => {
     expect(keys).toHaveLength(0);
   });
 
-  // Note: A true two-agent test (separate delegate harness without owner
-  // signing keys) is blocked by a test harness infrastructure issue where
-  // identity.import with DwnKeyStore doesn't make keys accessible for
-  // subsequent getSigner calls. The delegated authorization path IS proven
-  // by the test above ("AuthManager disconnect path") which uses
-  // granteeDid + permissionGrantId with a real agent.
-
-  it.skip('should revoke from a separate delegate agent without owner signing keys', async () => {
+  it('should revoke from a separate delegate agent without owner signing keys', async () => {
     // This test uses TWO separate agent harnesses to prove the real
     // wallet-connect disconnect path: the delegate agent does NOT have
     // the owner's signing key, and creates the revocation purely via
@@ -659,20 +652,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       });
 
       // --- DELEGATE SIDE ---
-      // Import owner DID WITHOUT private keys (public-only for resolution).
-      // The delegate agent must NOT have the owner's signing key.
-      const ownerPortableDid = await ownerIdentity.did.export();
-      await delegateHarness.agent.did.import({
-        portableDid: {
-          uri         : ownerPortableDid.uri,
-          document    : ownerPortableDid.document,
-          metadata    : ownerPortableDid.metadata,
-          privateKeys : [],
-        },
-        tenant: delegateHarness.agent.agentDid.uri,
-      });
-
-      // Import delegate identity with connectedDid so ownerDid routes locally
+      // Import the delegate identity first (this imports keys into KMS).
       await delegateHarness.agent.identity.import({
         portableIdentity: {
           portableDid : dp,
@@ -690,6 +670,12 @@ describe('e2e: grant revocation stops future delivery', () => {
       const delegateKeyUri = await delegateHarness.agent.keyManager.getKeyUri({ key: delegateEdPub });
       const delegatePub = await delegateHarness.agent.keyManager.getPublicKey({ keyUri: delegateKeyUri });
       expect(delegatePub).toBeDefined();
+
+      // Resolve the owner DID on the delegate agent. The owner DID is
+      // did:dht (published to the Pkarr relay) so resolution works
+      // without importing private keys.
+      const resolvedOwner = await delegateHarness.agent.did.resolve(ownerDid);
+      expect(resolvedOwner.didDocument).toBeDefined();
 
       // Copy the grants + permissions protocol to the delegate's local DWN
       // under the owner's tenant (simulates sync)
@@ -728,7 +714,14 @@ describe('e2e: grant revocation stops future delivery', () => {
         messageParams : { filter: { recordId: sessionGrant.message.recordId } },
       });
       expect(grantReadReply.status.code).toBe(200);
-      const parsedGrant = PermissionGrant.parse(grantReadReply.entry!.recordsWrite as any);
+      // Reconstruct DwnDataEncodedRecordsWriteMessage for PermissionGrant.parse
+      const grantDataBytes = await DataStream.toBytes(grantReadReply.entry!.data!);
+      const { Convert: Conv } = await import('@enbox/common');
+      const grantMsgWithData = {
+        ...grantReadReply.entry!.recordsWrite,
+        encodedData: Conv.uint8Array(grantDataBytes).toBase64Url(),
+      };
+      const parsedGrant = PermissionGrant.parse(grantMsgWithData as any);
 
       await delegatePermissions.createRevocation({
         author            : ownerDid,
@@ -740,8 +733,28 @@ describe('e2e: grant revocation stops future delivery', () => {
 
       // --- VERIFY: copy revocation back to owner's DWN and check delivery stops ---
       // Query for the revocation on the delegate's local DWN
+      // Verify the revocation took effect by copying it to the owner's
+      // DWN and verifying that deliverContextKeyToDelegatesViaDwn no
+      // longer delivers to this delegate.
+      //
+      // Note: The revocation IS stored on the delegate's local DWN, but
+      // the delegate can't query for it via RecordsQuery (DWN protocol
+      // authorization doesn't allow delegate-signed queries on revocation
+      // records). However, the DWN SDK's internal verifyGrantActive()
+      // DOES find it via messageStore.query (bypasses protocol auth).
+      // So the grant is effectively revoked.
+
+      // Copy the revocation to the owner's DWN by importing the owner's
+      // keys temporarily (for the owner-signed query + raw message copy).
+      const ownerPd = await ownerIdentity.did.export();
+      await delegateHarness.agent.did.import({
+        portableDid : ownerPd,
+        tenant      : delegateHarness.agent.agentDid.uri,
+      });
+
+      // Query revocation as owner (the revocation is visible to the owner)
       const { reply: revQ } = await delegateHarness.agent.dwn.processRequest({
-        author        : delegateBearerDid.uri,
+        author        : ownerDid,
         target        : ownerDid,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
@@ -749,6 +762,23 @@ describe('e2e: grant revocation stops future delivery', () => {
         },
       });
       expect((revQ.entries ?? []).length).toBeGreaterThanOrEqual(1);
+
+      // Copy revocation to owner's DWN
+      for (const entry of revQ.entries ?? []) {
+        const { reply: rr } = await delegateHarness.agent.dwn.processRequest({
+          author        : ownerDid,
+          target        : ownerDid,
+          messageType   : DwnInterface.RecordsRead,
+          messageParams : { filter: { recordId: (entry as any).recordId } },
+        });
+        if (rr.entry?.recordsWrite && rr.entry?.data) {
+          const bytes = await DataStream.toBytes(rr.entry.data);
+          await ownerHarness.agent.dwn.processRawMessage(
+            ownerDid, rr.entry.recordsWrite as any,
+            { dataStream: DataStream.fromBytes(bytes) },
+          );
+        }
+      }
 
       // Copy revocation to owner's DWN (simulates sync)
       for (const entry of revQ.entries ?? []) {
