@@ -12,7 +12,7 @@ import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { type BearerDid, DidDht, DidJwk } from '@enbox/dids';
 
-import { DwnInterface } from '../src/index.js';
+import { AgentPermissionsApi, DwnInterface } from '../src/index.js';
 import {
   EnboxConnectProtocol,
   type EnboxConnectRequest,
@@ -363,6 +363,11 @@ describe('enbox connect', () => {
 
     it('should send the encrypted JWE connect response to the server', async () => {
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      // Stub per-grant revocation createGrant calls (created inside submitConnectResponse)
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -459,6 +464,11 @@ describe('enbox connect', () => {
       // sent to the remote DWN for the requesting client to be able to sync it down later
 
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      // Stub per-grant revocation createGrant calls
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -497,6 +507,7 @@ describe('enbox connect', () => {
       );
 
       // expect the process request to only be called once for ProtocolsQuery
+      // (per-grant revocation goes through the stubbed AgentPermissionsApi.prototype.createGrant)
       expect(processDwnRequestStub.callCount).toBe(1);
       expect(processDwnRequestStub.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsQuery);
 
@@ -512,6 +523,11 @@ describe('enbox connect', () => {
       // looks for a response of 404, empty entries array or missing entries array
 
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      // Stub per-grant revocation createGrant calls
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -744,6 +760,11 @@ describe('enbox connect', () => {
       }];
 
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      // Stub per-grant revocation createGrant calls
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 

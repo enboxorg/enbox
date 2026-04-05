@@ -353,12 +353,17 @@ export class AgentPermissionsApi implements PermissionsApi {
       tags
     };
 
+    if (params.permissionGrantId) {
+      messageParams.permissionGrantId = params.permissionGrantId;
+    }
+
     const { reply, message } = await this.agent.processDwnRequest({
       store,
       author,
       target      : author,
       messageType : DwnInterface.RecordsWrite,
       messageParams,
+      granteeDid  : params.granteeDid,
       dataStream  : new Blob([ permissionRevocationBytes as BlobPart ])
     });
 

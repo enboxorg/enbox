@@ -10,6 +10,14 @@ import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
 import type { RestoreSessionOptions } from '../types.js';
 
+import type { StorageAdapter } from '../types.js';
+
+import type { EnboxUserAgent } from '@enbox/agent';
+
+import { Convert } from '@enbox/common';
+import { DataStream } from '@enbox/dwn-sdk-js';
+import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
+
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
 import { ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
@@ -19,6 +27,11 @@ import { ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword
  *
  * Returns `undefined` if no previous session exists.
  * Returns an `AuthSession` if the session was successfully restored.
+ *
+ * Two independent concerns are handled here:
+ * 1. Revocation retry maintenance (from a previous partial disconnect)
+ * 2. Normal session restore
+ * They do NOT depend on each other. Both can run in the same call.
  */
 export async function restoreSession(
   ctx: FlowContext,
@@ -26,27 +39,27 @@ export async function restoreSession(
 ): Promise<AuthSession | undefined> {
   const { userAgent, emitter, storage } = ctx;
 
-  // Check if there was a previous session.
+  // Two independent concerns:
+  // 1. PREVIOUSLY_CONNECTED — normal session restore
+  // 2. REVOCATION_RETRY_CONTEXT — orphaned revocations from partial disconnect
+  // If neither is set, nothing to do.
   const previouslyConnected = await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
-  if (previouslyConnected !== 'true') {
+  const retryContextJson = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+  if (previouslyConnected !== 'true' && !retryContextJson) {
     return undefined;
   }
 
-  // Resolve password: explicit option → callback → provider → manager default → insecure fallback.
-  // Note: restoreSession has an extra `onPasswordRequired` callback that sits between
-  // the explicit password and the provider. We handle that here, then delegate the
-  // remainder of the chain to `resolvePassword()`.
+  // Resolve password.
   let explicitPassword = options.password;
-
   if (!explicitPassword && !ctx.defaultPassword && options.onPasswordRequired) {
     explicitPassword = await options.onPasswordRequired();
   }
 
-  // Check for stale session marker: if the vault was never initialized,
-  // previouslyConnected is a leftover — clean up and bail.
+  // Check for stale session marker.
   const isFirstLaunch = await userAgent.firstLaunch();
   if (isFirstLaunch) {
     await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
+    await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
     return undefined;
   }
 
@@ -60,11 +73,36 @@ export async function restoreSession(
     isFirstLaunch: false,
   });
 
-  // Apply local DWN discovery (browser redirect payload or persisted endpoint).
-  // In remote mode, discovery already ran before agent creation — skip.
+  // Apply local DWN discovery.
   if (!userAgent.dwn.isRemoteMode) {
     await applyLocalDwnDiscovery(userAgent, storage, emitter);
   }
+
+  // --- Retry maintenance (independent from session restore) ---
+  // Best-effort: start sync temporarily for remote delivery, run retry,
+  // then stop. Failures here must NOT break a legitimate restore path.
+  if (retryContextJson) {
+    try {
+      await startSyncIfEnabled(userAgent, ctx.defaultSync);
+      try {
+        await retryOrphanedRevocations(userAgent, storage);
+      } finally {
+        await userAgent.sync.stopSync(2000);
+      }
+    } catch {
+      // Retry maintenance is best-effort. If sync startup or retry
+      // fails, the retry context remains in storage for next attempt.
+      // Do NOT let this block normal session restore below.
+    }
+  }
+
+  // --- Normal session restore ---
+  if (previouslyConnected !== 'true') {
+    return undefined;
+  }
+
+  // Start sync for the restored session.
+  await startSyncIfEnabled(userAgent, ctx.defaultSync);
 
   // Determine which identity to reconnect.
   const activeIdentityDid = await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY);
@@ -86,8 +124,7 @@ export async function restoreSession(
     }
   }
 
-  // Start sync.
-  await startSyncIfEnabled(userAgent, ctx.defaultSync);
+  // Sync was already started above (for the restored session).
 
   if (!identity) {
     // No identity found — this is valid for agent-only sessions created
@@ -105,6 +142,10 @@ export async function restoreSession(
       await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
+      await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+      // Do NOT remove REVOCATION_RETRY_CONTEXT here — it has its own
+      // lifecycle managed by the retry maintenance path. Stale session
+      // cleanup must not silently drop pending revocations.
       return undefined;
     }
 
@@ -180,4 +221,248 @@ export async function restoreSession(
     identityConnectedDid : identity.metadata.connectedDid,
     emitIdentityAdded    : false,
   });
+}
+
+// ─── Revocation retry helpers ───────────────────────────────────
+
+type RevocationEntry = { grantId: string; revocationGrantId: string };
+
+type RetryEntry = {
+  delegateDid: string;
+  connectedDid: string;
+  revocations: RevocationEntry[];
+};
+
+/**
+ * Load all retry entries from `REVOCATION_RETRY_CONTEXT`.
+ * Returns an empty array if the data is missing or malformed.
+ */
+async function loadRetryEntries(
+  storage: StorageAdapter,
+): Promise<RetryEntry[]> {
+  const json = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+  if (!json) { return []; }
+
+  try {
+    const parsed = JSON.parse(json);
+
+    // Handle legacy single-object format: wrap in array.
+    const entries = Array.isArray(parsed)
+      ? parsed
+      : (parsed?.delegateDid && parsed?.connectedDid && Array.isArray(parsed?.revocations))
+        ? [parsed]
+        : [];
+
+    if (entries.length === 0 && !Array.isArray(parsed)) {
+      // Truly malformed (not a valid legacy object either).
+      await clearRetryState(storage);
+      return [];
+    }
+
+    // Filter out malformed entries.
+    return entries.filter(
+      (e: any): e is RetryEntry => e?.delegateDid && e?.connectedDid && Array.isArray(e?.revocations),
+    );
+  } catch {
+    await clearRetryState(storage);
+    return [];
+  }
+}
+
+/**
+ * Revoke a single grant and send the revocation to remote DWN endpoints.
+ * Returns `true` if at least one remote endpoint confirmed (202/409).
+ */
+/**
+ * Ensure the revocation grant exists on the owner's remote DWN before
+ * attempting to use it. Reads the grant locally by recordId and sends
+ * it to all remote endpoints. This closes the gap where best-effort
+ * fanout at connect time may have failed.
+ */
+async function ensureRevocationGrantOnRemote(
+  userAgent: EnboxUserAgent,
+  connectedDid: string,
+  delegateDid: string,
+  revocationGrantId: string,
+  dwnEndpointUrls: string[],
+): Promise<void> {
+  if (dwnEndpointUrls.length === 0) { return; }
+
+  try {
+    // Read as the delegate (grant recipient), not the owner.
+    const { reply } = await userAgent.dwn.processRequest({
+      author        : delegateDid,
+      target        : connectedDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId: revocationGrantId } },
+    });
+    if (reply.status.code !== 200 || !reply.entry?.recordsWrite) { return; }
+
+    const { encodedData, ...rawMessage } = reply.entry.recordsWrite as any;
+    const data = reply.entry.data
+      ? new Blob([await DataStream.toBytes(reply.entry.data) as BlobPart])
+      : undefined;
+
+    for (const dwnUrl of dwnEndpointUrls) {
+      try {
+        await userAgent.rpc.sendDwnRequest({
+          dwnUrl,
+          targetDid : connectedDid,
+          message   : rawMessage,
+          data,
+        });
+      } catch {
+        // Per-endpoint failure — continue.
+      }
+    }
+  } catch {
+    // Best-effort — if the grant can't be read or sent, the revocation
+    // attempt will fail on auth and be retried next time.
+  }
+}
+
+/**
+ * Revoke a single grant and send the revocation to remote DWN endpoints.
+ * First ensures the revocation grant is on the remote DWN (self-healing).
+ * Returns `true` if at least one remote endpoint confirmed (202/409).
+ */
+async function revokeAndSendSingle(
+  userAgent: EnboxUserAgent,
+  connectedDid: string,
+  delegateDid: string,
+  entry: RevocationEntry,
+  dwnEndpointUrls: string[],
+): Promise<boolean> {
+  // Self-healing: ensure the revocation grant is on the remote DWN.
+  await ensureRevocationGrantOnRemote(
+    userAgent, connectedDid, delegateDid, entry.revocationGrantId, dwnEndpointUrls,
+  );
+
+  // Read as the delegate (grant recipient), not the owner.
+  const { reply: readReply } = await userAgent.dwn.processRequest({
+    author        : delegateDid,
+    target        : connectedDid,
+    messageType   : DwnInterface.RecordsRead,
+    messageParams : { filter: { recordId: entry.grantId } },
+  });
+  if (readReply.status.code !== 200 || !readReply.entry) { return false; }
+
+  // Reconstruct DwnDataEncodedRecordsWriteMessage: RecordsRead returns
+  // the data as a stream, but PermissionGrant.parse needs encodedData.
+  const grantDataBytes = readReply.entry.data
+    ? await DataStream.toBytes(readReply.entry.data)
+    : new Uint8Array(0);
+  const grantMessageWithData = {
+    ...readReply.entry.recordsWrite,
+    encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
+  };
+  const grant = DwnPermissionGrant.parse(grantMessageWithData as any);
+
+  const { message } = await userAgent.permissions.createRevocation({
+    author            : connectedDid,
+    store             : true,
+    grant,
+    granteeDid        : delegateDid,
+    permissionGrantId : entry.revocationGrantId,
+  });
+
+  return sendRevocationToEndpoints(userAgent, connectedDid, message, dwnEndpointUrls);
+}
+
+/**
+ * Send a revocation message to all owner DWN endpoints.
+ * Returns `true` if at least one endpoint confirmed (202/409).
+ */
+async function sendRevocationToEndpoints(
+  userAgent: EnboxUserAgent,
+  connectedDid: string,
+  revocationMessage: any,
+  dwnEndpointUrls: string[],
+): Promise<boolean> {
+  if (!revocationMessage || dwnEndpointUrls.length === 0) { return false; }
+
+  const { encodedData, ...rawMessage } = revocationMessage;
+  const data = encodedData
+    ? new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart])
+    : undefined;
+
+  for (const dwnUrl of dwnEndpointUrls) {
+    try {
+      const reply = await userAgent.rpc.sendDwnRequest({
+        dwnUrl,
+        targetDid : connectedDid,
+        message   : rawMessage as any,
+        data,
+      });
+      if (reply?.status?.code === 202 || reply?.status?.code === 409) {
+        return true;
+      }
+    } catch {
+      // Per-endpoint failure — try the next one.
+    }
+  }
+  return false;
+}
+
+/** Clear the self-contained revocation retry context from storage. */
+async function clearRetryState(storage: StorageAdapter): Promise<void> {
+  await storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+}
+
+/**
+ * Retry grant revocations that were not confirmed by the owner's remote
+ * DWN during a previous disconnect. Called from `restoreSession()` AFTER
+ * sync is started and only when `REVOCATION_RETRY_CONTEXT` exists.
+ *
+ * This function does NOT restore a session — the user explicitly
+ * disconnected and the retry is purely a background cleanup.
+ */
+export async function retryOrphanedRevocations(
+  userAgent: EnboxUserAgent,
+  storage: StorageAdapter,
+): Promise<void> {
+  let entries = await loadRetryEntries(storage);
+  if (entries.length === 0) {
+    await clearRetryState(storage);
+    return;
+  }
+
+  for (const entry of [...entries]) {
+    let remoteDwnUrls: string[] = [];
+    try {
+      remoteDwnUrls = await userAgent.dwn.getRemoteDwnEndpointUrls(entry.connectedDid);
+    } catch {
+      continue; // Can't resolve endpoints for this entry — try next.
+    }
+
+    const succeeded: string[] = [];
+    for (const revEntry of entry.revocations) {
+      try {
+        const confirmed = await revokeAndSendSingle(
+          userAgent, entry.connectedDid, entry.delegateDid, revEntry, remoteDwnUrls,
+        );
+        if (confirmed) { succeeded.push(revEntry.grantId); }
+      } catch {
+        // Individual failure — continue.
+      }
+    }
+
+    // Update the in-memory collection so the next iteration sees
+    // the correct state (avoid stale-snapshot overwrites).
+    const remaining = entry.revocations.filter((r) => !succeeded.includes(r.grantId));
+    if (remaining.length === 0) {
+      entries = entries.filter((e) => e.delegateDid !== entry.delegateDid);
+    } else {
+      entries = entries.map((e) =>
+        e.delegateDid === entry.delegateDid ? { ...e, revocations: remaining } : e,
+      );
+    }
+  }
+
+  // Write the final state once after processing all entries.
+  if (entries.length === 0) {
+    await clearRetryState(storage);
+  } else {
+    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(entries));
+  }
 }

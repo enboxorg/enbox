@@ -32,7 +32,9 @@ import type {
   WalletConnectOptions,
 } from './types.js';
 
-import { EnboxUserAgent } from '@enbox/agent';
+import { Convert } from '@enbox/common';
+import { DataStream } from '@enbox/dwn-sdk-js';
+import { DwnInterface, DwnPermissionGrant, EnboxUserAgent } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
@@ -457,7 +459,136 @@ export class AuthManager {
     const { clearStorage = false, timeout = 2000 } = options;
     const did = this._session?.did;
 
-    // Stop sync.
+    // Revoke delegated session grants BEFORE stopping sync so the
+    // revocations can be sent to the owner's remote DWN endpoints.
+    // Each revocation grant is contextId-scoped to the specific
+    // session grant it can revoke.
+    const delegateDid = this._session?.delegateDid;
+    const connectedDid = this._session?.did;
+    let failedRevocations: { grantId: string; revocationGrantId: string }[] = [];
+
+    if (delegateDid && connectedDid) {
+      try {
+        const revocationsJson = await this._storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
+        if (revocationsJson) {
+          const revocations: { grantId: string; revocationGrantId: string }[] = JSON.parse(revocationsJson);
+
+          // Resolve the owner's DWN endpoints for remote delivery.
+          // Resolve REMOTE owner DWN endpoints (from DID document, not local
+          // discovery). Only remote endpoints count for revocation success.
+          let remoteDwnUrls: string[] = [];
+          try {
+            remoteDwnUrls = await this._userAgent.dwn.getRemoteDwnEndpointUrls(connectedDid);
+          } catch {
+            // Endpoint resolution failure — revocations will be local-only.
+          }
+
+          const succeeded: string[] = [];
+          for (const { grantId, revocationGrantId } of revocations) {
+            try {
+              // Read the specific grant by recordId. Use the delegate DID
+              // as author since the delegate agent may not have the owner's
+              // signing key. The delegate is the grant's recipient, so the
+              // permissions protocol authorizes the read.
+              const { reply: readReply } = await this._userAgent.dwn.processRequest({
+                author        : delegateDid,
+                target        : connectedDid,
+                messageType   : DwnInterface.RecordsRead,
+                messageParams : { filter: { recordId: grantId } },
+              });
+              if (readReply.status.code !== 200 || !readReply.entry) { continue; }
+              // Reconstruct DwnDataEncodedRecordsWriteMessage: RecordsRead returns
+              // data as a stream, but PermissionGrant.parse needs encodedData.
+              const grantDataBytes = readReply.entry.data
+                ? await DataStream.toBytes(readReply.entry.data)
+                : new Uint8Array(0);
+              const grantMsgWithData = {
+                ...readReply.entry.recordsWrite,
+                encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
+              };
+              const grant = DwnPermissionGrant.parse(grantMsgWithData as any);
+
+              // Self-healing: ensure the revocation grant is on the remote
+              // DWN. The best-effort fanout at connect time may have failed.
+              if (remoteDwnUrls.length > 0) {
+                try {
+                  const { reply: revGrantReply } = await this._userAgent.dwn.processRequest({
+                    author        : delegateDid,
+                    target        : connectedDid,
+                    messageType   : DwnInterface.RecordsRead,
+                    messageParams : { filter: { recordId: revocationGrantId } },
+                  });
+                  if (revGrantReply.status.code === 200 && revGrantReply.entry?.recordsWrite) {
+                    const { encodedData: revGrantEncoded, ...revGrantRaw } = revGrantReply.entry.recordsWrite as any;
+                    const revGrantData = revGrantReply.entry.data
+                      ? new Blob([await DataStream.toBytes(revGrantReply.entry.data) as BlobPart])
+                      : undefined;
+                    for (const dwnUrl of remoteDwnUrls) {
+                      try {
+                        await this._userAgent.rpc.sendDwnRequest({
+                          dwnUrl,
+                          targetDid : connectedDid,
+                          message   : revGrantRaw,
+                          data      : revGrantData,
+                        });
+                      } catch { /* per-endpoint failure */ }
+                    }
+                  }
+                } catch { /* best-effort */ }
+              }
+
+              // Create the revocation locally.
+              const { message: revocationMessage } = await this._userAgent.permissions.createRevocation({
+                author            : connectedDid,
+                store             : true,
+                grant,
+                granteeDid        : delegateDid,
+                permissionGrantId : revocationGrantId,
+              });
+
+              // Send the revocation to the owner's remote DWN endpoints.
+              // A revocation is only considered successful if at least one
+              // remote endpoint confirms it (202/409). Without remote
+              // delivery, the owner-side authority source won't see it.
+              let remoteDelivered = false;
+              if (revocationMessage && remoteDwnUrls.length > 0) {
+                const { encodedData, ...rawMessage } = revocationMessage as any;
+                const data = encodedData
+                  ? new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart])
+                  : undefined;
+                for (const dwnUrl of remoteDwnUrls) {
+                  try {
+                    const sendReply = await this._userAgent.rpc.sendDwnRequest({
+                      dwnUrl,
+                      targetDid : connectedDid,
+                      message   : rawMessage as any,
+                      data,
+                    });
+                    if (sendReply?.status?.code === 202 || sendReply?.status?.code === 409) {
+                      remoteDelivered = true;
+                    }
+                  } catch {
+                    // Per-endpoint failure — try the next one.
+                  }
+                }
+              }
+
+              if (remoteDelivered) {
+                succeeded.push(grantId);
+              }
+            } catch {
+              // Individual revocation failure.
+            }
+          }
+
+          failedRevocations = revocations.filter((r) => !succeeded.includes(r.grantId));
+        }
+      } catch (error: any) {
+        console.warn(`AuthManager: Grant revocation on disconnect failed: ${error.message}`);
+      }
+    }
+
+    // Stop sync AFTER revocations are sent to remote endpoints.
     if (this._session) {
       await this._userAgent.sync.stopSync(timeout);
     }
@@ -488,7 +619,8 @@ export class AuthManager {
         }
       }
     } else {
-      // Clean disconnect: remove session markers but keep vault/identities.
+      // Clean disconnect: ALWAYS clear all session markers regardless
+      // of revocation outcome. Retry context is independent (step below).
       await this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
       await this._storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_DID);
@@ -496,6 +628,57 @@ export class AuthManager {
       await this._storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
+      await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+    }
+
+    // Update retry context — but NOT after a nuclear wipe.
+    // On failure: merge into existing collection.
+    // On success: prune any stale retry entry for this delegate.
+    if (!clearStorage && delegateDid && failedRevocations.length > 0 && connectedDid) {
+      let entries: { delegateDid: string; connectedDid: string; revocations: { grantId: string; revocationGrantId: string }[] }[] = [];
+      try {
+        const existing = await this._storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+        if (existing) {
+          const parsed = JSON.parse(existing);
+          if (Array.isArray(parsed)) {
+            entries = parsed;
+          } else if (parsed?.delegateDid && parsed?.connectedDid && Array.isArray(parsed?.revocations)) {
+            // Legacy single-object format — migrate to array.
+            entries = [parsed];
+          }
+        }
+      } catch { /* ignore corrupt data — start fresh */ }
+
+      // Replace or append this session's entry (keyed by delegateDid).
+      const idx = entries.findIndex((e) => e.delegateDid === delegateDid);
+      const newEntry = { delegateDid, connectedDid, revocations: failedRevocations };
+      if (idx >= 0) {
+        entries[idx] = newEntry;
+      } else {
+        entries.push(newEntry);
+      }
+
+      await this._storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(entries));
+      console.warn(
+        `AuthManager: ${failedRevocations.length} grant revocation(s) failed. ` +
+        `Retry context persisted in REVOCATION_RETRY_CONTEXT.`
+      );
+    } else if (!clearStorage && delegateDid && failedRevocations.length === 0) {
+      // All revocations succeeded — prune any stale retry entry for this
+      // delegate from a previous partial disconnect.
+      try {
+        const existing = await this._storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+        if (existing) {
+          const parsed = JSON.parse(existing);
+          const arr = Array.isArray(parsed) ? parsed : [];
+          const pruned = arr.filter((e: any) => e.delegateDid !== delegateDid);
+          if (pruned.length === 0) {
+            await this._storage.remove(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
+          } else if (pruned.length < arr.length) {
+            await this._storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(pruned));
+          }
+        }
+      } catch { /* best effort */ }
     }
 
     this._setState('unlocked');
@@ -840,10 +1023,14 @@ export class AuthManager {
     }
 
     // 5. Import delegate DID, process grants, set up sync.
-    const { delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols } = result;
+    const {
+      delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys,
+      delegateContextKeys, delegateMultiPartyProtocols, sessionRevocations,
+    } = result;
     const identity = await importDelegateAndSetupSync({
       userAgent, delegatePortableDid, connectedDid, delegateGrants,
       delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols,
+      sessionRevocations,
       flowName: 'Connect',
     });
 

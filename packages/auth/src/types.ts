@@ -250,6 +250,9 @@ export interface ConnectResult {
    * Delivered even when no contexts exist yet (cold-start).
    */
   delegateMultiPartyProtocols?: string[];
+
+  /** Per-grant revocation mappings for session-bound self-revocation on disconnect. */
+  sessionRevocations?: { grantId: string; revocationGrantId: string }[];
 }
 
 /**
@@ -706,4 +709,20 @@ export const STORAGE_KEYS = {
    * @see https://github.com/enboxorg/enbox/issues/690
    */
   REGISTRATION_TOKENS: 'enbox:auth:registrationTokens',
+
+  /**
+   * JSON-serialised `SessionRevocationEntry[]` mapping session grant IDs to
+   * their corresponding revocation grant IDs for disconnect.
+   */
+  SESSION_REVOCATIONS: 'enbox:auth:sessionRevocations',
+
+  /**
+   * Self-contained collection of revocation retry entries from previous
+   * partial disconnects. JSON-serialised array of
+   * `{ delegateDid, connectedDid, revocations }` entries, one per
+   * session. Keyed by `delegateDid` (unique per session).
+   *
+   * Completely independent from active session state.
+   */
+  REVOCATION_RETRY_CONTEXT: 'enbox:auth:revocationRetryContext',
 } as const;

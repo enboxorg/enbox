@@ -340,11 +340,13 @@ export async function importDelegateAndSetupSync(params: {
   delegateDecryptionKeys?: DelegateDecryptionKey[];
   delegateContextKeys?: DelegateContextKey[];
   delegateMultiPartyProtocols?: string[];
+  sessionRevocations?: { grantId: string; revocationGrantId: string }[];
   flowName: string;
 }): Promise<BearerIdentity> {
   const {
     userAgent, delegatePortableDid, connectedDid, delegateGrants,
-    delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols, flowName,
+    delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols,
+    sessionRevocations, flowName,
   } = params;
 
   let identity: BearerIdentity | undefined;
@@ -409,6 +411,9 @@ export async function importDelegateAndSetupSync(params: {
     if (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0) {
       (identity as any)._delegateMultiPartyProtocols = delegateMultiPartyProtocols;
     }
+    if (sessionRevocations && sessionRevocations.length > 0) {
+      (identity as any)._sessionRevocations = sessionRevocations;
+    }
 
     return identity;
   } catch (error: unknown) {
@@ -470,6 +475,10 @@ export async function finalizeDelegateSession(params: {
   const delegateMultiPartyProtocols = (identity as any)._delegateMultiPartyProtocols as string[] | undefined;
   if (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0) {
     extraStorageKeys[STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS] = JSON.stringify(delegateMultiPartyProtocols);
+  }
+  const sessionRevocations = (identity as any)._sessionRevocations as { grantId: string; revocationGrantId: string }[] | undefined;
+  if (sessionRevocations && sessionRevocations.length > 0) {
+    extraStorageKeys[STORAGE_KEYS.SESSION_REVOCATIONS] = JSON.stringify(sessionRevocations);
   }
 
   // Wire post-connect context key persistence: when the owner creates a

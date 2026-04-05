@@ -13,7 +13,6 @@ import type {
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
-import { TtlCache } from '@enbox/common';
 import {
   Cid,
   ContentEncryptionAlgorithm,
@@ -31,6 +30,7 @@ import {
   ResumableTaskStoreLevel,
   StateIndexLevel,
 } from '@enbox/dwn-sdk-js';
+import { Convert, TtlCache } from '@enbox/common';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 
@@ -360,6 +360,15 @@ export class AgentDwnApi {
     ]);
 
     return [...uniqueEndpoints];
+  }
+
+  /**
+   * Returns only the DWN service endpoints from the DID document (no local
+   * discovery endpoint). Use this when you need to confirm that a message
+   * reached the owner's actual remote DWN, not just the delegate's local server.
+   */
+  public async getRemoteDwnEndpointUrls(targetDid: string): Promise<string[]> {
+    return getDwnServiceEndpointUrls(targetDid, this.agent.did);
   }
 
   /** Lazily retrieves the local DWN server endpoint via discovery. */
@@ -1215,8 +1224,34 @@ export class AgentDwnApi {
         await this.getSigner(request.granteeDid) :
         await this.getSigner(request.author);
 
+      // When signing as a delegate with a permissionGrantId, fetch the full
+      // grant message and pass it as `delegatedGrant` so the DWN SDK correctly
+      // sets `authorization.authorDelegatedGrant` and resolves the logical
+      // author to the grantor (owner) rather than the signer (delegate).
+      const params = { ...request.messageParams } as any;
+      if (request.granteeDid && params.permissionGrantId && !params.delegatedGrant
+        && isDwnRequest(request, DwnInterface.RecordsWrite)) {
+        // Read as the grantee (delegate), not the owner. The delegate is
+        // the grant's recipient so the permissions protocol authorizes the
+        // read. The owner's signing key may not be available on the
+        // delegate agent in real wallet-connect flows.
+        const { reply: grantReply } = await this.processRequest({
+          author        : request.granteeDid,
+          target        : request.author,
+          messageType   : DwnInterface.RecordsRead,
+          messageParams : { filter: { recordId: params.permissionGrantId } },
+        });
+        if (grantReply.status.code === 200 && grantReply.entry?.recordsWrite && grantReply.entry?.data) {
+          const grantDataBytes = await DataStream.toBytes(grantReply.entry.data);
+          params.delegatedGrant = {
+            ...grantReply.entry.recordsWrite,
+            encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
+          };
+        }
+      }
+
       dwnMessage = await dwnMessageConstructor.create({
-        ...request.messageParams,
+        ...params,
         signer
       });
 

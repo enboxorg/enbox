@@ -68,6 +68,10 @@ export type CreateRevocationParams = {
   author: string;
   grant: DwnPermissionGrant;
   description?: string;
+  /** For delegated revocation: the delegate DID that signs the revocation. */
+  granteeDid?: string;
+  /** For delegated revocation: the grant ID that authorizes the revocation write. */
+  permissionGrantId?: string;
 };
 
 export type GetPermissionParams = {
