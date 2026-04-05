@@ -1,5 +1,58 @@
 # @enbox/agent
 
+## 0.6.0
+
+### Minor Changes
+
+- [#809](https://github.com/enboxorg/enbox/pull/809) [`f7b4c79`](https://github.com/enboxorg/enbox/commit/f7b4c79f5a11a4d3de7836bb1ee56e47c90faf3b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: browser connectivity detection, WebSocket heartbeat, and rpc.ping server handler
+
+  Adds browser `online`/`offline` and `visibilitychange` event listeners to the
+  sync engine. On offline, all active per-link connectivity states transition to
+  offline (reflected by the public `connectivityState` getter). On online or page
+  becoming visible, an immediate SMT reconciliation runs. Safe no-op in Node.
+
+  Adds application-level heartbeat (ping/pong) to `JsonRpcSocket` — sends
+  `rpc.ping` every 30s and closes the connection if no response arrives within
+  10s. Detects silently dead WebSocket connections that TCP keepalive misses.
+
+  Adds `rpc.ping` handler to the DWN server and a defensive unknown-method
+  guard to `JsonRpcRouter.handle()` (returns MethodNotFound instead of crashing).
+
+- [#812](https://github.com/enboxorg/enbox/pull/812) [`28fd8ed`](https://github.com/enboxorg/enbox/commit/28fd8ed952df6ea032f246180370169758a1b0f8) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: dead letter tracking and sync health API
+
+  Adds durable tracking of permanently failed sync messages in a LevelDB
+  sublevel. Failed messages are no longer logged and forgotten — they persist
+  until explicitly cleared by the application.
+
+  New public API on SyncEngine:
+
+  - `getFailedMessages(tenantDid?)` — list all dead letter entries
+  - `clearFailedMessage(messageCid)` — remove a single entry
+  - `clearAllFailedMessages(tenantDid?)` — clear all or scoped to a tenant
+  - `getSyncHealth()` — summary with connectivity, failed count, degraded links
+
+  Push permanent failures (400/401/403) now carry structured diagnostic info
+  (`PermanentPushFailure` type with `statusCode` and `detail`) and are
+  automatically recorded in the dead letter store.
+
+### Patch Changes
+
+- [#813](https://github.com/enboxorg/enbox/pull/813) [`963d366`](https://github.com/enboxorg/enbox/commit/963d366de71e9e6c077e0ed1ad11904e8a587c92) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: complete dead letter wiring for all sync failure paths
+
+  Records permanently failed messages in the dead letter store at every
+  failure point, not just push-permanent (400/401/403):
+
+  - push retry exhaustion: all CIDs in the batch recorded as `push-exhausted`
+  - pull processing failures: CIDs that fail after 3 retry passes recorded
+    as `pull-processing` (pullMessages now returns failed CIDs)
+  - closure validation failures: the triggering message CID recorded as
+    `closure` with the ClosureFailureCode and detail
+  - live pull processRawMessage exceptions: the failing CID recorded as
+    `pull-processing` with the error message
+
+- Updated dependencies [[`f7b4c79`](https://github.com/enboxorg/enbox/commit/f7b4c79f5a11a4d3de7836bb1ee56e47c90faf3b)]:
+  - @enbox/dwn-clients@0.3.0
+
 ## 0.5.16
 
 ### Patch Changes
