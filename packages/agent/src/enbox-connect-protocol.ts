@@ -771,15 +771,47 @@ async function prepareProtocol(
     logger.log(`Protocol already exists: ${protocolDefinition.protocol}`);
 
     const configureMessage = queryMessage.reply.entries![0];
-    const { reply: sendReply } = await agent.sendDwnRequest({
-      author      : selectedDid,
-      target      : selectedDid,
-      messageType : DwnInterface.ProtocolsConfigure,
-      rawMessage  : configureMessage,
-    });
 
-    if (sendReply.status.code !== 202 && sendReply.status.code !== 409) {
-      throw new Error(`Could not send protocol: ${sendReply.status.detail}`);
+    // If the protocol needs encryption but the existing definition lacks
+    // $encryption keys (e.g. installed before encryption was configured,
+    // or synced from a remote that had the old definition), re-install
+    // with encryption: true so the keys are derived and injected.
+    const existingDef = configureMessage.descriptor.definition;
+    const firstStructKey = Object.keys(existingDef.structure ?? {})[0];
+    const existingHasEncryption = firstStructKey
+      && (existingDef.structure as any)[firstStructKey]?.$encryption !== undefined;
+
+    if (needsEncryption && !existingHasEncryption) {
+      logger.log(`Re-installing protocol with encryption: ${protocolDefinition.protocol}`);
+      const { reply: reconfReply, message: reconfMessage } = await agent.sendDwnRequest({
+        author        : selectedDid,
+        target        : selectedDid,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: protocolDefinition },
+        encryption    : true,
+      });
+
+      if (reconfReply.status.code !== 202 && reconfReply.status.code !== 409) {
+        throw new Error(`Could not re-configure protocol with encryption: ${reconfReply.status.detail}`);
+      }
+
+      await agent.processDwnRequest({
+        author      : selectedDid,
+        target      : selectedDid,
+        messageType : DwnInterface.ProtocolsConfigure,
+        rawMessage  : reconfMessage,
+      });
+    } else {
+      const { reply: sendReply } = await agent.sendDwnRequest({
+        author      : selectedDid,
+        target      : selectedDid,
+        messageType : DwnInterface.ProtocolsConfigure,
+        rawMessage  : configureMessage,
+      });
+
+      if (sendReply.status.code !== 202 && sendReply.status.code !== 409) {
+        throw new Error(`Could not send protocol: ${sendReply.status.detail}`);
+      }
     }
   }
 }

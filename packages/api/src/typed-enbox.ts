@@ -769,11 +769,22 @@ export class TypedEnbox<
         return;
       }
 
-      // Installed but definitions differ — allow operations but warn.
-      console.warn(
-        `TypedEnbox: installed protocol '${this._definition.protocol}' differs from the provided definition. ` +
-        'Call configure() to update it.',
-      );
+      // Installed but definitions differ.
+      // For delegates this is expected: the synced definition includes
+      // runtime `$encryption` keys that the app-provided definition
+      // does not have. Pre-populate the agent's protocol definition
+      // cache so the encryption code path can find `$encryption` keys
+      // without re-querying the local DWN (which requires a grant).
+      if (this._dwn.isDelegate) {
+        await this._dwn.protocols.configure({
+          definition: existing.definition,
+        });
+      } else {
+        console.warn(
+          `TypedEnbox: installed protocol '${this._definition.protocol}' differs from the provided definition. ` +
+          'Call configure() to update it.',
+        );
+      }
       this._configured = true;
       return;
     }

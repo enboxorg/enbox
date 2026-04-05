@@ -491,6 +491,52 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
         await liveQuery.close();
       }
     });
+
+    it('should write encrypted records when sync has already pulled the protocol', async () => {
+      // This reproduces the production scenario: sync pulls the protocol
+      // definition (with $encryption) BEFORE the first records.create call.
+      // The _autoConfigureOnce early-return path is taken (protocol already
+      // installed), and the encrypted write must still find the $encryption
+      // keys in the protocol definition.
+      const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+      const protocolDef = createEncryptedProtocol(protocolUri);
+      const { delegateDid, dappEnbox } = await setupDelegateFlow(protocolDef);
+
+      // Explicitly sync — this pulls the owner's ProtocolsConfigure
+      // (with $encryption) onto the delegate's local DWN.
+      await (dappHarness.agent as EnboxUserAgent).sync.sync('pull');
+
+      const EncTestProtocol = defineProtocol(
+        protocolDef as ProtocolDefinition,
+        {} as EncryptedSchemaMap,
+      );
+
+      const typed = dappEnbox.using(EncTestProtocol);
+
+      // The protocol is already installed locally (from sync).
+      // _autoConfigureOnce should find it and NOT re-configure.
+      // The encrypted write must still succeed.
+      const { status: mintStatus, record: mintRecord } = await typed.records.create('mint', {
+        data: { url: 'https://testnut.cash', unit: 'sat' },
+      });
+      expect(mintStatus.code).toBe(202);
+
+      const { status: proofStatus, record: proofRecord } = await typed.records.create(
+        'mint/proof' as any,
+        {
+          data            : { amount: 100, secret: 'abc', C: 'def' },
+          parentContextId : mintRecord!.contextId,
+        },
+      );
+      expect(proofStatus.code).toBe(202);
+      expect(proofRecord).toBeDefined();
+      expect((proofRecord!.rawMessage as any).encryption).toBeDefined();
+
+      const signerDid = Jws.getSignerDid(
+        proofRecord!.rawMessage.authorization.signature.signatures[0],
+      );
+      expect(signerDid).toBe(delegateDid.uri);
+    });
   });
 });
 
