@@ -291,7 +291,13 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
 
     // Read the record from the store. If encryption is active for this tenant,
     // the agent's auto-decryption pipeline handles ECIES key unwrapping and AES decryption.
-    const encryptionActive = this.isEncryptionActive(tenantDid);
+    //
+    // When the protocol definition declares `encryptionRequired: true`, always
+    // request decryption — even if `initialize()` has not been called for this
+    // tenant yet. This covers delegate sessions where key records arrive via
+    // sync (`processRawMessage`) rather than `set()`, leaving the per-tenant
+    // `_tenantEncryptionActive` cache cold after an agent restart.
+    const encryptionActive = this.encryptionRequired || this.isEncryptionActive(tenantDid);
     const { reply: readReply } = await agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,

@@ -1476,7 +1476,9 @@ export class SyncEngineLevel implements SyncEngine {
             const messageStore = this.agent.dwn.node.storage.messageStore;
             let closureCtx = this._closureContexts.get(did);
             if (!closureCtx) {
-              closureCtx = createClosureContext(did);
+              closureCtx = createClosureContext(did, undefined, {
+                isDelegateSession: !!delegateDid,
+              });
               this._closureContexts.set(did, closureCtx);
             }
 

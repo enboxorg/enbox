@@ -122,19 +122,42 @@ export type ClosureEvaluationContext = {
   missingDeps: Set<string>;
   /** Maximum traversal depth. Default 32. */
   maxDepth: number;
+
+  /**
+   * When `true`, the sync link is operating as a delegated session.
+   *
+   * Affects class 5 (encryption) dependency extraction:
+   *
+   * - **Single-party** protocols: the delegate decrypts via pre-derived
+   *   `delegateDecryptionKeys` (ProtocolPath keys).  No key-delivery
+   *   records are involved, so the `keyDeliveryProtocol` edge is
+   *   suppressed entirely in `extractProtocolAwareDeps()`.
+   *
+   * - **Multi-party** protocols: on in-memory cache miss the runtime
+   *   falls back to `fetchCrossDeviceContextKey()` (see
+   *   `dwn-encryption.ts:453`, `dwn-key-delivery.ts:268`) which queries
+   *   the local DWN.  Both `keyDeliveryProtocol` and `contextKeyRecord`
+   *   are emitted and resolved normally.
+   */
+  isDelegateSession?: boolean;
 };
 
 /**
  * Create a fresh evaluation context for a batch of closure evaluations.
  */
-export function createClosureContext(tenantDid: string, maxDepth?: number): ClosureEvaluationContext {
+export function createClosureContext(
+  tenantDid: string,
+  maxDepth?: number,
+  options?: { isDelegateSession?: boolean },
+): ClosureEvaluationContext {
   return {
     tenantDid,
-    protocolCache : new Map(),
-    grantCache    : new Map(),
-    satisfiedDeps : new Set(),
-    missingDeps   : new Set(),
-    maxDepth      : maxDepth ?? 32,
+    protocolCache     : new Map(),
+    grantCache        : new Map(),
+    satisfiedDeps     : new Set(),
+    missingDeps       : new Set(),
+    maxDepth          : maxDepth ?? 32,
+    isDelegateSession : options?.isDelegateSession,
   };
 }
 
