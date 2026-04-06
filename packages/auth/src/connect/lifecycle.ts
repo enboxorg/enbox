@@ -25,7 +25,7 @@ import { Convert } from '@enbox/common';
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 
 import { DataStream } from '@enbox/dwn-sdk-js';
-import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
+import { DwnInterface, DwnPermissionGrant, KeyDeliveryProtocolDefinition } from '@enbox/agent';
 
 import { AuthSession } from '../identity-session.js';
 import { DEFAULT_DWN_ENDPOINTS, INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
@@ -369,6 +369,20 @@ export async function importDelegateAndSetupSync(params: {
       delegateDid : delegatePortableDid.uri,
       grants      : delegateGrants,
     });
+
+    // Install the key-delivery protocol on the delegate's local DWN so the
+    // sync engine's closure validator doesn't flag encrypted records as
+    // missing the `keyDeliveryProtocol` dependency.  This is a best-effort
+    // install — the protocol only needs to exist locally (it is never sent
+    // to the remote DWN for delegates).
+    try {
+      await userAgent.processDwnRequest({
+        author        : connectedDid,
+        target        : connectedDid,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: KeyDeliveryProtocolDefinition },
+      });
+    } catch { /* best effort — closure will fall back to repairing */ }
 
     // Import delegate protocol path decryption keys if the wallet provided
     // them. These enable the delegate to decrypt ProtocolPath-encrypted
