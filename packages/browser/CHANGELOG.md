@@ -1,5 +1,16 @@
 # @enbox/browser
 
+## 0.3.0
+
+### Minor Changes
+
+- [#856](https://github.com/enboxorg/enbox/pull/856) [`8154bb5`](https://github.com/enboxorg/enbox/commit/8154bb509deadf6e2446c39d2ad58e42de8181d7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: re-export api/auth from browser, update wallet defaults, add DWebConnect app metadata
+
+  - Re-export `Enbox`, `defineProtocol`, `repository` from `@enbox/api` and `AuthManager`, `AuthSession`, connect types from `@enbox/auth` so browser dapps need only a single `@enbox/browser` import
+  - Update `DEFAULT_WALLETS` to `enbox-wallet.pages.dev` and `blue-enbox-wallet.pages.dev` with description field
+  - Add `appName`, `appIcon`, and `portableIdentity` to the DWeb Connect postMessage protocol for richer wallet consent screens and identity export flows
+  - Add `description` field to `WalletOption` interface, rendered in the wallet selector modal
+
 ## 0.2.1
 
 ### Patch Changes
