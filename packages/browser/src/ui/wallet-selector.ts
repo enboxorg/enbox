@@ -12,7 +12,7 @@ import type { WalletOption } from '../browser-connect-handler.js';
 /** Shows the wallet selector modal and resolves with the chosen wallet URL. */
 export function showWalletSelector(wallets: WalletOption[]): Promise<string> {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
-    throw new Error('[@enbox/auth] Wallet selector is only available in browser environments.');
+    throw new Error('[@enbox/browser] Wallet selector is only available in browser environments.');
   }
 
   return new Promise<string>((resolve, reject) => {
@@ -52,7 +52,7 @@ export function showWalletSelector(wallets: WalletOption[]): Promise<string> {
     closeBtn.innerHTML = '&times;';
     closeBtn.addEventListener('click', () => {
       cleanup();
-      reject(new Error('[@enbox/auth] Wallet selection cancelled.'));
+      reject(new Error('[@enbox/browser] Wallet selection cancelled.'));
     });
 
     header.appendChild(title);
@@ -74,16 +74,28 @@ export function showWalletSelector(wallets: WalletOption[]): Promise<string> {
       icon.height = 32;
       icon.onerror = (): void => { icon.style.display = 'none'; };
 
+      const textGroup = document.createElement('div');
+      textGroup.className = 'wallet-text';
+
       const name = document.createElement('span');
       name.className = 'wallet-name';
       name.textContent = wallet.name;
+
+      textGroup.appendChild(name);
+
+      if (wallet.description) {
+        const desc = document.createElement('span');
+        desc.className = 'wallet-description';
+        desc.textContent = wallet.description;
+        textGroup.appendChild(desc);
+      }
 
       const arrow = document.createElement('span');
       arrow.className = 'arrow';
       arrow.textContent = '\u203A'; // ›
 
       item.appendChild(icon);
-      item.appendChild(name);
+      item.appendChild(textGroup);
       item.appendChild(arrow);
 
       item.addEventListener('click', () => {
@@ -152,7 +164,7 @@ export function showWalletSelector(wallets: WalletOption[]): Promise<string> {
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) {
         cleanup();
-        reject(new Error('[@enbox/auth] Wallet selection cancelled.'));
+        reject(new Error('[@enbox/browser] Wallet selection cancelled.'));
       }
     });
 
@@ -161,7 +173,7 @@ export function showWalletSelector(wallets: WalletOption[]): Promise<string> {
       if (e.key === 'Escape') {
         document.removeEventListener('keydown', onKeydown);
         cleanup();
-        reject(new Error('[@enbox/auth] Wallet selection cancelled.'));
+        reject(new Error('[@enbox/browser] Wallet selection cancelled.'));
       }
     };
     document.addEventListener('keydown', onKeydown);
@@ -294,11 +306,28 @@ function buildStyles(isDark: boolean): string {
     }
     .wallet-item:hover { background: ${itemHover}; }
 
-    .wallet-name { flex: 1; font-weight: 500; }
+    .wallet-text {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .wallet-name { font-weight: 500; }
+
+    .wallet-description {
+      font-size: 12px;
+      color: ${muted};
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
 
     .arrow {
       font-size: 20px;
       color: ${muted};
+      flex-shrink: 0;
     }
 
     .separator {

@@ -131,6 +131,7 @@
       "version": "0.2.1",
       "dependencies": {
         "@enbox/agent": "workspace:*",
+        "@enbox/api": "workspace:*",
         "@enbox/auth": "workspace:*",
         "@enbox/dids": "workspace:*",
       },
