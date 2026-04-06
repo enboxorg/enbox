@@ -858,6 +858,133 @@ describe('evaluateClosure', () => {
     });
   });
 
+  describe('Class 5 — delegate session encryption closure', () => {
+    it('should auto-satisfy keyDeliveryProtocol for delegate sessions (single-party)', async () => {
+      // Delegate sessions decrypt via pre-derived keys (delegateDecryptionKeys
+      // for single-party, delegateContextKeys for multi-party) — they do NOT
+      // use DWN-stored key-delivery records.  The closure resolver must treat
+      // keyDeliveryProtocol as structurally inapplicable for delegates.
+      const protocolDef = {
+        protocol  : 'https://example.com/wallet',
+        published : true,
+        types     : {
+          proof: { encryptionRequired: true },
+        },
+        structure: {
+          proof: {
+            $encryption: { rootKeyId: 'key-1', publicKeyJwk: {} },
+          },
+        },
+      };
+      const protocolConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: protocolDef },
+      } as any;
+
+      const msg = mockMessage({
+        protocol     : 'https://example.com/wallet',
+        protocolPath : 'proof',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'proof-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/wallet', [protocolConfig]],
+          // key-delivery protocol is MISSING from the store
+        ]),
+      });
+
+      // Non-delegate: closure FAILS because keyDeliveryProtocol is missing.
+      const ownerCtx = createClosureContext('did:example:alice');
+      const ownerResult = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/wallet',
+      }, ownerCtx);
+
+      expect(ownerResult.complete).toBe(false);
+      expect(ownerResult.failure!.code).toBe(ClosureFailureCode.EncryptionDependencyMissing);
+      expect(ownerResult.failure!.edge.label).toBe('keyDeliveryProtocol');
+
+      // Delegate: closure SUCCEEDS — keyDeliveryProtocol is auto-satisfied.
+      const delegateCtx = createClosureContext('did:example:alice', undefined, {
+        isDelegateSession: true,
+      });
+      const delegateResult = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/wallet',
+      }, delegateCtx);
+
+      expect(delegateResult.complete).toBe(true);
+      // The edge is suppressed at extraction time — it does not appear in the graph.
+      expect(delegateResult.edges.some(e => e.label === 'keyDeliveryProtocol')).toBe(false);
+    });
+
+    it('should NOT suppress keyDeliveryProtocol for delegate sessions with multi-party records', async () => {
+      // Multi-party: on cache miss the runtime falls back to
+      // fetchCrossDeviceContextKey() (dwn-encryption.ts:453,
+      // dwn-key-delivery.ts:268) which does a local RecordsQuery +
+      // RecordsRead.  That authorization path requires both the
+      // key-delivery ProtocolsConfigure and the contextKey record.
+      // Neither should be auto-satisfied for multi-party delegates.
+      const protocolDef = {
+        protocol  : 'https://example.com/chat',
+        published : true,
+        types     : {
+          thread      : {},
+          participant : {},
+          message     : { encryptionRequired: true },
+        },
+        structure: {
+          thread: {
+            participant: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: ['read'] }],
+            },
+            message: {
+              $encryption : { rootKeyId: 'key-1', publicKeyJwk: {} },
+              $actions    : [{ role: 'thread/participant', can: ['create', 'read'] }],
+            },
+          },
+        },
+      };
+      const protocolConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: protocolDef },
+      } as any;
+
+      const msg = mockMessage({
+        protocol     : 'https://example.com/chat',
+        protocolPath : 'thread/message',
+        parentId     : 'thread-1',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'msg-1';
+      (msg as any).contextId = 'thread-1/msg-1';
+
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      (parentThread as any).recordId = 'thread-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/chat', [protocolConfig]],
+          ['recordId:thread-1', [parentThread]],
+          // key-delivery protocol AND context key are MISSING
+        ]),
+      });
+
+      const ctx = createClosureContext('did:example:alice', undefined, {
+        isDelegateSession: true,
+      });
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/chat',
+      }, ctx);
+
+      // Both keyDeliveryProtocol and contextKeyRecord are real dependencies
+      // for multi-party delegates.  keyDeliveryProtocol is resolved first
+      // and fails because the key-delivery ProtocolsConfigure is not installed.
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.EncryptionDependencyMissing);
+      expect(result.failure!.edge.label).toBe('keyDeliveryProtocol');
+    });
+  });
+
   describe('Class 6: Cross-protocol $ref closure', () => {
     it('should require referenced protocol ProtocolsConfigure when path uses $ref', async () => {
       const composingDef = {

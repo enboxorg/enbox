@@ -200,6 +200,7 @@ function getRuleSetAtProtocolPath(
 function extractProtocolAwareDeps(
   message: GenericMessage,
   protocolDef: any,
+  isDelegateSession?: boolean,
 ): ClosureDependencyEdge[] {
   const desc = message.descriptor as Record<string, unknown>;
   if (desc.interface !== 'Records') { return []; }
@@ -246,15 +247,39 @@ function extractProtocolAwareDeps(
         identifierType  : 'protocol',
       });
 
-      // Level 2: key-delivery protocol record.
-      // The key-delivery protocol must be installed locally.
-      const keyDeliveryProtocol = 'https://identity.foundation/protocols/key-delivery';
-      edges.push({
-        dependencyClass : 5,
-        label           : 'keyDeliveryProtocol',
-        identifier      : keyDeliveryProtocol,
-        identifierType  : 'protocol',
-      });
+      // Determine whether this record uses multi-party (ProtocolContext)
+      // encryption before emitting key-delivery edges.
+      const contextId = (message as any).contextId as string | undefined;
+      let isMultiParty = false;
+      if (contextId) {
+        const rootProtocolPath = protocolPath.split('/')[0];
+        isMultiParty = isMultiPartyContext(protocolDef, rootProtocolPath);
+      }
+
+      // Level 2: key-delivery protocol ProtocolsConfigure.
+      //
+      // For **owner** sessions this is always emitted — the DWN needs the
+      // protocol installed to authorize contextKey record access.
+      //
+      // For **delegate** sessions:
+      //  - Single-party: the delegate decrypts via pre-derived
+      //    `delegateDecryptionKeys` (ProtocolPath keys).  No key-delivery
+      //    records are involved.  Edge is suppressed.
+      //  - Multi-party: on in-memory cache miss the runtime falls back to
+      //    `fetchCrossDeviceContextKey()` (dwn-encryption.ts:453,
+      //    dwn-key-delivery.ts:268) which does a local RecordsQuery +
+      //    RecordsRead against the owner's tenant.  That authorization path
+      //    requires the key-delivery ProtocolsConfigure.  Edge is emitted.
+      const suppressKeyDelivery = isDelegateSession && !isMultiParty;
+      if (!suppressKeyDelivery) {
+        const keyDeliveryProtocol = 'https://identity.foundation/protocols/key-delivery';
+        edges.push({
+          dependencyClass : 5,
+          label           : 'keyDeliveryProtocol',
+          identifier      : keyDeliveryProtocol,
+          identifierType  : 'protocol',
+        });
+      }
 
       // Level 3: Context key enforcement for multi-party contexts.
       // Uses isMultiPartyContext() from protocol-utils to determine whether the
@@ -264,21 +289,20 @@ function extractProtocolAwareDeps(
       //
       // Single-party contexts use ProtocolPath encryption (owner-only) and do
       // NOT need a context key — the edge is skipped entirely.
-      const contextId = (message as any).contextId as string | undefined;
-      if (contextId) {
-        const rootProtocolPath = protocolPath.split('/')[0];
-        const multiParty = isMultiPartyContext(protocolDef, rootProtocolPath);
-        if (multiParty) {
-          const rootContextId = contextId.split('/')[0];
-          // Separator is '|' (not ':') because protocol URIs contain '://'
-          // which would break indexOf(':') parsing in resolveDependency.
-          edges.push({
-            dependencyClass : 5,
-            label           : 'contextKeyRecord',
-            identifier      : `${desc.protocol}|${rootContextId}`,
-            identifierType  : 'messageCid',
-          });
-        }
+      //
+      // For delegates this edge is always emitted when applicable: the
+      // runtime's cross-device fallback still needs the contextKey record
+      // locally (on cache miss).
+      if (isMultiParty && contextId) {
+        const rootContextId = contextId.split('/')[0];
+        // Separator is '|' (not ':') because protocol URIs contain '://'
+        // which would break indexOf(':') parsing in resolveDependency.
+        edges.push({
+          dependencyClass : 5,
+          label           : 'contextKeyRecord',
+          identifier      : `${desc.protocol}|${rootContextId}`,
+          identifierType  : 'messageCid',
+        });
       }
     }
   }
@@ -496,7 +520,7 @@ export async function evaluateClosure(
         const cachedProtocolMsg = context.protocolCache.get(currentProtocol);
         const protocolDef = (cachedProtocolMsg?.descriptor as any)?.definition;
         if (protocolDef) {
-          const protoAwareEdges = extractProtocolAwareDeps(current, protocolDef);
+          const protoAwareEdges = extractProtocolAwareDeps(current, protocolDef, context.isDelegateSession);
           const protoResult = await resolveEdges(
             protoAwareEdges, allEdges, messageStore, context, visited, queue, rootCid, currentDepth
           );
