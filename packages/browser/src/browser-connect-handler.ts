@@ -18,16 +18,28 @@ export interface WalletOption {
   /** Display name (e.g. "Enbox Wallet"). */
   name: string;
 
-  /** Base URL of the wallet app (e.g. "https://wallet.enbox.org"). */
+  /** Base URL of the wallet app (e.g. "https://enbox-wallet.pages.dev"). */
   url: string;
 
   /** Optional icon URL. If omitted, the wallet's favicon is used. */
   icon?: string;
+
+  /** Short description shown below the wallet name in the selector. */
+  description?: string;
 }
 
 /** Default wallets shown in the selector when no overrides are provided. */
 export const DEFAULT_WALLETS: WalletOption[] = [
-  { name: 'Enbox Wallet', url: 'https://wallet.enbox.org' },
+  {
+    name        : 'Enbox Wallet',
+    url         : 'https://enbox-wallet.pages.dev',
+    description : 'Your digital identity wallet',
+  },
+  {
+    name        : 'Blue Enbox Wallet',
+    url         : 'https://blue-enbox-wallet.pages.dev',
+    description : 'Your digital identity wallet',
+  },
 ];
 
 /** Options for creating a BrowserConnectHandler. */
@@ -49,6 +61,19 @@ export interface BrowserConnectHandlerOptions {
    * @default 300_000 (5 minutes)
    */
   timeout?: number;
+
+  /**
+   * Display name of the requesting application.
+   * Shown in the wallet's permission consent screen.
+   */
+  appName?: string;
+
+  /**
+   * Icon URL of the requesting application.
+   * Shown alongside the app name in the wallet's consent screen.
+   * Defaults to `${window.location.origin}/favicon.ico` if omitted.
+   */
+  appIcon?: string;
 }
 
 /**
@@ -63,11 +88,12 @@ export interface BrowserConnectHandlerOptions {
  *
  * @example
  * ```ts
- * import { AuthManager } from '@enbox/auth';
- * import { BrowserConnectHandler } from '@enbox/browser';
+ * import { AuthManager, BrowserConnectHandler } from '@enbox/browser';
  *
  * const auth = await AuthManager.create({
- *   connectHandler: BrowserConnectHandler(),
+ *   connectHandler: BrowserConnectHandler({
+ *     appName: 'My Dapp',
+ *   }),
  * });
  *
  * const session = await auth.connect({ protocols: [NotesProtocol] });
@@ -80,6 +106,8 @@ export function BrowserConnectHandler(
     wallets = DEFAULT_WALLETS,
     walletUrl: fixedWalletUrl,
     timeout,
+    appName,
+    appIcon,
   } = options;
 
   return {
@@ -97,6 +125,8 @@ export function BrowserConnectHandler(
         walletUrl,
         permissionRequests: params.permissionRequests,
         timeout,
+        appName,
+        appIcon,
       });
     },
   };

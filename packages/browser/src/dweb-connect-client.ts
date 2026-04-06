@@ -17,7 +17,7 @@ import { decryptPostMessagePayload, generateEphemeralKeyPair } from './dweb-conn
 
 /** Options for initiating a DWeb Connect flow via popup. */
 export interface DWebConnectClientOptions {
-  /** Base URL of the wallet app (e.g. "https://wallet.enbox.org"). */
+  /** Base URL of the wallet app (e.g. "https://enbox-wallet.pages.dev"). */
   walletUrl: string;
 
   /** The DID to pre-select in the wallet's identity picker. */
@@ -35,6 +35,27 @@ export interface DWebConnectClientOptions {
    * @default 300_000 (5 minutes)
    */
   timeout?: number;
+
+  /**
+   * Display name of the requesting application.
+   * Shown in the wallet's permission consent screen.
+   */
+  appName?: string;
+
+  /**
+   * Icon URL of the requesting application.
+   * Shown alongside the app name in the wallet's consent screen.
+   */
+  appIcon?: string;
+
+  /**
+   * A PortableDid to transfer to the wallet for identity import.
+   *
+   * When provided, the wallet imports this identity and creates
+   * delegate grants for the dapp, allowing the dapp to transition
+   * from local-DID mode to delegate mode while keeping the same DID.
+   */
+  portableIdentity?: PortableDid;
 }
 
 /**
@@ -43,7 +64,8 @@ export interface DWebConnectClientOptions {
  * Protocol:
  * 1. Dapp opens `${walletUrl}/dweb-connect` as a popup.
  * 2. Wallet sends `{ type: 'dweb-connect-loaded' }` when ready.
- * 3. Dapp sends `{ type: 'dweb-connect-authorization-request', did, permissions }`.
+ * 3. Dapp sends `{ type: 'dweb-connect-authorization-request', did, permissions,
+ *    appName?, appIcon?, portableIdentity? }`.
  * 4. Wallet shows consent UI, then sends back
  *    `{ type: 'dweb-connect-authorization-response', delegateDid, grants }`.
  * 5. Popup closes.
@@ -57,11 +79,14 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
     did,
     permissionRequests,
     timeout = 300_000,
+    appName,
+    appIcon,
+    portableIdentity,
   } = options;
 
   if (typeof window === 'undefined') {
     throw new Error(
-      '[@enbox/auth] DWeb Connect is only available in browser environments.'
+      '[@enbox/browser] DWeb Connect is only available in browser environments.'
     );
   }
 
@@ -75,7 +100,7 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
 
   if (!popup) {
     throw new Error(
-      '[@enbox/auth] Popup blocked. Allow popups for this site to connect to a wallet.'
+      '[@enbox/browser] Popup blocked. Allow popups for this site to connect to a wallet.'
     );
   }
 
@@ -108,7 +133,7 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
         cleanup();
         try { popup.close(); } catch { /* best effort */ }
         reject(new Error(
-          '[@enbox/auth] DWeb Connect timed out waiting for wallet response.'
+          '[@enbox/browser] DWeb Connect timed out waiting for wallet response.'
         ));
       }
     }, timeout);
@@ -130,12 +155,16 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
       const { type } = event.data ?? {};
 
       if (type === 'dweb-connect-loaded') {
-        // Wallet is ready — send the authorization request with ephemeral public key.
+        // Wallet is ready — send the authorization request with
+        // ephemeral public key and optional app metadata.
         popup.postMessage({
           type               : 'dweb-connect-authorization-request',
           did,
           permissions        : permissionRequests,
           ephemeralPublicKey : dappPublicKeyBase64url,
+          appName,
+          appIcon,
+          portableIdentity,
         }, walletOrigin);
         return;
       }
