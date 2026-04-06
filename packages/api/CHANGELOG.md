@@ -1,5 +1,28 @@
 # @enbox/api
 
+## 0.6.15
+
+### Patch Changes
+
+- [#854](https://github.com/enboxorg/enbox/pull/854) [`57b1b52`](https://github.com/enboxorg/enbox/commit/57b1b52dcf80f2a4e995d649bb64c9e0b9eac9d8) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: delegate encrypted write fails with 'Unable to get signer for author did:dht'
+
+  When a delegate writes to a protocol type with `encryptionRequired: true`, the write
+  failed because: (1) the delegate's local protocol definition lacked the owner's
+  `$encryption` keys needed for ProtocolPath encryption, (2) the internal protocol
+  definition lookup signed the ProtocolsQuery as the owner DID whose private key is
+  not available to the delegate, and (3) the protocol definition cache was not populated
+  after the delegate installed the owner's remote definition.
+
+  The delegate now fetches the owner's protocol definition (with `$encryption` keys)
+  from the remote DWN during auto-configure, resolves a ProtocolsQuery permission grant
+  for local lookups, and caches the definition after installation. If the remote
+  definition cannot be fetched for a protocol with encrypted types, the operation fails
+  loudly instead of silently downgrading security.
+
+- Updated dependencies [[`57b1b52`](https://github.com/enboxorg/enbox/commit/57b1b52dcf80f2a4e995d649bb64c9e0b9eac9d8)]:
+  - @enbox/agent@0.6.3
+  - @enbox/auth@0.6.23
+
 ## 0.6.14
 
 ### Patch Changes
