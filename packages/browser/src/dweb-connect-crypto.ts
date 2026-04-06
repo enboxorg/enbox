@@ -139,7 +139,10 @@ function toBase64url(bytes: Uint8Array): string {
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  let b64 = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_');
+  // Strip trailing padding without a backtracking-vulnerable regex.
+  while (b64.endsWith('=')) { b64 = b64.slice(0, -1); }
+  return b64;
 }
 
 function fromBase64url(str: string): Uint8Array {
