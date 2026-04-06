@@ -1,5 +1,15 @@
 # @enbox/browser
 
+## 0.3.1
+
+### Patch Changes
+
+- [#858](https://github.com/enboxorg/enbox/pull/858) [`5535a9d`](https://github.com/enboxorg/enbox/commit/5535a9d538cdbbaca1bdc6e749f6fb710dac4adb) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: export showWalletSelector, fix portableIdentity type to PortableIdentity
+
+  - Export `showWalletSelector` from `@enbox/browser` so apps can use the Shadow DOM wallet picker directly for custom connect flows (e.g. identity export)
+  - Fix `DWebConnectClientOptions.portableIdentity` type from `PortableDid` to `PortableIdentity` to match what the wallet's `agent.identity.import()` expects
+  - Add integration test for all browser package re-exports
+
 ## 0.3.0
 
 ### Minor Changes
