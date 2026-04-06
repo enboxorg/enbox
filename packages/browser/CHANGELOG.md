@@ -1,5 +1,32 @@
 # @enbox/browser
 
+## 0.2.0
+
+### Minor Changes
+
+- [#852](https://github.com/enboxorg/enbox/pull/852) [`50c0d7e`](https://github.com/enboxorg/enbox/commit/50c0d7ed368d4a1b0c0c38673875c2f96f26802b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: ECDH-encrypted postMessage channel for DWeb Connect popup flow
+
+  The browser DWeb Connect popup flow now encrypts the authorization response
+  (containing delegate private keys and decryption material) using an ephemeral
+  ECDH key exchange between the dapp and wallet popup.
+
+  The dapp generates an ephemeral P-256 keypair and sends its public key with
+  the authorization request. The wallet generates its own ephemeral keypair,
+  performs ECDH + HKDF to derive a shared AES-256-GCM key, encrypts the
+  response payload, and sends the ciphertext. The dapp derives the same key
+  and decrypts.
+
+  Falls back to plaintext for wallets that don't support encrypted responses
+  (backward compatible). Exports encryptPostMessagePayload,
+  generateEphemeralKeyPair, and EncryptedPostMessagePayload for use by wallet
+  implementations.
+
+### Patch Changes
+
+- Updated dependencies [[`140bd84`](https://github.com/enboxorg/enbox/commit/140bd8474d0a333fe0b5428e1835d8176d269293), [`928f72f`](https://github.com/enboxorg/enbox/commit/928f72fb81beb7a979908e323ebe6510358b31b6)]:
+  - @enbox/agent@0.6.2
+  - @enbox/auth@0.6.22
+
 ## 0.1.26
 
 ### Patch Changes

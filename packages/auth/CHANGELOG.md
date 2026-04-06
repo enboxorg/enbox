@@ -1,5 +1,38 @@
 # @enbox/auth
 
+## 0.6.22
+
+### Patch Changes
+
+- [#850](https://github.com/enboxorg/enbox/pull/850) [`140bd84`](https://github.com/enboxorg/enbox/commit/140bd8474d0a333fe0b5428e1835d8176d269293) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: encrypt delegate decryption keys at rest using the vault CEK
+
+  Delegate decryption keys (DelegateDecryptionKey[] and DelegateContextKey[])
+  were previously stored as plaintext JSON in localStorage, making them
+  accessible to any XSS attack on the dapp origin. These keys contain
+  HD-derived X25519 private key material capable of decrypting all
+  protocol-encrypted records within the granted scope.
+
+  Keys are now encrypted as compact JWE (AES-256-GCM with the vault's
+  content encryption key) before persisting to storage. On session restore,
+  they are decrypted after the vault is unlocked. Backward-compatible with
+  sessions that stored keys as plaintext JSON (detected via JWE format check).
+
+  Added IdentityVault.encryptData/decryptData interface methods and
+  HdIdentityVault implementation.
+
+- [#853](https://github.com/enboxorg/enbox/pull/853) [`928f72f`](https://github.com/enboxorg/enbox/commit/928f72fb81beb7a979908e323ebe6510358b31b6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: install key-delivery protocol on delegate's local DWN during connect
+
+  The sync engine's closure validator requires the key-delivery protocol to be
+  installed locally for any encrypted protocol. Without it, sync links for
+  encrypted records transition to `repairing` state with
+  ClosureEncryptionDependencyMissing warnings. The key-delivery protocol is now
+  installed on the delegate's local DWN during importDelegateAndSetupSync.
+
+  Also exports KeyDeliveryProtocolDefinition from @enbox/agent.
+
+- Updated dependencies [[`140bd84`](https://github.com/enboxorg/enbox/commit/140bd8474d0a333fe0b5428e1835d8176d269293), [`928f72f`](https://github.com/enboxorg/enbox/commit/928f72fb81beb7a979908e323ebe6510358b31b6)]:
+  - @enbox/agent@0.6.2
+
 ## 0.6.21
 
 ### Patch Changes
