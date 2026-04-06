@@ -438,9 +438,10 @@ describe('walletConnect', () => {
     );
 
     expect(session.did).toBe('did:dht:connected456');
-    // 1 grant stored in delegate partition via processDwnRequest
+    // 2 calls: 1 key-delivery ProtocolsConfigure + 1 grant stored in
+    // delegate partition via processDwnRequest
     // (connected partition goes through dwn.processRawMessage)
-    expect(processCalls).toHaveLength(1);
+    expect(processCalls).toHaveLength(2);
   });
 
   test('cleans up on identity import failure', async () => {
