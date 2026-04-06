@@ -12,6 +12,9 @@ import type { ConnectResult } from '@enbox/auth';
 import type { PortableDid } from '@enbox/dids';
 import type { ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage } from '@enbox/agent';
 
+import type { EncryptedPostMessagePayload } from './dweb-connect-crypto.js';
+import { decryptPostMessagePayload, generateEphemeralKeyPair } from './dweb-connect-crypto.js';
+
 /** Options for initiating a DWeb Connect flow via popup. */
 export interface DWebConnectClientOptions {
   /** Base URL of the wallet app (e.g. "https://wallet.enbox.org"). */
@@ -76,6 +79,20 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
     );
   }
 
+  // Generate an ephemeral ECDH keypair for this connect session.
+  // The public key is sent to the wallet so it can encrypt the response
+  // containing delegate private keys and decryption material.
+  let dappKeyPair: CryptoKeyPair | undefined;
+  let dappPublicKeyBase64url: string | undefined;
+
+  try {
+    const ephemeral = await generateEphemeralKeyPair();
+    dappKeyPair = ephemeral.keyPair;
+    dappPublicKeyBase64url = ephemeral.publicKeyBase64url;
+  } catch {
+    // crypto.subtle unavailable (e.g. non-secure context) — skip encryption.
+  }
+
   return new Promise<ConnectResult | undefined>((resolve, reject) => {
     let settled = false;
 
@@ -113,11 +130,12 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
       const { type } = event.data ?? {};
 
       if (type === 'dweb-connect-loaded') {
-        // Wallet is ready — send the authorization request.
+        // Wallet is ready — send the authorization request with ephemeral public key.
         popup.postMessage({
-          type        : 'dweb-connect-authorization-request',
+          type               : 'dweb-connect-authorization-request',
           did,
-          permissions : permissionRequests,
+          permissions        : permissionRequests,
+          ephemeralPublicKey : dappPublicKeyBase64url,
         }, walletOrigin);
         return;
       }
@@ -126,6 +144,32 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
         clearInterval(pollClosed);
         cleanup();
 
+        // Handle encrypted response (wallet supports ECDH channel encryption).
+        const encrypted = event.data.encryptedPayload as EncryptedPostMessagePayload | undefined;
+        if (encrypted && dappKeyPair) {
+          decryptPostMessagePayload(encrypted, dappKeyPair).then((payload: Record<string, unknown>) => {
+            const p = payload as any;
+            if (!p.delegateDid || !p.grants) {
+              resolve(undefined);
+              return;
+            }
+            resolve({
+              delegatePortableDid         : p.delegateDid as PortableDid,
+              delegateGrants              : p.grants as DwnDataEncodedRecordsWriteMessage[],
+              connectedDid                : p.connectedDid ?? did ?? (p.delegateDid as PortableDid).uri,
+              delegateDecryptionKeys      : p.delegateDecryptionKeys ?? undefined,
+              delegateContextKeys         : p.delegateContextKeys ?? undefined,
+              delegateMultiPartyProtocols : p.delegateMultiPartyProtocols ?? undefined,
+              sessionRevocations          : p.sessionRevocations ?? undefined,
+            });
+          }).catch(() => {
+            // Decryption failed — treat as denied.
+            resolve(undefined);
+          });
+          return;
+        }
+
+        // Plaintext fallback (wallet doesn't support encryption yet).
         const {
           delegateDid,
           connectedDid: walletConnectedDid,
@@ -137,12 +181,10 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
         } = event.data;
 
         if (!delegateDid || !grants) {
-          // User denied the request.
           resolve(undefined);
           return;
         }
 
-        // connectedDid priority: wallet response > dapp-provided > delegate DID
         resolve({
           delegatePortableDid         : delegateDid as PortableDid,
           delegateGrants              : grants as DwnDataEncodedRecordsWriteMessage[],
