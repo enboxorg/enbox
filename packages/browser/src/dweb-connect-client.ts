@@ -8,9 +8,9 @@
  * @module
  */
 
-import type { ConnectResult } from '@enbox/auth';
 import type { PortableDid } from '@enbox/dids';
 import type { ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage } from '@enbox/agent';
+import type { ConnectResult, PortableIdentity } from '@enbox/auth';
 
 import type { EncryptedPostMessagePayload } from './dweb-connect-crypto.js';
 import { decryptPostMessagePayload, generateEphemeralKeyPair } from './dweb-connect-crypto.js';
@@ -49,13 +49,13 @@ export interface DWebConnectClientOptions {
   appIcon?: string;
 
   /**
-   * A PortableDid to transfer to the wallet for identity import.
+   * A portable identity to transfer to the wallet for import.
    *
    * When provided, the wallet imports this identity and creates
    * delegate grants for the dapp, allowing the dapp to transition
    * from local-DID mode to delegate mode while keeping the same DID.
    */
-  portableIdentity?: PortableDid;
+  portableIdentity?: PortableIdentity;
 }
 
 /**
