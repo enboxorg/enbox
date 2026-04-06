@@ -25,17 +25,32 @@ export type SyncMessageEntry = {
  * 202: message was successfully written to the remote DWN
  * 204: an initial write message was written without any data
  * 409: message was already present on the remote DWN
- * RecordsDelete + 404: the initial write was not found or already deleted
+ *
+ * When the *pushed* message is known (e.g. during push-sync), pass it as the
+ * second argument so that RecordsDelete + 404 ("initial write was not found or
+ * already deleted") can be detected.  The DWN's 404 reply omits `entry`, so
+ * checking `reply.entry` alone is insufficient.
  */
-export function syncMessageReplyIsSuccessful(reply: UnionMessageReply): boolean {
-  return reply.status.code === 202 ||
-    reply.status.code === 204 ||
-    reply.status.code === 409 ||
-    (
-      reply.entry?.message.descriptor.interface === DwnInterfaceName.Records &&
-      reply.entry?.message.descriptor.method === DwnMethodName.Delete &&
-      reply.status.code === 404
-    );
+export function syncMessageReplyIsSuccessful(reply: UnionMessageReply, pushedMessage?: GenericMessage): boolean {
+  if (reply.status.code === 202 || reply.status.code === 204 || reply.status.code === 409) {
+    return true;
+  }
+
+  if (reply.status.code === 404) {
+    // Check the pushed message first (always available during push-sync).
+    if (pushedMessage?.descriptor.interface === DwnInterfaceName.Records &&
+        pushedMessage?.descriptor.method === DwnMethodName.Delete) {
+      return true;
+    }
+
+    // Fallback: check the reply entry (for callers that don't pass the pushed message).
+    if (reply.entry?.message.descriptor.interface === DwnInterfaceName.Records &&
+        reply.entry?.message.descriptor.method === DwnMethodName.Delete) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -364,7 +379,7 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
         message   : entry.message
       });
 
-      if (syncMessageReplyIsSuccessful(reply)) {
+      if (syncMessageReplyIsSuccessful(reply, entry.message)) {
         succeeded.push(cid);
       } else if (isPermanentPushFailure(reply)) {
         // Permanent failures (400/401/403) will never succeed — do NOT retry.

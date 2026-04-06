@@ -35,7 +35,7 @@ describe('sync-messages', () => {
       expect(syncMessageReplyIsSuccessful(reply)).toBe(true);
     });
 
-    it('should return true for RecordsDelete with 404', () => {
+    it('should return true for RecordsDelete with 404 via reply.entry (fallback)', () => {
       const reply = {
         status : { code: 404, detail: 'Not Found' },
         entry  : {
@@ -50,7 +50,20 @@ describe('sync-messages', () => {
       expect(syncMessageReplyIsSuccessful(reply)).toBe(true);
     });
 
-    it('should return false for RecordsWrite with 404', () => {
+    it('should return true for RecordsDelete with 404 via pushedMessage (no reply.entry)', () => {
+      // The DWN's 404 reply for RecordsDelete omits `entry`, so the pushed
+      // message must be used to identify the operation.
+      const reply = { status: { code: 404, detail: 'Not Found' } } as UnionMessageReply;
+      const pushedMessage = {
+        descriptor: {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Delete,
+        },
+      } as any;
+      expect(syncMessageReplyIsSuccessful(reply, pushedMessage)).toBe(true);
+    });
+
+    it('should return false for RecordsWrite with 404 via reply.entry', () => {
       const reply = {
         status : { code: 404, detail: 'Not Found' },
         entry  : {
@@ -65,6 +78,17 @@ describe('sync-messages', () => {
       expect(syncMessageReplyIsSuccessful(reply)).toBe(false);
     });
 
+    it('should return false for RecordsWrite with 404 via pushedMessage', () => {
+      const reply = { status: { code: 404, detail: 'Not Found' } } as UnionMessageReply;
+      const pushedMessage = {
+        descriptor: {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Write,
+        },
+      } as any;
+      expect(syncMessageReplyIsSuccessful(reply, pushedMessage)).toBe(false);
+    });
+
     it('should return false for generic 500 error', () => {
       const reply = { status: { code: 500, detail: 'Internal Server Error' } } as UnionMessageReply;
       expect(syncMessageReplyIsSuccessful(reply)).toBe(false);
@@ -75,7 +99,7 @@ describe('sync-messages', () => {
       expect(syncMessageReplyIsSuccessful(reply)).toBe(false);
     });
 
-    it('should return false for 404 with no entry', () => {
+    it('should return false for 404 with no entry and no pushedMessage', () => {
       const reply = { status: { code: 404, detail: 'Not Found' } } as UnionMessageReply;
       expect(syncMessageReplyIsSuccessful(reply)).toBe(false);
     });
