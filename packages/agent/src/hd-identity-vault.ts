@@ -793,6 +793,56 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
   }
 
   /**
+   * Encrypts arbitrary data using the vault's content encryption key (CEK).
+   *
+   * The vault must be unlocked. The returned compact JWE string can be safely
+   * stored in untrusted storage (e.g. `localStorage`). Only the vault password
+   * can decrypt the data.
+   *
+   * @param params.plaintext - The data to encrypt.
+   * @returns A compact JWE string.
+   * @throws If the vault is locked.
+   */
+  public async encryptData({ plaintext }: { plaintext: Uint8Array }): Promise<string> {
+    if (this.isLocked() || !this._contentEncryptionKey) {
+      throw new Error('HdIdentityVault: Cannot encrypt data — vault is locked.');
+    }
+
+    return CompactJwe.encrypt({
+      key             : this._contentEncryptionKey,
+      plaintext,
+      protectedHeader : { alg: 'dir', enc: 'A256GCM' },
+      crypto          : this.crypto,
+      keyManager      : new LocalKeyManager(),
+    });
+  }
+
+  /**
+   * Decrypts data that was previously encrypted with {@link encryptData}.
+   *
+   * The vault must be unlocked.
+   *
+   * @param params.jwe - The compact JWE string to decrypt.
+   * @returns The original plaintext bytes.
+   * @throws If the vault is locked or the JWE is invalid.
+   */
+  public async decryptData({ jwe }: { jwe: string }): Promise<Uint8Array> {
+    if (this.isLocked() || !this._contentEncryptionKey) {
+      throw new Error('HdIdentityVault: Cannot decrypt data — vault is locked.');
+    }
+
+    const { plaintext } = await CompactJwe.decrypt({
+      jwe,
+      key        : this._contentEncryptionKey,
+      crypto     : this.crypto,
+      keyManager : new LocalKeyManager(),
+      options    : { minP2cCount: 1 },
+    });
+
+    return plaintext;
+  }
+
+  /**
    * Retrieves the Decentralized Identifier (DID) associated with the identity vault from the vault
    * store.
    *

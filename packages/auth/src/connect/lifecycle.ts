@@ -466,11 +466,15 @@ export async function finalizeDelegateSession(params: {
     [STORAGE_KEYS.CONNECTED_DID] : connectedDid,
   };
   if (delegateDecryptionKeys && delegateDecryptionKeys.length > 0) {
-    extraStorageKeys[STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS] = JSON.stringify(delegateDecryptionKeys);
+    const plaintext = Convert.string(JSON.stringify(delegateDecryptionKeys)).toUint8Array();
+    const jwe = await userAgent.vault.encryptData({ plaintext });
+    extraStorageKeys[STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS] = jwe;
   }
   const delegateContextKeys = (identity as any)._delegateContextKeys as DelegateContextKey[] | undefined;
   if (delegateContextKeys && delegateContextKeys.length > 0) {
-    extraStorageKeys[STORAGE_KEYS.DELEGATE_CONTEXT_KEYS] = JSON.stringify(delegateContextKeys);
+    const plaintext = Convert.string(JSON.stringify(delegateContextKeys)).toUint8Array();
+    const jwe = await userAgent.vault.encryptData({ plaintext });
+    extraStorageKeys[STORAGE_KEYS.DELEGATE_CONTEXT_KEYS] = jwe;
   }
   const delegateMultiPartyProtocols = (identity as any)._delegateMultiPartyProtocols as string[] | undefined;
   if (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0) {
@@ -488,7 +492,9 @@ export async function finalizeDelegateSession(params: {
     if (changedDelegateDid !== delegateDid) { return; }
     try {
       const keys = userAgent.dwn.exportDelegateContextKeys(delegateDid);
-      await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, JSON.stringify(keys));
+      const pt = Convert.string(JSON.stringify(keys)).toUint8Array();
+      const encrypted = await userAgent.vault.encryptData({ plaintext: pt });
+      await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, encrypted);
     } catch { /* best effort — keys will be re-derived on next connect */ }
   };
 

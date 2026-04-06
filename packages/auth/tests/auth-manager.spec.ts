@@ -612,10 +612,12 @@ describe('AuthManager', () => {
       expect(callback).toBeDefined();
       await callback('did:jwk:persist-restore');
 
-      // Verify the new key was persisted to storage
-      const persistedJson = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-      expect(persistedJson).toBeDefined();
-      const persisted = JSON.parse(persistedJson!);
+      // Verify the new key was persisted to storage (encrypted as JWE).
+      const persistedJwe = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+      expect(persistedJwe).toBeDefined();
+      // The stored value is a compact JWE. Decrypt with the mock vault.
+      const decryptedBytes = await agent.vault.decryptData({ jwe: persistedJwe! });
+      const persisted = JSON.parse(new TextDecoder().decode(decryptedBytes));
       expect(persisted).toEqual([newContextKey]);
 
       // Verify a second restore would pick up the persisted keys
