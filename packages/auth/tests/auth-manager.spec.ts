@@ -1161,20 +1161,26 @@ describe('AuthManager', () => {
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].did).toBe('did:external');
       expect(registerCalls[0].options.delegateDid).toBe('did:delegate');
+      // Delegate protocols derived from grants — empty because mock returns no entries.
+      expect(registerCalls[0].options.protocols).toEqual([]);
     });
 
     test('handles already-registered identity gracefully', async () => {
+      const updateCalls: any[] = [];
       const identity = createMockIdentity();
       const agent = createMockAgent({
-        identityGet          : async () => identity,
-        syncRegisterIdentity : async () => { throw new Error('Identity already registered'); },
-        syncStartSync        : async () => {},
+        identityGet               : async () => identity,
+        syncRegisterIdentity      : async () => { throw new Error('Identity already registered'); },
+        syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
+        syncStartSync             : async () => {},
       });
       const manager = createTestManager(agent, { sync: '10s' });
 
-      // Should not throw
+      // Should not throw — falls back to updateIdentityOptions.
       const session = await manager.switchIdentity('did:dht:testuser123');
       expect(session.did).toBe('did:dht:testuser123');
+      expect(updateCalls).toHaveLength(1);
+      expect(updateCalls[0].did).toBe('did:dht:testuser123');
     });
 
     test('skips registration when sync is off', async () => {

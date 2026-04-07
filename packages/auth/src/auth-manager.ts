@@ -32,8 +32,10 @@ import type {
   WalletConnectOptions,
 } from './types.js';
 
+import type { DwnDataEncodedRecordsWriteMessage } from '@enbox/agent';
+
 import { Convert } from '@enbox/common';
-import { DataStream } from '@enbox/dwn-sdk-js';
+import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant, EnboxUserAgent } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
@@ -812,20 +814,11 @@ export class AuthManager {
     // Register the identity for sync and restart sync.
     const sync = this._defaultSync;
     if (sync !== 'off') {
-      // Register the identity for sync.  The method throws if the identity
-      // is already registered, which is expected during session restore.
-      try {
-        await this._userAgent.sync.registerIdentity({
-          did     : connectedDid,
-          options : { delegateDid, protocols: [] },
-        });
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : '';
-        if (!msg.includes('already registered')) {
-          throw error;
-        }
-      }
+      const protocols = delegateDid
+        ? await this._deriveProtocolsFromGrants(delegateDid)
+        : [];
 
+      await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
       await startSyncIfEnabled(this._userAgent, sync);
     }
 
@@ -1079,6 +1072,65 @@ export class AuthManager {
       return session;
     } finally {
       this._isConnecting = false;
+    }
+  }
+
+  /**
+   * Derive the protocol list for a delegate's sync scope by querying
+   * stored grant records and extracting their `scope.protocol` fields.
+   *
+   * Returns a deduplicated array of protocol URIs, excluding the DWN
+   * permissions protocol itself (the delegate doesn't need to sync
+   * grant records — they're imported locally during the connect flow).
+   */
+  private async _deriveProtocolsFromGrants(delegateDid: string): Promise<string[]> {
+    const response = await this._userAgent.processDwnRequest({
+      author        : delegateDid,
+      target        : delegateDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.grantPath,
+        },
+      },
+    });
+
+    const protocols: string[] = [];
+    if (response.reply.status.code === 200 && response.reply.entries) {
+      for (const entry of response.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
+        const grant = DwnPermissionGrant.parse(entry);
+        const scopeProtocol = (grant.scope as any).protocol as string | undefined;
+        if (scopeProtocol && scopeProtocol !== PermissionsProtocol.uri) {
+          protocols.push(scopeProtocol);
+        }
+      }
+    }
+
+    return [...new Set(protocols)];
+  }
+
+  /**
+   * Register an identity for sync, or update an existing registration.
+   *
+   * If the identity is already registered (e.g. from a prior session),
+   * `updateIdentityOptions` is used instead of throwing.
+   */
+  private async _registerOrUpdateSyncIdentity(
+    connectedDid: string,
+    delegateDid: string | undefined,
+    protocols: string[],
+  ): Promise<void> {
+    const options = { delegateDid, protocols };
+    try {
+      await this._userAgent.sync.registerIdentity({ did: connectedDid, options });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : '';
+      if (msg.includes('already registered')) {
+        await this._userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
+      } else {
+        throw error;
+      }
     }
   }
 
