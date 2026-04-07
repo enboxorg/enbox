@@ -869,9 +869,24 @@ export class HttpApi {
     // POST /connect/callback
     if (method === 'POST' && path === '/connect/callback') {
       log.info('Storing Identity Provider (wallet) pushed response with ID token...');
-      const body = await req.json();
-      const idToken = body.id_token;
-      const state = body.state;
+
+      // The agent's submitConnectResponse sends application/x-www-form-urlencoded
+      // but the server was previously parsing as JSON, causing a 500 error.
+      // Support both content types for robustness.
+      const contentType = req.headers.get('content-type') ?? '';
+      let idToken: string | undefined;
+      let state: string | undefined;
+
+      if (contentType.includes('application/x-www-form-urlencoded')) {
+        const text = await req.text();
+        const params = new URLSearchParams(text);
+        idToken = params.get('id_token') ?? undefined;
+        state = params.get('state') ?? undefined;
+      } else {
+        const body = await req.json();
+        idToken = body.id_token;
+        state = body.state;
+      }
 
       if (idToken !== undefined && state != undefined) {
         await this.connectServer.setConnectResponse(state, idToken);
