@@ -1,5 +1,21 @@
 # @enbox/agent
 
+## 0.6.4
+
+### Patch Changes
+
+- [#860](https://github.com/enboxorg/enbox/pull/860) [`2b89675`](https://github.com/enboxorg/enbox/commit/2b896756caf48c627ad7a48ca960dd8730fb8c1e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: publish delegateKeyDelivery schema and cross-device key delivery
+
+  The delegateKeyDelivery field was added to the PermissionGrantData JSON
+  schema and the agent's connect protocol in commit 2887165, but was not
+  included in a subsequent publish. This caused a version mismatch where
+  @enbox/agent@0.6.3 generates grants with delegateKeyDelivery but
+  @enbox/dwn-sdk-js@0.3.2 rejects them with SchemaValidationAdditionalPropertyNotAllowed.
+
+- Updated dependencies [[`2b89675`](https://github.com/enboxorg/enbox/commit/2b896756caf48c627ad7a48ca960dd8730fb8c1e)]:
+  - @enbox/dwn-sdk-js@0.3.3
+  - @enbox/dwn-clients@0.3.1
+
 ## 0.6.3
 
 ### Patch Changes

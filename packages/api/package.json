@@ -1,6 +1,6 @@
 {
   "name": "@enbox/api",
-  "version": "0.6.15",
+  "version": "0.6.16",
   "description": "Enbox SDK — high-level API for Decentralized Web Nodes, DIDs, and Verifiable Credentials",
   "type": "module",
   "main": "./dist/esm/index.js",
