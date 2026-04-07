@@ -1,6 +1,6 @@
 {
   "name": "@enbox/protocols",
-  "version": "0.2.44",
+  "version": "0.2.45",
   "description": "Standard reusable DWN protocol definitions for the Enbox ecosystem",
   "type": "module",
   "main": "./dist/esm/index.js",
