@@ -1,5 +1,21 @@
 # @enbox/auth
 
+## 0.6.27
+
+### Patch Changes
+
+- [#867](https://github.com/enboxorg/enbox/pull/867) [`b9c667f`](https://github.com/enboxorg/enbox/commit/b9c667f6dc7994b257fefd19ed6db35a19477d98) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: exclude permissions protocol from delegate sync targets
+
+  processConnectedGrants was including the DWN permissions protocol
+  in connectedProtocols because submitConnectResponse creates a
+  revocation grant scoped to PermissionsProtocol.uri. This caused the
+  sync engine to register the permissions protocol as a sync target,
+  which then failed with "No permissions found for MessagesSync".
+
+  Permission records are already included in each protocol's sync stream
+  via PermissionsProtocol.constructAdditionalMessageFilter() in the DWN
+  SDK — no separate sync target is needed.
+
 ## 0.6.26
 
 ### Patch Changes
