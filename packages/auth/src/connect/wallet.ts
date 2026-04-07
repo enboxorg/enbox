@@ -49,7 +49,7 @@ export async function walletConnect(
   });
 
   if (!result) {
-    throw new Error('[@enbox/auth] Wallet connect flow was cancelled or returned no result.');
+    throw new Error('[@enbox/auth] Connection was denied by the wallet.');
   }
 
   // Import delegate DID, process grants, and set up sync.

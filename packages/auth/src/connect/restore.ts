@@ -14,8 +14,10 @@ import type { StorageAdapter } from '../types.js';
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
+import type { DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope } from '@enbox/agent';
+
 import { Convert } from '@enbox/common';
-import { DataStream } from '@enbox/dwn-sdk-js';
+import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
@@ -122,9 +124,6 @@ export async function restoreSession(
     return undefined;
   }
 
-  // Start sync for the restored session.
-  await startSyncIfEnabled(userAgent, ctx.defaultSync);
-
   // Determine which identity to reconnect.
   const activeIdentityDid = await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY);
   const storedDelegateDid = await storage.get(STORAGE_KEYS.DELEGATE_DID);
@@ -144,8 +143,6 @@ export async function restoreSession(
       identity = identities[0];
     }
   }
-
-  // Sync was already started above (for the restored session).
 
   if (!identity) {
     // No identity found — this is valid for agent-only sessions created
@@ -182,6 +179,32 @@ export async function restoreSession(
   const { connectedDid, delegateDid } = resolveIdentityDids(
     identity, storedDelegateDid ?? undefined,
   );
+
+  // Ensure the sync registration is protocol-scoped for delegate sessions.
+  // Previous versions registered delegates with protocols: [] (global sync),
+  // which causes the sync engine to attempt syncing the permissions protocol
+  // and fail with "No permissions found for MessagesSync".
+  // Derive the correct protocol list from stored grants and update.
+  if (delegateDid && ctx.defaultSync !== 'off') {
+    try {
+      const protocols = await deriveProtocolsFromGrants(userAgent, delegateDid);
+      const options = { delegateDid, protocols };
+      try {
+        await userAgent.sync.registerIdentity({ did: connectedDid, options });
+      } catch (regError: unknown) {
+        const msg = regError instanceof Error ? regError.message : '';
+        if (msg.includes('already registered')) {
+          await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
+        }
+        // Other errors are ignored — sync will still work with existing registration.
+      }
+    } catch {
+      // Best-effort — don't block restore if grant query fails.
+    }
+  }
+
+  // Start sync after the registration is correct.
+  await startSyncIfEnabled(userAgent, ctx.defaultSync);
 
   // Restore delegate decryption keys if persisted.
   // Keys are stored as compact JWE (encrypted with the vault CEK).
@@ -495,4 +518,44 @@ export async function retryOrphanedRevocations(
   } else {
     await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify(entries));
   }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────
+
+/**
+ * Derive the protocol list for a delegate's sync scope by querying
+ * stored grant records and extracting their `scope.protocol` fields.
+ *
+ * Returns a deduplicated array of protocol URIs, excluding the DWN
+ * permissions protocol itself (permission records are already included
+ * in each protocol's sync stream via `constructAdditionalMessageFilter`).
+ */
+async function deriveProtocolsFromGrants(
+  userAgent: EnboxUserAgent,
+  delegateDid: string,
+): Promise<string[]> {
+  const response = await userAgent.processDwnRequest({
+    author        : delegateDid,
+    target        : delegateDid,
+    messageType   : DwnInterface.RecordsQuery,
+    messageParams : {
+      filter: {
+        protocol     : PermissionsProtocol.uri,
+        protocolPath : PermissionsProtocol.grantPath,
+      },
+    },
+  });
+
+  const protocols: string[] = [];
+  if (response.reply.status.code === 200 && response.reply.entries) {
+    for (const entry of response.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
+      const grant = DwnPermissionGrant.parse(entry);
+      const scopeProtocol = (grant.scope as DwnMessagesPermissionScope | DwnRecordsPermissionScope).protocol;
+      if (scopeProtocol && scopeProtocol !== PermissionsProtocol.uri) {
+        protocols.push(scopeProtocol);
+      }
+    }
+  }
+
+  return [...new Set(protocols)];
 }

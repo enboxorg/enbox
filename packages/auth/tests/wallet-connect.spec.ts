@@ -218,7 +218,7 @@ describe('walletConnect', () => {
           validatePin        : async () => '1234',
         },
       )
-    ).rejects.toThrow('Wallet connect flow was cancelled');
+    ).rejects.toThrow('Connection was denied by the wallet');
   });
 
   test('successful wallet connect creates session', async () => {
