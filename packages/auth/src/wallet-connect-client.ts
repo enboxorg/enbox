@@ -183,6 +183,11 @@ async function initClient({
   if (authResponse) {
     const jwe = await authResponse?.text();
 
+    // Check for explicit denial from the wallet.
+    if (jwe === 'DENIED') {
+      return undefined;
+    }
+
     // Get the PIN from the user and use it as AAD to decrypt.
     const pin = await validatePin();
     const jwt = await EnboxConnectProtocol.decryptResponse(clientDid, jwe, pin);
