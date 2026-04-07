@@ -1,5 +1,30 @@
 # @enbox/auth
 
+## 0.6.25
+
+### Patch Changes
+
+- [#863](https://github.com/enboxorg/enbox/pull/863) [`e582ab0`](https://github.com/enboxorg/enbox/commit/e582ab05e6f242ee99e00dc0e94853ee2dcc5e51) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: scope delegate sync to granted protocols instead of global sync
+
+  The sync engine was attempting to sync all protocols (including the DWN
+  permissions protocol) for delegate sessions. This happened because:
+
+  1. `switchIdentity` / session restore registered delegates with
+     `protocols: []` (global sync) instead of deriving the protocol list
+     from stored grants.
+  2. `importDelegateAndSetupSync` correctly passed `connectedProtocols`,
+     but if the identity was already registered from a prior session with
+     `protocols: []`, the stale registration persisted.
+
+  Now:
+
+  - `switchIdentity` derives the protocol list from stored grants by
+    querying the delegate's DWN for grant records and extracting
+    `scope.protocol` (excluding the permissions protocol itself).
+  - `importDelegateAndSetupSync` falls back to `updateIdentityOptions`
+    when the identity is already registered, ensuring the protocol
+    list is always current.
+
 ## 0.6.24
 
 ### Patch Changes
