@@ -75,6 +75,7 @@ export interface MockAgentOverrides {
   dwnExportDelegateMultiPartyProtocols?: (delegateDid: string) => string[];
   dwnClearDelegateDecryptionKeys?: (delegateDid?: string) => void;
   syncRegisterIdentity?: (params: any) => Promise<void>;
+  syncUpdateIdentityOptions?: (params: any) => Promise<void>;
   syncStartSync?: (params: any) => Promise<void>;
   syncStopSync?: (timeout: number) => Promise<void>;
   syncSync?: (direction: string) => Promise<void>;
@@ -121,11 +122,21 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       delete: overrides.didDelete ?? (async (): Promise<void> => {}),
     },
 
+    sync: {
+      registerIdentity      : overrides.syncRegisterIdentity ?? (async (): Promise<void> => {}),
+      updateIdentityOptions : overrides.syncUpdateIdentityOptions ?? (async (): Promise<void> => {}),
+      startSync             : overrides.syncStartSync ?? (async (): Promise<void> => {}),
+      stopSync              : overrides.syncStopSync ?? (async (): Promise<void> => {}),
+      sync                  : overrides.syncSync ?? (async (): Promise<void> => {}),
+      close                 : overrides.syncClose ?? (async (): Promise<void> => {}),
+    },
+
     dwn: {
       setCachedLocalDwnEndpoint: overrides.dwnSetCachedLocalDwnEndpoint
         ?? (async (): Promise<boolean> => false),
       processRawMessage: overrides.dwnProcessRawMessage
         ?? (async (): Promise<any> => ({ status: { code: 202, detail: 'Accepted' } })),
+
       isRemoteMode                      : overrides.dwnIsRemoteMode ?? false,
       importDelegateDecryptionKeys      : overrides.dwnImportDelegateDecryptionKeys ?? ((): void => {}),
       importDelegateContextKeys         : overrides.dwnImportDelegateContextKeys ?? ((): void => {}),
@@ -134,17 +145,14 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       clearDelegateDecryptionKeys       : overrides.dwnClearDelegateDecryptionKeys ?? ((): void => {}),
     },
 
-    sync: {
-      registerIdentity : overrides.syncRegisterIdentity ?? (async (): Promise<void> => {}),
-      startSync        : overrides.syncStartSync ?? (async (): Promise<void> => {}),
-      stopSync         : overrides.syncStopSync ?? (async (): Promise<void> => {}),
-      sync             : overrides.syncSync ?? (async (): Promise<void> => {}),
-      close            : overrides.syncClose ?? (async (): Promise<void> => {}),
-    },
-
-    processDwnRequest: overrides.processDwnRequest ?? (async (): Promise<any> => ({
-      reply: { status: { code: 202, detail: 'Accepted' } },
-    })),
+    processDwnRequest: overrides.processDwnRequest ?? (async (params: any): Promise<any> => {
+      // RecordsQuery returns 200 with empty entries (used by _deriveProtocolsFromGrants).
+      // All other DWN messages return 202 Accepted.
+      if (params?.messageType === 'RecordsQuery') {
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      }
+      return { reply: { status: { code: 202, detail: 'Accepted' } } };
+    }),
 
     rpc: {
       getServerInfo: overrides.rpcGetServerInfo ?? (async (): Promise<any> => ({
