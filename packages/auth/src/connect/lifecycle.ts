@@ -24,7 +24,7 @@ import type { IdentityInfo, RegistrationOptions, StorageAdapter, SyncOption } fr
 import { Convert } from '@enbox/common';
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 
-import { DataStream } from '@enbox/dwn-sdk-js';
+import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant, KeyDeliveryProtocolDefinition } from '@enbox/agent';
 
 import { AuthSession } from '../identity-session.js';
@@ -313,7 +313,11 @@ export async function processConnectedGrants(params: {
     }
 
     const protocol = (grant.scope as DwnMessagesPermissionScope | DwnRecordsPermissionScope).protocol;
-    if (protocol) {
+    // Exclude the permissions protocol — revocation grants are scoped to it
+    // but the sync engine must not attempt to sync it separately. Permission
+    // records are already included in each protocol's sync stream via
+    // PermissionsProtocol.constructAdditionalMessageFilter().
+    if (protocol && protocol !== PermissionsProtocol.uri) {
       connectedProtocols.add(protocol);
     }
   }
