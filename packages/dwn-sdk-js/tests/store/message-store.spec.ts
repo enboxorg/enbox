@@ -32,6 +32,25 @@ export function testMessageStore(): void {
         await messageStore.close();
       });
 
+      it('should accept the same message twice (idempotent put)', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const { message } = await TestDataGenerator.generateRecordsWrite();
+        const { messageTimestamp } = message.descriptor;
+
+        // First put — should succeed.
+        await messageStore.put(alice.did, message, { messageTimestamp });
+
+        // Second put of the exact same message — should be a no-op.
+        // This can happen when sync or protocol.send() re-delivers a
+        // message the DWN already has (race between CID check and insert).
+        await messageStore.put(alice.did, message, { messageTimestamp });
+
+        // Verify the message is stored exactly once.
+        const cid = await Message.getCid(message);
+        const stored = await messageStore.get(alice.did, cid);
+        expect(stored).toBeDefined();
+      });
+
       it('stores messages as cbor/sha256 encoded blocks with CID as key', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 

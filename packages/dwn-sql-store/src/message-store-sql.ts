@@ -112,7 +112,19 @@ export class MessageStoreSql implements MessageStore {
     // if any of these inserts would throw, the whole transaction would be rolled back.
     // otherwise it is committed.
     const putMessageOperation = this.constructPutMessageOperation({ tenant, messageCid, encodedMessageBytes, encodedData, indexes });
-    await executeWithTransaction(this.#db, putMessageOperation);
+    try {
+      await executeWithTransaction(this.#db, putMessageOperation);
+    } catch (error: unknown) {
+      if (isDuplicateKeyError(error)) {
+        // Idempotent write — the exact same message already exists.
+        // This is expected when sync or protocol.send() re-delivers a
+        // message the DWN already has.  A race between the handler's
+        // duplicate-CID check and the actual insert makes this
+        // unavoidable in concurrent environments.
+        return;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -384,4 +396,59 @@ export class MessageStoreSql implements MessageStore {
       return { property: 'messageTimestamp', direction: SortDirection.Ascending };
     }
   }
+}
+
+/**
+ * Detect whether an error is a unique constraint violation from any
+ * supported database dialect.
+ *
+ * Each dialect surfaces the error differently:
+ *
+ * | Dialect    | Error code / errno             | Message pattern                                    |
+ * |------------|-------------------------------|----------------------------------------------------|
+ * | PostgreSQL | `code === '23505'`            | "duplicate key value violates unique constraint"   |
+ * | MySQL      | `errno === 1062`              | "Duplicate entry '...' for key '...'"              |
+ * | SQLite     | `code === 'SQLITE_CONSTRAINT'`| "UNIQUE constraint failed: ..."                    |
+ * | bun:sqlite | `code === 'SQLITE_CONSTRAINT_PRIMARYKEY'` or includes "UNIQUE" | same as above |
+ *
+ * @internal Exported for testing.
+ */
+export function isDuplicateKeyError(error: unknown): boolean {
+  if (error == null || typeof error !== 'object') {
+    return false;
+  }
+
+  const err = error as Record<string, unknown>;
+  const code = err.code;
+  const errno = err.errno;
+  const message = typeof err.message === 'string' ? err.message : '';
+
+  // PostgreSQL: error code 23505 = unique_violation
+  if (code === '23505') {
+    return true;
+  }
+
+  // MySQL: errno 1062 = ER_DUP_ENTRY
+  if (errno === 1062) {
+    return true;
+  }
+
+  // SQLite (better-sqlite3 / bun:sqlite): SQLITE_CONSTRAINT with UNIQUE
+  if (
+    typeof code === 'string' &&
+    code.startsWith('SQLITE_CONSTRAINT') &&
+    message.includes('UNIQUE')
+  ) {
+    return true;
+  }
+
+  // Fallback: message-based detection for unknown drivers
+  if (
+    (message.includes('duplicate key') || message.includes('Duplicate entry')) &&
+    (message.includes('messageCid') || message.includes('unique constraint'))
+  ) {
+    return true;
+  }
+
+  return false;
 }
