@@ -535,11 +535,11 @@ export class AgentDwnApi {
       });
     }
 
-    // Post-write key delivery: detect new participants and write contextKey records.
-    await this.postWriteKeyDelivery(request, message, reply);
-
-    // Auto-decrypt reply data if encryption is enabled (Component 7)
-    await this.maybeDecryptReply(request, reply);
+    // Post-write key delivery and reply decryption are independent — run in parallel.
+    await Promise.all([
+      this.postWriteKeyDelivery(request, message, reply),
+      this.maybeDecryptReply(request, reply),
+    ]);
 
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
@@ -756,8 +756,13 @@ export class AgentDwnApi {
         && !isExternallyAuthored
         && this.hasEligibleDelegatesForProtocol(writeParams.protocol);
 
-      if (newParticipants.size > 0 || needsDelegateDelivery) {
-        // Derive the context key once (shared for participant + delegate delivery).
+      // Cross-device delegate delivery (via DWN) runs whenever the owner
+      // creates a root record in a multi-party context, regardless of
+      // whether same-process delegates exist.
+      const needsCrossDeviceDelivery = isMultiParty && isRootRecord && !isExternallyAuthored;
+
+      // Derive the context key once and share it across all delivery paths.
+      if (newParticipants.size > 0 || needsDelegateDelivery || needsCrossDeviceDelivery) {
         const { keyId, keyUri } = await getEncryptionKeyInfoFn(this.agent, request.target);
         const contextDerivationPath = [
           KeyDerivationScheme.ProtocolContext,
@@ -818,38 +823,18 @@ export class AgentDwnApi {
             writeParams.protocol, rootContextId, contextKeyPayload,
           );
         }
-      }
 
-      // --- Cross-device delegate context key delivery (#826) ---
-      // Query grants to find ALL eligible delegates (including those on
-      // other agents) and write contextKey records to the DWN.
-      // This is separate from same-process delivery: it discovers delegates
-      // from the owner's DWN grants, not just in-memory caches. It must
-      // run even when no same-process delegates or participants exist.
-      if (isMultiParty && isRootRecord && !isExternallyAuthored) {
-        // Derive the context key if not already done above.
-        const { keyId: xdKeyId, keyUri: xdKeyUri } = await getEncryptionKeyInfoFn(this.agent, request.target);
-        const xdContextDerivationPath = [
-          KeyDerivationScheme.ProtocolContext,
-          rootContextId,
-        ];
-        const xdContextDerivedPrivateKeyBytes =
-          await this.agent.keyManager.derivePrivateKeyBytes({
-            keyUri         : xdKeyUri,
-            derivationPath : xdContextDerivationPath,
-          });
-        const xdContextDerivedPrivateJwk =
-          await X25519.bytesToPrivateKey({ privateKeyBytes: xdContextDerivedPrivateKeyBytes });
-        const xdContextKeyPayload: DerivedPrivateJwk = {
-          rootKeyId         : xdKeyId,
-          derivationScheme  : KeyDerivationScheme.ProtocolContext,
-          derivationPath    : xdContextDerivationPath,
-          derivedPrivateKey : xdContextDerivedPrivateJwk as PrivateKeyJwk,
-        };
-
-        await this.deliverContextKeyToDelegatesViaDwn(
-          request.target, writeParams.protocol, rootContextId, xdContextKeyPayload,
-        );
+        // --- Cross-device delegate context key delivery (#826) ---
+        // Query grants to find ALL eligible delegates (including those on
+        // other agents) and write contextKey records to the DWN.
+        // This is separate from same-process delivery: it discovers delegates
+        // from the owner's DWN grants, not just in-memory caches. It must
+        // run even when no same-process delegates or participants exist.
+        if (needsCrossDeviceDelivery) {
+          await this.deliverContextKeyToDelegatesViaDwn(
+            request.target, writeParams.protocol, rootContextId, contextKeyPayload,
+          );
+        }
       }
     } catch (detectionError: any) {
       // Participant detection failure is non-fatal — the record is still stored.

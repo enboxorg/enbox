@@ -159,6 +159,13 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
   private _cachedInitialized: boolean | undefined;
 
   /**
+   * Cached BearerDid from the last successful {@link getDid} call.
+   * The DID is immutable while the vault is unlocked, so the cache is
+   * always valid until {@link lock} clears it.
+   */
+  private _cachedBearerDid: BearerDid | undefined;
+
+  /**
    * Constructs an instance of `HdIdentityVault`, initializing the key derivation factor and data
    * store. It sets the default key derivation work factor and initializes the internal data store,
    * either with the provided store or a default in-memory store. It also establishes the initial
@@ -298,6 +305,11 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       throw new Error(`HdIdentityVault: Vault has not been initialized and unlocked.`);
     }
 
+    // Return the cached DID if available — it is immutable while unlocked.
+    if (this._cachedBearerDid) {
+      return this._cachedBearerDid;
+    }
+
     // Retrieve the encrypted DID record as compact JWE from the vault store.
     const didJwe = await this.getStoredDid();
 
@@ -317,7 +329,9 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     }
 
     // Return the DID in Bearer DID format.
-    return await BearerDid.import({ portableDid });
+    const bearerDid = await BearerDid.import({ portableDid });
+    this._cachedBearerDid = bearerDid;
+    return bearerDid;
   }
 
   /**
@@ -661,6 +675,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     // Clear the vault content encryption key (CEK), effectively locking the vault.
     if (this._contentEncryptionKey) {this._contentEncryptionKey.k = '';}
     this._contentEncryptionKey = undefined;
+    this._cachedBearerDid = undefined;
   }
 
   /**
@@ -767,8 +782,16 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    *         incorrect.
    */
   public async unlock({ password }: { password: string }): Promise<void> {
-    // Lock the vault.
-    await this.lock();
+    // Verify the vault has been initialized before attempting to unlock.
+    if (await this.isInitialized() === false) {
+      throw new Error(`HdIdentityVault: Unable to unlock the vault. Vault has not been initialized.`);
+    }
+
+    // Lock the vault if not already locked — avoids an unnecessary
+    // redundant isInitialized() store read inside lock().
+    if (!this.isLocked()) {
+      await this.lock();
+    }
 
     // Retrieve the content encryption key (CEK) record as a compact JWE from the data store.
     const cekJwe = await this.getStoredContentEncryptionKey();

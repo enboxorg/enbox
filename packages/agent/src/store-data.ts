@@ -69,9 +69,10 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * Cache of tenant DIDs that have been initialized with the protocol.
    * This is used to avoid redundant protocol initialization requests.
    *
-   * Since these are default protocols and unlikely to change, we can use a long TTL.
+   * Protocol installation is permanent — a plain Set avoids the overhead
+   * and TTL eviction of TtlCache, since installed protocols are never removed.
    */
-  protected _protocolInitializedCache: TtlCache<string, boolean> = new TtlCache({ ttl: ms('21 days'), max: 1000 });
+  protected _protocolInitializedCache: Set<string> = new Set();
 
   /**
    * The protocol assigned to this storage instance.
@@ -86,6 +87,10 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * installation fails if encryption is not possible).
    */
   private _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: ms('21 days'), max: 1000 });
+
+  /** Cached result of the `encryptionRequired` check on the protocol definition.
+   *  Computed lazily on first access — the definition is immutable after assignment. */
+  private _encryptionRequired: boolean | undefined;
 
   /**
    * Properties to use when writing and querying records with the DWN store.
@@ -249,15 +254,19 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
       this._tenantEncryptionActive.set(tenantDid, hasEncryption);
     }
 
-    this._protocolInitializedCache.set(tenantDid, true);
+    this._protocolInitializedCache.add(tenantDid);
   }
 
   /**
    * Returns `true` if any type in the protocol definition has `encryptionRequired: true`.
+   * Cached after first computation since the protocol definition is immutable.
    */
   private get encryptionRequired(): boolean {
-    return Object.values(this._recordProtocolDefinition.types)
-      .some((type): boolean => type.encryptionRequired === true);
+    if (this._encryptionRequired === undefined) {
+      this._encryptionRequired = Object.values(this._recordProtocolDefinition.types)
+        .some((type): boolean => type.encryptionRequired === true);
+    }
+    return this._encryptionRequired;
   }
 
   /**

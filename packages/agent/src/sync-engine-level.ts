@@ -259,6 +259,19 @@ export class SyncEngineLevel implements SyncEngine {
   /** Maximum entries in the echo-loop suppression cache. */
   private static readonly ECHO_SUPPRESS_MAX_ENTRIES = 10_000;
 
+  /**
+   * Cached sync targets result from the last {@link getSyncTargets} call.
+   * Invalidated on identity registration/unregistration/update.
+   * TTL-based: cleared after 30 seconds to pick up DID document changes.
+   */
+  private _syncTargetsCache?: {
+    targets: { did: string; dwnUrl: string; delegateDid?: string; protocol?: string }[];
+    timestamp: number;
+  };
+
+  /** TTL for the sync targets cache (30 seconds). */
+  private static readonly SYNC_TARGETS_CACHE_TTL_MS = 30_000;
+
   /** Count of consecutive SMT sync failures (for backoff in poll mode). */
   private _consecutiveFailures = 0;
 
@@ -351,12 +364,14 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async clear(): Promise<void> {
+    this._syncTargetsCache = undefined;
     await this.teardownLiveSync();
     await this._permissionsApi.clear();
     await this._db.clear();
   }
 
   public async close(): Promise<void> {
+    this._syncTargetsCache = undefined;
     await this.teardownLiveSync();
     await this._db.close();
   }
@@ -373,6 +388,7 @@ export class SyncEngineLevel implements SyncEngine {
     options ??= { protocols: [] };
 
     await registeredIdentities.put(did, JSON.stringify(options));
+    this._syncTargetsCache = undefined;
   }
 
   public async unregisterIdentity(did: string): Promise<void> {
@@ -383,6 +399,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     await registeredIdentities.del(did);
+    this._syncTargetsCache = undefined;
   }
 
   public async getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined> {
@@ -411,6 +428,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     await registeredIdentities.put(did, JSON.stringify(options));
+    this._syncTargetsCache = undefined;
   }
 
   // ---------------------------------------------------------------------------
@@ -534,6 +552,7 @@ export class SyncEngineLevel implements SyncEngine {
       this._syncIntervalId = undefined;
     }
 
+    this._syncTargetsCache = undefined;
     await this.teardownLiveSync();
   }
 
@@ -2735,6 +2754,9 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Returns the list of sync targets: (did, dwnUrl, delegateDid?, protocol?) tuples.
+   * Results are cached for up to 30 seconds to avoid redundant DID resolution
+   * on every sync tick. The cache is invalidated when identities are registered,
+   * unregistered, or updated.
    */
   private async getSyncTargets(): Promise<{
     did: string;
@@ -2742,6 +2764,12 @@ export class SyncEngineLevel implements SyncEngine {
     delegateDid?: string;
     protocol?: string;
   }[]> {
+    // Return cached targets if still valid.
+    if (this._syncTargetsCache
+        && (Date.now() - this._syncTargetsCache.timestamp) < SyncEngineLevel.SYNC_TARGETS_CACHE_TTL_MS) {
+      return this._syncTargetsCache.targets;
+    }
+
     const targets: { did: string; dwnUrl: string; delegateDid?: string; protocol?: string }[] = [];
 
     for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
@@ -2771,6 +2799,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
+    this._syncTargetsCache = { targets, timestamp: Date.now() };
     return targets;
   }
 
