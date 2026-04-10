@@ -29,7 +29,7 @@
     <wa-include src="./account-summary.html"></wa-include>
   </div>
 
-  <wa-dropdown-item value="#" onclick="window.location = this.value" onkeydown="if(event.key==='Enter'||event.key===' '){window.location = this.value}">
+  <wa-dropdown-item value="#" onclick="window.location.hash = '#'" onkeydown="if(event.key==='Enter'||event.key===' '){window.location.hash = '#'}">
     <wa-icon slot="icon" name="gear" variant="regular"></wa-icon>
     <div class="wa-cluster wa-gap-s">
       Settings
@@ -83,7 +83,7 @@
 
   <wa-divider></wa-divider>
 
-  <wa-dropdown-item value="#" onclick="window.location = this.value" onkeydown="if(event.key==='Enter'||event.key===' '){window.location = this.value}">
+  <wa-dropdown-item value="#" onclick="window.location.hash = '#'" onkeydown="if(event.key==='Enter'||event.key===' '){window.location.hash = '#'}">
     <wa-icon slot="icon" name="user" variant="regular"></wa-icon>
 
     <div class="wa-cluster wa-gap-s">
