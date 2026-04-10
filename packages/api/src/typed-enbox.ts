@@ -563,6 +563,8 @@ export class TypedEnbox<
   private _validPaths: Set<string>;
   /** @internal */
   private _records?: TypedEnbox<D, M>['records'];
+  /** @internal — cached result of the `hasEncryptedTypes` scan (definition is immutable). */
+  private _hasEncryptedTypes: boolean;
 
   /**
    * @internal Create a new `TypedEnbox` instance. Use `enbox.using(protocol)` instead.
@@ -573,6 +575,8 @@ export class TypedEnbox<
     this._dwn = dwn;
     this._definition = protocol.definition;
     this._validPaths = collectPaths(this._definition.structure);
+    this._hasEncryptedTypes = Object.values(this._definition.types)
+      .some((type: ProtocolType) => type.encryptionRequired === true);
   }
 
   /**
@@ -643,10 +647,7 @@ export class TypedEnbox<
     // protocols during the connect flow. The delegate cannot derive the
     // owner's encryption keys, so configuring here would install the
     // protocol WITHOUT $encryption keys — breaking all encrypted writes.
-    const hasEncryptedTypes = Object.values(this._definition.types)
-      .some((type) => (type as ProtocolType)?.encryptionRequired === true);
-
-    if (this._dwn.isDelegate && hasEncryptedTypes) {
+    if (this._dwn.isDelegate && this._hasEncryptedTypes) {
       throw new Error(
         `TypedEnbox: Protocol '${this._definition.protocol}' requires ` +
         `encryption but is not installed or has changed. In delegate mode, ` +
@@ -656,7 +657,7 @@ export class TypedEnbox<
       );
     }
 
-    const needsEncryption = !this._dwn.isDelegate && hasEncryptedTypes;
+    const needsEncryption = !this._dwn.isDelegate && this._hasEncryptedTypes;
 
     const result = await this._dwn.protocols.configure({
       definition : this._definition,
@@ -799,10 +800,7 @@ export class TypedEnbox<
       // installing without `$encryption` keys would allow plaintext writes
       // that the owner's remote DWN would later reject, or worse, persist
       // unencrypted sensitive data.
-      const hasEncryptedTypes = Object.values(this._definition.types)
-        .some((type) => (type as ProtocolType)?.encryptionRequired === true);
-
-      if (hasEncryptedTypes) {
+      if (this._hasEncryptedTypes) {
         throw new Error(
           `TypedEnbox: delegate cannot install protocol '${this._definition.protocol}' ` +
           'because it contains types with encryptionRequired but the owner\'s ' +

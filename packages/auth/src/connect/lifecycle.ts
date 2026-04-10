@@ -267,15 +267,33 @@ export async function processConnectedGrants(params: {
   const { agent, connectedDid, delegateDid, grants } = params;
   const connectedProtocols = new Set<string>();
 
-  for (const grantMessage of grants) {
+  // Two-phase write strategy:
+  //
+  // Phase 1 — delegate partition (rollbackable): write all grants into
+  // the delegateDid's partition using the delegate's signing key. If any
+  // write fails, delete the ones that succeeded and throw.
+  //
+  // Phase 2 — connected partition (not rollbackable): write grants into
+  // the connectedDid's partition using processRawMessage (the delegate
+  // agent doesn't hold the connectedDid's signing key, so it cannot
+  // create a signed RecordsDelete to roll these back). Phase 2 only
+  // runs after all phase-1 writes succeed, minimizing the orphan window.
+  //
+  // Both phases process grants concurrently with allSettled so a single
+  // failure doesn't leave other writes racing against cleanup.
+
+  // Prepare decoded grant data for both phases.
+  const parsed = grants.map((grantMessage) => {
     const grant = DwnPermissionGrant.parse(grantMessage);
-
     const { encodedData, ...rawMessage } = grantMessage;
-    const dataStream = new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart]);
+    return { grant, rawMessage, encodedData };
+  });
 
-    // Store the grant in the delegateDid's partition so the permissions
-    // API can look it up when building delegate-signed requests.
-    const { reply: delegateReply } = await agent.processDwnRequest({
+  // ── Phase 1: delegate partition ───────────────────────────────────
+
+  const delegateResults = await Promise.allSettled(parsed.map(async ({ rawMessage, encodedData }) => {
+    const dataStream = new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart]);
+    const { reply } = await agent.processDwnRequest({
       store       : true,
       author      : delegateDid,
       target      : delegateDid,
@@ -285,21 +303,37 @@ export async function processConnectedGrants(params: {
       dataStream,
     });
 
-    if (delegateReply.status.code !== 202) {
+    if (reply.status.code !== 202 && reply.status.code !== 409) {
       throw new Error(
-        `[@enbox/auth] Failed to store grant in delegate partition: ${delegateReply.status.detail}`
+        `[@enbox/auth] Failed to store grant in delegate partition: ${reply.status.detail}`
       );
     }
+  }));
 
-    // Also store the grant in the connectedDid's local DWN partition.
-    // When the sync engine (or any delegate-authorized operation) processes
-    // a request against the connectedDid's tenant, the DWN needs to find
-    // the grant record there to authorize the delegate.
-    //
-    // We use processRawMessage because the delegate agent does not hold the
-    // connectedDid's private keys — we cannot re-sign the message.  The
-    // rawMessage already carries valid authorization from the connectedDid
-    // (the wallet signed it), so we pass it directly to the local DWN.
+  const delegateFailure = delegateResults.find(
+    (r): r is PromiseRejectedResult => r.status === 'rejected',
+  );
+  if (delegateFailure) {
+    // Roll back the delegate-partition grants that succeeded. We CAN
+    // delete these because we hold the delegateDid's signing key.
+    await Promise.allSettled(parsed.map(async ({ rawMessage }, i) => {
+      if (delegateResults[i].status === 'fulfilled') {
+        try {
+          await agent.processDwnRequest({
+            author        : delegateDid,
+            target        : delegateDid,
+            messageType   : DwnInterface.RecordsDelete,
+            messageParams : { recordId: rawMessage.recordId },
+          });
+        } catch { /* best-effort rollback */ }
+      }
+    }));
+    throw delegateFailure.reason;
+  }
+
+  // ── Phase 2: connected partition ──────────────────────────────────
+
+  const connectedResults = await Promise.allSettled(parsed.map(async ({ rawMessage, encodedData }) => {
     const connectedReply = await agent.dwn.processRawMessage(
       connectedDid,
       rawMessage as GenericMessage,
@@ -311,12 +345,35 @@ export async function processConnectedGrants(params: {
         `[@enbox/auth] Failed to store grant in connected partition: ${connectedReply.status.detail}`
       );
     }
+  }));
 
+  const connectedFailure = connectedResults.find(
+    (r): r is PromiseRejectedResult => r.status === 'rejected',
+  );
+  if (connectedFailure) {
+    // Connected-partition grants cannot be rolled back (the delegate
+    // agent cannot sign RecordsDelete as connectedDid). The orphaned
+    // records are harmless: the connect flow will throw, the imported
+    // identity is cleaned up by importDelegateAndSetupSync(), and
+    // without a registered sync identity the grants are never used.
+    // Roll back the delegate-partition grants that we CAN clean up.
+    await Promise.allSettled(parsed.map(async ({ rawMessage }) => {
+      try {
+        await agent.processDwnRequest({
+          author        : delegateDid,
+          target        : delegateDid,
+          messageType   : DwnInterface.RecordsDelete,
+          messageParams : { recordId: rawMessage.recordId },
+        });
+      } catch { /* best-effort rollback */ }
+    }));
+    throw connectedFailure.reason;
+  }
+
+  // ── Collect protocols ─────────────────────────────────────────────
+
+  for (const { grant } of parsed) {
     const protocol = (grant.scope as DwnMessagesPermissionScope | DwnRecordsPermissionScope).protocol;
-    // Exclude the permissions protocol — revocation grants are scoped to it
-    // but the sync engine must not attempt to sync it separately. Permission
-    // records are already included in each protocol's sync stream via
-    // PermissionsProtocol.constructAdditionalMessageFilter().
     if (protocol && protocol !== PermissionsProtocol.uri) {
       connectedProtocols.add(protocol);
     }
@@ -496,16 +553,22 @@ export async function finalizeDelegateSession(params: {
     [STORAGE_KEYS.DELEGATE_DID]  : delegateDid,
     [STORAGE_KEYS.CONNECTED_DID] : connectedDid,
   };
-  if (delegateDecryptionKeys && delegateDecryptionKeys.length > 0) {
-    const plaintext = Convert.string(JSON.stringify(delegateDecryptionKeys)).toUint8Array();
-    const jwe = await userAgent.vault.encryptData({ plaintext });
-    extraStorageKeys[STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS] = jwe;
-  }
   const delegateContextKeys = (identity as any)._delegateContextKeys as DelegateContextKey[] | undefined;
-  if (delegateContextKeys && delegateContextKeys.length > 0) {
-    const plaintext = Convert.string(JSON.stringify(delegateContextKeys)).toUint8Array();
-    const jwe = await userAgent.vault.encryptData({ plaintext });
-    extraStorageKeys[STORAGE_KEYS.DELEGATE_CONTEXT_KEYS] = jwe;
+
+  // Encrypt decryption keys and context keys in parallel — both are independent.
+  const [decKeysJwe, ctxKeysJwe] = await Promise.all([
+    delegateDecryptionKeys?.length
+      ? userAgent.vault.encryptData({ plaintext: Convert.string(JSON.stringify(delegateDecryptionKeys)).toUint8Array() })
+      : undefined,
+    delegateContextKeys?.length
+      ? userAgent.vault.encryptData({ plaintext: Convert.string(JSON.stringify(delegateContextKeys)).toUint8Array() })
+      : undefined,
+  ]);
+  if (decKeysJwe) {
+    extraStorageKeys[STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS] = decKeysJwe;
+  }
+  if (ctxKeysJwe) {
+    extraStorageKeys[STORAGE_KEYS.DELEGATE_CONTEXT_KEYS] = ctxKeysJwe;
   }
   const delegateMultiPartyProtocols = (identity as any)._delegateMultiPartyProtocols as string[] | undefined;
   if (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0) {
@@ -587,15 +650,17 @@ export async function finalizeSession(params: {
     extraStorageKeys,
   } = params;
 
-  // Persist session markers.
-  await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-  await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
-
+  // Persist all session markers concurrently — all writes are independent.
+  const storageWrites: Promise<void>[] = [
+    storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true'),
+    storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid),
+  ];
   if (extraStorageKeys) {
     for (const [key, value] of Object.entries(extraStorageKeys)) {
-      await storage.set(key, value);
+      storageWrites.push(storage.set(key, value));
     }
   }
+  await Promise.all(storageWrites);
 
   // When identityName is undefined, no user identity exists (agent-only session).
   // Build an IdentityInfo with the agent DID as a fallback.

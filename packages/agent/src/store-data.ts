@@ -69,9 +69,14 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * Cache of tenant DIDs that have been initialized with the protocol.
    * This is used to avoid redundant protocol initialization requests.
    *
-   * Since these are default protocols and unlikely to change, we can use a long TTL.
+   * Uses TtlCache with a 1-hour TTL rather than a permanent Set so that
+   * protocol state changes by another agent/process (protocol upgrade,
+   * reinstall, or tenant clear) are eventually re-detected. Both this
+   * and `_tenantEncryptionActive` must share the same TTL so they expire
+   * together — otherwise `initialize()` could return early while the
+   * encryption state is stale.
    */
-  protected _protocolInitializedCache: TtlCache<string, boolean> = new TtlCache({ ttl: ms('21 days'), max: 1000 });
+  protected _protocolInitializedCache: TtlCache<string, boolean> = new TtlCache({ ttl: ms('1 hour'), max: 1000 });
 
   /**
    * The protocol assigned to this storage instance.
@@ -84,8 +89,15 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * When any type in `_recordProtocolDefinition` has `encryptionRequired: true`,
    * this will always be `true` after successful initialization (since
    * installation fails if encryption is not possible).
+   *
+   * Uses the same 1-hour TTL as `_protocolInitializedCache` so both
+   * caches expire and re-derive together. See comment above.
    */
-  private _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: ms('21 days'), max: 1000 });
+  private _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: ms('1 hour'), max: 1000 });
+
+  /** Cached result of the `encryptionRequired` check on the protocol definition.
+   *  Computed lazily on first access — the definition is immutable after assignment. */
+  private _encryptionRequired: boolean | undefined;
 
   /**
    * Properties to use when writing and querying records with the DWN store.
@@ -218,7 +230,11 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    */
   public async initialize({ tenant, agent }: DataStoreTenantParams): Promise<void> {
     const tenantDid = await getDataStoreTenant({ agent, tenant });
-    if (this._protocolInitializedCache.has(tenantDid)) {
+    // Short-circuit only when both caches are present. If the encryption
+    // cache has expired or was cleared while the init cache survived,
+    // re-derive instead of silently dropping encryption.
+    if (this._protocolInitializedCache.has(tenantDid)
+        && (!this.encryptionRequired || this._tenantEncryptionActive.has(tenantDid))) {
       return;
     }
 
@@ -237,27 +253,37 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
       throw new Error(`Failed to query for protocols: ${status.code} - ${status.detail}`);
     }
 
+    let encryptionActive = false;
+
     if (entries?.length === 0) {
       // protocol is not installed, install it
-      await this.installProtocol(tenantDid, agent);
-    } else if (this.encryptionRequired && !this._tenantEncryptionActive.has(tenantDid)) {
+      const installed = await this.installProtocol(tenantDid, agent);
+      encryptionActive = installed.encryptionActive;
+    } else if (this.encryptionRequired) {
       // Protocol already installed — determine if it has $encryption keys
       // by inspecting the installed definition.
       const definition = entries![0].descriptor?.definition;
       const firstType = Object.keys(definition?.structure ?? {})[0];
-      const hasEncryption = !!(firstType && definition?.structure[firstType]?.$encryption);
-      this._tenantEncryptionActive.set(tenantDid, hasEncryption);
+      encryptionActive = !!(firstType && definition?.structure[firstType]?.$encryption);
     }
 
+    // Set both caches atomically so they always expire together. This
+    // prevents a stale-encryption window where one cache expires before
+    // the other and initialize() short-circuits on the surviving entry.
+    this._tenantEncryptionActive.set(tenantDid, encryptionActive);
     this._protocolInitializedCache.set(tenantDid, true);
   }
 
   /**
    * Returns `true` if any type in the protocol definition has `encryptionRequired: true`.
+   * Cached after first computation since the protocol definition is immutable.
    */
   private get encryptionRequired(): boolean {
-    return Object.values(this._recordProtocolDefinition.types)
-      .some((type): boolean => type.encryptionRequired === true);
+    if (this._encryptionRequired === undefined) {
+      this._encryptionRequired = Object.values(this._recordProtocolDefinition.types)
+        .some((type): boolean => type.encryptionRequired === true);
+    }
+    return this._encryptionRequired;
   }
 
   /**
@@ -328,7 +354,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * If the tenant DID lacks an X25519 keyAgreement key, the error propagates
    * — plaintext fallback is not allowed.
    */
-  private async installProtocol(tenant: string, agent: EnboxPlatformAgent): Promise<void> {
+  private async installProtocol(tenant: string, agent: EnboxPlatformAgent): Promise<{ encryptionActive: boolean }> {
     let definition = this._recordProtocolDefinition;
     let encryptionActive = false;
 
@@ -342,8 +368,6 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
       encryptionActive = true;
     }
 
-    this._tenantEncryptionActive.set(tenant, encryptionActive);
-
     const { reply : { status } } = await agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
@@ -354,6 +378,8 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     if (status.code !== 202) {
       throw new Error(`Failed to install protocol: ${status.code} - ${status.detail}`);
     }
+
+    return { encryptionActive };
   }
 
   private async lookupRecordId({ id, tenantDid, agent }: {

@@ -259,6 +259,28 @@ export class SyncEngineLevel implements SyncEngine {
   /** Maximum entries in the echo-loop suppression cache. */
   private static readonly ECHO_SUPPRESS_MAX_ENTRIES = 10_000;
 
+  /**
+   * Cached sync targets result from the last {@link getSyncTargets} call.
+   * Invalidated on identity registration/unregistration/update.
+   * TTL-based: cleared after 30 seconds to pick up DID document changes.
+   */
+  private _syncTargetsCache?: {
+    targets: { did: string; dwnUrl: string; delegateDid?: string; protocol?: string }[];
+    timestamp: number;
+  };
+
+  /**
+   * Monotonic generation counter for sync target cache invalidation.
+   * Bumped on every invalidation (register/unregister/update/clear/close/stopSync).
+   * An in-flight `getSyncTargets()` captures the generation before awaiting
+   * and only writes to the cache if it hasn't changed, preventing a
+   * concurrent mutation from being masked by stale data.
+   */
+  private _syncTargetsCacheGeneration = 0;
+
+  /** TTL for the sync targets cache (30 seconds). */
+  private static readonly SYNC_TARGETS_CACHE_TTL_MS = 30_000;
+
   /** Count of consecutive SMT sync failures (for backoff in poll mode). */
   private _consecutiveFailures = 0;
 
@@ -312,6 +334,11 @@ export class SyncEngineLevel implements SyncEngine {
   set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
+    // Cached sync targets were resolved through the previous agent's
+    // DID resolver / endpoint lookup — invalidate so the next sync
+    // tick re-resolves through the new agent.
+    this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
   }
 
   get connectivityState(): SyncConnectivityState {
@@ -351,12 +378,16 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async clear(): Promise<void> {
+    this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
     await this._permissionsApi.clear();
     await this._db.clear();
   }
 
   public async close(): Promise<void> {
+    this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
     await this._db.close();
   }
@@ -373,6 +404,8 @@ export class SyncEngineLevel implements SyncEngine {
     options ??= { protocols: [] };
 
     await registeredIdentities.put(did, JSON.stringify(options));
+    this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
   }
 
   public async unregisterIdentity(did: string): Promise<void> {
@@ -383,6 +416,8 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     await registeredIdentities.del(did);
+    this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
   }
 
   public async getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined> {
@@ -411,6 +446,8 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     await registeredIdentities.put(did, JSON.stringify(options));
+    this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
   }
 
   // ---------------------------------------------------------------------------
@@ -534,6 +571,8 @@ export class SyncEngineLevel implements SyncEngine {
       this._syncIntervalId = undefined;
     }
 
+    this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
   }
 
@@ -2735,6 +2774,9 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Returns the list of sync targets: (did, dwnUrl, delegateDid?, protocol?) tuples.
+   * Results are cached for up to 30 seconds to avoid redundant DID resolution
+   * on every sync tick. The cache is invalidated when identities are registered,
+   * unregistered, or updated.
    */
   private async getSyncTargets(): Promise<{
     did: string;
@@ -2742,9 +2784,23 @@ export class SyncEngineLevel implements SyncEngine {
     delegateDid?: string;
     protocol?: string;
   }[]> {
+    // Return cached targets if still valid.
+    if (this._syncTargetsCache
+        && (Date.now() - this._syncTargetsCache.timestamp) < SyncEngineLevel.SYNC_TARGETS_CACHE_TTL_MS) {
+      return this._syncTargetsCache.targets;
+    }
+
+    // Capture the generation before any async work so we can detect
+    // concurrent invalidations (register/unregister/update) that would
+    // make our result stale.
+    const generationAtStart = this._syncTargetsCacheGeneration;
+
     const targets: { did: string; dwnUrl: string; delegateDid?: string; protocol?: string }[] = [];
+    let hasRegisteredIdentities = false;
+    let anyEndpointMissing = false;
 
     for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
+      hasRegisteredIdentities = true;
       let parsed: SyncIdentityOptions;
       try {
         parsed = JSON.parse(options) as SyncIdentityOptions;
@@ -2756,6 +2812,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       const dwnEndpointUrls = await this.agent.dwn.getDwnEndpointUrlsForTarget(did);
       if (dwnEndpointUrls.length === 0) {
+        anyEndpointMissing = true;
         continue;
       }
 
@@ -2771,6 +2828,17 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
+    // Only cache when:
+    // - The result is non-empty (empty = transient resolution failure).
+    // - All registered identities resolved successfully (partial =
+    //   one identity's endpoints failed transiently; caching would
+    //   suppress retries for that identity for the full TTL).
+    // - The generation hasn't changed (a concurrent register/unregister
+    //   invalidated the cache while we were awaiting).
+    const isComplete = hasRegisteredIdentities && !anyEndpointMissing;
+    if (targets.length > 0 && isComplete && this._syncTargetsCacheGeneration === generationAtStart) {
+      this._syncTargetsCache = { targets, timestamp: Date.now() };
+    }
     return targets;
   }
 

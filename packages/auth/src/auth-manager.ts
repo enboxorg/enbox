@@ -623,14 +623,16 @@ export class AuthManager {
     } else {
       // Clean disconnect: ALWAYS clear all session markers regardless
       // of revocation outcome. Retry context is independent (step below).
-      await this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
-      await this._storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
-      await this._storage.remove(STORAGE_KEYS.DELEGATE_DID);
-      await this._storage.remove(STORAGE_KEYS.CONNECTED_DID);
-      await this._storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
-      await this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-      await this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
-      await this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+      await Promise.all([
+        this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED),
+        this._storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY),
+        this._storage.remove(STORAGE_KEYS.DELEGATE_DID),
+        this._storage.remove(STORAGE_KEYS.CONNECTED_DID),
+        this._storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS),
+        this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS),
+        this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS),
+        this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS),
+      ]);
     }
 
     // Update retry context — but NOT after a nuclear wipe.

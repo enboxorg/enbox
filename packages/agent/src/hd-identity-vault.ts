@@ -1,6 +1,7 @@
-import type { DidDhtCreateOptions } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
 import type { KeyValueStore } from '@enbox/common';
+
+import type { DidDhtCreateOptions, PortableDid } from '@enbox/dids';
 
 import { HDKey } from 'ed25519-keygen/hdkey';
 import { wordlist } from '@scure/bip39/wordlists/english';
@@ -159,6 +160,14 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
   private _cachedInitialized: boolean | undefined;
 
   /**
+   * Cached decrypted PortableDid from the last successful {@link getDid} call.
+   * Caching the PortableDid (not the BearerDid) avoids the expensive JWE
+   * decrypt + LevelDB read on every call, while still returning a fresh
+   * BearerDid instance each time so callers cannot mutate shared state.
+   */
+  private _cachedPortableDid: PortableDid | undefined;
+
+  /**
    * Constructs an instance of `HdIdentityVault`, initializing the key derivation factor and data
    * store. It sets the default key derivation work factor and initializes the internal data store,
    * either with the provided store or a default in-memory store. It also establishes the initial
@@ -298,26 +307,34 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       throw new Error(`HdIdentityVault: Vault has not been initialized and unlocked.`);
     }
 
-    // Retrieve the encrypted DID record as compact JWE from the vault store.
-    const didJwe = await this.getStoredDid();
+    // If the decrypted PortableDid is not yet cached, decrypt it from the
+    // vault store.  This avoids the expensive LevelDB read + JWE decrypt on
+    // every call while the vault is unlocked.
+    if (!this._cachedPortableDid) {
+      const didJwe = await this.getStoredDid();
 
-    // Decrypt the compact JWE to obtain the PortableDid as a byte array.
-    const { plaintext: portableDidBytes } = await CompactJwe.decrypt({
-      jwe        : didJwe,
-      key        : this._contentEncryptionKey!,
-      crypto     : this.crypto,
-      keyManager : new LocalKeyManager(),
-      options    : { minP2cCount: 1 }, // Vault decrypts its own JWEs; no external-input floor needed.
-    });
+      const { plaintext: portableDidBytes } = await CompactJwe.decrypt({
+        jwe        : didJwe,
+        key        : this._contentEncryptionKey!,
+        crypto     : this.crypto,
+        keyManager : new LocalKeyManager(),
+        options    : { minP2cCount: 1 }, // Vault decrypts its own JWEs; no external-input floor needed.
+      });
 
-    // Convert the DID from a byte array to PortableDid format.
-    const portableDid = Convert.uint8Array(portableDidBytes).toObject();
-    if (!isPortableDid(portableDid)) {
-      throw new Error('HdIdentityVault: Unable to decode malformed DID in identity vault');
+      const portableDid = Convert.uint8Array(portableDidBytes).toObject();
+      if (!isPortableDid(portableDid)) {
+        throw new Error('HdIdentityVault: Unable to decode malformed DID in identity vault');
+      }
+
+      this._cachedPortableDid = portableDid;
     }
 
-    // Return the DID in Bearer DID format.
-    return await BearerDid.import({ portableDid });
+    // Always return a fresh BearerDid from a deep copy of the cached
+    // PortableDid.  BearerDid is mutable (document, metadata, keyManager
+    // are public) and BearerDid.import() takes document/metadata by
+    // reference, so without the clone a caller mutating a returned DID
+    // would corrupt the cache for all subsequent getDid() calls.
+    return await BearerDid.import({ portableDid: structuredClone(this._cachedPortableDid) });
   }
 
   /**
@@ -661,6 +678,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     // Clear the vault content encryption key (CEK), effectively locking the vault.
     if (this._contentEncryptionKey) {this._contentEncryptionKey.k = '';}
     this._contentEncryptionKey = undefined;
+    this._cachedPortableDid = undefined;
   }
 
   /**
@@ -767,8 +785,16 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    *         incorrect.
    */
   public async unlock({ password }: { password: string }): Promise<void> {
-    // Lock the vault.
-    await this.lock();
+    // Verify the vault has been initialized before attempting to unlock.
+    if (await this.isInitialized() === false) {
+      throw new Error(`HdIdentityVault: Unable to unlock the vault. Vault has not been initialized.`);
+    }
+
+    // Lock the vault if not already locked — avoids an unnecessary
+    // redundant isInitialized() store read inside lock().
+    if (!this.isLocked()) {
+      await this.lock();
+    }
 
     // Retrieve the content encryption key (CEK) record as a compact JWE from the data store.
     const cekJwe = await this.getStoredContentEncryptionKey();
