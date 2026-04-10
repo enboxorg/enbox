@@ -1340,7 +1340,7 @@ function stableStringify(value: unknown): string {
     return '[' + value.map((item) => stableStringify(item)).join(',') + ']';
   }
 
-  const keys = Object.keys(value as globalThis.Record<string, unknown>).sort();
+  const keys = Object.keys(value as globalThis.Record<string, unknown>).sort((a, b) => a.localeCompare(b));
   const pairs = keys.map((key) =>
     JSON.stringify(key) + ':' + stableStringify((value as globalThis.Record<string, unknown>)[key])
   );

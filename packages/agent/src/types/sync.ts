@@ -65,10 +65,10 @@ export async function computeScopeId(scope: SyncScope): Promise<string> {
   if (scope.kind === 'protocol') {
     canonical.protocol = scope.protocol;
     if (scope.protocolPathPrefixes !== undefined) {
-      canonical.protocolPathPrefixes = [...new Set(scope.protocolPathPrefixes)].sort();
+      canonical.protocolPathPrefixes = [...new Set(scope.protocolPathPrefixes)].sort((a, b) => a.localeCompare(b));
     }
     if (scope.contextIdPrefixes !== undefined) {
-      canonical.contextIdPrefixes = [...new Set(scope.contextIdPrefixes)].sort();
+      canonical.contextIdPrefixes = [...new Set(scope.contextIdPrefixes)].sort((a, b) => a.localeCompare(b));
     }
   }
 

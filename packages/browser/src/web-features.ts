@@ -63,7 +63,7 @@ interface DrlMediaElement extends HTMLElement {
 }
 
 let didResolver = new UniversalResolver({ didResolvers: [DidDht, DidWeb] });
-const didUrlRegex = /^https?:\/\/dweb\/([^/]+)\/?(.*)?$/;
+const didUrlRegex = /^https?:\/\/dweb\/([^/]+)\/?(.*)$/;
 const httpToHttpsRegex = /^http:/;
 const trailingSlashRegex = /\/$/;
 const DRL_CACHE_NAME = 'drl';

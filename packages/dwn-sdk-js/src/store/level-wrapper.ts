@@ -183,10 +183,11 @@ export class LevelWrapper<V> {
   }
 
   async isEmpty(options?: LevelWrapperOptions): Promise<boolean> {
-    for await (const _key of this.keys(options)) {
-      return false;
-    }
-    return true;
+    // Use the iterator protocol directly to avoid Sonar S1751 (single-iteration loop).
+    const iter = this.keys(options);
+    const { done } = await iter.next();
+    await iter.return(undefined as any);
+    return done === true;
   }
 
   async clear(): Promise<void> {

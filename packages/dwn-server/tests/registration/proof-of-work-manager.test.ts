@@ -40,7 +40,7 @@ describe('ProofOfWorkManager', () => {
     const challengeNonceRefreshSpy = sinon.stub(proofOfWorkManager as any, 'refreshChallengeNonce').callsFake(stub);
     const maximumAllowedHashValueRefreshSpy = sinon.stub(proofOfWorkManager as any, 'refreshMaximumAllowedHashValue').callsFake(stub);
 
-    clock.tick(60 * 60 * 1000);
+    await clock.tickAsync(60 * 60 * 1000);
 
     // 1 hour divided by the challenge refresh frequency
     const expectedChallengeNonceRefreshCount = 60 * 60 / proofOfWorkManager.challengeRefreshFrequencyInSeconds;
@@ -116,7 +116,7 @@ describe('ProofOfWorkManager', () => {
       // Simulating 1 proof-of-work per second for 100 seconds.
       await proofOfWorkManager.recordProofOfWork(uuidv4());
       expect(proofOfWorkManager.currentSolveCountPerMinute).toBeGreaterThanOrEqual(lastSolveCountPerMinute);
-      clock.tick(1000);
+      await clock.tickAsync(1000);
 
       // The maximum allowed hash value should be monotonically decreasing as more proof-of-work is submitted.
       expect(proofOfWorkManager.currentMaximumAllowedHashValue <= lastMaximumAllowedHashValue).toBe(true);
@@ -125,15 +125,15 @@ describe('ProofOfWorkManager', () => {
     expect(proofOfWorkManager.currentMaximumAllowedHashValue < baselineMaximumAllowedHashValue).toBe(true);
 
     // Simulated 100 seconds has passed, so all proof-of-work entries should be removed.
-    clock.tick(100_000);
-    clock.runToLast();
+    await clock.tickAsync(100_000);
+    await clock.runToLastAsync();
 
     expect(proofOfWorkManager.currentSolveCountPerMinute).toBe(0);
 
     baselineMaximumAllowedHashValue = proofOfWorkManager.currentMaximumAllowedHashValue;
     for (let i = 0; i < 100; i++) {
       // Simulating no proof-of-work load for 100 seconds.
-      clock.tick(1000);
+      await clock.tickAsync(1000);
 
       // The maximum allowed hash value should be monotonically increasing again.
       expect(proofOfWorkManager.currentMaximumAllowedHashValue >= lastMaximumAllowedHashValue).toBe(true);
@@ -165,8 +165,8 @@ describe('ProofOfWorkManager', () => {
     expect(proofOfWorkManager.currentMaximumAllowedHashValue < initialMaximumAllowedHashValueAsBigInt).toBe(true);
 
     // Simulated 1 hour has passed.
-    clock.tick(60 * 60 * 1000);
-    clock.runToLast();
+    await clock.tickAsync(60 * 60 * 1000);
+    await clock.runToLastAsync();
 
     expect(proofOfWorkManager.currentMaximumAllowedHashValue === initialMaximumAllowedHashValueAsBigInt).toBe(true);
   });
