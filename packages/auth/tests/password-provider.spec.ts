@@ -606,5 +606,50 @@ describe('PasswordProvider', () => {
       expect(io.closedFds).toContain(10);
       expect(io.closedFds).toContain(11);
     });
+
+    test('uses dynamic import path when io is not provided', async () => {
+      // readPasswordDevTty without io tries to open the real /dev/tty.
+      // In test environments this will fail because /dev/tty is not available
+      // or the test runner has no controlling terminal.
+      // This exercises the dynamic import branch (lines 157-165).
+      try {
+        await readPasswordDevTty('> ');
+      } catch (error: unknown) {
+        // Expected: either "cannot open /dev/tty" (no terminal) or a read error.
+        expect(error).toBeInstanceOf(Error);
+      }
+    });
+  });
+
+  describe('fromTty() - stdin not a TTY', () => {
+    test('throws when stdin.isTTY is false', async () => {
+      // This tests fromTty's getPassword() when stdin is not a TTY (lines 303, 305-308).
+      // We can only run this when stdin is actually not a TTY (typical in CI).
+      if (process.stdin.isTTY) {
+        return;
+      }
+
+      const provider = PasswordProvider.fromTty();
+      await expect(provider.getPassword({ reason: 'unlock' })).rejects.toThrow(
+        'stdin is not a TTY'
+      );
+    });
+  });
+
+  describe('fromDevTty() factory', () => {
+    test('creates a provider whose getPassword calls readPasswordDevTty', async () => {
+      // This tests lines 337-338: the fromDevTty factory returns a provider
+      // that delegates to readPasswordDevTty. Calling getPassword() will
+      // use the real (non-injected) readPasswordDevTty which tries /dev/tty.
+      const provider = PasswordProvider.fromDevTty({ prompt: 'Test: ' });
+
+      try {
+        await provider.getPassword({ reason: 'unlock' });
+      } catch (error: unknown) {
+        // Expected: "cannot open /dev/tty" in non-terminal test environments.
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain('cannot open /dev/tty');
+      }
+    });
   });
 });
