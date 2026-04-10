@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200" fill="none">
+  <style>
+    text { font-family: ui-monospace, 'JetBrains Mono', 'Cascadia Code', monospace; }
+    .label { fill: #1a1d20; font-size: 13px; font-weight: 600; }
+    .sublabel { fill: #545d69; font-size: 10px; }
+    .box { stroke-width: 1.5; rx: 8; }
+    .arrow { stroke: #a0a9b4; stroke-width: 1.5; stroke-linecap: round; }
+    .dot { fill: #0d9668; }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
+    }
+    .d1 { animation: pulse 2.4s ease-in-out infinite; }
+    .d2 { animation: pulse 2.4s ease-in-out 0.3s infinite; }
+    .d3 { animation: pulse 2.4s ease-in-out 0.6s infinite; }
+    .d4 { animation: pulse 2.4s ease-in-out 0.15s infinite; }
+    .d5 { animation: pulse 2.4s ease-in-out 0.45s infinite; }
+    .d6 { animation: pulse 2.4s ease-in-out 0.75s infinite; }
+    .lock { fill: #0d9668; font-size: 14px; }
+  </style>
+
+  <!-- Background -->
+  <rect width="800" height="200" fill="#f3f4f6" rx="12"/>
+
+  <!-- App box -->
+  <rect x="30" y="50" width="150" height="100" class="box" fill="#ffffff" stroke="#c4cad1"/>
+  <text x="105" y="92" text-anchor="middle" class="label">Your App</text>
+  <text x="105" y="112" text-anchor="middle" class="sublabel">@enbox/api</text>
+
+  <!-- Local DWN box -->
+  <rect x="250" y="50" width="150" height="100" class="box" fill="#ffffff" stroke="#c4cad1"/>
+  <text x="325" y="92" text-anchor="middle" class="label">Local DWN</text>
+  <text x="325" y="112" text-anchor="middle" class="sublabel">in-browser / on-device</text>
+
+  <!-- Remote DWN box -->
+  <rect x="540" y="50" width="150" height="100" class="box" fill="#ffffff" stroke="#c4cad1"/>
+  <text x="615" y="92" text-anchor="middle" class="label">Remote DWN</text>
+  <text x="615" y="112" text-anchor="middle" class="sublabel">any server, anywhere</text>
+
+  <!-- Another device box -->
+  <rect x="540" y="3" width="150" height="38" class="box" fill="#e2e5e9" stroke="#c4cad1"/>
+  <text x="615" y="27" text-anchor="middle" class="sublabel">Another device / app</text>
+
+  <!-- Arrow: App -> Local DWN -->
+  <line x1="180" y1="100" x2="248" y2="100" class="arrow"/>
+  <polygon points="248,95 258,100 248,105" fill="#a0a9b4"/>
+
+  <!-- Arrow: Local DWN -> Remote DWN -->
+  <line x1="400" y1="93" x2="538" y2="93" class="arrow"/>
+  <polygon points="538,88 548,93 538,98" fill="#a0a9b4"/>
+
+  <!-- Arrow: Remote DWN -> Local DWN -->
+  <line x1="538" y1="107" x2="400" y2="107" class="arrow"/>
+  <polygon points="400,102 390,107 400,112" fill="#a0a9b4"/>
+
+  <!-- Arrow: Remote DWN -> Other device -->
+  <line x1="615" y1="50" x2="615" y2="43" class="arrow"/>
+  <polygon points="610,43 615,33 620,43" fill="#a0a9b4"/>
+
+  <!-- Animated sync dots (forward) -->
+  <circle cx="430" cy="93" r="3" class="dot d1"/>
+  <circle cx="460" cy="93" r="3" class="dot d2"/>
+  <circle cx="490" cy="93" r="3" class="dot d3"/>
+
+  <!-- Animated sync dots (return) -->
+  <circle cx="500" cy="107" r="3" class="dot d4"/>
+  <circle cx="470" cy="107" r="3" class="dot d5"/>
+  <circle cx="440" cy="107" r="3" class="dot d6"/>
+
+  <!-- Encryption lock icon -->
+  <text x="465" y="79" text-anchor="middle" class="lock">&#x1F512;</text>
+  <text x="465" y="130" text-anchor="middle" class="sublabel">encrypted sync</text>
+
+  <!-- Labels -->
+  <rect x="250" y="160" width="150" height="24" rx="4" fill="#e2e5e9"/>
+  <text x="325" y="176" text-anchor="middle" class="sublabel" fill="#0d9668">user-controlled</text>
+
+  <rect x="540" y="160" width="150" height="24" rx="4" fill="#e2e5e9"/>
+  <text x="615" y="176" text-anchor="middle" class="sublabel" fill="#545d69">operator-blind (E2EE)</text>
+</svg>

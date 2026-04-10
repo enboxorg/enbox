@@ -1,183 +1,272 @@
-# Enbox
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/enbox-mark-dark.svg">
+    <img alt="Enbox" src="./assets/enbox-mark-light.svg" width="40">
+  </picture>
+</p>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/ci.yml?branch=main&label=ci&color=2ea043)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-357ec7)](./LICENSE)
-[![Bun](https://img.shields.io/badge/runtime-Bun-%23e8d5b7?logo=bun&logoColor=f9f1e1)](https://bun.sh)
+<h1 align="center">en<strong>b</strong>ox</h1>
 
-> **Research Preview** -- Enbox is under heavy development. Expect breaking changes. Not yet accepting external contributions. See [Status & Contributing](#status--contributing).
+<p align="center">
+  <strong>The decentralised backend for web apps.</strong>
+</p>
 
-A toolkit for decentralized identity and encrypted personal data storage.
+<p align="center">
+  <a href="https://github.com/enboxorg/enbox/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/ci.yml?branch=main&label=ci&style=flat-square&color=2ea043" alt="CI"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-545d69?style=flat-square" alt="License"></a>
+  <a href="https://bun.sh"><img src="https://img.shields.io/badge/runtime-Bun-f9f1e1?style=flat-square&logo=bun&logoColor=f9f1e1" alt="Bun"></a>
+  <a href="https://www.npmjs.com/package/@enbox/api"><img src="https://img.shields.io/npm/v/@enbox/api?style=flat-square&label=%40enbox%2Fapi&color=357ec7" alt="npm"></a>
+</p>
 
-## Table of Contents
+---
 
-- [Why Enbox?](#why-enbox)
-- [Quick Start](#quick-start)
-- [How It Works](#how-it-works)
-- [Packages](#packages)
-- [Testing](#testing)
-- [Development](#development)
-- [Security](#security)
-- [Status & Contributing](#status--contributing)
+> [!CAUTION]
+> **Research Preview -- Not Production Ready**
+>
+> Enbox is under heavy, active development. You should expect:
+>
+> - **Breaking API changes** without prior deprecation
+> - **Data loss** -- preview DWN servers may be wiped at any time
+> - **Security gaps** -- the codebase has not been audited; do not store sensitive data
+> - **Missing documentation** -- some features are undocumented or partially documented
+>
+> We are not yet accepting external contributions. If you build on Enbox today, pin your
+> dependencies and be prepared to adapt. This notice will be removed when Enbox reaches
+> a stable release.
 
-## Why Enbox?
+---
 
-- **User-owned data** -- Data lives in Decentralized Web Nodes (DWNs) that users control, not in application databases.
-- **End-to-end encryption** -- Two-layer encryption (seed-phrase vault + DWN record-level JWE) with no plaintext fallback.
-- **Protocol-driven** -- Declarative schemas define record types, access rules, and encryption requirements. Interoperable across applications.
-- **Decentralized identity** -- Built on DIDs (`did:dht`, `did:jwk`) with deterministic key derivation and recovery from a 12-word seed phrase.
-- **Cross-platform** -- Runs in Node.js (Bun) and modern browsers (Chrome 101+, Firefox 108+, Safari 16+).
+## What is Enbox?
+
+An open-source TypeScript SDK for building apps on [Decentralized Web Nodes](https://identity.foundation/decentralized-web-node/spec/) (DWNs). You get typed schemas, real-time subscriptions, queries, and end-to-end encryption -- but instead of a centralised database, every user gets their own encrypted personal datastore that syncs across devices and apps.
+
+DWN is an [open standard](https://identity.foundation/decentralized-web-node/spec/) maintained by the Decentralized Identity Foundation. Anyone can run a DWN server, and any app that speaks the same protocol can interoperate. Enbox provides the tooling to build on that standard: an SDK, an agent framework, a server implementation, and the cryptographic primitives underneath.
+
+| | Centralised backend | DWN-based (Enbox) |
+|---|---|---|
+| Data ownership | Provider holds all user data | Each user controls their own node |
+| Auth | Email/password, OAuth providers | Decentralized Identifiers (DIDs) + seed phrase recovery |
+| Schema | SQL tables, document collections | Protocol definitions (declarative, portable across apps) |
+| Real-time | Server-pushed change feeds | DWN subscriptions (LiveQuery) |
+| Encryption | At-rest, server-side | End-to-end (two-layer: vault + record-level JWE) |
+| Hosting | Managed cloud, single vendor | Run your own server, use a community node, or both |
+| Lock-in | Data lives in the provider's infra | Data follows the user -- switch apps without losing anything |
+
+---
 
 ## Quick Start
 
-Most applications only need the `@enbox/api` package:
-
 ```bash
-bun add @enbox/api
+bun add @enbox/api @enbox/auth
 ```
 
-```ts
-import { defineProtocol, Web5 } from '@enbox/api';
+### 1. Connect
 
-// Connect -- creates a local agent, identity vault, and DID
-const { web5, did: myDid } = await Web5.connect({
-  password: 'user-chosen-password',
+Create an auth session and an Enbox instance. Data syncs to whatever DWN endpoint(s) you configure -- a [community node](#dwn-servers), [your own](#run-your-own-node), or both.
+
+```ts
+import { AuthManager } from '@enbox/auth';
+import { Enbox, defineProtocol } from '@enbox/api';
+
+const auth = await AuthManager.create({
+  dwnEndpoints : ['https://enbox-dwn.fly.dev'],   // ← any DWN server
 });
 
-// Define a protocol with typed data shapes
-const NotesProtocol = defineProtocol({
-  protocol  : 'https://example.com/notes',
-  published : true,
+const session = await auth.connectLocal({ createIdentity: true });
+const enbox   = Enbox.connect({ session });
+```
+
+### 2. Define a protocol
+
+Protocols are declarative schemas -- they describe record types, nesting, access rules, and encryption. Any app that installs the same protocol can read and write the same record shapes.
+
+```ts
+const BookmarkProtocol = defineProtocol({
+  protocol  : 'https://example.com/bookmarks',
+  published : false,
   types     : {
-    note: {
-      schema      : 'https://example.com/schemas/note',
+    folder: {
+      schema      : 'https://example.com/schemas/folder',
       dataFormats : ['application/json'],
+    },
+    bookmark: {
+      schema              : 'https://example.com/schemas/bookmark',
+      dataFormats         : ['application/json'],
+      encryptionRequired  : true,    // ← end-to-end encrypted at the DWN layer
     },
   },
   structure: {
-    note: {},
+    folder: {
+      $tags    : { name: { type: 'string' } },   // queryable server-side
+      bookmark : {},                               // bookmarks nest under folders
+    },
   },
 } as const, {} as {
-  note: { title: string; body: string };
+  folder:   { name: string };
+  bookmark: { url: string; title: string; note?: string };
+});
+```
+
+### 3. Write and query data
+
+```ts
+const bookmarks = enbox.using(BookmarkProtocol);
+await bookmarks.configure();   // install the protocol on the user's DWN
+
+// Create a folder
+const { record: folder } = await bookmarks.records.create('folder', {
+  data : { name: 'Reading List' },
+  tags : { name: 'Reading List' },
 });
 
-// Scope all operations to the protocol
-const notes = web5.using(NotesProtocol);
-await notes.configure();
-
-// Create a record (path, data, and schema are type-checked)
-const { record } = await notes.records.create('note', {
-  data: { title: 'Hello', body: 'World' },
+// Add a bookmark (nested under the folder, encrypted automatically)
+await bookmarks.records.create('bookmark', {
+  parentContextId : folder.contextId,
+  data            : { url: 'https://example.com', title: 'Example', note: 'Check later' },
 });
 
-// Query records back -- data is typed automatically
-const { records } = await notes.records.query('note');
-for (const r of records) {
-  const note = await r.data.json(); // { title: string; body: string }
-  console.log(r.id, note.title);
+// Query all folders
+const { records: folders } = await bookmarks.records.query('folder');
+for (const f of folders) {
+  const data = await f.data.json();   // { name: string }
+  console.log(data.name);
 }
 ```
 
-See the [`@enbox/api` README](./packages/api/README.md) for the repository pattern, pre-built protocols, subscriptions, and full API reference.
+### 4. Subscribe to changes
 
-## How It Works
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  Your Application                                        │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │  @enbox/api   (Web5.connect, typed protocols)      │  │
-│  └────────────────────────┬───────────────────────────┘  │
-│  ┌────────────────────────▼───────────────────────────┐  │
-│  │  @enbox/agent  (identity vault, keys, sync)        │  │
-│  └────────────────────────┬───────────────────────────┘  │
-│  ┌────────────────────────▼───────────────────────────┐  │
-│  │  @enbox/dwn-sdk-js  (protocol engine, handlers)    │  │
-│  └────────────────────────┬───────────────────────────┘  │
-└───────────────────────────┼──────────────────────────────┘
-                            │ sync
-              ┌─────────────▼─────────────┐
-              │  @enbox/dwn-server        │
-              │  Remote DWN (HTTP/WS)     │
-              │  + SQL storage            │
-              └───────────────────────────┘
+```ts
+const { subscription } = await bookmarks.subscribe();
+subscription.on('change', () => {
+  // Re-query or refresh your UI -- changes sync across devices in real time
+});
 ```
 
-**Agent**: Manages DIDs, cryptographic keys, and an encrypted identity vault (BIP-39 seed phrase). Syncs data between local and remote DWNs.
+For browser apps, `@enbox/browser` re-exports everything from `@enbox/api` and `@enbox/auth` in a single import plus browser-specific helpers (`BrowserConnectHandler`, wallet-connect, DRL polyfills).
 
-**DWN**: A personal datastore governed by [protocols](https://identity.foundation/decentralized-web-node/spec/) -- declarative schemas that define record types, access control, and encryption rules. Each user controls their own node.
+See the [`@enbox/api` README](./packages/api/README.md) for the full API: `repository()` helper, singletons, pagination, permissions, and more.
 
-**Two-Layer Encryption**: (1) A user password encrypts the agent's portable DID as AES-256-GCM JWE via PBKDF2. (2) Protocol types with `encryptionRequired: true` are encrypted using ECDH-ES+A256KW key agreement with the tenant's X25519 key. Recovery requires only the 12-word seed phrase.
+---
+
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/dwn-flow-dark.svg">
+  <img alt="DWN sync flow: Your App → Local DWN → encrypted sync → Remote DWN → other devices" src="./assets/dwn-flow-light.svg">
+</picture>
+
+Your app talks to a **local DWN** running in the browser or on the device. The agent syncs encrypted messages to one or more **remote DWN servers** over HTTP/WebSocket. The remote server stores ciphertext -- it cannot read the data. Other devices and apps sync from the same remote node, staying in sync automatically.
+
+**Agent** -- manages DIDs, cryptographic keys, and an encrypted identity vault derived from a 12-word BIP-39 seed phrase. Syncs data between the local DWN and any remote DWN server the user has configured.
+
+**DWN** -- an [open-standard](https://identity.foundation/decentralized-web-node/spec/) personal datastore governed by protocols: declarative schemas that define record types, access control, and encryption rules. Each user controls their own node. The server is interchangeable -- run by you, the user, a community operator, or all three.
+
+**Two-layer encryption** -- (1) a user password encrypts the agent's identity as AES-256-GCM JWE via PBKDF2. (2) Protocol types with `encryptionRequired: true` are encrypted with ECDH-ES+A256KW key agreement using the tenant's X25519 key. Recovery requires only the seed phrase.
+
+### Sending data to another user
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/dwn-alice-bob-dark.svg">
+  <img alt="Alice-to-Bob flow: Alice writes a record, her agent resolves Bob's DID to discover his DWN endpoint, sends an encrypted message, and Bob's app syncs it" src="./assets/dwn-alice-bob-light.svg">
+</picture>
+
+Alice's app resolves Bob's DID to discover the DWN service endpoint in his DID document, then sends an encrypted record directly to Bob's DWN. Bob's app picks it up on the next sync. No relay, no shared database, no account on Alice's service -- just two DIDs and a protocol they both understand.
+
+---
+
+## DWN Servers
+
+A DWN server is a multi-tenant node that stores and relays messages on behalf of users. **Anyone can run one** -- it's just an HTTP/WebSocket server backed by a database. There is no central authority; users can point their DID at any server (or several).
+
+We run two preview nodes for development and testing. They are free to use but come with **no uptime, data persistence, or security guarantees**:
+
+| Node | URL | Notes |
+|---|---|---|
+| Fly.io | `https://enbox-dwn.fly.dev` | SQLite-backed, single region |
+| AWS | `https://dev.aws.dwn.enbox.id` | Aurora PostgreSQL, us-east-1 |
+
+Set DWN endpoints when creating the auth manager, or override per-identity:
+
+```ts
+import { AuthManager } from '@enbox/auth';
+
+// Default for all identities created through this manager
+const auth = await AuthManager.create({
+  dwnEndpoints: [
+    'https://enbox-dwn.fly.dev',
+    'https://dev.aws.dwn.enbox.id',
+  ],
+});
+
+// Or override for a specific identity
+const session = await auth.connectLocal({
+  dwnEndpoints  : ['https://eu.dwn.example.com'],
+  createIdentity: true,
+});
+```
+
+Check server health:
+
+```bash
+curl https://enbox-dwn.fly.dev/health
+curl https://dev.aws.dwn.enbox.id/health
+```
+
+### Run Your Own Node
+
+The `@enbox/dwn-server` package is a production-ready DWN server that runs anywhere Docker does. It supports PostgreSQL, SQLite, and MySQL for storage, with optional S3 for large blobs.
+
+```bash
+# Quick start with Docker Compose
+git clone https://github.com/enboxorg/enbox.git
+cd enbox
+docker compose up dwn-server
+```
+
+Then point your app at it:
+
+```ts
+const auth = await AuthManager.create({
+  dwnEndpoints: ['https://dwn.your-domain.com'],
+});
+```
+
+See [docs/HOSTING.md](./docs/HOSTING.md) for the full deployment guide: Docker Compose configuration, environment variables, production checklist, Fly.io one-click deploy, and AWS ECS setup.
+
+---
 
 ## Packages
 
 ### Application Layer
 
-| Package | Version | Description |
+| Package | npm | What it does |
 |---|---|---|
-| [`@enbox/api`](./packages/api) | [![npm](https://img.shields.io/npm/v/@enbox/api?color=357ec7)](https://www.npmjs.com/package/@enbox/api) | High-level SDK -- `Web5.connect()`, typed protocols, repository pattern |
-| [`@enbox/protocols`](./packages/protocols) | [![npm](https://img.shields.io/npm/v/@enbox/protocols?color=357ec7)](https://www.npmjs.com/package/@enbox/protocols) | Pre-built protocol definitions with JSON Schemas |
-| [`@enbox/protocol-codegen`](./packages/protocol-codegen) | [![npm](https://img.shields.io/npm/v/@enbox/protocol-codegen?color=357ec7)](https://www.npmjs.com/package/@enbox/protocol-codegen) | CLI: generate TypeScript types from protocol definitions |
+| [`@enbox/api`](./packages/api) | [![npm](https://img.shields.io/npm/v/@enbox/api?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/api) | **Start here.** `Web5.connect()`, typed protocols, queries, subscriptions |
+| [`@enbox/auth`](./packages/auth) | [![npm](https://img.shields.io/npm/v/@enbox/auth?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/auth) | Auth manager: local connect, wallet-connect, session restore |
+| [`@enbox/browser`](./packages/browser) | [![npm](https://img.shields.io/npm/v/@enbox/browser?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/browser) | Browser SDK: `Enbox.connect()`, polyfills, `repository()` helper |
+| [`@enbox/protocols`](./packages/protocols) | [![npm](https://img.shields.io/npm/v/@enbox/protocols?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/protocols) | Pre-built protocol definitions with JSON Schemas |
+| [`@enbox/protocol-codegen`](./packages/protocol-codegen) | [![npm](https://img.shields.io/npm/v/@enbox/protocol-codegen?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/protocol-codegen) | CLI to generate TypeScript types from protocol definitions |
 
 ### Agent & Identity
 
-| Package | Version | Description |
+| Package | npm | What it does |
 |---|---|---|
-| [`@enbox/agent`](./packages/agent) | [![npm](https://img.shields.io/npm/v/@enbox/agent?color=357ec7)](https://www.npmjs.com/package/@enbox/agent) | Agent framework: identity vault, key management, sync engine |
-| [`@enbox/dids`](./packages/dids) | [![npm](https://img.shields.io/npm/v/@enbox/dids?color=357ec7)](https://www.npmjs.com/package/@enbox/dids) | DID methods (`did:dht`, `did:jwk`), resolution |
-| [`@enbox/crypto`](./packages/crypto) | [![npm](https://img.shields.io/npm/v/@enbox/crypto?color=357ec7)](https://www.npmjs.com/package/@enbox/crypto) | Ed25519, X25519, secp256k1, AES, PBKDF2, JWE |
-| [`@enbox/common`](./packages/common) | [![npm](https://img.shields.io/npm/v/@enbox/common?color=357ec7)](https://www.npmjs.com/package/@enbox/common) | Shared utilities: `TtlCache`, `LevelStore`, data conversion |
-| [`@enbox/browser`](./packages/browser) | [![npm](https://img.shields.io/npm/v/@enbox/browser?color=357ec7)](https://www.npmjs.com/package/@enbox/browser) | Browser polyfills and DRL resolution |
+| [`@enbox/agent`](./packages/agent) | [![npm](https://img.shields.io/npm/v/@enbox/agent?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/agent) | Identity vault, key management, DWN sync engine |
+| [`@enbox/dids`](./packages/dids) | [![npm](https://img.shields.io/npm/v/@enbox/dids?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/dids) | DID methods (`did:dht`, `did:jwk`, `did:web`), resolution |
+| [`@enbox/crypto`](./packages/crypto) | [![npm](https://img.shields.io/npm/v/@enbox/crypto?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/crypto) | Ed25519, X25519, secp256k1, AES, PBKDF2, JWE |
+| [`@enbox/common`](./packages/common) | [![npm](https://img.shields.io/npm/v/@enbox/common?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/common) | Shared utilities: `TtlCache`, `LevelStore`, data conversion |
 
 ### DWN Infrastructure
 
-| Package | Version | Description |
+| Package | npm | What it does |
 |---|---|---|
-| [`@enbox/dwn-sdk-js`](./packages/dwn-sdk-js) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-sdk-js?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-sdk-js) | DWN protocol engine, message handlers, storage interfaces |
-| [`@enbox/dwn-clients`](./packages/dwn-clients) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-clients?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-clients) | DWN client libraries, JSON-RPC transport |
-| [`@enbox/dwn-server`](./packages/dwn-server) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-server?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-server) | Multi-tenant remote DWN server (HTTP/WS via Bun.serve) |
-| [`@enbox/dwn-relay`](https://github.com/enboxorg/dwn-relay) | -- | DWN relay/cache node (standalone repo) |
-| [`@enbox/dwn-sql-store`](./packages/dwn-sql-store) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-sql-store?color=357ec7)](https://www.npmjs.com/package/@enbox/dwn-sql-store) | SQL-backed DWN storage (PostgreSQL, SQLite, MySQL) |
-| [`@enbox/dwn-server-admin-ui`](./packages/dwn-server-admin-ui) | -- | Admin dashboard for DWN server |
+| [`@enbox/dwn-sdk-js`](./packages/dwn-sdk-js) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-sdk-js?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/dwn-sdk-js) | DWN protocol engine, message handlers, storage interfaces |
+| [`@enbox/dwn-clients`](./packages/dwn-clients) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-clients?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/dwn-clients) | DWN client libraries, JSON-RPC transport |
+| [`@enbox/dwn-server`](./packages/dwn-server) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-server?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/dwn-server) | Multi-tenant DWN server (HTTP/WS via Bun.serve) |
+| [`@enbox/dwn-sql-store`](./packages/dwn-sql-store) | [![npm](https://img.shields.io/npm/v/@enbox/dwn-sql-store?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/dwn-sql-store) | SQL-backed storage (PostgreSQL, SQLite, MySQL) |
+| [`@enbox/dwn-relay`](https://github.com/enboxorg/dwn-relay) | -- | DWN relay/cache node ([standalone repo](https://github.com/enboxorg/dwn-relay)) |
 
-### Build Order
-
-```
-@enbox/common → @enbox/crypto → @enbox/dids → @enbox/dwn-sdk-js → @enbox/dwn-clients → @enbox/agent → @enbox/api → @enbox/protocols
-```
-
-## Testing
-
-### Coverage
-
-| Package | Coverage |
-|---|---|
-| `@enbox/api` | [![api](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/api.json&color=2ea043)](packages/api) |
-| `@enbox/agent` | [![agent](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/agent.json&color=2ea043)](packages/agent) |
-| `@enbox/common` | [![common](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/common.json&color=2ea043)](packages/common) |
-| `@enbox/crypto` | [![crypto](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/crypto.json&color=2ea043)](packages/crypto) |
-| `@enbox/dids` | [![dids](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dids.json&color=2ea043)](packages/dids) |
-| `@enbox/dwn-clients` | [![dwn-clients](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-clients.json&color=2ea043)](packages/dwn-clients) |
-| `@enbox/dwn-sdk-js` | [![dwn-sdk-js](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sdk-js.json&color=2ea043)](packages/dwn-sdk-js) |
-| `@enbox/dwn-server` | [![dwn-server](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-server.json&color=2ea043)](packages/dwn-server) |
-| `@enbox/dwn-sql-store` | [![dwn-sql-store](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sql-store.json&color=2ea043)](packages/dwn-sql-store) |
-
-### Browser Support
-
-Seven packages run browser tests via Vitest + Playwright across Chromium, Firefox, and WebKit:
-
-| Package | Chromium | Firefox | WebKit |
-|---|:---:|:---:|:---:|
-| `@enbox/common` | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| `@enbox/crypto` | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| `@enbox/dids` | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| `@enbox/browser` | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| `@enbox/dwn-sdk-js` | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| `@enbox/agent` | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| `@enbox/api` | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-
-Browser build targets: Chrome 101+, Firefox 108+, Safari 16+.
-
-For the full testing guide (Docker services, DWN server setup, CI matrix, coverage commands), see [docs/TESTING.md](./docs/TESTING.md).
+---
 
 ## Development
 
@@ -194,50 +283,69 @@ bun install
 bun run build
 ```
 
-See [GETTING_STARTED.md](./GETTING_STARTED.md) for a more detailed walkthrough.
-
-### Common Commands
+### Commands
 
 ```bash
-bun run test:node                          # Run all Node tests
+bun run build                              # Build all packages
+bun run test:node                          # Run all tests
 bun run lint                               # Lint all packages
-bun run lint:fix                           # Auto-fix lint issues
-bun run --filter @enbox/agent build        # Build a specific package
-bun run clean                              # Clean build artifacts
-BROWSER=chromium bun run --filter @enbox/dwn-sdk-js test:browser  # Browser tests
+bun run --filter @enbox/agent build        # Build a single package
 ```
 
-### Hosting a DWN Server
+### Test Infrastructure
 
-See [docs/HOSTING.md](./docs/HOSTING.md) for Docker Compose setup, configuration, production checklist, and Fly.io deployment.
+Several packages require Docker services (Pkarr relay, PostgreSQL, NATS) and a local DWN server for their full test suites.
+
+```bash
+docker compose -f docker-compose.test.yaml up -d --wait
+export DID_DHT_GATEWAY_URI=http://localhost:7527
+bun run test:node
+```
+
+See [docs/TESTING.md](./docs/TESTING.md) for the complete testing guide. See [GETTING_STARTED.md](./GETTING_STARTED.md) for a detailed development walkthrough.
+
+### Test Coverage
+
+| Package | Coverage |
+|---|---|
+| `@enbox/api` | [![api](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/api.json&color=2ea043)](packages/api) |
+| `@enbox/agent` | [![agent](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/agent.json&color=2ea043)](packages/agent) |
+| `@enbox/common` | [![common](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/common.json&color=2ea043)](packages/common) |
+| `@enbox/crypto` | [![crypto](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/crypto.json&color=2ea043)](packages/crypto) |
+| `@enbox/dids` | [![dids](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dids.json&color=2ea043)](packages/dids) |
+| `@enbox/dwn-sdk-js` | [![dwn-sdk-js](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sdk-js.json&color=2ea043)](packages/dwn-sdk-js) |
+| `@enbox/dwn-server` | [![dwn-server](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-server.json&color=2ea043)](packages/dwn-server) |
+| `@enbox/dwn-sql-store` | [![dwn-sql-store](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sql-store.json&color=2ea043)](packages/dwn-sql-store) |
+
+### Browser Support
+
+Chromium, Firefox, and WebKit are tested via Playwright. Build targets: Chrome 101+, Firefox 108+, Safari 16+.
 
 ### Releasing
 
-Packages are published to npm via [Changesets](https://github.com/changesets/changesets). Never bump versions manually -- run `bun changeset` to create a changeset, then CI handles version bumps and publishing.
-
-## Security
-
-If you discover a security vulnerability, please report it responsibly. **Do not open a public issue.** Instead, email [security@enbox.org](mailto:security@enbox.org) with details. We will acknowledge receipt within 48 hours.
-
-## Status & Contributing
-
-Enbox is a **research preview under heavy development**. APIs will change without notice. We are not yet accepting external contributions -- if you're interested in contributing, watch the repo for updates.
-
-See contribution guides in individual packages for context: [dwn-server](./packages/dwn-server/CONTRIBUTING.md), [dwn-sdk-js](./packages/dwn-sdk-js/CONTRIBUTING.md).
-
-## AI / LLM Agent Context
-
-For architecture notes, coding style, test patterns, and build instructions, see [`CLAUDE.md`](./CLAUDE.md).
-
-## License
-
-Apache-2.0
-
-## Related Resources
-
-- [Decentralized Web Node Specification](https://identity.foundation/decentralized-web-node/spec/)
-- [DID Specification](https://www.w3.org/TR/did-core/)
+Packages are published to npm via [Changesets](https://github.com/changesets/changesets). Never bump versions manually -- run `bun changeset`, then CI handles the rest.
 
 ---
 
-*This monorepo consolidates packages from the [decentralized-identity](https://github.com/decentralized-identity) organization, including [dwn-sdk-js](https://github.com/decentralized-identity/dwn-sdk-js), [dwn-server](https://github.com/decentralized-identity/dwn-server), [dwn-sql-store](https://github.com/decentralized-identity/dwn-sql-store), and the web5-js monorepo.*
+## Security
+
+If you discover a security vulnerability, please report it responsibly. **Do not open a public issue.** Email [security@enboxorg.com](mailto:security@enboxorg.com) with details. We will acknowledge receipt within 48 hours.
+
+## Status & Contributing
+
+Enbox is a **research preview under heavy development**. APIs will change without notice. We are not yet accepting external contributions -- watch the repo for updates.
+
+## License
+
+[Apache-2.0](./LICENSE)
+
+## Resources
+
+- [Decentralized Web Node Specification](https://identity.foundation/decentralized-web-node/spec/)
+- [DID Core Specification](https://www.w3.org/TR/did-core/)
+- [Enbox Documentation](https://enbox-docs.pages.dev) *(work in progress)*
+- [Hosting Guide](./docs/HOSTING.md)
+
+---
+
+<sub>This monorepo consolidates packages from the [decentralized-identity](https://github.com/decentralized-identity) organisation, including [dwn-sdk-js](https://github.com/decentralized-identity/dwn-sdk-js), [dwn-server](https://github.com/decentralized-identity/dwn-server), [dwn-sql-store](https://github.com/decentralized-identity/dwn-sql-store), and the web5-js monorepo.</sub>
