@@ -166,7 +166,10 @@ export function AuditLog({ path }: { path?: string }) {
                     <td>
                       {entry.detail && entry.detail.length > 60 ? (
                         <span
+                          role="button"
+                          tabIndex={0}
                           onClick={() => toggleDetail(entry.id)}
+                          onKeyDown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDetail(entry.id); } }}
                           style="cursor:pointer;color:var(--color-primary)"
                           title={expandedId === entry.id ? 'Click to collapse' : 'Click to expand'}
                         >

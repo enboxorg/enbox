@@ -183,7 +183,7 @@ export class LevelWrapper<V> {
   }
 
   async isEmpty(options?: LevelWrapperOptions): Promise<boolean> {
-    for await (const _key of this.keys(options)) {
+    for await (const _key of this.keys(options)) { // NOSONAR — intentional single-iteration check
       return false;
     }
     return true;

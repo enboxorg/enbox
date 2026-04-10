@@ -183,17 +183,19 @@ export class ProofOfWorkManager {
     } catch (error) {
       console.error(`Encountered error while refreshing challenge nonce: ${error}`);
     } finally {
-      setTimeout(async () => this.periodicallyRefreshChallengeNonce(), this.challengeRefreshFrequencyInSeconds * 1000);
+      setTimeout(() => this.periodicallyRefreshChallengeNonce(), this.challengeRefreshFrequencyInSeconds * 1000);
     }
   }
 
-  private periodicallyRefreshProofOfWorkDifficulty (): void {
+  private async periodicallyRefreshProofOfWorkDifficulty (): Promise<void> {
     try {
-      this.refreshMaximumAllowedHashValue();
+      await this.refreshMaximumAllowedHashValue();
     } catch (error) {
       console.error(`Encountered error while updating proof of work difficulty: ${error}`);
     } finally {
-      setTimeout(async () => this.periodicallyRefreshProofOfWorkDifficulty(), this.difficultyReevaluationFrequencyInSeconds * 1000);
+      setTimeout(() => {
+        void this.periodicallyRefreshProofOfWorkDifficulty();
+      }, this.difficultyReevaluationFrequencyInSeconds * 1000);
     }
   }
 

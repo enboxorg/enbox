@@ -6,11 +6,7 @@ export function isEmptyObject(obj: unknown): boolean {
     return false;
   }
 
-  for (const _ in obj) {
-    return false;
-  }
-
-  return true;
+  return Object.keys(obj as object).length === 0;
 }
 
 /**

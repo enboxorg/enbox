@@ -17,7 +17,7 @@ export function canonicalize(obj: { [key: string]: any }): string {
    */
   const sortObjKeys = (obj: { [key: string]: any }): { [key: string]: any } => {
     if (obj !== null && typeof obj === 'object' && !Array.isArray(obj)) {
-      const sortedKeys = Object.keys(obj).sort();
+      const sortedKeys = Object.keys(obj).sort((a, b) => a.localeCompare(b));
       const sortedObj: { [key: string]: any } = {};
       for (const key of sortedKeys) {
         // Recursively sort keys of nested objects.
