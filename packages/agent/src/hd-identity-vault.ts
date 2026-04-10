@@ -329,11 +329,12 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       this._cachedPortableDid = portableDid;
     }
 
-    // Always return a fresh BearerDid instance.  BearerDid is mutable
-    // (document, metadata, keyManager are public), so sharing a single
-    // instance across callers would let one caller's mutations affect all
-    // subsequent getDid() results.
-    return await BearerDid.import({ portableDid: this._cachedPortableDid });
+    // Always return a fresh BearerDid from a deep copy of the cached
+    // PortableDid.  BearerDid is mutable (document, metadata, keyManager
+    // are public) and BearerDid.import() takes document/metadata by
+    // reference, so without the clone a caller mutating a returned DID
+    // would corrupt the cache for all subsequent getDid() calls.
+    return await BearerDid.import({ portableDid: structuredClone(this._cachedPortableDid) });
   }
 
   /**

@@ -2791,8 +2791,11 @@ export class SyncEngineLevel implements SyncEngine {
     const generationAtStart = this._syncTargetsCacheGeneration;
 
     const targets: { did: string; dwnUrl: string; delegateDid?: string; protocol?: string }[] = [];
+    let hasRegisteredIdentities = false;
+    let anyEndpointMissing = false;
 
     for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
+      hasRegisteredIdentities = true;
       let parsed: SyncIdentityOptions;
       try {
         parsed = JSON.parse(options) as SyncIdentityOptions;
@@ -2804,6 +2807,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       const dwnEndpointUrls = await this.agent.dwn.getDwnEndpointUrlsForTarget(did);
       if (dwnEndpointUrls.length === 0) {
+        anyEndpointMissing = true;
         continue;
       }
 
@@ -2819,14 +2823,15 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    // Only cache non-empty results when the generation hasn't changed.
-    // Empty results: a transient DID resolution failure can produce an
-    // empty list even though identities are registered — caching it
-    // would suppress retries until TTL expiry.
-    // Stale generation: a concurrent register/unregister/update
-    // invalidated the cache while we were awaiting; writing our result
-    // would mask that mutation for 30 seconds.
-    if (targets.length > 0 && this._syncTargetsCacheGeneration === generationAtStart) {
+    // Only cache when:
+    // - The result is non-empty (empty = transient resolution failure).
+    // - All registered identities resolved successfully (partial =
+    //   one identity's endpoints failed transiently; caching would
+    //   suppress retries for that identity for the full TTL).
+    // - The generation hasn't changed (a concurrent register/unregister
+    //   invalidated the cache while we were awaiting).
+    const isComplete = hasRegisteredIdentities && !anyEndpointMissing;
+    if (targets.length > 0 && isComplete && this._syncTargetsCacheGeneration === generationAtStart) {
       this._syncTargetsCache = { targets, timestamp: Date.now() };
     }
     return targets;
