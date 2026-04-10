@@ -1,16 +1,22 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./assets/enbox-mark-dark.svg">
-  <img alt="Enbox" src="./assets/enbox-mark-light.svg" width="40">
-</picture>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/enbox-mark-dark.svg">
+    <img alt="Enbox" src="./assets/enbox-mark-light.svg" width="40">
+  </picture>
+</p>
 
-# en**b**ox
+<h1 align="center">en<strong>b</strong>ox</h1>
 
-### The decentralised backend for web apps.
+<p align="center">
+  <strong>The decentralised backend for web apps.</strong>
+</p>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/ci.yml?branch=main&label=ci&style=flat-square&color=2ea043)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-545d69?style=flat-square)](./LICENSE)
-[![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?style=flat-square&logo=bun&logoColor=f9f1e1)](https://bun.sh)
-[![npm](https://img.shields.io/npm/v/@enbox/api?style=flat-square&label=%40enbox%2Fapi&color=357ec7)](https://www.npmjs.com/package/@enbox/api)
+<p align="center">
+  <a href="https://github.com/enboxorg/enbox/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/ci.yml?branch=main&label=ci&style=flat-square&color=2ea043" alt="CI"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-545d69?style=flat-square" alt="License"></a>
+  <a href="https://bun.sh"><img src="https://img.shields.io/badge/runtime-Bun-f9f1e1?style=flat-square&logo=bun&logoColor=f9f1e1" alt="Bun"></a>
+  <a href="https://www.npmjs.com/package/@enbox/api"><img src="https://img.shields.io/npm/v/@enbox/api?style=flat-square&label=%40enbox%2Fapi&color=357ec7" alt="npm"></a>
+</p>
 
 ---
 
@@ -142,34 +148,16 @@ See the [`@enbox/api` README](./packages/api/README.md) for the full API: `repos
 
 ---
 
-## Architecture
+## How it works
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  Your Application                                            │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │  @enbox/api                                            │  │
-│  │  Web5.connect() · defineProtocol() · typed queries     │  │
-│  └────────────────────────┬───────────────────────────────┘  │
-│  ┌────────────────────────▼───────────────────────────────┐  │
-│  │  @enbox/agent                                          │  │
-│  │  Identity vault · key management · DWN sync engine     │  │
-│  └────────────────────────┬───────────────────────────────┘  │
-│  ┌────────────────────────▼───────────────────────────────┐  │
-│  │  @enbox/dwn-sdk-js                                     │  │
-│  │  Protocol engine · message handlers · storage layer    │  │
-│  └────────────────────────┬───────────────────────────────┘  │
-└───────────────────────────┼──────────────────────────────────┘
-                            │  sync (HTTP + WebSocket)
-              ┌─────────────▼──────────────┐
-              │  @enbox/dwn-server         │
-              │  Multi-tenant remote DWN   │
-              │  PostgreSQL · SQLite · S3  │
-              └────────────────────────────┘
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/dwn-flow-dark.svg">
+  <img alt="DWN sync flow: Your App → Local DWN → encrypted sync → Remote DWN → other devices" src="./assets/dwn-flow-light.svg">
+</picture>
 
-**Agent** -- manages DIDs, cryptographic keys, and an encrypted identity vault derived from a 12-word BIP-39 seed phrase. Syncs data between a local DWN (in-browser or on-device) and any remote DWN server the user has configured.
+Your app talks to a **local DWN** running in the browser or on the device. The agent syncs encrypted messages to one or more **remote DWN servers** over HTTP/WebSocket. The remote server stores ciphertext -- it cannot read the data. Other devices and apps sync from the same remote node, staying in sync automatically.
+
+**Agent** -- manages DIDs, cryptographic keys, and an encrypted identity vault derived from a 12-word BIP-39 seed phrase. Syncs data between the local DWN and any remote DWN server the user has configured.
 
 **DWN** -- an [open-standard](https://identity.foundation/decentralized-web-node/spec/) personal datastore governed by protocols: declarative schemas that define record types, access control, and encryption rules. Each user controls their own node. The server is interchangeable -- run by you, the user, a community operator, or all three.
 
@@ -332,7 +320,7 @@ Packages are published to npm via [Changesets](https://github.com/changesets/cha
 
 ## Security
 
-If you discover a security vulnerability, please report it responsibly. **Do not open a public issue.** Email [security@enbox.org](mailto:security@enbox.org) with details. We will acknowledge receipt within 48 hours.
+If you discover a security vulnerability, please report it responsibly. **Do not open a public issue.** Email [security@enboxorg.com](mailto:security@enboxorg.com) with details. We will acknowledge receipt within 48 hours.
 
 ## Status & Contributing
 
