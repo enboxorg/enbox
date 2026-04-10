@@ -34,20 +34,20 @@ import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolv
 import { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
 
 export class Dwn {
-  private methodHandlers: { [key:string]: MethodHandler };
-  private didResolver: DidResolver;
-  private messageStore: MessageStore;
-  private dataStore: DataStore;
-  private resumableTaskStore: ResumableTaskStore;
-  private stateIndex: StateIndex;
-  private tenantGate: TenantGate;
-  private eventLog?: EventLog;
-  private storageController: StorageController;
-  private resumableTaskManager: ResumableTaskManager;
-  private _coreProtocols: CoreProtocolRegistry;
+  private readonly methodHandlers: { [key:string]: MethodHandler };
+  private readonly didResolver: DidResolver;
+  private readonly messageStore: MessageStore;
+  private readonly dataStore: DataStore;
+  private readonly resumableTaskStore: ResumableTaskStore;
+  private readonly stateIndex: StateIndex;
+  private readonly tenantGate: TenantGate;
+  private readonly eventLog?: EventLog;
+  private readonly storageController: StorageController;
+  private readonly resumableTaskManager: ResumableTaskManager;
+  private readonly _coreProtocols: CoreProtocolRegistry;
 
   /** Whether the DWN owns the resolver's lifecycle (i.e., created it via defaults). */
-  private ownsResolver: boolean;
+  private readonly ownsResolver: boolean;
 
   private constructor(config: DwnConfig) {
     this.didResolver = config.didResolver!;
@@ -204,7 +204,7 @@ export class Dwn {
     const handlerKey = rawMessage.descriptor.interface + rawMessage.descriptor.method;
     const methodHandlerReply = await this.methodHandlers[handlerKey].handle({
       tenant,
-      message: rawMessage as GenericMessage,
+      message: rawMessage,
       dataStream,
       subscriptionHandler
     });
