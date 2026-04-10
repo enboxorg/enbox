@@ -32,23 +32,19 @@
 
 ## What is Enbox?
 
-Think **Supabase or Firebase, but decentralised and user-owned**. Instead of storing your users' data in your database, Enbox gives every user their own encrypted personal datastore -- a [Decentralized Web Node](https://identity.foundation/decentralized-web-node/spec/) (DWN) -- that syncs across devices and apps.
+An open-source TypeScript SDK for building apps on [Decentralized Web Nodes](https://identity.foundation/decentralized-web-node/spec/) (DWNs). You get typed schemas, real-time subscriptions, queries, and end-to-end encryption -- but instead of a centralised database, every user gets their own encrypted personal datastore that syncs across devices and apps.
 
-You get the same developer experience you're used to: typed schemas, real-time subscriptions, queries, and a high-level SDK. But your app never touches a centralised database. Users own their data, control who can access it, and can take it with them.
+DWN is an **open standard** -- not an Enbox product. Anyone can run a DWN server, and any app that speaks the same protocol can interoperate. Enbox is a toolkit for building on that standard: an SDK, an agent framework, a server implementation, and the cryptographic primitives underneath.
 
-**No vendor lock-in. No server to maintain (unless you want to). No user table.**
-
-### How it compares
-
-| | Supabase / Firebase | Enbox |
+| | Centralised backend | DWN-based (Enbox) |
 |---|---|---|
-| Data ownership | You host it, you own it | Users own their data |
-| Auth | Email/password, OAuth | Decentralized Identifiers (DIDs) + seed phrases |
-| Schema | SQL tables / Firestore collections | Protocol definitions (declarative, portable) |
-| Real-time | Postgres changes / Firestore snapshots | DWN subscriptions (LiveQuery) |
-| Encryption | At-rest (server-side) | End-to-end (two-layer: vault + record-level JWE) |
-| Hosting | Managed cloud | Self-host, use preview servers, or both |
-| Vendor lock-in | Yes | No -- data follows the user |
+| Data ownership | Provider holds all user data | Each user controls their own node |
+| Auth | Email/password, OAuth providers | Decentralized Identifiers (DIDs) + seed phrase recovery |
+| Schema | SQL tables, document collections | Protocol definitions (declarative, portable across apps) |
+| Real-time | Server-pushed change feeds | DWN subscriptions (LiveQuery) |
+| Encryption | At-rest, server-side | End-to-end (two-layer: vault + record-level JWE) |
+| Hosting | Managed cloud, single vendor | Run your own server, use a community node, or both |
+| Lock-in | Data lives in the provider's infra | Data follows the user -- switch apps without losing anything |
 
 ---
 
@@ -173,24 +169,26 @@ See the [`@enbox/api` README](./packages/api/README.md) for the full API: reposi
               └────────────────────────────┘
 ```
 
-**Agent** -- manages DIDs, cryptographic keys, and an encrypted identity vault derived from a 12-word BIP-39 seed phrase. Syncs data between a local DWN (in-browser or on-device) and one or more remote DWN servers.
+**Agent** -- manages DIDs, cryptographic keys, and an encrypted identity vault derived from a 12-word BIP-39 seed phrase. Syncs data between a local DWN (in-browser or on-device) and any remote DWN server the user has configured.
 
-**DWN** -- a personal datastore governed by [protocols](https://identity.foundation/decentralized-web-node/spec/): declarative schemas that define record types, access control, and encryption rules. Each user controls their own node. Apps that speak the same protocol can interoperate without coordination.
+**DWN** -- an [open-standard](https://identity.foundation/decentralized-web-node/spec/) personal datastore governed by protocols: declarative schemas that define record types, access control, and encryption rules. Each user controls their own node. The server is interchangeable -- run by you, the user, a community operator, or all three.
 
 **Two-layer encryption** -- (1) a user password encrypts the agent's identity as AES-256-GCM JWE via PBKDF2. (2) Protocol types with `encryptionRequired: true` are encrypted with ECDH-ES+A256KW key agreement using the tenant's X25519 key. Recovery requires only the seed phrase.
 
 ---
 
-## Preview DWN Servers
+## DWN Servers
 
-Two public preview DWN servers are available for development and testing. These are free to use but come with **no uptime guarantees, no data persistence guarantees, and no security guarantees**.
+A DWN server is a multi-tenant node that stores and relays messages on behalf of users. **Anyone can run one** -- it's just an HTTP/WebSocket server backed by a database. There is no central authority; users can point their DID at any server (or several).
 
-| Server | URL | Infrastructure |
+We run two preview nodes for development and testing. They are free to use but come with **no uptime, data persistence, or security guarantees**:
+
+| Node | URL | Notes |
 |---|---|---|
-| **Fly.io** | `https://enbox-dwn.fly.dev` | Fly.io, SQLite |
-| **AWS** | `https://dev.aws.dwn.enbox.id` | ECS + Aurora PostgreSQL, us-east-1 |
+| Fly.io | `https://enbox-dwn.fly.dev` | SQLite-backed, single region |
+| AWS | `https://dev.aws.dwn.enbox.id` | Aurora PostgreSQL, us-east-1 |
 
-Pass one or both when connecting:
+Pass any DWN endpoint(s) when connecting:
 
 ```ts
 const { web5 } = await Web5.connect({
@@ -226,9 +224,9 @@ curl https://enbox-dwn.fly.dev/health
 curl https://dev.aws.dwn.enbox.id/health
 ```
 
-### Deploy Your Own
+### Run Your Own Node
 
-You can self-host a DWN server anywhere Docker runs. The server supports PostgreSQL, SQLite, and MySQL for storage, with optional S3 for large blobs.
+The `@enbox/dwn-server` package is a production-ready DWN server that runs anywhere Docker does. It supports PostgreSQL, SQLite, and MySQL for storage, with optional S3 for large blobs.
 
 ```bash
 # Quick start with Docker Compose
