@@ -130,6 +130,6 @@ export class Messages {
       };
     }
 
-    return filterCopy as Filter;
+    return filterCopy;
   }
 }

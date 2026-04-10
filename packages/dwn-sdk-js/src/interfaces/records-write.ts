@@ -549,7 +549,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     // `signature` generation
     const signature = await createSignerSignature({
       recordId    : this._message.recordId,
-      contextId   : this._message.contextId!, // contextId is computed just above, always defined here
+      contextId   : this._message.contextId, // contextId is computed just above, always defined here
       descriptorCid,
       attestation : this._message.attestation,
       encryption  : this._message.encryption,
@@ -872,7 +872,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   public static async fetchInitialRecordsWrite(
     messageStore: MessageStore, tenant: string, recordId: string
   ): Promise<RecordsWrite | undefined> {
-    return fetchInitialRecordsWrite(messageStore, tenant, recordId) as Promise<RecordsWrite | undefined>;
+    return fetchInitialRecordsWrite(messageStore, tenant, recordId);
   }
 
   /** Delegate to `fetchInitialRecordsWriteMessage` in `records-write-query.ts`. */

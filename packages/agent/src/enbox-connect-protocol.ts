@@ -1297,7 +1297,7 @@ async function submitConnectResponse(
 
   logger.log('Encrypting connect response...');
   const encryptedResponse = await EnboxConnectProtocol.encryptResponse({
-    jwt              : responseObjectJwt!,
+    jwt              : responseObjectJwt,
     encryptionKey    : sharedKey,
     delegateDidKeyId : delegateBearerDid.document.verificationMethod![0].id,
     pin,

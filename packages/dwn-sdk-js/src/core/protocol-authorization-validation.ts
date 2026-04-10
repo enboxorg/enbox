@@ -28,7 +28,7 @@ export async function verifyProtocolPathAndContextId(
   fetchProtocolDefinition: FetchProtocolDefinitionFn,
   governingTimestamp?: string,
 ): Promise<void> {
-  const declaredProtocolPath = inboundMessage.message.descriptor.protocolPath!;
+  const declaredProtocolPath = inboundMessage.message.descriptor.protocolPath;
   const declaredTypeName = getTypeName(declaredProtocolPath);
 
   const parentId = inboundMessage.message.descriptor.parentId;
@@ -47,7 +47,7 @@ export async function verifyProtocolPathAndContextId(
 
   // Determine the protocol URI for the parent query.
   // If the parent path segment has a `$ref` in the composing protocol, the parent lives in a different protocol.
-  const childProtocol = inboundMessage.message.descriptor.protocol!;
+  const childProtocol = inboundMessage.message.descriptor.protocol;
   const parentProtocolUri = await resolveParentProtocolUri(
     tenant, childProtocol, declaredProtocolPath, messageStore, fetchProtocolDefinition, governingTimestamp
   );
@@ -174,7 +174,7 @@ export async function verifyTypeWithComposition(
   fetchProtocolDefinition: FetchProtocolDefinitionFn,
   governingTimestamp?: string,
 ): Promise<void> {
-  const declaredProtocolPath = inboundMessage.descriptor.protocolPath!;
+  const declaredProtocolPath = inboundMessage.descriptor.protocolPath;
   const declaredTypeName = getTypeName(declaredProtocolPath);
 
   // Resolve which protocol types map to use.
@@ -231,7 +231,7 @@ export function verifyType(
   protocolTypes: ProtocolTypes,
   typeName?: string,
 ): void {
-  const declaredTypeName = typeName ?? getTypeName(inboundMessage.descriptor.protocolPath!);
+  const declaredTypeName = typeName ?? getTypeName(inboundMessage.descriptor.protocolPath);
   const typeNames = Object.keys(protocolTypes);
 
   if (!typeNames.includes(declaredTypeName)) {
@@ -361,12 +361,12 @@ export async function verifyAsRoleRecordIfNeeded(
     );
   }
 
-  const protocolPath = incomingRecordsWrite.message.descriptor.protocolPath!;
+  const protocolPath = incomingRecordsWrite.message.descriptor.protocolPath;
   const filter: Filter = {
     interface         : DwnInterfaceName.Records,
     method            : DwnMethodName.Write,
     isLatestBaseState : true,
-    protocol          : incomingRecordsWrite.message.descriptor.protocol!,
+    protocol          : incomingRecordsWrite.message.descriptor.protocol,
     protocolPath,
     recipient,
   };
@@ -422,12 +422,12 @@ export async function verifyRecordLimit(
   const { max, strategy } = ruleSet.$recordLimit;
 
   // Build a filter to count existing records at the same protocol path and parent context.
-  const protocolPath = incomingMessage.message.descriptor.protocolPath!;
+  const protocolPath = incomingMessage.message.descriptor.protocolPath;
   const filter: Filter = {
     interface         : DwnInterfaceName.Records,
     method            : DwnMethodName.Write,
     isLatestBaseState : true,
-    protocol          : incomingMessage.message.descriptor.protocol!,
+    protocol          : incomingMessage.message.descriptor.protocol,
     protocolPath,
   };
 

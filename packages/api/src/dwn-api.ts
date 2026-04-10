@@ -783,7 +783,7 @@ export class DwnApi {
             author       : getRecordAuthor(message as DwnMessage[DwnInterface.RecordsWrite]),
             connectedDid : this.connectedDid,
             remoteOrigin,
-            initialWrite : initialWrite as DwnMessage[DwnInterface.RecordsWrite] | undefined,
+            initialWrite : initialWrite,
             protocolRole,
             delegateDid  : this.delegateDid,
           }, this.permissionsApi);

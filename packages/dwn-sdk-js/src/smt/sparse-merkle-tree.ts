@@ -148,7 +148,7 @@ export class SparseMerkleTree {
         return this.defaultHashes[prefix.length];
       }
 
-      const internalNode = node as SMTInternalNode;
+      const internalNode = node;
       if (prefix[i]) {
         currentHash = internalNode.rightHash;
       } else {
@@ -186,7 +186,7 @@ export class SparseMerkleTree {
         return [];
       }
 
-      const internalNode = node as SMTInternalNode;
+      const internalNode = node;
       if (prefix[i]) {
         currentHash = internalNode.rightHash;
       } else {
@@ -266,7 +266,7 @@ export class SparseMerkleTree {
     }
 
     // Internal node — recurse into the appropriate child
-    const internalNode = node as SMTInternalNode;
+    const internalNode = node;
     const goRight = getBit(keyHash, depth);
 
     let newLeftHash: Hash;
@@ -405,7 +405,7 @@ export class SparseMerkleTree {
     }
 
     // Internal node — recurse into the appropriate child
-    const internalNode = node as SMTInternalNode;
+    const internalNode = node;
     const goRight = getBit(keyHash, depth);
 
     let newLeftHash: Hash;
@@ -477,7 +477,7 @@ export class SparseMerkleTree {
       return hashEquals(node.keyHash, keyHash);
     }
 
-    const internalNode = node as SMTInternalNode;
+    const internalNode = node;
     const goRight = getBit(keyHash, depth);
 
     if (goRight) {
@@ -508,7 +508,7 @@ export class SparseMerkleTree {
       return { siblings: [], leafNode: node, depth };
     }
 
-    const internalNode = node as SMTInternalNode;
+    const internalNode = node;
     const goRight = getBit(keyHash, depth);
 
     let childHash: Hash;
@@ -578,7 +578,7 @@ export class SparseMerkleTree {
       return [node.valueCid];
     }
 
-    const internalNode = node as SMTInternalNode;
+    const internalNode = node;
     const leftLeaves = await this.collectLeaves(internalNode.leftHash, depth + 1);
     const rightLeaves = await this.collectLeaves(internalNode.rightHash, depth + 1);
 

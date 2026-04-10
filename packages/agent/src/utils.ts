@@ -19,7 +19,7 @@ export async function getDwnServiceEndpointUrls(didUri: string, dereferencer: Di
       ? [serviceEndpoint]
       : Array.isArray(serviceEndpoint) && serviceEndpoint.every(endpoint => typeof endpoint === 'string')
       // If the service endpoint is an array of strings, use it as is.
-        ? serviceEndpoint as string[]
+        ? serviceEndpoint
         // If the service endpoint is neither a string nor an array of strings, return an empty array.
         : [];
 

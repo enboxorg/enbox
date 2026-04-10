@@ -1325,6 +1325,6 @@ export function ensureIdentityRuntime(runtimeWindow: IdentityRuntimeHostWindow):
     runtimeWindow[identityRuntimeWindowKey] = new IdentityRuntimeController();
   }
 
-  return runtimeWindow[identityRuntimeWindowKey]!;
+  return runtimeWindow[identityRuntimeWindowKey];
 }
 

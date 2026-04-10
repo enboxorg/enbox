@@ -959,7 +959,7 @@ export class TypedEnbox<
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
-        const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
+        const typeEntry = this._definition.types[typeName];
 
         // Auto-enable encryption when the type requires it.
         // Delegates CAN encrypt because the $encryption public keys in the
@@ -1032,7 +1032,7 @@ export class TypedEnbox<
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
-        const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
+        const typeEntry = this._definition.types[typeName];
 
         const queryFilter = mapParentContextId(request?.filter);
         // Auto-enable decryption when the type requires it. Delegates use
@@ -1091,7 +1091,7 @@ export class TypedEnbox<
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
-        const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
+        const typeEntry = this._definition.types[typeName];
 
         const readFilter = mapParentContextId(request.filter);
         // Auto-enable decryption when the type requires it. See query()
@@ -1195,7 +1195,7 @@ export class TypedEnbox<
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
-        const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
+        const typeEntry = this._definition.types[typeName];
 
         const subFilter = mapParentContextId(request?.filter);
 

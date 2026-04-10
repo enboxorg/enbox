@@ -518,7 +518,7 @@ export async function evaluateClosure(
       const currentProtocol = currentDesc.protocol as string | undefined;
       if (currentProtocol) {
         const cachedProtocolMsg = context.protocolCache.get(currentProtocol);
-        const protocolDef = (cachedProtocolMsg?.descriptor as any)?.definition;
+        const protocolDef = cachedProtocolMsg?.descriptor?.definition;
         if (protocolDef) {
           const protoAwareEdges = extractProtocolAwareDeps(current, protocolDef, context.isDelegateSession);
           const protoResult = await resolveEdges(

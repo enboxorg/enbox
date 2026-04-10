@@ -106,7 +106,7 @@ export class RecordsWriteHandler implements MethodHandler {
         if (isInitial) {
           const hasInlineData = !!(newestExistingMessage as any).encodedData;
           const hasStoredData = this.deps.dataStore
-            ? !!(await this.deps.dataStore.get(tenant, recordsWrite.message.recordId, message.descriptor.dataCid!))
+            ? !!(await this.deps.dataStore.get(tenant, recordsWrite.message.recordId, message.descriptor.dataCid))
             : false;
           existingLacksData = !hasInlineData && !hasStoredData;
         }
@@ -252,7 +252,7 @@ export class RecordsWriteHandler implements MethodHandler {
     // if data is below the threshold, we store it within MessageStore
     if (message.descriptor.dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {
       // validate data integrity before setting.
-      const dataBytes = await DataStream.toBytes(dataStream!);
+      const dataBytes = await DataStream.toBytes(dataStream);
       const dataCid = await Cid.computeDagPbCidFromBytes(dataBytes);
       RecordsWriteHandler.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataBytes.length);
 

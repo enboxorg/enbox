@@ -703,11 +703,11 @@ export class SyncEngineLevel implements SyncEngine {
         }
 
         this.emitEvent({ type: 'link:status-change', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, from: 'initializing', to: 'live' });
-        await this.ledger.setStatus(link!, 'live');
+        await this.ledger.setStatus(link, 'live');
 
         // If the link was marked dirty in a previous session, schedule
         // immediate reconciliation now that subscriptions are open.
-        if (link!.needsReconcile) {
+        if (link.needsReconcile) {
           this.scheduleReconcile(linkKey, 1000);
         }
       } catch (error: any) {
@@ -716,10 +716,10 @@ export class SyncEngineLevel implements SyncEngine {
           : buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
 
         // Detect ProgressGap (410) — the cursor is stale, link needs SMT repair.
-        if ((error as any).isProgressGap && link) {
+        if (error.isProgressGap && link) {
           console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
           this.emitEvent({ type: 'gap:detected', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, reason: 'ProgressGap' });
-          const gapInfo = (error as any).gapInfo;
+          const gapInfo = error.gapInfo;
           await this.transitionToRepairing(linkKey, link, {
             resumeToken: gapInfo?.latestAvailable,
           });

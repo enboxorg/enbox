@@ -281,7 +281,7 @@ export class DidWeb extends DidMethod {
       // Add the verification method to the specified purpose properties.
       for (const purpose of vmOptions.purposes ?? []) {
         document[purpose] ??= [];
-        document[purpose]!.push(methodId);
+        document[purpose].push(methodId);
       }
     }
 

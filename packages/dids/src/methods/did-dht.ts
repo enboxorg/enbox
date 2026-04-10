@@ -263,7 +263,7 @@ export class DidDht extends DidMethod {
         // Initialize the purpose property if it does not already exist.
         document[purpose] ??= [];
         // Add the verification method to the purpose property.
-        document[purpose]!.push(methodId);
+        document[purpose].push(methodId);
       }
     }
 

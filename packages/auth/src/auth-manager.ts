@@ -563,7 +563,7 @@ export class AuthManager {
                     const sendReply = await this._userAgent.rpc.sendDwnRequest({
                       dwnUrl,
                       targetDid : connectedDid,
-                      message   : rawMessage as any,
+                      message   : rawMessage,
                       data,
                     });
                     if (sendReply?.status?.code === 202 || sendReply?.status?.code === 409) {

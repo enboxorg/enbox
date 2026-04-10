@@ -10,7 +10,7 @@ import { Message } from './message.js';
 export abstract class AbstractMessage<M extends GenericMessage> implements MessageInterface<M> {
   private _message: M;
   public get message(): M {
-    return this._message as M;
+    return this._message;
   }
 
   private _signer: string | undefined;
