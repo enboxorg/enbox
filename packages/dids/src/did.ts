@@ -152,7 +152,7 @@ export class Did {
     const match = Did.DID_URI_PATTERN.exec(didUri);
 
     // If the pattern does not match, or if the required groups are not found, return null.
-    if (!match || !match.groups) {return null;}
+    if (!match?.groups) {return null;}
 
     // Extract the method, id, params, path, query, and fragment from the regex match groups.
     const { method, id, path, query, fragment } = match.groups;

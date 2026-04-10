@@ -297,7 +297,7 @@ function TenantList() {
 
             <div class="pagination">
               <div class="info">
-                Showing {items.length}{totalCount !== undefined ? ` of ${formatNumber(totalCount)}` : ''} tenant{items.length !== 1 ? 's' : ''}
+                Showing {items.length}{totalCount === undefined ? '' : ` of ${formatNumber(totalCount)}`} tenant{items.length === 1 ? '' : 's'}
               </div>
               <div style="display:flex;gap:8px">
                 <button
@@ -482,7 +482,7 @@ function MessageBrowser({ did }: { did: string }) {
 
           <div class="pagination">
             <div class="info">
-              Showing {messageItems.length} message{messageItems.length !== 1 ? 's' : ''}
+               Showing {messageItems.length} message{messageItems.length === 1 ? '' : 's'}
             </div>
             <div style="display:flex;gap:8px">
               <button
@@ -599,8 +599,8 @@ function TenantDetail({ did }: { did: string }) {
         <h2 style="margin-top:8px;word-break:break-all;font-family:var(--font-mono);font-size:14px">{did}</h2>
         {tenant && (
           <div style="display:flex;gap:8px;margin-top:8px">
-            <span class={`badge ${tenant.isActive !== false ? 'badge-success' : 'badge-muted'}`}>
-              {tenant.isActive !== false ? 'Active' : 'Inactive'}
+            <span class={`badge ${tenant.isActive === false ? 'badge-muted' : 'badge-success'}`}>
+              {tenant.isActive === false ? 'Inactive' : 'Active'}
             </span>
             <span class={`badge ${tenant.suspended ? 'badge-danger' : 'badge-success'}`}>
               {tenant.suspended ? 'Suspended' : 'Not Suspended'}

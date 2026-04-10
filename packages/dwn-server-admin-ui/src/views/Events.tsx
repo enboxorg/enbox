@@ -123,7 +123,7 @@ export function Events({ path }: { path?: string }) {
                     <td>{evt.method}</td>
                     <td><span class={statusBadgeClass(evt.status)}>{evt.status}</span></td>
                     <td><span class={transportBadgeClass(evt.transport)}>{evt.transport.toUpperCase()}</span></td>
-                    <td>{evt.dataSize !== undefined ? formatBytes(evt.dataSize) : '\u2014'}</td>
+                    <td>{evt.dataSize === undefined ? '\u2014' : formatBytes(evt.dataSize)}</td>
                   </tr>
                 ))}
               </tbody>

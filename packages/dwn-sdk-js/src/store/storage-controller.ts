@@ -131,10 +131,10 @@ export class StorageController {
       }
 
       const existing = recordIdToMessages.get(recordId);
-      if (existing !== undefined) {
-        existing.push(msg);
-      } else {
+      if (existing === undefined) {
         recordIdToMessages.set(recordId, [msg]);
+      } else {
+        existing.push(msg);
       }
     }
 

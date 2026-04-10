@@ -365,7 +365,7 @@ export class AdminStore {
       protocolPath     : row.protocolPath,
       schema           : row.schema,
       dataFormat       : row.dataFormat,
-      dataSize         : row.dataSize !== null ? Number(row.dataSize) : null,
+      dataSize         : row.dataSize === null ? null : Number(row.dataSize),
       dateCreated      : row.dateCreated,
       messageTimestamp : row.messageTimestamp,
     }));

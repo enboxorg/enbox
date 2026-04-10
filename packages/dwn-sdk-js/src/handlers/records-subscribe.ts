@@ -97,7 +97,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
           const gapInfo = (error as any).gapInfo as ProgressGapInfo | undefined;
           return {
             status : { code: 410, detail: 'Progress token gap' },
-            error  : gapInfo !== undefined ? { code: 'ProgressGap' as const, ...gapInfo } : undefined,
+            error  : gapInfo === undefined ? undefined : { code: 'ProgressGap' as const, ...gapInfo },
           };
         }
         return messageReplyFromError(error, 500);

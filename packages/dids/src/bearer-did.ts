@@ -179,7 +179,7 @@ export class BearerDid {
       vm => extractDidFragment(vm.id) === (extractDidFragment(params?.methodId) ?? extractDidFragment(this.document.assertionMethod?.[0]))
     );
 
-    if (!(verificationMethod && verificationMethod.publicKeyJwk)) {
+    if (!verificationMethod?.publicKeyJwk) {
       throw new DidError(DidErrorCode.InternalError, 'A verification method intended for signing could not be determined from the DID Document');
     }
 

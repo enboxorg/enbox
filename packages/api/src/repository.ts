@@ -147,7 +147,7 @@ function buildRootSingletonMethods(
         if (records.length > 0) {
           const { status, record } = await records[0].update({
             data: options.data,
-            ...(options.tags !== undefined ? { tags: options.tags } : {}),
+            ...(options.tags === undefined ? {} : { tags: options.tags }),
           } as never);
           return { status, record };
         }
@@ -245,7 +245,7 @@ function buildNestedSingletonMethods(
         if (records.length > 0) {
           const { status, record } = await records[0].update({
             data: options.data,
-            ...(options.tags !== undefined ? { tags: options.tags } : {}),
+            ...(options.tags === undefined ? {} : { tags: options.tags }),
           } as never);
           return { status, record };
         }

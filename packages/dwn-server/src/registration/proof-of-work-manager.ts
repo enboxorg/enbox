@@ -210,7 +210,12 @@ export class ProofOfWorkManager {
 
   private refreshChallengeNonce(): void {
     // If challenge seed is supplied, use it to deterministically generate the challenge nonces.
-    if (this.challengeSeed !== undefined) {
+    if (this.challengeSeed === undefined) {
+      const newChallengeNonce = ProofOfWork.generateNonce();
+
+      this.challengeNonces.previousChallengeNonce = this.challengeNonces.currentChallengeNonce;
+      this.challengeNonces.currentChallengeNonce = newChallengeNonce;
+    } else {
       const currentRefreshIntervalId = Math.floor(Date.now() / (this.challengeRefreshFrequencyInSeconds * 1000));
       const previousRefreshIntervalId = currentRefreshIntervalId - 1;
       const nextRefreshIntervalId = currentRefreshIntervalId + 1;
@@ -220,11 +225,6 @@ export class ProofOfWorkManager {
       const nextChallengeNonce = ProofOfWork.hashAsHexString([this.challengeSeed, nextRefreshIntervalId.toString(), this.challengeSeed]);
 
       this.challengeNonces = { previousChallengeNonce, currentChallengeNonce, nextChallengeNonce };
-    } else {
-      const newChallengeNonce = ProofOfWork.generateNonce();
-
-      this.challengeNonces.previousChallengeNonce = this.challengeNonces.currentChallengeNonce;
-      this.challengeNonces.currentChallengeNonce = newChallengeNonce;
     }
   }
 

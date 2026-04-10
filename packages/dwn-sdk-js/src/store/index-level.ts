@@ -498,13 +498,13 @@ export class IndexLevel {
 
     const sortedValues = [...matches.values()].sort((a,b) => this.sortItems(a,b, sortProperty, sortDirection));
 
-    const start = cursorStartingKey !== undefined ? this.findCursorStartingIndex(sortedValues, sortDirection, sortProperty, cursorStartingKey) : 0;
+    const start = cursorStartingKey === undefined ? 0 : this.findCursorStartingIndex(sortedValues, sortDirection, sortProperty, cursorStartingKey);
     if (start < 0) {
       // if the provided cursor does not come before any of the results, we return no results
       return [];
     }
 
-    const end = limit !== undefined ? start + limit: undefined;
+    const end = limit === undefined ? undefined : start + limit;
     return sortedValues.slice(start, end);
   }
 

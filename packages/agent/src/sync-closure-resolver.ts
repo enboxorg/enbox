@@ -366,7 +366,7 @@ function extractProtocolAwareDeps(
           Buffer.from(payload, 'base64url').toString('utf-8')
         );
         const protocolRole = decoded.protocolRole as string | undefined;
-        if (protocolRole && protocolRole.includes(':')) {
+        if (protocolRole?.includes(':')) {
           // Cross-protocol role: "alias:protocolPath"
           const roleColonIdx = protocolRole.indexOf(':');
           const roleAlias = protocolRole.substring(0, roleColonIdx);
@@ -518,7 +518,7 @@ export async function evaluateClosure(
       const currentProtocol = currentDesc.protocol as string | undefined;
       if (currentProtocol) {
         const cachedProtocolMsg = context.protocolCache.get(currentProtocol);
-        const protocolDef = (cachedProtocolMsg?.descriptor as any)?.definition;
+        const protocolDef = cachedProtocolMsg?.descriptor?.definition;
         if (protocolDef) {
           const protoAwareEdges = extractProtocolAwareDeps(current, protocolDef, context.isDelegateSession);
           const protoResult = await resolveEdges(

@@ -76,7 +76,7 @@ function getEndpointFromQueryParam(): string | null {
   try {
     const params = new URLSearchParams(window.location.search);
     const endpoint = params.get('endpoint');
-    if (endpoint && endpoint.startsWith('http')) {
+    if (endpoint?.startsWith('http')) {
       return endpoint;
     }
   } catch {

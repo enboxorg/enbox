@@ -153,7 +153,7 @@ export class RecordsGrantAuthorization {
 
     // If grant specifies a contextId, check that record falls under that contextId
     if (grantScope.contextId !== undefined) {
-      if (recordsWriteMessage.contextId === undefined || !recordsWriteMessage.contextId.startsWith(grantScope.contextId)) {
+      if (!recordsWriteMessage.contextId?.startsWith(grantScope.contextId)) {
         throw new DwnError(
           DwnErrorCode.RecordsGrantAuthorizationScopeContextIdMismatch,
           `Grant scope specifies different contextId than what appears in the record`

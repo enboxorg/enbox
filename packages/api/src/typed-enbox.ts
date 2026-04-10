@@ -959,7 +959,7 @@ export class TypedEnbox<
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
-        const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
+        const typeEntry = this._definition.types[typeName];
 
         // Auto-enable encryption when the type requires it.
         // Delegates CAN encrypt because the $encryption public keys in the
@@ -980,7 +980,7 @@ export class TypedEnbox<
           tags            : request.tags,
           protocol        : this._definition.protocol,
           protocolPath    : normalizedPath,
-          ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
+          ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
           dataFormat      : request.dataFormat ?? typeEntry?.dataFormats?.[0],
         });
 
@@ -1032,7 +1032,7 @@ export class TypedEnbox<
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
-        const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
+        const typeEntry = this._definition.types[typeName];
 
         const queryFilter = mapParentContextId(request?.filter);
         // Auto-enable decryption when the type requires it. Delegates use
@@ -1048,7 +1048,7 @@ export class TypedEnbox<
             ...queryFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,
-            ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
+            ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
           },
           dateSort     : request?.dateSort,
           pagination   : request?.pagination,
@@ -1091,7 +1091,7 @@ export class TypedEnbox<
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
-        const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
+        const typeEntry = this._definition.types[typeName];
 
         const readFilter = mapParentContextId(request.filter);
         // Auto-enable decryption when the type requires it. See query()
@@ -1107,7 +1107,7 @@ export class TypedEnbox<
             ...readFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,
-            ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
+            ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
           },
         });
 
@@ -1195,7 +1195,7 @@ export class TypedEnbox<
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
         const typeName = lastSegment(normalizedPath);
-        const typeEntry = this._definition.types[typeName] as ProtocolType | undefined;
+        const typeEntry = this._definition.types[typeName];
 
         const subFilter = mapParentContextId(request?.filter);
 
@@ -1205,7 +1205,7 @@ export class TypedEnbox<
             ...subFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,
-            ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
+            ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
           },
           protocolRole: request?.protocolRole,
         });

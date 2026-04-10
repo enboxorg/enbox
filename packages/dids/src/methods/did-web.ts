@@ -281,7 +281,7 @@ export class DidWeb extends DidMethod {
       // Add the verification method to the specified purpose properties.
       for (const purpose of vmOptions.purposes ?? []) {
         document[purpose] ??= [];
-        document[purpose]!.push(methodId);
+        document[purpose].push(methodId);
       }
     }
 
@@ -334,7 +334,7 @@ export class DidWeb extends DidMethod {
       ? didDocument.verificationMethod?.find(vm => extractDidFragment(vm.id) === targetFragment)
       : didDocument.verificationMethod?.[0];
 
-    if (!(verificationMethod && verificationMethod.publicKeyJwk)) {
+    if (!verificationMethod?.publicKeyJwk) {
       throw new DidError(
         DidErrorCode.InternalError,
         'A verification method intended for signing could not be determined from the DID Document'

@@ -377,21 +377,21 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       for (let j = i + 1; j < actionRules.length; j++) {
         const otherActionRule = actionRules[j];
 
-        if (actionRule.who !== undefined) {
-          if (actionRule.who === otherActionRule.who && actionRule.of === otherActionRule.of) {
-            throw new DwnError(
-              DwnErrorCode.ProtocolsConfigureDuplicateActorInRuleSet,
-              `More than one action rule per actor ${actionRule.who} of ${actionRule.of} ` +
-              `not allowed within a rule set: ${JSON.stringify(actionRule)}`
-            );
-          }
-        } else {
-          // else implicitly a role-based action rule
+        if (actionRule.who === undefined) {
+          // implicitly a role-based action rule
 
           if (actionRule.role === otherActionRule.role) {
             throw new DwnError(
               DwnErrorCode.ProtocolsConfigureDuplicateRoleInRuleSet,
               `More than one action rule per role ${actionRule.role} not allowed within a rule set: ${JSON.stringify(actionRule)}`
+            );
+          }
+        } else {
+          if (actionRule.who === otherActionRule.who && actionRule.of === otherActionRule.of) {
+            throw new DwnError(
+              DwnErrorCode.ProtocolsConfigureDuplicateActorInRuleSet,
+              `More than one action rule per actor ${actionRule.who} of ${actionRule.of} ` +
+              `not allowed within a rule set: ${JSON.stringify(actionRule)}`
             );
           }
         }
@@ -497,7 +497,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
     }
 
     // validate alias exists in `uses`
-    if (uses === undefined || uses[parsed.alias] === undefined) {
+    if (uses?.[parsed.alias] === undefined) {
       throw new DwnError(
         DwnErrorCode.ProtocolsConfigureInvalidRefAlias,
         `'$ref' alias '${parsed.alias}' at protocol path '${ruleSetProtocolPath}' does not exist in the 'uses' map.`
@@ -543,7 +543,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       );
     }
 
-    if (uses === undefined || uses[parsed.alias] === undefined) {
+    if (uses?.[parsed.alias] === undefined) {
       const errorCode = fieldName === 'role'
         ? DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole
         : DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolOf;

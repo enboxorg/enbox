@@ -106,7 +106,7 @@ export class RecordsWriteHandler implements MethodHandler {
         if (isInitial) {
           const hasInlineData = !!(newestExistingMessage as any).encodedData;
           const hasStoredData = this.deps.dataStore
-            ? !!(await this.deps.dataStore.get(tenant, recordsWrite.message.recordId, message.descriptor.dataCid!))
+            ? !!(await this.deps.dataStore.get(tenant, recordsWrite.message.recordId, message.descriptor.dataCid))
             : false;
           existingLacksData = !hasInlineData && !hasStoredData;
         }
@@ -121,9 +121,9 @@ export class RecordsWriteHandler implements MethodHandler {
 
     // Look up the core protocol (if any) for the incoming message so that lifecycle hooks
     // can be dispatched generically rather than checking for specific protocol URIs.
-    const coreProtocol = message.descriptor.protocol !== undefined
-      ? this.deps.coreProtocols?.get(message.descriptor.protocol)
-      : undefined;
+    const coreProtocol = message.descriptor.protocol === undefined
+      ? undefined
+      : this.deps.coreProtocols?.get(message.descriptor.protocol);
 
     try {
       if (newestExistingMessage?.descriptor.method === DwnMethodName.Delete) {
@@ -148,11 +148,8 @@ export class RecordsWriteHandler implements MethodHandler {
       let isLatestBaseState = false;
       let messageWithOptionalEncodedData = message as RecordsQueryReplyEntry;
 
-      if (dataStream !== undefined) {
-        messageWithOptionalEncodedData = await this.processMessageWithDataStream(tenant, message, dataStream);
-        isLatestBaseState = true;
-      } else {
-        // else data stream is NOT provided
+      if (dataStream === undefined) {
+        // data stream is NOT provided
 
         // if the incoming message is not an initial write, and no dataStream is provided, we would allow it provided it passes validation
         // processMessageWithoutDataStream() abstracts that logic
@@ -161,6 +158,9 @@ export class RecordsWriteHandler implements MethodHandler {
           messageWithOptionalEncodedData = await this.processMessageWithoutDataStream(tenant, message, newestExistingWrite );
           isLatestBaseState = true;
         }
+      } else {
+        messageWithOptionalEncodedData = await this.processMessageWithDataStream(tenant, message, dataStream);
+        isLatestBaseState = true;
       }
 
       const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
@@ -252,14 +252,14 @@ export class RecordsWriteHandler implements MethodHandler {
     // if data is below the threshold, we store it within MessageStore
     if (message.descriptor.dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {
       // validate data integrity before setting.
-      const dataBytes = await DataStream.toBytes(dataStream!);
+      const dataBytes = await DataStream.toBytes(dataStream);
       const dataCid = await Cid.computeDagPbCidFromBytes(dataBytes);
       RecordsWriteHandler.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataBytes.length);
 
       // Dispatch schema validation to the core protocol, if applicable.
-      const coreProtocol = message.descriptor.protocol !== undefined
-        ? this.deps.coreProtocols?.get(message.descriptor.protocol)
-        : undefined;
+      const coreProtocol = message.descriptor.protocol === undefined
+        ? undefined
+        : this.deps.coreProtocols?.get(message.descriptor.protocol);
       if (coreProtocol?.validateRecord !== undefined) {
         coreProtocol.validateRecord(message, dataBytes);
       }
@@ -304,13 +304,13 @@ export class RecordsWriteHandler implements MethodHandler {
 
     if (dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {
       // we encode the data from the original write if it is smaller than the data-store threshold
-      if (newestExistingWrite.encodedData !== undefined) {
-        messageWithOptionalEncodedData.encodedData = newestExistingWrite.encodedData;
-      } else {
+      if (newestExistingWrite.encodedData === undefined) {
         throw new DwnError(
           DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious,
           `No dataStream was provided and unable to get data from previous message`
         );
+      } else {
+        messageWithOptionalEncodedData.encodedData = newestExistingWrite.encodedData;
       }
     } else {
       // else just make sure the data is in the data store
@@ -396,7 +396,7 @@ export class RecordsWriteHandler implements MethodHandler {
       ruleSet = ruleSet[pathSegments[i]] as typeof ruleSet;
     }
 
-    if (ruleSet === undefined || ruleSet.$squash !== true) {
+    if (ruleSet?.$squash !== true) {
       return;
     }
 

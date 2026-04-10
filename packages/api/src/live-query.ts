@@ -220,15 +220,15 @@ export class LiveQuery extends EventTarget {
     } else {
       const knownTimestamp = this._knownRecords.get(record.id);
 
-      if (knownTimestamp !== undefined) {
+      if (knownTimestamp === undefined) {
+        changeType = 'create';
+      } else {
         // We've seen this recordId before (either from snapshot or a prior event).
         if (record.timestamp <= knownTimestamp) {
           // Duplicate or stale event from the overlap window — skip.
           return;
         }
         changeType = 'update';
-      } else {
-        changeType = 'create';
       }
 
       // Update the known state.

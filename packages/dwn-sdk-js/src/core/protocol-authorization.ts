@@ -61,7 +61,7 @@ export class ProtocolAuthorization {
     // fetch the protocol definition that was active at the governing timestamp
     const protocolDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
       tenant,
-      incomingMessage.message.descriptor.protocol!,
+      incomingMessage.message.descriptor.protocol,
       messageStore,
       governingTimestamp,
       coreProtocols,
@@ -85,7 +85,7 @@ export class ProtocolAuthorization {
 
     // get the rule set for the inbound message
     const ruleSet = ProtocolAuthorization.getRuleSet(
-      incomingMessage.message.descriptor.protocolPath!,
+      incomingMessage.message.descriptor.protocolPath,
       protocolDefinition,
     );
 
@@ -143,7 +143,7 @@ export class ProtocolAuthorization {
     // fetch the protocol definition that was active at the governing timestamp
     const protocolDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
       tenant,
-      incomingMessage.message.descriptor.protocol!,
+      incomingMessage.message.descriptor.protocol,
       messageStore,
       governingTimestamp,
       coreProtocols,
@@ -151,7 +151,7 @@ export class ProtocolAuthorization {
 
     // get the rule set for the inbound message
     const ruleSet = ProtocolAuthorization.getRuleSet(
-      incomingMessage.message.descriptor.protocolPath!,
+      incomingMessage.message.descriptor.protocolPath,
       protocolDefinition,
     );
 
@@ -161,8 +161,8 @@ export class ProtocolAuthorization {
     await verifyInvokedRole(
       tenant,
       incomingMessage,
-      incomingMessage.message.descriptor.protocol!,
-      incomingMessage.message.contextId!,
+      incomingMessage.message.descriptor.protocol,
+      incomingMessage.message.contextId,
       protocolDefinition,
       messageStore,
       boundFetchDefinition,
@@ -201,14 +201,14 @@ export class ProtocolAuthorization {
     const initialWrite = await fetchInitialWrite(
       tenant, newestRecordsWrite.message.recordId, messageStore
     );
-    const governingTimestamp = initialWrite !== undefined
-      ? initialWrite.descriptor.messageTimestamp
-      : newestRecordsWrite.message.descriptor.messageTimestamp;
+    const governingTimestamp = initialWrite === undefined
+      ? newestRecordsWrite.message.descriptor.messageTimestamp
+      : initialWrite.descriptor.messageTimestamp;
 
     // fetch the protocol definition that was active when the record was created
     const protocolDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
       tenant,
-      newestRecordsWrite.message.descriptor.protocol!,
+      newestRecordsWrite.message.descriptor.protocol,
       messageStore,
       governingTimestamp,
       coreProtocols,
@@ -216,7 +216,7 @@ export class ProtocolAuthorization {
 
     // get the rule set for the inbound message
     const ruleSet = ProtocolAuthorization.getRuleSet(
-      newestRecordsWrite.message.descriptor.protocolPath!,
+      newestRecordsWrite.message.descriptor.protocolPath,
       protocolDefinition,
     );
 
@@ -226,8 +226,8 @@ export class ProtocolAuthorization {
     await verifyInvokedRole(
       tenant,
       incomingMessage,
-      newestRecordsWrite.message.descriptor.protocol!,
-      newestRecordsWrite.message.contextId!,
+      newestRecordsWrite.message.descriptor.protocol,
+      newestRecordsWrite.message.contextId,
       protocolDefinition,
       messageStore,
       boundFetchDefinition,
@@ -312,14 +312,14 @@ export class ProtocolAuthorization {
     const initialWrite = await fetchInitialWrite(
       tenant, incomingMessage.message.descriptor.recordId, messageStore
     );
-    const governingTimestamp = initialWrite !== undefined
-      ? initialWrite.descriptor.messageTimestamp
-      : recordsWrite.message.descriptor.messageTimestamp;
+    const governingTimestamp = initialWrite === undefined
+      ? recordsWrite.message.descriptor.messageTimestamp
+      : initialWrite.descriptor.messageTimestamp;
 
     // fetch the protocol definition that was active when the record was created
     const protocolDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
       tenant,
-      recordsWrite.message.descriptor.protocol!,
+      recordsWrite.message.descriptor.protocol,
       messageStore,
       governingTimestamp,
       coreProtocols,
@@ -327,7 +327,7 @@ export class ProtocolAuthorization {
 
     // get the rule set for the inbound message
     const ruleSet = ProtocolAuthorization.getRuleSet(
-      recordsWrite.message.descriptor.protocolPath!,
+      recordsWrite.message.descriptor.protocolPath,
       protocolDefinition,
     );
 
@@ -337,8 +337,8 @@ export class ProtocolAuthorization {
     await verifyInvokedRole(
       tenant,
       incomingMessage,
-      recordsWrite.message.descriptor.protocol!,
-      recordsWrite.message.contextId!,
+      recordsWrite.message.descriptor.protocol,
+      recordsWrite.message.contextId,
       protocolDefinition,
       messageStore,
       boundFetchDefinition,
@@ -389,12 +389,12 @@ export class ProtocolAuthorization {
       protocol  : protocolUri,
     };
 
-    if (messageTimestamp !== undefined) {
-      // temporal lookup: find the protocol definition active at the given timestamp
-      query.messageTimestamp = { lte: messageTimestamp };
-    } else {
+    if (messageTimestamp === undefined) {
       // default: return only the latest protocol definition
       query.isLatestBaseState = true;
+    } else {
+      // temporal lookup: find the protocol definition active at the given timestamp
+      query.messageTimestamp = { lte: messageTimestamp };
     }
 
     const { messages: protocols } = await messageStore.query(

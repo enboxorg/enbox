@@ -172,10 +172,10 @@ export class CoseKey {
       coseKey.set(CoseKeyParamLabel.Crv, jwkCrvToCose[crv]);
 
       if (jwk.x !== undefined) {
-        coseKey.set(CoseKeyParamLabel.X, Convert.base64Url(jwk.x as string).toUint8Array());
+        coseKey.set(CoseKeyParamLabel.X, Convert.base64Url(jwk.x).toUint8Array());
       }
       if (jwk.d !== undefined) {
-        coseKey.set(CoseKeyParamLabel.D, Convert.base64Url(jwk.d as string).toUint8Array());
+        coseKey.set(CoseKeyParamLabel.D, Convert.base64Url(jwk.d).toUint8Array());
       }
     } else if (jwk.kty === 'EC') {
       coseKey.set(CoseKeyLabel.Kty, CoseKeyType.EC2);
@@ -187,13 +187,13 @@ export class CoseKey {
       coseKey.set(CoseKeyParamLabel.Crv, jwkCrvToCose[crv]);
 
       if (jwk.x !== undefined) {
-        coseKey.set(CoseKeyParamLabel.X, Convert.base64Url(jwk.x as string).toUint8Array());
+        coseKey.set(CoseKeyParamLabel.X, Convert.base64Url(jwk.x).toUint8Array());
       }
       if (jwk.y !== undefined) {
-        coseKey.set(CoseKeyParamLabel.Y, Convert.base64Url(jwk.y as string).toUint8Array());
+        coseKey.set(CoseKeyParamLabel.Y, Convert.base64Url(jwk.y).toUint8Array());
       }
       if (jwk.d !== undefined) {
-        coseKey.set(CoseKeyParamLabel.D, Convert.base64Url(jwk.d as string).toUint8Array());
+        coseKey.set(CoseKeyParamLabel.D, Convert.base64Url(jwk.d).toUint8Array());
       }
     } else {
       throw new CryptoError(CryptoErrorCode.AlgorithmNotSupported, `CoseKey: unsupported key type '${jwk.kty}'`);

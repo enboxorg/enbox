@@ -90,12 +90,12 @@ const cli = yargs(hideBin(process.argv))
       }
 
       // Write or print
-      if (args.output !== undefined) {
+      if (args.output === undefined) {
+        process.stdout.write(code);
+      } else {
         const outputPath = resolve(args.output);
         await writeFile(outputPath, code, 'utf-8');
         process.stderr.write(`\nWrote ${outputPath}\n`);
-      } else {
-        process.stdout.write(code);
       }
     },
   )

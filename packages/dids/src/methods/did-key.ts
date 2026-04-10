@@ -351,7 +351,7 @@ export class DidKey extends DidMethod {
     const [ methodId ] = didDocument.assertionMethod || [];
     const verificationMethod = didDocument.verificationMethod?.find(vm => vm.id === methodId);
 
-    if (!(verificationMethod && verificationMethod.publicKeyJwk)) {
+    if (!verificationMethod?.publicKeyJwk) {
       throw new DidError(DidErrorCode.InternalError, 'A verification method intended for signing could not be determined from the DID Document');
     }
 

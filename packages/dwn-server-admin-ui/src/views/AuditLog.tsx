@@ -190,7 +190,7 @@ export function AuditLog({ path }: { path?: string }) {
           {cursor !== undefined && (
             <div class="pagination">
               <span class="info">
-                Showing {entries.length} entries{total !== undefined ? ` of ${total}` : ''}
+                Showing {entries.length} entries{total === undefined ? '' : ` of ${total}`}
               </span>
               <button class="btn" onClick={() => fetchAudit(true)} disabled={loadingMore}>
                 {loadingMore ? 'Loading...' : 'Load More'}

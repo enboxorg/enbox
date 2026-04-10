@@ -703,11 +703,11 @@ export class SyncEngineLevel implements SyncEngine {
         }
 
         this.emitEvent({ type: 'link:status-change', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, from: 'initializing', to: 'live' });
-        await this.ledger.setStatus(link!, 'live');
+        await this.ledger.setStatus(link, 'live');
 
         // If the link was marked dirty in a previous session, schedule
         // immediate reconciliation now that subscriptions are open.
-        if (link!.needsReconcile) {
+        if (link.needsReconcile) {
           this.scheduleReconcile(linkKey, 1000);
         }
       } catch (error: any) {
@@ -716,10 +716,10 @@ export class SyncEngineLevel implements SyncEngine {
           : buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
 
         // Detect ProgressGap (410) — the cursor is stale, link needs SMT repair.
-        if ((error as any).isProgressGap && link) {
+        if (error.isProgressGap && link) {
           console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
           this.emitEvent({ type: 'gap:detected', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, reason: 'ProgressGap' });
-          const gapInfo = (error as any).gapInfo;
+          const gapInfo = error.gapInfo;
           await this.transitionToRepairing(linkKey, link, {
             resumeToken: gapInfo?.latestAvailable,
           });
@@ -781,7 +781,7 @@ export class SyncEngineLevel implements SyncEngine {
     let drained = 0;
     while (true) {
       const entry = rt.inflight.get(rt.nextCommitOrdinal);
-      if (!entry || !entry.committed) { break; }
+      if (!entry?.committed) { break; }
 
       // This ordinal is committed — advance the durable checkpoint.
       ReplicationLedger.commitContiguousToken(link.pull, entry.token);
@@ -894,7 +894,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       // Verify link still exists and is still repairing.
       const currentLink = this._activeLinks.get(linkKey);
-      if (!currentLink || currentLink.status !== 'repairing') { return; }
+      if (currentLink?.status !== 'repairing') { return; }
 
       try {
         await this.repairLink(linkKey);
@@ -1511,7 +1511,7 @@ export class SyncEngineLevel implements SyncEngine {
           // For protocol-scoped links, verify that all hard dependencies for
           // this operation are locally present before considering it committed.
           // Full-tenant scope bypasses this entirely (returns complete with 0 queries).
-          if (link && link.scope.kind === 'protocol') {
+          if (link?.scope.kind === 'protocol') {
             const messageStore = this.agent.dwn.node.storage.messageStore;
             let closureCtx = this._closureContexts.get(did);
             if (!closureCtx) {
@@ -2257,9 +2257,9 @@ export class SyncEngineLevel implements SyncEngine {
   private async getLocalRoot(did: string, delegateDid?: string, protocol?: string): Promise<string> {
     const si = this.stateIndex;
     if (si) {
-      const rootHash = protocol !== undefined
-        ? await si.getProtocolRoot(did, protocol)
-        : await si.getRoot(did);
+      const rootHash = protocol === undefined
+        ? await si.getRoot(did)
+        : await si.getProtocolRoot(did, protocol);
       return hashToHex(rootHash);
     }
 
@@ -2402,9 +2402,9 @@ export class SyncEngineLevel implements SyncEngine {
       if (si) {
         // Fast path: direct StateIndex access (local mode).
         const bitPath = SyncEngineLevel.parseBitPrefix(prefix);
-        const hash = protocol !== undefined
-          ? await si.getProtocolSubtreeHash(did, protocol, bitPath)
-          : await si.getSubtreeHash(did, bitPath);
+        const hash = protocol === undefined
+          ? await si.getSubtreeHash(did, bitPath)
+          : await si.getProtocolSubtreeHash(did, protocol, bitPath);
         hexHash = hashToHex(hash);
       } else {
         // Remote mode fallback.
@@ -2444,9 +2444,9 @@ export class SyncEngineLevel implements SyncEngine {
     const si = this.stateIndex;
     if (si) {
       const bitPath = SyncEngineLevel.parseBitPrefix(prefix);
-      const hash = protocol !== undefined
-        ? await si.getProtocolSubtreeHash(did, protocol, bitPath)
-        : await si.getSubtreeHash(did, bitPath);
+      const hash = protocol === undefined
+        ? await si.getSubtreeHash(did, bitPath)
+        : await si.getProtocolSubtreeHash(did, protocol, bitPath);
       return hashToHex(hash);
     }
 
@@ -2479,9 +2479,9 @@ export class SyncEngineLevel implements SyncEngine {
     const si = this.stateIndex;
     if (si) {
       const bitPath = SyncEngineLevel.parseBitPrefix(prefix);
-      return protocol !== undefined
-        ? await si.getProtocolLeaves(did, protocol, bitPath)
-        : await si.getLeaves(did, bitPath);
+      return protocol === undefined
+        ? await si.getLeaves(did, bitPath)
+        : await si.getProtocolLeaves(did, protocol, bitPath);
     }
 
     // Remote mode fallback.

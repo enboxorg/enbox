@@ -375,7 +375,7 @@ export class Records {
       delete filterCopy.recipient;
     }
 
-    return filterCopy as Filter;
+    return filterCopy;
   }
 
   /**

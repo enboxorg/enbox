@@ -1,6 +1,6 @@
 import type { EnboxAgent } from './types/agent.js';
 import type { CreateGrantParams, CreateRequestParams, CreateRevocationParams, FetchPermissionRequestParams, FetchPermissionsParams, GetPermissionParams, IsGrantRevokedParams, PermissionGrantEntry, PermissionRequestEntry, PermissionRevocationEntry, PermissionsApi } from './types/permissions.js';
-import type { DwnDataEncodedRecordsWriteMessage, DwnMessageParams, DwnMessagesPermissionScope, DwnPermissionScope, DwnProtocolPermissionScope, DwnRecordsPermissionScope, ProcessDwnRequest } from './types/dwn.js';
+import type { DwnDataEncodedRecordsWriteMessage, DwnMessageParams, DwnPermissionScope, DwnRecordsPermissionScope, ProcessDwnRequest } from './types/dwn.js';
 import type { PermissionGrant, PermissionGrantData, PermissionRequestData, PermissionRevocationData } from '@enbox/dwn-sdk-js';
 
 import { isRecordsType } from './dwn-api.js';
@@ -474,7 +474,7 @@ export class AgentPermissionsApi implements PermissionsApi {
           return true;
         }
       } else {
-        const messagesScope = scope as DwnMessagesPermissionScope | DwnProtocolPermissionScope;
+        const messagesScope = scope;
         // Checks for unrestricted protocol scope, if no protocol is defined in the scope it is unrestricted
         if (messagesScope.protocol === undefined) {
           return true;

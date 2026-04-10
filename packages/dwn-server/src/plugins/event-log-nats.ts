@@ -252,13 +252,13 @@ export default class NatsEventLog implements EventLog {
     let reason: ProgressGapReason;
     if (cursor.streamId !== expectedStreamId) {
       reason = 'stream_mismatch';
-    } else if (cursor.epoch !== this.#epoch) {
-      reason = 'epoch_mismatch';
-    } else {
+    } else if (cursor.epoch === this.#epoch) {
       // Check if position is within replay bounds using BigInt
       // for safe handling of NATS sequences beyond Number.MAX_SAFE_INTEGER.
       const bounds = await this.getReplayBounds(tenant);
-      if (bounds !== undefined) {
+      if (bounds === undefined) {
+        return; // No events — vacuously valid.
+      } else {
         const cursorSeq = BigInt(cursor.position);
         const oldestSeq = BigInt(bounds.oldest.position);
         if (cursorSeq < oldestSeq - 1n) {
@@ -266,9 +266,9 @@ export default class NatsEventLog implements EventLog {
         } else {
           return; // Valid.
         }
-      } else {
-        return; // No events — vacuously valid.
       }
+    } else {
+      reason = 'epoch_mismatch';
     }
 
     const bounds = await this.getReplayBounds(tenant);
@@ -315,11 +315,11 @@ export default class NatsEventLog implements EventLog {
       ack_policy     : AckPolicy.None, // ordered consumers use AckNone
     };
 
-    if (cursor !== undefined) {
+    if (cursor === undefined) {
+      consumerOpts.deliver_policy = DeliverPolicy.All;
+    } else {
       consumerOpts.deliver_policy = DeliverPolicy.StartSequence;
       consumerOpts.opt_start_seq = Number(cursor.position) + 1;
-    } else {
-      consumerOpts.deliver_policy = DeliverPolicy.All;
     }
 
     const consumer = await this.#jsm!.consumers.add(this.#config.streamName, consumerOpts);
@@ -405,11 +405,11 @@ export default class NatsEventLog implements EventLog {
       inactive_threshold : 60_000_000_000, // 60 seconds in nanos
     };
 
-    if (cursor !== undefined) {
+    if (cursor === undefined) {
+      consumerOpts.deliver_policy = DeliverPolicy.New;
+    } else {
       consumerOpts.deliver_policy = DeliverPolicy.StartSequence;
       consumerOpts.opt_start_seq = Number(cursor.position) + 1;
-    } else {
-      consumerOpts.deliver_policy = DeliverPolicy.New;
     }
 
     await this.#jsm!.consumers.add(this.#config.streamName, consumerOpts);

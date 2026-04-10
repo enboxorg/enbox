@@ -72,7 +72,7 @@ export function ViewOptions({
   githubUrl: string;
 }) {
   const items = useMemo(() => {
-    const pageUrl = typeof window !== 'undefined' ? window.location.href : 'loading';
+    const pageUrl = typeof window === 'undefined' ? 'loading' : window.location.href;
     const q = `Read ${pageUrl}, I want to ask questions about it.`;
 
     return [

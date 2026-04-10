@@ -14,7 +14,7 @@ import type { StorageAdapter } from '../types.js';
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
-import type { DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope } from '@enbox/agent';
+import type { DwnDataEncodedRecordsWriteMessage } from '@enbox/agent';
 
 import { Convert } from '@enbox/common';
 import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
@@ -444,7 +444,7 @@ async function sendRevocationToEndpoints(
       const reply = await userAgent.rpc.sendDwnRequest({
         dwnUrl,
         targetDid : connectedDid,
-        message   : rawMessage as any,
+        message   : rawMessage,
         data,
       });
       if (reply?.status?.code === 202 || reply?.status?.code === 409) {
@@ -550,7 +550,7 @@ async function deriveProtocolsFromGrants(
   if (response.reply.status.code === 200 && response.reply.entries) {
     for (const entry of response.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
       const grant = DwnPermissionGrant.parse(entry);
-      const scopeProtocol = (grant.scope as DwnMessagesPermissionScope | DwnRecordsPermissionScope).protocol;
+      const scopeProtocol = grant.scope.protocol;
       if (scopeProtocol && scopeProtocol !== PermissionsProtocol.uri) {
         protocols.push(scopeProtocol);
       }

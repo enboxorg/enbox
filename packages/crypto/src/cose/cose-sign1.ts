@@ -190,9 +190,9 @@ export class CoseSign1 {
     const protectedHeaderBytes = Cbor.encode(protectedHeaderMap);
 
     // Build the unprotected header.
-    const unprotectedHeaderMap = params.unprotectedHeader !== undefined
-      ? CoseSign1.buildUnprotectedHeaderMap(params.unprotectedHeader)
-      : new Map<number, unknown>();
+    const unprotectedHeaderMap = params.unprotectedHeader === undefined
+      ? new Map<number, unknown>()
+      : CoseSign1.buildUnprotectedHeaderMap(params.unprotectedHeader);
 
     // Construct the Sig_structure1 (to-be-signed bytes).
     const sigStructure = CoseSign1.buildSigStructure1(
