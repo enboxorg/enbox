@@ -1,0 +1,209 @@
+import { describe, expect, test } from 'bun:test';
+
+import { AuthEventEmitter } from '../src/events.js';
+import { MemoryStorage } from '../src/storage/storage.js';
+import { STORAGE_KEYS } from '../src/types.js';
+import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
+import { finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants } from '../src/connect/lifecycle.js';
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+/** Build a mock DwnDataEncodedRecordsWriteMessage (grant) that DwnPermissionGrant.parse accepts. */
+function buildGrantMessage(protocol: string, grantId: string): any {
+  return {
+    recordId    : grantId,
+    contextId   : grantId,
+    encodedData : btoa(JSON.stringify({
+      dateExpires : '2040-06-25T16:09:16.693356Z',
+      scope       : { interface: 'Records', method: 'Read', protocol },
+      delegated   : true,
+    })),
+    descriptor: {
+      interface    : 'Records',
+      method       : 'Write',
+      protocol     : 'https://identity.foundation/dwn/permissions',
+      protocolPath : 'grant',
+      recipient    : 'did:jwk:delegate1',
+      dateCreated  : '2025-01-01T00:00:00.000000Z',
+      dataFormat   : 'application/json',
+      dataCid      : 'bafytest',
+      dataSize     : 100,
+    },
+    authorization: {
+      signature: {
+        signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner1#sig' })) }],
+      },
+    },
+  };
+}
+
+describe('processConnectedGrants', () => {
+  describe('grant rollback on delegate partition write failure', () => {
+    test('rolls back succeeded grants when one delegate partition write fails', async () => {
+      const deleteCalls: string[] = [];
+      let callCount = 0;
+
+      const agent = createMockAgent({
+        processDwnRequest: async (params: any): Promise<any> => {
+          if (params.messageType === 'RecordsWrite') {
+            callCount++;
+            // First grant succeeds, second fails.
+            if (callCount === 2) {
+              return { reply: { status: { code: 500, detail: 'Internal error' } } };
+            }
+            return { reply: { status: { code: 202, detail: 'Accepted' } } };
+          }
+          if (params.messageType === 'RecordsDelete') {
+            deleteCalls.push(params.messageParams.recordId);
+            return { reply: { status: { code: 202, detail: 'Accepted' } } };
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
+      });
+
+      const grants = [
+        buildGrantMessage('https://proto.a', 'grant-a'),
+        buildGrantMessage('https://proto.b', 'grant-b'),
+      ];
+
+      await expect(
+        processConnectedGrants({
+          agent,
+          connectedDid : 'did:dht:connected',
+          delegateDid  : 'did:jwk:delegate',
+          grants,
+        })
+      ).rejects.toThrow('Failed to store grant in delegate partition');
+
+      // The first (succeeded) grant should have been rolled back.
+      expect(deleteCalls).toContain('grant-a');
+    });
+  });
+});
+
+describe('importDelegateAndSetupSync', () => {
+  describe('importDelegateDecryptionKeys branch', () => {
+    test('imports delegate decryption keys when provided', async () => {
+      const importedDecryptionKeys: any[] = [];
+      const importedContextKeys: any[] = [];
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent({
+        identityImport                  : async () => identity,
+        dwnImportDelegateDecryptionKeys : (did: string, keys: any[]) => {
+          importedDecryptionKeys.push({ did, keys });
+        },
+        dwnImportDelegateContextKeys: (did: string, keys: any[], protocols?: string[]) => {
+          importedContextKeys.push({ did, keys, protocols });
+        },
+        dwnProcessRawMessage: async () => ({ status: { code: 202, detail: 'Accepted' } }),
+      });
+
+      const grants = [buildGrantMessage('https://proto.a', 'grant-a')];
+
+      const decryptionKeys = [{ algorithm: 'A256GCM', derivationScheme: 'protocolPath', key: {} }];
+      const contextKeys = [{ contextId: 'ctx-1', key: {} }];
+
+      const result = await importDelegateAndSetupSync({
+        userAgent                   : agent,
+        delegatePortableDid         : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+        connectedDid                : 'did:dht:connected1',
+        delegateGrants              : grants,
+        delegateDecryptionKeys      : decryptionKeys as any,
+        delegateContextKeys         : contextKeys as any,
+        delegateMultiPartyProtocols : ['https://proto.a'],
+        flowName                    : 'test',
+      });
+
+      expect(result).toBeDefined();
+
+      // Decryption keys should have been imported (line 452).
+      expect(importedDecryptionKeys).toHaveLength(1);
+      expect(importedDecryptionKeys[0].did).toBe('did:jwk:delegate1');
+      expect(importedDecryptionKeys[0].keys).toEqual(decryptionKeys);
+
+      // Context keys should have been imported (lines 458-463).
+      expect(importedContextKeys).toHaveLength(1);
+      expect(importedContextKeys[0].did).toBe('did:jwk:delegate1');
+    });
+  });
+});
+
+describe('finalizeDelegateSession', () => {
+  describe('onDelegateContextKeysChanged callback', () => {
+    test('persists updated context keys when callback fires for matching delegate', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const exportedKeys = [{ contextId: 'ctx-1', key: {} }];
+      const agent = createMockAgent({
+        dwnExportDelegateContextKeys: () => exportedKeys,
+      });
+
+      const session = await finalizeDelegateSession({
+        userAgent    : agent,
+        emitter,
+        storage,
+        identity     : identity as any,
+        connectedDid : 'did:dht:connected1',
+        delegateDid  : 'did:jwk:delegate1',
+        sync         : '15s',
+      });
+
+      expect(session).toBeDefined();
+
+      // The callback should have been wired.
+      const callback = (agent.dwn as any).onDelegateContextKeysChanged;
+      expect(callback).toBeDefined();
+
+      // Fire the callback with matching delegate DID.
+      await callback('did:jwk:delegate1');
+
+      // Context keys should be encrypted and persisted.
+      const stored = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+      expect(stored).toBeDefined();
+      expect(stored).not.toBeNull();
+    });
+
+    test('ignores callback when delegate DID does not match', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent();
+
+      await finalizeDelegateSession({
+        userAgent    : agent,
+        emitter,
+        storage,
+        identity     : identity as any,
+        connectedDid : 'did:dht:connected1',
+        delegateDid  : 'did:jwk:delegate1',
+        sync         : '15s',
+      });
+
+      const callback = (agent.dwn as any).onDelegateContextKeysChanged;
+      expect(callback).toBeDefined();
+
+      // Fire with non-matching delegate — should be a no-op.
+      await callback('did:jwk:different');
+
+      // No context keys should be stored.
+      const stored = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+      expect(stored).toBeNull();
+    });
+  });
+});

@@ -131,6 +131,51 @@ describe('createRecordData()', () => {
       expect(bytes).toBeInstanceOf(Uint8Array);
       expect(bytes).toEqual(expected);
     });
+
+    it('should return cached bytes on the second call without re-fetching', async () => {
+      let callCount = 0;
+      const data = createRecordData(
+        async () => { callCount++; return stringStream('cached'); },
+        'text/plain',
+      );
+
+      const first = await data.bytes();
+      const second = await data.bytes();
+      expect(callCount).toBe(1);
+      expect(first).toEqual(second);
+    });
+
+    it('should share a single in-flight fetch when called concurrently', async () => {
+      let callCount = 0;
+      const data = createRecordData(
+        async () => { callCount++; return stringStream('shared'); },
+        'text/plain',
+      );
+
+      const [a, b] = await Promise.all([data.bytes(), data.bytes()]);
+      expect(callCount).toBe(1);
+      expect(a).toEqual(b);
+    });
+  });
+
+  describe('stream() from cache', () => {
+    it('should reconstruct a stream from cached bytes after bytes() populates the cache', async () => {
+      let callCount = 0;
+      const data = createRecordData(
+        async () => { callCount++; return stringStream('from cache'); },
+        'text/plain',
+      );
+
+      // Populate the cache via bytes().
+      await data.bytes();
+      expect(callCount).toBe(1);
+
+      // stream() should use the cache, not call streamFn again.
+      const stream = await data.stream();
+      const text = await Stream.consumeToText({ readableStream: stream });
+      expect(text).toBe('from cache');
+      expect(callCount).toBe(1);
+    });
   });
 
   describe('then()', () => {
