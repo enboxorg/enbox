@@ -558,6 +558,50 @@ describe('KeyStore', () => {
         expect(storedKeyAfter!.kty).toBe(storedKeyBefore!.kty);
         expect(storedKeyAfter!.kid).toBe(storedKeyBefore!.kid);
       });
+
+      it('should re-derive encryption state after natural TTL expiry', async () => {
+        const { TtlCache } = await import('@enbox/common');
+
+        // First call — installs the protocol with $encryption.
+        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
+
+        const tenantDid = testHarness.agent.agentDid.uri;
+        expect((keyStore as any).isEncryptionActive(tenantDid)).toBe(true);
+
+        // Replace both caches with 1ms-TTL versions and pre-populate them
+        // so they will expire almost immediately, simulating what happens
+        // when the real 1-hour TTL elapses in a long-lived process.
+        const shortInitCache = new TtlCache<string, boolean>({ ttl: 1, max: 100 });
+        const shortEncCache = new TtlCache<string, boolean>({ ttl: 1, max: 100 });
+        shortInitCache.set(tenantDid, true);
+        shortEncCache.set(tenantDid, true);
+        (keyStore as DwnDataStore<Jwk>)['_protocolInitializedCache'] = shortInitCache;
+        (keyStore as any)._tenantEncryptionActive = shortEncCache;
+
+        // Wait for TTL expiry (1ms + safety margin).
+        await new Promise<void>(resolve => setTimeout(resolve, 10));
+
+        // After expiry, caches should no longer report the tenant as present.
+        expect(shortInitCache.has(tenantDid)).toBe(false);
+        expect(shortEncCache.has(tenantDid)).toBe(false);
+
+        // Spy on processRequest to verify initialize() issues a ProtocolsQuery.
+        const processRequestSpy = spyOn(testHarness.agent.dwn, 'processRequest');
+
+        // Re-initialize — should re-query the protocol and re-derive encryption state.
+        await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
+
+        // Verify a ProtocolsQuery was actually issued (not short-circuited).
+        const protocolsQueryCall = processRequestSpy.mock.calls.find(
+          (args: any[]) => args[0]?.messageType === DwnInterface.ProtocolsQuery
+        );
+        expect(protocolsQueryCall).toBeDefined();
+
+        // Encryption should be re-detected as active.
+        expect((keyStore as any).isEncryptionActive(tenantDid)).toBe(true);
+
+        processRequestSpy.mockRestore();
+      });
     });
 
     describe('getAllRecords() error handling', () => {

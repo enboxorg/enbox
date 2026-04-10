@@ -159,6 +159,87 @@ describe('processConnectedGrants', () => {
       })
     ).rejects.toThrow('Failed to store grant in delegate partition: Unauthorized');
   });
+
+  test('rolls back delegate-partition grants when phase 2 (connected) fails', async () => {
+    // Track processDwnRequest calls by messageType so we can inspect
+    // the rollback RecordsDelete calls separately from the writes.
+    const calls: { messageType: string; recordId?: string; author?: string }[] = [];
+
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        calls.push({
+          messageType : params.messageType,
+          recordId    : params.messageParams?.recordId ?? params.rawMessage?.recordId,
+          author      : params.author,
+        });
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      },
+      // Phase 2 uses dwn.processRawMessage — first call succeeds, second fails.
+      dwnProcessRawMessage: (() => {
+        let callCount = 0;
+        return async (): Promise<any> => {
+          callCount++;
+          if (callCount === 2) {
+            return { status: { code: 500, detail: 'Internal Server Error' } };
+          }
+          return { status: { code: 202, detail: 'Accepted' } };
+        };
+      })(),
+    });
+
+    const grants = [
+      { _scope: { protocol: 'https://proto.example/a' }, encodedData: 'dGVzdA', recordId: 'rec-a', descriptor: {} },
+      { _scope: { protocol: 'https://proto.example/b' }, encodedData: 'dGVzdA', recordId: 'rec-b', descriptor: {} },
+    ] as any;
+
+    await expect(
+      processConnectedGrants({ agent, connectedDid: 'did:dht:connected', delegateDid: 'did:dht:delegate', grants })
+    ).rejects.toThrow('Failed to store grant in connected partition');
+
+    // Phase 1: 2 RecordsWrite calls (one per grant, delegate partition).
+    const writes = calls.filter(c => c.messageType === 'RecordsWrite');
+    expect(writes).toHaveLength(2);
+
+    // Rollback: 2 RecordsDelete calls (one per grant, delegate partition).
+    const deletes = calls.filter(c => c.messageType === 'RecordsDelete');
+    expect(deletes).toHaveLength(2);
+    // Both deletes should target the delegate partition.
+    expect(deletes.every(d => d.author === 'did:dht:delegate')).toBe(true);
+    // Both deletes should reference the original recordIds.
+    const deletedIds = new Set(deletes.map(d => d.recordId));
+    expect(deletedIds.has('rec-a')).toBe(true);
+    expect(deletedIds.has('rec-b')).toBe(true);
+  });
+
+  test('accepts 409 (duplicate) in phase 1 for idempotent retries', async () => {
+    const agent = createMockAgent({
+      // First grant returns 409 (stale duplicate from prior failed attempt),
+      // second grant returns 202 (fresh write).
+      processDwnRequest: (() => {
+        let callCount = 0;
+        return async (): Promise<any> => {
+          callCount++;
+          const code = callCount === 1 ? 409 : 202;
+          return { reply: { status: { code, detail: code === 409 ? 'Conflict' : 'Accepted' } } };
+        };
+      })(),
+    });
+
+    const grants = [
+      { _scope: { protocol: 'https://proto.example/a' }, encodedData: 'dGVzdA', recordId: 'rec-a', descriptor: {} },
+      { _scope: { protocol: 'https://proto.example/b' }, encodedData: 'dGVzdA', recordId: 'rec-b', descriptor: {} },
+    ] as any;
+
+    // Should succeed — 409 is treated as idempotent success.
+    const result = await processConnectedGrants({
+      agent,
+      connectedDid : 'did:dht:connected',
+      delegateDid  : 'did:dht:delegate',
+      grants,
+    });
+
+    expect(result).toEqual(['https://proto.example/a', 'https://proto.example/b']);
+  });
 });
 
 describe('walletConnect', () => {
