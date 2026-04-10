@@ -172,7 +172,9 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncLock = true;
 
-      await expect(engine.stopSync(200)).rejects.toThrow('did not complete within');
+      // Use timeout < 100 so stopSync only needs one short sleep before
+      // throwing, making the test fast and resilient to CI timer jitter.
+      await expect(engine.stopSync(10)).rejects.toThrow('did not complete within');
 
       (engine as any)._syncLock = false;
     });
