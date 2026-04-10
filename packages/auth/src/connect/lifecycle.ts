@@ -267,29 +267,33 @@ export async function processConnectedGrants(params: {
   const { agent, connectedDid, delegateDid, grants } = params;
   const connectedProtocols = new Set<string>();
 
-  // Track successfully-written grant recordIds so we can roll them back
-  // if any grant fails. Each entry records which partitions were written.
-  const written: { recordId: string; delegateWritten: boolean; connectedWritten: boolean }[] = [];
-
-  // Process all grants concurrently — each grant is independent of
-  // the others. Within a single grant, the delegate-partition write
-  // must succeed before the connected-partition write so that a
-  // delegate failure doesn't leave an orphaned connected-partition
-  // record.
+  // Two-phase write strategy:
   //
-  // We use allSettled (not all) so that a failure in one grant does
-  // not leave other grant writes racing against cleanup. All writes
-  // settle before we inspect results.
-  const results = await Promise.allSettled(grants.map(async (grantMessage) => {
+  // Phase 1 — delegate partition (rollbackable): write all grants into
+  // the delegateDid's partition using the delegate's signing key. If any
+  // write fails, delete the ones that succeeded and throw.
+  //
+  // Phase 2 — connected partition (not rollbackable): write grants into
+  // the connectedDid's partition using processRawMessage (the delegate
+  // agent doesn't hold the connectedDid's signing key, so it cannot
+  // create a signed RecordsDelete to roll these back). Phase 2 only
+  // runs after all phase-1 writes succeed, minimizing the orphan window.
+  //
+  // Both phases process grants concurrently with allSettled so a single
+  // failure doesn't leave other writes racing against cleanup.
+
+  // Prepare decoded grant data for both phases.
+  const parsed = grants.map((grantMessage) => {
     const grant = DwnPermissionGrant.parse(grantMessage);
-
     const { encodedData, ...rawMessage } = grantMessage;
-    const recordId = rawMessage.recordId;
-    const dataStream = new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart]);
+    return { grant, rawMessage, encodedData };
+  });
 
-    // Store the grant in the delegateDid's partition so the permissions
-    // API can look it up when building delegate-signed requests.
-    const { reply: delegateReply } = await agent.processDwnRequest({
+  // ── Phase 1: delegate partition ───────────────────────────────────
+
+  const delegateResults = await Promise.allSettled(parsed.map(async ({ rawMessage, encodedData }) => {
+    const dataStream = new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart]);
+    const { reply } = await agent.processDwnRequest({
       store       : true,
       author      : delegateDid,
       target      : delegateDid,
@@ -299,17 +303,37 @@ export async function processConnectedGrants(params: {
       dataStream,
     });
 
-    if (delegateReply.status.code !== 202) {
+    if (reply.status.code !== 202) {
       throw new Error(
-        `[@enbox/auth] Failed to store grant in delegate partition: ${delegateReply.status.detail}`
+        `[@enbox/auth] Failed to store grant in delegate partition: ${reply.status.detail}`
       );
     }
+  }));
 
-    written.push({ recordId, delegateWritten: true, connectedWritten: false });
+  const delegateFailure = delegateResults.find(
+    (r): r is PromiseRejectedResult => r.status === 'rejected',
+  );
+  if (delegateFailure) {
+    // Roll back the delegate-partition grants that succeeded. We CAN
+    // delete these because we hold the delegateDid's signing key.
+    await Promise.allSettled(parsed.map(async ({ rawMessage }, i) => {
+      if (delegateResults[i].status === 'fulfilled') {
+        try {
+          await agent.processDwnRequest({
+            author        : delegateDid,
+            target        : delegateDid,
+            messageType   : DwnInterface.RecordsDelete,
+            messageParams : { recordId: rawMessage.recordId },
+          });
+        } catch { /* best-effort rollback */ }
+      }
+    }));
+    throw delegateFailure.reason;
+  }
 
-    // Also store the grant in the connectedDid's local DWN partition.
-    // We use processRawMessage because the delegate agent does not hold
-    // the connectedDid's private keys — we cannot re-sign the message.
+  // ── Phase 2: connected partition ──────────────────────────────────
+
+  const connectedResults = await Promise.allSettled(parsed.map(async ({ rawMessage, encodedData }) => {
     const connectedReply = await agent.dwn.processRawMessage(
       connectedDid,
       rawMessage as GenericMessage,
@@ -321,49 +345,38 @@ export async function processConnectedGrants(params: {
         `[@enbox/auth] Failed to store grant in connected partition: ${connectedReply.status.detail}`
       );
     }
+  }));
 
-    // Mark connected partition as written (find our entry by recordId).
-    const entry = written.find(w => w.recordId === recordId);
-    if (entry) { entry.connectedWritten = true; }
+  const connectedFailure = connectedResults.find(
+    (r): r is PromiseRejectedResult => r.status === 'rejected',
+  );
+  if (connectedFailure) {
+    // Connected-partition grants cannot be rolled back (the delegate
+    // agent cannot sign RecordsDelete as connectedDid). The orphaned
+    // records are harmless: the connect flow will throw, the imported
+    // identity is cleaned up by importDelegateAndSetupSync(), and
+    // without a registered sync identity the grants are never used.
+    // Roll back the delegate-partition grants that we CAN clean up.
+    await Promise.allSettled(parsed.map(async ({ rawMessage }) => {
+      try {
+        await agent.processDwnRequest({
+          author        : delegateDid,
+          target        : delegateDid,
+          messageType   : DwnInterface.RecordsDelete,
+          messageParams : { recordId: rawMessage.recordId },
+        });
+      } catch { /* best-effort rollback */ }
+    }));
+    throw connectedFailure.reason;
+  }
 
+  // ── Collect protocols ─────────────────────────────────────────────
+
+  for (const { grant } of parsed) {
     const protocol = (grant.scope as DwnMessagesPermissionScope | DwnRecordsPermissionScope).protocol;
-    // Exclude the permissions protocol — revocation grants are scoped to it
-    // but the sync engine must not attempt to sync it separately. Permission
-    // records are already included in each protocol's sync stream via
-    // PermissionsProtocol.constructAdditionalMessageFilter().
     if (protocol && protocol !== PermissionsProtocol.uri) {
       connectedProtocols.add(protocol);
     }
-  }));
-
-  // If any grant failed, roll back all successfully-written grant records
-  // before throwing. Without this, stale permission records would remain
-  // in the delegate/connected partitions after the connect flow errors.
-  const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-  if (firstFailure) {
-    await Promise.allSettled(written.map(async ({ recordId, delegateWritten, connectedWritten }) => {
-      if (delegateWritten) {
-        try {
-          await agent.processDwnRequest({
-            author        : delegateDid,
-            target        : delegateDid,
-            messageType   : DwnInterface.RecordsDelete,
-            messageParams : { recordId },
-          });
-        } catch { /* best-effort rollback */ }
-      }
-      if (connectedWritten) {
-        try {
-          await agent.processDwnRequest({
-            author        : connectedDid,
-            target        : connectedDid,
-            messageType   : DwnInterface.RecordsDelete,
-            messageParams : { recordId },
-          });
-        } catch { /* best-effort rollback */ }
-      }
-    }));
-    throw firstFailure.reason;
   }
 
   return [...connectedProtocols];

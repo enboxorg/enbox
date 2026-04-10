@@ -334,6 +334,11 @@ export class SyncEngineLevel implements SyncEngine {
   set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
+    // Cached sync targets were resolved through the previous agent's
+    // DID resolver / endpoint lookup — invalidate so the next sync
+    // tick re-resolves through the new agent.
+    this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
   }
 
   get connectivityState(): SyncConnectivityState {
