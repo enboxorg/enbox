@@ -303,7 +303,7 @@ export async function processConnectedGrants(params: {
       dataStream,
     });
 
-    if (reply.status.code !== 202) {
+    if (reply.status.code !== 202 && reply.status.code !== 409) {
       throw new Error(
         `[@enbox/auth] Failed to store grant in delegate partition: ${reply.status.detail}`
       );
