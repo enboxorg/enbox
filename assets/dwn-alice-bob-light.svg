@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 320" fill="none">
+  <style>
+    text { font-family: ui-monospace, 'JetBrains Mono', 'Cascadia Code', monospace; }
+    .label { fill: #1a1d20; font-size: 13px; font-weight: 600; }
+    .sublabel { fill: #545d69; font-size: 10px; }
+    .step { fill: #78828f; font-size: 10px; font-weight: 600; }
+    .box { stroke-width: 1.5; rx: 8; }
+    .arrow { stroke: #a0a9b4; stroke-width: 1.5; stroke-linecap: round; }
+    .arrow-accent { stroke: #0d9668; stroke-width: 1.5; stroke-linecap: round; }
+    .arrow-resolve { stroke: #2b7ab5; stroke-width: 1.5; stroke-linecap: round; stroke-dasharray: 6 4; }
+    .dot { fill: #0d9668; }
+    .dot-blue { fill: #2b7ab5; }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
+    }
+    .d1 { animation: pulse 2.4s ease-in-out infinite; }
+    .d2 { animation: pulse 2.4s ease-in-out 0.3s infinite; }
+    .d3 { animation: pulse 2.4s ease-in-out 0.6s infinite; }
+    .d4 { animation: pulse 2.4s ease-in-out 0.15s infinite; }
+    .d5 { animation: pulse 2.4s ease-in-out 0.45s infinite; }
+    .d6 { animation: pulse 2.4s ease-in-out 0.75s infinite; }
+    .persona { font-size: 11px; font-weight: 600; letter-spacing: 0.5px; }
+    .did-text { fill: #78828f; font-size: 9px; }
+  </style>
+
+  <!-- Background -->
+  <rect width="800" height="320" fill="#f3f4f6" rx="12"/>
+
+  <!-- ═══ ALICE ROW ═══ -->
+
+  <text x="30" y="30" class="persona" fill="#0d9668">ALICE</text>
+
+  <rect x="30" y="40" width="130" height="80" class="box" fill="#ffffff" stroke="#c4cad1"/>
+  <text x="95" y="74" text-anchor="middle" class="label">Alice's App</text>
+  <text x="95" y="92" text-anchor="middle" class="sublabel">@enbox/api</text>
+
+  <rect x="220" y="40" width="130" height="80" class="box" fill="#ffffff" stroke="#a0a9b4"/>
+  <text x="285" y="74" text-anchor="middle" class="label">Alice's DWN</text>
+  <text x="285" y="92" text-anchor="middle" class="did-text">did:dht:alice...</text>
+
+  <line x1="160" y1="80" x2="218" y2="80" class="arrow"/>
+  <polygon points="218,75 228,80 218,85" fill="#a0a9b4"/>
+  <text x="189" y="72" text-anchor="middle" class="step">1</text>
+
+  <!-- ═══ DID RESOLUTION ═══ -->
+
+  <rect x="310" y="150" width="180" height="60" class="box" fill="#e2e5e9" stroke="#c4cad1"/>
+  <text x="400" y="176" text-anchor="middle" class="label" fill="#2b7ab5">DID Resolution</text>
+  <text x="400" y="193" text-anchor="middle" class="sublabel">did:dht · did:web · did:jwk</text>
+
+  <path d="M 285 120 L 285 155 L 308 155" class="arrow-resolve" fill="none"/>
+  <polygon points="308,150 318,155 308,160" fill="#2b7ab5"/>
+  <text x="272" y="142" text-anchor="middle" class="step" fill="#2b7ab5">2</text>
+  <text x="285" y="155" text-anchor="end" class="did-text" dx="-8">resolve did:dht:bob...</text>
+
+  <path d="M 490 170 L 530 170 L 530 80 L 538 80" class="arrow-resolve" fill="none"/>
+  <polygon points="538,75 548,80 538,85" fill="#2b7ab5"/>
+  <text x="552" y="142" text-anchor="middle" class="did-text">DWN endpoint</text>
+
+  <circle cx="340" cy="155" r="2.5" class="dot-blue d1"/>
+  <circle cx="360" cy="155" r="2.5" class="dot-blue d2"/>
+  <circle cx="380" cy="155" r="2.5" class="dot-blue d3"/>
+
+  <!-- ═══ BOB ROW ═══ -->
+
+  <text x="550" y="30" class="persona" fill="#d4713a">BOB</text>
+
+  <rect x="550" y="40" width="130" height="80" class="box" fill="#ffffff" stroke="#a0a9b4"/>
+  <text x="615" y="74" text-anchor="middle" class="label">Bob's DWN</text>
+  <text x="615" y="92" text-anchor="middle" class="did-text">did:dht:bob...</text>
+
+  <rect x="550" y="230" width="130" height="80" class="box" fill="#ffffff" stroke="#c4cad1"/>
+  <text x="615" y="264" text-anchor="middle" class="label">Bob's App</text>
+  <text x="615" y="282" text-anchor="middle" class="sublabel">@enbox/api</text>
+
+  <line x1="350" y1="72" x2="548" y2="72" class="arrow-accent"/>
+  <polygon points="548,67 558,72 548,77" fill="#0d9668"/>
+  <text x="449" y="64" text-anchor="middle" class="step" fill="#0d9668">3</text>
+
+  <circle cx="410" cy="72" r="3" class="dot d4"/>
+  <circle cx="440" cy="72" r="3" class="dot d5"/>
+  <circle cx="470" cy="72" r="3" class="dot d6"/>
+
+  <line x1="615" y1="120" x2="615" y2="228" class="arrow"/>
+  <polygon points="610,228 615,238 620,228" fill="#a0a9b4"/>
+  <text x="628" y="178" class="step">4</text>
+
+  <!-- ═══ STEP LABELS ═══ -->
+
+  <rect x="30" y="260" width="420" height="50" rx="6" fill="#e2e5e9" stroke="#c4cad1" stroke-width="1"/>
+
+  <circle cx="50" cy="275" r="8" fill="#ffffff" stroke="#a0a9b4" stroke-width="1"/>
+  <text x="50" y="279" text-anchor="middle" class="step">1</text>
+  <text x="66" y="279" class="sublabel">Alice writes a record</text>
+
+  <circle cx="50" cy="296" r="8" fill="#ffffff" stroke="#2b7ab5" stroke-width="1"/>
+  <text x="50" y="300" text-anchor="middle" class="step" fill="#2b7ab5">2</text>
+  <text x="66" y="300" class="sublabel">Agent resolves Bob's DID to find his DWN endpoint</text>
+
+  <circle cx="250" cy="275" r="8" fill="#ffffff" stroke="#0d9668" stroke-width="1"/>
+  <text x="250" y="279" text-anchor="middle" class="step" fill="#0d9668">3</text>
+  <text x="266" y="279" class="sublabel">Encrypted message sent to Bob's DWN</text>
+
+  <circle cx="250" cy="296" r="8" fill="#ffffff" stroke="#a0a9b4" stroke-width="1"/>
+  <text x="250" y="300" text-anchor="middle" class="step">4</text>
+  <text x="266" y="300" class="sublabel">Bob's app syncs and decrypts</text>
+</svg>

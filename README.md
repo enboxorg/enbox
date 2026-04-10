@@ -163,6 +163,15 @@ Your app talks to a **local DWN** running in the browser or on the device. The a
 
 **Two-layer encryption** -- (1) a user password encrypts the agent's identity as AES-256-GCM JWE via PBKDF2. (2) Protocol types with `encryptionRequired: true` are encrypted with ECDH-ES+A256KW key agreement using the tenant's X25519 key. Recovery requires only the seed phrase.
 
+### Sending data to another user
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/dwn-alice-bob-dark.svg">
+  <img alt="Alice-to-Bob flow: Alice writes a record, her agent resolves Bob's DID to discover his DWN endpoint, sends an encrypted message, and Bob's app syncs it" src="./assets/dwn-alice-bob-light.svg">
+</picture>
+
+When Alice wants to send data to Bob, her agent resolves Bob's DID to discover the DWN service endpoint listed in his DID document. The message is encrypted to Bob's public key and delivered directly to Bob's DWN server. Bob's app picks it up on the next sync. No intermediary, no shared database, no account on Alice's service -- just two DIDs and a protocol they both understand.
+
 ---
 
 ## DWN Servers
