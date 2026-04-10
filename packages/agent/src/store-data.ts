@@ -93,7 +93,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * Uses the same 1-hour TTL as `_protocolInitializedCache` so both
    * caches expire and re-derive together. See comment above.
    */
-  private _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: ms('1 hour'), max: 1000 });
+  private readonly _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: ms('1 hour'), max: 1000 });
 
   /** Cached result of the `encryptionRequired` check on the protocol definition.
    *  Computed lazily on first access — the definition is immutable after assignment. */
@@ -429,7 +429,7 @@ export class InMemoryDataStore<TStoreObject extends Record<string, any> = Jwk> i
   /**
    * A private field that contains the Map used as the in-memory data store.
    */
-  private store: Map<string, TStoreObject> = new Map();
+  private readonly store: Map<string, TStoreObject> = new Map();
 
   public async delete({ id, agent, tenant }: DataStoreDeleteParams): Promise<boolean> {
     // Determine the tenant identifier (DID) for the delete operation.

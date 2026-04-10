@@ -27,8 +27,8 @@ import { Kysely, sql } from 'kysely';
 
 
 export class MessageStoreSql implements MessageStore {
-  #dialect: Dialect;
-  #tags: TagTables;
+  readonly #dialect: Dialect;
+  readonly #tags: TagTables;
   #db: Kysely<DwnDatabaseType> | null = null;
 
   constructor(dialect: Dialect) {

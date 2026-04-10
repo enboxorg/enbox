@@ -121,9 +121,9 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
    */
   private _agent?: EnboxPlatformAgent;
 
-  private _didMethods: Map<string, DidMethodApi> = new Map();
+  private readonly _didMethods: Map<string, DidMethodApi> = new Map();
 
-  private _store: AgentDataStore<PortableDid>;
+  private readonly _store: AgentDataStore<PortableDid>;
 
   constructor({ agent, didMethods, resolverCache, store }: DidApiParams) {
     if (!didMethods) {

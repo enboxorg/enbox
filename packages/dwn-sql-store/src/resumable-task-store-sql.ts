@@ -9,7 +9,7 @@ import { Kysely, sql } from 'kysely';
 export class ResumableTaskStoreSql implements ResumableTaskStore {
   private static readonly taskTimeoutInSeconds = 60;
 
-  #dialect: Dialect;
+  readonly #dialect: Dialect;
   #db: Kysely<DwnDatabaseType> | null = null;
 
   constructor(dialect: Dialect) {

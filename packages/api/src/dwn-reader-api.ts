@@ -148,7 +148,7 @@ export type ReaderProtocolsQueryResponse = DwnResponseStatus & {
  * @beta
  */
 export class DwnReaderApi {
-  private _anonymousDwn: AnonymousDwnApi;
+  private readonly _anonymousDwn: AnonymousDwnApi;
 
   constructor(anonymousDwn: AnonymousDwnApi) {
     this._anonymousDwn = anonymousDwn;

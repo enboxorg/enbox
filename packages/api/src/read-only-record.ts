@@ -48,19 +48,19 @@ export type ReadOnlyRecordOptions = {
  */
 export class ReadOnlyRecord {
   // Private backing fields.
-  private _anonymousDwn: AnonymousDwnApi;
-  private _remoteOrigin: string;
-  private _author: string;
-  private _creator: string;
-  private _descriptor: RecordsWriteDescriptor;
-  private _recordId: string;
-  private _contextId?: string;
-  private _initialWrite?: RecordsWriteMessage;
-  private _encodedData?: Blob;
+  private readonly _anonymousDwn: AnonymousDwnApi;
+  private readonly _remoteOrigin: string;
+  private readonly _author: string;
+  private readonly _creator: string;
+  private readonly _descriptor: RecordsWriteDescriptor;
+  private readonly _recordId: string;
+  private readonly _contextId?: string;
+  private readonly _initialWrite?: RecordsWriteMessage;
+  private readonly _encodedData?: Blob;
   private _readableStream?: ReadableStream;
-  private _authorization: RecordsWriteMessage['authorization'];
-  private _attestation?: RecordsWriteMessage['attestation'];
-  private _encryption?: RecordsWriteMessage['encryption'];
+  private readonly _authorization: RecordsWriteMessage['authorization'];
+  private readonly _attestation?: RecordsWriteMessage['attestation'];
+  private readonly _encryption?: RecordsWriteMessage['encryption'];
 
   constructor(options: ReadOnlyRecordOptions) {
     const { rawMessage, initialWrite, encodedData, data, remoteOrigin, anonymousDwn } = options;

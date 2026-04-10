@@ -93,13 +93,13 @@ export interface PermissionGrantOptions {
  */
 export class PermissionGrant implements PermissionGrantModel {
   /** The PermissionsAPI used to interact with the underlying permission grant */
-  private _permissions: AgentPermissionsApi;
+  private readonly _permissions: AgentPermissionsApi;
   /** The DID to use as the author and default target for the underlying permission grant */
-  private _connectedDid: string;
+  private readonly _connectedDid: string;
   /** The underlying DWN `RecordsWrite` message along with encoded data that represent the grant */
   private _message: DwnDataEncodedRecordsWriteMessage;
   /** The parsed grant object */
-  private _grant: DwnPermissionGrant;
+  private readonly _grant: DwnPermissionGrant;
 
   private constructor({ api, connectedDid, message, grant }:{
     api: AgentPermissionsApi;

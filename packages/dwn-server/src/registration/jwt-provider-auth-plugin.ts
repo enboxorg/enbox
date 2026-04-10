@@ -36,9 +36,9 @@ export type JwtProviderAuthPluginOptions = {
  * {@link ProviderAuthPlugin} instead.
  */
 export class JwtProviderAuthPlugin implements ProviderAuthPlugin {
-  #getKey: Uint8Array | jose.JWTVerifyGetKey;
-  #issuer: string | undefined;
-  #audience: string | undefined;
+  readonly #getKey: Uint8Array | jose.JWTVerifyGetKey;
+  readonly #issuer: string | undefined;
+  readonly #audience: string | undefined;
 
   private constructor(
     getKey: Uint8Array | jose.JWTVerifyGetKey,

@@ -30,10 +30,10 @@ export type ResumableRecordsSquashData = {
  */
 export class StorageController {
 
-  private messageStore: MessageStore;
-  private dataStore: DataStore;
-  private stateIndex: StateIndex;
-  private eventLog?: EventLog;
+  private readonly messageStore: MessageStore;
+  private readonly dataStore: DataStore;
+  private readonly stateIndex: StateIndex;
+  private readonly eventLog?: EventLog;
 
   public constructor({ messageStore, dataStore, stateIndex, eventLog }: {
     messageStore : MessageStore,

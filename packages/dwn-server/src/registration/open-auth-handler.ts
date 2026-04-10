@@ -28,14 +28,14 @@ const MAX_PENDING_CODES = 10_000;
 const CLEANUP_INTERVAL_MS = 60_000;
 
 export class OpenAuthHandler {
-  #secret: Uint8Array;
-  #issuer: string;
+  readonly #secret: Uint8Array;
+  readonly #issuer: string;
   /** Pending authorization codes. Maps code → { redirectUri, expiresAt }. */
-  #pendingCodes: Map<string, { redirectUri: string; expiresAt: number }>;
+  readonly #pendingCodes: Map<string, { redirectUri: string; expiresAt: number }>;
   /** Registration token TTL in seconds. Default: 1 year. */
-  #tokenTtlSeconds: number;
+  readonly #tokenTtlSeconds: number;
   /** Periodic cleanup timer for expired codes. */
-  #cleanupTimer: ReturnType<typeof setInterval>;
+  readonly #cleanupTimer: ReturnType<typeof setInterval>;
 
   private constructor(secret: Uint8Array, issuer: string, tokenTtlSeconds: number) {
     this.#secret = secret;

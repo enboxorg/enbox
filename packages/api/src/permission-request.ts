@@ -59,13 +59,13 @@ export interface PermissionRequestModel {
  */
 export class PermissionRequest implements PermissionRequestModel {
   /** The PermissionsAPI used to interact with the underlying permission request */
-  private _permissions: AgentPermissionsApi;
+  private readonly _permissions: AgentPermissionsApi;
   /** The DID to use as the author and default target for the underlying permission request */
-  private _connectedDid: string;
+  private readonly _connectedDid: string;
   /** The underlying DWN `RecordsWrite` message along with encoded data that represent the request */
   private _message: DwnDataEncodedRecordsWriteMessage;
   /** The parsed permission request object */
-  private _request: DwnPermissionRequest;
+  private readonly _request: DwnPermissionRequest;
 
   private constructor({ api, connectedDid, message, request }: {
     api: AgentPermissionsApi;

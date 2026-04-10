@@ -175,7 +175,7 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private _permissionsApi: PermissionsApi;
 
-  private _db: AbstractLevel<string | Buffer | Uint8Array>;
+  private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
   private _syncIntervalId?: ReturnType<typeof setInterval>;
   private _syncLock = false;
 
@@ -191,7 +191,7 @@ export class SyncEngineLevel implements SyncEngine {
    * Populated from the ledger on `startLiveSync`, used by subscription handlers
    * to avoid async ledger lookups on every event.
    */
-  private _activeLinks: Map<string, ReplicationLinkState> = new Map();
+  private readonly _activeLinks: Map<string, ReplicationLinkState> = new Map();
 
   /**
    * Per-link in-memory delivery-order tracking for the pull path. Keyed by
@@ -199,7 +199,7 @@ export class SyncEngineLevel implements SyncEngine {
    * restarts from `contiguousAppliedToken` and idempotent apply handles
    * re-delivered events.
    */
-  private _linkRuntimes: Map<string, LinkRuntimeState> = new Map();
+  private readonly _linkRuntimes: Map<string, LinkRuntimeState> = new Map();
 
   /**
    * Hex-encoded default hashes for empty subtrees at each depth, keyed by depth.
@@ -233,10 +233,10 @@ export class SyncEngineLevel implements SyncEngine {
   private _connectivityState: SyncConnectivityState = 'unknown';
 
   /** Registered event listeners for observability. */
-  private _eventListeners: Set<SyncEventListener> = new Set();
+  private readonly _eventListeners: Set<SyncEventListener> = new Set();
 
   /** Per-link push runtime: queue, debounce timer, retry state. */
-  private _pushRuntimes: Map<string, PushRuntimeState> = new Map();
+  private readonly _pushRuntimes: Map<string, PushRuntimeState> = new Map();
 
   /**
    * CIDs recently received via pull subscription, keyed by `cid|dwnUrl` to
@@ -244,7 +244,7 @@ export class SyncEngineLevel implements SyncEngine {
    * is only suppressed for push back to Provider A — it still fans out to
    * Provider B and C. TTL: 60 seconds. Cap: 10,000 entries.
    */
-  private _recentlyPulledCids: Map<string, number> = new Map();
+  private readonly _recentlyPulledCids: Map<string, number> = new Map();
 
   /** TTL for echo-loop suppression entries (60 seconds). */
   private static readonly ECHO_SUPPRESS_TTL_MS = 60_000;
@@ -254,7 +254,7 @@ export class SyncEngineLevel implements SyncEngine {
    * Caches ProtocolsConfigure and grant lookups across events for the same
    * tenant. Keyed by tenantDid to prevent cross-tenant cache pollution.
    */
-  private _closureContexts: Map<string, ClosureEvaluationContext> = new Map();
+  private readonly _closureContexts: Map<string, ClosureEvaluationContext> = new Map();
 
   /** Maximum entries in the echo-loop suppression cache. */
   private static readonly ECHO_SUPPRESS_MAX_ENTRIES = 10_000;
@@ -804,16 +804,16 @@ export class SyncEngineLevel implements SyncEngine {
   private static readonly MAX_REPAIR_ATTEMPTS = 3;
 
   /** Per-link degraded-poll interval timers. */
-  private _degradedPollTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
+  private readonly _degradedPollTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
 
   /** Per-link repair attempt counters. */
-  private _repairAttempts: Map<string, number> = new Map();
+  private readonly _repairAttempts: Map<string, number> = new Map();
 
   /** Per-link active repair promises — prevents concurrent repair for the same link. */
-  private _activeRepairs: Map<string, Promise<void>> = new Map();
+  private readonly _activeRepairs: Map<string, Promise<void>> = new Map();
 
   /** Per-link retry timers for failed repairs below max attempts. */
-  private _repairRetryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private readonly _repairRetryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   /** Backoff schedule for repair retries (milliseconds). */
   private static readonly REPAIR_BACKOFF_MS = [1_000, 3_000, 10_000];
@@ -824,7 +824,7 @@ export class SyncEngineLevel implements SyncEngine {
    * the post-repair checkpoint so the reopened subscription replays from
    * a valid boundary instead of starting live-only.
    */
-  private _repairContext: Map<string, { resumeToken?: ProgressToken }> = new Map();
+  private readonly _repairContext: Map<string, { resumeToken?: ProgressToken }> = new Map();
 
   /**
    * Central helper for transitioning a link to `repairing`. Encapsulates:
@@ -1983,10 +1983,10 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   /** Active reconcile timers, keyed by link key. */
-  private _reconcileTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private readonly _reconcileTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   /** Active reconcile operations, keyed by link key (dedup). */
-  private _reconcileInFlight: Map<string, Promise<void>> = new Map();
+  private readonly _reconcileInFlight: Map<string, Promise<void>> = new Map();
 
   /**
    * Schedule a per-link reconciliation after a short debounce. Coalesces

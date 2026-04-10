@@ -19,7 +19,7 @@ import type { AuthEvent, AuthEventHandler, AuthEventMap } from './types.js';
  * ```
  */
 export class AuthEventEmitter {
-  private _listeners = new Map<AuthEvent, Set<AuthEventHandler<AuthEvent>>>();
+  private readonly _listeners = new Map<AuthEvent, Set<AuthEventHandler<AuthEvent>>>();
 
   /**
    * Subscribe to an event. Returns an unsubscribe function.

@@ -12,10 +12,10 @@ import { getDialectFromUrl } from '../storage.js';
  * runs direct SQL for operations like listing tenants and computing aggregates.
  */
 export class AdminStore {
-  private db: Kysely<AdminDatabase>;
+  private readonly db: Kysely<AdminDatabase>;
   private cachedGlobalStats: GlobalStats | undefined;
   private cachedGlobalStatsTimestamp = 0;
-  private cacheTtlMs: number;
+  private readonly cacheTtlMs: number;
 
   private constructor(dialect: Dialect, cacheTtlMs: number) {
     this.db = new Kysely<AdminDatabase>({ dialect });

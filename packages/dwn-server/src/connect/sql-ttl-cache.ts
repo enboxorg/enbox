@@ -8,7 +8,7 @@ export class SqlTtlCache {
   private static readonly cacheTableName = 'cacheEntries';
   private static readonly cleanupIntervalInSeconds = 60;
 
-  private db: Kysely<CacheDatabase>;
+  private readonly db: Kysely<CacheDatabase>;
   private cleanupTimer: NodeJS.Timeout;
 
   private constructor(sqlDialect: Dialect) {

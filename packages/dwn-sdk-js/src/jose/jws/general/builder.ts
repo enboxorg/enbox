@@ -4,7 +4,7 @@ import type { MessageSigner } from '../../../types/signer.js';
 import { Encoder } from '../../../utils/encoder.js';
 
 export class GeneralJwsBuilder {
-  private jws: GeneralJws;
+  private readonly jws: GeneralJws;
 
   private constructor(jws: GeneralJws) {
     this.jws = jws;

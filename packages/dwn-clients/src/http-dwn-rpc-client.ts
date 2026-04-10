@@ -99,8 +99,8 @@ function parseRetryAfterMs(response: Response): number | undefined {
  * Respects the `Retry-After` response header when present.
  */
 export class HttpDwnRpcClient implements DwnRpc {
-  private serverInfoCache: DwnServerInfoCache;
-  private _retryOptions: Required<HttpRetryOptions>;
+  private readonly serverInfoCache: DwnServerInfoCache;
+  private readonly _retryOptions: Required<HttpRetryOptions>;
 
   constructor(serverInfoCache?: DwnServerInfoCache, retryOptions?: HttpRetryOptions) {
     this.serverInfoCache = serverInfoCache ?? new DwnServerInfoCacheMemory();

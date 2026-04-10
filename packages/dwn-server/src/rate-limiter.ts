@@ -25,7 +25,7 @@ type Bucket = {
 export class RateLimiter {
   #refillRate: number;
   #maxTokens: number;
-  #buckets: Map<string, Bucket> = new Map();
+  readonly #buckets: Map<string, Bucket> = new Map();
   #cleanupInterval: ReturnType<typeof setInterval> | undefined;
 
   /** Stale buckets older than 5 minutes are purged. */

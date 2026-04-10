@@ -19,7 +19,7 @@ import type { Hash, SMTDiffResult, SMTInternalNode, SMTLeafNode, SMTNodeStore, S
 import { getBit, hashChildren, hashEquals, hashKey, hashLeaf, initDefaultHashes, SMT_DEPTH } from './smt-utils.js';
 
 export class SparseMerkleTree {
-  private store: SMTNodeStore;
+  private readonly store: SMTNodeStore;
   private defaultHashes!: Hash[];
 
   constructor(store: SMTNodeStore) {

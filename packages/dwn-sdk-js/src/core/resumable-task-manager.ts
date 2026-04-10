@@ -20,9 +20,9 @@ export class ResumableTaskManager {
   public static readonly timeoutExtensionFrequencyInSeconds = 30;
 
   private resumableTaskBatchSize = 100;
-  private resumableTaskHandlers: { [key:string]: (taskData: any) => Promise<void> };
+  private readonly resumableTaskHandlers: { [key:string]: (taskData: any) => Promise<void> };
 
-  public constructor(private resumableTaskStore: ResumableTaskStore, storageController: StorageController) {
+  public constructor(private readonly resumableTaskStore: ResumableTaskStore, storageController: StorageController) {
     // assign resumable task handlers
     this.resumableTaskHandlers = {
       // NOTE: The arrow function is IMPORTANT here, else the `this` context will be lost within the invoked method.

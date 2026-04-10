@@ -15,7 +15,7 @@ import { getRuleSetAtPath, parseCrossProtocolRef } from '../utils/protocols.js';
 
 export class ProtocolsConfigureHandler implements MethodHandler {
 
-  constructor(private deps: HandlerDependencies) { }
+  constructor(private readonly deps: HandlerDependencies) { }
 
   public async handle({
     tenant,

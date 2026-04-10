@@ -28,7 +28,7 @@ export type StateIndexLevelConfig = {
 };
 
 export class StateIndexLevel implements StateIndex {
-  private config: StateIndexLevelConfig;
+  private readonly config: StateIndexLevelConfig;
   private db!: LevelWrapper<string>;
 
   /**
@@ -36,13 +36,13 @@ export class StateIndexLevel implements StateIndex {
    * Stores promises to avoid race conditions when multiple concurrent operations
    * trigger lazy initialization of the same tenant's SMT.
    */
-  private globalTrees: Map<string, Promise<SparseMerkleTree>> = new Map();
+  private readonly globalTrees: Map<string, Promise<SparseMerkleTree>> = new Map();
 
   /**
    * Cache of per-tenant, per-protocol SMTs. Key format: `{tenant}\x00{protocol}`
    * Stores promises to avoid race conditions (same reason as globalTrees).
    */
-  private protocolTrees: Map<string, Promise<SparseMerkleTree>> = new Map();
+  private readonly protocolTrees: Map<string, Promise<SparseMerkleTree>> = new Map();
 
   constructor(config?: StateIndexLevelConfig) {
     this.config = {

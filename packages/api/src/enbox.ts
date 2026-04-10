@@ -95,7 +95,7 @@ export class Enbox {
   public did: DidApi;
 
   /** Internal DWN API instance. Use {@link Enbox.using} for protocol-scoped access. */
-  private _dwn: DwnApi;
+  private readonly _dwn: DwnApi;
 
   /**
    * Cache of {@link TypedEnbox} instances keyed by protocol URI.
@@ -104,7 +104,7 @@ export class Enbox {
    * instance for a given protocol across multiple call sites, avoiding
    * redundant protocol installations and duplicated internal state.
    */
-  private _typedInstances = new Map<string, TypedEnbox<ProtocolDefinition, SchemaMap>>();
+  private readonly _typedInstances = new Map<string, TypedEnbox<ProtocolDefinition, SchemaMap>>();
 
   /** Exposed instance to the VC APIs, allow users to issue, present and verify VCs. */
   public vc: VcApi;

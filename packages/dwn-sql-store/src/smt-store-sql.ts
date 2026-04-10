@@ -27,9 +27,9 @@ export type SMTStoreSqlParams = {
 };
 
 export class SMTStoreSql implements SMTNodeStore {
-  #db: Kysely<DwnDatabaseType>;
-  #tenant: string;
-  #scope: string;
+  readonly #db: Kysely<DwnDatabaseType>;
+  readonly #tenant: string;
+  readonly #scope: string;
 
   constructor({ db, tenant, scope }: SMTStoreSqlParams) {
     this.#db = db;

@@ -13,7 +13,7 @@ export class TagTables {
   /**
    * @param dialect the target dialect, necessary for returning the `insertId`
    */
-  constructor(private dialect: Dialect){}
+  constructor(private readonly dialect: Dialect){}
 
   /**
    * Inserts the given tags associated with the given foreign `insertId`.

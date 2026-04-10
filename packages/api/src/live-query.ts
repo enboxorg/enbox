@@ -150,10 +150,10 @@ export class LiveQuery extends EventTarget {
   readonly cursor?: PaginationCursor;
 
   /** The underlying DWN subscription handle. */
-  private _subscription: DwnMessageSubscription;
+  private readonly _subscription: DwnMessageSubscription;
 
   /** Tracks known record states for dedup and change-type classification. */
-  private _knownRecords: Map<string, string>;
+  private readonly _knownRecords: Map<string, string>;
 
   /** Whether the live query has been closed. */
   private _closed = false;

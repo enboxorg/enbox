@@ -42,7 +42,7 @@ interface SocketConnection {
 export class WebSocketDwnRpcClient implements DwnRpc {
   public get transportProtocols(): string[] { return ['ws:', 'wss:']; }
   // a map of dwn host to WebSocket connection
-  private static connections = new Map<string, SocketConnection>();
+  private static readonly connections = new Map<string, SocketConnection>();
 
   async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
 

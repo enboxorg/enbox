@@ -31,7 +31,7 @@ type SerializedLeafNode = {
 type SerializedNode = SerializedInternalNode | SerializedLeafNode;
 
 export class SMTStoreLevel implements SMTNodeStore {
-  private db: LevelWrapper<string>;
+  private readonly db: LevelWrapper<string>;
   private nodesPartition!: LevelWrapper<string>;
   private metaPartition!: LevelWrapper<string>;
   private initialized = false;

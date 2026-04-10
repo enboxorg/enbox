@@ -34,15 +34,15 @@ export interface ConnectionManager {
  */
 export class InMemoryConnectionManager implements ConnectionManager {
   constructor(
-    private dwn: Dwn,
-    private connections: Map<ServerWebSocket<WsData>, SocketConnection> = new Map(),
-    private maxInFlight?: number,
-    private activityLog?: ActivityLog,
-    private adminStore?: AdminStore,
-    private registrationStore?: RegistrationStore,
-    private serverConfig?: DwnServerConfig,
-    private tenantRateLimiter?: RateLimiter,
-    private messageProcessedHooks?: MessageProcessedHook[],
+    private readonly dwn: Dwn,
+    private readonly connections: Map<ServerWebSocket<WsData>, SocketConnection> = new Map(),
+    private readonly maxInFlight?: number,
+    private readonly activityLog?: ActivityLog,
+    private readonly adminStore?: AdminStore,
+    private readonly registrationStore?: RegistrationStore,
+    private readonly serverConfig?: DwnServerConfig,
+    private readonly tenantRateLimiter?: RateLimiter,
+    private readonly messageProcessedHooks?: MessageProcessedHook[],
   ) {}
 
   async connect(socket: ServerWebSocket<WsData>): Promise<void> {

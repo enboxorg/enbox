@@ -21,7 +21,7 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
   private _agent?: EnboxPlatformAgent;
 
   /** A map of DIDs that are currently in-flight. This helps avoid going into an infinite loop */
-  private _resolving: Map<string, boolean> = new Map();
+  private readonly _resolving: Map<string, boolean> = new Map();
 
   constructor({ agent, db, location, ttl }: DidResolverCacheLevelParams & { agent?: EnboxPlatformAgent }) {
     super ({ db, location, ttl });

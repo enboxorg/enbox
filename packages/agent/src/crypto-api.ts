@@ -256,7 +256,7 @@ export class AgentCryptoApi implements CryptoApi<
    * that implements a specific cryptographic algorithm. This map is used to cache and reuse
    * instances for performance optimization, ensuring that each algorithm is instantiated only once.
    */
-  private _algorithmInstances: Map<AlgorithmConstructor, InstanceType<typeof CryptoAlgorithm>> = new Map();
+  private readonly _algorithmInstances: Map<AlgorithmConstructor, InstanceType<typeof CryptoAlgorithm>> = new Map();
 
   public async bytesToPrivateKey({ algorithm: algorithmIdentifier, privateKeyBytes }:
     CryptoApiBytesToPrivateKeyParams

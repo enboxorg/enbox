@@ -10,10 +10,10 @@ export class VcApi {
    * Holds the instance of a {@link EnboxAgent} that represents the current execution context for
    * the `VcApi`. This agent is used to process VC requests.
    */
-  private agent: EnboxAgent;
+  private readonly agent: EnboxAgent;
 
   /** The DID of the tenant under which DID operations are being performed. */
-  private connectedDid: string;
+  private readonly connectedDid: string;
 
   constructor(options: { agent: EnboxAgent, connectedDid: string }) {
     this.agent = options.agent;

@@ -28,8 +28,8 @@ export class AdminSessionManager {
   /** Cleanup runs every 10 minutes. */
   static readonly #CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 
-  #sessions: Map<string, SessionEntry> = new Map();
-  #ttlMs: number;
+  readonly #sessions: Map<string, SessionEntry> = new Map();
+  readonly #ttlMs: number;
   #cleanupInterval: ReturnType<typeof setInterval> | undefined;
 
   constructor(ttlSeconds?: number) {

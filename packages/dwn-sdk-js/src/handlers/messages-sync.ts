@@ -25,7 +25,7 @@ const DEFAULT_MAX_INLINE_DATA_SIZE = DwnConstant.maxDataSizeAllowedToBeEncoded;
 
 export class MessagesSyncHandler implements MethodHandler {
 
-  constructor(private deps: HandlerDependencies) { }
+  constructor(private readonly deps: HandlerDependencies) { }
 
   public async handle({
     tenant,

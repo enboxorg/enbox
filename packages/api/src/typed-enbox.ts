@@ -552,19 +552,19 @@ export class TypedEnbox<
   M extends SchemaMap = SchemaMap,
 > {
   /** @internal */
-  private _dwn: DwnApi;
+  private readonly _dwn: DwnApi;
   /** @internal */
-  private _definition: D;
+  private readonly _definition: D;
   /** @internal */
   private _configured: boolean = false;
   /** @internal */
   private _ensureReadyPromise: Promise<void> | null = null;
   /** @internal */
-  private _validPaths: Set<string>;
+  private readonly _validPaths: Set<string>;
   /** @internal */
   private _records?: TypedEnbox<D, M>['records'];
   /** @internal — cached result of the `hasEncryptedTypes` scan (definition is immutable). */
-  private _hasEncryptedTypes: boolean;
+  private readonly _hasEncryptedTypes: boolean;
 
   /**
    * @internal Create a new `TypedEnbox` instance. Use `enbox.using(protocol)` instead.

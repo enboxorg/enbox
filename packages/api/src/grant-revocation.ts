@@ -31,9 +31,9 @@ export interface GrantRevocationOptions {
  */
 export class PermissionGrantRevocation implements GrantRevocationModel {
   /** The PermissionsAPI used to interact with the underlying revocation  */
-  private _permissions: AgentPermissionsApi;
+  private readonly _permissions: AgentPermissionsApi;
   /** The DID to use as the author and default target for the underlying revocation */
-  private _connectedDid: string;
+  private readonly _connectedDid: string;
   /** The DWN `RecordsWrite` message, along with encodedData that represents the revocation */
   private _message: DwnDataEncodedRecordsWriteMessage;
 

@@ -27,7 +27,7 @@ type HandlerArgs = { tenant: string, message: RecordsWriteMessage, dataStream?: 
 
 export class RecordsWriteHandler implements MethodHandler {
 
-  constructor(private deps: HandlerDependencies) { }
+  constructor(private readonly deps: HandlerDependencies) { }
 
   public async handle({
     tenant,

@@ -42,7 +42,7 @@ export class DidKeyUtils {
    * // Returns 'ed25519-pub', the multicodec name for an Ed25519 public key
    * ```
    */
-  private static JWK_TO_MULTICODEC: { [key: string]: string } = {
+  private static readonly JWK_TO_MULTICODEC: { [key: string]: string } = {
     'Ed25519:public'    : 'ed25519-pub',
     'Ed25519:private'   : 'ed25519-priv',
     'secp256k1:public'  : 'secp256k1-pub',
@@ -76,7 +76,7 @@ export class DidKeyUtils {
    * // Returns a partial JWK for an Ed25519 public key
    * ```
    */
-  private static MULTICODEC_TO_JWK: { [key: string]: Jwk } = {
+  private static readonly MULTICODEC_TO_JWK: { [key: string]: Jwk } = {
     'ed25519-pub'    : { crv: 'Ed25519', kty: 'OKP', x: '' },
     'ed25519-priv'   : { crv: 'Ed25519', kty: 'OKP', x: '', d: '' },
     'secp256k1-pub'  : { crv: 'secp256k1', kty: 'EC', x: '', y: '' },

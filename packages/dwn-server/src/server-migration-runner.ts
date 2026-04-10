@@ -11,7 +11,7 @@ import { Migrator } from 'kysely';
  * dialect, producing the concrete Kysely {@link Migration} objects.
  */
 class ServerMigrationProvider implements MigrationProvider {
-  #dialect: Dialect;
+  readonly #dialect: Dialect;
   #factories: ReadonlyArray<readonly [name: string, factory: ServerMigrationFactory]>;
 
   constructor(

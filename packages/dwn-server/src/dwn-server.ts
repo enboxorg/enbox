@@ -101,9 +101,9 @@ export class DwnServer {
   #auditLog: AuditLog | undefined;
   #passkeyStore: AdminPasskeyStore | undefined;
   #sessionManager: AdminSessionManager | undefined;
-  #externalHooks: MessageProcessedHook[];
-  #externalRegistrationManager: RegistrationManager | undefined;
-  #externalOpenAuthHandler: OpenAuthHandler | undefined;
+  readonly #externalHooks: MessageProcessedHook[];
+  readonly #externalRegistrationManager: RegistrationManager | undefined;
+  readonly #externalOpenAuthHandler: OpenAuthHandler | undefined;
 
   /**
    * @param options.dwn - Dwn instance to use as an override.

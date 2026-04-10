@@ -62,9 +62,9 @@ export class LocalDwnDiscovery {
   private _cacheExpiry = 0;
 
   constructor(
-    private _rpcClient: EnboxRpc,
-    private _cacheTtlMs = 10_000,
-    private _discoveryFile?: DwnDiscoveryFile,
+    private readonly _rpcClient: EnboxRpc,
+    private readonly _cacheTtlMs = 10_000,
+    private readonly _discoveryFile?: DwnDiscoveryFile,
   ) {}
 
   /**
