@@ -267,39 +267,44 @@ export async function processConnectedGrants(params: {
   const { agent, connectedDid, delegateDid, grants } = params;
   const connectedProtocols = new Set<string>();
 
-  // Process all grants concurrently — each grant's two DWN writes are
-  // independent of other grants.
+  // Process all grants concurrently — each grant is independent of
+  // the others. Within a single grant, the delegate-partition write
+  // must succeed before the connected-partition write so that a
+  // delegate failure doesn't leave an orphaned connected-partition
+  // record (the cleanup path only removes the imported identity/DID,
+  // not individual grant records).
   await Promise.all(grants.map(async (grantMessage) => {
     const grant = DwnPermissionGrant.parse(grantMessage);
 
     const { encodedData, ...rawMessage } = grantMessage;
     const dataStream = new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart]);
 
-    // Store the grant in both partitions concurrently: the delegate
-    // partition (for permissions lookup) and the connected partition
-    // (for DWN authorization during sync).
-    const [{ reply: delegateReply }, connectedReply] = await Promise.all([
-      agent.processDwnRequest({
-        store       : true,
-        author      : delegateDid,
-        target      : delegateDid,
-        messageType : DwnInterface.RecordsWrite,
-        signAsOwner : true,
-        rawMessage,
-        dataStream,
-      }),
-      agent.dwn.processRawMessage(
-        connectedDid,
-        rawMessage as GenericMessage,
-        { dataStream: DataStream.fromBytes(Convert.base64Url(encodedData).toUint8Array()) },
-      ),
-    ]);
+    // Store the grant in the delegateDid's partition so the permissions
+    // API can look it up when building delegate-signed requests.
+    const { reply: delegateReply } = await agent.processDwnRequest({
+      store       : true,
+      author      : delegateDid,
+      target      : delegateDid,
+      messageType : DwnInterface.RecordsWrite,
+      signAsOwner : true,
+      rawMessage,
+      dataStream,
+    });
 
     if (delegateReply.status.code !== 202) {
       throw new Error(
         `[@enbox/auth] Failed to store grant in delegate partition: ${delegateReply.status.detail}`
       );
     }
+
+    // Also store the grant in the connectedDid's local DWN partition.
+    // We use processRawMessage because the delegate agent does not hold
+    // the connectedDid's private keys — we cannot re-sign the message.
+    const connectedReply = await agent.dwn.processRawMessage(
+      connectedDid,
+      rawMessage as GenericMessage,
+      { dataStream: DataStream.fromBytes(Convert.base64Url(encodedData).toUint8Array()) },
+    );
 
     if (connectedReply.status.code !== 202 && connectedReply.status.code !== 409) {
       throw new Error(

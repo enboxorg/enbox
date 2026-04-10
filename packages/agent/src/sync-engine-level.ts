@@ -2799,7 +2799,15 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    this._syncTargetsCache = { targets, timestamp: Date.now() };
+    // Only cache non-empty results. A transient DID resolution failure
+    // can produce an empty list even though identities are registered.
+    // Caching the empty result would suppress retries until TTL expiry,
+    // turning a brief discovery miss into a multi-minute reconnect stall
+    // (e.g. startLiveSync's second getSyncTargets() call would reuse the
+    // empty result from the initial sync() catch-up pass).
+    if (targets.length > 0) {
+      this._syncTargetsCache = { targets, timestamp: Date.now() };
+    }
     return targets;
   }
 
