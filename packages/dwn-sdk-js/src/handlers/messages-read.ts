@@ -18,7 +18,7 @@ type HandleArgs = { tenant: string, message: MessagesReadMessage };
 
 export class MessagesReadHandler implements MethodHandler {
 
-  constructor(private deps: HandlerDependencies) {}
+  constructor(private readonly deps: HandlerDependencies) {}
 
   public async handle({ tenant, message }: HandleArgs): Promise<MessagesReadReply> {
     let messagesRead: MessagesRead;

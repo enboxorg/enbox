@@ -116,14 +116,14 @@ export class SendCache {
    * A private static map that serves as the core storage mechanism for the cache. It maps record
    * IDs to a set of target DIDs, indicating which records have been sent to which targets.
   */
-  private static cache = new Map<string, Set<string>>();
+  private static readonly cache = new Map<string, Set<string>>();
 
   /**
    * The maximum number of entries allowed in the cache. Once this limit is exceeded, the oldest
    * entries are evicted to make room for new ones. This limit applies both to the number of records
    * and the number of targets per record.
    */
-  private static sendCacheLimit = 100;
+  private static readonly sendCacheLimit = 100;
 
   /**
    * Checks if a given record ID has been sent to a specified target DID. This method is used to

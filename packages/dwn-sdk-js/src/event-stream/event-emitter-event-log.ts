@@ -65,21 +65,21 @@ export interface EventEmitterEventLogConfig {
  * For multi-node deployments, use a distributed implementation (NATS, Redis, etc.).
  */
 export class EventEmitterEventLog implements EventLog {
-  private emitter = mitt<EmitterEvents>();
+  private readonly emitter = mitt<EmitterEvents>();
   private isOpen: boolean = false;
-  private errorHandler: (error: any) => void = (error): void => { console.error('event log error', error); };
-  private maxEventsPerTenant: number;
+  private readonly errorHandler: (error: any) => void = (error): void => { console.error('event log error', error); };
+  private readonly maxEventsPerTenant: number;
 
   /**
    * Per-tenant ordered event storage.
    * Key: tenant DID → Map of seq → StoredEntry.
    */
-  private tenantLogs: Map<string, Map<number, StoredEntry>> = new Map();
+  private readonly tenantLogs: Map<string, Map<number, StoredEntry>> = new Map();
 
   /**
    * Per-tenant monotonic sequence counter.
    */
-  private tenantSeqs: Map<string, number> = new Map();
+  private readonly tenantSeqs: Map<string, number> = new Map();
 
   /**
    * Epoch for this EventLog instance. Generated once at construction as a

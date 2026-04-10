@@ -70,7 +70,7 @@ export class AuditLog {
   /** Cleanup runs every hour. */
   static readonly #CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
-  #db: Kysely<AuditDatabase>;
+  readonly #db: Kysely<AuditDatabase>;
   #retentionConfig: AuditRetentionConfig | undefined;
   #cleanupInterval: ReturnType<typeof setInterval> | undefined;
 

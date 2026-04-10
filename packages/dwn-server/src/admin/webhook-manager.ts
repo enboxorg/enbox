@@ -35,7 +35,7 @@ export class WebhookManager {
   static readonly #maxRetries = 3;
   static readonly #retryDelaysMs = [1000, 5000, 15000];
 
-  #db: Kysely<WebhookDatabase>;
+  readonly #db: Kysely<WebhookDatabase>;
 
   private constructor(dialect: Dialect) {
     this.#db = new Kysely<WebhookDatabase>({ dialect });

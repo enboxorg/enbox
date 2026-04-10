@@ -71,7 +71,7 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
   /**
    * A map to store method resolvers against method names.
    */
-  private didResolvers: Map<string, DidMethodResolver> = new Map();
+  private readonly didResolvers: Map<string, DidMethodResolver> = new Map();
 
   /**
    * Constructs a new `DidResolver`.

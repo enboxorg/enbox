@@ -20,7 +20,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 
 export class RecordsSubscribeHandler implements MethodHandler {
 
-  constructor(private deps: HandlerDependencies) { }
+  constructor(private readonly deps: HandlerDependencies) { }
 
   public async handle({
     tenant,

@@ -241,7 +241,7 @@ export class DwnApi {
    * Holds the instance of a {@link EnboxAgent} that represents the current execution context for
    * the `DwnApi`. This agent is used to process DWN requests.
    */
-  private agent: EnboxAgent;
+  private readonly agent: EnboxAgent;
 
   /**
    * The DID of the DWN tenant under which operations are being performed.
@@ -255,10 +255,10 @@ export class DwnApi {
   set connectedDid(did: string) { this._connectedDid = did; }
 
   /** (optional) The DID of the signer when signing with permissions */
-  private delegateDid?: string;
+  private readonly delegateDid?: string;
 
   /** Holds the instance of {@link AgentPermissionsApi} that helps when dealing with permissions protocol records */
-  private permissionsApi: AgentPermissionsApi;
+  private readonly permissionsApi: AgentPermissionsApi;
 
   constructor(options: { agent: EnboxAgent, connectedDid: string, delegateDid?: string }) {
     this.agent = options.agent;

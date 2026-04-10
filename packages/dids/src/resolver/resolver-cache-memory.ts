@@ -20,7 +20,7 @@ export type DidResolverCacheMemoryParams = {
 };
 
 export class DidResolverCacheMemory implements DidResolverCache {
-  private cache: TtlCache<string, DidResolutionResult>;
+  private readonly cache: TtlCache<string, DidResolutionResult>;
 
   constructor({ ttl = '15m' }: DidResolverCacheMemoryParams = {}) {
     this.cache = new TtlCache({ ttl: ms(ttl) });

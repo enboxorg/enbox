@@ -161,13 +161,13 @@ function tenantToSubjectToken(tenant: string): string {
  * Must be a default export with a no-arg constructor.
  */
 export default class NatsEventLog implements EventLog {
-  #config: NatsEventLogConfig;
+  readonly #config: NatsEventLogConfig;
   #nc: NatsConnection | undefined;
   #js: JetStreamClient | undefined;
   #jsm: JetStreamManager | undefined;
 
   /** Active subscription consumers, keyed by consumer name. */
-  #activeConsumers: Map<string, { messages?: ConsumerMessages; stopped: boolean }> = new Map();
+  readonly #activeConsumers: Map<string, { messages?: ConsumerMessages; stopped: boolean }> = new Map();
 
   /**
    * Epoch for this EventLog instance. Stable as long as the JetStream stream exists.

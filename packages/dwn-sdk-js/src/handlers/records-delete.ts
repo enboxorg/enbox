@@ -18,7 +18,7 @@ import { ResumableTaskName } from '../core/resumable-task-manager.js';
 
 export class RecordsDeleteHandler implements MethodHandler {
 
-  constructor(private deps: HandlerDependencies) { }
+  constructor(private readonly deps: HandlerDependencies) { }
 
   public async handle({
     tenant,

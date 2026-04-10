@@ -98,8 +98,8 @@ export type AnonymousProtocolsQueryParams = {
  * ```
  */
 export class AnonymousDwnApi {
-  private _didResolver: DidUrlDereferencer;
-  private _rpcClient: EnboxRpc;
+  private readonly _didResolver: DidUrlDereferencer;
+  private readonly _rpcClient: EnboxRpc;
 
   constructor({ didResolver, rpcClient }: AnonymousDwnApiParams) {
     this._didResolver = didResolver;

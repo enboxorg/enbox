@@ -143,10 +143,10 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
   public crypto = new AgentCryptoApi();
 
   /** Determines the computational intensity of the key derivation process. */
-  private _keyDerivationWorkFactor: number;
+  private readonly _keyDerivationWorkFactor: number;
 
   /** The underlying key-value store for the vault's encrypted content. */
-  private _store: KeyValueStore<string, string>;
+  private readonly _store: KeyValueStore<string, string>;
 
   /** The cryptographic key used to encrypt and decrypt the vault's content securely. */
   private _contentEncryptionKey: Jwk | undefined;

@@ -92,20 +92,20 @@ export class JsonRpcSocket {
    * handler is added before sending and removed on response or timeout.
    * For subscriptions, the handler lives until explicitly closed.
    */
-  private messageHandlers: Map<JsonRpcId, (event: { data: any }) => void> = new Map();
+  private readonly messageHandlers: Map<JsonRpcId, (event: { data: any }) => void> = new Map();
 
   /**
    * Set of JSON-RPC ids that belong to subscription handlers (as opposed to
    * one-shot request handlers). Subscription handlers survive reconnection;
    * one-shot handlers are rejected on unexpected close.
    */
-  private subscriptionHandlerIds: Set<JsonRpcId> = new Set();
+  private readonly subscriptionHandlerIds: Set<JsonRpcId> = new Set();
 
   /** The URL to connect/reconnect to. */
-  private url: string;
+  private readonly url: string;
 
   /** Stored options for reconnection. */
-  private options: JsonRpcSocketOptions;
+  private readonly options: JsonRpcSocketOptions;
 
   /** Whether `close()` was called intentionally by the user. */
   private closedByUser = false;
@@ -127,7 +127,7 @@ export class JsonRpcSocket {
 
   private constructor(
     private socket: WebSocket,
-    private responseTimeout: number,
+    private readonly responseTimeout: number,
     url: string,
     options: JsonRpcSocketOptions,
   ) {

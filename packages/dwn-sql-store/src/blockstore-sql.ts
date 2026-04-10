@@ -17,8 +17,8 @@ import { CID } from 'multiformats';
  * `DataStoreSql`. This class does not own the connection lifecycle.
  */
 export class BlockstoreSql implements Blockstore {
-  #db: Kysely<DwnDatabaseType>;
-  #rootDataCid: string;
+  readonly #db: Kysely<DwnDatabaseType>;
+  readonly #rootDataCid: string;
 
   constructor(db: Kysely<DwnDatabaseType>, rootDataCid: string) {
     this.#db = db;

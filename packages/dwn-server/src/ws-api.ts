@@ -14,7 +14,7 @@ import { InMemoryConnectionManager } from './connection/connection-manager.js';
 
 export class WsApi {
   dwn: Dwn;
-  #connectionManager: ConnectionManager;
+  readonly #connectionManager: ConnectionManager;
 
   constructor(
     httpApi: HttpApi, dwn: Dwn, connectionManager?: ConnectionManager,

@@ -12,7 +12,7 @@ export class RegistrationStore {
   private static readonly registeredTenantTableName = 'registeredTenants';
   private static readonly tenantQuotasTableName = 'tenantQuotas';
 
-  private db: Kysely<RegistrationDatabase>;
+  private readonly db: Kysely<RegistrationDatabase>;
 
   private constructor (sqlDialect: Dialect) {
     this.db = new Kysely<RegistrationDatabase>({ dialect: sqlDialect });

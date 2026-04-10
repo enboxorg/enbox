@@ -14,7 +14,7 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export class MessagesSubscribeHandler implements MethodHandler {
 
-  constructor(private deps: HandlerDependencies) {}
+  constructor(private readonly deps: HandlerDependencies) {}
 
   public async handle({
     tenant,

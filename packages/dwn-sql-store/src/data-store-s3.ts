@@ -29,12 +29,12 @@ import { Kysely, sql } from 'kysely';
  * (`queueSize * partSize`).
  */
 export class DataStoreS3 implements DataStore {
-  #dialect: Dialect;
+  readonly #dialect: Dialect;
   #db: Kysely<DwnDatabaseType> | null = null;
-  #s3: S3Client;
-  #bucket: string;
-  #partSize: number;
-  #queueSize: number;
+  readonly #s3: S3Client;
+  readonly #bucket: string;
+  readonly #partSize: number;
+  readonly #queueSize: number;
 
   constructor(config: DataStoreS3Config) {
     this.#dialect = config.dialect;

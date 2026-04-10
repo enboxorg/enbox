@@ -8,22 +8,22 @@ import { Message } from './message.js';
  * An abstract implementation of the `MessageInterface` interface.
  */
 export abstract class AbstractMessage<M extends GenericMessage> implements MessageInterface<M> {
-  private _message: M;
+  private readonly _message: M;
   public get message(): M {
     return this._message as M;
   }
 
-  private _signer: string | undefined;
+  private readonly _signer: string | undefined;
   public get signer(): string | undefined {
     return this._signer;
   }
 
-  private _author: string | undefined;
+  private readonly _author: string | undefined;
   public get author(): string | undefined {
     return this._author;
   }
 
-  private _signaturePayload: GenericSignaturePayload | undefined;
+  private readonly _signaturePayload: GenericSignaturePayload | undefined;
   public get signaturePayload(): GenericSignaturePayload | undefined {
     return this._signaturePayload;
   }

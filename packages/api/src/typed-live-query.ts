@@ -65,7 +65,7 @@ export type TypedRecordChange<T> = {
  */
 export class TypedLiveQuery<T> {
   /** The underlying untyped LiveQuery instance. */
-  private _liveQuery: LiveQuery;
+  private readonly _liveQuery: LiveQuery;
 
   /** Cached typed record array, built lazily from the underlying records. */
   private _typedRecords?: TypedRecord<T>[];

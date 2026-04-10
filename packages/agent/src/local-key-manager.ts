@@ -177,7 +177,7 @@ export class LocalKeyManager implements AgentKeyManager {
    * that implements a specific cryptographic algorithm. This map is used to cache and reuse
    * instances for performance optimization, ensuring that each algorithm is instantiated only once.
    */
-  private _algorithmInstances: Map<AlgorithmConstructor, InstanceType<typeof CryptoAlgorithm>> = new Map();
+  private readonly _algorithmInstances: Map<AlgorithmConstructor, InstanceType<typeof CryptoAlgorithm>> = new Map();
 
   /**
    * The `_keyStore` private variable in `LocalKeyManager` is a {@link AgentDataStore} instance used
@@ -187,7 +187,7 @@ export class LocalKeyManager implements AgentKeyManager {
    * persistent storage, providing flexibility in key management according to the application's
    * requirements.
    */
-  private _keyStore: AgentDataStore<Jwk>;
+  private readonly _keyStore: AgentDataStore<Jwk>;
 
   constructor({ agent, keyStore }: LocalKmsParams = {}) {
     this._agent = agent;

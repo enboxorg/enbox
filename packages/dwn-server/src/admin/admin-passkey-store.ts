@@ -34,7 +34,7 @@ export type AdminPasskeyRecord = {
 export class AdminPasskeyStore {
   static readonly #tableName = 'adminPasskeys';
 
-  #db: Kysely<PasskeyDatabase>;
+  readonly #db: Kysely<PasskeyDatabase>;
 
   private constructor(dialect: Dialect) {
     this.#db = new Kysely<PasskeyDatabase>({ dialect });

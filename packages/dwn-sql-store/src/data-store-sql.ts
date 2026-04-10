@@ -23,7 +23,7 @@ import { Kysely, sql } from 'kysely';
  * when the last ref to a `dataCid` is gone.
  */
 export class DataStoreSql implements DataStore {
-  #dialect: Dialect;
+  readonly #dialect: Dialect;
   #db: Kysely<DwnDatabaseType> | null = null;
 
   constructor(dialect: Dialect) {

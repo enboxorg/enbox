@@ -84,21 +84,21 @@ import { importFromPhrase, importFromPortable } from './connect/import.js';
  * ```
  */
 export class AuthManager {
-  private _userAgent: EnboxUserAgent;
-  private _emitter: AuthEventEmitter;
-  private _storage: StorageAdapter;
+  private readonly _userAgent: EnboxUserAgent;
+  private readonly _emitter: AuthEventEmitter;
+  private readonly _storage: StorageAdapter;
   private _session: AuthSession | undefined;
   private _state: AuthState = 'uninitialized';
   private _isConnecting = false;
   private _isShutDown = false;
 
   // Default options from create()
-  private _defaultPassword?: string;
-  private _passwordProvider?: PasswordProvider;
-  private _defaultSync?: SyncOption;
-  private _defaultDwnEndpoints?: string[];
-  private _registration?: RegistrationOptions;
-  private _connectHandler?: ConnectHandler;
+  private readonly _defaultPassword?: string;
+  private readonly _passwordProvider?: PasswordProvider;
+  private readonly _defaultSync?: SyncOption;
+  private readonly _defaultDwnEndpoints?: string[];
+  private readonly _registration?: RegistrationOptions;
+  private readonly _connectHandler?: ConnectHandler;
 
   /**
    * The local DWN server endpoint discovered during `create()`, if any.
@@ -106,7 +106,7 @@ export class AuthManager {
    * event listeners are attached, so consumers should check this property
    * after `create()` returns rather than relying solely on events.
    */
-  private _localDwnEndpoint?: string;
+  private readonly _localDwnEndpoint?: string;
 
   private constructor(params: {
     userAgent: EnboxUserAgent;

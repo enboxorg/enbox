@@ -189,7 +189,7 @@ export type TypedRecordDeleteResult<T> = DwnResponseStatus & {
  */
 export class TypedRecord<T> {
   /** @internal The underlying untyped Record instance. */
-  private _record: Record;
+  private readonly _record: Record;
 
   /**
    * @internal Wrap an untyped {@link Record} in a type-safe shell.

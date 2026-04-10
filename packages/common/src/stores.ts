@@ -5,7 +5,7 @@ import { Level } from 'level';
 import type { KeyValueStore } from './types.js';
 
 export class LevelStore<K = string, V = any> implements KeyValueStore<K, V> {
-  private store: AbstractLevel<string | Buffer | Uint8Array, K, V>;
+  private readonly store: AbstractLevel<string | Buffer | Uint8Array, K, V>;
 
   constructor({ db, location = 'DATASTORE' }: {
     db?: AbstractLevel<string | Buffer | Uint8Array, K, V>;
@@ -68,7 +68,7 @@ export class MemoryStore<K, V> implements KeyValueStore<K, V> {
   /**
    * A private field that contains the Map used as the key-value store.
    */
-  private store: Map<K, V> = new Map();
+  private readonly store: Map<K, V> = new Map();
 
   /**
    * Clears all entries in the key-value store.

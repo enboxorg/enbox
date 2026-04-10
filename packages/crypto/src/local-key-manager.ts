@@ -122,7 +122,7 @@ export class LocalKeyManager implements
    * that implements a specific cryptographic algorithm. This map is used to cache and reuse
    * instances for performance optimization, ensuring that each algorithm is instantiated only once.
    */
-  private _algorithmInstances: Map<AlgorithmConstructor, InstanceType<typeof CryptoAlgorithm>> = new Map();
+  private readonly _algorithmInstances: Map<AlgorithmConstructor, InstanceType<typeof CryptoAlgorithm>> = new Map();
 
   /**
    * The `_keyStore` private variable in `LocalKeyManager` is a `KeyValueStore` instance used for
@@ -132,7 +132,7 @@ export class LocalKeyManager implements
    * persistent storage, providing flexibility in key management according to the application's
    * requirements.
    */
-  private _keyStore: KeyValueStore<KeyIdentifier, Jwk>;
+  private readonly _keyStore: KeyValueStore<KeyIdentifier, Jwk>;
 
   constructor(params?: LocalKeyManagerParams) {
     this._keyStore = params?.keyStore ?? new MemoryStore<KeyIdentifier, Jwk>();

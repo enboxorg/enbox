@@ -20,7 +20,7 @@ export type DwnServerInfoCacheMemoryParams = {
 };
 
 export class DwnServerInfoCacheMemory implements DwnServerInfoCache {
-  private cache: TtlCache<string, ServerInfo>;
+  private readonly cache: TtlCache<string, ServerInfo>;
 
   constructor({ ttl = '15m' }: DwnServerInfoCacheMemoryParams= {}) {
     this.cache = new TtlCache({ ttl: ms(ttl) });

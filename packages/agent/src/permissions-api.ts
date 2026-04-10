@@ -11,7 +11,7 @@ import { DwnInterface, DwnPermissionGrant, DwnPermissionRequest } from './types/
 export class AgentPermissionsApi implements PermissionsApi {
 
   /** cache for fetching a permission {@link PermissionGrant}, keyed by a specific MessageType and protocol */
-  private _cachedPermissions: TtlCache<string, PermissionGrantEntry> = new TtlCache({ ttl: 60 * 1000 });
+  private readonly _cachedPermissions: TtlCache<string, PermissionGrantEntry> = new TtlCache({ ttl: 60 * 1000 });
 
   private _agent?: EnboxAgent;
 

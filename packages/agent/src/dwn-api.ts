@@ -130,20 +130,20 @@ export class AgentDwnApi {
    * `undefined` in remote mode — all operations route through RPC to
    * the local DWN server endpoint.
    */
-  private _dwn?: Dwn;
+  private readonly _dwn?: Dwn;
 
   /**
    * The local DWN server endpoint for remote mode.
    * When set, `_dwn` is `undefined` and `processRequest()` routes
    * through `sendDwnRpcRequest()`.
    */
-  private _localDwnEndpoint?: string;
+  private readonly _localDwnEndpoint?: string;
 
   /**
    * Protocol definition cache — TTL 30 minutes. Protocols rarely change.
    * Keyed by `${tenantDid}~${protocolUri}`.
    */
-  private _protocolDefinitionCache = new TtlCache<string, ProtocolDefinition>({
+  private readonly _protocolDefinitionCache = new TtlCache<string, ProtocolDefinition>({
     ttl: 30 * 60 * 1000
   });
 
@@ -151,7 +151,7 @@ export class AgentDwnApi {
    * Context key cache — stores resolved context encryption key info for
    * multi-party protocols. Keyed by rootContextId. TTL 30 minutes.
    */
-  private _contextKeyCache = new TtlCache<string, {
+  private readonly _contextKeyCache = new TtlCache<string, {
     keyId: string;
     keyUri: KeyIdentifier;
     contextDerivationPath: string[];
@@ -162,7 +162,7 @@ export class AgentDwnApi {
    * where the current user is a participant (not the creator).
    * Keyed by `ctx~${authorDid}~${rootContextId}`. TTL 30 minutes.
    */
-  private _contextDerivedKeyCache = new TtlCache<string, DerivedPrivateJwk>({
+  private readonly _contextDerivedKeyCache = new TtlCache<string, DerivedPrivateJwk>({
     ttl: 30 * 60 * 1000
   });
 
@@ -176,7 +176,7 @@ export class AgentDwnApi {
    * granted read scopes for that delegate session.
    * TTL 24 hours (keys are re-populated on session restore).
    */
-  private _delegateDecryptionKeyCache = new TtlCache<string, {
+  private readonly _delegateDecryptionKeyCache = new TtlCache<string, {
     protocol: string;
     scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'exact' };
     derivedPrivateKey: DerivedPrivateJwk;
@@ -190,12 +190,12 @@ export class AgentDwnApi {
    * Keyed by `dctx~${delegateDid}~${protocol}~${rootContextId}`.
    * TTL 24 hours (re-populated on session restore).
    */
-  private _delegateContextKeyCache = new TtlCache<string, DerivedPrivateJwk>({
+  private readonly _delegateContextKeyCache = new TtlCache<string, DerivedPrivateJwk>({
     ttl: 24 * 60 * 60 * 1000
   });
 
   /** Tracks which context key cache entries belong to which delegate DID. */
-  private _delegateContextKeyCacheIndex = new Map<string, string[]>();
+  private readonly _delegateContextKeyCacheIndex = new Map<string, string[]>();
 
   /**
    * Explicit registry of which multi-party protocols each delegate has
@@ -207,7 +207,7 @@ export class AgentDwnApi {
    * Unlike the context key cache, this registry is NOT time-limited —
    * it persists for the lifetime of the session.
    */
-  private _delegateMultiPartyProtocols = new Map<string, Set<string>>();
+  private readonly _delegateMultiPartyProtocols = new Map<string, Set<string>>();
 
   /**
    * Optional callback invoked when post-connect context keys are delivered
@@ -219,7 +219,7 @@ export class AgentDwnApi {
    * Cache of locally-managed DIDs (agent DID + identities). Used to decide
    * whether a target DID should be routed through the local DWN server.
    */
-  private _localManagedDidCache = new TtlCache<string, boolean>({
+  private readonly _localManagedDidCache = new TtlCache<string, boolean>({
     ttl: 30 * 60 * 1000
   });
 
@@ -1588,7 +1588,7 @@ export class AgentDwnApi {
    * Cache for key delivery protocol installation status per tenant.
    * Once confirmed installed, we skip re-checking for 21 days.
    */
-  private _keyDeliveryProtocolInstalledCache = new TtlCache<string, boolean>({
+  private readonly _keyDeliveryProtocolInstalledCache = new TtlCache<string, boolean>({
     ttl : 21 * 24 * 60 * 60 * 1000,
     max : 1000,
   });

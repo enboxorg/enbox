@@ -20,14 +20,14 @@ export class ProofOfWorkManager {
 
   // There is opportunity to improve implementation here.
   // TODO: https://github.com/enboxorg/enbox/issues/101
-  private proofOfWorkOfLastMinute: Map<string, number> = new Map(); // proofOfWorkId -> timestamp of proof-of-work
+  private readonly proofOfWorkOfLastMinute: Map<string, number> = new Map(); // proofOfWorkId -> timestamp of proof-of-work
 
   // Seed to generate the challenge nonce from, this allows all DWN instances in a cluster to generate the same challenge.
-  private challengeSeed?: string;
-  private difficultyIncreaseMultiplier: number;
+  private readonly challengeSeed?: string;
+  private readonly difficultyIncreaseMultiplier: number;
   private currentMaximumAllowedHashValueAsBigInt: bigint;
-  private initialMaximumAllowedHashValueAsBigInt: bigint;
-  private desiredSolveCountPerMinute: number;
+  private readonly initialMaximumAllowedHashValueAsBigInt: bigint;
+  private readonly desiredSolveCountPerMinute: number;
 
   /**
    * How often the challenge nonce is refreshed.

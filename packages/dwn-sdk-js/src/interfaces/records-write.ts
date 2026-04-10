@@ -135,9 +135,9 @@ export type CreateFromOptions = {
  * NOTE: Unable to extend `AbstractMessage` directly because the incompatible `_message` type, which is not just a generic `<M>` type.
  */
 export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
-  private parentContextId: string | undefined;
+  private readonly parentContextId: string | undefined;
 
-  private _message: InternalRecordsWriteMessage;
+  private readonly _message: InternalRecordsWriteMessage;
   /**
    * Valid JSON message representing this RecordsWrite.
    * @throws `DwnErrorCode.RecordsWriteMissingSigner` if the message is not signed yet.

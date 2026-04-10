@@ -38,22 +38,22 @@ export class SocketConnection {
   /** Timestamp when the connection was established (for admin introspection). */
   public readonly connectedAt: number = Date.now();
 
-  private heartbeatInterval: ReturnType<typeof setInterval>;
-  private subscriptions: Map<JsonRpcId, JsonRpcSubscription> = new Map();
-  private flowControllers: Map<JsonRpcId, FlowController> = new Map();
+  private readonly heartbeatInterval: ReturnType<typeof setInterval>;
+  private readonly subscriptions: Map<JsonRpcId, JsonRpcSubscription> = new Map();
+  private readonly flowControllers: Map<JsonRpcId, FlowController> = new Map();
   private isAlive: boolean;
 
   constructor(
-    private socket: ServerWebSocket<WsData>,
-    private dwn: Dwn,
-    private onCloseCallback?: () => void,
-    private maxInFlight: number = DEFAULT_MAX_IN_FLIGHT,
-    private activityLog?: ActivityLog,
-    private adminStore?: AdminStore,
-    private registrationStore?: RegistrationStore,
-    private serverConfig?: DwnServerConfig,
-    private tenantRateLimiter?: RateLimiter,
-    private messageProcessedHooks?: MessageProcessedHook[],
+    private readonly socket: ServerWebSocket<WsData>,
+    private readonly dwn: Dwn,
+    private readonly onCloseCallback?: () => void,
+    private readonly maxInFlight: number = DEFAULT_MAX_IN_FLIGHT,
+    private readonly activityLog?: ActivityLog,
+    private readonly adminStore?: AdminStore,
+    private readonly registrationStore?: RegistrationStore,
+    private readonly serverConfig?: DwnServerConfig,
+    private readonly tenantRateLimiter?: RateLimiter,
+    private readonly messageProcessedHooks?: MessageProcessedHook[],
   ){
     // Bun handles ping/pong automatically at the protocol level, but we still
     // want an application-level heartbeat to detect dead connections.

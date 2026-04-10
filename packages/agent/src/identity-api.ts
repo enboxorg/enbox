@@ -54,7 +54,7 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
    */
   private _agent?: EnboxPlatformAgent<TKeyManager>;
 
-  private _store: AgentDataStore<IdentityMetadata>;
+  private readonly _store: AgentDataStore<IdentityMetadata>;
 
   constructor({ agent, store }: IdentityApiParams<TKeyManager> = {}) {
     this._agent = agent;

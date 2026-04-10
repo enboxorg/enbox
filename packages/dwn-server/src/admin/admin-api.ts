@@ -72,14 +72,14 @@ export class AdminApi {
   #passkeyStore: AdminPasskeyStore | undefined;
   #sessionManager: AdminSessionManager | undefined;
   /** In-memory challenge store: maps challenge → expiry timestamp. */
-  #challenges: Map<string, number> = new Map();
+  readonly #challenges: Map<string, number> = new Map();
   /** Challenge TTL: 60 seconds. */
   static readonly #CHALLENGE_TTL_MS = 60_000;
-  #startTime: number;
+  readonly #startTime: number;
   #packageInfo: { version?: string };
   #metricsInterval: ReturnType<typeof setInterval> | undefined;
   /** Tracks last failed-auth audit timestamp per IP to rate-limit logging. */
-  #failedAuthLog: Map<string, number> = new Map();
+  readonly #failedAuthLog: Map<string, number> = new Map();
   /** Minimum interval between audit log entries for the same IP (60 seconds). */
   static readonly #AUTH_AUDIT_INTERVAL_MS = 60_000;
 

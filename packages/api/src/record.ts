@@ -90,31 +90,31 @@ export class Record implements RecordModel {
    * Cache to minimize the amount of redundant two-phase commits we do in store() and send()
    * Retains awareness of the last 100 records stored/sent for up to 100 target DIDs each.
    */
-  private static _sendCache = SendCache;
+  private static readonly _sendCache = SendCache;
 
   // Record instance metadata.
 
   /** The {@link EnboxAgent} instance that handles DWNs requests. */
-  private _agent: EnboxAgent;
+  private readonly _agent: EnboxAgent;
   /** The DID of the DWN tenant under which operations are being performed. */
-  private _connectedDid: string;
+  private readonly _connectedDid: string;
   /** The optional DID that is delegated to act on behalf of the connectedDid */
-  private _delegateDid?: string;
+  private readonly _delegateDid?: string;
   /** cache for fetching a permission {@link PermissionGrant}, keyed by a specific MessageType and protocol */
-  private _permissionsApi: PermissionsApi;
+  private readonly _permissionsApi: PermissionsApi;
   /** Encoded data of the record, if available. */
   private _encodedData?: Blob;
   /** Stream of the record's data (Web ReadableStream for cross-platform compatibility). */
   private _readableStream?: ReadableStream;
   /** The origin DID if the record was fetched from a remote DWN. */
-  private _remoteOrigin?: string;
+  private readonly _remoteOrigin?: string;
 
   // Private variables for DWN `RecordsWrite` message properties.
 
   /** The DID of the entity that most recently authored or deleted the record. */
-  private _author: string;
+  private readonly _author: string;
   /** The DID of the entity that originally created the record. */
-  private _creator: string;
+  private readonly _creator: string;
   /** Attestation JWS signature. */
   private _attestation?: DwnMessage[DwnInterface.RecordsWrite]['attestation'];
   /** Authorization signature(s). */
@@ -132,7 +132,7 @@ export class Record implements RecordModel {
   /** Flag indicating if the initial write has been signed by the owner. */
   private _initialWriteSigned: boolean;
   /** Unique identifier of the record. */
-  private _recordId: string;
+  private readonly _recordId: string;
   /** Role under which the record is written. */
   private _protocolRole?: RecordOptions['protocolRole'];
 

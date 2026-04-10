@@ -35,7 +35,7 @@ export type SetConnectRequestResult = {
 export class ConnectServer {
   public static readonly ttlInSeconds = 600;
 
-  private baseUrl: string;
+  private readonly baseUrl: string;
   private cache: SqlTtlCache;
 
   /**

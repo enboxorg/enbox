@@ -8,7 +8,7 @@ import type { Hash, SMTNode, SMTNodeStore } from '../types/smt-types.js';
 import { hashToHex } from './smt-utils.js';
 
 export class SMTStoreMemory implements SMTNodeStore {
-  private nodes: Map<string, SMTNode> = new Map();
+  private readonly nodes: Map<string, SMTNode> = new Map();
   private root: Hash | undefined;
 
   async open(): Promise<void> {

@@ -44,7 +44,7 @@ export interface EnboxRpc extends DwnRpc, DidRpc, DwnServerInfoRpc {}
  * Client used to communicate with Dwn Servers
  */
 export class EnboxRpcClient implements EnboxRpc {
-  private transportClients: Map<string, EnboxRpc>;
+  private readonly transportClients: Map<string, EnboxRpc>;
 
   constructor(clients: EnboxRpc[] = []) {
     this.transportClients = new Map();

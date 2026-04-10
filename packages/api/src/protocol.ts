@@ -31,13 +31,13 @@ export type ProtocolMetadata = {
  */
 export class Protocol {
   /** The {@link EnboxAgent} instance that handles DWNs requests. */
-  private _agent: EnboxAgent;
+  private readonly _agent: EnboxAgent;
 
   /** Metadata associated with the protocol, including the author and optional message CID. */
-  private _metadata: ProtocolMetadata;
+  private readonly _metadata: ProtocolMetadata;
 
   /** The ProtocolsConfigureMessage containing the detailed configuration for the protocol. */
-  private _protocolsConfigureMessage: DwnMessage[DwnInterface.ProtocolsConfigure];
+  private readonly _protocolsConfigureMessage: DwnMessage[DwnInterface.ProtocolsConfigure];
 
   /**
    * Constructs a new instance of the Protocol class.

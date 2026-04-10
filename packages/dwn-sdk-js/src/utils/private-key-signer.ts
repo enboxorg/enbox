@@ -30,8 +30,8 @@ export type PrivateKeySignerOptions = {
 export class PrivateKeySigner implements MessageSigner {
   public keyId;
   public algorithm;
-  private privateJwk: PrivateKeyJwk;
-  private signatureAlgorithm;
+  private readonly privateJwk: PrivateKeyJwk;
+  private readonly signatureAlgorithm;
 
   public constructor(options: PrivateKeySignerOptions) {
     if (options.keyId === undefined && options.privateJwk.kid === undefined) {

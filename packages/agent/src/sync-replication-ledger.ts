@@ -21,7 +21,7 @@ const KEY_SEP = '^';
  */
 export class ReplicationLedger {
   private readonly db: AbstractLevel<string | Buffer | Uint8Array>;
-  private sublevel;
+  private readonly sublevel;
 
   constructor(db: AbstractLevel<string | Buffer | Uint8Array>) {
     this.db = db;
