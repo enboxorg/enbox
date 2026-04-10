@@ -85,8 +85,14 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * When any type in `_recordProtocolDefinition` has `encryptionRequired: true`,
    * this will always be `true` after successful initialization (since
    * installation fails if encryption is not possible).
+   *
+   * Uses a permanent Map (not TtlCache) to match the lifetime of
+   * `_protocolInitializedCache`. Both are derived from the installed
+   * protocol definition which is immutable for a given tenant — if
+   * this expired while the init cache remained, `initialize()` would
+   * return early and never re-derive the encryption state.
    */
-  private _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: ms('21 days'), max: 1000 });
+  private _tenantEncryptionActive: Map<string, boolean> = new Map();
 
   /** Cached result of the `encryptionRequired` check on the protocol definition.
    *  Computed lazily on first access — the definition is immutable after assignment. */
