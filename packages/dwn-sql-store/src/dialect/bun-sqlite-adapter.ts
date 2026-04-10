@@ -15,6 +15,7 @@ interface KyselySqliteStatement {
     changes: number | bigint;
     lastInsertRowid: number | bigint;
   };
+  iterate(parameters: ReadonlyArray<unknown>): IterableIterator<unknown>;
 }
 
 /**
@@ -75,6 +76,10 @@ export function createBunSqliteDatabase(
             changes: number | bigint;
             lastInsertRowid: number | bigint;
           };
+        },
+
+        iterate(parameters: ReadonlyArray<unknown>): IterableIterator<unknown> {
+          return stmt.iterate(...(parameters as any[])) as IterableIterator<unknown>;
         },
       };
     },
