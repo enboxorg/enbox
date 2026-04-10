@@ -269,6 +269,15 @@ export class SyncEngineLevel implements SyncEngine {
     timestamp: number;
   };
 
+  /**
+   * Monotonic generation counter for sync target cache invalidation.
+   * Bumped on every invalidation (register/unregister/update/clear/close/stopSync).
+   * An in-flight `getSyncTargets()` captures the generation before awaiting
+   * and only writes to the cache if it hasn't changed, preventing a
+   * concurrent mutation from being masked by stale data.
+   */
+  private _syncTargetsCacheGeneration = 0;
+
   /** TTL for the sync targets cache (30 seconds). */
   private static readonly SYNC_TARGETS_CACHE_TTL_MS = 30_000;
 
@@ -365,6 +374,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   public async clear(): Promise<void> {
     this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
     await this._permissionsApi.clear();
     await this._db.clear();
@@ -372,6 +382,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   public async close(): Promise<void> {
     this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
     await this._db.close();
   }
@@ -389,6 +400,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     await registeredIdentities.put(did, JSON.stringify(options));
     this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
   }
 
   public async unregisterIdentity(did: string): Promise<void> {
@@ -400,6 +412,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     await registeredIdentities.del(did);
     this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
   }
 
   public async getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined> {
@@ -429,6 +442,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     await registeredIdentities.put(did, JSON.stringify(options));
     this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
   }
 
   // ---------------------------------------------------------------------------
@@ -553,6 +567,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     this._syncTargetsCache = undefined;
+    this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
   }
 
@@ -2770,6 +2785,11 @@ export class SyncEngineLevel implements SyncEngine {
       return this._syncTargetsCache.targets;
     }
 
+    // Capture the generation before any async work so we can detect
+    // concurrent invalidations (register/unregister/update) that would
+    // make our result stale.
+    const generationAtStart = this._syncTargetsCacheGeneration;
+
     const targets: { did: string; dwnUrl: string; delegateDid?: string; protocol?: string }[] = [];
 
     for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
@@ -2799,13 +2819,14 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    // Only cache non-empty results. A transient DID resolution failure
-    // can produce an empty list even though identities are registered.
-    // Caching the empty result would suppress retries until TTL expiry,
-    // turning a brief discovery miss into a multi-minute reconnect stall
-    // (e.g. startLiveSync's second getSyncTargets() call would reuse the
-    // empty result from the initial sync() catch-up pass).
-    if (targets.length > 0) {
+    // Only cache non-empty results when the generation hasn't changed.
+    // Empty results: a transient DID resolution failure can produce an
+    // empty list even though identities are registered — caching it
+    // would suppress retries until TTL expiry.
+    // Stale generation: a concurrent register/unregister/update
+    // invalidated the cache while we were awaiting; writing our result
+    // would mask that mutation for 30 seconds.
+    if (targets.length > 0 && this._syncTargetsCacheGeneration === generationAtStart) {
       this._syncTargetsCache = { targets, timestamp: Date.now() };
     }
     return targets;

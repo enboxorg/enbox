@@ -273,7 +273,11 @@ export async function processConnectedGrants(params: {
   // delegate failure doesn't leave an orphaned connected-partition
   // record (the cleanup path only removes the imported identity/DID,
   // not individual grant records).
-  await Promise.all(grants.map(async (grantMessage) => {
+  //
+  // We use allSettled (not all) so that a failure in one grant does
+  // not leave other grant writes racing against cleanup. All writes
+  // settle before we inspect results.
+  const results = await Promise.allSettled(grants.map(async (grantMessage) => {
     const grant = DwnPermissionGrant.parse(grantMessage);
 
     const { encodedData, ...rawMessage } = grantMessage;
@@ -321,6 +325,13 @@ export async function processConnectedGrants(params: {
       connectedProtocols.add(protocol);
     }
   }));
+
+  // If any grant failed, throw the first error. Because allSettled waited
+  // for every write to settle, no grants are still racing against cleanup.
+  const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (firstFailure) {
+    throw firstFailure.reason;
+  }
 
   return [...connectedProtocols];
 }

@@ -1,6 +1,7 @@
-import type { DidDhtCreateOptions } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
 import type { KeyValueStore } from '@enbox/common';
+
+import type { DidDhtCreateOptions, PortableDid } from '@enbox/dids';
 
 import { HDKey } from 'ed25519-keygen/hdkey';
 import { wordlist } from '@scure/bip39/wordlists/english';
@@ -159,11 +160,12 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
   private _cachedInitialized: boolean | undefined;
 
   /**
-   * Cached BearerDid from the last successful {@link getDid} call.
-   * The DID is immutable while the vault is unlocked, so the cache is
-   * always valid until {@link lock} clears it.
+   * Cached decrypted PortableDid from the last successful {@link getDid} call.
+   * Caching the PortableDid (not the BearerDid) avoids the expensive JWE
+   * decrypt + LevelDB read on every call, while still returning a fresh
+   * BearerDid instance each time so callers cannot mutate shared state.
    */
-  private _cachedBearerDid: BearerDid | undefined;
+  private _cachedPortableDid: PortableDid | undefined;
 
   /**
    * Constructs an instance of `HdIdentityVault`, initializing the key derivation factor and data
@@ -305,33 +307,33 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       throw new Error(`HdIdentityVault: Vault has not been initialized and unlocked.`);
     }
 
-    // Return the cached DID if available — it is immutable while unlocked.
-    if (this._cachedBearerDid) {
-      return this._cachedBearerDid;
+    // If the decrypted PortableDid is not yet cached, decrypt it from the
+    // vault store.  This avoids the expensive LevelDB read + JWE decrypt on
+    // every call while the vault is unlocked.
+    if (!this._cachedPortableDid) {
+      const didJwe = await this.getStoredDid();
+
+      const { plaintext: portableDidBytes } = await CompactJwe.decrypt({
+        jwe        : didJwe,
+        key        : this._contentEncryptionKey!,
+        crypto     : this.crypto,
+        keyManager : new LocalKeyManager(),
+        options    : { minP2cCount: 1 }, // Vault decrypts its own JWEs; no external-input floor needed.
+      });
+
+      const portableDid = Convert.uint8Array(portableDidBytes).toObject();
+      if (!isPortableDid(portableDid)) {
+        throw new Error('HdIdentityVault: Unable to decode malformed DID in identity vault');
+      }
+
+      this._cachedPortableDid = portableDid;
     }
 
-    // Retrieve the encrypted DID record as compact JWE from the vault store.
-    const didJwe = await this.getStoredDid();
-
-    // Decrypt the compact JWE to obtain the PortableDid as a byte array.
-    const { plaintext: portableDidBytes } = await CompactJwe.decrypt({
-      jwe        : didJwe,
-      key        : this._contentEncryptionKey!,
-      crypto     : this.crypto,
-      keyManager : new LocalKeyManager(),
-      options    : { minP2cCount: 1 }, // Vault decrypts its own JWEs; no external-input floor needed.
-    });
-
-    // Convert the DID from a byte array to PortableDid format.
-    const portableDid = Convert.uint8Array(portableDidBytes).toObject();
-    if (!isPortableDid(portableDid)) {
-      throw new Error('HdIdentityVault: Unable to decode malformed DID in identity vault');
-    }
-
-    // Return the DID in Bearer DID format.
-    const bearerDid = await BearerDid.import({ portableDid });
-    this._cachedBearerDid = bearerDid;
-    return bearerDid;
+    // Always return a fresh BearerDid instance.  BearerDid is mutable
+    // (document, metadata, keyManager are public), so sharing a single
+    // instance across callers would let one caller's mutations affect all
+    // subsequent getDid() results.
+    return await BearerDid.import({ portableDid: this._cachedPortableDid });
   }
 
   /**
@@ -675,7 +677,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     // Clear the vault content encryption key (CEK), effectively locking the vault.
     if (this._contentEncryptionKey) {this._contentEncryptionKey.k = '';}
     this._contentEncryptionKey = undefined;
-    this._cachedBearerDid = undefined;
+    this._cachedPortableDid = undefined;
   }
 
   /**
