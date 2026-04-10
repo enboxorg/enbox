@@ -34,7 +34,7 @@
 
 An open-source TypeScript SDK for building apps on [Decentralized Web Nodes](https://identity.foundation/decentralized-web-node/spec/) (DWNs). You get typed schemas, real-time subscriptions, queries, and end-to-end encryption -- but instead of a centralised database, every user gets their own encrypted personal datastore that syncs across devices and apps.
 
-DWN is an **open standard** -- not an Enbox product. Anyone can run a DWN server, and any app that speaks the same protocol can interoperate. Enbox is a toolkit for building on that standard: an SDK, an agent framework, a server implementation, and the cryptographic primitives underneath.
+DWN is an [open standard](https://identity.foundation/decentralized-web-node/spec/) maintained by the Decentralized Identity Foundation. Anyone can run a DWN server, and any app that speaks the same protocol can interoperate. Enbox provides the tooling to build on that standard: an SDK, an agent framework, a server implementation, and the cryptographic primitives underneath.
 
 | | Centralised backend | DWN-based (Enbox) |
 |---|---|---|
