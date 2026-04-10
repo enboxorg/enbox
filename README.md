@@ -170,7 +170,7 @@ Your app talks to a **local DWN** running in the browser or on the device. The a
   <img alt="Alice-to-Bob flow: Alice writes a record, her agent resolves Bob's DID to discover his DWN endpoint, sends an encrypted message, and Bob's app syncs it" src="./assets/dwn-alice-bob-light.svg">
 </picture>
 
-When Alice wants to send data to Bob, her agent resolves Bob's DID to discover the DWN service endpoint listed in his DID document. The message is encrypted to Bob's public key and delivered directly to Bob's DWN server. Bob's app picks it up on the next sync. No intermediary, no shared database, no account on Alice's service -- just two DIDs and a protocol they both understand.
+Alice's app resolves Bob's DID to discover the DWN service endpoint in his DID document, then sends an encrypted record directly to Bob's DWN. Bob's app picks it up on the next sync. No relay, no shared database, no account on Alice's service -- just two DIDs and a protocol they both understand.
 
 ---
 
