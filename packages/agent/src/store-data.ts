@@ -69,10 +69,14 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * Cache of tenant DIDs that have been initialized with the protocol.
    * This is used to avoid redundant protocol initialization requests.
    *
-   * Protocol installation is permanent — a plain Set avoids the overhead
-   * and TTL eviction of TtlCache, since installed protocols are never removed.
+   * Uses TtlCache with a 1-hour TTL rather than a permanent Set so that
+   * protocol state changes by another agent/process (protocol upgrade,
+   * reinstall, or tenant clear) are eventually re-detected. Both this
+   * and `_tenantEncryptionActive` must share the same TTL so they expire
+   * together — otherwise `initialize()` could return early while the
+   * encryption state is stale.
    */
-  protected _protocolInitializedCache: Set<string> = new Set();
+  protected _protocolInitializedCache: TtlCache<string, boolean> = new TtlCache({ ttl: ms('1 hour'), max: 1000 });
 
   /**
    * The protocol assigned to this storage instance.
@@ -86,13 +90,10 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * this will always be `true` after successful initialization (since
    * installation fails if encryption is not possible).
    *
-   * Uses a permanent Map (not TtlCache) to match the lifetime of
-   * `_protocolInitializedCache`. Both are derived from the installed
-   * protocol definition which is immutable for a given tenant — if
-   * this expired while the init cache remained, `initialize()` would
-   * return early and never re-derive the encryption state.
+   * Uses the same 1-hour TTL as `_protocolInitializedCache` so both
+   * caches expire and re-derive together. See comment above.
    */
-  private _tenantEncryptionActive: Map<string, boolean> = new Map();
+  private _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: ms('1 hour'), max: 1000 });
 
   /** Cached result of the `encryptionRequired` check on the protocol definition.
    *  Computed lazily on first access — the definition is immutable after assignment. */
@@ -260,7 +261,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
       this._tenantEncryptionActive.set(tenantDid, hasEncryption);
     }
 
-    this._protocolInitializedCache.add(tenantDid);
+    this._protocolInitializedCache.set(tenantDid, true);
   }
 
   /**
