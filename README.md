@@ -51,79 +51,78 @@ DWN is an **open standard** -- not an Enbox product. Anyone can run a DWN server
 ## Quick Start
 
 ```bash
-bun add @enbox/api
+bun add @enbox/api @enbox/auth
 ```
 
 ### 1. Connect
 
-Create an agent with a DID. Data syncs to the DWN endpoints you specify -- use a [preview server](#preview-dwn-servers) or [your own](#deploy-your-own).
+Create an auth session and an Enbox instance. Data syncs to whatever DWN endpoint(s) you configure -- a [community node](#dwn-servers), [your own](#run-your-own-node), or both.
 
 ```ts
-import { Web5 } from '@enbox/api';
+import { AuthManager } from '@enbox/auth';
+import { Enbox, defineProtocol } from '@enbox/api';
 
-const { web5, did: myDid } = await Web5.connect({
-  password: 'user-chosen-password',
-  didCreateOptions: {
-    dwnEndpoints: ['https://enbox-dwn.fly.dev'],  // ← your DWN server(s)
-  },
+const auth = await AuthManager.create({
+  dwnEndpoints : ['https://enbox-dwn.fly.dev'],   // ← any DWN server
 });
+
+const session = await auth.connectLocal({ createIdentity: true });
+const enbox   = Enbox.connect({ session });
 ```
 
 ### 2. Define a protocol
 
-Protocols are like schemas -- they describe record types, access rules, and encryption. Any app that speaks the same protocol can interoperate.
+Protocols are declarative schemas -- they describe record types, nesting, access rules, and encryption. Any app that installs the same protocol can read and write the same record shapes.
 
 ```ts
-import { defineProtocol } from '@enbox/api';
-
-const TaskProtocol = defineProtocol({
-  protocol  : 'https://example.com/tasks',
+const BookmarkProtocol = defineProtocol({
+  protocol  : 'https://example.com/bookmarks',
   published : false,
   types     : {
-    project: {
-      schema      : 'https://example.com/schemas/project',
+    folder: {
+      schema      : 'https://example.com/schemas/folder',
       dataFormats : ['application/json'],
     },
-    task: {
-      schema              : 'https://example.com/schemas/task',
+    bookmark: {
+      schema              : 'https://example.com/schemas/bookmark',
       dataFormats         : ['application/json'],
-      encryptionRequired  : true,   // ← encrypted at the DWN layer
+      encryptionRequired  : true,    // ← end-to-end encrypted at the DWN layer
     },
   },
   structure: {
-    project: {
-      $tags: { name: { type: 'string' } },    // queryable metadata
-      task: {},                                 // tasks nest under projects
+    folder: {
+      $tags    : { name: { type: 'string' } },   // queryable server-side
+      bookmark : {},                               // bookmarks nest under folders
     },
   },
 } as const, {} as {
-  project: { name: string; description?: string };
-  task:    { title: string; done: boolean; assignee?: string };
+  folder:   { name: string };
+  bookmark: { url: string; title: string; note?: string };
 });
 ```
 
 ### 3. Write and query data
 
 ```ts
-const tasks = web5.using(TaskProtocol);
-await tasks.configure();   // install the protocol on the local DWN
+const bookmarks = enbox.using(BookmarkProtocol);
+await bookmarks.configure();   // install the protocol on the user's DWN
 
-// Create a project
-const { record: project } = await tasks.records.create('project', {
-  data: { name: 'Launch', description: 'Ship the MVP' },
-  tags: { name: 'Launch' },
+// Create a folder
+const { record: folder } = await bookmarks.records.create('folder', {
+  data : { name: 'Reading List' },
+  tags : { name: 'Reading List' },
 });
 
-// Create a task nested under the project (encrypted automatically)
-await tasks.records.create('task', {
-  parentContextId : project.contextId,
-  data            : { title: 'Write README', done: false },
+// Add a bookmark (nested under the folder, encrypted automatically)
+await bookmarks.records.create('bookmark', {
+  parentContextId : folder.contextId,
+  data            : { url: 'https://example.com', title: 'Example', note: 'Check later' },
 });
 
-// Query all projects
-const { records: projects } = await tasks.records.query('project');
-for (const p of projects) {
-  const data = await p.data.json();   // { name: string; description?: string }
+// Query all folders
+const { records: folders } = await bookmarks.records.query('folder');
+for (const f of folders) {
+  const data = await f.data.json();   // { name: string }
   console.log(data.name);
 }
 ```
@@ -131,14 +130,15 @@ for (const p of projects) {
 ### 4. Subscribe to changes
 
 ```ts
-const { subscription } = await tasks.subscribe();
+const { subscription } = await bookmarks.subscribe();
 subscription.on('change', () => {
-  // Re-query or refresh your UI -- changes sync across devices
-  console.log('Data changed');
+  // Re-query or refresh your UI -- changes sync across devices in real time
 });
 ```
 
-See the [`@enbox/api` README](./packages/api/README.md) for the full API: repository pattern, singletons, pagination, permissions, and more.
+For browser apps, `@enbox/browser` re-exports everything from `@enbox/api` and `@enbox/auth` in a single import plus browser-specific helpers (`BrowserConnectHandler`, wallet-connect, DRL polyfills).
+
+See the [`@enbox/api` README](./packages/api/README.md) for the full API: `repository()` helper, singletons, pagination, permissions, and more.
 
 ---
 
@@ -188,32 +188,23 @@ We run two preview nodes for development and testing. They are free to use but c
 | Fly.io | `https://enbox-dwn.fly.dev` | SQLite-backed, single region |
 | AWS | `https://dev.aws.dwn.enbox.id` | Aurora PostgreSQL, us-east-1 |
 
-Pass any DWN endpoint(s) when connecting:
-
-```ts
-const { web5 } = await Web5.connect({
-  password: 'my-password',
-  didCreateOptions: {
-    dwnEndpoints: [
-      'https://enbox-dwn.fly.dev',
-      'https://dev.aws.dwn.enbox.id',
-    ],
-  },
-});
-```
-
-Or configure at the auth manager level (for apps using `@enbox/auth` directly):
+Set DWN endpoints when creating the auth manager, or override per-identity:
 
 ```ts
 import { AuthManager } from '@enbox/auth';
 
+// Default for all identities created through this manager
 const auth = await AuthManager.create({
-  dwnEndpoints: ['https://your-dwn.example.com'],  // ← all identities use this
+  dwnEndpoints: [
+    'https://enbox-dwn.fly.dev',
+    'https://dev.aws.dwn.enbox.id',
+  ],
 });
 
-// Or override per-identity at connect time:
+// Or override for a specific identity
 const session = await auth.connectLocal({
-  dwnEndpoints: ['https://eu.dwn.example.com'],    // ← this identity only
+  dwnEndpoints  : ['https://eu.dwn.example.com'],
+  createIdentity: true,
 });
 ```
 
@@ -238,11 +229,8 @@ docker compose up dwn-server
 Then point your app at it:
 
 ```ts
-const { web5 } = await Web5.connect({
-  password: 'my-password',
-  didCreateOptions: {
-    dwnEndpoints: ['https://dwn.your-domain.com'],
-  },
+const auth = await AuthManager.create({
+  dwnEndpoints: ['https://dwn.your-domain.com'],
 });
 ```
 
