@@ -96,7 +96,7 @@ export function Overview() {
                         <span class={`status-dot ${check.status === 'healthy' ? 'healthy' : check.status === 'unhealthy' ? 'unhealthy' : 'unknown'}`} />
                         {check.status}
                       </td>
-                      <td>{check.latencyMs !== undefined ? `${check.latencyMs}ms` : '—'}</td>
+                      <td>{check.latencyMs === undefined ? '—' : `${check.latencyMs}ms`}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -53,7 +53,7 @@ export async function verifyInvokedRole(
       );
     }
 
-    if (protocolDefinition.uses === undefined || protocolDefinition.uses[parsed.alias] === undefined) {
+    if (protocolDefinition.uses?.[parsed.alias] === undefined) {
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationNotARole,
         `Cross-protocol role alias '${parsed.alias}' in '${protocolRole}' does not exist in the protocol's 'uses' map.`
@@ -68,7 +68,7 @@ export async function verifyInvokedRole(
       tenant, roleProtocolUri, messageStore, governingTimestamp
     );
     const roleRuleSet = getRuleSetAtPath(roleProtocolPath, refDefinition.structure);
-    if (roleRuleSet === undefined || !roleRuleSet.$role) {
+    if (!roleRuleSet?.$role) {
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationNotARole,
         `Cross-protocol role path ${protocolRole} does not match role record type.`
@@ -77,7 +77,7 @@ export async function verifyInvokedRole(
   } else {
     // Local role: validate in the composing protocol's definition
     const roleRuleSet = getRuleSetAtPath(protocolRole, protocolDefinition.structure);
-    if (roleRuleSet === undefined || !roleRuleSet.$role) {
+    if (!roleRuleSet?.$role) {
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationNotARole,
         `Protocol path ${protocolRole} does not match role record type.`

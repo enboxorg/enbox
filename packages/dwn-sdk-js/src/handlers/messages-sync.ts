@@ -51,9 +51,9 @@ export class MessagesSyncHandler implements MethodHandler {
     try {
       switch (action) {
       case 'root': {
-        const rootHash = protocol !== undefined
-          ? await this.deps.stateIndex!.getProtocolRoot(tenant, protocol)
-          : await this.deps.stateIndex!.getRoot(tenant);
+        const rootHash = protocol === undefined
+          ? await this.deps.stateIndex!.getRoot(tenant)
+          : await this.deps.stateIndex!.getProtocolRoot(tenant, protocol);
         return {
           status : { code: 200, detail: 'OK' },
           root   : hashToHex(rootHash),
@@ -62,9 +62,9 @@ export class MessagesSyncHandler implements MethodHandler {
 
       case 'subtree': {
         const bitPath = MessagesSyncHandler.parseBitPrefix(prefix!);
-        const hash = protocol !== undefined
-          ? await this.deps.stateIndex!.getProtocolSubtreeHash(tenant, protocol, bitPath)
-          : await this.deps.stateIndex!.getSubtreeHash(tenant, bitPath);
+        const hash = protocol === undefined
+          ? await this.deps.stateIndex!.getSubtreeHash(tenant, bitPath)
+          : await this.deps.stateIndex!.getProtocolSubtreeHash(tenant, protocol, bitPath);
         return {
           status : { code: 200, detail: 'OK' },
           hash   : hashToHex(hash),
@@ -73,9 +73,9 @@ export class MessagesSyncHandler implements MethodHandler {
 
       case 'leaves': {
         const bitPath = MessagesSyncHandler.parseBitPrefix(prefix!);
-        const leaves = protocol !== undefined
-          ? await this.deps.stateIndex!.getProtocolLeaves(tenant, protocol, bitPath)
-          : await this.deps.stateIndex!.getLeaves(tenant, bitPath);
+        const leaves = protocol === undefined
+          ? await this.deps.stateIndex!.getLeaves(tenant, bitPath)
+          : await this.deps.stateIndex!.getProtocolLeaves(tenant, protocol, bitPath);
         return {
           status  : { code: 200, detail: 'OK' },
           entries : leaves,
@@ -165,18 +165,18 @@ export class MessagesSyncHandler implements MethodHandler {
       if (clientHash === undefined) {
         // Server has entries the client doesn't — enumerate server leaves.
         const bitPath = MessagesSyncHandler.parseBitPrefix(pfx);
-        const leaves = protocol !== undefined
-          ? await stateIndex.getProtocolLeaves(tenant, protocol, bitPath)
-          : await stateIndex.getLeaves(tenant, bitPath);
+        const leaves = protocol === undefined
+          ? await stateIndex.getLeaves(tenant, bitPath)
+          : await stateIndex.getProtocolLeaves(tenant, protocol, bitPath);
         onlyRemoteCids.push(...leaves);
         continue;
       }
 
       // Both sides have entries but they differ — enumerate both and set-diff.
       const bitPath = MessagesSyncHandler.parseBitPrefix(pfx);
-      const serverLeaves = protocol !== undefined
-        ? await stateIndex.getProtocolLeaves(tenant, protocol, bitPath)
-        : await stateIndex.getLeaves(tenant, bitPath);
+      const serverLeaves = protocol === undefined
+        ? await stateIndex.getLeaves(tenant, bitPath)
+        : await stateIndex.getProtocolLeaves(tenant, protocol, bitPath);
 
       // We don't have the client's leaves, so we report all server leaves
       // as onlyRemote (the client will de-duplicate locally). We also
@@ -210,9 +210,9 @@ export class MessagesSyncHandler implements MethodHandler {
 
     const walk = async (prefix: string, currentDepth: number): Promise<void> => {
       const bitPath = MessagesSyncHandler.parseBitPrefix(prefix);
-      const hash = protocol !== undefined
-        ? await stateIndex.getProtocolSubtreeHash(tenant, protocol, bitPath)
-        : await stateIndex.getSubtreeHash(tenant, bitPath);
+      const hash = protocol === undefined
+        ? await stateIndex.getSubtreeHash(tenant, bitPath)
+        : await stateIndex.getProtocolSubtreeHash(tenant, protocol, bitPath);
       const hexHash = hashToHex(hash);
 
       if (hexHash === defaultHashHex) {

@@ -26,10 +26,10 @@ export class Message {
     }
 
     let author;
-    if (message.authorization.authorDelegatedGrant !== undefined) {
-      author = Message.getSigner(message.authorization.authorDelegatedGrant);
-    } else {
+    if (message.authorization.authorDelegatedGrant === undefined) {
       author = Message.getSigner(message);
+    } else {
+      author = Message.getSigner(message.authorization.authorDelegatedGrant);
     }
 
     return author;

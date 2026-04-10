@@ -913,7 +913,7 @@ export class AdminApi {
     const target = url.searchParams.get('target') ?? undefined;
     const limit = Math.min(parseIntOrDefault(url.searchParams.get('limit'), 50), 1000);
     const cursorParam = url.searchParams.get('cursor');
-    const cursor = cursorParam !== null ? parseIntOrDefault(cursorParam, 0) : undefined;
+    const cursor = cursorParam === null ? undefined : parseIntOrDefault(cursorParam, 0);
 
     const result = await this.#auditLog.query({ since, action, target, limit, cursor });
     return Response.json(result);
@@ -1060,7 +1060,7 @@ export class AdminApi {
     const protocol = url.searchParams.get('protocol') ?? undefined;
     const limit = Math.min(parseIntOrDefault(url.searchParams.get('limit'), 20), 100);
     const cursorParam = url.searchParams.get('cursor');
-    const cursor = cursorParam !== null ? parseIntOrDefault(cursorParam, 0) : undefined;
+    const cursor = cursorParam === null ? undefined : parseIntOrDefault(cursorParam, 0);
 
     const result = await this.#adminStore.getTenantMessages(did, {
       interface: iface,

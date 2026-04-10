@@ -109,7 +109,9 @@ export async function handleEvent(
     }
   }
   try {
-    if (!path) {
+    if (path) {
+      return await fetchResource(event, did, drl, path, responseCache, options);
+    } else {
       const response = await didResolver.resolve(did);
       return new Response(JSON.stringify(response), {
         status  : 200,
@@ -117,8 +119,7 @@ export async function handleEvent(
           'Content-Type': 'application/json',
         },
       });
-    } else
-    {return await fetchResource(event, did, drl, path, responseCache, options);}
+    }
   } catch (error) {
     if (error instanceof Response) {
       return error;
@@ -576,12 +577,11 @@ export function activatePolyfills(options: ActivatePolyfillsOptions = {}): void 
   }
   if (typeof window !== 'undefined' && typeof window.document !== 'undefined') {
     if (options.injectStyles !== false) {
-      if (document.readyState !== 'loading') {injectElements();}
-      else {
+      if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', injectElements, {
           once: true,
         });
-      }
+      } else {injectElements();}
     }
     if (options.links !== false) {addLinkFeatures();}
   }

@@ -108,13 +108,13 @@ export class RegistrationManager implements TenantGate {
   public async handleRegistrationRequest(registrationRequest: RegistrationRequest): Promise<void> {
     if (registrationRequest.providerAuth?.registrationToken !== undefined) {
       await this.handleProviderAuthRegistration(registrationRequest);
-    } else if (registrationRequest.proofOfWork !== undefined) {
-      await this.handleProofOfWorkRegistration(registrationRequest);
-    } else {
+    } else if (registrationRequest.proofOfWork === undefined) {
       throw new DwnServerError(
         DwnServerErrorCode.RegistrationRequestMissingCredentials,
         'Registration request must include either providerAuth or proofOfWork credentials.',
       );
+    } else {
+      await this.handleProofOfWorkRegistration(registrationRequest);
     }
   }
 
@@ -154,9 +154,9 @@ export class RegistrationManager implements TenantGate {
       termsOfServiceHash : registrationRequest.registrationData.termsOfServiceHash,
       accountId          : validationResult.accountId,
       registrationType   : 'provider-auth',
-      metadata           : validationResult.metadata !== undefined
-        ? JSON.stringify(validationResult.metadata)
-        : undefined,
+      metadata           : validationResult.metadata === undefined
+        ? undefined
+        : JSON.stringify(validationResult.metadata),
     });
   }
 

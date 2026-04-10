@@ -298,7 +298,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
 
             // Check that the role path exists and is marked $role: true in the referenced protocol
             const roleRuleSet = getRuleSetAtPath(parsed.protocolPath, refDefinition.structure);
-            if (roleRuleSet === undefined || !roleRuleSet.$role) {
+            if (!roleRuleSet?.$role) {
               throw new DwnError(
                 DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole,
                 `cross-protocol role '${actionRule.role}' at protocol path '${childProtocolPath}' ` +

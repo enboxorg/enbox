@@ -309,7 +309,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       // Compute the delay, preferring Retry-After when available.
       const retryAfterMs = lastResponse ? parseRetryAfterMs(lastResponse) : undefined;
       const backoffMs = computeBackoffDelay(attempt, baseDelayMs, maxDelayMs);
-      const delayMs = retryAfterMs !== undefined ? Math.max(retryAfterMs, backoffMs) : backoffMs;
+      const delayMs = retryAfterMs === undefined ? backoffMs : Math.max(retryAfterMs, backoffMs);
 
       await new Promise<void>((resolve): void => { setTimeout(resolve, delayMs); });
     }

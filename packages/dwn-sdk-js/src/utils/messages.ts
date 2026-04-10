@@ -21,7 +21,7 @@ export class Messages {
     // normalize each filter, and only add non-empty filters to the returned array
     for (const filter of filters) {
       // normalize the protocol URL if it exists
-      const protocol = filter.protocol !== undefined ? normalizeProtocolUrl(filter.protocol) : undefined;
+      const protocol = filter.protocol === undefined ? undefined : normalizeProtocolUrl(filter.protocol);
 
       const messagesFilter = {
         ...filter,

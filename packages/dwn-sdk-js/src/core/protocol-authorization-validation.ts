@@ -445,7 +445,7 @@ export async function verifyRecordLimit(
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationRecordLimitExceeded,
         `record limit of ${max} reached at protocol path '${protocolPath}'` +
-        `${parentContextId !== '' ? ` under parent context '${parentContextId}'` : ''}` +
+        `${parentContextId === '' ? '' : ` under parent context '${parentContextId}'`}` +
         `: new records are rejected until existing records are deleted.`
       );
     }

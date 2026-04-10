@@ -224,7 +224,7 @@ export class DeliveryService implements MessageProcessedHook {
     }
 
     const ruleSet = getRuleSetAtPath(descriptor.protocolPath, protocolDefinition.structure);
-    if (!ruleSet || !ruleSet.$delivery) {
+    if (!ruleSet?.$delivery) {
       return;
     }
 

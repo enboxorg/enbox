@@ -131,9 +131,7 @@ export class EventEmitterEventLog implements EventLog {
     let reason: ProgressGapReason;
     if (cursor.streamId !== expectedStreamId) {
       reason = 'stream_mismatch';
-    } else if (cursor.epoch !== this.epoch) {
-      reason = 'epoch_mismatch';
-    } else {
+    } else if (cursor.epoch === this.epoch) {
       // Check if position is still within replay bounds.
       const log = this.tenantLogs.get(tenant);
       if (log !== undefined && log.size > 0) {
@@ -148,6 +146,8 @@ export class EventEmitterEventLog implements EventLog {
       } else {
         return; // No events for tenant — cursor is vacuously valid (will get empty catch-up + EOSE).
       }
+    } else {
+      reason = 'epoch_mismatch';
     }
 
     // Build gap metadata.
@@ -226,7 +226,7 @@ export class EventEmitterEventLog implements EventLog {
       await this.validateCursor(tenant, cursor);
     }
 
-    const cursorSeq = cursor !== undefined ? EventEmitterEventLog.parsePosition(cursor.position) : undefined;
+    const cursorSeq = cursor === undefined ? undefined : EventEmitterEventLog.parsePosition(cursor.position);
     const log = this.tenantLogs.get(tenant);
 
     if (log === undefined || log.size === 0) {
@@ -319,12 +319,12 @@ export class EventEmitterEventLog implements EventLog {
         if (filters !== undefined && filters.length > 0) {
           if (!FilterUtility.matchAnyFilter(payload.indexes, filters)) { return; }
         }
-        if (!catchUpComplete) {
-          pendingLiveEvents.push({ event: payload.event, seq: payload.seq, messageCid: payload.messageCid });
-        } else {
+        if (catchUpComplete) {
           void tokenFromPayload(payload).then((token) => {
             listener({ type: 'event', cursor: token, event: payload.event });
           });
+        } else {
+          pendingLiveEvents.push({ event: payload.event, seq: payload.seq, messageCid: payload.messageCid });
         }
       };
 
@@ -334,9 +334,9 @@ export class EventEmitterEventLog implements EventLog {
       const readResult = await this.read(tenant, { cursor, filters });
       // The read cursor is the token of the last read event, or the input cursor if nothing new.
       const eoseCursor = readResult.cursor ?? cursor;
-      const lastCatchUpSeq = readResult.cursor !== undefined
-        ? EventEmitterEventLog.parsePosition(readResult.cursor.position)
-        : cursorSeq;
+      const lastCatchUpSeq = readResult.cursor === undefined
+        ? cursorSeq
+        : EventEmitterEventLog.parsePosition(readResult.cursor.position);
 
       // Use the messageCid captured by read() during its synchronous iteration.
       // This eliminates re-lookup races: read() populates entry.messageCid before

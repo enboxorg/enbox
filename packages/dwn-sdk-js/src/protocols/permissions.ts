@@ -605,7 +605,7 @@ export class PermissionsProtocol implements CoreProtocol {
    */
   private static validateTags(requestOrGrant: RecordsWriteMessage, scopedProtocol: string): void {
     // the protocol tag must be included with the record.
-    if (requestOrGrant.descriptor.tags === undefined || requestOrGrant.descriptor.tags.protocol === undefined) {
+    if (requestOrGrant.descriptor.tags?.protocol === undefined) {
       throw new DwnError(
         DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag,
         'Permission grants must have a `tags` property that contains a protocol tag'

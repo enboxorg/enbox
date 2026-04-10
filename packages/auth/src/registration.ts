@@ -103,8 +103,8 @@ export async function registerWithDwnEndpoints(
             tokenData = {
               registrationToken : refreshed.registrationToken,
               refreshToken      : refreshed.refreshToken,
-              expiresAt         : refreshed.expiresIn !== undefined
-                ? Date.now() + (refreshed.expiresIn * 1000) : undefined,
+              expiresAt         : refreshed.expiresIn === undefined
+                ? undefined : Date.now() + (refreshed.expiresIn * 1000),
               tokenUrl   : tokenData.tokenUrl,
               refreshUrl : tokenData.refreshUrl,
             };
@@ -140,8 +140,8 @@ export async function registerWithDwnEndpoints(
           tokenData = {
             registrationToken : tokenResponse.registrationToken,
             refreshToken      : tokenResponse.refreshToken,
-            expiresAt         : tokenResponse.expiresIn !== undefined
-              ? Date.now() + (tokenResponse.expiresIn * 1000) : undefined,
+            expiresAt         : tokenResponse.expiresIn === undefined
+              ? undefined : Date.now() + (tokenResponse.expiresIn * 1000),
             tokenUrl   : providerAuth.tokenUrl,
             refreshUrl : providerAuth.refreshUrl,
           };

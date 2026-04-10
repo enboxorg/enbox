@@ -301,24 +301,24 @@ export class FlattenedJwe {
     const tag = decodeHeaderParam('tag', jwe.tag);
 
     // Decode the JWE Ciphertext to a byte array, and if present, append the Authentication Tag.
-    const ciphertext = tag !== undefined
-      ? new Uint8Array([
+    const ciphertext = tag === undefined
+      ? Convert.base64Url(jwe.ciphertext).toUint8Array()
+      : new Uint8Array([
         ...Convert.base64Url(jwe.ciphertext).toUint8Array(),
         ...(tag ?? [])
-      ])
-      : Convert.base64Url(jwe.ciphertext).toUint8Array();
+      ]);
 
     // If the JWE Additional Authenticated Data (AAD) is present, the Additional Authenticated Data
     // input to the Content Encryption Algorithm is
     // ASCII(Encoded Protected Header || '.' || BASE64URL(JWE AAD)). If the JWE AAD is absent, the
     // Additional Authenticated Data is ASCII(BASE64URL(UTF8(JWE Protected Header))).
-    const additionalData = jwe.aad !== undefined
-      ? new Uint8Array([
+    const additionalData = jwe.aad === undefined
+      ? Convert.string(jwe.protected ?? '').toUint8Array()
+      : new Uint8Array([
         ...Convert.string(jwe.protected ?? '').toUint8Array(),
         ...Convert.string('.').toUint8Array(),
         ...Convert.string(jwe.aad).toUint8Array()
-      ])
-      : Convert.string(jwe.protected ?? '').toUint8Array();
+      ]);
 
     // Decrypt the JWE using the Content Encryption Key (CEK) with:
     // - Key Manager: If the CEK is a Key Identifier.

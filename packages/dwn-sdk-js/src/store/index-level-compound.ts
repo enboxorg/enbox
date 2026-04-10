@@ -203,7 +203,17 @@ export async function queryWithCompoundIndex(
   // determine the iterator bounds from the prefix
   const iteratorOptions: LevelWrapperIteratorOptions<string> = {};
 
-  if (cursor !== undefined) {
+  if (cursor === undefined) {
+    if (sortDirection === SortDirection.Ascending) {
+      iteratorOptions.gt = prefix;
+      iteratorOptions.lt = prefix + '\xff';
+    } else {
+      // for descending without cursor, start from the end of the prefix range
+      iteratorOptions.gt = prefix;
+      iteratorOptions.lt = prefix + '\xff';
+      iteratorOptions.reverse = true;
+    }
+  } else {
     // build the full compound key for the cursor position
     const cursorSortEncoded = encodeValue(cursor.value);
     const cursorKey = prefix + cursorSortEncoded + delimiter + cursor.messageCid;
@@ -215,16 +225,6 @@ export async function queryWithCompoundIndex(
     } else {
       iteratorOptions.lt = cursorKey;
       iteratorOptions.gt = prefix;
-      iteratorOptions.reverse = true;
-    }
-  } else {
-    if (sortDirection === SortDirection.Ascending) {
-      iteratorOptions.gt = prefix;
-      iteratorOptions.lt = prefix + '\xff';
-    } else {
-      // for descending without cursor, start from the end of the prefix range
-      iteratorOptions.gt = prefix;
-      iteratorOptions.lt = prefix + '\xff';
       iteratorOptions.reverse = true;
     }
   }

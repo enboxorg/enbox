@@ -605,7 +605,7 @@ export class Record implements RecordModel {
       remoteOrigin : this._remoteOrigin,
       protocolRole : protocolRole ?? this._protocolRole,
       initialWrite,
-      encodedData  : data !== undefined ? dataBlob : this._encodedData,
+      encodedData  : data === undefined ? this._encodedData : dataBlob,
       ...responseMessage as DwnMessage[DwnInterface.RecordsWrite],
     }, this._permissionsApi);
 
@@ -622,7 +622,7 @@ export class Record implements RecordModel {
     this._contextId = msg.contextId;
     this._initialWrite = initialWrite;
     this._protocolRole = protocolRole ?? this._protocolRole;
-    this._encodedData = data !== undefined ? dataBlob : this._encodedData;
+    this._encodedData = data === undefined ? this._encodedData : dataBlob;
     this._readableStream = undefined; // Invalidate any consumed stream.
     this._rawMessageDirty = true; // Force rawMessage cache rebuild.
 

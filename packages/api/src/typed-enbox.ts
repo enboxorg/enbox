@@ -980,7 +980,7 @@ export class TypedEnbox<
           tags            : request.tags,
           protocol        : this._definition.protocol,
           protocolPath    : normalizedPath,
-          ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
+          ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
           dataFormat      : request.dataFormat ?? typeEntry?.dataFormats?.[0],
         });
 
@@ -1048,7 +1048,7 @@ export class TypedEnbox<
             ...queryFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,
-            ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
+            ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
           },
           dateSort     : request?.dateSort,
           pagination   : request?.pagination,
@@ -1107,7 +1107,7 @@ export class TypedEnbox<
             ...readFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,
-            ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
+            ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
           },
         });
 
@@ -1205,7 +1205,7 @@ export class TypedEnbox<
             ...subFilter,
             protocol     : this._definition.protocol,
             protocolPath : normalizedPath,
-            ...(typeEntry?.schema !== undefined ? { schema: typeEntry.schema } : {}),
+            ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
           },
           protocolRole: request?.protocolRole,
         });

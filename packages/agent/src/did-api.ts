@@ -303,7 +303,7 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
       const parsedDid = Did.parse(uri);
       // currently only supporting DHT as a publishable method.
       // TODO: abstract this into the didMethod class so that other publishable methods can be supported.
-      if (parsedDid && parsedDid.method === 'dht') {
+      if (parsedDid?.method === 'dht') {
         await DidDht.publish({ did: bearerDid });
       }
     }

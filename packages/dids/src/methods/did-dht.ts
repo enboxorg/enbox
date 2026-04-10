@@ -237,7 +237,7 @@ export class DidDht extends DidMethod {
     for (const verificationMethod of verificationMethodsToAdd) {
       // Generate a random key for the verification method, or if its the Identity Key's
       // verification method (`id` is 0) use the key previously generated.
-      const keyUri = (verificationMethod.id && verificationMethod.id.split('#').pop() === '0')
+      const keyUri = (verificationMethod.id?.split('#').pop() === '0')
         ? identityKeyUri
         : await keyManager.generateKey({ algorithm: verificationMethod.algorithm });
 
@@ -368,7 +368,7 @@ export class DidDht extends DidMethod {
       vm => extractDidFragment(vm.id) === (extractDidFragment(methodId) ?? extractDidFragment(didDocument.assertionMethod?.[0]))
     );
 
-    if (!(verificationMethod && verificationMethod.publicKeyJwk)) {
+    if (!verificationMethod?.publicKeyJwk) {
       throw new DidError(DidErrorCode.InternalError, 'A verification method intended for signing could not be determined from the DID Document');
     }
 

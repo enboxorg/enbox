@@ -43,10 +43,10 @@ export abstract class AbstractMessage<M extends GenericMessage> implements Messa
 
       // if the message authorization contains author delegated grant, the author would be the grantor of the grant
       // else the author would be the signer of the message
-      if (message.authorization.authorDelegatedGrant !== undefined) {
-        this._author = Message.getSigner(message.authorization.authorDelegatedGrant);
-      } else {
+      if (message.authorization.authorDelegatedGrant === undefined) {
         this._author = this._signer;
+      } else {
+        this._author = Message.getSigner(message.authorization.authorDelegatedGrant);
       }
 
       this._signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature);

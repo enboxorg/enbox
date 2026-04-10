@@ -256,11 +256,12 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
       };
 
       // if no other services exist, create a new array with the DWN service
-      if (!portableDid.document.service) {
-        portableDid.document.service = [newDwnService];
-      } else {
-        // otherwise, push the new DWN service to the existing services
+      if (portableDid.document.service) {
+        // push the new DWN service to the existing services
         portableDid.document.service.push(newDwnService);
+      } else {
+        // no other services exist, create a new array with the DWN service
+        portableDid.document.service = [newDwnService];
       }
     }
 

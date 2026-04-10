@@ -214,15 +214,15 @@ class IdentityRuntimeController implements IdentityRuntime {
     const auth = await this._getAuth();
     if (!this._restoreAttempted) {
       this._restoreAttempted = true;
-      if (!auth.isLocked) {
+      if (auth.isLocked) {
+        // Locked vault is an expected state reflected in UI controls; avoid noisy warnings.
+        this._lastError = undefined;
+      } else {
         try {
           await auth.restoreSession();
         } catch (error) {
           this._lastError = errorMessage(error);
         }
-      } else {
-        // Locked vault is an expected state reflected in UI controls; avoid noisy warnings.
-        this._lastError = undefined;
       }
     }
 
@@ -759,7 +759,7 @@ class IdentityRuntimeController implements IdentityRuntime {
         title,
         url,
         ...(icon ? { icon } : {}),
-        ...(sortOrder !== undefined ? { sortOrder } : {}),
+        ...(sortOrder === undefined ? {} : { sortOrder }),
       };
 
       const existingRecord = rawLink.id ? existingLinksById.get(rawLink.id) : undefined;

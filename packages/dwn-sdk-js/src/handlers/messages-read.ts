@@ -52,16 +52,16 @@ export class MessagesReadHandler implements MethodHandler {
       const recordsWrite = entry.message as RecordsQueryReplyEntry;
       // RecordsWrite specific handling, if MessageStore has embedded `encodedData` return it with the entry.
       // we store `encodedData` along with the message if the data is below a certain threshold.
-      if (recordsWrite.encodedData !== undefined) {
-        const dataBytes = Encoder.base64UrlToBytes(recordsWrite.encodedData);
-        entry.data = DataStream.fromBytes(dataBytes);
-        delete recordsWrite.encodedData;
-      } else {
-        // otherwise check the data store for the associated data
+      if (recordsWrite.encodedData === undefined) {
+        // check the data store for the associated data
         const result = await this.deps.dataStore!.get(tenant, recordsWrite.recordId, recordsWrite.descriptor.dataCid);
         if (result?.dataStream !== undefined) {
           entry.data = result.dataStream;
         }
+      } else {
+        const dataBytes = Encoder.base64UrlToBytes(recordsWrite.encodedData);
+        entry.data = DataStream.fromBytes(dataBytes);
+        delete recordsWrite.encodedData;
       }
     }
 

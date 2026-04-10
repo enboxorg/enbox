@@ -270,7 +270,7 @@ export class DidJwk extends DidMethod {
     // Attempt to find the verification method in the DID Document.
     const [ verificationMethod ] = didDocument.verificationMethod ?? [];
 
-    if (!(verificationMethod && verificationMethod.publicKeyJwk)) {
+    if (!verificationMethod?.publicKeyJwk) {
       throw new DidError(DidErrorCode.InternalError, 'A verification method intended for signing could not be determined from the DID Document');
     }
 

@@ -800,11 +800,11 @@ export class HttpApi {
         return Response.json({ success: true }, { status: 200 });
       } catch (error) {
         const dwnServerError = error as DwnServerError;
-        if (dwnServerError.code !== undefined) {
-          return Response.json(dwnServerError, { status: 400 });
-        } else {
+        if (dwnServerError.code === undefined) {
           log.info('Error handling registration request:', error);
           return Response.json({ success: false }, { status: 500 });
+        } else {
+          return Response.json(dwnServerError, { status: 400 });
         }
       }
     }
@@ -850,18 +850,18 @@ export class HttpApi {
         log.info(`Retrieving Connect Request object of ID: ${requestId}...`);
 
         const requestObjectJwt = await this.connectServer.getConnectRequest(requestId);
-        if (!requestObjectJwt) {
-          return Response.json({
-            ok     : false,
-            status : { code: 404, message: 'Not Found' },
-          }, { status: 404 });
-        } else {
+        if (requestObjectJwt) {
           const body = typeof requestObjectJwt === 'string'
             ? requestObjectJwt
             : JSON.stringify(requestObjectJwt);
           return new Response(body, {
             headers: { 'content-type': 'application/jwt' },
           });
+        } else {
+          return Response.json({
+            ok     : false,
+            status : { code: 404, message: 'Not Found' },
+          }, { status: 404 });
         }
       }
     }
@@ -910,16 +910,16 @@ export class HttpApi {
         log.info(`Retrieving ID token for state: ${state}...`);
 
         const idToken = await this.connectServer.getConnectResponse(state);
-        if (!idToken) {
-          return Response.json({
-            ok     : false,
-            status : { code: 404, message: 'Not Found' },
-          }, { status: 404 });
-        } else {
+        if (idToken) {
           const body = typeof idToken === 'string' ? idToken : JSON.stringify(idToken);
           return new Response(body, {
             headers: { 'content-type': 'application/jwt' },
           });
+        } else {
+          return Response.json({
+            ok     : false,
+            status : { code: 404, message: 'Not Found' },
+          }, { status: 404 });
         }
       }
     }

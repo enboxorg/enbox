@@ -58,7 +58,7 @@ export function validateAdminAuth(
   }
 
   // Try session token if a session manager is available.
-  if (sessionManager && sessionManager.validate(suppliedToken)) {
+  if (sessionManager?.validate(suppliedToken)) {
     return { error: null, authMethod: 'session' };
   }
 

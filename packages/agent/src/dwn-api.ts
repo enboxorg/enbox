@@ -629,9 +629,9 @@ export class AgentDwnApi {
     let resubscribeFactory: ResubscribeFactory | undefined;
     if (subscriptionHandler !== undefined && !('messageCid' in request)) {
       resubscribeFactory = async (cursor?: ProgressToken): Promise<GenericMessage> => {
-        const resumeParams = cursor !== undefined
-          ? { ...request.messageParams, cursor } as DwnMessageParams[T]
-          : request.messageParams;
+        const resumeParams = cursor === undefined
+          ? request.messageParams
+          : { ...request.messageParams, cursor } as DwnMessageParams[T];
 
         const resumeRequest: ProcessDwnRequest<T> = { ...request, messageParams: resumeParams };
         const { message: resumeMessage } = await this.constructDwnMessage({ request: resumeRequest });
@@ -1211,8 +1211,22 @@ export class AgentDwnApi {
     let dwnMessage: DwnMessageInstance[T];
     const dwnMessageConstructor = dwnMessageConstructors[request.messageType];
 
-    // if there is no raw message provided, we need to create the dwn message
-    if (!rawMessage) {
+    // if a raw message is provided, parse it; otherwise create a new dwn message
+    if (rawMessage) {
+      dwnMessage = await dwnMessageConstructor.parse(rawMessage);
+      if (isRecordsWrite(dwnMessage) && request.signAsOwner) {
+        // if we are signing as owner, we use the author's signer
+        const signer = await this.getSigner(request.author);
+        await dwnMessage.signAsOwner(signer);
+      } else if (request.granteeDid && isRecordsWrite(dwnMessage) && request.signAsOwnerDelegate) {
+        // if we are signing as owner delegate, we use the grantee's signer and the provided delegated grant
+        const signer = await this.getSigner(request.granteeDid);
+
+        //if we have reached here, the presence of the grant params has already been checked
+        const messageParams = request.messageParams as DwnMessageParams[DwnInterface.RecordsWrite];
+        await dwnMessage.signAsOwnerDelegate(signer, messageParams.delegatedGrant!);
+      }
+    } else {
       if (request.messageParams === undefined) {
         throw new Error('AgentDwnApi: messageParams must be provided when rawMessage is not given.');
       }
@@ -1274,21 +1288,6 @@ export class AgentDwnApi {
 
         // Cache context key info for subsequent writes in this context
         this._contextKeyCache.set(contextId, { keyId, keyUri, contextDerivationPath });
-      }
-
-    } else {
-      dwnMessage = await dwnMessageConstructor.parse(rawMessage);
-      if (isRecordsWrite(dwnMessage) && request.signAsOwner) {
-        // if we are signing as owner, we use the author's signer
-        const signer = await this.getSigner(request.author);
-        await dwnMessage.signAsOwner(signer);
-      } else if (request.granteeDid && isRecordsWrite(dwnMessage) && request.signAsOwnerDelegate) {
-        // if we are signing as owner delegate, we use the grantee's signer and the provided delegated grant
-        const signer = await this.getSigner(request.granteeDid);
-
-        //if we have reached here, the presence of the grant params has already been checked
-        const messageParams = request.messageParams as DwnMessageParams[DwnInterface.RecordsWrite];
-        await dwnMessage.signAsOwnerDelegate(signer, messageParams.delegatedGrant!);
       }
     }
 

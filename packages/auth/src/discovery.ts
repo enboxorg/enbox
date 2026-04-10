@@ -58,7 +58,7 @@ export function checkUrlForDwnDiscoveryPayload(): string | undefined {
 
   // Clear the fragment to prevent re-reading on subsequent calls or
   // if the user refreshes the page after the redirect.
-  if (typeof globalThis.history !== 'undefined' && globalThis.history.replaceState) {
+  if (globalThis.history?.replaceState) {
     const cleanUrl = globalThis.location.href.split('#')[0];
     globalThis.history.replaceState(null, '', cleanUrl);
   }

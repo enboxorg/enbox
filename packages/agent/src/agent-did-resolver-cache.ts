@@ -55,7 +55,10 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
         // if a DID is stored in the DID Store, then we don't want to evict it from the cache until we have a successful resolution
         // upon a successful resolution, we will update both the storage and the cache with the newly resolved Document.
         const storedDid = await this.agent.did.get({ didUri: did, tenant: this.agent.agentDid.uri });
-        if ('undefined' !== typeof storedDid) {
+        if ('undefined' === typeof storedDid) {
+          this._resolving.delete(did);
+          this.cache.nextTick(() => this.cache.del(did));
+        } else {
           try {
             const result = await this.agent.did.resolve(did);
 
@@ -82,9 +85,6 @@ export class AgentDidResolverCache extends DidResolverCacheLevel implements DidR
           } finally {
             this._resolving.delete(did);
           }
-        } else {
-          this._resolving.delete(did);
-          this.cache.nextTick(() => this.cache.del(did));
         }
       }
       return cachedResult.value;

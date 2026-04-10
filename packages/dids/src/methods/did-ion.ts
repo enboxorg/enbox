@@ -485,7 +485,7 @@ export class DidIon extends DidMethod {
       vm => vm.id === (methodId ?? didDocument.assertionMethod?.[0])
     );
 
-    if (!(verificationMethod && verificationMethod.publicKeyJwk)) {
+    if (!verificationMethod?.publicKeyJwk) {
       throw new DidError(DidErrorCode.InternalError, 'A verification method intended for signing could not be determined from the DID Document');
     }
 

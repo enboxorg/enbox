@@ -232,10 +232,10 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       if (message.authorization.ownerSignature !== undefined) {
         // if the message authorization contains owner delegated grant, the owner would be the grantor of the grant
         // else the owner would be the signer of the owner signature
-        if (message.authorization.ownerDelegatedGrant !== undefined) {
-          this._owner = Message.getSigner(message.authorization.ownerDelegatedGrant);
-        } else {
+        if (message.authorization.ownerDelegatedGrant === undefined) {
           this._owner = Jws.getSignerDid(message.authorization.ownerSignature.signatures[0]);
+        } else {
+          this._owner = Message.getSigner(message.authorization.ownerDelegatedGrant);
         }
 
         this._ownerSignaturePayload = Jws.decodePlainObjectPayload(message.authorization.ownerSignature);
@@ -321,7 +321,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       protocol          : normalizeProtocolUrl(options.protocol),
       protocolPath      : options.protocolPath,
       recipient         : options.recipient,
-      schema            : options.schema !== undefined ? normalizeSchemaUrl(options.schema) : undefined,
+      schema            : options.schema === undefined ? undefined : normalizeSchemaUrl(options.schema),
       tags              : options.tags,
       parentId          : RecordsWrite.getRecordIdFromContextId(options.parentContextId),
       dataCid,
@@ -524,11 +524,11 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     // compute delegated grant ID and author if delegated grant is given
     let delegatedGrantId;
     let authorDid;
-    if (delegatedGrant !== undefined) {
+    if (delegatedGrant === undefined) {
+      authorDid = Jws.extractDid(signer.keyId);
+    } else {
       delegatedGrantId = await Message.getCid(delegatedGrant);
       authorDid = Jws.getSignerDid(delegatedGrant.authorization.signature.signatures[0]);
-    } else {
-      authorDid = Jws.extractDid(signer.keyId);
     }
 
     const descriptor = this._message.descriptor;

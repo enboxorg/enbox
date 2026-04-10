@@ -115,11 +115,7 @@ export class RecordsReadHandler implements MethodHandler {
     }
 
     let data;
-    if (matchedRecordsWrite.encodedData !== undefined) {
-      const dataBytes = Encoder.base64UrlToBytes(matchedRecordsWrite.encodedData);
-      data = DataStream.fromBytes(dataBytes);
-      delete matchedRecordsWrite.encodedData;
-    } else {
+    if (matchedRecordsWrite.encodedData === undefined) {
       const result = await this.deps.dataStore!.get(tenant, matchedRecordsWrite.recordId, matchedRecordsWrite.descriptor.dataCid);
       if (result?.dataStream === undefined) {
         // The message envelope exists but the record data is unavailable (e.g., evicted
@@ -131,6 +127,10 @@ export class RecordsReadHandler implements MethodHandler {
         };
       }
       data = result.dataStream;
+    } else {
+      const dataBytes = Encoder.base64UrlToBytes(matchedRecordsWrite.encodedData);
+      data = DataStream.fromBytes(dataBytes);
+      delete matchedRecordsWrite.encodedData;
     }
 
     const recordsReadReply: RecordsReadReply = {

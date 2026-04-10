@@ -390,10 +390,10 @@ export class MessageStoreSql implements MessageStore {
       return { property: 'dateCreated', direction: messageSort.dateCreated };
     } else if (messageSort?.datePublished !== undefined) {
       return { property: 'datePublished', direction: messageSort.datePublished };
-    } else if (messageSort?.messageTimestamp !== undefined) {
-      return { property: 'messageTimestamp', direction: messageSort.messageTimestamp };
-    } else {
+    } else if (messageSort?.messageTimestamp === undefined) {
       return { property: 'messageTimestamp', direction: SortDirection.Ascending };
+    } else {
+      return { property: 'messageTimestamp', direction: messageSort.messageTimestamp };
     }
   }
 }
