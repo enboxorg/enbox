@@ -169,14 +169,26 @@ describe('SyncEngineLevel — identity management', () => {
     });
 
     it('should throw when sync lock does not clear within timeout', async () => {
-      const engine = new SyncEngineLevel({ db });
-      (engine as any)._syncLock = true;
+      const clock = sinon.useFakeTimers();
+      try {
+        const engine = new SyncEngineLevel({ db });
+        (engine as any)._syncLock = true;
 
-      // Use timeout < 100 so stopSync only needs one short sleep before
-      // throwing, making the test fast and resilient to CI timer jitter.
-      await expect(engine.stopSync(10)).rejects.toThrow('did not complete within');
+        // Start stopSync but don't await — it will poll until timeout.
+        let caught: Error | undefined;
+        const promise = engine.stopSync(200).catch((err: Error): void => { caught = err; });
 
-      (engine as any)._syncLock = false;
+        // Advance past the timeout so the polling loop exceeds the budget.
+        await clock.tickAsync(300);
+        await promise;
+
+        expect(caught).toBeDefined();
+        expect(caught!.message).toContain('did not complete within');
+
+        (engine as any)._syncLock = false;
+      } finally {
+        clock.restore();
+      }
     });
   });
 });

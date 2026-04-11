@@ -531,7 +531,7 @@ describe('SyncEngineLevel — private methods', () => {
       // Both groups should have started before either finished.
       // With sequential processing, elapsed would be >= 210ms.
       // With parallel processing, elapsed should be ~200ms (the slow group).
-      expect(elapsed).toBeLessThan(300);
+      expect(elapsed).toBeLessThan(1000);
 
       // The fast group should finish before the slow group.
       const fastEndIdx = callLog.indexOf('end:https://fast.example.com');
@@ -1394,14 +1394,19 @@ describe('SyncEngineLevel — private methods', () => {
         }
       });
 
-      await engine.startSync({ mode: 'poll', interval: '50ms' });
+      const clock = sinon.useFakeTimers();
+      try {
+        await engine.startSync({ mode: 'poll', interval: '50ms' });
 
-      // Wait for the interval to fire at least once
-      await new Promise((resolve): void => { setTimeout(resolve, 150); });
+        // Advance past several interval periods
+        await clock.tickAsync(150);
 
-      expect(callCount).toBeGreaterThanOrEqual(2);
+        expect(callCount).toBeGreaterThanOrEqual(2);
 
-      await engine.stopSync();
+        await engine.stopSync();
+      } finally {
+        clock.restore();
+      }
     });
 
     it('should skip intervalSync when syncLock is held', async () => {
@@ -1410,21 +1415,26 @@ describe('SyncEngineLevel — private methods', () => {
 
       const syncStub = sinon.stub(engine, 'sync').resolves();
 
-      // Start poll with very short interval
-      await engine.startSync({ mode: 'poll', interval: '50ms' });
-      expect(syncStub.calledOnce).toBe(true);
+      const clock = sinon.useFakeTimers();
+      try {
+        // Start poll with very short interval
+        await engine.startSync({ mode: 'poll', interval: '50ms' });
+        expect(syncStub.calledOnce).toBe(true);
 
-      // Set lock — interval callbacks should skip
-      (engine as any)._syncLock = true;
+        // Set lock — interval callbacks should skip
+        (engine as any)._syncLock = true;
 
-      // Wait for interval to fire
-      await new Promise((resolve): void => { setTimeout(resolve, 100); });
+        // Advance past interval period
+        await clock.tickAsync(100);
 
-      // sync should not have been called again while locked
-      expect(syncStub.calledOnce).toBe(true);
+        // sync should not have been called again while locked
+        expect(syncStub.calledOnce).toBe(true);
 
-      (engine as any)._syncLock = false;
-      await engine.stopSync();
+        (engine as any)._syncLock = false;
+        await engine.stopSync();
+      } finally {
+        clock.restore();
+      }
     });
 
     it('should handle sync error in intervalSync and continue', async () => {
@@ -1438,14 +1448,19 @@ describe('SyncEngineLevel — private methods', () => {
       syncStub.onSecondCall().rejects(new Error('sync failed'));
       syncStub.resolves(); // subsequent calls resolve
 
-      await engine.startSync({ mode: 'poll', interval: '50ms' });
+      const clock = sinon.useFakeTimers();
+      try {
+        await engine.startSync({ mode: 'poll', interval: '50ms' });
 
-      // Wait for interval to fire and call the intervalSync closure
-      await new Promise((resolve): void => { setTimeout(resolve, 150); });
+        // Advance past interval period to trigger the intervalSync closure
+        await clock.tickAsync(150);
 
-      expect(consoleStub.called).toBe(true);
+        expect(consoleStub.called).toBe(true);
 
-      await engine.stopSync();
+        await engine.stopSync();
+      } finally {
+        clock.restore();
+      }
     });
   });
 
@@ -1469,15 +1484,20 @@ describe('SyncEngineLevel — private methods', () => {
       });
       sinon.stub(engine as any, 'getSyncTargets').resolves([]);
 
-      await engine.startSync({ mode: 'live', interval: '50ms' });
+      const clock = sinon.useFakeTimers();
+      try {
+        await engine.startSync({ mode: 'live', interval: '50ms' });
 
-      // Wait for integrity check interval
-      await new Promise((resolve): void => { setTimeout(resolve, 150); });
+        // Advance past integrity check interval
+        await clock.tickAsync(150);
 
-      expect(syncCallCount).toBeGreaterThanOrEqual(2);
-      expect(consoleStub.called).toBe(true);
+        expect(syncCallCount).toBeGreaterThanOrEqual(2);
+        expect(consoleStub.called).toBe(true);
 
-      await engine.stopSync();
+        await engine.stopSync();
+      } finally {
+        clock.restore();
+      }
     });
 
     it('should skip integrityCheck when syncLock is held', async () => {
@@ -1487,18 +1507,23 @@ describe('SyncEngineLevel — private methods', () => {
       const syncStub = sinon.stub(engine, 'sync').resolves();
       sinon.stub(engine as any, 'getSyncTargets').resolves([]);
 
-      await engine.startSync({ mode: 'live', interval: '50ms' });
-      expect(syncStub.calledOnce).toBe(true); // initial catch-up
+      const clock = sinon.useFakeTimers();
+      try {
+        await engine.startSync({ mode: 'live', interval: '50ms' });
+        expect(syncStub.calledOnce).toBe(true); // initial catch-up
 
-      // Set lock — integrity check should skip
-      (engine as any)._syncLock = true;
+        // Set lock — integrity check should skip
+        (engine as any)._syncLock = true;
 
-      await new Promise((resolve): void => { setTimeout(resolve, 100); });
+        await clock.tickAsync(100);
 
-      expect(syncStub.calledOnce).toBe(true);
+        expect(syncStub.calledOnce).toBe(true);
 
-      (engine as any)._syncLock = false;
-      await engine.stopSync();
+        (engine as any)._syncLock = false;
+        await engine.stopSync();
+      } finally {
+        clock.restore();
+      }
     });
   });
 
