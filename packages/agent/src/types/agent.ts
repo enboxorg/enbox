@@ -170,14 +170,8 @@ export interface EnboxPlatformAgent<TKeyManager extends AgentKeyManager = AgentK
    */
   sync: SyncEngine;
 
-  /**
-   * Vault-backed secret store for classified credentials such as registration
-   * tokens, refresh tokens, and delegate decryption keys. Secrets are
-   * encrypted at rest with the vault's content encryption key and never
-   * written to browser-accessible storage.
-   */
+  /** Vault-backed secret store for classified credentials, encrypted at rest with the vault key. */
   secrets: SecretStore;
-
   /**
    * An instance of {@link IdentityVault}, providing secure storage and management of an Enbox Agent's
    * DID and cryptographic keys.

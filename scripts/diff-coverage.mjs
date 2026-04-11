@@ -75,14 +75,14 @@ function getChangedLines() {
   let diff;
   try {
     diff = execSync(
-      'git diff origin/main...HEAD --unified=0 -- "packages/*/src/**/*.ts" ":!*.spec.ts" ":!*.test.ts" ":!*.d.ts"',
+      'git diff origin/main...HEAD --unified=0 -- "packages/*/src/*.ts" "packages/*/src/**/*.ts" ":!*.spec.ts" ":!*.test.ts" ":!*.d.ts"',
       { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 }
     );
   } catch {
     // If origin/main doesn't exist (e.g. shallow clone), try HEAD~1
     try {
       diff = execSync(
-        'git diff HEAD~1...HEAD --unified=0 -- "packages/*/src/**/*.ts" ":!*.spec.ts" ":!*.test.ts" ":!*.d.ts"',
+        'git diff HEAD~1...HEAD --unified=0 -- "packages/*/src/*.ts" "packages/*/src/**/*.ts" ":!*.spec.ts" ":!*.test.ts" ":!*.d.ts"',
         { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 }
       );
     } catch {
