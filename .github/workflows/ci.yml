@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
-      src: ${{ steps.filter.outputs.src }}
+      src: ${{ steps.src-filter.outputs.src }}
       needs_common_crypto: ${{ steps.propagate.outputs.needs_common_crypto }}
       needs_lightweight: ${{ steps.propagate.outputs.needs_lightweight }}
       needs_dids: ${{ steps.propagate.outputs.needs_dids }}
@@ -43,9 +43,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Two filter steps: 'src' needs predicate-quantifier 'every' so that
+      # negation patterns (e.g. !**/*.md) work correctly.  Per-package filters
+      # need the default 'some' (match ANY pattern) since each filter lists
+      # multiple inclusion globs for the same package.
       - name: Check for source changes
         uses: dorny/paths-filter@v3
-        id: filter
+        id: src-filter
         with:
           predicate-quantifier: 'every'
           filters: |
@@ -57,6 +61,11 @@ jobs:
               - '!docs/**'
               - '!.changeset/**'
 
+      - name: Detect per-package changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
             infra:
               - 'package.json'
               - 'bun.lock'
