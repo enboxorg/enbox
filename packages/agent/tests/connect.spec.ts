@@ -352,10 +352,10 @@ describe('enbox connect', () => {
         .stub(CryptoUtils, 'randomBytes')
         .returns(encryptionNonce);
       connectResponseJwe = await EnboxConnectProtocol.encryptResponse({
-        jwt              : connectResponseJwt,
-        encryptionKey    : sharedECDHPrivateKey,
-        pin              : randomPin,
-        delegateDidKeyId : delegateBearerDid.document.verificationMethod![0].id,
+        jwt                  : connectResponseJwt,
+        encryptionKey        : sharedECDHPrivateKey,
+        pin                  : randomPin,
+        delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
       });
       expect(typeof connectResponseJwe).toBe('string');
       expect(randomBytesStub.calledOnce).toBe(true);
@@ -456,6 +456,89 @@ describe('enbox connect', () => {
   // NOTE: `end to end client test` and `initClient — error paths` were moved
   // to @enbox/auth (wallet-connect-client.spec.ts) since WalletConnect.initClient
   // now lives in that package.
+
+  describe('JWE privacy — no kid leak (issue #890)', () => {
+    it('should not include kid in the JWE protected header', async () => {
+      const [protectedHeaderB64U] = connectResponseJwe.split('.');
+      const header = Convert.base64Url(protectedHeaderB64U).toObject() as Record<string, unknown>;
+
+      expect(header.kid).toBeUndefined();
+    });
+
+    it('should include an epk (ephemeral public key) in the JWE protected header', async () => {
+      const [protectedHeaderB64U] = connectResponseJwe.split('.');
+      const header = Convert.base64Url(protectedHeaderB64U).toObject() as Record<string, unknown>;
+
+      expect(header.epk).toBeDefined();
+      expect(typeof header.epk).toBe('object');
+    });
+
+    it('should only include minimal key material (kty, crv, x) in epk — no kid or alg', async () => {
+      const [protectedHeaderB64U] = connectResponseJwe.split('.');
+      const header = Convert.base64Url(protectedHeaderB64U).toObject() as Record<string, unknown>;
+      const epk = header.epk as Record<string, unknown>;
+
+      expect(Object.keys(epk).sort()).toEqual(['crv', 'kty', 'x']);
+      expect(epk.kid).toBeUndefined();
+      expect(epk.alg).toBeUndefined();
+    });
+
+    it('should not contain a did: URI anywhere in the relay-visible protected header', async () => {
+      const [protectedHeaderB64U] = connectResponseJwe.split('.');
+      const headerJson = Convert.base64Url(protectedHeaderB64U).toString();
+
+      expect(headerJson).not.toContain('did:');
+    });
+
+    it('should decrypt correctly with epk-based key agreement (round-trip)', async () => {
+      // Encrypt a fresh response with epk, then decrypt — verifies the full round-trip.
+      const freshJwe = await EnboxConnectProtocol.encryptResponse({
+        jwt                  : connectResponseJwt,
+        encryptionKey        : sharedECDHPrivateKey,
+        pin                  : randomPin,
+        delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
+      });
+
+      const decrypted = await EnboxConnectProtocol.decryptResponse(
+        clientEphemeralBearerDid,
+        freshJwe,
+        randomPin
+      );
+
+      expect(decrypted).toBe(connectResponseJwt);
+    });
+
+    it('should decrypt correctly without a PIN (local flow)', async () => {
+      const jweNoPin = await EnboxConnectProtocol.encryptResponse({
+        jwt                  : connectResponseJwt,
+        encryptionKey        : sharedECDHPrivateKey,
+        delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
+      });
+
+      const decrypted = await EnboxConnectProtocol.decryptResponse(
+        clientEphemeralBearerDid,
+        jweNoPin,
+      );
+
+      expect(decrypted).toBe(connectResponseJwt);
+    });
+
+    it('should throw when epk is missing from the protected header', async () => {
+      // Manually construct a JWE with no epk to verify the guard clause.
+      const badHeader = { alg: 'dir', cty: 'JWT', enc: 'XC20P', typ: 'JWT' };
+      const badJwe = [
+        Convert.object(badHeader).toBase64Url(),
+        '',
+        Convert.uint8Array(new Uint8Array(24)).toBase64Url(),
+        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
+        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
+      ].join('.');
+
+      await expect(
+        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, badJwe, randomPin)
+      ).rejects.toThrow('missing required "epk"');
+    });
+  });
 
   describe('submitConnectResponse', () => {
     it('should not attempt to configure the protocol if it already exists', async () => {
