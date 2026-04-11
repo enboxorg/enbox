@@ -40,7 +40,7 @@ export async function generateEphemeralKeyPair(): Promise<{
   keyPair: CryptoKeyPair;
   publicKeyBase64url: ExportedPublicKey;
 }> {
-  const keyPair = await crypto.subtle.generateKey(ECDH_PARAMS, false, ['deriveKey']);
+  const keyPair = await crypto.subtle.generateKey(ECDH_PARAMS, false, ['deriveBits']);
   const rawPub = await crypto.subtle.exportKey('raw', keyPair.publicKey);
   return { keyPair, publicKeyBase64url: toBase64url(new Uint8Array(rawPub)) };
 }
