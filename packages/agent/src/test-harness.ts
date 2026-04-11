@@ -23,6 +23,7 @@ import { SyncEngineLevel } from './sync-engine-level.js';
 import { DwnDidStore, InMemoryDidStore } from './store-did.js';
 import { DwnIdentityStore, InMemoryIdentityStore } from './store-identity.js';
 import { DwnKeyStore, InMemoryKeyStore } from './store-key.js';
+import { InMemorySecretStore, VaultBackedSecretStore } from './secret-store.js';
 
 type StoreSetupResult = {
   agentVault: HdIdentityVault;
@@ -31,6 +32,7 @@ type StoreSetupResult = {
   identityApi: AgentIdentityApi<LocalKeyManager>;
   keyManager: LocalKeyManager;
   permissionsApi: AgentPermissionsApi;
+  secretsApi: InMemorySecretStore | VaultBackedSecretStore;
   vaultStore: KeyValueStore<string, string>;
 };
 
@@ -120,11 +122,12 @@ export class PlatformAgentTestHarness {
 
     // Easiest way to start with fresh in-memory stores is to re-instantiate Agent components.
     if (this.agentStores === 'memory') {
-      const { didApi, identityApi, permissionsApi, keyManager } = PlatformAgentTestHarness.useMemoryStores({ agent: this.agent });
+      const { didApi, identityApi, permissionsApi, keyManager, secretsApi } = PlatformAgentTestHarness.useMemoryStores({ agent: this.agent });
       this.agent.did = didApi;
       this.agent.identity = identityApi;
       this.agent.keyManager = keyManager;
       this.agent.permissions = permissionsApi;
+      this.agent.secrets = secretsApi;
     }
   }
 
@@ -248,7 +251,8 @@ export class PlatformAgentTestHarness {
       keyManager,
       didResolverCache,
       vaultStore,
-      permissionsApi
+      permissionsApi,
+      secretsApi,
     } = (agentStores === 'memory')
       ? PlatformAgentTestHarness.useMemoryStores()
       : PlatformAgentTestHarness.useDiskStores({ testDataLocation, stores: dwnStores });
@@ -294,6 +298,7 @@ export class PlatformAgentTestHarness {
       keyManager,
       permissionsApi,
       rpcClient,
+      secretsApi,
       syncApi,
     });
 
@@ -346,7 +351,12 @@ export class PlatformAgentTestHarness {
 
     const permissionsApi = new AgentPermissionsApi({ agent });
 
-    return { agentVault, didApi, didResolverCache, identityApi, keyManager, permissionsApi, vaultStore };
+    const secretsApi = new VaultBackedSecretStore({
+      vault : agentVault,
+      store : new LevelStore<string, string>({ location: testDataPath('SECRET_STORE') }),
+    });
+
+    return { agentVault, didApi, didResolverCache, identityApi, keyManager, permissionsApi, secretsApi, vaultStore };
   }
 
   private static useMemoryStores({ agent }: { agent?: EnboxPlatformAgent<LocalKeyManager> } = {}): StoreSetupResult {
@@ -369,6 +379,8 @@ export class PlatformAgentTestHarness {
 
     const permissionsApi = new AgentPermissionsApi({ agent });
 
-    return { agentVault, didApi, didResolverCache, identityApi, keyManager, permissionsApi, vaultStore };
+    const secretsApi = new InMemorySecretStore();
+
+    return { agentVault, didApi, didResolverCache, identityApi, keyManager, permissionsApi, secretsApi, vaultStore };
   }
 }

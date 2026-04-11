@@ -8,6 +8,7 @@ import type { AgentPermissionsApi } from '../../src/permissions-api.js';
 import type { EnboxPlatformAgent } from '../../src/types/agent.js';
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { IdentityVault } from '../../src/types/identity-vault.js';
+import type { SecretStore } from '../../src/secret-store.js';
 import type { SyncEngine } from '../../src/types/sync.js';
 import type { AgentDidApi, DidInterface } from '../../src/did-api.js';
 import type { DidRequest, DidResponse } from '../../src/did-api.js';
@@ -19,6 +20,8 @@ import type {
 } from '../../src/types/dwn.js';
 import type { ProcessVcRequest, SendVcRequest, VcResponse } from '../../src/types/vc.js';
 
+import { InMemorySecretStore } from '../../src/secret-store.js';
+
 type TestAgentParams<TKeyManager extends AgentKeyManager> = {
   agentVault: IdentityVault;
   cryptoApi: AgentCryptoApi;
@@ -28,6 +31,7 @@ type TestAgentParams<TKeyManager extends AgentKeyManager> = {
   keyManager: TKeyManager;
   permissionsApi: AgentPermissionsApi;
   rpcClient: EnboxRpc;
+  secretsApi?: SecretStore;
   syncApi: SyncEngine;
 };
 
@@ -39,6 +43,7 @@ export class TestAgent<TKeyManager extends AgentKeyManager> implements EnboxPlat
   public keyManager: TKeyManager;
   public permissions: AgentPermissionsApi;
   public rpc: EnboxRpc;
+  public secrets: SecretStore;
   public sync: SyncEngine;
   public vault: IdentityVault;
 
@@ -52,6 +57,7 @@ export class TestAgent<TKeyManager extends AgentKeyManager> implements EnboxPlat
     this.keyManager = params.keyManager;
     this.permissions = params.permissionsApi;
     this.rpc = params.rpcClient;
+    this.secrets = params.secretsApi ?? new InMemorySecretStore();
     this.sync = params.syncApi;
     this.vault = params.agentVault;
 

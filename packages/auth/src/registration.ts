@@ -11,8 +11,9 @@
  * @module
  */
 
-import type { EnboxUserAgent } from '@enbox/agent';
+import type { EnboxUserAgent, SecretStore } from '@enbox/agent';
 
+import { Convert } from '@enbox/common';
 import { DwnRegistrar } from '@enbox/dwn-clients';
 
 import { STORAGE_KEYS } from './types.js';
@@ -38,8 +39,20 @@ export interface RegistrationContext {
   connectedDid: string;
 
   /**
-   * Storage adapter for automatic token persistence.
-   * Only used when `registration.persistTokens` is `true`.
+   * Vault-backed secret store for encrypted token persistence.
+   *
+   * When provided **and** the vault is unlocked, registration tokens are
+   * stored here instead of in the plaintext `StorageAdapter`, keeping
+   * bearer credentials out of `localStorage`.
+   */
+  secretStore?: SecretStore;
+
+  /**
+   * Plaintext storage adapter for automatic token persistence.
+   *
+   * @deprecated Prefer {@link secretStore} when the vault is available.
+   *             This field is retained for backwards compatibility with
+   *             callers that have not yet migrated.
    */
   storage?: StorageAdapter;
 }
@@ -60,14 +73,19 @@ export async function registerWithDwnEndpoints(
   ctx: RegistrationContext,
   registration: RegistrationOptions,
 ): Promise<void> {
-  const { userAgent, dwnEndpoints, agentDid, connectedDid, storage } = ctx;
+  const { userAgent, dwnEndpoints, agentDid, connectedDid, secretStore, storage } = ctx;
 
-  // Load initial tokens: when persistTokens is enabled, load from storage
-  // (ignoring any explicit registrationTokens). Otherwise use the explicit map.
+  // Load initial tokens: when persistTokens is enabled, load from the
+  // vault-backed SecretStore (preferred) or plaintext StorageAdapter
+  // (fallback). Otherwise use the explicit map.
   let seedTokens: Record<string, RegistrationTokenData> = {};
 
-  if (registration.persistTokens && storage) {
-    seedTokens = await loadTokensFromStorage(storage);
+  if (registration.persistTokens) {
+    if (secretStore) {
+      seedTokens = await loadTokensFromSecretStore(secretStore);
+    } else if (storage) {
+      seedTokens = await loadTokensFromStorage(storage);
+    }
   } else {
     seedTokens = registration.registrationTokens ?? {};
   }
@@ -162,9 +180,13 @@ export async function registerWithDwnEndpoints(
       }
     }
 
-    // Persist tokens to storage when auto-persistence is enabled.
-    if (registration.persistTokens && storage) {
-      await saveTokensToStorage(storage, updatedTokens);
+    // Persist tokens: prefer vault-backed SecretStore over plaintext StorageAdapter.
+    if (registration.persistTokens) {
+      if (secretStore) {
+        await saveTokensToSecretStore(secretStore, updatedTokens);
+      } else if (storage) {
+        await saveTokensToStorage(storage, updatedTokens);
+      }
     }
 
     // Notify app of updated tokens (always, even when auto-persisting).
@@ -209,4 +231,39 @@ export async function saveTokensToStorage(
   tokens: Record<string, RegistrationTokenData>,
 ): Promise<void> {
   await storage.set(STORAGE_KEYS.REGISTRATION_TOKENS, JSON.stringify(tokens));
+}
+
+// ─── SecretStore helpers ─────────────────────────────────────────
+
+/**
+ * Load registration tokens from the vault-backed {@link SecretStore}.
+ *
+ * Returns an empty record if no tokens are stored, the stored value is
+ * corrupt, or the vault is locked (best-effort — never throws).
+ *
+ * @internal
+ */
+export async function loadTokensFromSecretStore(
+  secretStore: SecretStore,
+): Promise<Record<string, RegistrationTokenData>> {
+  try {
+    const bytes = await secretStore.get(STORAGE_KEYS.REGISTRATION_TOKENS);
+    if (!bytes) { return {}; }
+    const json = Convert.uint8Array(bytes).toString();
+    return JSON.parse(json) as Record<string, RegistrationTokenData>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Save registration tokens to the vault-backed {@link SecretStore}.
+ * @internal
+ */
+export async function saveTokensToSecretStore(
+  secretStore: SecretStore,
+  tokens: Record<string, RegistrationTokenData>,
+): Promise<void> {
+  const bytes = Convert.string(JSON.stringify(tokens)).toUint8Array();
+  await secretStore.put(STORAGE_KEYS.REGISTRATION_TOKENS, bytes);
 }

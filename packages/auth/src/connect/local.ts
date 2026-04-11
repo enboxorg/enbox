@@ -81,11 +81,12 @@ export async function localConnect(
   if (ctx.registration) {
     await registerWithDwnEndpoints(
       {
-        userAgent : userAgent,
+        userAgent   : userAgent,
         dwnEndpoints,
-        agentDid  : userAgent.agentDid.uri,
+        agentDid    : userAgent.agentDid.uri,
         connectedDid,
-        storage   : storage,
+        secretStore : userAgent.secrets,
+        storage     : storage,
       },
       ctx.registration,
     );
