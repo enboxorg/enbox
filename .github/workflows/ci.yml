@@ -26,6 +26,18 @@ jobs:
     timeout-minutes: 2
     outputs:
       src: ${{ steps.filter.outputs.src }}
+      needs_common_crypto: ${{ steps.propagate.outputs.needs_common_crypto }}
+      needs_dids: ${{ steps.propagate.outputs.needs_dids }}
+      needs_dwn_sdk: ${{ steps.propagate.outputs.needs_dwn_sdk }}
+      needs_dwn_clients: ${{ steps.propagate.outputs.needs_dwn_clients }}
+      needs_dwn_sql_store: ${{ steps.propagate.outputs.needs_dwn_sql_store }}
+      needs_dwn_server: ${{ steps.propagate.outputs.needs_dwn_server }}
+      needs_agent: ${{ steps.propagate.outputs.needs_agent }}
+      needs_auth: ${{ steps.propagate.outputs.needs_auth }}
+      needs_api: ${{ steps.propagate.outputs.needs_api }}
+      needs_agent_api_group: ${{ steps.propagate.outputs.needs_agent_api_group }}
+      needs_browser_tests: ${{ steps.propagate.outputs.needs_browser_tests }}
+      needs_e2e: ${{ steps.propagate.outputs.needs_e2e }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -34,33 +46,129 @@ jobs:
         uses: dorny/paths-filter@v3
         id: filter
         with:
-          # With the default predicate-quantifier ('some'), a file only needs
-          # to match ONE pattern to be considered changed.  Since '**' matches
-          # everything, the negation patterns were silently ignored and the
-          # filter always returned true.
-          #
-          # With 'every', a file must match ALL patterns.  A .md file matches
-          # '**' but fails '!**/*.md', so it's excluded — which is the
-          # intended behavior.
           predicate-quantifier: 'every'
           filters: |
             src:
-              - '**'
+              - added|modified: '**'
               - '!**/*.md'
               - '!**/LICENSE'
               - '!**/CODE_OF_CONDUCT*'
               - '!docs/**'
               - '!.changeset/**'
-              - '!scripts/**'
+
+            infra:
+              - 'package.json'
+              - 'bun.lock'
+              - 'tsconfig.json'
+              - 'turbo.json'
+              - 'eslint.config.cjs'
+              - '.github/workflows/ci.yml'
+              - 'scripts/**'
+              - 'build/**'
+
+            common-crypto:
+              - 'packages/common/src/**'
+              - 'packages/common/tests/**'
+              - 'packages/crypto/src/**'
+              - 'packages/crypto/tests/**'
+
+            dids:
+              - 'packages/dids/src/**'
+              - 'packages/dids/tests/**'
+
+            dwn-sdk:
+              - 'packages/dwn-sdk-js/src/**'
+              - 'packages/dwn-sdk-js/tests/**'
+              - 'packages/dwn-sdk-js/json-schemas/**'
+
+            dwn-clients:
+              - 'packages/dwn-clients/src/**'
+              - 'packages/dwn-clients/tests/**'
+
+            dwn-sql-store:
+              - 'packages/dwn-sql-store/src/**'
+              - 'packages/dwn-sql-store/tests/**'
+
+            dwn-server:
+              - 'packages/dwn-server/src/**'
+              - 'packages/dwn-server/tests/**'
+
+            agent:
+              - 'packages/agent/src/**'
+              - 'packages/agent/tests/**'
+
+            auth:
+              - 'packages/auth/src/**'
+              - 'packages/auth/tests/**'
+
+            api:
+              - 'packages/api/src/**'
+              - 'packages/api/tests/**'
+
+            browser-pkg:
+              - 'packages/browser/src/**'
+              - 'packages/browser/tests/**'
+
+      - name: Propagate changes through dependency graph
+        id: propagate
+        run: |
+          # Convert filter outputs to shell booleans
+          infra="${{ steps.filter.outputs.infra }}"
+          common_crypto="${{ steps.filter.outputs.common-crypto }}"
+          dids="${{ steps.filter.outputs.dids }}"
+          dwn_sdk="${{ steps.filter.outputs.dwn-sdk }}"
+          dwn_clients="${{ steps.filter.outputs.dwn-clients }}"
+          dwn_sql_store="${{ steps.filter.outputs.dwn-sql-store }}"
+          dwn_server="${{ steps.filter.outputs.dwn-server }}"
+          agent="${{ steps.filter.outputs.agent }}"
+          auth="${{ steps.filter.outputs.auth }}"
+          api="${{ steps.filter.outputs.api }}"
+          browser_pkg="${{ steps.filter.outputs.browser-pkg }}"
+
+          # Propagate down the dependency graph
+          needs_common_crypto=$( [ "$infra" = "true" ] || [ "$common_crypto" = "true" ] && echo true || echo false )
+          needs_dids=$( [ "$needs_common_crypto" = "true" ] || [ "$dids" = "true" ] && echo true || echo false )
+          needs_dwn_sdk=$( [ "$needs_dids" = "true" ] || [ "$dwn_sdk" = "true" ] && echo true || echo false )
+          needs_dwn_clients=$( [ "$needs_dwn_sdk" = "true" ] || [ "$dwn_clients" = "true" ] && echo true || echo false )
+          needs_dwn_sql_store=$( [ "$needs_dwn_sdk" = "true" ] || [ "$dwn_sql_store" = "true" ] && echo true || echo false )
+          needs_dwn_server=$( [ "$needs_dwn_sdk" = "true" ] || [ "$needs_dwn_clients" = "true" ] || [ "$needs_dwn_sql_store" = "true" ] || [ "$dwn_server" = "true" ] && echo true || echo false )
+          needs_agent=$( [ "$needs_dids" = "true" ] || [ "$needs_dwn_sdk" = "true" ] || [ "$needs_dwn_clients" = "true" ] || [ "$agent" = "true" ] && echo true || echo false )
+          needs_auth=$( [ "$needs_agent" = "true" ] || [ "$auth" = "true" ] && echo true || echo false )
+          needs_api=$( [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$api" = "true" ] && echo true || echo false )
+          needs_agent_api_group=$( [ "$needs_dids" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$needs_api" = "true" ] || [ "$dwn_clients" = "true" ] && echo true || echo false )
+          needs_browser_tests=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_dids" = "true" ] || [ "$needs_dwn_sdk" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_api" = "true" ] || [ "$browser_pkg" = "true" ] && echo true || echo false )
+          needs_e2e=$( [ "$needs_agent" = "true" ] && echo true || echo false )
+
+          # Write outputs
+          {
+            echo "needs_common_crypto=$needs_common_crypto"
+            echo "needs_dids=$needs_dids"
+            echo "needs_dwn_sdk=$needs_dwn_sdk"
+            echo "needs_dwn_clients=$needs_dwn_clients"
+            echo "needs_dwn_sql_store=$needs_dwn_sql_store"
+            echo "needs_dwn_server=$needs_dwn_server"
+            echo "needs_agent=$needs_agent"
+            echo "needs_auth=$needs_auth"
+            echo "needs_api=$needs_api"
+            echo "needs_agent_api_group=$needs_agent_api_group"
+            echo "needs_browser_tests=$needs_browser_tests"
+            echo "needs_e2e=$needs_e2e"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Change detection results:"
+          echo "  common_crypto=$needs_common_crypto dids=$needs_dids dwn_sdk=$needs_dwn_sdk"
+          echo "  dwn_clients=$needs_dwn_clients dwn_sql_store=$needs_dwn_sql_store dwn_server=$needs_dwn_server"
+          echo "  agent=$needs_agent auth=$needs_auth api=$needs_api"
+          echo "  agent_api_group=$needs_agent_api_group browser=$needs_browser_tests e2e=$needs_e2e"
 
   # ---------------------------------------------------------------------------
-  # Shared setup: install, lint, build, then upload the workspace as an artifact
-  # so downstream test jobs don't each have to rebuild.
+  # Lint: runs in parallel with build for fast feedback (no build needed —
+  # ESLint uses project: true which resolves .ts source files via tsconfig).
   # ---------------------------------------------------------------------------
-  setup:
-    name: Lint & Build
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     needs: changes
     if: needs.changes.outputs.src == 'true'
 
@@ -87,6 +195,37 @@ jobs:
       - name: Lint
         run: bun run lint
 
+  # ---------------------------------------------------------------------------
+  # Build: runs in parallel with lint, produces workspace-build artifact for
+  # downstream test jobs.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Restore bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
       - name: Build
         run: bun run build
 
@@ -104,7 +243,8 @@ jobs:
     name: 'Test: common / crypto / auth'
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    needs: setup
+    needs: [build, changes]
+    if: needs.changes.outputs.needs_common_crypto == 'true'
 
     steps:
       - name: Checkout repository
@@ -162,7 +302,8 @@ jobs:
     name: 'Test: dwn-sdk-js'
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    needs: setup
+    needs: [build, changes]
+    if: needs.changes.outputs.needs_dwn_sdk == 'true'
 
     steps:
       - name: Checkout repository
@@ -215,7 +356,8 @@ jobs:
     name: 'Test: dids / agent / api'
     runs-on: ubuntu-latest
     timeout-minutes: 8
-    needs: setup
+    needs: [build, changes]
+    if: needs.changes.outputs.needs_agent_api_group == 'true'
 
     services:
       postgres-dwn-server:
@@ -342,8 +484,8 @@ jobs:
     name: 'Test: e2e (long-running)'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: setup
-    if: needs.changes.outputs.src == 'true'
+    needs: [build, changes]
+    if: needs.changes.outputs.needs_e2e == 'true'
 
     services:
       postgres-e2e:
@@ -443,7 +585,8 @@ jobs:
     name: 'Test: dwn-sql-store'
     runs-on: ubuntu-latest
     timeout-minutes: 8
-    needs: setup
+    needs: [build, changes]
+    if: needs.changes.outputs.needs_dwn_sql_store == 'true'
 
     services:
       postgres:
@@ -541,7 +684,8 @@ jobs:
     name: 'Test: dwn-server'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: setup
+    needs: [build, changes]
+    if: needs.changes.outputs.needs_dwn_server == 'true'
 
     steps:
       - name: Checkout repository
@@ -601,19 +745,21 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # Coverage: download package lcov files, merge them for SonarCloud, build an
-  # informational report, then comment the PR.
+  # Coverage (Node): merge node LCOV files, run diff-coverage gate, post PR
+  # comment.  Does NOT wait for browser tests — removes them from critical path.
   # ---------------------------------------------------------------------------
-  coverage:
-    name: Coverage Check & Merge
+  coverage-node:
+    name: 'Coverage: Node'
     runs-on: ubuntu-latest
     timeout-minutes: 6
-    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser]
+    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server]
     if: always() && !cancelled() && needs.changes.outputs.src == 'true'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -631,10 +777,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Download coverage artifacts
+      - name: Download node coverage artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: coverage-*
+          pattern: coverage-!(browser-*)
           path: .
           merge-multiple: true
 
@@ -648,6 +794,12 @@ jobs:
           path: coverage/merged/
           retention-days: 1
           if-no-files-found: error
+
+      - name: Diff-coverage gate
+        if: github.event_name == 'pull_request'
+        run: bun run scripts/diff-coverage.mjs
+        env:
+          DIFF_COVERAGE_THRESHOLD: '80'
 
       - name: Build coverage report
         id: coverage-check
@@ -705,7 +857,6 @@ jobs:
           mkdir -p coverage-badges
 
           node_file=$(mktemp)
-          browser_tsv=$(mktemp)
 
           for lcov_file in packages/*/coverage/lcov.info; do
             found_any=true
@@ -723,19 +874,6 @@ jobs:
             else
               echo "| $pkg | ${coverage}% | :white_check_mark: |" >> "$node_file"
             fi
-          done
-
-          for lcov_file in packages/*/coverage-browser-*/lcov.info; do
-            found_any=true
-            pkg=$(basename "$(dirname "$(dirname "$lcov_file")")")
-            coverage_dir=$(basename "$(dirname "$lcov_file")")
-            browser="${coverage_dir#coverage-browser-}"
-            coverage=$(parse_lcov "$lcov_file")
-            badge_color=$(badge_color_for "$coverage")
-
-            printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' \
-              "$coverage" "$badge_color" > "coverage-badges/${pkg}-${browser}.json"
-            printf '%s\t%s\t%s\n' "$pkg" "$browser" "$coverage" >> "$browser_tsv"
           done
 
           {
@@ -761,41 +899,9 @@ jobs:
             else
               echo ":white_check_mark: **All packages meet the ${target}% coverage target.**"
             fi
-
-            echo ""
-
-            if [ -s "$browser_tsv" ]; then
-              echo "<details>"
-              echo "<summary>Browser Coverage (informational)</summary>"
-              echo ""
-              cr_icon='![Chromium](https://img.shields.io/badge/-Chromium-4285F4?logo=googlechrome&logoColor=white&style=flat-square)'
-              ff_icon='![Firefox](https://img.shields.io/badge/-Firefox-FF7139?logo=firefox&logoColor=white&style=flat-square)'
-              wk_icon='![WebKit](https://img.shields.io/badge/-WebKit-006CFF?logo=safari&logoColor=white&style=flat-square)'
-              echo "| Package | $cr_icon | $ff_icon | $wk_icon |"
-              echo "|---------|----------|---------|--------|"
-
-              sort -t$'\t' -k1,1 "$browser_tsv" -o "$browser_tsv"
-              pkg_list=$(cut -f1 "$browser_tsv" | sort -u)
-
-              for pkg in $pkg_list; do
-                chromium_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="chromium" {print $3}' "$browser_tsv")
-                firefox_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="firefox" {print $3}' "$browser_tsv")
-                webkit_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="webkit" {print $3}' "$browser_tsv")
-                cr_cell="${chromium_cov:+${chromium_cov}%}" ; cr_cell="${cr_cell:-—}"
-                ff_cell="${firefox_cov:+${firefox_cov}%}" ; ff_cell="${ff_cell:-—}"
-                wk_cell="${webkit_cov:+${webkit_cov}%}" ; wk_cell="${wk_cell:-—}"
-                echo "| $pkg | $cr_cell | $ff_cell | $wk_cell |"
-              done
-
-              echo ""
-              echo "_Browser coverage is informational only (subset of tests)._"
-              echo "_Node coverage target is informational only and does not gate CI._"
-              echo ""
-              echo "</details>"
-            fi
           } > coverage-report.md
 
-          rm -f "$node_file" "$browser_tsv"
+          rm -f "$node_file"
 
           cat coverage-report.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -838,8 +944,6 @@ jobs:
               });
             }
 
-      # Update coverage badge data in a public Gist (main branch only).
-      # TODO: When the repo is made public, migrate to Codecov or GitHub Pages.
       - name: Update coverage badges
         if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
@@ -852,7 +956,6 @@ jobs:
 
           GIST_ID="02d15f39a46173a612a8862ec6d7cfcf"
 
-          # Build a single JSON payload with all badge files
           payload='{"files":{'
           first=true
           for badge_file in coverage-badges/*.json; do
@@ -864,7 +967,6 @@ jobs:
             else
               payload+=','
             fi
-            # Escape the content for JSON string value
             escaped=$(printf '%s' "$content" | jq -Rs .)
             payload+="\"$filename\":{\"content\":$escaped}"
             echo "  Badge: $filename -> $content"
@@ -887,6 +989,129 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
+  # Coverage (Browser): merges browser LCOV files and updates PR comment.
+  # Informational only — does not block ci-passed for node-only changes.
+  # ---------------------------------------------------------------------------
+  coverage-browser:
+    name: 'Coverage: Browser'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    needs: [changes, test-browser]
+    if: always() && !cancelled() && needs.changes.outputs.needs_browser_tests == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download browser coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-browser-*
+          path: .
+          merge-multiple: true
+
+      - name: Build browser coverage report
+        shell: bash
+        run: |
+          shopt -s nullglob
+
+          parse_lcov() {
+            local lcov_file="$1"
+            local total_lf=0 total_lh=0 in_src=false
+            while IFS= read -r line; do
+              case "$line" in
+                SF:src/*|SF:*/src/*) in_src=true ;;
+                SF:*) in_src=false ;;
+                LF:*) if [ "$in_src" = true ]; then total_lf=$((total_lf + ${line#LF:})); fi ;;
+                LH:*) if [ "$in_src" = true ]; then total_lh=$((total_lh + ${line#LH:})); fi ;;
+              esac
+            done < "$lcov_file"
+            if [ "$total_lf" -gt 0 ]; then
+              awk "BEGIN { printf \"%.1f\", ($total_lh / $total_lf) * 100 }"
+            else
+              echo "0.0"
+            fi
+          }
+
+          browser_tsv=$(mktemp)
+          found_any=false
+
+          for lcov_file in packages/*/coverage-browser-*/lcov.info; do
+            found_any=true
+            pkg=$(basename "$(dirname "$(dirname "$lcov_file")")")
+            coverage_dir=$(basename "$(dirname "$lcov_file")")
+            browser="${coverage_dir#coverage-browser-}"
+            coverage=$(parse_lcov "$lcov_file")
+            printf '%s\t%s\t%s\n' "$pkg" "$browser" "$coverage" >> "$browser_tsv"
+          done
+
+          if [ "$found_any" = true ] && [ -s "$browser_tsv" ]; then
+            {
+              echo "<details>"
+              echo "<summary>Browser Coverage (informational)</summary>"
+              echo ""
+              cr_icon='![Chromium](https://img.shields.io/badge/-Chromium-4285F4?logo=googlechrome&logoColor=white&style=flat-square)'
+              ff_icon='![Firefox](https://img.shields.io/badge/-Firefox-FF7139?logo=firefox&logoColor=white&style=flat-square)'
+              wk_icon='![WebKit](https://img.shields.io/badge/-WebKit-006CFF?logo=safari&logoColor=white&style=flat-square)'
+              echo "| Package | $cr_icon | $ff_icon | $wk_icon |"
+              echo "|---------|----------|---------|--------|"
+
+              sort -t$'\t' -k1,1 "$browser_tsv" -o "$browser_tsv"
+              pkg_list=$(cut -f1 "$browser_tsv" | sort -u)
+
+              for pkg in $pkg_list; do
+                chromium_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="chromium" {print $3}' "$browser_tsv")
+                firefox_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="firefox" {print $3}' "$browser_tsv")
+                webkit_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="webkit" {print $3}' "$browser_tsv")
+                cr_cell="${chromium_cov:+${chromium_cov}%}" ; cr_cell="${cr_cell:-—}"
+                ff_cell="${firefox_cov:+${firefox_cov}%}" ; ff_cell="${ff_cell:-—}"
+                wk_cell="${webkit_cov:+${webkit_cov}%}" ; wk_cell="${wk_cell:-—}"
+                echo "| $pkg | $cr_cell | $ff_cell | $wk_cell |"
+              done
+
+              echo ""
+              echo "_Browser coverage is informational only (subset of tests)._"
+              echo ""
+              echo "</details>"
+            } > browser-coverage-report.md
+
+            cat browser-coverage-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          rm -f "$browser_tsv"
+
+      - name: Append browser coverage to PR comment
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('browser-coverage-report.md')) return;
+            const browserSection = fs.readFileSync('browser-coverage-report.md', 'utf8');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Coverage Report')
+            );
+
+            if (existing) {
+              const body = existing.body.includes('Browser Coverage')
+                ? existing.body
+                : existing.body + '\n\n' + browserSection;
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            }
+
+  # ---------------------------------------------------------------------------
   # Browser tests: run Vitest browser mode with Playwright.
   #
   # Two-dimensional matrix: shard (package group) × browser.  Each cell runs
@@ -902,7 +1127,8 @@ jobs:
     name: 'Test: Browser (${{ matrix.shard.name }} / ${{ matrix.browser }})'
     runs-on: ubuntu-latest
     timeout-minutes: 21
-    needs: setup
+    needs: [build, changes]
+    if: needs.changes.outputs.needs_browser_tests == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -1065,13 +1291,13 @@ jobs:
   # ---------------------------------------------------------------------------
   # SonarCloud: consume the merged LCOV artifact and publish analysis results.
   # The job activates once SONAR_PROJECT_KEY / SONAR_ORG repo vars are set.
-  # Quality gate waiting stays off until coverage improvement work lands.
+  # Quality gate is enforced (blocks PRs that fail the SonarCloud QG).
   # ---------------------------------------------------------------------------
   sonarcloud:
     name: SonarCloud
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [changes, coverage]
+    needs: [changes, coverage-node]
     if: needs.changes.outputs.src == 'true' && vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
 
     steps:
@@ -1113,6 +1339,8 @@ jobs:
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ vars.SONAR_ORG }}
             -Dsonar.pullrequest.github.repository=${{ github.repository }}
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
 
   # ---------------------------------------------------------------------------
   # Gate job for branch protection — always runs so required checks pass even
@@ -1122,7 +1350,7 @@ jobs:
     name: CI Passed
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage, sonarcloud]
+    needs: [changes, lint, build, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage-node, coverage-browser, sonarcloud]
     if: always()
     steps:
       - name: Check results
@@ -1133,16 +1361,26 @@ jobs:
             exit 0
           fi
 
-          # All test jobs must succeed
-          if [ "${{ needs.test-lightweight.result }}" != "success" ]; then
+          # Lint and build must always succeed when src changed
+          if [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "::error::lint failed"
+            exit 1
+          fi
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            echo "::error::build failed"
+            exit 1
+          fi
+
+          # Test jobs: required when they run, OK to skip (no relevant changes)
+          if [ "${{ needs.test-lightweight.result }}" != "success" ] && [ "${{ needs.test-lightweight.result }}" != "skipped" ]; then
             echo "::error::test-lightweight failed"
             exit 1
           fi
-          if [ "${{ needs.test-dwn-sdk.result }}" != "success" ]; then
+          if [ "${{ needs.test-dwn-sdk.result }}" != "success" ] && [ "${{ needs.test-dwn-sdk.result }}" != "skipped" ]; then
             echo "::error::test-dwn-sdk failed"
             exit 1
           fi
-          if [ "${{ needs.test-agent-api.result }}" != "success" ]; then
+          if [ "${{ needs.test-agent-api.result }}" != "success" ] && [ "${{ needs.test-agent-api.result }}" != "skipped" ]; then
             echo "::error::test-agent-api failed"
             exit 1
           fi
@@ -1150,27 +1388,38 @@ jobs:
             echo "::error::test-e2e failed"
             exit 1
           fi
-          if [ "${{ needs.test-sql-store.result }}" != "success" ]; then
+          if [ "${{ needs.test-sql-store.result }}" != "success" ] && [ "${{ needs.test-sql-store.result }}" != "skipped" ]; then
             echo "::error::test-sql-store failed"
             exit 1
           fi
-          if [ "${{ needs.test-dwn-server.result }}" != "success" ]; then
+          if [ "${{ needs.test-dwn-server.result }}" != "success" ] && [ "${{ needs.test-dwn-server.result }}" != "skipped" ]; then
             echo "::error::test-dwn-server failed"
             exit 1
           fi
-          if [ "${{ needs.test-browser.result }}" != "success" ]; then
+
+          # Browser tests: required when they run, OK to skip
+          if [ "${{ needs.test-browser.result }}" != "success" ] && [ "${{ needs.test-browser.result }}" != "skipped" ]; then
             echo "::error::test-browser failed"
             exit 1
           fi
 
-          if [ "${{ needs.coverage.result }}" != "success" ]; then
-            echo "::error::Coverage check failed"
+          # Coverage (node): required when it ran
+          if [ "${{ needs.coverage-node.result }}" != "success" ] && [ "${{ needs.coverage-node.result }}" != "skipped" ]; then
+            echo "::error::coverage-node failed"
             exit 1
           fi
 
-          if [ -n "${{ vars.SONAR_PROJECT_KEY }}" ] && [ -n "${{ vars.SONAR_ORG }}" ] && [ "${{ needs.sonarcloud.result }}" != "success" ]; then
-            echo "::error::SonarCloud scan failed"
-            exit 1
+          # Coverage (browser): informational — OK to skip or fail
+          if [ "${{ needs.coverage-browser.result }}" = "failure" ]; then
+            echo "::warning::coverage-browser failed (informational, not blocking)"
+          fi
+
+          # SonarCloud: required when configured and ran
+          if [ -n "${{ vars.SONAR_PROJECT_KEY }}" ] && [ -n "${{ vars.SONAR_ORG }}" ]; then
+            if [ "${{ needs.sonarcloud.result }}" != "success" ] && [ "${{ needs.sonarcloud.result }}" != "skipped" ]; then
+              echo "::error::SonarCloud scan failed"
+              exit 1
+            fi
           fi
 
           echo "All checks passed"
