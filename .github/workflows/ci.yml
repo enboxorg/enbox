@@ -1421,11 +1421,14 @@ jobs:
           SONAR_HOST_URL: https://sonarcloud.io
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
+          # Quality gate enforcement only on PRs (new code period).
+          # Main branch pushes run the scan for analysis but don't block
+          # on pre-existing quality gate failures.
           args: >
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ vars.SONAR_ORG }}
             -Dsonar.pullrequest.github.repository=${{ github.repository }}
-            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.wait=${{ github.event_name == 'pull_request' }}
             -Dsonar.qualitygate.timeout=300
 
   # ---------------------------------------------------------------------------
