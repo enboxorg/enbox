@@ -107,15 +107,21 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
   // Generate an ephemeral ECDH keypair for this connect session.
   // The public key is sent to the wallet so it can encrypt the response
   // containing delegate private keys and decryption material.
-  let dappKeyPair: CryptoKeyPair | undefined;
-  let dappPublicKeyBase64url: string | undefined;
+  // Encryption is mandatory — if key generation fails (e.g. non-secure
+  // context where crypto.subtle is unavailable), the connect flow aborts.
+  let dappKeyPair: CryptoKeyPair;
+  let dappPublicKeyBase64url: string;
 
   try {
     const ephemeral = await generateEphemeralKeyPair();
     dappKeyPair = ephemeral.keyPair;
     dappPublicKeyBase64url = ephemeral.publicKeyBase64url;
   } catch {
-    // crypto.subtle unavailable (e.g. non-secure context) — skip encryption.
+    popup.close();
+    throw new Error(
+      '[@enbox/browser] DWeb Connect requires a secure context (HTTPS) for encrypted key exchange. '
+      + 'crypto.subtle is not available in this environment.'
+    );
   }
 
   return new Promise<ConnectResult | undefined>((resolve, reject) => {
@@ -173,55 +179,39 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
         clearInterval(pollClosed);
         cleanup();
 
-        // Handle encrypted response (wallet supports ECDH channel encryption).
-        const encrypted = event.data.encryptedPayload as EncryptedPostMessagePayload | undefined;
-        if (encrypted && dappKeyPair) {
-          decryptPostMessagePayload(encrypted, dappKeyPair).then((payload: Record<string, unknown>) => {
-            const p = payload as any;
-            if (!p.delegateDid || !p.grants) {
-              resolve(undefined);
-              return;
-            }
-            resolve({
-              delegatePortableDid         : p.delegateDid as PortableDid,
-              delegateGrants              : p.grants as DwnDataEncodedRecordsWriteMessage[],
-              connectedDid                : p.connectedDid ?? did ?? (p.delegateDid as PortableDid).uri,
-              delegateDecryptionKeys      : p.delegateDecryptionKeys ?? undefined,
-              delegateContextKeys         : p.delegateContextKeys ?? undefined,
-              delegateMultiPartyProtocols : p.delegateMultiPartyProtocols ?? undefined,
-              sessionRevocations          : p.sessionRevocations ?? undefined,
-            });
-          }).catch(() => {
-            // Decryption failed — treat as denied.
-            resolve(undefined);
-          });
-          return;
-        }
-
-        // Plaintext fallback (wallet doesn't support encryption yet).
-        const {
-          delegateDid,
-          connectedDid: walletConnectedDid,
-          grants,
-          delegateDecryptionKeys,
-          delegateContextKeys,
-          delegateMultiPartyProtocols,
-          sessionRevocations,
-        } = event.data;
-
-        if (!delegateDid || !grants) {
+        // If the wallet sent an explicit error, treat as denied.
+        if (event.data.error) {
           resolve(undefined);
           return;
         }
 
-        resolve({
-          delegatePortableDid         : delegateDid as PortableDid,
-          delegateGrants              : grants as DwnDataEncodedRecordsWriteMessage[],
-          connectedDid                : walletConnectedDid ?? did ?? delegateDid.uri,
-          delegateDecryptionKeys      : delegateDecryptionKeys ?? undefined,
-          delegateContextKeys         : delegateContextKeys ?? undefined,
-          delegateMultiPartyProtocols : delegateMultiPartyProtocols ?? undefined,
-          sessionRevocations          : sessionRevocations ?? undefined,
+        // Require an encrypted response. The dapp always sends an
+        // ephemeralPublicKey, so a plaintext response means either the
+        // wallet is outdated or something intercepted the flow.
+        const encrypted = event.data.encryptedPayload as EncryptedPostMessagePayload | undefined;
+        if (!encrypted) {
+          resolve(undefined);
+          return;
+        }
+
+        decryptPostMessagePayload(encrypted, dappKeyPair).then((payload: Record<string, unknown>) => {
+          const p = payload as any;
+          if (!p.delegateDid || !p.grants) {
+            resolve(undefined);
+            return;
+          }
+          resolve({
+            delegatePortableDid         : p.delegateDid as PortableDid,
+            delegateGrants              : p.grants as DwnDataEncodedRecordsWriteMessage[],
+            connectedDid                : p.connectedDid ?? did ?? (p.delegateDid as PortableDid).uri,
+            delegateDecryptionKeys      : p.delegateDecryptionKeys ?? undefined,
+            delegateContextKeys         : p.delegateContextKeys ?? undefined,
+            delegateMultiPartyProtocols : p.delegateMultiPartyProtocols ?? undefined,
+            sessionRevocations          : p.sessionRevocations ?? undefined,
+          });
+        }).catch(() => {
+          // Decryption failed — treat as denied.
+          resolve(undefined);
         });
       }
     };
