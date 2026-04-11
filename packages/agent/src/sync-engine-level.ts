@@ -398,16 +398,13 @@ export class SyncEngineLevel implements SyncEngine {
     await this._db.close();
   }
 
-  public async registerIdentity({ did, options }: { did: string; options?: SyncIdentityOptions }): Promise<void> {
+  public async registerIdentity({ did, options }: { did: string; options: SyncIdentityOptions }): Promise<void> {
     const registeredIdentities = this._db.sublevel('registeredIdentities');
 
     const existing = await this.getIdentityOptions(did);
     if (existing) {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is already registered.`);
     }
-
-    // if no options are provided, we default to no delegateDid and all protocols (empty array)
-    options ??= { protocols: [] };
 
     await registeredIdentities.put(did, JSON.stringify(options));
     this._syncTargetsCache = undefined;
@@ -2984,7 +2981,7 @@ export class SyncEngineLevel implements SyncEngine {
         parsed = JSON.parse(options) as SyncIdentityOptions;
       } catch (error: unknown) {
         console.warn(`SyncEngineLevel: Corrupt sync options for ${did}, falling back to global sync:`, error);
-        parsed = { protocols: [] };
+        parsed = { protocols: 'all' };
       }
       const { protocols, delegateDid } = parsed;
 
@@ -2995,7 +2992,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       for (const dwnUrl of dwnEndpointUrls) {
-        if (protocols.length === 0) {
+        if (protocols === 'all') {
           // Sync all protocols (global tree).
           targets.push({ did, delegateDid, dwnUrl });
         } else {

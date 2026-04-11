@@ -24,14 +24,14 @@ describe('SyncEngineLevel — identity management', () => {
   });
 
   describe('registerIdentity', () => {
-    it('should register an identity with default options', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:register1' });
+    it('should register an identity with protocols: all', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:register1', options: { protocols: 'all' } });
       const options = await syncEngine.getIdentityOptions('did:example:register1');
       expect(options).toBeDefined();
-      expect(options!.protocols).toEqual([]);
+      expect(options!.protocols).toBe('all');
     });
 
-    it('should register an identity with custom options', async () => {
+    it('should register an identity with specific protocols and delegateDid', async () => {
       await syncEngine.registerIdentity({
         did     : 'did:example:register2',
         options : { protocols: ['https://example.com/protocol1'], delegateDid: 'did:example:delegate' },
@@ -43,16 +43,16 @@ describe('SyncEngineLevel — identity management', () => {
     });
 
     it('should throw when registering an already registered identity', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:dup' });
+      await syncEngine.registerIdentity({ did: 'did:example:dup', options: { protocols: 'all' } });
       await expect(
-        syncEngine.registerIdentity({ did: 'did:example:dup' })
+        syncEngine.registerIdentity({ did: 'did:example:dup', options: { protocols: 'all' } })
       ).rejects.toThrow('is already registered');
     });
   });
 
   describe('unregisterIdentity', () => {
     it('should unregister a registered identity', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:unreg1' });
+      await syncEngine.registerIdentity({ did: 'did:example:unreg1', options: { protocols: 'all' } });
       await syncEngine.unregisterIdentity('did:example:unreg1');
       const options = await syncEngine.getIdentityOptions('did:example:unreg1');
       expect(options).toBeUndefined();
@@ -99,9 +99,195 @@ describe('SyncEngineLevel — identity management', () => {
       await expect(
         syncEngine.updateIdentityOptions({
           did     : 'did:example:nonexistent',
-          options : { protocols: [] },
+          options : { protocols: 'all' },
         })
       ).rejects.toThrow('is not registered');
+    });
+  });
+
+  describe('explicit protocol scope', () => {
+    it('should persist protocols: all and retrieve it as the string all', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:scope-all', options: { protocols: 'all' } });
+      const options = await syncEngine.getIdentityOptions('did:example:scope-all');
+      expect(options).toBeDefined();
+      expect(options!.protocols).toBe('all');
+      expect(typeof options!.protocols).toBe('string');
+    });
+
+    it('should persist a specific protocol list and retrieve it as an array', async () => {
+      const protos = ['https://proto.example.com/chat/1.0', 'https://proto.example.com/notes/1.0'];
+      await syncEngine.registerIdentity({ did: 'did:example:scope-list', options: { protocols: protos } });
+      const options = await syncEngine.getIdentityOptions('did:example:scope-list');
+      expect(options).toBeDefined();
+      expect(Array.isArray(options!.protocols)).toBe(true);
+      expect(options!.protocols).toEqual(protos);
+    });
+
+    it('should persist an empty protocol array (syncs nothing specific)', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:scope-empty', options: { protocols: [] } });
+      const options = await syncEngine.getIdentityOptions('did:example:scope-empty');
+      expect(options).toBeDefined();
+      expect(options!.protocols).toEqual([]);
+    });
+
+    it('should persist syncMode alongside protocols', async () => {
+      await syncEngine.registerIdentity({
+        did     : 'did:example:scope-mode',
+        options : { protocols: 'all', syncMode: 'standard' },
+      });
+      const options = await syncEngine.getIdentityOptions('did:example:scope-mode');
+      expect(options).toBeDefined();
+      expect(options!.protocols).toBe('all');
+      expect(options!.syncMode).toBe('standard');
+    });
+
+    it('should update from protocols: all to a specific list', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:scope-switch', options: { protocols: 'all' } });
+      await syncEngine.updateIdentityOptions({
+        did     : 'did:example:scope-switch',
+        options : { protocols: ['https://proto.example.com/notes/1.0'] },
+      });
+      const options = await syncEngine.getIdentityOptions('did:example:scope-switch');
+      expect(options!.protocols).toEqual(['https://proto.example.com/notes/1.0']);
+    });
+
+    it('should update from a specific list to protocols: all', async () => {
+      await syncEngine.registerIdentity({
+        did     : 'did:example:scope-widen',
+        options : { protocols: ['https://proto.example.com/notes/1.0'] },
+      });
+      await syncEngine.updateIdentityOptions({
+        did     : 'did:example:scope-widen',
+        options : { protocols: 'all' },
+      });
+      const options = await syncEngine.getIdentityOptions('did:example:scope-widen');
+      expect(options!.protocols).toBe('all');
+    });
+  });
+
+  describe('getSyncTargets — protocol scope handling', () => {
+    it('should produce one unscoped target per URL when protocols is all', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn1.example.com', 'https://dwn2.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      await engine.registerIdentity({ did: 'did:example:all-protos', options: { protocols: 'all' } });
+      const targets = await (engine as any).getSyncTargets();
+
+      expect(targets).toHaveLength(2);
+      expect(targets[0].protocol).toBeUndefined();
+      expect(targets[1].protocol).toBeUndefined();
+      expect(targets[0].dwnUrl).toBe('https://dwn1.example.com');
+      expect(targets[1].dwnUrl).toBe('https://dwn2.example.com');
+    });
+
+    it('should produce one target per protocol per URL when protocols is a list', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      await engine.registerIdentity({
+        did     : 'did:example:scoped',
+        options : { protocols: ['https://proto1.example.com', 'https://proto2.example.com'] },
+      });
+      const targets = await (engine as any).getSyncTargets();
+
+      expect(targets).toHaveLength(2);
+      expect(targets[0].protocol).toBe('https://proto1.example.com');
+      expect(targets[1].protocol).toBe('https://proto2.example.com');
+    });
+
+    it('should produce zero targets when protocols is an empty array', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      await engine.registerIdentity({ did: 'did:example:empty-list', options: { protocols: [] } });
+      const targets = await (engine as any).getSyncTargets();
+
+      expect(targets).toHaveLength(0);
+    });
+
+    it('should fall back to all when stored JSON is corrupt', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      // Write corrupt JSON directly to the sublevel.
+      const identities = db.sublevel('registeredIdentities');
+      await identities.put('did:example:corrupt', '}{not-json');
+
+      const warnStub = sinon.stub(console, 'warn');
+      const targets = await (engine as any).getSyncTargets();
+
+      expect(targets).toHaveLength(1);
+      expect(targets[0].did).toBe('did:example:corrupt');
+      expect(targets[0].protocol).toBeUndefined();
+      expect(warnStub.calledOnce).toBe(true);
+      warnStub.restore();
+    });
+
+    it('should include delegateDid in targets from registration options', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      await engine.registerIdentity({
+        did     : 'did:example:delegated',
+        options : { protocols: 'all', delegateDid: 'did:example:delegate' },
+      });
+      const targets = await (engine as any).getSyncTargets();
+
+      expect(targets).toHaveLength(1);
+      expect(targets[0].delegateDid).toBe('did:example:delegate');
+    });
+
+    it('should handle mixed all and scoped registrations', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      await engine.registerIdentity({
+        did     : 'did:example:alice',
+        options : { protocols: 'all' },
+      });
+      await engine.registerIdentity({
+        did     : 'did:example:bob',
+        options : { protocols: ['https://proto.example.com/chat/1.0'] },
+      });
+
+      const targets = await (engine as any).getSyncTargets();
+
+      // Alice produces 1 unscoped target, Bob produces 1 scoped target.
+      expect(targets).toHaveLength(2);
+      const aliceTarget = targets.find((t: any) => t.did === 'did:example:alice');
+      const bobTarget = targets.find((t: any) => t.did === 'did:example:bob');
+      expect(aliceTarget!.protocol).toBeUndefined();
+      expect(bobTarget!.protocol).toBe('https://proto.example.com/chat/1.0');
     });
   });
 
@@ -111,7 +297,7 @@ describe('SyncEngineLevel — identity management', () => {
       const mockAgent = { agentDid: 'did:example:agent' } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
-      await engine.registerIdentity({ did: 'did:example:clear1' });
+      await engine.registerIdentity({ did: 'did:example:clear1', options: { protocols: 'all' } });
       expect(await engine.getIdentityOptions('did:example:clear1')).toBeDefined();
 
       await engine.clear();

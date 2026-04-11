@@ -336,7 +336,7 @@ describe('E2E Multi-Agent Sync', () => {
       const recordId = writeResult.message!.recordId;
 
       // Primary agent registers Alice and syncs (push to remote).
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri });
+      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
       // Verify record is on the remote DWN.
@@ -407,7 +407,7 @@ describe('E2E Multi-Agent Sync', () => {
       expect(profileWrite.reply.status.code).toBe(202);
 
       // Push both to remote.
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri });
+      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
       // Device agent has grants ONLY for notes protocol.
@@ -505,7 +505,7 @@ describe('E2E Multi-Agent Sync', () => {
 
     it('should deliver a record in real-time from primary to device via remote DWN', async () => {
       // Register identities on both agents.
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri });
+      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
       await deviceHarness.agent.sync.registerIdentity({
         did     : alice.did.uri,
         options : {
@@ -557,7 +557,7 @@ describe('E2E Multi-Agent Sync', () => {
 
     it('should handle multiple sequential writes in live mode', async () => {
       // Register and start live sync.
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri });
+      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
       await deviceHarness.agent.sync.registerIdentity({
         did     : alice.did.uri,
         options : {
@@ -625,7 +625,7 @@ describe('E2E Multi-Agent Sync', () => {
 
     it('should only deliver protocol-scoped records in live mode', async () => {
       // Register primary with full sync, device with only notes protocol.
-      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri });
+      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
       await deviceHarness.agent.sync.registerIdentity({
         did     : alice.did.uri,
         options : {

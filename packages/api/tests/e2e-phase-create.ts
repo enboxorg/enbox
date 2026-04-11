@@ -120,8 +120,8 @@ async function main(): Promise<void> {
   // Identity metadata, portable DID, and encrypted keys are stored under the
   // agent DID's tenant — these must be pushed so recovery can pull them back.
   log('Syncing to remote DWN...');
-  await agent.sync.registerIdentity({ did: agent.agentDid.uri });
-  await agent.sync.registerIdentity({ did });
+  await agent.sync.registerIdentity({ did: agent.agentDid.uri, options: { protocols: 'all' } });
+  await agent.sync.registerIdentity({ did, options: { protocols: 'all' } });
 
   // Push sync multiple times to handle ordering dependencies.
   // The remote DWN rejects messages that depend on protocols not yet installed

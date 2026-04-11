@@ -1208,7 +1208,7 @@ describe('AuthManager', () => {
 
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].did).toBe('did:dht:testuser123');
-      expect(registerCalls[0].options.protocols).toEqual([]);
+      expect(registerCalls[0].options.protocols).toBe('all');
     });
 
     test('passes delegateDid for wallet-connected identity', async () => {

@@ -826,9 +826,9 @@ export class AuthManager {
     // Register the identity for sync and restart sync.
     const sync = this._defaultSync;
     if (sync !== 'off') {
-      const protocols = delegateDid
+      const protocols: 'all' | string[] = delegateDid
         ? await this._deriveProtocolsFromGrants(delegateDid)
-        : [];
+        : 'all';
 
       await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
       await startSyncIfEnabled(this._userAgent, sync);
@@ -1131,7 +1131,7 @@ export class AuthManager {
   private async _registerOrUpdateSyncIdentity(
     connectedDid: string,
     delegateDid: string | undefined,
-    protocols: string[],
+    protocols: 'all' | string[],
   ): Promise<void> {
     const options = { delegateDid, protocols };
     try {

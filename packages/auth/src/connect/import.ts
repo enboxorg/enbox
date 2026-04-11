@@ -72,7 +72,7 @@ export async function importFromPhrase(
   if (isNewIdentity && sync !== 'off') {
     await userAgent.sync.registerIdentity({
       did     : connectedDid,
-      options : { delegateDid, protocols: [] },
+      options : { delegateDid, protocols: 'all' },
     });
   }
 
@@ -131,7 +131,7 @@ export async function importFromPortable(
   if (sync !== 'off') {
     await userAgent.sync.registerIdentity({
       did     : connectedDid,
-      options : { delegateDid, protocols: [] },
+      options : { delegateDid, protocols: 'all' },
     });
   }
 

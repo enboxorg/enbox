@@ -307,7 +307,8 @@ describe('SyncEngineLevel', () => {
 
       // Register Alice's DID to be synchronized.
       await testHarness.agent.sync.registerIdentity({
-        did: alice.did.uri,
+        did     : alice.did.uri,
+        options : { protocols: 'all' },
       });
 
       // Execute Sync to pull all records from Alice's remote DWN to Alice's local DWN.
@@ -378,7 +379,8 @@ describe('SyncEngineLevel', () => {
       it('throws an error if the sync is currently already running', async () => {
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -470,7 +472,8 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Execute Sync to pull all records from Alice's remote DWN to Alice's local DWN.
@@ -680,7 +683,8 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Execute Sync to pull all records from Alice's remote DWN to Alice's local DWN.
@@ -744,7 +748,8 @@ describe('SyncEngineLevel', () => {
 
         // register alice
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // create a remote record
@@ -855,12 +860,14 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Register Bob's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
-          did: bob.did.uri,
+          did     : bob.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Execute Sync to pull all records from Alice's and Bob's remove DWNs to their local DWNs.
@@ -947,7 +954,8 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Execute Sync to pull all records from Alice's remote DWN to Alice's local DWN.
@@ -1140,7 +1148,8 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Execute Sync to push all records from Alice's local DWN to Alice's remote DWN.
@@ -1203,7 +1212,8 @@ describe('SyncEngineLevel', () => {
 
         //register alice
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // create a local record
@@ -1306,12 +1316,14 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Register Bob's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
-          did: bob.did.uri,
+          did     : bob.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Execute Sync to push all records from Alice's and Bob's local DWNs to their remote DWNs.
@@ -1349,7 +1361,8 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID for sync.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Write a record to Alice's remote DWN.
@@ -1410,7 +1423,8 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID for sync.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Write a record to Alice's local DWN.
@@ -1472,7 +1486,8 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID for sync.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Write a record locally.
@@ -1538,7 +1553,8 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID for sync.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Write a record locally.
@@ -1653,7 +1669,8 @@ describe('SyncEngineLevel', () => {
     describe('startSync()', () => {
       it('calls sync() in each interval', async () => {
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         const syncSpy = sinon.stub(SyncEngineLevel.prototype as any, 'sync');
@@ -1673,7 +1690,8 @@ describe('SyncEngineLevel', () => {
 
       it('does not call sync() again until a sync round finishes', async () => {
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -1731,7 +1749,8 @@ describe('SyncEngineLevel', () => {
 
       it('calls sync once per interval with the latest interval timer being respected', async () => {
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -1777,7 +1796,8 @@ describe('SyncEngineLevel', () => {
       it('should replace the interval timer with the latest interval timer', async () => {
 
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -1817,7 +1837,8 @@ describe('SyncEngineLevel', () => {
 
       it('should log sync errors, but continue syncing the next interval', async () => {
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -1857,7 +1878,8 @@ describe('SyncEngineLevel', () => {
     describe('stopSync()', () => {
       it('stops the sync interval', async () => {
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -1898,7 +1920,8 @@ describe('SyncEngineLevel', () => {
 
       it('waits for the current sync to complete before stopping', async () => {
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -1960,7 +1983,8 @@ describe('SyncEngineLevel', () => {
 
       it('throws if ongoing sync does not complete within 2 seconds', async () => {
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -2025,7 +2049,8 @@ describe('SyncEngineLevel', () => {
 
       it('only waits for the ongoing sync for the given timeout before failing', async () => {
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -2781,13 +2806,14 @@ describe('SyncEngineLevel', () => {
 
         // register identity without any options
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         const registerIdentitiesPutCall = abstractLevelPut.args[0];
         const options = JSON.parse(registerIdentitiesPutCall[1] as string);
-        // confirm that without options the options are set to an empty protocol array
-        expect(options).toEqual({ protocols: [] });
+        // confirm that the options are stored as-is with protocols: 'all'
+        expect(options).toEqual({ protocols: 'all' });
       });
     });
 
@@ -2799,7 +2825,8 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         await syncEngine.sync();
@@ -2812,7 +2839,8 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // First sync to get to online state.
@@ -2837,7 +2865,8 @@ describe('SyncEngineLevel', () => {
 
         // Register Alice's DID.
         await testHarness.agent.sync.registerIdentity({
-          did: alice.did.uri,
+          did     : alice.did.uri,
+          options : { protocols: 'all' },
         });
 
         // Successful sync -> online.
@@ -2874,8 +2903,8 @@ describe('SyncEngineLevel', () => {
         // Create two identities that share the same DWN URL.
         const alice2 = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
         const bob2 = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
-        await syncEngine.registerIdentity({ did: alice2.did.uri });
-        await syncEngine.registerIdentity({ did: bob2.did.uri });
+        await syncEngine.registerIdentity({ did: alice2.did.uri, options: { protocols: 'all' } });
+        await syncEngine.registerIdentity({ did: bob2.did.uri, options: { protocols: 'all' } });
 
         // Stub getLocalRoot to fail for the first target.
         const consoleErrorStub = sinon.stub(console, 'error');
