@@ -1290,9 +1290,9 @@ function stripEncryptionBlocks(value: unknown): unknown {
 function normalizePath(path: string): string {
   // Strip leading and trailing '/' without regex quantifiers (avoids ReDoS scanners).
   let start = 0;
-  while (start < path.length && path.charCodeAt(start) === 47) { start++; } // 47 === '/'
+  while (start < path.length && path.codePointAt(start) === 47) { start++; } // 47 === '/'
   let end = path.length;
-  while (end > start && path.charCodeAt(end - 1) === 47) { end--; }
+  while (end > start && path.codePointAt(end - 1) === 47) { end--; }
   return path.slice(start, end);
 }
 

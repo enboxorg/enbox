@@ -11,7 +11,7 @@ import { DwnInterfaceName, DwnMethodName, getRuleSetAtPath, Message } from '@enb
 /** Strips trailing `/` characters without regex (avoids ReDoS scanners). */
 function stripTrailingSlashes(value: string): string {
   let end = value.length;
-  while (end > 0 && value.charCodeAt(end - 1) === 47) { // 47 === '/'
+  while (end > 0 && value.codePointAt(end - 1) === 47) { // 47 === '/'
     end--;
   }
   return end === value.length ? value : value.slice(0, end);

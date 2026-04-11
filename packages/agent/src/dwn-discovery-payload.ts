@@ -276,10 +276,10 @@ function stringToBase64Url(input: string): string {
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
-  const result = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_');
+  const result = btoa(binary).replaceAll('+', '-').replaceAll('/', '_');
   // Strip trailing '=' padding without regex quantifiers (avoids ReDoS scanners).
   let end = result.length;
-  while (end > 0 && result.charCodeAt(end - 1) === 61) { end--; } // 61 === '='
+  while (end > 0 && result.codePointAt(end - 1) === 61) { end--; } // 61 === '='
   return end === result.length ? result : result.slice(0, end);
 }
 
