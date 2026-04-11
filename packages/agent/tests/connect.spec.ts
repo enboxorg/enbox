@@ -524,7 +524,6 @@ describe('enbox connect', () => {
     });
 
     it('should throw when epk is missing from the protected header', async () => {
-      // Manually construct a JWE with no epk to verify the guard clause.
       const badHeader = { alg: 'dir', cty: 'JWT', enc: 'XC20P', typ: 'JWT' };
       const badJwe = [
         Convert.object(badHeader).toBase64Url(),
@@ -537,6 +536,173 @@ describe('enbox connect', () => {
       await expect(
         EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, badJwe, randomPin)
       ).rejects.toThrow('missing required "epk"');
+    });
+
+    it('should throw when epk is null', async () => {
+      const badHeader = { alg: 'dir', cty: 'JWT', enc: 'XC20P', typ: 'JWT', epk: null };
+      const badJwe = [
+        Convert.object(badHeader).toBase64Url(),
+        '',
+        Convert.uint8Array(new Uint8Array(24)).toBase64Url(),
+        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
+        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
+      ].join('.');
+
+      await expect(
+        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, badJwe, randomPin)
+      ).rejects.toThrow('missing required "epk"');
+    });
+
+    it('should throw when epk is a string instead of an object', async () => {
+      const badHeader = { alg: 'dir', cty: 'JWT', enc: 'XC20P', typ: 'JWT', epk: 'did:jwk:abc' };
+      const badJwe = [
+        Convert.object(badHeader).toBase64Url(),
+        '',
+        Convert.uint8Array(new Uint8Array(24)).toBase64Url(),
+        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
+        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
+      ].join('.');
+
+      await expect(
+        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, badJwe, randomPin)
+      ).rejects.toThrow('missing required "epk"');
+    });
+
+    it('should throw when epk is a number', async () => {
+      const badHeader = { alg: 'dir', cty: 'JWT', enc: 'XC20P', typ: 'JWT', epk: 42 };
+      const badJwe = [
+        Convert.object(badHeader).toBase64Url(),
+        '',
+        Convert.uint8Array(new Uint8Array(24)).toBase64Url(),
+        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
+        Convert.uint8Array(new Uint8Array(16)).toBase64Url(),
+      ].join('.');
+
+      await expect(
+        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, badJwe, randomPin)
+      ).rejects.toThrow('missing required "epk"');
+    });
+
+    it('should fail decryption when the epk is tampered with', async () => {
+      // Swap the epk with a completely different key — ECDH will derive
+      // a different shared secret and AEAD decryption will fail.
+      const differentDid = await DidJwk.create();
+      const wrongEpk = differentDid.document.verificationMethod![0].publicKeyJwk!;
+
+      const [, ...rest] = connectResponseJwe.split('.');
+      const tamperedHeader = {
+        alg : 'dir',
+        cty : 'JWT',
+        enc : 'XC20P',
+        typ : 'JWT',
+        epk : { kty: wrongEpk.kty, crv: wrongEpk.crv, x: wrongEpk.x },
+      };
+      const tamperedJwe = [Convert.object(tamperedHeader).toBase64Url(), ...rest].join('.');
+
+      await expect(
+        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, tamperedJwe, randomPin)
+      ).rejects.toThrow();
+    });
+
+    it('should fail decryption when a different client DID is used', async () => {
+      const wrongClientDid = await DidJwk.create();
+
+      await expect(
+        EnboxConnectProtocol.decryptResponse(wrongClientDid, connectResponseJwe, randomPin)
+      ).rejects.toThrow();
+    });
+
+    it('should fail decryption when ciphertext is tampered with', async () => {
+      const parts = connectResponseJwe.split('.');
+      // Flip a byte in the ciphertext segment.
+      const ciphertextBytes = Convert.base64Url(parts[3]).toUint8Array();
+      ciphertextBytes[0] ^= 0xff;
+      parts[3] = Convert.uint8Array(ciphertextBytes).toBase64Url();
+      const tamperedJwe = parts.join('.');
+
+      await expect(
+        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, tamperedJwe, randomPin)
+      ).rejects.toThrow();
+    });
+
+    it('should fail when PIN was used during encryption but omitted during decryption', async () => {
+      // connectResponseJwe was encrypted WITH randomPin — decrypt without it.
+      await expect(
+        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, connectResponseJwe)
+      ).rejects.toThrow();
+    });
+
+    it('should fail when PIN was not used during encryption but provided during decryption', async () => {
+      const jweNoPin = await EnboxConnectProtocol.encryptResponse({
+        jwt                  : connectResponseJwt,
+        encryptionKey        : sharedECDHPrivateKey,
+        delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
+      });
+
+      await expect(
+        EnboxConnectProtocol.decryptResponse(clientEphemeralBearerDid, jweNoPin, '1234')
+      ).rejects.toThrow();
+    });
+
+    it('should strip extra JWK fields (kid, alg, d) from the epk in the header', async () => {
+      // Pass a JWK that has extra identifying/private fields.
+      const fullJwk = {
+        ...delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
+        kid : 'some-identifying-kid',
+        alg : 'EdDSA',
+        d   : 'private-key-material-that-must-not-leak',
+      };
+
+      const jwe = await EnboxConnectProtocol.encryptResponse({
+        jwt                  : connectResponseJwt,
+        encryptionKey        : sharedECDHPrivateKey,
+        delegatePublicKeyJwk : fullJwk,
+        pin                  : randomPin,
+      });
+
+      const [headerB64U] = jwe.split('.');
+      const header = Convert.base64Url(headerB64U).toObject() as Record<string, unknown>;
+      const epk = header.epk as Record<string, unknown>;
+
+      expect(Object.keys(epk).sort()).toEqual(['crv', 'kty', 'x']);
+      expect(epk.kid).toBeUndefined();
+      expect(epk.alg).toBeUndefined();
+      expect(epk.d).toBeUndefined();
+
+      // Should still decrypt correctly since the key material is the same.
+      const decrypted = await EnboxConnectProtocol.decryptResponse(
+        clientEphemeralBearerDid, jwe, randomPin
+      );
+      expect(decrypted).toBe(connectResponseJwt);
+    });
+
+    it('should produce non-correlatable epk values for different delegate DIDs', async () => {
+      const delegate1 = await DidJwk.create();
+      const delegate2 = await DidJwk.create();
+
+      const sharedKey1 = await EnboxConnectProtocol.deriveSharedKey(
+        delegate1, clientEphemeralBearerDid.document
+      );
+      const sharedKey2 = await EnboxConnectProtocol.deriveSharedKey(
+        delegate2, clientEphemeralBearerDid.document
+      );
+
+      const jwe1 = await EnboxConnectProtocol.encryptResponse({
+        jwt                  : connectResponseJwt,
+        encryptionKey        : sharedKey1,
+        delegatePublicKeyJwk : delegate1.document.verificationMethod![0].publicKeyJwk!,
+      });
+      const jwe2 = await EnboxConnectProtocol.encryptResponse({
+        jwt                  : connectResponseJwt,
+        encryptionKey        : sharedKey2,
+        delegatePublicKeyJwk : delegate2.document.verificationMethod![0].publicKeyJwk!,
+      });
+
+      const header1 = Convert.base64Url(jwe1.split('.')[0]).toObject() as Record<string, any>;
+      const header2 = Convert.base64Url(jwe2.split('.')[0]).toObject() as Record<string, any>;
+
+      // The x coordinates must differ — each delegate has a unique key pair.
+      expect(header1.epk.x).not.toBe(header2.epk.x);
     });
   });
 
