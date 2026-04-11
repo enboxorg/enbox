@@ -83,7 +83,11 @@ export async function computeScopeId(scope: SyncScope): Promise<string> {
   for (const b of hashArray) {
     base64 += String.fromCharCode(b);
   }
-  return btoa(base64).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const result = btoa(base64).replaceAll('+', '-').replaceAll('/', '_');
+  // Strip trailing '=' padding without regex quantifiers (avoids ReDoS scanners).
+  let end = result.length;
+  while (end > 0 && result.codePointAt(end - 1) === 61) { end--; } // 61 === '='
+  return end === result.length ? result : result.slice(0, end);
 }
 
 // ---------------------------------------------------------------------------

@@ -60,8 +60,9 @@ function isRetryable(error?: unknown, response?: Response): boolean {
  */
 function computeBackoffDelay(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
   const exponentialDelay = Math.min(baseDelayMs * Math.pow(2, attempt), maxDelayMs);
-  const jitter = 0.5 + Math.random() * 0.5;
-  return exponentialDelay * jitter;
+  // Jitter: random delay in [exponentialDelay/2, exponentialDelay).
+  const halfDelay = Math.floor(exponentialDelay / 2);
+  return halfDelay + (crypto.getRandomValues(new Uint32Array(1))[0] % (halfDelay || 1));
 }
 
 /**

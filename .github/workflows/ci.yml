@@ -502,15 +502,17 @@ jobs:
           bun run --filter @enbox/dwn-clients  test:node:coverage
           bun run --filter @enbox/agent        test:node:coverage
           bun run --filter @enbox/api          test:node:coverage
+          bun run --filter @enbox/browser      test:node:coverage
 
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/packages/dids/coverage coverage-staging/packages/dwn-clients/coverage coverage-staging/packages/agent/coverage coverage-staging/packages/api/coverage
+          mkdir -p coverage-staging/packages/dids/coverage coverage-staging/packages/dwn-clients/coverage coverage-staging/packages/agent/coverage coverage-staging/packages/api/coverage coverage-staging/packages/browser/coverage
           cp packages/dids/coverage/lcov.info coverage-staging/packages/dids/coverage/lcov.info 2>/dev/null || true
           cp packages/dwn-clients/coverage/lcov.info coverage-staging/packages/dwn-clients/coverage/lcov.info 2>/dev/null || true
           cp packages/agent/coverage/lcov.info coverage-staging/packages/agent/coverage/lcov.info 2>/dev/null || true
           cp packages/api/coverage/lcov.info coverage-staging/packages/api/coverage/lcov.info 2>/dev/null || true
+          cp packages/browser/coverage/lcov.info coverage-staging/packages/browser/coverage/lcov.info 2>/dev/null || true
 
       - name: Upload coverage
         if: always()
