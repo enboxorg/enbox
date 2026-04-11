@@ -324,12 +324,28 @@ export interface SyncEngine {
   readonly connectivityState: SyncConnectivityState;
 
   /**
+   * Whether sync is currently running (either live or poll mode).
+   * Use this to avoid calling `startSync()` when sync is already active,
+   * which would tear down all existing subscriptions and restart from scratch.
+   */
+  readonly isRunning: boolean;
+
+  /**
    * Register an identity to be managed by the SyncEngine for syncing.
    * The options can define specific protocols that should only be synced, or a delegate DID that should be used to sign the sync messages.
+   *
+   * When live sync is active, the new identity is hot-added: its replication
+   * links are created and subscriptions opened immediately, without tearing
+   * down existing subscriptions for other identities. This enables
+   * multi-identity agents (e.g. ElectroBun desktop DWN, multi-persona dApps)
+   * to add identities at runtime without disrupting sync for others.
    */
   registerIdentity(params: { did: string, options?: SyncIdentityOptions }): Promise<void>;
   /**
    * Unregister an identity from the SyncEngine, this will stop syncing messages for this identity.
+   *
+   * When live sync is active, the identity is hot-removed: its subscriptions
+   * are closed and runtime state cleaned up without affecting other identities.
    */
   unregisterIdentity(did: string): Promise<void>;
   /**
@@ -351,8 +367,11 @@ export interface SyncEngine {
    * Starts sync. In `'live'` mode opens real-time subscriptions with SMT
    * fallback; in `'poll'` mode uses periodic SMT reconciliation.
    *
-   * Subsequent calls update the mode/interval. Calling with a different mode
-   * tears down the previous mode's resources before starting the new one.
+   * If sync is already running in the requested mode, this is a no-op —
+   * existing subscriptions are preserved. This prevents disrupting live
+   * sync for existing identities when called after `registerIdentity()`.
+   * Calling with a *different* mode tears down the previous mode's
+   * resources before starting the new one.
    */
   startSync(params: StartSyncParams): Promise<void>;
   /**

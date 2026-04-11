@@ -15,7 +15,7 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { BearerIdentity, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent } from '@enbox/agent';
+import type { BearerIdentity, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnMessagesPermissionScope, DwnRecordsPermissionScope, EnboxUserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
@@ -163,6 +163,14 @@ export async function startSyncIfEnabled(
   sync: SyncOption | undefined,
 ): Promise<void> {
   if (sync === 'off') {
+    return;
+  }
+
+  // If sync is already running, skip the start call. `registerIdentity()`
+  // hot-adds new identities to the active live sync session automatically,
+  // so calling `startSync()` again would needlessly tear down all existing
+  // subscriptions and restart from scratch.
+  if (userAgent.sync.isRunning) {
     return;
   }
 
@@ -373,7 +381,7 @@ export async function processConnectedGrants(params: {
   // ── Collect protocols ─────────────────────────────────────────────
 
   for (const { grant } of parsed) {
-    const protocol = grant.scope.protocol;
+    const protocol = (grant.scope as DwnMessagesPermissionScope | DwnRecordsPermissionScope).protocol;
     if (protocol && protocol !== PermissionsProtocol.uri) {
       connectedProtocols.add(protocol);
     }
