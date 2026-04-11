@@ -90,6 +90,7 @@ jobs:
               - 'packages/dwn-sdk-js/src/**'
               - 'packages/dwn-sdk-js/tests/**'
               - 'packages/dwn-sdk-js/json-schemas/**'
+              - 'packages/dwn-sdk-js/build/**'
               - 'packages/dwn-sdk-js/package.json'
               - 'packages/dwn-sdk-js/tsconfig.json'
               - 'packages/dwn-sdk-js/vitest*.config.*'
@@ -136,6 +137,12 @@ jobs:
               - 'packages/api/tsconfig.json'
               - 'packages/api/vitest*.config.*'
 
+            protocols:
+              - 'packages/protocols/src/**'
+              - 'packages/protocols/tests/**'
+              - 'packages/protocols/package.json'
+              - 'packages/protocols/tsconfig.json'
+
             browser-pkg:
               - 'packages/browser/src/**'
               - 'packages/browser/tests/**'
@@ -157,6 +164,7 @@ jobs:
           agent="${{ steps.filter.outputs.agent }}"
           auth="${{ steps.filter.outputs.auth }}"
           api="${{ steps.filter.outputs.api }}"
+          protocols="${{ steps.filter.outputs.protocols }}"
           browser_pkg="${{ steps.filter.outputs.browser-pkg }}"
 
           # Propagate down the dependency graph
@@ -170,7 +178,7 @@ jobs:
           needs_auth=$( [ "$needs_agent" = "true" ] || [ "$auth" = "true" ] && echo true || echo false )
           needs_api=$( [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$api" = "true" ] && echo true || echo false )
           needs_lightweight=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_auth" = "true" ] && echo true || echo false )
-          needs_agent_api_group=$( [ "$needs_dids" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$needs_api" = "true" ] || [ "$dwn_clients" = "true" ] && echo true || echo false )
+          needs_agent_api_group=$( [ "$needs_dids" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$needs_api" = "true" ] || [ "$dwn_clients" = "true" ] || [ "$protocols" = "true" ] && echo true || echo false )
           needs_browser_tests=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_dids" = "true" ] || [ "$needs_dwn_sdk" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_api" = "true" ] || [ "$browser_pkg" = "true" ] && echo true || echo false )
           needs_e2e=$( [ "$needs_agent" = "true" ] && echo true || echo false )
 
@@ -960,7 +968,10 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const body = fs.readFileSync('coverage-report.md', 'utf8');
+            const nodeSection = fs.readFileSync('coverage-report.md', 'utf8');
+            const NODE_START = '<!-- coverage-node-start -->';
+            const NODE_END = '<!-- coverage-node-end -->';
+            const markedNode = `${NODE_START}\n${nodeSection}\n${NODE_END}`;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
@@ -973,6 +984,16 @@ jobs:
             );
 
             if (existing) {
+              // Replace only the node section, preserving any browser section
+              let body = existing.body;
+              const startIdx = body.indexOf(NODE_START);
+              const endIdx = body.indexOf(NODE_END);
+              if (startIdx !== -1 && endIdx !== -1) {
+                body = body.slice(0, startIdx) + markedNode + body.slice(endIdx + NODE_END.length);
+              } else {
+                // First time node runs on this comment — prepend node section
+                body = markedNode + '\n\n' + body;
+              }
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -984,7 +1005,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body,
+                body: markedNode,
               });
             }
 
@@ -1131,7 +1152,10 @@ jobs:
           script: |
             const fs = require('fs');
             if (!fs.existsSync('browser-coverage-report.md')) return;
-            const browserSection = fs.readFileSync('browser-coverage-report.md', 'utf8');
+            const browserContent = fs.readFileSync('browser-coverage-report.md', 'utf8');
+            const BROWSER_START = '<!-- coverage-browser-start -->';
+            const BROWSER_END = '<!-- coverage-browser-end -->';
+            const markedBrowser = `${BROWSER_START}\n${browserContent}\n${BROWSER_END}`;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
@@ -1144,9 +1168,14 @@ jobs:
             );
 
             if (existing) {
-              const body = existing.body.includes('Browser Coverage')
-                ? existing.body
-                : existing.body + '\n\n' + browserSection;
+              let body = existing.body;
+              const startIdx = body.indexOf(BROWSER_START);
+              const endIdx = body.indexOf(BROWSER_END);
+              if (startIdx !== -1 && endIdx !== -1) {
+                body = body.slice(0, startIdx) + markedBrowser + body.slice(endIdx + BROWSER_END.length);
+              } else {
+                body = body + '\n\n' + markedBrowser;
+              }
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -1154,7 +1183,7 @@ jobs:
                 body,
               });
             } else {
-              const body = '## Coverage Report\n\n_Node coverage not available for this run._\n\n' + browserSection;
+              const body = '## Coverage Report\n\n_Node coverage not available for this run._\n\n' + markedBrowser;
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -1349,8 +1378,12 @@ jobs:
     name: SonarCloud
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [changes, coverage-node]
-    if: needs.changes.outputs.src == 'true' && vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
+    needs: [changes, coverage-node, coverage-browser]
+    # Run after coverage jobs finish (whichever ran); OK if both are skipped
+    if: >-
+      always() && !cancelled() &&
+      needs.changes.outputs.src == 'true' &&
+      vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
 
     steps:
       - name: Checkout repository
@@ -1368,6 +1401,7 @@ jobs:
 
       - name: Download merged coverage
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: coverage-merged
           path: coverage/merged

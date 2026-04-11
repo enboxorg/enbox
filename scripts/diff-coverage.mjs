@@ -17,7 +17,7 @@
 
 import { execSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve, relative } from 'node:path';
+import { resolve } from 'node:path';
 
 const THRESHOLD = Number(process.env.DIFF_COVERAGE_THRESHOLD ?? 80);
 const LCOV_PATH = resolve('coverage/merged/lcov.info');
