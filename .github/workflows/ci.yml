@@ -753,7 +753,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server]
-    if: always() && !cancelled() && needs.changes.outputs.src == 'true'
+    # Run only when at least one node test job actually ran (not all skipped)
+    if: >-
+      always() && !cancelled() && needs.changes.outputs.src == 'true' &&
+      (needs.test-lightweight.result == 'success' || needs.test-dwn-sdk.result == 'success' ||
+       needs.test-agent-api.result == 'success' || needs.test-sql-store.result == 'success' ||
+       needs.test-dwn-server.result == 'success')
 
     steps:
       - name: Checkout repository
@@ -780,9 +785,12 @@ jobs:
       - name: Download node coverage artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: coverage-!(browser-*)
+          pattern: coverage-*
           path: .
           merge-multiple: true
+
+      - name: Remove browser coverage before merge
+        run: find . -path '*/coverage-browser-*' -type d -exec rm -rf {} + 2>/dev/null || true
 
       - name: Merge LCOV coverage
         run: bun run coverage:merge:reports
@@ -1403,7 +1411,7 @@ jobs:
             exit 1
           fi
 
-          # Coverage (node): required when it ran
+          # Coverage (node): required when it ran, OK to skip (no test jobs ran)
           if [ "${{ needs.coverage-node.result }}" != "success" ] && [ "${{ needs.coverage-node.result }}" != "skipped" ]; then
             echo "::error::coverage-node failed"
             exit 1
