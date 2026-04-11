@@ -130,17 +130,6 @@ describe('SyncEngineLevel — identity management', () => {
       expect(options!.protocols).toEqual([]);
     });
 
-    it('should persist syncMode alongside protocols', async () => {
-      await syncEngine.registerIdentity({
-        did     : 'did:example:scope-mode',
-        options : { protocols: 'all', syncMode: 'standard' },
-      });
-      const options = await syncEngine.getIdentityOptions('did:example:scope-mode');
-      expect(options).toBeDefined();
-      expect(options!.protocols).toBe('all');
-      expect(options!.syncMode).toBe('standard');
-    });
-
     it('should update from protocols: all to a specific list', async () => {
       await syncEngine.registerIdentity({ did: 'did:example:scope-switch', options: { protocols: 'all' } });
       await syncEngine.updateIdentityOptions({

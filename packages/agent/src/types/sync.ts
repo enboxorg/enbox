@@ -16,12 +16,6 @@ export type SyncIdentityOptions = {
    * - `string[]` — sync only the listed protocol URIs.
    */
   protocols: 'all' | string[];
-  /**
-   * Sync privacy mode. `'standard'` is the default wire-visible protocol
-   * scoping; `'private'` will use a single opaque SMT with no per-protocol
-   * identifiers on the wire (not yet implemented — reserved for future use).
-   */
-  syncMode?: 'standard' | 'private';
 };
 
 /**
