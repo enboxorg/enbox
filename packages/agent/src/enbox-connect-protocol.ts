@@ -435,18 +435,21 @@ async function decryptRequest({
 // Encryption: response (ECDH shared key + optional PIN)
 // ---------------------------------------------------------------------------
 
-/** Derives a shared ECDH key for encrypting/decrypting the connect response. */
-async function deriveSharedKey(
+/**
+ * Core ECDH key derivation from a raw public key JWK.
+ *
+ * Converts both keys to X25519, performs ECDH, and derives the final
+ * symmetric key via HKDF-SHA-256.
+ */
+async function deriveSharedKeyFromJwk(
   privateKeyDid: BearerDid,
-  publicKeyDid: DidDocument
+  publicKeyJwk: Jwk
 ): Promise<Uint8Array> {
   const privatePortableDid = await privateKeyDid.export();
-
-  const publicJwk = publicKeyDid.verificationMethod?.[0].publicKeyJwk!;
   const privateJwk = privatePortableDid.privateKeys?.[0]!;
-  publicJwk.alg = 'EdDSA';
+  const pubJwk = { ...publicKeyJwk, alg: 'EdDSA' };
 
-  const publicX25519 = await Ed25519.convertPublicKeyToX25519({ publicKey: publicJwk });
+  const publicX25519 = await Ed25519.convertPublicKeyToX25519({ publicKey: pubJwk });
   const privateX25519 = await Ed25519.convertPrivateKeyToX25519({ privateKey: privateJwk });
 
   const sharedKey = await X25519.sharedSecret({
@@ -463,6 +466,15 @@ async function deriveSharedKey(
   });
 }
 
+/** Derives a shared ECDH key for encrypting/decrypting the connect response. */
+async function deriveSharedKey(
+  privateKeyDid: BearerDid,
+  publicKeyDid: DidDocument
+): Promise<Uint8Array> {
+  const publicJwk = publicKeyDid.verificationMethod?.[0].publicKeyJwk!;
+  return deriveSharedKeyFromJwk(privateKeyDid, publicJwk);
+}
+
 /**
  * Encrypts the connect response JWT.
  *
@@ -475,20 +487,29 @@ async function deriveSharedKey(
 async function encryptResponse({
   jwt,
   encryptionKey,
-  delegateDidKeyId,
+  delegatePublicKeyJwk,
   pin,
 }: {
   jwt: string;
   encryptionKey: Uint8Array;
-  delegateDidKeyId: string;
+  delegatePublicKeyJwk: Jwk;
   pin?: string;
 }): Promise<string> {
+  // Include only the minimum key material (kty, crv, x) in the ephemeral
+  // public key header.  This avoids leaking DID-level identifiers (kid,
+  // alg, etc.) that would let the relay correlate sessions or resolve
+  // the delegate DID.  See https://github.com/enboxorg/enbox/issues/890
+  const epk: Jwk = {
+    kty : delegatePublicKeyJwk.kty,
+    crv : delegatePublicKeyJwk.crv,
+    x   : delegatePublicKeyJwk.x,
+  };
   const protectedHeader = {
     alg : 'dir',
     cty : 'JWT',
     enc : 'XC20P',
     typ : 'JWT',
-    kid : delegateDidKeyId,
+    epk,
   };
   const nonce = CryptoUtils.randomBytes(24);
 
@@ -533,16 +554,12 @@ async function decryptResponse(
     authenticationTagB64U,
   ] = jwe.split('.');
 
-  const header = Convert.base64Url(protectedHeaderB64U).toObject() as Jwk;
-  if (!header.kid) {
-    throw new Error('Connect: JWE protected header is missing required "kid" property.');
+  const header = Convert.base64Url(protectedHeaderB64U).toObject() as Record<string, unknown>;
+  if (!header.epk || typeof header.epk !== 'object') {
+    throw new Error('Connect: JWE protected header is missing required "epk" property.');
   }
-  const delegateResolvedDid = await DidJwk.resolve(header.kid.split('#')[0]);
 
-  const sharedKey = await EnboxConnectProtocol.deriveSharedKey(
-    clientDid,
-    delegateResolvedDid.didDocument!
-  );
+  const sharedKey = await deriveSharedKeyFromJwk(clientDid, header.epk as Jwk);
 
   // Build AAD — include PIN if provided (must match what was used during encryption).
   const aadObject = pin
@@ -1297,9 +1314,9 @@ async function submitConnectResponse(
 
   logger.log('Encrypting connect response...');
   const encryptedResponse = await EnboxConnectProtocol.encryptResponse({
-    jwt              : responseObjectJwt,
-    encryptionKey    : sharedKey,
-    delegateDidKeyId : delegateBearerDid.document.verificationMethod![0].id,
+    jwt                  : responseObjectJwt,
+    encryptionKey        : sharedKey,
+    delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
     pin,
   });
 
