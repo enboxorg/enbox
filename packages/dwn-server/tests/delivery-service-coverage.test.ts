@@ -452,6 +452,29 @@ describe('DeliveryService — coverage', () => {
       expect(fetchStub.firstCall.args[0]).toBe('http://peer.example.com');
     });
 
+    it('should strip multiple trailing slashes from endpoints', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
+        new Response(null, { status: 200 }),
+      );
+
+      const tenant = 'did:test:alice';
+      const resolver = fakeResolver({
+        [tenant]: didDocWithDwnService(tenant, [
+          'http://self.example.com',
+          'http://peer.example.com///',
+        ]),
+      });
+
+      const dwn = mockDwn();
+      const svc = DeliveryService.create(dwn, resolver, testConfig());
+
+      svc.dispatchIfNeeded(tenant, recordsWriteMessage(), 202);
+      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 100));
+
+      expect(fetchStub.callCount).toBe(1);
+      expect(fetchStub.firstCall.args[0]).toBe('http://peer.example.com');
+    });
+
     it('should extract endpoints from service with nodes object', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
         new Response(null, { status: 200 }),

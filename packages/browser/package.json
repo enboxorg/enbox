@@ -13,6 +13,8 @@
     "build": "bun run clean && bun run build:esm",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
+    "test:node": "bun test tests/drl-url-parser.spec.ts",
+    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage tests/drl-url-parser.spec.ts",
     "test:browser": "bunx --bun vitest --config vitest.browser.config.ts --run",
     "test:browser:coverage": "bunx --bun vitest --config vitest.browser.config.ts --run --coverage --coverage.provider=istanbul"
   },

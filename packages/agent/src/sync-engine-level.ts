@@ -1109,8 +1109,14 @@ export class SyncEngineLevel implements SyncEngine {
     if (existing) { clearInterval(existing); }
 
     // Schedule per-link polling with jitter (15-30 seconds).
+    // Rejection sampling: mask to 14 bits ([0, 16383]), reject >= 15000.
     const baseInterval = 15_000;
-    const jitter = Math.floor(Math.random() * 15_000);
+    const randomBuf = new Uint32Array(1);
+    let jitter: number;
+    do {
+      crypto.getRandomValues(randomBuf);
+      jitter = randomBuf[0] & 0x3FFF;
+    } while (jitter >= baseInterval);
     const interval = baseInterval + jitter;
 
     const pollGeneration = this._engineGeneration;

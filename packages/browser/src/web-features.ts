@@ -63,7 +63,10 @@ interface DrlMediaElement extends HTMLElement {
 }
 
 let didResolver = new UniversalResolver({ didResolvers: [DidDht, DidWeb] });
-const didUrlRegex = /^https?:\/\/dweb\/([^/]+)\/?(.*)$/;
+
+import { parseDrlUrl } from './drl-url-parser.js';
+export { parseDrlUrl } from './drl-url-parser.js';
+
 const httpToHttpsRegex = /^http:/;
 const trailingSlashRegex = /\/$/;
 const DRL_CACHE_NAME = 'drl';
@@ -198,9 +201,9 @@ async function installWorker(options: ActivatePolyfillsOptions = {}): Promise<vo
         event.waitUntil(workerSelf.clients.claim());
       });
       workerSelf.addEventListener('fetch', (event: FetchEvent) => {
-        const match = event.request.url.match(didUrlRegex);
-        if (match) {
-          event.respondWith(handleEvent(event, match[1], match[2], options));
+        const parsed = parseDrlUrl(event.request.url);
+        if (parsed) {
+          event.respondWith(handleEvent(event, parsed[0], parsed[1], options));
         }
       });
     }
@@ -436,10 +439,10 @@ function addLinkFeatures(): void {
       const anchor = (event.target as Element)?.closest('a');
       if (anchor) {
         const href = anchor.href;
-        const match = href.match(didUrlRegex);
-        if (match) {
-          const did = match[1];
-          const path = match[2];
+        const parsed = parseDrlUrl(href);
+        if (parsed) {
+          const did = parsed[0];
+          const path = parsed[1];
           const openAsTab = anchor.target === '_blank';
           event.preventDefault();
           try {
@@ -488,7 +491,7 @@ function addLinkFeatures(): void {
         (event.pointerType === 'touch' && event.isPrimary)
       ) {
         resetContextMenuTarget();
-        if (target?.src?.match(didUrlRegex)) {
+        if (target?.src && parseDrlUrl(target.src)) {
           contextMenuTarget = target;
           target.__src__ = target.src;
           const drl = target.src
