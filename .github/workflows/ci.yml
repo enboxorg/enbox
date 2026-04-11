@@ -27,6 +27,7 @@ jobs:
     outputs:
       src: ${{ steps.filter.outputs.src }}
       needs_common_crypto: ${{ steps.propagate.outputs.needs_common_crypto }}
+      needs_lightweight: ${{ steps.propagate.outputs.needs_lightweight }}
       needs_dids: ${{ steps.propagate.outputs.needs_dids }}
       needs_dwn_sdk: ${{ steps.propagate.outputs.needs_dwn_sdk }}
       needs_dwn_clients: ${{ steps.propagate.outputs.needs_dwn_clients }}
@@ -49,7 +50,7 @@ jobs:
           predicate-quantifier: 'every'
           filters: |
             src:
-              - added|modified: '**'
+              - '**'
               - '!**/*.md'
               - '!**/LICENSE'
               - '!**/CODE_OF_CONDUCT*'
@@ -69,45 +70,78 @@ jobs:
             common-crypto:
               - 'packages/common/src/**'
               - 'packages/common/tests/**'
+              - 'packages/common/package.json'
+              - 'packages/common/tsconfig.json'
+              - 'packages/common/vitest*.config.*'
               - 'packages/crypto/src/**'
               - 'packages/crypto/tests/**'
+              - 'packages/crypto/package.json'
+              - 'packages/crypto/tsconfig.json'
+              - 'packages/crypto/vitest*.config.*'
 
             dids:
               - 'packages/dids/src/**'
               - 'packages/dids/tests/**'
+              - 'packages/dids/package.json'
+              - 'packages/dids/tsconfig.json'
+              - 'packages/dids/vitest*.config.*'
 
             dwn-sdk:
               - 'packages/dwn-sdk-js/src/**'
               - 'packages/dwn-sdk-js/tests/**'
               - 'packages/dwn-sdk-js/json-schemas/**'
+              - 'packages/dwn-sdk-js/package.json'
+              - 'packages/dwn-sdk-js/tsconfig.json'
+              - 'packages/dwn-sdk-js/vitest*.config.*'
 
             dwn-clients:
               - 'packages/dwn-clients/src/**'
               - 'packages/dwn-clients/tests/**'
+              - 'packages/dwn-clients/package.json'
+              - 'packages/dwn-clients/tsconfig.json'
+              - 'packages/dwn-clients/vitest*.config.*'
 
             dwn-sql-store:
               - 'packages/dwn-sql-store/src/**'
               - 'packages/dwn-sql-store/tests/**'
+              - 'packages/dwn-sql-store/package.json'
+              - 'packages/dwn-sql-store/tsconfig.json'
+              - 'packages/dwn-sql-store/vitest*.config.*'
 
             dwn-server:
               - 'packages/dwn-server/src/**'
               - 'packages/dwn-server/tests/**'
+              - 'packages/dwn-server/package.json'
+              - 'packages/dwn-server/tsconfig.json'
+              - 'packages/dwn-server/vitest*.config.*'
 
             agent:
               - 'packages/agent/src/**'
               - 'packages/agent/tests/**'
+              - 'packages/agent/package.json'
+              - 'packages/agent/tsconfig.json'
+              - 'packages/agent/vitest*.config.*'
 
             auth:
               - 'packages/auth/src/**'
               - 'packages/auth/tests/**'
+              - 'packages/auth/package.json'
+              - 'packages/auth/tsconfig.json'
+              - 'packages/auth/vitest*.config.*'
 
             api:
               - 'packages/api/src/**'
               - 'packages/api/tests/**'
+              - 'packages/api/package.json'
+              - 'packages/api/tsconfig.json'
+              - 'packages/api/vitest*.config.*'
 
             browser-pkg:
               - 'packages/browser/src/**'
               - 'packages/browser/tests/**'
+              - 'packages/browser/package.json'
+              - 'packages/browser/tsconfig.json'
+              - 'packages/browser/vitest*.config.*'
 
       - name: Propagate changes through dependency graph
         id: propagate
@@ -135,6 +169,7 @@ jobs:
           needs_agent=$( [ "$needs_dids" = "true" ] || [ "$needs_dwn_sdk" = "true" ] || [ "$needs_dwn_clients" = "true" ] || [ "$agent" = "true" ] && echo true || echo false )
           needs_auth=$( [ "$needs_agent" = "true" ] || [ "$auth" = "true" ] && echo true || echo false )
           needs_api=$( [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$api" = "true" ] && echo true || echo false )
+          needs_lightweight=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_auth" = "true" ] && echo true || echo false )
           needs_agent_api_group=$( [ "$needs_dids" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_auth" = "true" ] || [ "$needs_api" = "true" ] || [ "$dwn_clients" = "true" ] && echo true || echo false )
           needs_browser_tests=$( [ "$needs_common_crypto" = "true" ] || [ "$needs_dids" = "true" ] || [ "$needs_dwn_sdk" = "true" ] || [ "$needs_agent" = "true" ] || [ "$needs_api" = "true" ] || [ "$browser_pkg" = "true" ] && echo true || echo false )
           needs_e2e=$( [ "$needs_agent" = "true" ] && echo true || echo false )
@@ -142,6 +177,7 @@ jobs:
           # Write outputs
           {
             echo "needs_common_crypto=$needs_common_crypto"
+            echo "needs_lightweight=$needs_lightweight"
             echo "needs_dids=$needs_dids"
             echo "needs_dwn_sdk=$needs_dwn_sdk"
             echo "needs_dwn_clients=$needs_dwn_clients"
@@ -244,7 +280,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     needs: [build, changes]
-    if: needs.changes.outputs.needs_common_crypto == 'true'
+    if: needs.changes.outputs.needs_lightweight == 'true'
 
     steps:
       - name: Checkout repository
@@ -1115,6 +1151,14 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 comment_id: existing.id,
+                body,
+              });
+            } else {
+              const body = '## Coverage Report\n\n_Node coverage not available for this run._\n\n' + browserSection;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
                 body,
               });
             }
