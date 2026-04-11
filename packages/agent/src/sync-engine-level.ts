@@ -342,9 +342,12 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   get isRunning(): boolean {
+    // Only active subscriptions indicate sync is running. The integrity
+    // timer (_syncIntervalId) alone does not — it may remain after the
+    // last identity is removed. Including it would prevent startSync()
+    // from being called when a new identity is added after removal.
     return this._liveSubscriptions.length > 0 ||
-           this._localSubscriptions.length > 0 ||
-           this._syncIntervalId !== undefined;
+           this._localSubscriptions.length > 0;
   }
 
   get connectivityState(): SyncConnectivityState {
@@ -425,8 +428,10 @@ export class SyncEngineLevel implements SyncEngine {
     this._syncTargetsCacheGeneration++;
 
     // If live sync is active, hot-add subscriptions for this identity without
-    // tearing down existing links.
-    if (this._syncMode === 'live' && this._liveSubscriptions.length > 0) {
+    // tearing down existing links. The condition uses _syncMode (not
+    // _liveSubscriptions.length) so hot-add works even after the last
+    // identity was removed and no subscriptions remain.
+    if (this._syncMode === 'live') {
       await this.addIdentityToLiveSync(did, options);
     }
   }
@@ -440,7 +445,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     // If live sync is active, hot-remove subscriptions for this identity
     // without tearing down links for other identities.
-    if (this._syncMode === 'live' && this._liveSubscriptions.length > 0) {
+    if (this._syncMode === 'live') {
       await this.removeIdentityFromLiveSync(did);
     }
 
@@ -477,6 +482,14 @@ export class SyncEngineLevel implements SyncEngine {
     await registeredIdentities.put(did, JSON.stringify(options));
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
+
+    // If live sync is active, tear down the identity's existing subscriptions
+    // and re-add with the new options so protocol filters and delegateDid
+    // take effect immediately.
+    if (this._syncMode === 'live' && this.hasActiveLinksForDid(did)) {
+      await this.removeIdentityFromLiveSync(did);
+      await this.addIdentityToLiveSync(did, options);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1014,6 +1027,8 @@ export class SyncEngineLevel implements SyncEngine {
       ReplicationLedger.resetCheckpoint(link.pull, resumeToken);
       await this.ledger.saveLink(link);
       if (this._engineGeneration !== generation) { return; }
+      // If the identity was hot-removed during repair, don't reopen.
+      if (!this._activeLinks.has(linkKey)) { return; }
 
       // Step 5: Reopen subscriptions.
       // Mark needsReconcile BEFORE reopening — local push starts from "now",
@@ -1357,6 +1372,14 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
   // Hot-add / hot-remove: per-identity live sync management
   // ---------------------------------------------------------------------------
+
+  /** Check whether this DID has any active links in the current sync session. */
+  private hasActiveLinksForDid(did: string): boolean {
+    for (const key of this._activeLinks.keys()) {
+      if (this.isLinkKeyForDid(key, did)) { return true; }
+    }
+    return false;
+  }
 
   /** Check whether a link key belongs to a given DID. */
   private isLinkKeyForDid(key: string, did: string): boolean {

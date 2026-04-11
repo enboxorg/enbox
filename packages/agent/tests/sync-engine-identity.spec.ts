@@ -227,16 +227,19 @@ describe('SyncEngineLevel — identity management', () => {
       expect(hotAddStub.called).toBe(false);
     });
 
-    it('should not call addIdentityToLiveSync when live mode has no active subscriptions', async () => {
+    it('should call addIdentityToLiveSync when live mode has no active subscriptions (e.g. after last identity removed)', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncMode = 'live';
       (engine as any)._liveSubscriptions = [];
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
 
-      await engine.registerIdentity({ did: 'did:example:nohot-empty' });
+      await engine.registerIdentity({ did: 'did:example:hot-after-removal' });
 
-      expect(hotAddStub.called).toBe(false);
+      // Hot-add should fire because _syncMode is 'live', even with zero
+      // existing subscriptions. This handles the case where the last
+      // identity was removed and a new one is added.
+      expect(hotAddStub.calledOnce).toBe(true);
     });
 
     it('should still persist identity even if addIdentityToLiveSync throws', async () => {
@@ -627,10 +630,13 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should return true when poll interval is active', () => {
+    it('should return false when only integrity timer is active (no subscriptions)', () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncIntervalId = setInterval(() => {}, 60_000);
-      expect(engine.isRunning).toBe(true);
+      // The integrity timer alone does not make sync "running" — after the
+      // last identity is removed, startSyncIfEnabled() must be able to
+      // detect that sync needs restarting for a new identity.
+      expect(engine.isRunning).toBe(false);
       clearInterval((engine as any)._syncIntervalId);
       (engine as any)._syncIntervalId = undefined;
     });
@@ -642,19 +648,120 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._localSubscriptions = [];
     });
 
-    it('should return false after all state is cleared', () => {
+    it('should return false after all subscriptions are removed', () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._liveSubscriptions = [];
       (engine as any)._localSubscriptions = [];
-      (engine as any)._syncIntervalId = undefined;
       expect(engine.isRunning).toBe(false);
     });
 
-    it('should return false when only active links exist but no subscriptions or interval', () => {
+    it('should return false when only active links exist but no subscriptions', () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._activeLinks.set('some-key', { tenantDid: 'did:example:a' });
       expect(engine.isRunning).toBe(false);
       (engine as any)._activeLinks.clear();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // updateIdentityOptions — live subscription refresh
+  // ---------------------------------------------------------------------------
+
+  describe('updateIdentityOptions — live subscription refresh', () => {
+    it('should hot-remove and hot-add when updating options during live sync', async () => {
+      const engine = new SyncEngineLevel({ db });
+      await engine.registerIdentity({ did: 'did:example:update1' });
+
+      (engine as any)._syncMode = 'live';
+      (engine as any)._activeLinks.set('did:example:update1^https://dwn.example.com', { tenantDid: 'did:example:update1' });
+
+      const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+
+      const newOptions = { protocols: ['https://new-proto.example'], delegateDid: 'did:example:delegate' };
+      await engine.updateIdentityOptions({ did: 'did:example:update1', options: newOptions });
+
+      expect(hotRemoveStub.calledOnce).toBe(true);
+      expect(hotAddStub.calledOnce).toBe(true);
+      expect(hotAddStub.firstCall.args[1]).toEqual(newOptions);
+      // hot-remove should be called before hot-add
+      expect(hotRemoveStub.calledBefore(hotAddStub)).toBe(true);
+    });
+
+    it('should not hot-remove/add when updating options while sync is not live', async () => {
+      const engine = new SyncEngineLevel({ db });
+      await engine.registerIdentity({ did: 'did:example:update-poll' });
+
+      (engine as any)._syncMode = 'poll';
+
+      const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+
+      await engine.updateIdentityOptions({ did: 'did:example:update-poll', options: { protocols: ['https://new.example'] } });
+
+      expect(hotRemoveStub.called).toBe(false);
+      expect(hotAddStub.called).toBe(false);
+    });
+
+    it('should not hot-remove/add when identity has no active links (not yet syncing)', async () => {
+      const engine = new SyncEngineLevel({ db });
+      await engine.registerIdentity({ did: 'did:example:update-nolinks' });
+
+      (engine as any)._syncMode = 'live';
+      // No active links for this DID
+
+      const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+
+      await engine.updateIdentityOptions({ did: 'did:example:update-nolinks', options: { protocols: ['https://new.example'] } });
+
+      expect(hotRemoveStub.called).toBe(false);
+      expect(hotAddStub.called).toBe(false);
+    });
+
+    it('should persist new options even if not in live mode', async () => {
+      const engine = new SyncEngineLevel({ db });
+      await engine.registerIdentity({ did: 'did:example:persist-opts' });
+
+      const newOptions = { protocols: ['https://persisted.example'] };
+      await engine.updateIdentityOptions({ did: 'did:example:persist-opts', options: newOptions });
+
+      const stored = await engine.getIdentityOptions('did:example:persist-opts');
+      expect(stored).toEqual(newOptions);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // remove-last-then-add scenario
+  // ---------------------------------------------------------------------------
+
+  describe('remove last identity, then add new one', () => {
+    it('should hot-add the new identity even when no subscriptions remain', async () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._syncMode = 'live';
+
+      // Simulate: identity A was syncing, then removed (no subscriptions left).
+      (engine as any)._liveSubscriptions = [];
+      (engine as any)._localSubscriptions = [];
+
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+
+      await engine.registerIdentity({ did: 'did:example:after-last-removed' });
+
+      // Hot-add should fire because _syncMode is 'live'.
+      expect(hotAddStub.calledOnce).toBe(true);
+    });
+
+    it('isRunning should return false after last identity removed so startSyncIfEnabled proceeds', () => {
+      const engine = new SyncEngineLevel({ db });
+      // Timer left over from live mode, but no subscriptions.
+      (engine as any)._syncIntervalId = setInterval(() => {}, 60_000);
+      (engine as any)._liveSubscriptions = [];
+      (engine as any)._localSubscriptions = [];
+
+      expect(engine.isRunning).toBe(false);
+
+      clearInterval((engine as any)._syncIntervalId);
     });
   });
 });

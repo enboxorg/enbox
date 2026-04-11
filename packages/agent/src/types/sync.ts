@@ -324,7 +324,9 @@ export interface SyncEngine {
   readonly connectivityState: SyncConnectivityState;
 
   /**
-   * Whether sync is currently running (either live or poll mode).
+   * Whether sync is actively processing — i.e. at least one pull or push
+   * subscription is open. A stale integrity timer alone does not count.
+   *
    * Use this to avoid calling `startSync()` when sync is already active,
    * which would tear down all existing subscriptions and restart from scratch.
    */
