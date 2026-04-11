@@ -2007,7 +2007,10 @@ export class SyncEngineLevel implements SyncEngine {
     const timer = setTimeout((): void => {
       this._reconcileTimers.delete(linkKey);
       if (this._engineGeneration !== generation) { return; }
-      void this.reconcileLink(linkKey);
+      void this.reconcileLink(linkKey).catch((): void => {
+        // Errors are already logged inside doReconcileLink; swallow here
+        // to prevent unhandled-rejection flakes in the test runner.
+      });
     }, delayMs);
     this._reconcileTimers.set(linkKey, timer);
   }

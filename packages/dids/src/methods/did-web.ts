@@ -58,7 +58,7 @@ function isPrivateHostname(hostname: string): boolean {
   let v6 = h;
   if (v6.startsWith('[') && v6.endsWith(']')) { v6 = v6.slice(1, -1); }
   if (v6.includes(':')) {
-    if (v6 === '::1' || v6 === '::' || v6 === '::0') { return true; }
+    if (v6 === '::1' || v6 === '::') { return true; }
     if (v6.startsWith('fe80:') || v6.startsWith('fe80%')) { return true; }
     if (v6.startsWith('fc') || v6.startsWith('fd')) { return true; }
   }
