@@ -1092,13 +1092,14 @@ export class AuthManager {
     this._guardConcurrency();
     this._isConnecting = true;
 
-    // Clear in-memory delegate caches from any previous session so a
-    // reconnect with fewer capabilities (e.g. write-only) doesn't
-    // retain stale decryption keys from a prior read-capable session.
-    this._userAgent.dwn.clearDelegateDecryptionKeys();
-
     try {
       const session = await fn();
+
+      // Clear in-memory delegate caches from the previous session AFTER
+      // the new connect succeeds.  Clearing before fn() would break the
+      // active session if the new connect fails (e.g. user denial).
+      this._userAgent.dwn.clearDelegateDecryptionKeys();
+
       this._session = session;
       this._setState('connected');
       return session;

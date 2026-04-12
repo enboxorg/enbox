@@ -374,7 +374,7 @@ describe('AuthManager', () => {
   });
 
   describe('in-memory cache cleanup on reconnect', () => {
-    test('clears delegate decryption keys from prior session before new connect', async () => {
+    test('clears delegate decryption keys after successful connect', async () => {
       const clearCalls: (string | undefined)[] = [];
       const agent = createMockAgent({
         firstLaunch                    : async () => false,
@@ -385,9 +385,26 @@ describe('AuthManager', () => {
 
       await manager.connect({ password: 'test' });
 
-      // clearDelegateDecryptionKeys should have been called during _withConnect
-      // (before the connect flow runs) to prevent stale keys from a prior session.
+      // clearDelegateDecryptionKeys should have been called after the connect
+      // flow succeeded, clearing stale keys from any prior session.
       expect(clearCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    test('does not clear delegate keys when connect fails', async () => {
+      const clearCalls: (string | undefined)[] = [];
+      const agent = createMockAgent({
+        firstLaunch                    : async () => false,
+        identityList                   : async () => [], // no identities → first launch
+        start                          : async () => { throw new Error('vault unlock failed'); },
+        dwnClearDelegateDecryptionKeys : (did?: string) => { clearCalls.push(did); },
+      });
+      const manager = createTestManager(agent);
+
+      await expect(manager.connect({ password: 'test' })).rejects.toThrow();
+
+      // Keys should NOT have been cleared since the connect failed —
+      // a prior active session's keys must survive.
+      expect(clearCalls).toHaveLength(0);
     });
   });
 
