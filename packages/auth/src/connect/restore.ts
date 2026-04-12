@@ -227,7 +227,10 @@ export async function restoreSession(
   // which causes the sync engine to attempt syncing the permissions protocol
   // and fail with "No permissions found for MessagesSync".
   // Derive the correct protocol list from stored grants and update.
-  if (delegateDid && ctx.defaultSync !== 'off') {
+  // Always repair regardless of sync state — a stale registration persists
+  // on disk and would take effect if sync is later enabled.
+  let syncRepairFailed = false;
+  if (delegateDid) {
     try {
       const protocols = await deriveProtocolsFromGrants(userAgent, delegateDid);
       if (protocols === 'all' || protocols.length > 0) {
@@ -253,14 +256,14 @@ export async function restoreSession(
         }
       }
     } catch {
-      // Best-effort — don't block restore if grant query fails.
+      // Grant query failed — don't block restore, but don't start sync
+      // with a potentially stale registration.
+      syncRepairFailed = true;
     }
   }
 
-  // Start sync after the registration is correct.
-  await startSyncIfEnabled(userAgent, ctx.defaultSync);
-
-  // Restore delegate decryption keys and context keys.
+  // Restore delegate decryption/context keys BEFORE starting sync so that
+  // the first sync cycle can decrypt encrypted records.
   //
   // Keys are loaded from the vault-backed SecretStore (preferred). When
   // the SecretStore is empty, we fall back to the legacy StorageAdapter
@@ -313,6 +316,12 @@ export async function restoreSession(
         await userAgent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, bytes);
       } catch { /* best effort — keys will be re-derived on next connect */ }
     };
+  }
+
+  // Start sync only if the registration repair succeeded (or was not needed).
+  // If repair failed, don't start sync with potentially stale scope.
+  if (!syncRepairFailed) {
+    await startSyncIfEnabled(userAgent, ctx.defaultSync);
   }
 
   // Persist session info, build AuthSession, and emit lifecycle events.

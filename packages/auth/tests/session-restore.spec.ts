@@ -591,7 +591,7 @@ describe('restoreSession', () => {
       expect(registerCalls[0].options.protocols).toBe('all');
     });
 
-    test('rethrows I/O errors from unregisterIdentity (caught by best-effort block)', async () => {
+    test('does not start sync when repair fails with I/O error', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -600,19 +600,48 @@ describe('restoreSession', () => {
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
       });
 
+      const syncStartCalls: any[] = [];
       const agent = createMockAgent({
         firstLaunch               : async () => false,
         identityConnectedIdentity : async () => identity,
         syncUnregisterIdentity    : async () => { throw new Error('LEVEL_IO_ERROR'); },
+        syncStartSync             : async (params) => { syncStartCalls.push(params); },
       });
 
-      // The I/O error is rethrown by the narrowed catch, but caught by the
-      // outer best-effort block — restore should still succeed.
+      // Restore succeeds but sync should NOT start — repair failed.
       const session = await restoreSession(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
       );
 
       expect(session).toBeDefined();
+      expect(syncStartCalls).toHaveLength(0);
+    });
+
+    test('repairs delegate registration even when sync is off', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const unregisterCalls: string[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncUnregisterIdentity    : async (did) => { unregisterCalls.push(did); },
+      });
+
+      // Sync is off — repair should still run to clean up stale registrations.
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: 'off' },
+      );
+
+      expect(session).toBeDefined();
+      // Zero grants (default mock) → unregister called.
+      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls[0]).toBe('did:dht:external');
     });
   });
 
