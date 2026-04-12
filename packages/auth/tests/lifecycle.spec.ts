@@ -392,6 +392,104 @@ describe('importDelegateAndSetupSync', () => {
 });
 
 describe('finalizeDelegateSession', () => {
+  describe('stale state cleanup on reconnect', () => {
+    test('clears old decryption keys when reconnect has no decryption keys', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      const agent = createMockAgent();
+
+      // Simulate a prior session that stored decryption keys.
+      await agent.secrets.put(
+        STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS,
+        new TextEncoder().encode(JSON.stringify([{ keyId: 'old-key' }])),
+      );
+
+      // Reconnect with a write-only delegate — no decryption keys.
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate2' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+      // No _delegateDecryptionKeys set on identity.
+
+      await finalizeDelegateSession({
+        userAgent    : agent,
+        emitter,
+        storage,
+        identity     : identity as any,
+        connectedDid : 'did:dht:connected1',
+        delegateDid  : 'did:jwk:delegate2',
+        sync         : '15s',
+      });
+
+      // Old decryption keys must be cleared from SecretStore.
+      const stored = await agent.secrets.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
+      expect(stored).toBeUndefined();
+    });
+
+    test('clears old context keys and multi-party protocols when absent on reconnect', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      const agent = createMockAgent();
+
+      // Simulate a prior session that stored context keys and multi-party protocols.
+      await agent.secrets.put(
+        STORAGE_KEYS.DELEGATE_CONTEXT_KEYS,
+        new TextEncoder().encode(JSON.stringify([{ contextId: 'old-ctx' }])),
+      );
+      await storage.set(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS, JSON.stringify(['old-proto']));
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate2' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      await finalizeDelegateSession({
+        userAgent    : agent,
+        emitter,
+        storage,
+        identity     : identity as any,
+        connectedDid : 'did:dht:connected1',
+        delegateDid  : 'did:jwk:delegate2',
+        sync         : '15s',
+      });
+
+      const ctxKeys = await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+      expect(ctxKeys).toBeUndefined();
+      const mpProtos = await storage.get(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
+      expect(mpProtos).toBeNull();
+    });
+
+    test('clears old session revocations when absent on reconnect', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      const agent = createMockAgent();
+
+      // Simulate a prior session that stored revocations.
+      await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([
+        { grantId: 'old-grant', revocationGrantId: 'old-revocation' },
+      ]));
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate2' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+      // No _sessionRevocations set on identity.
+
+      await finalizeDelegateSession({
+        userAgent    : agent,
+        emitter,
+        storage,
+        identity     : identity as any,
+        connectedDid : 'did:dht:connected1',
+        delegateDid  : 'did:jwk:delegate2',
+        sync         : '15s',
+      });
+
+      const revocations = await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
+      expect(revocations).toBeNull();
+    });
+  });
+
   describe('onDelegateContextKeysChanged callback', () => {
     test('persists updated context keys when callback fires for matching delegate', async () => {
       const emitter = new AuthEventEmitter();

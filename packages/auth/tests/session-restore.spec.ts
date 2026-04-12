@@ -511,6 +511,34 @@ describe('restoreSession', () => {
     });
   });
 
+  describe('stale state isolation', () => {
+    test('does not rehydrate cleared delegate keys after a write-only reconnect', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const importedDecryptionKeys: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch                     : async () => false,
+        identityConnectedIdentity       : async () => identity,
+        dwnImportDelegateDecryptionKeys : (did: string, keys: any[]) => { importedDecryptionKeys.push(...keys); },
+      });
+
+      // SecretStore and legacy storage are both empty (cleared by prior reconnect).
+      // Restore should NOT import any decryption keys.
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(importedDecryptionKeys).toHaveLength(0);
+    });
+  });
+
   describe('deriveProtocolsFromGrants', () => {
     test('filters out PermissionsProtocol.uri from derived protocols', async () => {
       const emitter = new AuthEventEmitter();

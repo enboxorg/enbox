@@ -572,31 +572,45 @@ export async function finalizeDelegateSession(params: {
   const delegateContextKeys = (identity as any)._delegateContextKeys as DelegateContextKey[] | undefined;
 
   // Store delegate keys in the SecretStore (encrypted at rest).
-  // Both writes are independent and can run in parallel.
+  // When keys are absent from the new session, actively clear stale values
+  // from prior sessions so that a reconnect with fewer capabilities
+  // doesn't retain old decryption material.
   const secretWrites: Promise<void>[] = [];
   if (delegateDecryptionKeys?.length) {
     secretWrites.push(
       userAgent.secrets.put(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, Convert.string(JSON.stringify(delegateDecryptionKeys)).toUint8Array()),
     );
+  } else {
+    secretWrites.push(userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS).then(() => {}).catch(() => {}));
+    secretWrites.push(storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS).catch(() => {}));
   }
   if (delegateContextKeys?.length) {
     secretWrites.push(
       userAgent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, Convert.string(JSON.stringify(delegateContextKeys)).toUint8Array()),
     );
+  } else {
+    secretWrites.push(userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).then(() => {}).catch(() => {}));
+    secretWrites.push(storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}));
   }
-  if (secretWrites.length > 0) {
-    await Promise.all(secretWrites);
-    // Best-effort cleanup of any legacy plaintext copies.
+  await Promise.all(secretWrites);
+  // Best-effort cleanup of any legacy plaintext copies when new keys were written.
+  if (delegateDecryptionKeys?.length || delegateContextKeys?.length) {
     try { await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS); } catch { /* best-effort */ }
     try { await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
   }
+
   const delegateMultiPartyProtocols = (identity as any)._delegateMultiPartyProtocols as string[] | undefined;
   if (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0) {
     extraStorageKeys[STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS] = JSON.stringify(delegateMultiPartyProtocols);
+  } else {
+    try { await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS); } catch { /* best-effort */ }
   }
+
   const sessionRevocations = (identity as any)._sessionRevocations as { grantId: string; revocationGrantId: string }[] | undefined;
   if (sessionRevocations && sessionRevocations.length > 0) {
     extraStorageKeys[STORAGE_KEYS.SESSION_REVOCATIONS] = JSON.stringify(sessionRevocations);
+  } else {
+    try { await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS); } catch { /* best-effort */ }
   }
 
   // Wire post-connect context key persistence: when the owner creates a
