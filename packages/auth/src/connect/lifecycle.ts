@@ -467,10 +467,7 @@ export async function importDelegateAndSetupSync(params: {
     // Register (or update) the identity for protocol-scoped sync.
     // If the identity is already registered from a prior session, update
     // the protocol list so it matches the new grants — otherwise a stale
-    // registration would remain and the sync engine would try to sync
-    // every protocol including the DWN permissions protocol, which the
-    // delegate has no grant for.
-    // A delegate with zero granted protocols has nothing to sync — skip.
+    // registration would remain. Skip when zero protocols are granted.
     if (connectedProtocols.length > 0) {
       const syncOptions = {
         delegateDid : delegatePortableDid.uri,

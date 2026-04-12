@@ -230,8 +230,7 @@ export async function restoreSession(
   if (delegateDid && ctx.defaultSync !== 'off') {
     try {
       const protocols = await deriveProtocolsFromGrants(userAgent, delegateDid);
-      // A delegate with zero grants has nothing to sync — skip registration.
-      if (protocols.length > 0) {
+      if (protocols.length > 0) { // zero grants → nothing to sync — skip
         const options = { delegateDid, protocols: protocols as [string, ...string[]] };
         try {
           await userAgent.sync.registerIdentity({ did: connectedDid, options });
