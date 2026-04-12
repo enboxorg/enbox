@@ -305,7 +305,7 @@ export function testMessagesSubscribeHandler(): void {
             grantedTo : bob,
             scope     : {
               interface : DwnInterfaceName.Messages,
-              method    : DwnMethodName.Subscribe
+              method    : DwnMethodName.Read
             }
           });
           const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
@@ -466,32 +466,6 @@ export function testMessagesSubscribeHandler(): void {
           expect(bobReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationInterfaceMismatch);
         });
 
-        it('rejects subscribe of messages with mismatching method grant scopes', async () => {
-          const alice = await TestDataGenerator.generateDidKeyPersona();
-          const bob = await TestDataGenerator.generateDidKeyPersona();
-
-          // create grant that is scoped to `MessagesSync` for bob
-          const { message: grantMessage, dataStream } = await TestDataGenerator.generateGrantCreate({
-            author    : alice,
-            grantedTo : bob,
-            scope     : {
-              interface : DwnInterfaceName.Messages,
-              method    : DwnMethodName.Sync,
-            }
-          });
-          const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
-          expect(grantReply.status.code).toBe(202);
-
-          // bob attempts to use the `MessagesSync` grant on an `MessagesSubscribe` message
-          const { message: bobSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
-            author            : bob,
-            permissionGrantId : grantMessage.recordId
-          });
-          const bobReply = await dwn.processMessage(alice.did, bobSubscribe);
-          expect(bobReply.status.code).toBe(401);
-          expect(bobReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationMethodMismatch);
-        });
-
         describe('protocol filtered messages', () => {
           it('allows subscribe of protocol filtered messages with matching protocol grant scopes', async () => {
 
@@ -522,7 +496,7 @@ export function testMessagesSubscribeHandler(): void {
               grantedTo : bob,
               scope     : {
                 interface : DwnInterfaceName.Messages,
-                method    : DwnMethodName.Subscribe,
+                method    : DwnMethodName.Read,
                 protocol  : protocol1.protocol
               }
             });
@@ -946,7 +920,7 @@ export function testMessagesSubscribeHandler(): void {
               grantedTo : bob,
               scope     : {
                 interface : DwnInterfaceName.Messages,
-                method    : DwnMethodName.Subscribe,
+                method    : DwnMethodName.Read,
                 protocol  : protocol1.protocol
               }
             });

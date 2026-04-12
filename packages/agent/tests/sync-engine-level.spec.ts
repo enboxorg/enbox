@@ -597,7 +597,7 @@ describe('SyncEngineLevel', () => {
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
           scope       : {
             interface : DwnInterfaceName.Messages,
-            method    : DwnMethodName.Sync,
+            method    : DwnMethodName.Read,
             protocol  : 'https://protocol.xyz/foo'
           }
         });
@@ -1078,7 +1078,7 @@ describe('SyncEngineLevel', () => {
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
           scope       : {
             interface : DwnInterfaceName.Messages,
-            method    : DwnMethodName.Sync,
+            method    : DwnMethodName.Read,
             protocol  : 'https://protocol.xyz/foo'
           }
         });
@@ -2631,7 +2631,7 @@ describe('SyncEngineLevel', () => {
           author      : alice.did.uri,
           grantedTo   : aliceDeviceX.did.uri,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
-          scope       : { protocol: protocolFoo.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Sync }
+          scope       : { protocol: protocolFoo.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read }
         });
 
         const recordsQueryGrant = await testHarness.agent.permissions.createGrant({

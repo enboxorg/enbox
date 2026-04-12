@@ -330,7 +330,7 @@ export function testMessagesSyncHandler(): void {
             grantedTo : bob,
             scope     : {
               interface : DwnInterfaceName.Messages,
-              method    : DwnMethodName.Sync,
+              method    : DwnMethodName.Read,
             },
           });
           const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream });
@@ -462,7 +462,7 @@ export function testMessagesSyncHandler(): void {
             grantedTo : bob,
             scope     : {
               interface : DwnInterfaceName.Messages,
-              method    : DwnMethodName.Sync,
+              method    : DwnMethodName.Read,
               protocol  : protocolDefinition.protocol,
             },
           });
@@ -517,33 +517,6 @@ export function testMessagesSyncHandler(): void {
           expect(reply.status.detail).toContain(DwnErrorCode.GrantAuthorizationInterfaceMismatch);
         });
 
-        it('rejects sync with mismatching method grant scope', async () => {
-          const alice = await TestDataGenerator.generateDidKeyPersona();
-          const bob = await TestDataGenerator.generateDidKeyPersona();
-
-          // create a MessagesSubscribe grant (wrong method for MessagesSync)
-          const { message: grantMessage, dataStream } = await TestDataGenerator.generateGrantCreate({
-            author    : alice,
-            grantedTo : bob,
-            scope     : {
-              interface : DwnInterfaceName.Messages,
-              method    : DwnMethodName.Subscribe,
-            },
-          });
-          const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
-          expect(grantReply.status.code).toBe(202);
-
-          const { message: syncMsg } = await MessagesSync.create({
-            signer            : Jws.createSigner(bob),
-            action            : 'root',
-            permissionGrantId : grantMessage.recordId,
-          });
-
-          const reply = await dwn.processMessage(alice.did, syncMsg);
-          expect(reply.status.code).toBe(401);
-          expect(reply.status.detail).toContain(DwnErrorCode.GrantAuthorizationMethodMismatch);
-        });
-
         it('rejects sync with mismatching protocol grant scope', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
@@ -554,7 +527,7 @@ export function testMessagesSyncHandler(): void {
             grantedTo : bob,
             scope     : {
               interface : DwnInterfaceName.Messages,
-              method    : DwnMethodName.Sync,
+              method    : DwnMethodName.Read,
               protocol  : 'http://protocol1',
             },
           });

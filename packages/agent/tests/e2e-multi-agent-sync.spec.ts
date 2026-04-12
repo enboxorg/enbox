@@ -249,7 +249,7 @@ describe('E2E Multi-Agent Sync', () => {
     messagesSyncGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
       grantor : alice,
       grantee : aliceDevice,
-      scope   : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Sync },
+      scope   : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
     });
 
     // RecordsQuery grant (for test verification only).
