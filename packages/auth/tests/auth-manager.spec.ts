@@ -374,20 +374,27 @@ describe('AuthManager', () => {
   });
 
   describe('in-memory cache cleanup on reconnect', () => {
-    test('clears delegate decryption keys after successful connect', async () => {
+    test('clears previous delegate keys on successful reconnect', async () => {
       const clearCalls: (string | undefined)[] = [];
+      const identity = createMockIdentity({
+        did      : { uri: 'did:delegate:old' },
+        metadata : { name: 'Old', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected' },
+      });
       const agent = createMockAgent({
         firstLaunch                    : async () => false,
-        identityList                   : async () => [createMockIdentity()],
+        identityList                   : async () => [identity],
         dwnClearDelegateDecryptionKeys : (did?: string) => { clearCalls.push(did); },
       });
       const manager = createTestManager(agent);
 
+      // First connect — no previous session, so no clear.
       await manager.connect({ password: 'test' });
+      expect(clearCalls).toHaveLength(0);
 
-      // clearDelegateDecryptionKeys should have been called after the connect
-      // flow succeeded, clearing stale keys from any prior session.
-      expect(clearCalls.length).toBeGreaterThanOrEqual(1);
+      // Reconnect — should clear the previous delegate's keys.
+      await manager.connect({ password: 'test' });
+      expect(clearCalls).toHaveLength(1);
+      expect(clearCalls[0]).toBe('did:delegate:old');
     });
 
     test('does not clear delegate keys when connect fails', async () => {
@@ -404,6 +411,21 @@ describe('AuthManager', () => {
 
       // Keys should NOT have been cleared since the connect failed —
       // a prior active session's keys must survive.
+      expect(clearCalls).toHaveLength(0);
+    });
+
+    test('does not wipe newly imported keys on first delegated connect', async () => {
+      const clearCalls: (string | undefined)[] = [];
+      const agent = createMockAgent({
+        firstLaunch                    : async () => false,
+        identityList                   : async () => [createMockIdentity()],
+        dwnClearDelegateDecryptionKeys : (did?: string) => { clearCalls.push(did); },
+      });
+      const manager = createTestManager(agent);
+
+      // First connect with no prior session — clear should not be called,
+      // preserving any keys the connect flow just imported.
+      await manager.connect({ password: 'test' });
       expect(clearCalls).toHaveLength(0);
     });
   });

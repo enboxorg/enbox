@@ -1092,13 +1092,20 @@ export class AuthManager {
     this._guardConcurrency();
     this._isConnecting = true;
 
+    // Capture the previous session's delegate DID so we can clear only
+    // its in-memory keys after the new connect succeeds.
+    const previousDelegateDid = this._session?.delegateDid;
+
     try {
       const session = await fn();
 
-      // Clear in-memory delegate caches from the previous session AFTER
-      // the new connect succeeds.  Clearing before fn() would break the
-      // active session if the new connect fails (e.g. user denial).
-      this._userAgent.dwn.clearDelegateDecryptionKeys();
+      // Clear in-memory delegate caches scoped to the previous session
+      // AFTER the new connect succeeds. This preserves the new session's
+      // freshly imported keys while removing the old session's stale ones.
+      // If the previous session was not delegated, this is a no-op.
+      if (previousDelegateDid) {
+        this._userAgent.dwn.clearDelegateDecryptionKeys(previousDelegateDid);
+      }
 
       this._session = session;
       this._setState('connected');
