@@ -2042,7 +2042,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async flushPendingPushesForLink(linkKey: string): Promise<void> {
     const pushRuntime = this._pushRuntimes.get(linkKey);
-    if (!pushRuntime) {
+    if (!pushRuntime || !this._activeLinks.has(linkKey)) {
       return;
     }
 

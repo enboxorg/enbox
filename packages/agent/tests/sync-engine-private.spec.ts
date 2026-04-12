@@ -1056,8 +1056,12 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('flushPendingPushes', () => {
+    /** Minimal active-link stub so flushPendingPushesForLink does not bail. */
+    const stubLink = { tenantDid: 'did:example:alice', scope: { kind: 'full' }, status: 'live' } as any;
+
     it('should clear pending push entries after flushing', async () => {
       const engine = new SyncEngineLevel({ db });
+      (engine as any)._activeLinks.set('key1', stubLink);
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
@@ -1074,6 +1078,7 @@ describe('SyncEngineLevel — private methods', () => {
       const mockAgent = { agentDid: 'did:example:agent' } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
+      (engine as any)._activeLinks.set('key1', stubLink);
 
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
@@ -1106,6 +1111,7 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
+      (engine as any)._activeLinks.set('key1', stubLink);
 
       // Simulate a push runtime left over from a previously retried batch
       // that eventually succeeded — retryCount is stale at 2.
@@ -1140,6 +1146,7 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
+      (engine as any)._activeLinks.set('key1', stubLink);
 
       // Simulate a runtime with stale retryCount from a prior batch,
       // plus new entries waiting. The batch-A entries will be flushed;
@@ -1185,6 +1192,7 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
+      (engine as any)._activeLinks.set('key1', stubLink);
 
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
