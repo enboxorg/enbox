@@ -302,6 +302,18 @@ export class SyncEngineLevel implements SyncEngine {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
     this._db = (db) ? db : new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
+
+    // Absorb LEVEL_DATABASE_NOT_OPEN errors from deferred sublevel writes
+    // that complete after stopSync/close. Without this, a reconcile or push
+    // timer that fires during the teardown window can queue a deferred write
+    // that surfaces as an uncaught exception when the DB finishes closing.
+    if (typeof this._db.on === 'function') {
+      this._db.on('error', (err: any): void => {
+        if (err?.code !== 'LEVEL_DATABASE_NOT_OPEN') {
+          console.error('SyncEngineLevel: unexpected database error', err);
+        }
+      });
+    }
   }
 
   /** Lazy accessor for the replication ledger. */
