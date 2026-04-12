@@ -80,7 +80,7 @@ export interface MockAgentOverrides {
   syncStopSync?: (timeout: number) => Promise<void>;
   syncSync?: (direction: string) => Promise<void>;
   syncClose?: () => Promise<void>;
-  syncIsRunning?: boolean;
+  syncHasActiveSubscriptions?: boolean;
   processDwnRequest?: (params: any) => Promise<any>;
   rpcGetServerInfo?: (url: string) => Promise<any>;
   vaultIsInitialized?: () => Promise<boolean>;
@@ -124,13 +124,13 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     },
 
     sync: {
-      registerIdentity      : overrides.syncRegisterIdentity ?? (async (): Promise<void> => {}),
-      updateIdentityOptions : overrides.syncUpdateIdentityOptions ?? (async (): Promise<void> => {}),
-      startSync             : overrides.syncStartSync ?? (async (): Promise<void> => {}),
-      stopSync              : overrides.syncStopSync ?? (async (): Promise<void> => {}),
-      sync                  : overrides.syncSync ?? (async (): Promise<void> => {}),
-      close                 : overrides.syncClose ?? (async (): Promise<void> => {}),
-      isRunning             : overrides.syncIsRunning ?? false,
+      registerIdentity       : overrides.syncRegisterIdentity ?? (async (): Promise<void> => {}),
+      updateIdentityOptions  : overrides.syncUpdateIdentityOptions ?? (async (): Promise<void> => {}),
+      startSync              : overrides.syncStartSync ?? (async (): Promise<void> => {}),
+      stopSync               : overrides.syncStopSync ?? (async (): Promise<void> => {}),
+      sync                   : overrides.syncSync ?? (async (): Promise<void> => {}),
+      close                  : overrides.syncClose ?? (async (): Promise<void> => {}),
+      hasActiveSubscriptions : overrides.syncHasActiveSubscriptions ?? false,
     },
 
     dwn: {

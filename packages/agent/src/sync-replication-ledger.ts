@@ -66,6 +66,14 @@ export class ReplicationLedger {
       // connectivity is runtime state — always reset to 'unknown' on load
       // so stale 'online' from a previous session doesn't give false positives.
       link.connectivity = 'unknown';
+
+      // Update delegateDid if it changed (e.g. via updateIdentityOptions).
+      // Without this, repair/reconcile would keep using the old delegate.
+      if (link.delegateDid !== params.delegateDid) {
+        link.delegateDid = params.delegateDid;
+        await this.sublevel.put(key, JSON.stringify(link));
+      }
+
       return link;
     } catch (error) {
       const e = error as { code: string };

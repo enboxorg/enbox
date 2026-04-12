@@ -402,10 +402,10 @@ describe('localConnect', () => {
     const startSyncCalls: any[] = [];
 
     const agent = createMockAgent({
-      firstLaunch   : async () => false,
-      identityList  : async () => [createMockIdentity()],
-      syncStartSync : async (params) => { startSyncCalls.push(params); },
-      syncIsRunning : true,
+      firstLaunch                : async () => false,
+      identityList               : async () => [createMockIdentity()],
+      syncStartSync              : async (params) => { startSyncCalls.push(params); },
+      syncHasActiveSubscriptions : true,
     });
 
     await localConnect(
@@ -424,10 +424,10 @@ describe('localConnect', () => {
     const startSyncCalls: any[] = [];
 
     const agent = createMockAgent({
-      firstLaunch   : async () => false,
-      identityList  : async () => [createMockIdentity()],
-      syncStartSync : async (params) => { startSyncCalls.push(params); },
-      syncIsRunning : false,
+      firstLaunch                : async () => false,
+      identityList               : async () => [createMockIdentity()],
+      syncStartSync              : async (params) => { startSyncCalls.push(params); },
+      syncHasActiveSubscriptions : false,
     });
 
     await localConnect(

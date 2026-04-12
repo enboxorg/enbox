@@ -324,13 +324,15 @@ export interface SyncEngine {
   readonly connectivityState: SyncConnectivityState;
 
   /**
-   * Whether sync is actively processing — i.e. at least one pull or push
-   * subscription is open. A stale integrity timer alone does not count.
+   * Whether at least one live pull or push subscription is open.
    *
-   * Use this to avoid calling `startSync()` when sync is already active,
-   * which would tear down all existing subscriptions and restart from scratch.
+   * This is specifically about live-mode subscriptions — it is `false` in
+   * poll mode and `false` when only the integrity timer remains (e.g. after
+   * the last identity was removed). Callers use this to avoid calling
+   * `startSync()` when live subscriptions are active, which would tear
+   * them all down and rebuild from scratch.
    */
-  readonly isRunning: boolean;
+  readonly hasActiveSubscriptions: boolean;
 
   /**
    * Register an identity to be managed by the SyncEngine for syncing.

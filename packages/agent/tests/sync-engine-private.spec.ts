@@ -1672,7 +1672,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._ledger = { saveLink: saveStub };
 
       await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
       });
 
       const handler = getHandler();
@@ -1697,8 +1697,14 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = new SyncEngineLevel({ db, agent });
       const consoleStub = sinon.stub(console, 'error');
 
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      (engine as any)._activeLinks.set(linkKey, {
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com',
+        scopeId: 'test', scope: { kind: 'full' }, status: 'live', pull: {},
+      });
+
       await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
       });
 
       const handler = getHandler();
@@ -1737,8 +1743,14 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      (engine as any)._activeLinks.set(linkKey, {
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com',
+        scopeId: 'test', scope: { kind: 'full' }, status: 'live', pull: {},
+      });
+
       await (engine as any).openLocalPushSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
       });
 
       expect(capturedHandler).toBeDefined();

@@ -614,37 +614,34 @@ describe('SyncEngineLevel — identity management', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // isRunning
+  // hasActiveSubscriptions
   // ---------------------------------------------------------------------------
 
-  describe('isRunning', () => {
-    it('should return false when no sync is active', () => {
+  describe('hasActiveSubscriptions', () => {
+    it('should return false when no subscriptions are open', () => {
       const engine = new SyncEngineLevel({ db });
-      expect(engine.isRunning).toBe(false);
+      expect(engine.hasActiveSubscriptions).toBe(false);
     });
 
-    it('should return true when live subscriptions are active', () => {
+    it('should return true when live pull subscriptions are open', () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._liveSubscriptions = [{ linkKey: 'k', did: 'did:example:a', close: sinon.stub() }];
-      expect(engine.isRunning).toBe(true);
+      expect(engine.hasActiveSubscriptions).toBe(true);
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should return false when only integrity timer is active (no subscriptions)', () => {
+    it('should return false when only the integrity timer is active', () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncIntervalId = setInterval(() => {}, 60_000);
-      // The integrity timer alone does not make sync "running" — after the
-      // last identity is removed, startSyncIfEnabled() must be able to
-      // detect that sync needs restarting for a new identity.
-      expect(engine.isRunning).toBe(false);
+      expect(engine.hasActiveSubscriptions).toBe(false);
       clearInterval((engine as any)._syncIntervalId);
       (engine as any)._syncIntervalId = undefined;
     });
 
-    it('should return true when local push subscriptions are active', () => {
+    it('should return true when local push subscriptions are open', () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._localSubscriptions = [{ linkKey: 'k', did: 'did:example:a', close: sinon.stub() }];
-      expect(engine.isRunning).toBe(true);
+      expect(engine.hasActiveSubscriptions).toBe(true);
       (engine as any)._localSubscriptions = [];
     });
 
@@ -652,13 +649,13 @@ describe('SyncEngineLevel — identity management', () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._liveSubscriptions = [];
       (engine as any)._localSubscriptions = [];
-      expect(engine.isRunning).toBe(false);
+      expect(engine.hasActiveSubscriptions).toBe(false);
     });
 
     it('should return false when only active links exist but no subscriptions', () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._activeLinks.set('some-key', { tenantDid: 'did:example:a' });
-      expect(engine.isRunning).toBe(false);
+      expect(engine.hasActiveSubscriptions).toBe(false);
       (engine as any)._activeLinks.clear();
     });
   });
@@ -752,14 +749,14 @@ describe('SyncEngineLevel — identity management', () => {
       expect(hotAddStub.calledOnce).toBe(true);
     });
 
-    it('isRunning should return false after last identity removed so startSyncIfEnabled proceeds', () => {
+    it('hasActiveSubscriptions should return false after last identity removed', () => {
       const engine = new SyncEngineLevel({ db });
       // Timer left over from live mode, but no subscriptions.
       (engine as any)._syncIntervalId = setInterval(() => {}, 60_000);
       (engine as any)._liveSubscriptions = [];
       (engine as any)._localSubscriptions = [];
 
-      expect(engine.isRunning).toBe(false);
+      expect(engine.hasActiveSubscriptions).toBe(false);
 
       clearInterval((engine as any)._syncIntervalId);
     });

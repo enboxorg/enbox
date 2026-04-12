@@ -91,6 +91,67 @@ describe('ReplicationLedger', () => {
       expect(link.delegateDid).toBe('did:example:delegate');
       expect(link.protocol).toBe('https://protocol.xyz');
     });
+
+    it('should update delegateDid on existing link when it changes', async () => {
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:old-delegate',
+      });
+
+      const updated = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:new-delegate',
+      });
+
+      expect(updated.delegateDid).toBe('did:example:new-delegate');
+    });
+
+    it('should clear delegateDid on existing link when removed', async () => {
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:delegate',
+      });
+
+      const updated = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      expect(updated.delegateDid).toBeUndefined();
+    });
+
+    it('should persist updated delegateDid durably', async () => {
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:old',
+      });
+
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:new',
+      });
+
+      // Third call should still see the updated value.
+      const reloaded = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:new',
+      });
+
+      expect(reloaded.delegateDid).toBe('did:example:new');
+    });
   });
 
   describe('saveLink', () => {

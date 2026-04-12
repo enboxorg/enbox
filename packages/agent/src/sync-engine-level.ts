@@ -341,11 +341,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._syncTargetsCacheGeneration++;
   }
 
-  get isRunning(): boolean {
-    // Only active subscriptions indicate sync is running. The integrity
-    // timer (_syncIntervalId) alone does not — it may remain after the
-    // last identity is removed. Including it would prevent startSync()
-    // from being called when a new identity is added after removal.
+  get hasActiveSubscriptions(): boolean {
     return this._liveSubscriptions.length > 0 ||
            this._localSubscriptions.length > 0;
   }
@@ -1586,6 +1582,12 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
 
+      // Identity was hot-removed — bail out so late callbacks don't mutate
+      // state for a DID that is no longer being synced.
+      if (!this._activeLinks.has(cursorKey)) {
+        return;
+      }
+
       if (subMessage.type === 'eose') {
         // End-of-stored-events — catch-up complete.
         if (link) {
@@ -1947,7 +1949,13 @@ export class SyncEngineLevel implements SyncEngine {
       // scope prefixes. Events outside the scope are not our responsibility.
       const pushLinkKey = target.linkKey;
       const pushLink = this._activeLinks.get(pushLinkKey);
-      if (pushLink && !isEventInScope(subMessage.event.message, pushLink.scope)) {
+
+      // Identity was hot-removed — bail so late callbacks don't enqueue
+      // pushes for a DID that is no longer being synced.
+      if (!pushLink) {
+        return;
+      }
+      if (!isEventInScope(subMessage.event.message, pushLink.scope)) {
         return;
       }
 

@@ -18,8 +18,8 @@ describe('startSyncIfEnabled', () => {
   test('should call startSync with live mode when sync is undefined', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({
-      syncStartSync : async (params) => { startSyncCalls.push(params); },
-      syncIsRunning : false,
+      syncStartSync              : async (params) => { startSyncCalls.push(params); },
+      syncHasActiveSubscriptions : false,
     });
 
     await startSyncIfEnabled(agent, undefined);
@@ -31,8 +31,8 @@ describe('startSyncIfEnabled', () => {
   test('should call startSync with poll mode when sync is a string interval', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({
-      syncStartSync : async (params) => { startSyncCalls.push(params); },
-      syncIsRunning : false,
+      syncStartSync              : async (params) => { startSyncCalls.push(params); },
+      syncHasActiveSubscriptions : false,
     });
 
     await startSyncIfEnabled(agent, '30s');
@@ -44,8 +44,8 @@ describe('startSyncIfEnabled', () => {
   test('should skip startSync when sync is already running', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({
-      syncStartSync : async (params) => { startSyncCalls.push(params); },
-      syncIsRunning : true,
+      syncStartSync              : async (params) => { startSyncCalls.push(params); },
+      syncHasActiveSubscriptions : true,
     });
 
     await startSyncIfEnabled(agent, undefined);
@@ -56,8 +56,8 @@ describe('startSyncIfEnabled', () => {
   test('should skip startSync when sync is already running with poll mode', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({
-      syncStartSync : async (params) => { startSyncCalls.push(params); },
-      syncIsRunning : true,
+      syncStartSync              : async (params) => { startSyncCalls.push(params); },
+      syncHasActiveSubscriptions : true,
     });
 
     await startSyncIfEnabled(agent, '2m');
@@ -68,8 +68,8 @@ describe('startSyncIfEnabled', () => {
   test('should call startSync when sync is not running and sync option is an interval', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({
-      syncStartSync : async (params) => { startSyncCalls.push(params); },
-      syncIsRunning : false,
+      syncStartSync              : async (params) => { startSyncCalls.push(params); },
+      syncHasActiveSubscriptions : false,
     });
 
     await startSyncIfEnabled(agent, '10s');

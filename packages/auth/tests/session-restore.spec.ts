@@ -248,9 +248,9 @@ describe('restoreSession', () => {
     const syncCalls: any[] = [];
 
     const agent = createMockAgent({
-      firstLaunch   : async () => false,
-      syncStartSync : async (params) => { syncCalls.push(params); },
-      syncIsRunning : true,
+      firstLaunch                : async () => false,
+      syncStartSync              : async (params) => { syncCalls.push(params); },
+      syncHasActiveSubscriptions : true,
     });
 
     await restoreSession({ userAgent: agent, emitter, storage });

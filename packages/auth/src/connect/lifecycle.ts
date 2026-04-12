@@ -166,8 +166,8 @@ export async function startSyncIfEnabled(
     return;
   }
 
-  // Skip if sync is already running — registerIdentity() hot-adds inline.
-  if (userAgent.sync.isRunning) { return; }
+  // Skip if live subscriptions are active — registerIdentity() hot-adds inline.
+  if (userAgent.sync.hasActiveSubscriptions) { return; }
 
   const syncMode = sync === undefined ? 'live' : 'poll';
   const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
