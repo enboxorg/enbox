@@ -147,9 +147,14 @@ export class GrantAuthorization {
     }
 
     // Messages.Read is the only valid Messages scope and covers Read, Subscribe, and Sync operations.
-    // Defensively require scope.method === Read so malformed grants that bypass schema validation
-    // (e.g. legacy stored data) are rejected rather than treated as unified grants.
-    if (dwnInterface === DwnInterfaceName.Messages && permissionGrant.scope.method === DwnMethodName.Read) {
+    // Reject any Messages grant with method !== Read (malformed or legacy stored data).
+    if (dwnInterface === DwnInterfaceName.Messages) {
+      if (permissionGrant.scope.method !== DwnMethodName.Read) {
+        throw new DwnError(
+          DwnErrorCode.GrantAuthorizationMethodMismatch,
+          `messages permission grant must have method 'Read', got '${permissionGrant.scope.method}' for grant ${permissionGrant.id}`
+        );
+      }
       const allowedMethods = [DwnMethodName.Read, DwnMethodName.Subscribe, DwnMethodName.Sync];
       if (!allowedMethods.includes(dwnMethod as DwnMethodName)) {
         throw new DwnError(

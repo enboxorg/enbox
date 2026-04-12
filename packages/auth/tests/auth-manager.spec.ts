@@ -373,6 +373,24 @@ describe('AuthManager', () => {
     });
   });
 
+  describe('in-memory cache cleanup on reconnect', () => {
+    test('clears delegate decryption keys from prior session before new connect', async () => {
+      const clearCalls: (string | undefined)[] = [];
+      const agent = createMockAgent({
+        firstLaunch                    : async () => false,
+        identityList                   : async () => [createMockIdentity()],
+        dwnClearDelegateDecryptionKeys : (did?: string) => { clearCalls.push(did); },
+      });
+      const manager = createTestManager(agent);
+
+      await manager.connect({ password: 'test' });
+
+      // clearDelegateDecryptionKeys should have been called during _withConnect
+      // (before the connect flow runs) to prevent stale keys from a prior session.
+      expect(clearCalls.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
   describe('concurrency guard', () => {
     test('throws when connect is called concurrently', async () => {
       const agent = createMockAgent({
