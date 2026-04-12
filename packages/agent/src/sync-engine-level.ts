@@ -692,95 +692,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Step 2: Initialize replication links and open live subscriptions.
     // Each target's link initialization is independent — process concurrently.
     const syncTargets = await this.getSyncTargets();
-    await Promise.allSettled(syncTargets.map(async (target) => {
-      let link: ReplicationLinkState | undefined;
-      try {
-        // Get or create the link in the durable ledger.
-        // Use protocol-scoped scope when a protocol is specified, otherwise full-tenant.
-        const linkScope: SyncScope = target.protocol
-          ? { kind: 'protocol', protocol: target.protocol }
-          : { kind: 'full' };
-        link = await this.ledger.getOrCreateLink({
-          tenantDid      : target.did,
-          remoteEndpoint : target.dwnUrl,
-          scope          : linkScope,
-          delegateDid    : target.delegateDid,
-          protocol       : target.protocol,
-        });
-
-        // Cache the link for fast access by subscription handlers.
-        // Use scopeId from the link for consistent runtime identity.
-        const linkKey = this.buildLinkKey(target.did, target.dwnUrl, link.scopeId);
-
-        // One-time migration: if the link has no pull checkpoint, check for
-        // a legacy cursor in the old syncCursors sublevel. The legacy key
-        // used protocol, not scopeId, so we must build it the old way.
-        if (!link.pull.contiguousAppliedToken) {
-          const legacyKey = buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
-          const legacyCursor = await this.getCursor(legacyKey);
-          if (legacyCursor) {
-            ReplicationLedger.resetCheckpoint(link.pull, legacyCursor);
-            await this.ledger.saveLink(link);
-            await this.deleteLegacyCursor(legacyKey);
-          }
-        }
-
-        this._activeLinks.set(linkKey, link);
-
-        // Open subscriptions — only transition to live if both succeed.
-        // If pull succeeds but push fails, close the pull subscription to
-        // avoid a resource leak with inconsistent state.
-        const targetWithKey = { ...target, linkKey };
-        await this.openLivePullSubscription(targetWithKey);
-        try {
-          await this.openLocalPushSubscription(targetWithKey);
-        } catch (pushError) {
-          // Close the already-opened pull subscription.
-          const pullSub = this._liveSubscriptions.find((s) => s.linkKey === linkKey);
-          if (pullSub) {
-            try { await pullSub.close(); } catch { /* best effort */ }
-            this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
-          }
-          throw pushError;
-        }
-
-        this.emitEvent({ type: 'link:status-change', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, from: 'initializing', to: 'live' });
-        await this.ledger.setStatus(link, 'live');
-
-        // If the link was marked dirty in a previous session, schedule
-        // immediate reconciliation now that subscriptions are open.
-        if (link.needsReconcile) {
-          this.scheduleReconcile(linkKey, 1000);
-        }
-      } catch (error: any) {
-        const linkKey = link
-          ? this.buildLinkKey(target.did, target.dwnUrl, link.scopeId)
-          : buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
-
-        // Detect ProgressGap (410) — the cursor is stale, link needs SMT repair.
-        if (error.isProgressGap && link) {
-          console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
-          this.emitEvent({ type: 'gap:detected', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, reason: 'ProgressGap' });
-          const gapInfo = error.gapInfo;
-          await this.transitionToRepairing(linkKey, link, {
-            resumeToken: gapInfo?.latestAvailable,
-          });
-          return;
-        }
-
-        console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
-
-        // Clean up in-memory state for the failed link so it doesn't appear
-        // active to later code. The durable link remains at 'initializing'.
-        this._activeLinks.delete(linkKey);
-        this._linkRuntimes.delete(linkKey);
-
-        // Recompute connectivity — if no live subscriptions remain, reset to unknown.
-        if (this._liveSubscriptions.length === 0) {
-          this._connectivityState = 'unknown';
-        }
-      }
-    }));
+    await Promise.allSettled(syncTargets.map(t => this.initializeLinkTarget(t)));
 
     // Step 3: Schedule infrequent SMT integrity check.
     const integrityCheck = async (): Promise<void> => {
@@ -1370,6 +1282,97 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   // ---------------------------------------------------------------------------
+  // Per-target link initialization (shared by startLiveSync + addIdentityToLiveSync)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Initialize a single replication link target: create or resume the durable
+   * link, migrate legacy cursors, open pull + push subscriptions, and
+   * transition the link to `'live'`. On failure, the link is cleaned up and
+   * — for ProgressGap errors — transitioned to `'repairing'`.
+   *
+   * Used by both `startLiveSync` (bulk) and `addIdentityToLiveSync` (hot-add).
+   */
+  private async initializeLinkTarget(target: {
+    did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
+  }): Promise<void> {
+    let link: ReplicationLinkState | undefined;
+    try {
+      const linkScope: SyncScope = target.protocol
+        ? { kind: 'protocol', protocol: target.protocol }
+        : { kind: 'full' };
+      link = await this.ledger.getOrCreateLink({
+        tenantDid      : target.did,
+        remoteEndpoint : target.dwnUrl,
+        scope          : linkScope,
+        delegateDid    : target.delegateDid,
+        protocol       : target.protocol,
+      });
+
+      const linkKey = this.buildLinkKey(target.did, target.dwnUrl, link.scopeId);
+
+      // One-time migration: if the link has no pull checkpoint, check for
+      // a legacy cursor in the old syncCursors sublevel.
+      if (!link.pull.contiguousAppliedToken) {
+        const legacyKey = buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
+        const legacyCursor = await this.getCursor(legacyKey);
+        if (legacyCursor) {
+          ReplicationLedger.resetCheckpoint(link.pull, legacyCursor);
+          await this.ledger.saveLink(link);
+          await this.deleteLegacyCursor(legacyKey);
+        }
+      }
+
+      this._activeLinks.set(linkKey, link);
+
+      // Open subscriptions — only transition to live if both succeed.
+      // If pull succeeds but push fails, close the pull subscription to
+      // avoid a resource leak with inconsistent state.
+      const targetWithKey = { ...target, linkKey };
+      await this.openLivePullSubscription(targetWithKey);
+      try {
+        await this.openLocalPushSubscription(targetWithKey);
+      } catch (pushError) {
+        const pullSub = this._liveSubscriptions.find((s) => s.linkKey === linkKey);
+        if (pullSub) {
+          try { await pullSub.close(); } catch { /* best effort */ }
+          this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
+        }
+        throw pushError;
+      }
+
+      this.emitEvent({ type: 'link:status-change', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, from: 'initializing', to: 'live' });
+      await this.ledger.setStatus(link, 'live');
+
+      if (link.needsReconcile) {
+        this.scheduleReconcile(linkKey, 1000);
+      }
+    } catch (error: any) {
+      const linkKey = link
+        ? this.buildLinkKey(target.did, target.dwnUrl, link.scopeId)
+        : buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
+
+      if (error.isProgressGap && link) {
+        console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
+        this.emitEvent({ type: 'gap:detected', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, reason: 'ProgressGap' });
+        await this.transitionToRepairing(linkKey, link, {
+          resumeToken: error.gapInfo?.latestAvailable,
+        });
+        return;
+      }
+
+      console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
+
+      this._activeLinks.delete(linkKey);
+      this._linkRuntimes.delete(linkKey);
+
+      if (this._liveSubscriptions.length === 0) {
+        this._connectivityState = 'unknown';
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Hot-add / hot-remove: per-identity live sync management
   // ---------------------------------------------------------------------------
 
@@ -1388,16 +1391,9 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Adds a single identity to the active live sync session without tearing
-   * down subscriptions for other identities. Resolves DWN endpoints, creates
-   * replication links, and opens pull + push subscriptions for each target.
-   *
-   * Called automatically by `registerIdentity()` when live sync is active.
-   * No-op if the identity has no resolvable DWN endpoints.
-   *
-   * Uses `Promise.allSettled` so that a single endpoint failure does not
-   * prevent other endpoints from being set up. Per-target errors are logged
-   * and the failed link is cleaned up, but no error propagates to the caller.
+   * Hot-add a single identity to the active live sync session.
+   * Resolves DWN endpoints and delegates to {@link initializeLinkTarget}
+   * for each target. No-op when the identity has no resolvable endpoints.
    */
   private async addIdentityToLiveSync(did: string, options: SyncIdentityOptions): Promise<void> {
     const { protocols, delegateDid } = options;
@@ -1419,73 +1415,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    // Initialize links and open subscriptions concurrently — same logic as
-    // startLiveSync but scoped to this identity's targets only.
-    await Promise.allSettled(targets.map(async (target) => {
-      let link: ReplicationLinkState | undefined;
-      try {
-        const linkScope: SyncScope = target.protocol
-          ? { kind: 'protocol', protocol: target.protocol }
-          : { kind: 'full' };
-        link = await this.ledger.getOrCreateLink({
-          tenantDid      : target.did,
-          remoteEndpoint : target.dwnUrl,
-          scope          : linkScope,
-          delegateDid    : target.delegateDid,
-          protocol       : target.protocol,
-        });
-
-        const linkKey = this.buildLinkKey(target.did, target.dwnUrl, link.scopeId);
-
-        // One-time migration from legacy cursors.
-        if (!link.pull.contiguousAppliedToken) {
-          const legacyKey = buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
-          const legacyCursor = await this.getCursor(legacyKey);
-          if (legacyCursor) {
-            ReplicationLedger.resetCheckpoint(link.pull, legacyCursor);
-            await this.ledger.saveLink(link);
-            await this.deleteLegacyCursor(legacyKey);
-          }
-        }
-
-        this._activeLinks.set(linkKey, link);
-
-        const targetWithKey = { ...target, linkKey };
-        await this.openLivePullSubscription(targetWithKey);
-        try {
-          await this.openLocalPushSubscription(targetWithKey);
-        } catch (pushError) {
-          const pullSub = this._liveSubscriptions.find((s) => s.linkKey === linkKey);
-          if (pullSub) {
-            try { await pullSub.close(); } catch { /* best effort */ }
-            this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
-          }
-          throw pushError;
-        }
-
-        this.emitEvent({ type: 'link:status-change', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, from: 'initializing', to: 'live' });
-        await this.ledger.setStatus(link, 'live');
-
-        if (link.needsReconcile) {
-          this.scheduleReconcile(linkKey, 1000);
-        }
-      } catch (error: any) {
-        const linkKey = link
-          ? this.buildLinkKey(target.did, target.dwnUrl, link.scopeId)
-          : buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
-
-        if (error.isProgressGap && link) {
-          await this.transitionToRepairing(linkKey, link, {
-            resumeToken: error.gapInfo?.latestAvailable,
-          });
-          return;
-        }
-
-        console.error(`SyncEngineLevel: Failed to hot-add live subscription for ${target.did} -> ${target.dwnUrl}`, error);
-        this._activeLinks.delete(linkKey);
-        this._linkRuntimes.delete(linkKey);
-      }
-    }));
+    await Promise.allSettled(targets.map(t => this.initializeLinkTarget(t)));
   }
 
   /**

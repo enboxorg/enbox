@@ -369,11 +369,8 @@ export interface SyncEngine {
    * Starts sync. In `'live'` mode opens real-time subscriptions with SMT
    * fallback; in `'poll'` mode uses periodic SMT reconciliation.
    *
-   * If sync is already running in the requested mode, this is a no-op —
-   * existing subscriptions are preserved. This prevents disrupting live
-   * sync for existing identities when called after `registerIdentity()`.
-   * Calling with a *different* mode tears down the previous mode's
-   * resources before starting the new one.
+   * Subsequent calls update the mode/interval. Calling with a different mode
+   * tears down the previous mode's resources before starting the new one.
    */
   startSync(params: StartSyncParams): Promise<void>;
   /**
