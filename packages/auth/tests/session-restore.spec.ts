@@ -648,6 +648,39 @@ describe('restoreSession', () => {
       expect(syncStartCalls).toHaveLength(0);
     });
 
+    test('removes stale registration when repair fails so later sync cannot use it', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const unregisterCalls: string[] = [];
+      const syncStartCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncStartSync             : async (params) => { syncStartCalls.push(params); },
+        syncUnregisterIdentity    : async (did) => { unregisterCalls.push(did); },
+        // Make grant derivation fail to trigger the repair-failure path.
+        processDwnRequest         : async () => { throw new Error('store unavailable'); },
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      // Repair failed → sync should not start.
+      expect(syncStartCalls).toHaveLength(0);
+      // Stale registration should be best-effort removed so a later
+      // manual startSync() cannot use stale scope.
+      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls[0]).toBe('did:dht:external');
+    });
+
     test('repairs delegate registration even when sync is off', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();

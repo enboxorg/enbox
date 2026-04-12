@@ -258,9 +258,12 @@ export async function restoreSession(
         }
       }
     } catch {
-      // Grant query failed — don't block restore, but don't start sync
-      // with a potentially stale registration.
+      // Grant query or registration repair failed — don't block restore,
+      // but don't let a stale registration remain usable.
       syncRepairFailed = true;
+      // Best-effort: remove any existing registration so a later manual
+      // startSync() cannot use stale scope for this connected DID.
+      try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* already gone or store error */ }
     }
   }
 

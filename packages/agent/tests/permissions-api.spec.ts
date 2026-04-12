@@ -1216,6 +1216,42 @@ describe('AgentPermissionsApi', () => {
       expect(noMatch).toBeUndefined();
     });
 
+    it('rejects malformed Messages grant with method !== Read', async () => {
+      const aliceDeviceX = await testHarness.agent.identity.create({
+        store     : true,
+        metadata  : { name: 'Alice Device X' },
+        didMethod : 'jwk'
+      });
+
+      // Create a valid Messages.Read grant, then tamper with the parsed scope
+      // to simulate a legacy/malformed grant with method: 'Sync'.
+      const grant = await testHarness.agent.permissions.createGrant({
+        author      : aliceDid.uri,
+        grantedTo   : aliceDeviceX.did.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        store       : true,
+        scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
+      });
+
+      // Build a tampered PermissionGrantEntry with scope.method = 'Sync' to
+      // simulate a malformed/legacy grant that bypassed schema validation.
+      const tamperedEntry = {
+        message : grant.message,
+        grant   : {
+          ...grant.grant,
+          scope: { ...grant.grant.scope, method: 'Sync' },
+        },
+      };
+
+      // The tampered grant should NOT match any Messages operation.
+      for (const messageType of [DwnInterface.MessagesRead, DwnInterface.MessagesSync, DwnInterface.MessagesSubscribe]) {
+        const matched = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+          messageType,
+        }, [tamperedEntry as any]);
+        expect(matched).toBeUndefined();
+      }
+    });
+
     it('Messages with protocol', async () => {
       const aliceDeviceX = await testHarness.agent.identity.create({
         store     : true,
