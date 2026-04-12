@@ -2202,6 +2202,7 @@ export class SyncEngineLevel implements SyncEngine {
     const timer = setTimeout((): void => {
       this._reconcileTimers.delete(linkKey);
       if (this._engineGeneration !== generation) { return; }
+      if (!this._activeLinks.has(linkKey)) { return; }
       void this.reconcileLink(linkKey);
     }, delayMs);
     this._reconcileTimers.set(linkKey, timer);
