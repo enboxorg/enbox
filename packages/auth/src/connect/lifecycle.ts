@@ -467,21 +467,24 @@ export async function importDelegateAndSetupSync(params: {
     // Register (or update) the identity for protocol-scoped sync.
     // If the identity is already registered from a prior session, update
     // the protocol list so it matches the new grants — otherwise a stale
-    // `protocols: []` (global sync) would remain and the sync engine
-    // would try to sync every protocol including the DWN permissions
-    // protocol, which the delegate has no grant for.
-    const syncOptions = {
-      delegateDid : delegatePortableDid.uri,
-      protocols   : connectedProtocols,
-    };
-    try {
-      await userAgent.sync.registerIdentity({ did: connectedDid, options: syncOptions });
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : '';
-      if (msg.includes('already registered')) {
-        await userAgent.sync.updateIdentityOptions({ did: connectedDid, options: syncOptions });
-      } else {
-        throw error;
+    // registration would remain and the sync engine would try to sync
+    // every protocol including the DWN permissions protocol, which the
+    // delegate has no grant for.
+    // A delegate with zero granted protocols has nothing to sync — skip.
+    if (connectedProtocols.length > 0) {
+      const syncOptions = {
+        delegateDid : delegatePortableDid.uri,
+        protocols   : connectedProtocols as [string, ...string[]],
+      };
+      try {
+        await userAgent.sync.registerIdentity({ did: connectedDid, options: syncOptions });
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : '';
+        if (msg.includes('already registered')) {
+          await userAgent.sync.updateIdentityOptions({ did: connectedDid, options: syncOptions });
+        } else {
+          throw error;
+        }
       }
     }
 

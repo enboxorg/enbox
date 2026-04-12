@@ -826,11 +826,17 @@ export class AuthManager {
     // Register the identity for sync and restart sync.
     const sync = this._defaultSync;
     if (sync !== 'off') {
-      const protocols: 'all' | string[] = delegateDid
+      const derivedProtocols = delegateDid
         ? await this._deriveProtocolsFromGrants(delegateDid)
-        : 'all';
+        : undefined;
 
-      await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
+      // A delegate with zero grants has nothing to sync — skip registration.
+      if (!delegateDid || !derivedProtocols || derivedProtocols.length > 0) {
+        const protocols: 'all' | [string, ...string[]] = derivedProtocols && derivedProtocols.length > 0
+          ? derivedProtocols as [string, ...string[]]
+          : 'all';
+        await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
+      }
       await startSyncIfEnabled(this._userAgent, sync);
     }
 
@@ -1131,7 +1137,7 @@ export class AuthManager {
   private async _registerOrUpdateSyncIdentity(
     connectedDid: string,
     delegateDid: string | undefined,
-    protocols: 'all' | string[],
+    protocols: 'all' | [string, ...string[]],
   ): Promise<void> {
     const options = { delegateDid, protocols };
     try {

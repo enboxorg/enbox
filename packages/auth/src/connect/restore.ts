@@ -230,15 +230,18 @@ export async function restoreSession(
   if (delegateDid && ctx.defaultSync !== 'off') {
     try {
       const protocols = await deriveProtocolsFromGrants(userAgent, delegateDid);
-      const options = { delegateDid, protocols };
-      try {
-        await userAgent.sync.registerIdentity({ did: connectedDid, options });
-      } catch (regError: unknown) {
-        const msg = regError instanceof Error ? regError.message : '';
-        if (msg.includes('already registered')) {
-          await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
+      // A delegate with zero grants has nothing to sync — skip registration.
+      if (protocols.length > 0) {
+        const options = { delegateDid, protocols: protocols as [string, ...string[]] };
+        try {
+          await userAgent.sync.registerIdentity({ did: connectedDid, options });
+        } catch (regError: unknown) {
+          const msg = regError instanceof Error ? regError.message : '';
+          if (msg.includes('already registered')) {
+            await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
+          }
+          // Other errors are ignored — sync will still work with existing registration.
         }
-        // Other errors are ignored — sync will still work with existing registration.
       }
     } catch {
       // Best-effort — don't block restore if grant query fails.

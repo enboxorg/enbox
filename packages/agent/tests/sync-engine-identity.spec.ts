@@ -103,6 +103,23 @@ describe('SyncEngineLevel — identity management', () => {
         })
       ).rejects.toThrow('is not registered');
     });
+
+    it('should reject an empty protocols array', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:upd-empty', options: { protocols: ['old'] } });
+      await expect(
+        syncEngine.updateIdentityOptions({
+          did     : 'did:example:upd-empty',
+          options : { protocols: [] } as any,
+        })
+      ).rejects.toThrow('empty array is ambiguous');
+    });
+
+    it('should reject when options is missing entirely (JS caller)', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:upd-no-opts', options: { protocols: ['old'] } });
+      await expect(
+        (syncEngine as any).updateIdentityOptions({ did: 'did:example:upd-no-opts' })
+      ).rejects.toThrow('options.protocols is required');
+    });
   });
 
   describe('explicit protocol scope', () => {

@@ -15,7 +15,7 @@ export type SyncIdentityOptions = {
    * - `'all'` — sync all protocols (full replica).
    * - `string[]` — sync only the listed protocol URIs.
    */
-  protocols: 'all' | string[];
+  protocols: 'all' | [string, ...string[]];
 };
 
 /**

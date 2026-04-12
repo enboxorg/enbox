@@ -360,6 +360,19 @@ describe('restoreSession', () => {
         identityConnectedIdentity : async () => identity,
         syncRegisterIdentity      : async () => { throw new Error('already registered'); },
         syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
+        // Return a mock grant so deriveProtocolsFromGrants produces a non-empty
+        // protocol list and the sync registration path is actually exercised.
+        processDwnRequest         : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [buildMockGrantEntry('https://proto.example.com/notes')],
+              },
+            };
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
       });
 
       const session = await restoreSession(

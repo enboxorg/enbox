@@ -1211,7 +1211,7 @@ describe('AuthManager', () => {
       expect(registerCalls[0].options.protocols).toBe('all');
     });
 
-    test('passes delegateDid for wallet-connected identity', async () => {
+    test('skips sync registration for delegate with zero grants', async () => {
       const registerCalls: any[] = [];
       const identity = createMockIdentity({
         did      : { uri: 'did:delegate' },
@@ -1226,11 +1226,8 @@ describe('AuthManager', () => {
 
       await manager.switchIdentity('did:delegate');
 
-      expect(registerCalls).toHaveLength(1);
-      expect(registerCalls[0].did).toBe('did:external');
-      expect(registerCalls[0].options.delegateDid).toBe('did:delegate');
-      // Delegate protocols derived from grants — empty because mock returns no entries.
-      expect(registerCalls[0].options.protocols).toEqual([]);
+      // Zero grants means nothing to sync — registration is skipped entirely.
+      expect(registerCalls).toHaveLength(0);
     });
 
     test('handles already-registered identity gracefully', async () => {

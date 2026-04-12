@@ -568,7 +568,14 @@ describe('walletConnect', () => {
       syncRegisterIdentity : async () => { throw new Error('sync reg failed'); },
     });
 
-    initClientStub.onFirstCall().resolves(createInitClientResult());
+    // Provide a grant so connectedProtocols is non-empty and sync registration is attempted.
+    const grantData = [{
+      _scope      : { protocol: 'https://proto.example/chat' },
+      encodedData : 'dGVzdA',
+      recordId    : 'rec1',
+      descriptor  : {},
+    }];
+    initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
     await expect(
       walletConnect(
@@ -603,7 +610,14 @@ describe('walletConnect', () => {
       syncRegisterIdentity : async () => { throw new Error('trigger cleanup'); },
     });
 
-    initClientStub.onFirstCall().resolves(createInitClientResult());
+    // Provide a grant so connectedProtocols is non-empty and sync registration is attempted.
+    const grantData = [{
+      _scope      : { protocol: 'https://proto.example/chat' },
+      encodedData : 'dGVzdA',
+      recordId    : 'rec1',
+      descriptor  : {},
+    }];
+    initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
     // Should not throw from cleanup — only from the original error
     await expect(
