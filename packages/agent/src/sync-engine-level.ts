@@ -383,10 +383,12 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async clear(): Promise<void> {
-    this._syncMode = undefined;
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
+    const inFlightReconcile = [...this._reconcileInFlight.values()];
     await this.teardownLiveSync();
+    await Promise.allSettled(inFlightReconcile);
+    this._syncMode = undefined;
     await this._permissionsApi.clear();
     await this._db.clear();
   }
@@ -394,7 +396,9 @@ export class SyncEngineLevel implements SyncEngine {
   public async close(): Promise<void> {
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
+    const inFlightReconcile = [...this._reconcileInFlight.values()];
     await this.teardownLiveSync();
+    await Promise.allSettled(inFlightReconcile);
     await this._db.close();
   }
 
@@ -614,10 +618,12 @@ export class SyncEngineLevel implements SyncEngine {
       this._syncIntervalId = undefined;
     }
 
-    this._syncMode = undefined;
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
+    const inFlightReconcile = [...this._reconcileInFlight.values()];
     await this.teardownLiveSync();
+    await Promise.allSettled(inFlightReconcile);
+    this._syncMode = undefined;
   }
 
   // ---------------------------------------------------------------------------
