@@ -823,31 +823,31 @@ export class AuthManager {
       connectedDid : identity.metadata.connectedDid,
     };
 
-    // Register the identity for sync and restart sync.
-    const sync = this._defaultSync;
-    if (sync !== 'off') {
-      const derivedProtocols = delegateDid
-        ? await this._deriveProtocolsFromGrants(delegateDid)
-        : undefined;
+    // Always repair the sync registration regardless of sync state — a stale
+    // registration persists on disk and would take effect when sync is later
+    // enabled. This matches restoreSession()'s behavior.
+    const derivedProtocols = delegateDid
+      ? await this._deriveProtocolsFromGrants(delegateDid)
+      : undefined;
 
-      if (delegateDid && derivedProtocols !== undefined && derivedProtocols !== 'all' && derivedProtocols.length === 0) {
-        // Zero grants — this delegate has no permissions. Remove any
-        // stale sync registration so revoked protocols stop syncing.
-        try {
-          await this._userAgent.sync.unregisterIdentity(connectedDid);
-        } catch (error: unknown) {
-          const msg = error instanceof Error ? error.message : '';
-          if (!msg.includes('is not registered')) { throw error; }
-        }
-      } else {
-        const protocols: 'all' | [string, ...string[]] =
-          derivedProtocols === 'all' ? 'all'
-            : derivedProtocols && derivedProtocols.length > 0 ? derivedProtocols as [string, ...string[]]
-              : 'all';
-        await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
+    if (delegateDid && derivedProtocols !== undefined && derivedProtocols !== 'all' && derivedProtocols.length === 0) {
+      // Zero grants — this delegate has no permissions. Remove any
+      // stale sync registration so revoked protocols stop syncing.
+      try {
+        await this._userAgent.sync.unregisterIdentity(connectedDid);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : '';
+        if (!msg.includes('is not registered')) { throw error; }
       }
-      await startSyncIfEnabled(this._userAgent, sync);
+    } else {
+      const protocols: 'all' | [string, ...string[]] =
+        derivedProtocols === 'all' ? 'all'
+          : derivedProtocols && derivedProtocols.length > 0 ? derivedProtocols as [string, ...string[]]
+            : 'all';
+      await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
     }
+
+    await startSyncIfEnabled(this._userAgent, this._defaultSync);
 
     this._session = new AuthSession({
       agent    : this._userAgent,

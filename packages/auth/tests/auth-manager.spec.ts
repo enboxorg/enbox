@@ -1357,18 +1357,45 @@ describe('AuthManager', () => {
       expect(updateCalls[0].did).toBe('did:dht:testuser123');
     });
 
-    test('skips registration when sync is off', async () => {
+    test('repairs registration but does not start sync when sync is off', async () => {
       const registerCalls: any[] = [];
+      const syncStartCalls: any[] = [];
       const identity = createMockIdentity();
       const agent = createMockAgent({
         identityGet          : async () => identity,
         syncRegisterIdentity : async (params) => { registerCalls.push(params); },
+        syncStartSync        : async (params) => { syncStartCalls.push(params); },
       });
       const manager = createTestManager(agent, { sync: 'off' });
 
       await manager.switchIdentity('did:dht:testuser123');
 
+      // Registration still happens (to keep on-disk state correct).
+      expect(registerCalls).toHaveLength(1);
+      // But sync does not start.
+      expect(syncStartCalls).toHaveLength(0);
+    });
+
+    test('unregisters delegate with zero grants even when sync is off', async () => {
+      const unregisterCalls: string[] = [];
+      const registerCalls: any[] = [];
+      const identity = createMockIdentity({
+        did      : { uri: 'did:delegate' },
+        metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:external' },
+      });
+      const agent = createMockAgent({
+        identityGet            : async () => identity,
+        syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
+        syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+      });
+      const manager = createTestManager(agent, { sync: 'off' });
+
+      await manager.switchIdentity('did:delegate');
+
+      // Zero grants → should unregister stale scope even with sync off.
       expect(registerCalls).toHaveLength(0);
+      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls[0]).toBe('did:external');
     });
   });
 
