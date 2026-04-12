@@ -73,7 +73,14 @@ export class ReplicationLedger {
       // is not the same as explicitly clearing it.
       if ('delegateDid' in params && link.delegateDid !== params.delegateDid) {
         link.delegateDid = params.delegateDid;
-        await this.sublevel.put(key, JSON.stringify(link));
+        try {
+          await this.sublevel.put(key, JSON.stringify(link));
+        } catch (writeError: any) {
+          if (writeError?.code === 'LEVEL_DATABASE_NOT_OPEN') {
+            return link; // DB closed during teardown — return stale link
+          }
+          throw writeError;
+        }
       }
 
       return link;
