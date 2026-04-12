@@ -212,7 +212,7 @@ export class SyncEngineLevel implements SyncEngine {
   // Live sync state
   // ---------------------------------------------------------------------------
 
-  /** Current sync mode, set by `startSync`. */
+  /** Current sync mode, set by `startSync`. Reset to `undefined` by `stopSync`/`clear`. */
   private _syncMode: SyncMode | undefined = 'poll';
 
   /**
@@ -302,18 +302,6 @@ export class SyncEngineLevel implements SyncEngine {
     this._agent = agent;
     this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
     this._db = (db) ? db : new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
-
-    // Absorb LEVEL_DATABASE_NOT_OPEN errors from deferred sublevel writes
-    // that complete after stopSync/close. Without this, a reconcile or push
-    // timer that fires during the teardown window can queue a deferred write
-    // that surfaces as an uncaught exception when the DB finishes closing.
-    if (typeof this._db.on === 'function') {
-      this._db.on('error', (err: any): void => {
-        if (err?.code !== 'LEVEL_DATABASE_NOT_OPEN') {
-          console.error('SyncEngineLevel: unexpected database error', err);
-        }
-      });
-    }
   }
 
   /** Lazy accessor for the replication ledger. */
@@ -397,9 +385,7 @@ export class SyncEngineLevel implements SyncEngine {
   public async clear(): Promise<void> {
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
-    const inFlightReconcile = [...this._reconcileInFlight.values()];
     await this.teardownLiveSync();
-    await Promise.allSettled(inFlightReconcile);
     this._syncMode = undefined;
     await this._permissionsApi.clear();
     await this._db.clear();
@@ -408,23 +394,10 @@ export class SyncEngineLevel implements SyncEngine {
   public async close(): Promise<void> {
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
-    const inFlightReconcile = [...this._reconcileInFlight.values()];
     await this.teardownLiveSync();
-    await Promise.allSettled(inFlightReconcile);
     await this._db.close();
   }
 
-  /**
-   * Register an identity for syncing.
-   *
-   * When live sync is active, the identity is hot-added immediately: its
-   * replication links are created and subscriptions opened without tearing
-   * down existing links for other identities.
-   *
-   * If the hot-add fails (e.g. DWN endpoint unreachable), the identity is
-   * still persisted and will be picked up on the next `startSync()` call.
-   * The error propagates to the caller so it can decide whether to retry.
-   */
   public async registerIdentity({ did, options }: { did: string; options?: SyncIdentityOptions }): Promise<void> {
     const registeredIdentities = this._db.sublevel('registeredIdentities');
 
@@ -440,10 +413,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
 
-    // If live sync is active, hot-add subscriptions for this identity without
-    // tearing down existing links. The condition uses _syncMode (not
-    // _liveSubscriptions.length) so hot-add works even after the last
-    // identity was removed and no subscriptions remain.
+    // If live sync is active, hot-add subscriptions for this identity.
     if (this._syncMode === 'live') {
       await this.addIdentityToLiveSync(did, options);
     }
@@ -456,8 +426,7 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
     }
 
-    // If live sync is active, hot-remove subscriptions for this identity
-    // without tearing down links for other identities.
+    // If live sync is active, hot-remove subscriptions for this identity.
     if (this._syncMode === 'live') {
       await this.removeIdentityFromLiveSync(did);
     }
@@ -496,13 +465,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
 
-    // Persist delegateDid changes to the durable ledger so repair/reconcile
-    // paths pick up the new delegate when they reload the link.
-    await this.ledger.updateDelegateDid(did, options.delegateDid);
-
-    // If live sync is active, tear down the identity's existing subscriptions
-    // and re-add with the new options so protocol filters and delegateDid
-    // take effect immediately.
+    // If live sync is active, rebuild subscriptions with the new options.
     if (this._syncMode === 'live' && this.hasActiveLinksForDid(did)) {
       await this.removeIdentityFromLiveSync(did);
       await this.addIdentityToLiveSync(did, options);
@@ -632,9 +595,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
-    const inFlightReconcile = [...this._reconcileInFlight.values()];
     await this.teardownLiveSync();
-    await Promise.allSettled(inFlightReconcile);
     this._syncMode = undefined;
   }
 
@@ -959,10 +920,6 @@ export class SyncEngineLevel implements SyncEngine {
       ReplicationLedger.resetCheckpoint(link.pull, resumeToken);
       await this.ledger.saveLink(link);
       if (this._engineGeneration !== generation) { return; }
-      // If the identity was hot-removed (or removed and re-added with a new
-      // link), bail — the stale link in our closure must not overwrite the
-      // new link's state or reopen subscriptions with old parameters.
-      if (this._activeLinks.get(linkKey) !== link) { return; }
 
       // Step 5: Reopen subscriptions.
       // Mark needsReconcile BEFORE reopening — local push starts from "now",
@@ -1316,10 +1273,7 @@ export class SyncEngineLevel implements SyncEngine {
   /**
    * Initialize a single replication link target: create or resume the durable
    * link, migrate legacy cursors, open pull + push subscriptions, and
-   * transition the link to `'live'`. On failure, the link is cleaned up and
-   * — for ProgressGap errors — transitioned to `'repairing'`.
-   *
-   * Used by both `startLiveSync` (bulk) and `addIdentityToLiveSync` (hot-add).
+   * transition the link to `'live'`.
    */
   private async initializeLinkTarget(target: {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
@@ -1339,8 +1293,6 @@ export class SyncEngineLevel implements SyncEngine {
 
       const linkKey = this.buildLinkKey(target.did, target.dwnUrl, link.scopeId);
 
-      // One-time migration: if the link has no pull checkpoint, check for
-      // a legacy cursor in the old syncCursors sublevel.
       if (!link.pull.contiguousAppliedToken) {
         const legacyKey = buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
         const legacyCursor = await this.getCursor(legacyKey);
@@ -1353,9 +1305,6 @@ export class SyncEngineLevel implements SyncEngine {
 
       this._activeLinks.set(linkKey, link);
 
-      // Open subscriptions — only transition to live if both succeed.
-      // If pull succeeds but push fails, close the pull subscription to
-      // avoid a resource leak with inconsistent state.
       const targetWithKey = { ...target, linkKey };
       await this.openLivePullSubscription(targetWithKey);
       try {
@@ -1404,7 +1353,12 @@ export class SyncEngineLevel implements SyncEngine {
   // Hot-add / hot-remove: per-identity live sync management
   // ---------------------------------------------------------------------------
 
-  /** Check whether this DID has any active links in the current sync session. */
+  /** Check whether a link key belongs to a given DID. */
+  private isLinkKeyForDid(key: string, did: string): boolean {
+    return key.startsWith(did + '^') || key.startsWith(did + '_');
+  }
+
+  /** Check whether this DID has any active links. */
   private hasActiveLinksForDid(did: string): boolean {
     for (const key of this._activeLinks.keys()) {
       if (this.isLinkKeyForDid(key, did)) { return true; }
@@ -1412,26 +1366,12 @@ export class SyncEngineLevel implements SyncEngine {
     return false;
   }
 
-  /** Check whether a link key belongs to a given DID. */
-  private isLinkKeyForDid(key: string, did: string): boolean {
-    // Link keys use `^` (buildLinkId) or `_` (legacy buildLegacyCursorKey).
-    return key.startsWith(did + '^') || key.startsWith(did + '_');
-  }
-
-  /**
-   * Hot-add a single identity to the active live sync session.
-   * Resolves DWN endpoints and delegates to {@link initializeLinkTarget}
-   * for each target. No-op when the identity has no resolvable endpoints.
-   */
+  /** Hot-add a single identity to the active live sync session. */
   private async addIdentityToLiveSync(did: string, options: SyncIdentityOptions): Promise<void> {
     const { protocols, delegateDid } = options;
-
     const dwnEndpointUrls = await this.agent.dwn.getDwnEndpointUrlsForTarget(did);
-    if (dwnEndpointUrls.length === 0) {
-      return;
-    }
+    if (dwnEndpointUrls.length === 0) { return; }
 
-    // Build targets for this identity only.
     const targets: { did: string; dwnUrl: string; delegateDid?: string; protocol?: string }[] = [];
     for (const dwnUrl of dwnEndpointUrls) {
       if (protocols.length === 0) {
@@ -1446,29 +1386,18 @@ export class SyncEngineLevel implements SyncEngine {
     await Promise.allSettled(targets.map(t => this.initializeLinkTarget(t)));
   }
 
-  /**
-   * Removes a single identity from the active live sync session. Closes all
-   * subscriptions, clears runtime state, and removes links for the specified
-   * DID without affecting other identities.
-   *
-   * Called automatically by `unregisterIdentity()` when live sync is active.
-   */
+  /** Hot-remove a single identity from the active live sync session. */
   private async removeIdentityFromLiveSync(did: string): Promise<void> {
-    // Close and remove pull subscriptions for this identity.
-    const pullToClose = this._liveSubscriptions.filter(s => s.did === did);
-    for (const sub of pullToClose) {
+    for (const sub of this._liveSubscriptions.filter(s => s.did === did)) {
       try { await sub.close(); } catch { /* best effort */ }
     }
     this._liveSubscriptions = this._liveSubscriptions.filter(s => s.did !== did);
 
-    // Close and remove push subscriptions for this identity.
-    const pushToClose = this._localSubscriptions.filter(s => s.did === did);
-    for (const sub of pushToClose) {
+    for (const sub of this._localSubscriptions.filter(s => s.did === did)) {
       try { await sub.close(); } catch { /* best effort */ }
     }
     this._localSubscriptions = this._localSubscriptions.filter(s => s.did !== did);
 
-    // Clear push runtimes for this identity (cancel pending timers).
     for (const [key, runtime] of this._pushRuntimes) {
       if (runtime.did === did) {
         if (runtime.timer) { clearTimeout(runtime.timer); }
@@ -1476,68 +1405,31 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    // Clear degraded-poll timers for this identity's links.
     for (const [key, timer] of this._degradedPollTimers) {
-      if (this.isLinkKeyForDid(key, did)) {
-        clearInterval(timer);
-        this._degradedPollTimers.delete(key);
-      }
+      if (this.isLinkKeyForDid(key, did)) { clearInterval(timer); this._degradedPollTimers.delete(key); }
     }
-
-    // Clear repair state for this identity's links.
-    // _activeRepairs and _repairContext must be cleared so that a
-    // quick re-add of the same link doesn't reuse an in-flight repair
-    // promise that holds stale delegateDid/protocol references.
     for (const key of this._repairAttempts.keys()) {
-      if (this.isLinkKeyForDid(key, did)) {
-        this._repairAttempts.delete(key);
-      }
+      if (this.isLinkKeyForDid(key, did)) { this._repairAttempts.delete(key); }
     }
     for (const key of this._activeRepairs.keys()) {
-      if (this.isLinkKeyForDid(key, did)) {
-        this._activeRepairs.delete(key);
-      }
+      if (this.isLinkKeyForDid(key, did)) { this._activeRepairs.delete(key); }
     }
     for (const key of this._repairContext.keys()) {
-      if (this.isLinkKeyForDid(key, did)) {
-        this._repairContext.delete(key);
-      }
+      if (this.isLinkKeyForDid(key, did)) { this._repairContext.delete(key); }
     }
     for (const [key, timer] of this._repairRetryTimers) {
-      if (this.isLinkKeyForDid(key, did)) {
-        clearTimeout(timer);
-        this._repairRetryTimers.delete(key);
-      }
+      if (this.isLinkKeyForDid(key, did)) { clearTimeout(timer); this._repairRetryTimers.delete(key); }
     }
-
-    // Clear reconcile state for this identity's links.
     for (const [key, timer] of this._reconcileTimers) {
-      if (this.isLinkKeyForDid(key, did)) {
-        clearTimeout(timer);
-        this._reconcileTimers.delete(key);
-      }
+      if (this.isLinkKeyForDid(key, did)) { clearTimeout(timer); this._reconcileTimers.delete(key); }
     }
     for (const key of this._reconcileInFlight.keys()) {
-      if (this.isLinkKeyForDid(key, did)) {
-        this._reconcileInFlight.delete(key);
-      }
+      if (this.isLinkKeyForDid(key, did)) { this._reconcileInFlight.delete(key); }
     }
-
-    // Clear active links and runtime state for this identity.
     for (const key of this._activeLinks.keys()) {
-      if (this.isLinkKeyForDid(key, did)) {
-        this._activeLinks.delete(key);
-        this._linkRuntimes.delete(key);
-      }
+      if (this.isLinkKeyForDid(key, did)) { this._activeLinks.delete(key); this._linkRuntimes.delete(key); }
     }
-
-    // Clear closure context for this tenant.
     this._closureContexts.delete(did);
-
-    // Echo-loop entries (`_recentlyPulledCids`) are keyed by `{cid}|{dwnUrl}`,
-    // not DID-scoped. We can't identify which belong to this identity, so they
-    // expire naturally via TTL (60s). Stale entries only prevent redundant
-    // pushes briefly — safe to leave.
   }
 
   // ---------------------------------------------------------------------------
@@ -1610,12 +1502,6 @@ export class SyncEngineLevel implements SyncEngine {
     // ensures the checkpoint advances only when all earlier deliveries are committed.
     const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
       if (this._engineGeneration !== handlerGeneration) {
-        return;
-      }
-
-      // Identity was hot-removed — bail out so late callbacks don't mutate
-      // state for a DID that is no longer being synced.
-      if (!this._activeLinks.has(cursorKey)) {
         return;
       }
 
@@ -1980,18 +1866,7 @@ export class SyncEngineLevel implements SyncEngine {
       // scope prefixes. Events outside the scope are not our responsibility.
       const pushLinkKey = target.linkKey;
       const pushLink = this._activeLinks.get(pushLinkKey);
-
-      // If the link is present, filter by scope. If it was hot-removed
-      // (_activeLinks cleared for this DID), pushLink is undefined and
-      // we skip the event. During startup, pushLink may also be undefined
-      // before initializeLinkTarget completes — in that case we still
-      // skip, which is safe because the initial SMT reconciliation will
-      // catch up any missed local writes.
-      if (!pushLink) {
-        return;
-      }
-
-      if (!isEventInScope(subMessage.event.message, pushLink.scope)) {
+      if (pushLink && !isEventInScope(subMessage.event.message, pushLink.scope)) {
         return;
       }
 
@@ -2060,7 +1935,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async flushPendingPushesForLink(linkKey: string): Promise<void> {
     const pushRuntime = this._pushRuntimes.get(linkKey);
-    if (!pushRuntime || !this._activeLinks.has(linkKey)) {
+    if (!pushRuntime) {
       return;
     }
 
@@ -2233,7 +2108,6 @@ export class SyncEngineLevel implements SyncEngine {
     const timer = setTimeout((): void => {
       this._reconcileTimers.delete(linkKey);
       if (this._engineGeneration !== generation) { return; }
-      if (!this._activeLinks.has(linkKey)) { return; }
       void this.reconcileLink(linkKey).catch((): void => {
         // Errors are already logged inside doReconcileLink; swallow here
         // to prevent unhandled-rejection flakes in the test runner.

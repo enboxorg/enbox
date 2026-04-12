@@ -268,10 +268,9 @@ describe('SyncLinkReconciler', () => {
 
     it('should abort after diff if shouldContinue returns false', async () => {
       const shouldContinue = sinon.stub();
-      shouldContinue.onCall(0).returns(true); // before getLocalRoot
-      shouldContinue.onCall(1).returns(true); // after getLocalRoot
-      shouldContinue.onCall(2).returns(true); // after getRemoteRoot
-      shouldContinue.onCall(3).returns(false); // after diff
+      shouldContinue.onCall(0).returns(true);
+      shouldContinue.onCall(1).returns(true);
+      shouldContinue.onCall(2).returns(false);
       const deps = makeDeps({
         shouldContinue,
         getLocalRoot   : sinon.stub().resolves('rootA'),

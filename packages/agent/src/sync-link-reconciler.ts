@@ -87,8 +87,6 @@ export class SyncLinkReconciler {
     const verifyConvergence = options?.verifyConvergence ?? false;
     const shouldContinue = this._deps.shouldContinue;
 
-    if (shouldContinue && !shouldContinue()) { return { aborted: true, changed: false, didPull: false, didPush: false }; }
-
     const localRoot = await this._deps.getLocalRoot(did, delegateDid, protocol);
     if (shouldContinue && !shouldContinue()) { return { aborted: true, changed: false, didPull: false, didPush: false }; }
 

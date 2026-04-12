@@ -99,21 +99,6 @@ export class ReplicationLedger {
     await this.sublevel.put(key, JSON.stringify(link));
   }
 
-  /**
-   * Update the delegateDid on all links for a given tenant + endpoint.
-   * Called explicitly by `updateIdentityOptions` — keeps `getOrCreateLink`
-   * read-only for existing links so the hot path has no surprise writes.
-   */
-  public async updateDelegateDid(tenantDid: string, delegateDid: string | undefined): Promise<void> {
-    const links = await this.getLinksForTenant(tenantDid);
-    for (const link of links) {
-      if (link.delegateDid !== delegateDid) {
-        link.delegateDid = delegateDid;
-        await this.saveLink(link);
-      }
-    }
-  }
-
   /** Delete a link. */
   public async deleteLink(tenantDid: string, remoteEndpoint: string, scopeId: string): Promise<void> {
     const key = ReplicationLedger.buildKey(tenantDid, remoteEndpoint, scopeId);
