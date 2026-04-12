@@ -623,6 +623,7 @@ export class AuthManager {
     } else {
       // Clean disconnect: ALWAYS clear all session markers regardless
       // of revocation outcome. Retry context is independent (step below).
+      // Delegate keys are removed from both SecretStore and legacy StorageAdapter.
       await Promise.all([
         this._storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED),
         this._storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY),
@@ -632,6 +633,8 @@ export class AuthManager {
         this._storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS),
         this._storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS),
         this._storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS),
+        this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS).catch(() => {}),
+        this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
       ]);
     }
 

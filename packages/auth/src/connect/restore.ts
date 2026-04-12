@@ -46,6 +46,45 @@ async function decryptStoredKeys(
 }
 
 /**
+ * Load delegate keys from SecretStore, falling back to legacy StorageAdapter.
+ *
+ * On a successful legacy read the keys are migrated into the SecretStore and
+ * the plaintext/JWE copy is removed (best-effort). Returns the JSON string
+ * representation of the keys, or `undefined` if nothing is stored.
+ */
+async function loadDelegateKeysWithFallback(
+  userAgent: EnboxUserAgent,
+  storage: StorageAdapter,
+  key: string,
+): Promise<string | undefined> {
+  // 1. Try SecretStore (preferred path).
+  try {
+    const bytes = await userAgent.secrets.get(key);
+    if (bytes) {
+      return Convert.uint8Array(bytes).toString();
+    }
+  } catch { /* vault may be locked — fall through to legacy path */ }
+
+  // 2. Fall back to legacy StorageAdapter (JWE or plaintext JSON).
+  const legacy = await storage.get(key);
+  if (!legacy) { return undefined; }
+
+  try {
+    const json = await decryptStoredKeys(userAgent, legacy);
+
+    // Migrate into SecretStore and remove legacy copy (best-effort).
+    try {
+      await userAgent.secrets.put(key, Convert.string(json).toUint8Array());
+      await storage.remove(key);
+    } catch { /* best-effort migration */ }
+
+    return json;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Attempt to restore a previous session.
  *
  * Returns `undefined` if no previous session exists.
@@ -153,6 +192,7 @@ export async function restoreSession(
 
     if (!isAgentOnlySession) {
       // Truly stale session data — clean up and bail.
+      // Remove delegate keys from both SecretStore and legacy StorageAdapter.
       await storage.remove(STORAGE_KEYS.PREVIOUSLY_CONNECTED);
       await storage.remove(STORAGE_KEYS.ACTIVE_IDENTITY);
       await storage.remove(STORAGE_KEYS.DELEGATE_DID);
@@ -161,6 +201,8 @@ export async function restoreSession(
       await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
       await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS);
+      try { await userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS); } catch { /* best-effort */ }
+      try { await userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
       // Do NOT remove REVOCATION_RETRY_CONTEXT here — it has its own
       // lifecycle managed by the retry maintenance path. Stale session
       // cleanup must not silently drop pending revocations.
@@ -206,16 +248,19 @@ export async function restoreSession(
   // Start sync after the registration is correct.
   await startSyncIfEnabled(userAgent, ctx.defaultSync);
 
-  // Restore delegate decryption keys if persisted.
-  // Keys are stored as compact JWE (encrypted with the vault CEK).
-  // Falls back to plaintext JSON for backward compatibility with sessions
-  // created before the encryption-at-rest fix.
+  // Restore delegate decryption keys and context keys.
+  //
+  // Keys are loaded from the vault-backed SecretStore (preferred). When
+  // the SecretStore is empty, we fall back to the legacy StorageAdapter
+  // which may hold either a compact JWE (encrypted with the vault CEK)
+  // or raw JSON (from sessions created before the encryption-at-rest fix).
+  // On successful fallback, the legacy copy is removed (best-effort) so
+  // all future reads come from the SecretStore.
   if (delegateDid && connectedDid) {
-    const storedKeys = await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
-    if (storedKeys) {
+    const decryptionKeysJson = await loadDelegateKeysWithFallback(userAgent, storage, STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
+    if (decryptionKeysJson) {
       try {
-        const keysJson = await decryptStoredKeys(userAgent, storedKeys);
-        const keys = JSON.parse(keysJson);
+        const keys = JSON.parse(decryptionKeysJson);
         if (Array.isArray(keys) && keys.length > 0) {
           userAgent.dwn.importDelegateDecryptionKeys(delegateDid, keys);
         }
@@ -223,7 +268,7 @@ export async function restoreSession(
     }
 
     // Restore context keys for multi-party encrypted protocols.
-    const storedCtxKeys = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+    const contextKeysJson = await loadDelegateKeysWithFallback(userAgent, storage, STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
     // Restore multi-party protocol registrations (not encrypted — no key material).
     const mpProtocolsJson = await storage.get(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
     let multiPartyProtocols: string[] | undefined;
@@ -234,12 +279,9 @@ export async function restoreSession(
       } catch { /* best effort */ }
     }
 
-    if (storedCtxKeys || multiPartyProtocols) {
+    if (contextKeysJson || multiPartyProtocols) {
       try {
-        const ctxKeysJson = storedCtxKeys
-          ? await decryptStoredKeys(userAgent, storedCtxKeys)
-          : '[]';
-        const ctxKeys = JSON.parse(ctxKeysJson);
+        const ctxKeys = contextKeysJson ? JSON.parse(contextKeysJson) : [];
         userAgent.dwn.importDelegateContextKeys(
           delegateDid,
           Array.isArray(ctxKeys) ? ctxKeys : [],
@@ -255,9 +297,8 @@ export async function restoreSession(
       if (changedDelegateDid !== restoreDelegateDid) { return; }
       try {
         const keys = userAgent.dwn.exportDelegateContextKeys(restoreDelegateDid);
-        const pt = Convert.string(JSON.stringify(keys)).toUint8Array();
-        const encrypted = await userAgent.vault.encryptData({ plaintext: pt });
-        await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, encrypted);
+        const bytes = Convert.string(JSON.stringify(keys)).toUint8Array();
+        await userAgent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, bytes);
       } catch { /* best effort — keys will be re-derived on next connect */ }
     };
   }
