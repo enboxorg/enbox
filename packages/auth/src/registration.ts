@@ -188,8 +188,11 @@ export async function registerWithDwnEndpoints(
     if (registration.persistTokens) {
       if (secretStore) {
         await saveTokensToSecretStore(secretStore, updatedTokens);
+        // Best-effort cleanup: remove the legacy plaintext copy so bearer
+        // tokens no longer sit in localStorage.  A failure here must not
+        // turn a successful registration into an error.
         if (storage) {
-          await storage.remove(STORAGE_KEYS.REGISTRATION_TOKENS);
+          try { await storage.remove(STORAGE_KEYS.REGISTRATION_TOKENS); } catch { /* best-effort */ }
         }
       } else if (storage) {
         await saveTokensToStorage(storage, updatedTokens);

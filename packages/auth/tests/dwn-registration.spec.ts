@@ -1116,4 +1116,52 @@ describe('SecretStore token helpers', () => {
     const leftover = await storage.get(STORAGE_KEYS.REGISTRATION_TOKENS);
     expect(leftover).toBeNull();
   });
+
+  test('succeeds even when legacy storage.remove() throws during migration', async () => {
+    mockRegisterTenant.mockClear();
+    mockRegisterTenant.mockImplementation(async () => {});
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['proof-of-work-sha256-v0'],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    const { InMemorySecretStore } = await import('@enbox/agent');
+    const secretStore = new InMemorySecretStore();
+    const storage = new MemoryStorage();
+
+    // Pre-populate legacy tokens.
+    await saveTokensToStorage(storage, {
+      'https://dwn1.example.com': { registrationToken: 'legacy' },
+    });
+
+    // Make remove() throw to simulate a storage failure.
+    storage.remove = async (): Promise<void> => { throw new Error('disk full'); };
+
+    let successCalled = false;
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        secretStore,
+        storage,
+      },
+      {
+        onSuccess     : () => { successCalled = true; },
+        onFailure     : () => {},
+        persistTokens : true,
+      },
+    );
+
+    // Registration should still succeed — remove() failure is best-effort.
+    expect(successCalled).toBe(true);
+
+    // Tokens should be in the SecretStore regardless.
+    const persisted = await loadTokensFromSecretStore(secretStore);
+    expect(persisted['https://dwn1.example.com'].registrationToken).toBe('legacy');
+  });
 });
