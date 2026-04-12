@@ -604,6 +604,13 @@ export class AuthManager {
       // Nuclear wipe: clear all persisted auth data.
       await this._storage.clear();
 
+      // Wipe all secrets from the vault-backed SecretStore.
+      await Promise.all([
+        this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS).catch(() => {}),
+        this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
+        this._userAgent.secrets.delete(STORAGE_KEYS.REGISTRATION_TOKENS).catch(() => {}),
+      ]);
+
       // Also clear non-prefixed localStorage and IndexedDB (browser).
       if (typeof globalThis.localStorage !== 'undefined') {
         globalThis.localStorage.clear();

@@ -769,13 +769,20 @@ describe('AuthManager', () => {
       expect(clearCalled).toBe(true);
     });
 
-    test('nuclear disconnect clears all storage', async () => {
+    test('nuclear disconnect clears all storage including SecretStore', async () => {
+      const { Convert } = await import('@enbox/common');
       const storage = new MemoryStorage();
 
       const agent = createMockAgent({
         firstLaunch  : async () => false,
         identityList : async () => [createMockIdentity()],
       });
+
+      // Pre-populate SecretStore with all secret types.
+      await agent.secrets.put(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, Convert.string('[]').toUint8Array());
+      await agent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, Convert.string('[]').toUint8Array());
+      await agent.secrets.put(STORAGE_KEYS.REGISTRATION_TOKENS, Convert.string('{}').toUint8Array());
+
       const manager = createTestManager(agent, { storage });
       await manager.connect({ password: 'test' });
 
@@ -783,6 +790,11 @@ describe('AuthManager', () => {
 
       expect(manager.state).toBe('unlocked');
       expect(manager.session).toBeUndefined();
+
+      // All secrets must be wiped.
+      expect(await agent.secrets.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBeUndefined();
+      expect(await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS)).toBeUndefined();
+      expect(await agent.secrets.get(STORAGE_KEYS.REGISTRATION_TOKENS)).toBeUndefined();
     });
 
     test('emits session-end event with DID', async () => {
