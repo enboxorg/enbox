@@ -241,6 +241,24 @@ describe('restoreSession', () => {
     expect(syncCalls).toHaveLength(0);
   });
 
+  test('skips startSync when sync is already running', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    const syncCalls: any[] = [];
+
+    const agent = createMockAgent({
+      firstLaunch   : async () => false,
+      syncStartSync : async (params) => { syncCalls.push(params); },
+      syncIsRunning : true,
+    });
+
+    await restoreSession({ userAgent: agent, emitter, storage });
+
+    // startSync should not be called because sync is already running.
+    expect(syncCalls).toHaveLength(0);
+  });
+
   describe('onPasswordRequired callback', () => {
     test('calls onPasswordRequired when no password is provided', async () => {
       const emitter = new AuthEventEmitter();
