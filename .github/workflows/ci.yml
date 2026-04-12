@@ -502,15 +502,17 @@ jobs:
           bun run --filter @enbox/dwn-clients  test:node:coverage
           bun run --filter @enbox/agent        test:node:coverage
           bun run --filter @enbox/api          test:node:coverage
+          bun run --filter @enbox/browser      test:node:coverage
 
       - name: Stage coverage
         if: always()
         run: |
-          mkdir -p coverage-staging/packages/dids/coverage coverage-staging/packages/dwn-clients/coverage coverage-staging/packages/agent/coverage coverage-staging/packages/api/coverage
+          mkdir -p coverage-staging/packages/dids/coverage coverage-staging/packages/dwn-clients/coverage coverage-staging/packages/agent/coverage coverage-staging/packages/api/coverage coverage-staging/packages/browser/coverage
           cp packages/dids/coverage/lcov.info coverage-staging/packages/dids/coverage/lcov.info 2>/dev/null || true
           cp packages/dwn-clients/coverage/lcov.info coverage-staging/packages/dwn-clients/coverage/lcov.info 2>/dev/null || true
           cp packages/agent/coverage/lcov.info coverage-staging/packages/agent/coverage/lcov.info 2>/dev/null || true
           cp packages/api/coverage/lcov.info coverage-staging/packages/api/coverage/lcov.info 2>/dev/null || true
+          cp packages/browser/coverage/lcov.info coverage-staging/packages/browser/coverage/lcov.info 2>/dev/null || true
 
       - name: Upload coverage
         if: always()
@@ -798,20 +800,20 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # Coverage (Node): merge node LCOV files, run diff-coverage gate, post PR
-  # comment.  Does NOT wait for browser tests — removes them from critical path.
+  # Coverage (Node): merge all LCOV files (node + browser), run diff-coverage
+  # gate, post PR comment.
   # ---------------------------------------------------------------------------
   coverage-node:
     name: 'Coverage: Node'
     runs-on: ubuntu-latest
     timeout-minutes: 6
-    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server]
-    # Run only when at least one node test job actually ran (not all skipped)
+    needs: [changes, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser]
+    # Run when at least one test job actually ran (node or browser)
     if: >-
       always() && !cancelled() && needs.changes.outputs.src == 'true' &&
       (needs.test-lightweight.result == 'success' || needs.test-dwn-sdk.result == 'success' ||
        needs.test-agent-api.result == 'success' || needs.test-sql-store.result == 'success' ||
-       needs.test-dwn-server.result == 'success')
+       needs.test-dwn-server.result == 'success' || needs.test-browser.result == 'success')
 
     steps:
       - name: Checkout repository
@@ -841,9 +843,6 @@ jobs:
           pattern: coverage-*
           path: .
           merge-multiple: true
-
-      - name: Remove browser coverage before merge
-        run: find . -path '*/coverage-browser-*' -type d -exec rm -rf {} + 2>/dev/null || true
 
       - name: Merge LCOV coverage
         run: bun run coverage:merge:reports

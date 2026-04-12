@@ -8,6 +8,15 @@ import log from 'loglevel';
 import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { DwnInterfaceName, DwnMethodName, getRuleSetAtPath, Message } from '@enbox/dwn-sdk-js';
 
+/** Strips trailing `/` characters without regex (avoids ReDoS scanners). */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.codePointAt(end - 1) === 47) { // 47 === '/'
+    end--;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -77,7 +86,7 @@ export class DeliveryService implements MessageProcessedHook {
     this.#dwn = dwn;
     this.#didResolver = didResolver;
     this.#config = config;
-    this.#selfBaseUrl = config.baseUrl.replace(/\/+$/, '');
+    this.#selfBaseUrl = stripTrailingSlashes(config.baseUrl);
   }
 
   /**
@@ -536,17 +545,17 @@ export class DeliveryService implements MessageProcessedHook {
       const epValue = service.serviceEndpoint;
 
       if (typeof epValue === 'string') {
-        endpoints.push({ url: epValue.replace(/\/+$/, ''), isFull: true });
+        endpoints.push({ url: stripTrailingSlashes(epValue), isFull: true });
       } else if (Array.isArray(epValue)) {
         for (const entry of epValue) {
           if (typeof entry === 'string') {
-            endpoints.push({ url: entry.replace(/\/+$/, ''), isFull: true });
+            endpoints.push({ url: stripTrailingSlashes(entry), isFull: true });
           } else if (entry && typeof entry === 'object') {
             // Map entry: { url: "...", dataRetention?: "full" | "cache" }
             const mapEntry = entry as { url?: string; dataRetention?: string };
             if (typeof mapEntry.url === 'string') {
               endpoints.push({
-                url    : mapEntry.url.replace(/\/+$/, ''),
+                url    : stripTrailingSlashes(mapEntry.url),
                 isFull : mapEntry.dataRetention !== 'cache',
               });
             }
@@ -559,7 +568,7 @@ export class DeliveryService implements MessageProcessedHook {
           if (Array.isArray(nodes)) {
             for (const node of nodes) {
               if (typeof node === 'string') {
-                endpoints.push({ url: node.replace(/\/+$/, ''), isFull: true });
+                endpoints.push({ url: stripTrailingSlashes(node), isFull: true });
               }
             }
           }
@@ -569,7 +578,7 @@ export class DeliveryService implements MessageProcessedHook {
           const mapEntry = epValue as { url?: string; dataRetention?: string };
           if (typeof mapEntry.url === 'string') {
             endpoints.push({
-              url    : mapEntry.url.replace(/\/+$/, ''),
+              url    : stripTrailingSlashes(mapEntry.url),
               isFull : mapEntry.dataRetention !== 'cache',
             });
           }

@@ -489,7 +489,8 @@ export class JsonRpcSocket {
 
       // Exponential backoff with jitter: delay = min(baseDelay * 2^(attempt-1), maxDelay) * (0.5 + random*0.5)
       const expDelay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
-      const jitteredDelay = expDelay * (0.5 + Math.random() * 0.5);
+      const halfExpDelay = Math.floor(expDelay / 2);
+      const jitteredDelay = halfExpDelay + (crypto.getRandomValues(new Uint32Array(1))[0] % (halfExpDelay || 1));
 
       await new Promise(resolve => setTimeout(resolve, jitteredDelay));
 
