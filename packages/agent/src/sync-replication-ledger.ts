@@ -66,23 +66,6 @@ export class ReplicationLedger {
       // connectivity is runtime state — always reset to 'unknown' on load
       // so stale 'online' from a previous session doesn't give false positives.
       link.connectivity = 'unknown';
-
-      // Update delegateDid if the caller explicitly supplied a different value
-      // (e.g. via updateIdentityOptions → hot-remove → hot-add). Only write
-      // when the param is present in the call — omitting delegateDid entirely
-      // is not the same as explicitly clearing it.
-      if ('delegateDid' in params && link.delegateDid !== params.delegateDid) {
-        link.delegateDid = params.delegateDid;
-        try {
-          await this.sublevel.put(key, JSON.stringify(link));
-        } catch (writeError: any) {
-          if (writeError?.code === 'LEVEL_DATABASE_NOT_OPEN') {
-            return link; // DB closed during teardown — return stale link
-          }
-          throw writeError;
-        }
-      }
-
       return link;
     } catch (error) {
       const e = error as { code: string };
@@ -114,6 +97,21 @@ export class ReplicationLedger {
     const key = ReplicationLedger.buildKey(link.tenantDid, link.remoteEndpoint, link.scopeId);
     link.lastActivityAt = new Date().toISOString();
     await this.sublevel.put(key, JSON.stringify(link));
+  }
+
+  /**
+   * Update the delegateDid on all links for a given tenant + endpoint.
+   * Called explicitly by `updateIdentityOptions` — keeps `getOrCreateLink`
+   * read-only for existing links so the hot path has no surprise writes.
+   */
+  public async updateDelegateDid(tenantDid: string, delegateDid: string | undefined): Promise<void> {
+    const links = await this.getLinksForTenant(tenantDid);
+    for (const link of links) {
+      if (link.delegateDid !== delegateDid) {
+        link.delegateDid = delegateDid;
+        await this.saveLink(link);
+      }
+    }
   }
 
   /** Delete a link. */

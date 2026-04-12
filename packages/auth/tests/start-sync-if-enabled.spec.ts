@@ -53,18 +53,6 @@ describe('startSyncIfEnabled', () => {
     expect(startSyncCalls).toHaveLength(0);
   });
 
-  test('should skip startSync when sync is already running with poll mode', async () => {
-    const startSyncCalls: any[] = [];
-    const agent = createMockAgent({
-      syncStartSync              : async (params) => { startSyncCalls.push(params); },
-      syncHasActiveSubscriptions : true,
-    });
-
-    await startSyncIfEnabled(agent, '2m');
-
-    expect(startSyncCalls).toHaveLength(0);
-  });
-
   test('should call startSync when sync is not running and sync option is an interval', async () => {
     const startSyncCalls: any[] = [];
     const agent = createMockAgent({

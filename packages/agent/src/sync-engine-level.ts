@@ -383,6 +383,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async clear(): Promise<void> {
+    this._syncMode = undefined;
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
@@ -478,6 +479,10 @@ export class SyncEngineLevel implements SyncEngine {
     await registeredIdentities.put(did, JSON.stringify(options));
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
+
+    // Persist delegateDid changes to the durable ledger so repair/reconcile
+    // paths pick up the new delegate when they reload the link.
+    await this.ledger.updateDelegateDid(did, options.delegateDid);
 
     // If live sync is active, tear down the identity's existing subscriptions
     // and re-add with the new options so protocol filters and delegateDid
@@ -936,8 +941,10 @@ export class SyncEngineLevel implements SyncEngine {
       ReplicationLedger.resetCheckpoint(link.pull, resumeToken);
       await this.ledger.saveLink(link);
       if (this._engineGeneration !== generation) { return; }
-      // If the identity was hot-removed during repair, don't reopen.
-      if (!this._activeLinks.has(linkKey)) { return; }
+      // If the identity was hot-removed (or removed and re-added with a new
+      // link), bail — the stale link in our closure must not overwrite the
+      // new link's state or reopen subscriptions with old parameters.
+      if (this._activeLinks.get(linkKey) !== link) { return; }
 
       // Step 5: Reopen subscriptions.
       // Mark needsReconcile BEFORE reopening — local push starts from "now",
@@ -1308,7 +1315,7 @@ export class SyncEngineLevel implements SyncEngine {
         tenantDid      : target.did,
         remoteEndpoint : target.dwnUrl,
         scope          : linkScope,
-        ...(target.delegateDid !== undefined ? { delegateDid: target.delegateDid } : {}),
+        delegateDid    : target.delegateDid,
         protocol       : target.protocol,
       });
 
