@@ -1308,7 +1308,7 @@ export class SyncEngineLevel implements SyncEngine {
         tenantDid      : target.did,
         remoteEndpoint : target.dwnUrl,
         scope          : linkScope,
-        delegateDid    : target.delegateDid,
+        ...(target.delegateDid !== undefined ? { delegateDid: target.delegateDid } : {}),
         protocol       : target.protocol,
       });
 
