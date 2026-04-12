@@ -554,6 +554,66 @@ describe('restoreSession', () => {
       expect(registerCalls[0].options.protocols).toContain(customProtoUri);
       expect(registerCalls[0].options.protocols).not.toContain(permissionsProtoUri);
     });
+
+    test('returns all for an unscoped grant (no protocol in scope)', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const registerCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async (params) => { registerCalls.push(params); },
+        processDwnRequest         : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [buildUnscopedMockGrantEntry('grant-unrestricted')],
+              },
+            };
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(registerCalls).toHaveLength(1);
+      expect(registerCalls[0].options.protocols).toBe('all');
+    });
+
+    test('rethrows I/O errors from unregisterIdentity (caught by best-effort block)', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncUnregisterIdentity    : async () => { throw new Error('LEVEL_IO_ERROR'); },
+      });
+
+      // The I/O error is rethrown by the narrowed catch, but caught by the
+      // outer best-effort block — restore should still succeed.
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+    });
   });
 
   describe('loadRetryEntries', () => {
@@ -693,6 +753,35 @@ function buildMockGrantEntry(protocol: string): any {
     encodedData : btoa(JSON.stringify({
       dateExpires : '2040-06-25T16:09:16.693356Z',
       scope       : { interface: 'Records', method: 'Read', protocol },
+      delegated   : true,
+    })),
+    descriptor: {
+      interface    : 'Records',
+      method       : 'Write',
+      protocol     : 'https://identity.foundation/dwn/permissions',
+      protocolPath : 'grant',
+      recipient    : 'did:dht:testuser123',
+      dateCreated  : '2025-01-01T00:00:00.000000Z',
+      dataFormat   : 'application/json',
+      dataCid      : 'bafytest',
+      dataSize     : 100,
+    },
+    authorization: {
+      signature: {
+        signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:testagent#sig' })) }],
+      },
+    },
+  };
+}
+
+/** Build an unscoped grant entry — no protocol in scope (unrestricted). */
+function buildUnscopedMockGrantEntry(grantId: string): any {
+  return {
+    recordId    : grantId,
+    contextId   : grantId,
+    encodedData : btoa(JSON.stringify({
+      dateExpires : '2040-06-25T16:09:16.693356Z',
+      scope       : { interface: 'Messages', method: 'Read' },
       delegated   : true,
     })),
     descriptor: {

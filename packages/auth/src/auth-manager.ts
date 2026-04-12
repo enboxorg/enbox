@@ -830,14 +830,20 @@ export class AuthManager {
         ? await this._deriveProtocolsFromGrants(delegateDid)
         : undefined;
 
-      if (delegateDid && derivedProtocols && derivedProtocols.length === 0) {
+      if (delegateDid && derivedProtocols !== undefined && derivedProtocols !== 'all' && derivedProtocols.length === 0) {
         // Zero grants — this delegate has no permissions. Remove any
         // stale sync registration so revoked protocols stop syncing.
-        try { await this._userAgent.sync.unregisterIdentity(connectedDid); } catch { /* not registered */ }
+        try {
+          await this._userAgent.sync.unregisterIdentity(connectedDid);
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : '';
+          if (!msg.includes('is not registered')) { throw error; }
+        }
       } else {
-        const protocols: 'all' | [string, ...string[]] = derivedProtocols && derivedProtocols.length > 0
-          ? derivedProtocols as [string, ...string[]]
-          : 'all';
+        const protocols: 'all' | [string, ...string[]] =
+          derivedProtocols === 'all' ? 'all'
+            : derivedProtocols && derivedProtocols.length > 0 ? derivedProtocols as [string, ...string[]]
+              : 'all';
         await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
       }
       await startSyncIfEnabled(this._userAgent, sync);
@@ -1104,7 +1110,7 @@ export class AuthManager {
    * permissions protocol itself (the delegate doesn't need to sync
    * grant records — they're imported locally during the connect flow).
    */
-  private async _deriveProtocolsFromGrants(delegateDid: string): Promise<string[]> {
+  private async _deriveProtocolsFromGrants(delegateDid: string): Promise<'all' | string[]> {
     const response = await this._userAgent.processDwnRequest({
       author        : delegateDid,
       target        : delegateDid,
@@ -1121,7 +1127,12 @@ export class AuthManager {
     if (response.reply.status.code === 200 && response.reply.entries) {
       for (const entry of response.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
         const grant = DwnPermissionGrant.parse(entry);
-        const scopeProtocol = (grant.scope as any).protocol as string | undefined;
+        const scope = grant.scope as any;
+        const scopeProtocol = scope.protocol as string | undefined;
+        if (scopeProtocol === undefined && 'interface' in scope) {
+          // Unrestricted grant (well-formed scope with no protocol) — delegate can sync all protocols.
+          return 'all';
+        }
         if (scopeProtocol && scopeProtocol !== PermissionsProtocol.uri) {
           protocols.push(scopeProtocol);
         }

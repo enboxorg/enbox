@@ -10,6 +10,35 @@ import { finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGr
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+/** Build a mock unscoped (unrestricted) grant — no protocol in scope. */
+function buildUnscopedGrantMessage(grantId: string): any {
+  return {
+    recordId    : grantId,
+    contextId   : grantId,
+    encodedData : btoa(JSON.stringify({
+      dateExpires : '2040-06-25T16:09:16.693356Z',
+      scope       : { interface: 'Messages', method: 'Read' },
+      delegated   : true,
+    })),
+    descriptor: {
+      interface    : 'Records',
+      method       : 'Write',
+      protocol     : 'https://identity.foundation/dwn/permissions',
+      protocolPath : 'grant',
+      recipient    : 'did:jwk:delegate1',
+      dateCreated  : '2025-01-01T00:00:00.000000Z',
+      dataFormat   : 'application/json',
+      dataCid      : 'bafytest',
+      dataSize     : 100,
+    },
+    authorization: {
+      signature: {
+        signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner1#sig' })) }],
+      },
+    },
+  };
+}
+
 /** Build a mock DwnDataEncodedRecordsWriteMessage (grant) that DwnPermissionGrant.parse accepts. */
 function buildGrantMessage(protocol: string, grantId: string): any {
   return {
@@ -188,6 +217,58 @@ describe('importDelegateAndSetupSync', () => {
       });
 
       expect(result).toBeDefined();
+    });
+
+    test('rethrows I/O errors from unregisterIdentity', async () => {
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent({
+        identityImport         : async () => identity,
+        syncUnregisterIdentity : async () => { throw new Error('LEVEL_IO_ERROR'); },
+        dwnProcessRawMessage   : async () => ({ status: { code: 202, detail: 'Accepted' } }),
+      });
+
+      await expect(
+        importDelegateAndSetupSync({
+          userAgent           : agent,
+          delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+          connectedDid        : 'did:dht:connected1',
+          delegateGrants      : [],
+          flowName            : 'test',
+        })
+      ).rejects.toThrow('LEVEL_IO_ERROR');
+    });
+
+    test('registers with protocols: all for unscoped grant', async () => {
+      const syncCalls: any[] = [];
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent({
+        identityImport       : async () => identity,
+        syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+        dwnProcessRawMessage : async () => ({ status: { code: 202, detail: 'Accepted' } }),
+      });
+
+      const grants = [buildUnscopedGrantMessage('grant-unrestricted')];
+
+      const result = await importDelegateAndSetupSync({
+        userAgent           : agent,
+        delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+        connectedDid        : 'did:dht:connected1',
+        delegateGrants      : grants,
+        flowName            : 'test',
+      });
+
+      expect(result).toBeDefined();
+      expect(syncCalls).toHaveLength(1);
+      expect(syncCalls[0].options.protocols).toBe('all');
     });
 
     test('registers sync when protocols are granted', async () => {

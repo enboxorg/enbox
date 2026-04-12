@@ -264,7 +264,7 @@ export async function processConnectedGrants(params: {
   connectedDid: string;
   delegateDid: string;
   grants: DwnDataEncodedRecordsWriteMessage[];
-}): Promise<string[]> {
+}): Promise<'all' | string[]> {
   const { agent, connectedDid, delegateDid, grants } = params;
   const connectedProtocols = new Set<string>();
 
@@ -374,7 +374,12 @@ export async function processConnectedGrants(params: {
   // ── Collect protocols ─────────────────────────────────────────────
 
   for (const { grant } of parsed) {
-    const protocol = grant.scope.protocol;
+    const scope = grant.scope;
+    const protocol = scope.protocol;
+    if (protocol === undefined && 'interface' in scope) {
+      // Unrestricted grant (well-formed scope with no protocol) — delegate can sync all protocols.
+      return 'all';
+    }
     if (protocol && protocol !== PermissionsProtocol.uri) {
       connectedProtocols.add(protocol);
     }
@@ -468,10 +473,10 @@ export async function importDelegateAndSetupSync(params: {
     // If the identity is already registered from a prior session, update
     // the protocol list so it matches the new grants — otherwise a stale
     // registration would remain.
-    if (connectedProtocols.length > 0) {
+    if (connectedProtocols === 'all' || connectedProtocols.length > 0) {
       const syncOptions = {
         delegateDid : delegatePortableDid.uri,
-        protocols   : connectedProtocols as [string, ...string[]],
+        protocols   : connectedProtocols === 'all' ? 'all' as const : connectedProtocols as [string, ...string[]],
       };
       try {
         await userAgent.sync.registerIdentity({ did: connectedDid, options: syncOptions });
@@ -485,7 +490,12 @@ export async function importDelegateAndSetupSync(params: {
       }
     } else {
       // Zero grants — remove any stale sync registration so revoked protocols stop syncing.
-      try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* not registered */ }
+      try {
+        await userAgent.sync.unregisterIdentity(connectedDid);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : '';
+        if (!msg.includes('is not registered')) { throw error; }
+      }
     }
 
     // No explicit sync('pull') here — startSyncIfEnabled() in the caller

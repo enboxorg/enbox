@@ -230,8 +230,11 @@ export async function restoreSession(
   if (delegateDid && ctx.defaultSync !== 'off') {
     try {
       const protocols = await deriveProtocolsFromGrants(userAgent, delegateDid);
-      if (protocols.length > 0) {
-        const options = { delegateDid, protocols: protocols as [string, ...string[]] };
+      if (protocols === 'all' || protocols.length > 0) {
+        const options = {
+          delegateDid,
+          protocols: protocols === 'all' ? 'all' as const : protocols as [string, ...string[]],
+        };
         try {
           await userAgent.sync.registerIdentity({ did: connectedDid, options });
         } catch (regError: unknown) {
@@ -242,7 +245,12 @@ export async function restoreSession(
         }
       } else {
         // Zero grants — remove any stale sync registration so revoked protocols stop syncing.
-        try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* not registered */ }
+        try {
+          await userAgent.sync.unregisterIdentity(connectedDid);
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : '';
+          if (!msg.includes('is not registered')) { throw error; }
+        }
       }
     } catch {
       // Best-effort — don't block restore if grant query fails.
@@ -578,7 +586,7 @@ export async function retryOrphanedRevocations(
 async function deriveProtocolsFromGrants(
   userAgent: EnboxUserAgent,
   delegateDid: string,
-): Promise<string[]> {
+): Promise<'all' | string[]> {
   const response = await userAgent.processDwnRequest({
     author        : delegateDid,
     target        : delegateDid,
@@ -595,7 +603,12 @@ async function deriveProtocolsFromGrants(
   if (response.reply.status.code === 200 && response.reply.entries) {
     for (const entry of response.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
       const grant = DwnPermissionGrant.parse(entry);
-      const scopeProtocol = grant.scope.protocol;
+      const scope = grant.scope;
+      const scopeProtocol = scope.protocol;
+      if (scopeProtocol === undefined && 'interface' in scope) {
+        // Unrestricted grant (well-formed scope with no protocol) — delegate can sync all protocols.
+        return 'all';
+      }
       if (scopeProtocol && scopeProtocol !== PermissionsProtocol.uri) {
         protocols.push(scopeProtocol);
       }

@@ -1234,6 +1234,76 @@ describe('AuthManager', () => {
       expect(unregisterCalls[0]).toBe('did:external');
     });
 
+    test('registers with all for delegate with unscoped grant', async () => {
+      const registerCalls: any[] = [];
+      const identity = createMockIdentity({
+        did      : { uri: 'did:delegate' },
+        metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:external' },
+      });
+      const agent = createMockAgent({
+        identityGet          : async () => identity,
+        syncRegisterIdentity : async (params) => { registerCalls.push(params); },
+        syncStartSync        : async () => {},
+        // Return an unscoped grant (no protocol in scope).
+        processDwnRequest    : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [{
+                  recordId    : 'grant-unrestricted',
+                  contextId   : 'grant-unrestricted',
+                  encodedData : btoa(JSON.stringify({
+                    dateExpires : '2040-01-01T00:00:00.000Z',
+                    scope       : { interface: 'Messages', method: 'Read' },
+                    delegated   : true,
+                  })),
+                  descriptor: {
+                    interface    : 'Records',
+                    method       : 'Write',
+                    protocol     : 'https://identity.foundation/dwn/permissions',
+                    protocolPath : 'grant',
+                    recipient    : 'did:delegate',
+                    dateCreated  : '2025-01-01T00:00:00.000000Z',
+                    dataFormat   : 'application/json',
+                    dataCid      : 'bafytest',
+                    dataSize     : 100,
+                  },
+                  authorization: {
+                    signature: {
+                      signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner#sig' })) }],
+                    },
+                  },
+                }],
+              },
+            };
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
+      });
+      const manager = createTestManager(agent, { sync: '10s' });
+
+      await manager.switchIdentity('did:delegate');
+
+      expect(registerCalls).toHaveLength(1);
+      expect(registerCalls[0].options.protocols).toBe('all');
+    });
+
+    test('rethrows I/O errors from unregisterIdentity', async () => {
+      const identity = createMockIdentity({
+        did      : { uri: 'did:delegate' },
+        metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:external' },
+      });
+      const agent = createMockAgent({
+        identityGet            : async () => identity,
+        syncUnregisterIdentity : async () => { throw new Error('LEVEL_IO_ERROR'); },
+        syncStartSync          : async () => {},
+      });
+      const manager = createTestManager(agent, { sync: '10s' });
+
+      await expect(manager.switchIdentity('did:delegate')).rejects.toThrow('LEVEL_IO_ERROR');
+    });
+
     test('handles already-registered identity gracefully', async () => {
       const updateCalls: any[] = [];
       const identity = createMockIdentity();
