@@ -213,7 +213,7 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   /** Current sync mode, set by `startSync`. */
-  private _syncMode: SyncMode = 'poll';
+  private _syncMode: SyncMode | undefined = 'poll';
 
   /**
    * Monotonic session generation counter. Incremented on every teardown.
@@ -613,6 +613,7 @@ export class SyncEngineLevel implements SyncEngine {
       this._syncIntervalId = undefined;
     }
 
+    this._syncMode = undefined;
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
@@ -1457,9 +1458,22 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Clear repair state for this identity's links.
+    // _activeRepairs and _repairContext must be cleared so that a
+    // quick re-add of the same link doesn't reuse an in-flight repair
+    // promise that holds stale delegateDid/protocol references.
     for (const key of this._repairAttempts.keys()) {
       if (this.isLinkKeyForDid(key, did)) {
         this._repairAttempts.delete(key);
+      }
+    }
+    for (const key of this._activeRepairs.keys()) {
+      if (this.isLinkKeyForDid(key, did)) {
+        this._activeRepairs.delete(key);
+      }
+    }
+    for (const key of this._repairContext.keys()) {
+      if (this.isLinkKeyForDid(key, did)) {
+        this._repairContext.delete(key);
       }
     }
     for (const [key, timer] of this._repairRetryTimers) {

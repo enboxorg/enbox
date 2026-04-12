@@ -764,4 +764,73 @@ describe('SyncEngineLevel — identity management', () => {
       clearInterval((engine as any)._syncIntervalId);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // stopSync resets _syncMode — registerIdentity after stop must not hot-add
+  // ---------------------------------------------------------------------------
+
+  describe('registerIdentity after stopSync', () => {
+    it('should not hot-add when sync was explicitly stopped', async () => {
+      const engine = new SyncEngineLevel({ db });
+
+      // Simulate a live sync session that was explicitly stopped.
+      (engine as any)._syncMode = 'live';
+      await engine.stopSync();
+
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+
+      await engine.registerIdentity({ did: 'did:example:after-stop' });
+
+      // _syncMode should have been reset by stopSync, so no hot-add.
+      expect(hotAddStub.called).toBe(false);
+    });
+
+    it('should not hot-remove when sync was explicitly stopped', async () => {
+      const engine = new SyncEngineLevel({ db });
+      await engine.registerIdentity({ did: 'did:example:stop-then-unreg' });
+
+      (engine as any)._syncMode = 'live';
+      await engine.stopSync();
+
+      const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
+
+      await engine.unregisterIdentity('did:example:stop-then-unreg');
+
+      expect(hotRemoveStub.called).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // removeIdentityFromLiveSync clears in-flight repair state
+  // ---------------------------------------------------------------------------
+
+  describe('removeIdentityFromLiveSync — in-flight repair cleanup', () => {
+    it('should clear _activeRepairs for the target DID', async () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._liveSubscriptions = [];
+      (engine as any)._localSubscriptions = [];
+
+      (engine as any)._activeRepairs.set('did:example:alice^https://dwn.example.com^scope1', Promise.resolve());
+      (engine as any)._activeRepairs.set('did:example:bob^https://dwn.example.com^scope1', Promise.resolve());
+
+      await (engine as any).removeIdentityFromLiveSync('did:example:alice');
+
+      expect((engine as any)._activeRepairs.has('did:example:alice^https://dwn.example.com^scope1')).toBe(false);
+      expect((engine as any)._activeRepairs.has('did:example:bob^https://dwn.example.com^scope1')).toBe(true);
+    });
+
+    it('should clear _repairContext for the target DID', async () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._liveSubscriptions = [];
+      (engine as any)._localSubscriptions = [];
+
+      (engine as any)._repairContext.set('did:example:alice^https://dwn.example.com^scope1', { resumeToken: 'tok1' });
+      (engine as any)._repairContext.set('did:example:bob^https://dwn.example.com^scope1', { resumeToken: 'tok2' });
+
+      await (engine as any).removeIdentityFromLiveSync('did:example:alice');
+
+      expect((engine as any)._repairContext.has('did:example:alice^https://dwn.example.com^scope1')).toBe(false);
+      expect((engine as any)._repairContext.has('did:example:bob^https://dwn.example.com^scope1')).toBe(true);
+    });
+  });
 });
