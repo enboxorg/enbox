@@ -133,6 +133,64 @@ describe('importDelegateAndSetupSync', () => {
       expect(importedContextKeys[0].did).toBe('did:jwk:delegate1');
     });
   });
+
+  describe('sync registration with zero granted protocols', () => {
+    test('skips sync registration when no protocols are granted', async () => {
+      const syncCalls: any[] = [];
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent({
+        identityImport       : async () => identity,
+        syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+        dwnProcessRawMessage : async () => ({ status: { code: 202, detail: 'Accepted' } }),
+      });
+
+      // Empty grants → processConnectedGrants returns [] → sync registration skipped.
+      const result = await importDelegateAndSetupSync({
+        userAgent           : agent,
+        delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+        connectedDid        : 'did:dht:connected1',
+        delegateGrants      : [],
+        flowName            : 'test',
+      });
+
+      expect(result).toBeDefined();
+      expect(syncCalls).toHaveLength(0);
+    });
+
+    test('registers sync when protocols are granted', async () => {
+      const syncCalls: any[] = [];
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent({
+        identityImport       : async () => identity,
+        syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+        dwnProcessRawMessage : async () => ({ status: { code: 202, detail: 'Accepted' } }),
+      });
+
+      const grants = [buildGrantMessage('https://proto.example/chat', 'grant-chat')];
+
+      const result = await importDelegateAndSetupSync({
+        userAgent           : agent,
+        delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+        connectedDid        : 'did:dht:connected1',
+        delegateGrants      : grants,
+        flowName            : 'test',
+      });
+
+      expect(result).toBeDefined();
+      expect(syncCalls).toHaveLength(1);
+      expect(syncCalls[0].options.protocols).toContain('https://proto.example/chat');
+    });
+  });
 });
 
 describe('finalizeDelegateSession', () => {

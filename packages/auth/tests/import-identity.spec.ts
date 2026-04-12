@@ -107,6 +107,7 @@ describe('importFromPhrase', () => {
     );
 
     expect(syncCalls).toHaveLength(1);
+    expect(syncCalls[0].options.protocols).toBe('all');
   });
 
   test('skips sync when disabled', async () => {
@@ -239,6 +240,7 @@ describe('importFromPortable', () => {
     );
 
     expect(syncRegCalls).toHaveLength(1);
+    expect(syncRegCalls[0].options.protocols).toBe('all');
     expect(syncStartCalls).toHaveLength(1);
     expect(syncStartCalls[0].mode).toBe('poll');
   });

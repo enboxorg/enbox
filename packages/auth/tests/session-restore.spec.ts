@@ -383,6 +383,36 @@ describe('restoreSession', () => {
       expect(updateCalls).toHaveLength(1);
       expect(updateCalls[0].did).toBe('did:dht:external');
     });
+
+    test('skips sync registration when delegate has zero grants', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const registerCalls: any[] = [];
+      const updateCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async (params) => { registerCalls.push(params); },
+        syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
+        // Default processDwnRequest returns empty entries for RecordsQuery,
+        // so deriveProtocolsFromGrants returns [] → skip registration.
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      // Zero grants means nothing to sync — neither register nor update should be called.
+      expect(registerCalls).toHaveLength(0);
+      expect(updateCalls).toHaveLength(0);
+    });
   });
 
   describe('deriveProtocolsFromGrants', () => {
