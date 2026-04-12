@@ -1950,11 +1950,16 @@ export class SyncEngineLevel implements SyncEngine {
       const pushLinkKey = target.linkKey;
       const pushLink = this._activeLinks.get(pushLinkKey);
 
-      // Identity was hot-removed — bail so late callbacks don't enqueue
-      // pushes for a DID that is no longer being synced.
+      // If the link is present, filter by scope. If it was hot-removed
+      // (_activeLinks cleared for this DID), pushLink is undefined and
+      // we skip the event. During startup, pushLink may also be undefined
+      // before initializeLinkTarget completes — in that case we still
+      // skip, which is safe because the initial SMT reconciliation will
+      // catch up any missed local writes.
       if (!pushLink) {
         return;
       }
+
       if (!isEventInScope(subMessage.event.message, pushLink.scope)) {
         return;
       }

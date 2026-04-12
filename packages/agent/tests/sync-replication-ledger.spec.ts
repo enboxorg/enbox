@@ -110,7 +110,7 @@ describe('ReplicationLedger', () => {
       expect(updated.delegateDid).toBe('did:example:new-delegate');
     });
 
-    it('should clear delegateDid on existing link when removed', async () => {
+    it('should clear delegateDid on existing link when explicitly set to undefined', async () => {
       await ledger.getOrCreateLink({
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
@@ -122,9 +122,27 @@ describe('ReplicationLedger', () => {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        delegateDid    : undefined,
       });
 
       expect(updated.delegateDid).toBeUndefined();
+    });
+
+    it('should not modify delegateDid when param is omitted', async () => {
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:delegate',
+      });
+
+      const reloaded = await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+      });
+
+      expect(reloaded.delegateDid).toBe('did:example:delegate');
     });
 
     it('should persist updated delegateDid durably', async () => {

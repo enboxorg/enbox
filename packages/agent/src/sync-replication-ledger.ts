@@ -67,9 +67,11 @@ export class ReplicationLedger {
       // so stale 'online' from a previous session doesn't give false positives.
       link.connectivity = 'unknown';
 
-      // Update delegateDid if it changed (e.g. via updateIdentityOptions).
-      // Without this, repair/reconcile would keep using the old delegate.
-      if (link.delegateDid !== params.delegateDid) {
+      // Update delegateDid if the caller explicitly supplied a different value
+      // (e.g. via updateIdentityOptions → hot-remove → hot-add). Only write
+      // when the param is present in the call — omitting delegateDid entirely
+      // is not the same as explicitly clearing it.
+      if ('delegateDid' in params && link.delegateDid !== params.delegateDid) {
         link.delegateDid = params.delegateDid;
         await this.sublevel.put(key, JSON.stringify(link));
       }
