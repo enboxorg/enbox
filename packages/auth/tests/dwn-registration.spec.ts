@@ -5,8 +5,10 @@ import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 
 import {
+  loadTokensFromSecretStore,
   loadTokensFromStorage,
   registerWithDwnEndpoints,
+  saveTokensToSecretStore,
   saveTokensToStorage,
 } from '../src/registration.js';
 
@@ -957,5 +959,209 @@ describe('registerWithDwnEndpoints with persistTokens', () => {
 
     // Should still succeed — loadTokensFromStorage returns {} on error
     expect(successCalled).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+//  SecretStore helpers
+// ---------------------------------------------------------------------------
+
+describe('SecretStore token helpers', () => {
+  test('saveTokensToSecretStore and loadTokensFromSecretStore round-trip', async () => {
+    const { InMemorySecretStore } = await import('@enbox/agent');
+    const secretStore = new InMemorySecretStore();
+
+    const tokens: Record<string, RegistrationTokenData> = {
+      'https://dwn1.example.com': {
+        registrationToken : 'reg-abc',
+        refreshToken      : 'refresh-xyz',
+        expiresAt         : Date.now() + 60_000,
+        tokenUrl          : 'https://auth.example.com/token',
+        refreshUrl        : 'https://auth.example.com/refresh',
+      },
+    };
+
+    await saveTokensToSecretStore(secretStore, tokens);
+    const loaded = await loadTokensFromSecretStore(secretStore);
+
+    expect(loaded).toEqual(tokens);
+  });
+
+  test('loadTokensFromSecretStore returns empty object when no tokens stored', async () => {
+    const { InMemorySecretStore } = await import('@enbox/agent');
+    const secretStore = new InMemorySecretStore();
+
+    const loaded = await loadTokensFromSecretStore(secretStore);
+    expect(loaded).toEqual({});
+  });
+
+  test('loadTokensFromSecretStore returns empty object on corrupt data', async () => {
+    const { InMemorySecretStore } = await import('@enbox/agent');
+    const secretStore = new InMemorySecretStore();
+
+    // Store invalid JSON bytes.
+    await secretStore.put('enbox:auth:registrationTokens', new Uint8Array([0xFF, 0xFE]));
+
+    const loaded = await loadTokensFromSecretStore(secretStore);
+    expect(loaded).toEqual({});
+  });
+
+  test('loadTokensFromSecretStore returns empty object when secretStore.get throws', async () => {
+    const throwingStore = {
+      async put(): Promise<void> { /* no-op */ },
+      async get(): Promise<Uint8Array | undefined> { throw new Error('vault is locked'); },
+      async delete(): Promise<boolean> { return false; },
+    };
+
+    const loaded = await loadTokensFromSecretStore(throwingStore);
+    expect(loaded).toEqual({});
+  });
+
+  test('registerWithDwnEndpoints persists to secretStore when provided', async () => {
+    mockRegisterTenant.mockClear();
+    mockRegisterTenant.mockImplementation(async () => {});
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['proof-of-work-sha256-v0'],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    const { InMemorySecretStore } = await import('@enbox/agent');
+    const secretStore = new InMemorySecretStore();
+
+    // Pre-populate tokens in the secret store.
+    const seedTokens: Record<string, RegistrationTokenData> = {
+      'https://dwn1.example.com': {
+        registrationToken : 'pre-existing',
+        expiresAt         : Date.now() + 60_000,
+      },
+    };
+    await saveTokensToSecretStore(secretStore, seedTokens);
+
+    let successCalled = false;
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        secretStore,
+      },
+      {
+        onSuccess     : () => { successCalled = true; },
+        onFailure     : () => {},
+        persistTokens : true,
+      },
+    );
+
+    expect(successCalled).toBe(true);
+
+    // Tokens should have been persisted back to the secret store.
+    const persisted = await loadTokensFromSecretStore(secretStore);
+    expect(persisted['https://dwn1.example.com']).toBeDefined();
+    expect(persisted['https://dwn1.example.com'].registrationToken).toBe('pre-existing');
+  });
+
+  test('migrates legacy StorageAdapter tokens to SecretStore and clears plaintext copy', async () => {
+    mockRegisterTenant.mockClear();
+    mockRegisterTenant.mockImplementation(async () => {});
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['proof-of-work-sha256-v0'],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    const { InMemorySecretStore } = await import('@enbox/agent');
+    const secretStore = new InMemorySecretStore();
+    const storage = new MemoryStorage();
+
+    // Pre-populate tokens in the LEGACY storage only (simulates upgrade).
+    const legacyTokens: Record<string, RegistrationTokenData> = {
+      'https://dwn1.example.com': {
+        registrationToken : 'legacy-token',
+        expiresAt         : Date.now() + 60_000,
+      },
+    };
+    await saveTokensToStorage(storage, legacyTokens);
+
+    let successCalled = false;
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        secretStore,
+        storage,
+      },
+      {
+        onSuccess     : () => { successCalled = true; },
+        onFailure     : () => {},
+        persistTokens : true,
+      },
+    );
+
+    expect(successCalled).toBe(true);
+
+    // Tokens should have migrated into the SecretStore.
+    const migrated = await loadTokensFromSecretStore(secretStore);
+    expect(migrated['https://dwn1.example.com']).toBeDefined();
+    expect(migrated['https://dwn1.example.com'].registrationToken).toBe('legacy-token');
+
+    // Legacy plaintext copy should have been removed.
+    const leftover = await storage.get(STORAGE_KEYS.REGISTRATION_TOKENS);
+    expect(leftover).toBeNull();
+  });
+
+  test('succeeds even when legacy storage.remove() throws during migration', async () => {
+    mockRegisterTenant.mockClear();
+    mockRegisterTenant.mockImplementation(async () => {});
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['proof-of-work-sha256-v0'],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    const { InMemorySecretStore } = await import('@enbox/agent');
+    const secretStore = new InMemorySecretStore();
+    const storage = new MemoryStorage();
+
+    // Pre-populate legacy tokens.
+    await saveTokensToStorage(storage, {
+      'https://dwn1.example.com': { registrationToken: 'legacy' },
+    });
+
+    // Make remove() throw to simulate a storage failure.
+    storage.remove = async (): Promise<void> => { throw new Error('disk full'); };
+
+    let successCalled = false;
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        secretStore,
+        storage,
+      },
+      {
+        onSuccess     : () => { successCalled = true; },
+        onFailure     : () => {},
+        persistTokens : true,
+      },
+    );
+
+    // Registration should still succeed — remove() failure is best-effort.
+    expect(successCalled).toBe(true);
+
+    // Tokens should be in the SecretStore regardless.
+    const persisted = await loadTokensFromSecretStore(secretStore);
+    expect(persisted['https://dwn1.example.com'].registrationToken).toBe('legacy');
   });
 });

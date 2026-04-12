@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import { Convert } from '@enbox/common';
+
 import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
@@ -168,10 +170,11 @@ describe('finalizeDelegateSession', () => {
       // Fire the callback with matching delegate DID.
       await callback('did:jwk:delegate1');
 
-      // Context keys should be encrypted and persisted.
-      const stored = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+      // Context keys should be persisted in the agent's SecretStore.
+      const stored = await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
       expect(stored).toBeDefined();
-      expect(stored).not.toBeNull();
+      const parsed = JSON.parse(Convert.uint8Array(stored!).toString());
+      expect(parsed).toEqual(exportedKeys);
     });
 
     test('ignores callback when delegate DID does not match', async () => {
@@ -201,9 +204,9 @@ describe('finalizeDelegateSession', () => {
       // Fire with non-matching delegate — should be a no-op.
       await callback('did:jwk:different');
 
-      // No context keys should be stored.
-      const stored = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-      expect(stored).toBeNull();
+      // No context keys should be stored in SecretStore.
+      const stored = await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+      expect(stored).toBeUndefined();
     });
   });
 });

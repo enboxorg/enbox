@@ -57,11 +57,12 @@ export async function importFromPhrase(
   if (ctx.registration) {
     await registerWithDwnEndpoints(
       {
-        userAgent : userAgent,
+        userAgent   : userAgent,
         dwnEndpoints,
-        agentDid  : userAgent.agentDid.uri,
+        agentDid    : userAgent.agentDid.uri,
         connectedDid,
-        storage   : storage,
+        secretStore : userAgent.secrets,
+        storage     : storage,
       },
       ctx.registration,
     );
@@ -115,11 +116,12 @@ export async function importFromPortable(
     const dwnEndpoints = ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
     await registerWithDwnEndpoints(
       {
-        userAgent : userAgent,
+        userAgent   : userAgent,
         dwnEndpoints,
-        agentDid  : userAgent.agentDid.uri,
+        agentDid    : userAgent.agentDid.uri,
         connectedDid,
-        storage   : storage,
+        secretStore : userAgent.secrets,
+        storage     : storage,
       },
       ctx.registration,
     );

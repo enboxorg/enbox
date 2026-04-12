@@ -7,6 +7,7 @@ import type { AgentKeyManager } from './key-manager.js';
 import type { AgentPermissionsApi } from '../permissions-api.js';
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { IdentityVault } from './identity-vault.js';
+import type { SecretStore } from '../secret-store.js';
 import type { SyncEngine } from './sync.js';
 import type { AgentDidApi, DidInterface, DidRequest, DidResponse } from '../did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './dwn.js';
@@ -169,6 +170,8 @@ export interface EnboxPlatformAgent<TKeyManager extends AgentKeyManager = AgentK
    */
   sync: SyncEngine;
 
+  /** Vault-backed secret store for classified credentials, encrypted at rest with the vault key. */
+  secrets: SecretStore;
   /**
    * An instance of {@link IdentityVault}, providing secure storage and management of an Enbox Agent's
    * DID and cryptographic keys.

@@ -5,6 +5,8 @@
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
+import { InMemorySecretStore } from '@enbox/agent';
+
 /** Minimal BearerIdentity-like object for testing. */
 export interface MockIdentity {
   did: { uri: string };
@@ -102,7 +104,8 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
   const defaultIdentity = createMockIdentity();
 
   return {
-    agentDid: { uri: 'did:dht:testagent' },
+    agentDid : { uri: 'did:dht:testagent' },
+    secrets  : new InMemorySecretStore(),
 
     firstLaunch : overrides.firstLaunch ?? (async (): Promise<boolean> => false),
     initialize  : overrides.initialize ?? (async (): Promise<string> => 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12'),

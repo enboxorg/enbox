@@ -547,7 +547,9 @@ export async function finalizeDelegateSession(params: {
   await startSyncIfEnabled(userAgent, sync);
 
   // Persist protocol path keys alongside the delegate session markers
-  // so they survive agent restarts.
+  // so they survive agent restarts.  Delegate keys are stored in the
+  // vault-backed SecretStore (encrypted at rest), while non-secret
+  // session markers go into the plaintext StorageAdapter.
   const delegateDecryptionKeys = (identity as any)._delegateDecryptionKeys as DelegateDecryptionKey[] | undefined;
   const extraStorageKeys: Record<string, string> = {
     [STORAGE_KEYS.DELEGATE_DID]  : delegateDid,
@@ -555,20 +557,24 @@ export async function finalizeDelegateSession(params: {
   };
   const delegateContextKeys = (identity as any)._delegateContextKeys as DelegateContextKey[] | undefined;
 
-  // Encrypt decryption keys and context keys in parallel — both are independent.
-  const [decKeysJwe, ctxKeysJwe] = await Promise.all([
-    delegateDecryptionKeys?.length
-      ? userAgent.vault.encryptData({ plaintext: Convert.string(JSON.stringify(delegateDecryptionKeys)).toUint8Array() })
-      : undefined,
-    delegateContextKeys?.length
-      ? userAgent.vault.encryptData({ plaintext: Convert.string(JSON.stringify(delegateContextKeys)).toUint8Array() })
-      : undefined,
-  ]);
-  if (decKeysJwe) {
-    extraStorageKeys[STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS] = decKeysJwe;
+  // Store delegate keys in the SecretStore (encrypted at rest).
+  // Both writes are independent and can run in parallel.
+  const secretWrites: Promise<void>[] = [];
+  if (delegateDecryptionKeys?.length) {
+    secretWrites.push(
+      userAgent.secrets.put(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, Convert.string(JSON.stringify(delegateDecryptionKeys)).toUint8Array()),
+    );
   }
-  if (ctxKeysJwe) {
-    extraStorageKeys[STORAGE_KEYS.DELEGATE_CONTEXT_KEYS] = ctxKeysJwe;
+  if (delegateContextKeys?.length) {
+    secretWrites.push(
+      userAgent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, Convert.string(JSON.stringify(delegateContextKeys)).toUint8Array()),
+    );
+  }
+  if (secretWrites.length > 0) {
+    await Promise.all(secretWrites);
+    // Best-effort cleanup of any legacy plaintext copies.
+    try { await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS); } catch { /* best-effort */ }
+    try { await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
   }
   const delegateMultiPartyProtocols = (identity as any)._delegateMultiPartyProtocols as string[] | undefined;
   if (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0) {
@@ -586,9 +592,8 @@ export async function finalizeDelegateSession(params: {
     if (changedDelegateDid !== delegateDid) { return; }
     try {
       const keys = userAgent.dwn.exportDelegateContextKeys(delegateDid);
-      const pt = Convert.string(JSON.stringify(keys)).toUint8Array();
-      const encrypted = await userAgent.vault.encryptData({ plaintext: pt });
-      await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, encrypted);
+      const bytes = Convert.string(JSON.stringify(keys)).toUint8Array();
+      await userAgent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, bytes);
     } catch { /* best effort — keys will be re-derived on next connect */ }
   };
 

@@ -171,7 +171,8 @@ export interface RegistrationOptions {
    * endpoint, it is used directly without re-running the auth flow.
    *
    * When {@link persistTokens} is `true`, this field is ignored —
-   * tokens are loaded automatically from the `StorageAdapter`.
+   * tokens are loaded automatically from the agent's vault-backed
+   * `SecretStore` (preferred) or the legacy `StorageAdapter` (fallback).
    */
   registrationTokens?: Record<string, RegistrationTokenData>;
 
@@ -180,20 +181,28 @@ export interface RegistrationOptions {
    * The app should persist these for future sessions.
    *
    * When {@link persistTokens} is `true`, tokens are saved automatically
-   * to the `StorageAdapter`. This callback is still invoked (if provided)
-   * **after** the automatic save, so consumers can observe token changes
-   * without handling persistence themselves.
+   * to the agent's vault-backed `SecretStore` (or the legacy
+   * `StorageAdapter` when no `SecretStore` is available). This callback
+   * is still invoked (if provided) **after** the automatic save, so
+   * consumers can observe token changes without handling persistence
+   * themselves.
    */
   onRegistrationTokens?: (tokens: Record<string, RegistrationTokenData>) => void;
 
   /**
-   * Automatically persist and restore registration tokens using the
-   * auth manager's `StorageAdapter`.
+   * Automatically persist and restore registration tokens.
    *
-   * When `true`, tokens are loaded from storage before registration and
-   * saved back after new or refreshed tokens are obtained. This removes
-   * the need for consumers to implement their own token I/O via
+   * When `true`, tokens are loaded before registration and saved back
+   * after new or refreshed tokens are obtained, removing the need for
+   * consumers to implement their own token I/O via
    * {@link registrationTokens} and {@link onRegistrationTokens}.
+   *
+   * **Storage preference:** tokens are stored in the agent's vault-backed
+   * `SecretStore` (encrypted at rest) when available.  On the first run
+   * after an upgrade, any tokens left in the legacy plaintext
+   * `StorageAdapter` are migrated into the `SecretStore` and the
+   * plaintext copy is removed.  If no `SecretStore` is provided, the
+   * `StorageAdapter` is used as a fallback.
    *
    * Defaults to `false` for backward compatibility.
    *

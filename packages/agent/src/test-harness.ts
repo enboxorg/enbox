@@ -23,6 +23,7 @@ import { SyncEngineLevel } from './sync-engine-level.js';
 import { DwnDidStore, InMemoryDidStore } from './store-did.js';
 import { DwnIdentityStore, InMemoryIdentityStore } from './store-identity.js';
 import { DwnKeyStore, InMemoryKeyStore } from './store-key.js';
+import { InMemorySecretStore, VaultBackedSecretStore } from './secret-store.js';
 
 type StoreSetupResult = {
   agentVault: HdIdentityVault;
@@ -31,6 +32,9 @@ type StoreSetupResult = {
   identityApi: AgentIdentityApi<LocalKeyManager>;
   keyManager: LocalKeyManager;
   permissionsApi: AgentPermissionsApi;
+  secretsApi: InMemorySecretStore | VaultBackedSecretStore;
+  /** Backing KeyValueStore for VaultBackedSecretStore (for clear/close lifecycle). */
+  secretStore?: KeyValueStore<string, string>;
   vaultStore: KeyValueStore<string, string>;
 };
 
@@ -44,6 +48,8 @@ type PlatformAgentTestHarnessParams = {
   dwnStateIndex: StateIndexLevel;
   dwnMessageStore: MessageStoreLevel;
   dwnResumableTaskStore: ResumableTaskStoreLevel;
+  /** Backing KeyValueStore for VaultBackedSecretStore (disk mode only). */
+  secretStore?: KeyValueStore<string, string>;
   syncStore: AbstractLevel<string | Buffer | Uint8Array>;
   vaultStore: KeyValueStore<string, string>;
   dwnStores: {
@@ -64,6 +70,7 @@ export class PlatformAgentTestHarness {
   public dwnStateIndex: StateIndexLevel;
   public dwnMessageStore: MessageStoreLevel;
   public dwnResumableTaskStore: ResumableTaskStoreLevel;
+  public secretStore?: KeyValueStore<string, string>;
   public syncStore: AbstractLevel<string | Buffer | Uint8Array>;
   public vaultStore: KeyValueStore<string, string>;
 
@@ -87,6 +94,7 @@ export class PlatformAgentTestHarness {
     this.dwnDataStore = params.dwnDataStore;
     this.dwnStateIndex = params.dwnStateIndex;
     this.dwnMessageStore = params.dwnMessageStore;
+    this.secretStore = params.secretStore;
     this.syncStore = params.syncStore;
     this.vaultStore = params.vaultStore;
     this.dwnResumableTaskStore = params.dwnResumableTaskStore;
@@ -106,6 +114,7 @@ export class PlatformAgentTestHarness {
     await this.dwnResumableTaskStore.clear();
     await this.syncStore.clear();
     await this.vaultStore.clear();
+    if (this.secretStore) { await this.secretStore.clear(); }
     (this.agent.vault as any)['_cachedInitialized'] = undefined;
     await this.agent.permissions.clear();
     this.dwnStores.clear();
@@ -120,11 +129,12 @@ export class PlatformAgentTestHarness {
 
     // Easiest way to start with fresh in-memory stores is to re-instantiate Agent components.
     if (this.agentStores === 'memory') {
-      const { didApi, identityApi, permissionsApi, keyManager } = PlatformAgentTestHarness.useMemoryStores({ agent: this.agent });
+      const { didApi, identityApi, permissionsApi, keyManager, secretsApi } = PlatformAgentTestHarness.useMemoryStores({ agent: this.agent });
       this.agent.did = didApi;
       this.agent.identity = identityApi;
       this.agent.keyManager = keyManager;
       this.agent.permissions = permissionsApi;
+      this.agent.secrets = secretsApi;
     }
   }
 
@@ -153,6 +163,7 @@ export class PlatformAgentTestHarness {
     await this.dwnStateIndex.close();
     await this.dwnMessageStore.close();
     await this.dwnResumableTaskStore.close();
+    if (this.secretStore) { await this.secretStore.close(); }
     await this.syncStore.close();
     await this.vaultStore.close();
   }
@@ -248,7 +259,9 @@ export class PlatformAgentTestHarness {
       keyManager,
       didResolverCache,
       vaultStore,
-      permissionsApi
+      permissionsApi,
+      secretsApi,
+      secretStore,
     } = (agentStores === 'memory')
       ? PlatformAgentTestHarness.useMemoryStores()
       : PlatformAgentTestHarness.useDiskStores({ testDataLocation, stores: dwnStores });
@@ -294,6 +307,7 @@ export class PlatformAgentTestHarness {
       keyManager,
       permissionsApi,
       rpcClient,
+      secretsApi,
       syncApi,
     });
 
@@ -307,8 +321,9 @@ export class PlatformAgentTestHarness {
       dwnMessageStore,
       dwnResumableTaskStore,
       dwnStores,
+      secretStore,
       syncStore,
-      vaultStore
+      vaultStore,
     });
   }
 
@@ -346,7 +361,13 @@ export class PlatformAgentTestHarness {
 
     const permissionsApi = new AgentPermissionsApi({ agent });
 
-    return { agentVault, didApi, didResolverCache, identityApi, keyManager, permissionsApi, vaultStore };
+    const secretStore = new LevelStore<string, string>({ location: testDataPath('SECRET_STORE') });
+    const secretsApi = new VaultBackedSecretStore({
+      vault : agentVault,
+      store : secretStore,
+    });
+
+    return { agentVault, didApi, didResolverCache, identityApi, keyManager, permissionsApi, secretsApi, secretStore, vaultStore };
   }
 
   private static useMemoryStores({ agent }: { agent?: EnboxPlatformAgent<LocalKeyManager> } = {}): StoreSetupResult {
@@ -369,6 +390,8 @@ export class PlatformAgentTestHarness {
 
     const permissionsApi = new AgentPermissionsApi({ agent });
 
-    return { agentVault, didApi, didResolverCache, identityApi, keyManager, permissionsApi, vaultStore };
+    const secretsApi = new InMemorySecretStore();
+
+    return { agentVault, didApi, didResolverCache, identityApi, keyManager, permissionsApi, secretsApi, vaultStore };
   }
 }

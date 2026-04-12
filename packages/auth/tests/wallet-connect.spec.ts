@@ -725,11 +725,10 @@ describe('walletConnect', () => {
     );
 
     // Both context keys and multi-party protocols should be persisted.
-    // Context keys are encrypted as JWE; multi-party protocols are plain JSON (no key material).
-    const ctxKeysJwe = await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-    expect(ctxKeysJwe).toBeDefined();
-    const ctxKeysBytes = await agent.vault.decryptData({ jwe: ctxKeysJwe! });
-    expect(JSON.parse(new TextDecoder().decode(ctxKeysBytes))).toEqual(ctxKeys);
+    // Context keys are stored in the vault-backed SecretStore; multi-party protocols are plain JSON.
+    const ctxKeysBytes = await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
+    expect(ctxKeysBytes).toBeDefined();
+    expect(JSON.parse(new TextDecoder().decode(ctxKeysBytes!))).toEqual(ctxKeys);
 
     const mpProtocolsJson = await storage.get(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
     expect(mpProtocolsJson).toBeDefined();

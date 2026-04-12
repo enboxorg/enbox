@@ -3,6 +3,7 @@ import type { BearerDid } from '@enbox/dids';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { LocalDwnStrategy } from './local-dwn.js';
+import type { SecretStore } from './secret-store.js';
 import type { SyncEngine } from './types/sync.js';
 import type { DidInterface, DidRequest, DidResponse } from './did-api.js';
 import type { DwnInterface, DwnResponse, ProcessDwnRequest, SendDwnRequest } from './types/dwn.js';
@@ -23,6 +24,7 @@ import { LevelStore } from '@enbox/common';
 import { LocalKeyManager } from './local-key-manager.js';
 import { SyncEngineLevel } from './sync-engine-level.js';
 import { DidDht, DidJwk } from '@enbox/dids';
+import { InMemorySecretStore, VaultBackedSecretStore } from './secret-store.js';
 
 /**
  * Initialization parameters for {@link EnboxUserAgent}, including an optional recovery phrase that
@@ -84,6 +86,8 @@ export type AgentParams<TKeyManager extends AgentKeyManager = LocalKeyManager> =
   permissionsApi: AgentPermissionsApi;
   /** Remote procedure call (RPC) client used to communicate with other Enbox services. */
   rpcClient: EnboxRpc;
+  /** Vault-backed secret store for classified credentials. */
+  secretsApi?: SecretStore;
   /** Facilitates data synchronization of DWN records between nodes. */
   syncApi: SyncEngine;
 };
@@ -110,6 +114,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
   public keyManager: TKeyManager;
   public permissions: AgentPermissionsApi;
   public rpc: EnboxRpc;
+  public secrets: SecretStore;
   public sync: SyncEngine;
   public vault: HdIdentityVault;
 
@@ -124,6 +129,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     this.keyManager = params.keyManager;
     this.permissions = params.permissionsApi;
     this.rpc = params.rpcClient;
+    this.secrets = params.secretsApi ?? new InMemorySecretStore();
     this.sync = params.syncApi;
     this.vault = params.agentVault;
 
@@ -157,13 +163,18 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     dataPath = 'DATA/AGENT',
     localDwnStrategy,
     localDwnEndpoint,
-    agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, syncApi
+    agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, secretsApi, syncApi
   }: CreateUserAgentParams = {}
   ): Promise<EnboxUserAgent> {
 
     agentVault ??= new HdIdentityVault({
       keyDerivationWorkFactor : 210_000,
       store                   : new LevelStore<string, string>({ location: `${dataPath}/VAULT_STORE` })
+    });
+
+    secretsApi ??= new VaultBackedSecretStore({
+      vault : agentVault,
+      store : new LevelStore<string, string>({ location: `${dataPath}/SECRET_STORE` }),
     });
 
     cryptoApi ??= new AgentCryptoApi();
@@ -211,11 +222,12 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
       cryptoApi,
       didApi,
       dwnApi,
+      identityApi,
       keyManager,
       permissionsApi,
-      identityApi,
       rpcClient,
-      syncApi
+      secretsApi,
+      syncApi,
     });
   }
 

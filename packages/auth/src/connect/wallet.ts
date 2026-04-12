@@ -71,8 +71,9 @@ export async function walletConnect(
       {
         userAgent,
         dwnEndpoints,
-        agentDid: userAgent.agentDid.uri,
+        agentDid    : userAgent.agentDid.uri,
         connectedDid,
+        secretStore : userAgent.secrets,
         storage,
       },
       ctx.registration,
