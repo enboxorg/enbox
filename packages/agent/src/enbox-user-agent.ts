@@ -163,7 +163,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     dataPath = 'DATA/AGENT',
     localDwnStrategy,
     localDwnEndpoint,
-    agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, syncApi
+    agentDid, agentVault, cryptoApi, didApi, dwnApi, identityApi, keyManager, permissionsApi, rpcClient, secretsApi, syncApi
   }: CreateUserAgentParams = {}
   ): Promise<EnboxUserAgent> {
 
@@ -172,7 +172,7 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
       store                   : new LevelStore<string, string>({ location: `${dataPath}/VAULT_STORE` })
     });
 
-    const secretsApi = new VaultBackedSecretStore({
+    secretsApi ??= new VaultBackedSecretStore({
       vault : agentVault,
       store : new LevelStore<string, string>({ location: `${dataPath}/SECRET_STORE` }),
     });

@@ -75,15 +75,17 @@ export async function registerWithDwnEndpoints(
 ): Promise<void> {
   const { userAgent, dwnEndpoints, agentDid, connectedDid, secretStore, storage } = ctx;
 
-  // Load initial tokens: when persistTokens is enabled, load from the
-  // vault-backed SecretStore (preferred) or plaintext StorageAdapter
-  // (fallback). Otherwise use the explicit map.
+  // Load initial tokens: when persistTokens is enabled, try the
+  // vault-backed SecretStore first, then fall back to the legacy plaintext
+  // StorageAdapter.  This ensures upgraded clients that already have tokens
+  // in localStorage can still read them (and migrate them on the next save).
   let seedTokens: Record<string, RegistrationTokenData> = {};
 
   if (registration.persistTokens) {
     if (secretStore) {
       seedTokens = await loadTokensFromSecretStore(secretStore);
-    } else if (storage) {
+    }
+    if (Object.keys(seedTokens).length === 0 && storage) {
       seedTokens = await loadTokensFromStorage(storage);
     }
   } else {
@@ -181,9 +183,14 @@ export async function registerWithDwnEndpoints(
     }
 
     // Persist tokens: prefer vault-backed SecretStore over plaintext StorageAdapter.
+    // When migrating to SecretStore, also clear the legacy plaintext copy so
+    // bearer tokens no longer sit in localStorage.
     if (registration.persistTokens) {
       if (secretStore) {
         await saveTokensToSecretStore(secretStore, updatedTokens);
+        if (storage) {
+          await storage.remove(STORAGE_KEYS.REGISTRATION_TOKENS);
+        }
       } else if (storage) {
         await saveTokensToStorage(storage, updatedTokens);
       }

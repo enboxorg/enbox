@@ -1063,4 +1063,57 @@ describe('SecretStore token helpers', () => {
     expect(persisted['https://dwn1.example.com']).toBeDefined();
     expect(persisted['https://dwn1.example.com'].registrationToken).toBe('pre-existing');
   });
+
+  test('migrates legacy StorageAdapter tokens to SecretStore and clears plaintext copy', async () => {
+    mockRegisterTenant.mockClear();
+    mockRegisterTenant.mockImplementation(async () => {});
+
+    const agent = createMockAgent({
+      rpcGetServerInfo: async () => ({
+        registrationRequirements : ['proof-of-work-sha256-v0'],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    const { InMemorySecretStore } = await import('@enbox/agent');
+    const secretStore = new InMemorySecretStore();
+    const storage = new MemoryStorage();
+
+    // Pre-populate tokens in the LEGACY storage only (simulates upgrade).
+    const legacyTokens: Record<string, RegistrationTokenData> = {
+      'https://dwn1.example.com': {
+        registrationToken : 'legacy-token',
+        expiresAt         : Date.now() + 60_000,
+      },
+    };
+    await saveTokensToStorage(storage, legacyTokens);
+
+    let successCalled = false;
+    await registerWithDwnEndpoints(
+      {
+        userAgent    : agent,
+        dwnEndpoints : ['https://dwn1.example.com'],
+        agentDid     : 'did:dht:agent1',
+        connectedDid : 'did:dht:user1',
+        secretStore,
+        storage,
+      },
+      {
+        onSuccess     : () => { successCalled = true; },
+        onFailure     : () => {},
+        persistTokens : true,
+      },
+    );
+
+    expect(successCalled).toBe(true);
+
+    // Tokens should have migrated into the SecretStore.
+    const migrated = await loadTokensFromSecretStore(secretStore);
+    expect(migrated['https://dwn1.example.com']).toBeDefined();
+    expect(migrated['https://dwn1.example.com'].registrationToken).toBe('legacy-token');
+
+    // Legacy plaintext copy should have been removed.
+    const leftover = await storage.get(STORAGE_KEYS.REGISTRATION_TOKENS);
+    expect(leftover).toBeNull();
+  });
 });
