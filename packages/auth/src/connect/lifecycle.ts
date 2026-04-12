@@ -166,13 +166,8 @@ export async function startSyncIfEnabled(
     return;
   }
 
-  // If sync is already running, skip the start call. `registerIdentity()`
-  // hot-adds new identities to the active live sync session automatically,
-  // so calling `startSync()` again would needlessly tear down all existing
-  // subscriptions and restart from scratch.
-  if (userAgent.sync.isRunning) {
-    return;
-  }
+  // Skip if sync is already running — registerIdentity() hot-adds inline.
+  if (userAgent.sync.isRunning) { return; }
 
   const syncMode = sync === undefined ? 'live' : 'poll';
   const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
