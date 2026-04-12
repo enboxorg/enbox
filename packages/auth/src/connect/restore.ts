@@ -244,6 +244,8 @@ export async function restoreSession(
           const msg = regError instanceof Error ? regError.message : '';
           if (msg.includes('already registered')) {
             await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
+          } else {
+            throw regError;
           }
         }
       } else {

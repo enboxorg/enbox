@@ -2999,8 +2999,8 @@ export class SyncEngineLevel implements SyncEngine {
       try {
         parsed = JSON.parse(options) as SyncIdentityOptions;
       } catch (error: unknown) {
-        console.warn(`SyncEngineLevel: Corrupt sync options for ${did}, falling back to global sync:`, error);
-        parsed = { protocols: 'all' };
+        console.warn(`SyncEngineLevel: Corrupt sync options for ${did}, skipping identity:`, error);
+        continue;
       }
 
       // Legacy migration: pre-v0.x registrations stored an empty array to

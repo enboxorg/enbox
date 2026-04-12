@@ -291,7 +291,7 @@ describe('SyncEngineLevel — identity management', () => {
       expect(targets[0].protocol).toBeUndefined();
     });
 
-    it('should fall back to all when stored JSON is corrupt', async () => {
+    it('should skip identity when stored JSON is corrupt', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
@@ -307,9 +307,8 @@ describe('SyncEngineLevel — identity management', () => {
       const warnStub = sinon.stub(console, 'warn');
       const targets = await (engine as any).getSyncTargets();
 
-      expect(targets).toHaveLength(1);
-      expect(targets[0].did).toBe('did:example:corrupt');
-      expect(targets[0].protocol).toBeUndefined();
+      // Corrupt identity is skipped — no targets generated.
+      expect(targets).toHaveLength(0);
       expect(warnStub.calledOnce).toBe(true);
       warnStub.restore();
     });

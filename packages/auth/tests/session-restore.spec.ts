@@ -420,7 +420,7 @@ describe('restoreSession', () => {
       expect(registerCalls[0].options.protocols).toContain('https://proto.example.com/notes');
     });
 
-    test('silently ignores non-registration errors from registerIdentity', async () => {
+    test('does not start sync when registerIdentity fails with non-registration error', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -429,10 +429,12 @@ describe('restoreSession', () => {
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
       });
 
+      const syncStartCalls: any[] = [];
       const agent = createMockAgent({
         firstLaunch               : async () => false,
         identityConnectedIdentity : async () => identity,
         syncRegisterIdentity      : async () => { throw new Error('database unavailable'); },
+        syncStartSync             : async (params) => { syncStartCalls.push(params); },
         processDwnRequest         : async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             return {
@@ -446,12 +448,13 @@ describe('restoreSession', () => {
         },
       });
 
-      // Should NOT throw — non-registration errors are silently ignored in restore.
+      // Restore succeeds but sync should NOT start — repair failed.
       const session = await restoreSession(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
       );
 
       expect(session).toBeDefined();
+      expect(syncStartCalls).toHaveLength(0);
     });
 
     test('unregisters sync when delegate has zero grants', async () => {
