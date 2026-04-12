@@ -190,6 +190,61 @@ describe('importDelegateAndSetupSync', () => {
       expect(syncCalls).toHaveLength(1);
       expect(syncCalls[0].options.protocols).toContain('https://proto.example/chat');
     });
+
+    test('falls back to updateIdentityOptions when already registered', async () => {
+      const updateCalls: any[] = [];
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent({
+        identityImport            : async () => identity,
+        syncRegisterIdentity      : async () => { throw new Error('already registered'); },
+        syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
+        dwnProcessRawMessage      : async () => ({ status: { code: 202, detail: 'Accepted' } }),
+      });
+
+      const grants = [buildGrantMessage('https://proto.example/chat', 'grant-chat')];
+
+      const result = await importDelegateAndSetupSync({
+        userAgent           : agent,
+        delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+        connectedDid        : 'did:dht:connected1',
+        delegateGrants      : grants,
+        flowName            : 'test',
+      });
+
+      expect(result).toBeDefined();
+      expect(updateCalls).toHaveLength(1);
+      expect(updateCalls[0].options.protocols).toContain('https://proto.example/chat');
+    });
+
+    test('rethrows non-registration errors from sync registerIdentity', async () => {
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent({
+        identityImport       : async () => identity,
+        syncRegisterIdentity : async () => { throw new Error('database unavailable'); },
+        dwnProcessRawMessage : async () => ({ status: { code: 202, detail: 'Accepted' } }),
+      });
+
+      const grants = [buildGrantMessage('https://proto.example/chat', 'grant-chat')];
+
+      await expect(
+        importDelegateAndSetupSync({
+          userAgent           : agent,
+          delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+          connectedDid        : 'did:dht:connected1',
+          delegateGrants      : grants,
+          flowName            : 'test',
+        })
+      ).rejects.toThrow('database unavailable');
+    });
   });
 });
 

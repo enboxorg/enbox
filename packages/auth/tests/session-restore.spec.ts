@@ -384,6 +384,76 @@ describe('restoreSession', () => {
       expect(updateCalls[0].did).toBe('did:dht:external');
     });
 
+    test('registers sync successfully when delegate has grants', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const registerCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async (params) => { registerCalls.push(params); },
+        processDwnRequest         : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [buildMockGrantEntry('https://proto.example.com/notes')],
+              },
+            };
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(registerCalls).toHaveLength(1);
+      expect(registerCalls[0].options.protocols).toContain('https://proto.example.com/notes');
+    });
+
+    test('silently ignores non-registration errors from registerIdentity', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async () => { throw new Error('database unavailable'); },
+        processDwnRequest         : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [buildMockGrantEntry('https://proto.example.com/notes')],
+              },
+            };
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
+      });
+
+      // Should NOT throw — non-registration errors are silently ignored in restore.
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+    });
+
     test('skips sync registration when delegate has zero grants', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
