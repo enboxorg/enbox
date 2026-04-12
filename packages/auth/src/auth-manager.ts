@@ -1129,8 +1129,8 @@ export class AuthManager {
         const grant = DwnPermissionGrant.parse(entry);
         const scope = grant.scope as any;
         const scopeProtocol = scope.protocol as string | undefined;
-        if (scopeProtocol === undefined && 'interface' in scope) {
-          // Unrestricted grant (well-formed scope with no protocol) — delegate can sync all protocols.
+        if (scopeProtocol === undefined && scope.interface === 'Messages') {
+          // Unrestricted Messages grant (no protocol scope) — delegate can sync all protocols.
           return 'all';
         }
         if (scopeProtocol && scopeProtocol !== PermissionsProtocol.uri) {

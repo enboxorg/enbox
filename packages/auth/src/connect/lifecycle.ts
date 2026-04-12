@@ -376,8 +376,8 @@ export async function processConnectedGrants(params: {
   for (const { grant } of parsed) {
     const scope = grant.scope;
     const protocol = scope.protocol;
-    if (protocol === undefined && 'interface' in scope) {
-      // Unrestricted grant (well-formed scope with no protocol) — delegate can sync all protocols.
+    if (protocol === undefined && (scope as any).interface === 'Messages') {
+      // Unrestricted Messages grant (no protocol scope) — delegate can sync all protocols.
       return 'all';
     }
     if (protocol && protocol !== PermissionsProtocol.uri) {

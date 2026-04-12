@@ -11,13 +11,13 @@ import { finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGr
 // ── Helpers ──────────────────────────────────────────────────────
 
 /** Build a mock unscoped (unrestricted) grant — no protocol in scope. */
-function buildUnscopedGrantMessage(grantId: string): any {
+function buildUnscopedGrantMessage(grantId: string, scopeInterface = 'Messages', scopeMethod = 'Read'): any {
   return {
     recordId    : grantId,
     contextId   : grantId,
     encodedData : btoa(JSON.stringify({
       dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: 'Messages', method: 'Read' },
+      scope       : { interface: scopeInterface, method: scopeMethod },
       delegated   : true,
     })),
     descriptor: {
@@ -269,6 +269,40 @@ describe('importDelegateAndSetupSync', () => {
       expect(result).toBeDefined();
       expect(syncCalls).toHaveLength(1);
       expect(syncCalls[0].options.protocols).toBe('all');
+    });
+
+    test('does not treat unscoped non-Messages grant as all', async () => {
+      const syncCalls: any[] = [];
+      const unregisterCalls: string[] = [];
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent({
+        identityImport         : async () => identity,
+        syncRegisterIdentity   : async (params) => { syncCalls.push(params); },
+        syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+        dwnProcessRawMessage   : async () => ({ status: { code: 202, detail: 'Accepted' } }),
+      });
+
+      // A Protocols.Query grant has no protocol but is NOT a Messages grant.
+      const grants = [buildUnscopedGrantMessage('grant-proto-query', 'Protocols', 'Query')];
+
+      const result = await importDelegateAndSetupSync({
+        userAgent           : agent,
+        delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+        connectedDid        : 'did:dht:connected1',
+        delegateGrants      : grants,
+        flowName            : 'test',
+      });
+
+      expect(result).toBeDefined();
+      // Should NOT register with 'all' — Protocols.Query grant does not authorize sync.
+      expect(syncCalls).toHaveLength(0);
+      // Should trigger unregister since no sync-relevant protocols were found.
+      expect(unregisterCalls).toHaveLength(1);
     });
 
     test('registers sync when protocols are granted', async () => {
