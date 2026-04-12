@@ -1699,8 +1699,8 @@ describe('SyncEngineLevel — private methods', () => {
 
       const linkKey = 'did:example:alice^https://dwn.example.com';
       (engine as any)._activeLinks.set(linkKey, {
-        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com',
-        scopeId: 'test', scope: { kind: 'full' }, status: 'live', pull: {},
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live', pull           : {},
       });
 
       await (engine as any).openLivePullSubscription({
@@ -1745,8 +1745,8 @@ describe('SyncEngineLevel — private methods', () => {
 
       const linkKey = 'did:example:alice^https://dwn.example.com';
       (engine as any)._activeLinks.set(linkKey, {
-        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com',
-        scopeId: 'test', scope: { kind: 'full' }, status: 'live', pull: {},
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live', pull           : {},
       });
 
       await (engine as any).openLocalPushSubscription({
