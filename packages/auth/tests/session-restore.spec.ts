@@ -454,7 +454,7 @@ describe('restoreSession', () => {
       expect(session).toBeDefined();
     });
 
-    test('skips sync registration when delegate has zero grants', async () => {
+    test('unregisters sync when delegate has zero grants', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
@@ -464,14 +464,14 @@ describe('restoreSession', () => {
       });
 
       const registerCalls: any[] = [];
-      const updateCalls: any[] = [];
+      const unregisterCalls: string[] = [];
       const agent = createMockAgent({
         firstLaunch               : async () => false,
         identityConnectedIdentity : async () => identity,
         syncRegisterIdentity      : async (params) => { registerCalls.push(params); },
-        syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
+        syncUnregisterIdentity    : async (did) => { unregisterCalls.push(did); },
         // Default processDwnRequest returns empty entries for RecordsQuery,
-        // so deriveProtocolsFromGrants returns [] → skip registration.
+        // so deriveProtocolsFromGrants returns [] → unregister stale registration.
       });
 
       const session = await restoreSession(
@@ -479,9 +479,32 @@ describe('restoreSession', () => {
       );
 
       expect(session).toBeDefined();
-      // Zero grants means nothing to sync — neither register nor update should be called.
       expect(registerCalls).toHaveLength(0);
-      expect(updateCalls).toHaveLength(0);
+      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls[0]).toBe('did:dht:external');
+    });
+
+    test('tolerates unregister failure when identity was never registered', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncUnregisterIdentity    : async () => { throw new Error('is not registered'); },
+      });
+
+      // Should not throw — unregister failure is silently ignored in restore.
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
     });
   });
 

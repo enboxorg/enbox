@@ -445,7 +445,12 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       const options = await registeredIdentities.get(did);
       if (options) {
-        return JSON.parse(options) as SyncIdentityOptions;
+        const parsed = JSON.parse(options) as SyncIdentityOptions;
+        // Legacy migration: pre-upgrade registrations stored [] to mean "sync all".
+        if (Array.isArray(parsed.protocols) && parsed.protocols.length === 0) {
+          return { ...parsed, protocols: 'all' };
+        }
+        return parsed;
       }
     } catch (error) {
       const e = error as { code: string };

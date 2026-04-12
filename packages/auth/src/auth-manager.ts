@@ -830,8 +830,11 @@ export class AuthManager {
         ? await this._deriveProtocolsFromGrants(delegateDid)
         : undefined;
 
-      // A delegate with zero grants has nothing to sync — skip registration.
-      if (!delegateDid || !derivedProtocols || derivedProtocols.length > 0) {
+      if (delegateDid && derivedProtocols && derivedProtocols.length === 0) {
+        // Zero grants — this delegate has no permissions. Remove any
+        // stale sync registration so revoked protocols stop syncing.
+        try { await this._userAgent.sync.unregisterIdentity(connectedDid); } catch { /* not registered */ }
+      } else {
         const protocols: 'all' | [string, ...string[]] = derivedProtocols && derivedProtocols.length > 0
           ? derivedProtocols as [string, ...string[]]
           : 'all';

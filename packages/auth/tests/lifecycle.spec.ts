@@ -135,8 +135,9 @@ describe('importDelegateAndSetupSync', () => {
   });
 
   describe('sync registration with zero granted protocols', () => {
-    test('skips sync registration when no protocols are granted', async () => {
+    test('unregisters sync when no protocols are granted', async () => {
       const syncCalls: any[] = [];
+      const unregisterCalls: string[] = [];
 
       const identity = createMockIdentity({
         did      : { uri: 'did:jwk:delegate1' },
@@ -144,12 +145,13 @@ describe('importDelegateAndSetupSync', () => {
       });
 
       const agent = createMockAgent({
-        identityImport       : async () => identity,
-        syncRegisterIdentity : async (params) => { syncCalls.push(params); },
-        dwnProcessRawMessage : async () => ({ status: { code: 202, detail: 'Accepted' } }),
+        identityImport         : async () => identity,
+        syncRegisterIdentity   : async (params) => { syncCalls.push(params); },
+        syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+        dwnProcessRawMessage   : async () => ({ status: { code: 202, detail: 'Accepted' } }),
       });
 
-      // Empty grants → processConnectedGrants returns [] → sync registration skipped.
+      // Empty grants → processConnectedGrants returns [] → unregister stale registration.
       const result = await importDelegateAndSetupSync({
         userAgent           : agent,
         delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
@@ -160,6 +162,32 @@ describe('importDelegateAndSetupSync', () => {
 
       expect(result).toBeDefined();
       expect(syncCalls).toHaveLength(0);
+      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls[0]).toBe('did:dht:connected1');
+    });
+
+    test('tolerates unregister when identity was never registered', async () => {
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent({
+        identityImport         : async () => identity,
+        syncUnregisterIdentity : async () => { throw new Error('is not registered'); },
+        dwnProcessRawMessage   : async () => ({ status: { code: 202, detail: 'Accepted' } }),
+      });
+
+      // Should not throw — unregister failure is silently ignored.
+      const result = await importDelegateAndSetupSync({
+        userAgent           : agent,
+        delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+        connectedDid        : 'did:dht:connected1',
+        delegateGrants      : [],
+        flowName            : 'test',
+      });
+
+      expect(result).toBeDefined();
     });
 
     test('registers sync when protocols are granted', async () => {

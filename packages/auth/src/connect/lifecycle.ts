@@ -467,7 +467,7 @@ export async function importDelegateAndSetupSync(params: {
     // Register (or update) the identity for protocol-scoped sync.
     // If the identity is already registered from a prior session, update
     // the protocol list so it matches the new grants — otherwise a stale
-    // registration would remain. Skip when zero protocols are granted.
+    // registration would remain.
     if (connectedProtocols.length > 0) {
       const syncOptions = {
         delegateDid : delegatePortableDid.uri,
@@ -483,6 +483,9 @@ export async function importDelegateAndSetupSync(params: {
           throw error;
         }
       }
+    } else {
+      // Zero grants — remove any stale sync registration so revoked protocols stop syncing.
+      try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* not registered */ }
     }
 
     // No explicit sync('pull') here — startSyncIfEnabled() in the caller

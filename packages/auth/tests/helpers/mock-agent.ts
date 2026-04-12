@@ -77,6 +77,7 @@ export interface MockAgentOverrides {
   dwnExportDelegateMultiPartyProtocols?: (delegateDid: string) => string[];
   dwnClearDelegateDecryptionKeys?: (delegateDid?: string) => void;
   syncRegisterIdentity?: (params: any) => Promise<void>;
+  syncUnregisterIdentity?: (did: string) => Promise<void>;
   syncUpdateIdentityOptions?: (params: any) => Promise<void>;
   syncStartSync?: (params: any) => Promise<void>;
   syncStopSync?: (timeout: number) => Promise<void>;
@@ -128,6 +129,7 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
 
     sync: {
       registerIdentity       : overrides.syncRegisterIdentity ?? (async (): Promise<void> => {}),
+      unregisterIdentity     : overrides.syncUnregisterIdentity ?? (async (): Promise<void> => {}),
       updateIdentityOptions  : overrides.syncUpdateIdentityOptions ?? (async (): Promise<void> => {}),
       startSync              : overrides.syncStartSync ?? (async (): Promise<void> => {}),
       stopSync               : overrides.syncStopSync ?? (async (): Promise<void> => {}),

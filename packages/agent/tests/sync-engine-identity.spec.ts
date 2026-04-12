@@ -71,6 +71,36 @@ describe('SyncEngineLevel — identity management', () => {
       expect(options).toBeUndefined();
     });
 
+    it('should normalize legacy protocols: [] to all on read', async () => {
+      // Write a legacy registration directly to the sublevel, bypassing registerIdentity validation.
+      const identities = db.sublevel('registeredIdentities');
+      await identities.put('did:example:legacy-read', JSON.stringify({ protocols: [] }));
+
+      const options = await syncEngine.getIdentityOptions('did:example:legacy-read');
+      expect(options).toBeDefined();
+      expect(options!.protocols).toBe('all');
+    });
+
+    it('should normalize legacy protocols: [] preserving delegateDid', async () => {
+      const identities = db.sublevel('registeredIdentities');
+      await identities.put('did:example:legacy-delegate-read', JSON.stringify({
+        protocols   : [],
+        delegateDid : 'did:example:delegate',
+      }));
+
+      const options = await syncEngine.getIdentityOptions('did:example:legacy-delegate-read');
+      expect(options).toBeDefined();
+      expect(options!.protocols).toBe('all');
+      expect(options!.delegateDid).toBe('did:example:delegate');
+    });
+
+    it('should not normalize non-empty protocol arrays', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:specific', options: { protocols: ['https://proto.example'] } });
+      const options = await syncEngine.getIdentityOptions('did:example:specific');
+      expect(options).toBeDefined();
+      expect(options!.protocols).toEqual(['https://proto.example']);
+    });
+
     it('should throw on unexpected Level errors', async () => {
       // Stub the sublevel to throw a non-LEVEL_NOT_FOUND error.
       const stubGet = sinon.stub().rejects({ code: 'LEVEL_IO_ERROR' });

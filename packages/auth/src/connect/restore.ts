@@ -230,7 +230,7 @@ export async function restoreSession(
   if (delegateDid && ctx.defaultSync !== 'off') {
     try {
       const protocols = await deriveProtocolsFromGrants(userAgent, delegateDid);
-      if (protocols.length > 0) { // zero grants → nothing to sync — skip
+      if (protocols.length > 0) {
         const options = { delegateDid, protocols: protocols as [string, ...string[]] };
         try {
           await userAgent.sync.registerIdentity({ did: connectedDid, options });
@@ -239,8 +239,10 @@ export async function restoreSession(
           if (msg.includes('already registered')) {
             await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
           }
-          // Other errors are ignored — sync will still work with existing registration.
         }
+      } else {
+        // Zero grants — remove any stale sync registration so revoked protocols stop syncing.
+        try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* not registered */ }
       }
     } catch {
       // Best-effort — don't block restore if grant query fails.

@@ -1211,23 +1211,27 @@ describe('AuthManager', () => {
       expect(registerCalls[0].options.protocols).toBe('all');
     });
 
-    test('skips sync registration for delegate with zero grants', async () => {
+    test('unregisters sync for delegate with zero grants', async () => {
       const registerCalls: any[] = [];
+      const unregisterCalls: string[] = [];
       const identity = createMockIdentity({
         did      : { uri: 'did:delegate' },
         metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:external' },
       });
       const agent = createMockAgent({
-        identityGet          : async () => identity,
-        syncRegisterIdentity : async (params) => { registerCalls.push(params); },
-        syncStartSync        : async () => {},
+        identityGet            : async () => identity,
+        syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
+        syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+        syncStartSync          : async () => {},
       });
       const manager = createTestManager(agent, { sync: '10s' });
 
       await manager.switchIdentity('did:delegate');
 
-      // Zero grants means nothing to sync — registration is skipped entirely.
+      // Zero grants — should unregister (not register) to clear stale scope.
       expect(registerCalls).toHaveLength(0);
+      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls[0]).toBe('did:external');
     });
 
     test('handles already-registered identity gracefully', async () => {
