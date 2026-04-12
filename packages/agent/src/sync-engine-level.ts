@@ -399,6 +399,13 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async registerIdentity({ did, options }: { did: string; options: SyncIdentityOptions }): Promise<void> {
+    if (!options || !('protocols' in options)) {
+      throw new Error('SyncEngineLevel: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.');
+    }
+    if (Array.isArray(options.protocols) && options.protocols.length === 0) {
+      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.');
+    }
+
     const registeredIdentities = this._db.sublevel('registeredIdentities');
 
     const existing = await this.getIdentityOptions(did);
@@ -2983,6 +2990,14 @@ export class SyncEngineLevel implements SyncEngine {
         console.warn(`SyncEngineLevel: Corrupt sync options for ${did}, falling back to global sync:`, error);
         parsed = { protocols: 'all' };
       }
+
+      // Legacy migration: pre-v0.x registrations stored an empty array to
+      // mean "sync everything".  Treat [] the same as 'all' so that
+      // existing users don't silently lose sync after upgrading.
+      if (Array.isArray(parsed.protocols) && parsed.protocols.length === 0) {
+        parsed = { ...parsed, protocols: 'all' };
+      }
+
       const { protocols, delegateDid } = parsed;
 
       const dwnEndpointUrls = await this.agent.dwn.getDwnEndpointUrlsForTarget(did);

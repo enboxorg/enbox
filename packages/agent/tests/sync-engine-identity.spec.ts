@@ -123,11 +123,16 @@ describe('SyncEngineLevel — identity management', () => {
       expect(options!.protocols).toEqual(protos);
     });
 
-    it('should persist an empty protocol array (syncs nothing specific)', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:scope-empty', options: { protocols: [] } });
-      const options = await syncEngine.getIdentityOptions('did:example:scope-empty');
-      expect(options).toBeDefined();
-      expect(options!.protocols).toEqual([]);
+    it('should reject an empty protocols array at registration time', async () => {
+      await expect(
+        syncEngine.registerIdentity({ did: 'did:example:scope-empty', options: { protocols: [] } })
+      ).rejects.toThrow('empty array is ambiguous');
+    });
+
+    it('should reject when options is missing entirely (JS caller)', async () => {
+      await expect(
+        (syncEngine as any).registerIdentity({ did: 'did:example:no-opts' })
+      ).rejects.toThrow('options.protocols is required');
     });
 
     it('should update from protocols: all to a specific list', async () => {
@@ -194,7 +199,7 @@ describe('SyncEngineLevel — identity management', () => {
       expect(targets[1].protocol).toBe('https://proto2.example.com');
     });
 
-    it('should produce zero targets when protocols is an empty array', async () => {
+    it('should migrate legacy protocols: [] to all on read', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
@@ -203,10 +208,40 @@ describe('SyncEngineLevel — identity management', () => {
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
-      await engine.registerIdentity({ did: 'did:example:empty-list', options: { protocols: [] } });
+      // Simulate a pre-upgrade registration persisted as { protocols: [] }.
+      const identities = db.sublevel('registeredIdentities');
+      await identities.put('did:example:legacy-owner', JSON.stringify({ protocols: [] }));
+
       const targets = await (engine as any).getSyncTargets();
 
-      expect(targets).toHaveLength(0);
+      // Legacy [] must be treated as full-replica, not zero targets.
+      expect(targets).toHaveLength(1);
+      expect(targets[0].did).toBe('did:example:legacy-owner');
+      expect(targets[0].protocol).toBeUndefined();
+    });
+
+    it('should migrate legacy delegate registration with protocols: []', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      // Simulate a pre-upgrade delegate registration with empty protocols.
+      const identities = db.sublevel('registeredIdentities');
+      await identities.put('did:example:legacy-delegate', JSON.stringify({
+        protocols   : [],
+        delegateDid : 'did:example:delegate',
+      }));
+
+      const targets = await (engine as any).getSyncTargets();
+
+      expect(targets).toHaveLength(1);
+      expect(targets[0].did).toBe('did:example:legacy-delegate');
+      expect(targets[0].delegateDid).toBe('did:example:delegate');
+      expect(targets[0].protocol).toBeUndefined();
     });
 
     it('should fall back to all when stored JSON is corrupt', async () => {
