@@ -840,15 +840,17 @@ describe('restoreSession', () => {
  * Used by deriveProtocolsFromGrants tests.
  */
 function buildMockGrantEntry(protocol: string): any {
+  const grantData = JSON.stringify({
+    dateExpires : '2040-06-25T16:09:16.693356Z',
+    scope       : { interface: 'Messages', method: 'Read', protocol },
+    delegated   : true,
+  });
+  const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return {
     recordId    : `grant-${protocol}`,
     contextId   : `grant-${protocol}`,
-    encodedData : btoa(JSON.stringify({
-      dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: 'Records', method: 'Read', protocol },
-      delegated   : true,
-    })),
-    descriptor: {
+    encodedData : encoded,
+    descriptor  : {
       interface    : 'Records',
       method       : 'Write',
       protocol     : 'https://identity.foundation/dwn/permissions',
@@ -869,15 +871,17 @@ function buildMockGrantEntry(protocol: string): any {
 
 /** Build an unscoped grant entry — no protocol in scope (unrestricted). */
 function buildUnscopedMockGrantEntry(grantId: string): any {
+  const grantData = JSON.stringify({
+    dateExpires : '2040-06-25T16:09:16.693356Z',
+    scope       : { interface: 'Messages', method: 'Read' },
+    delegated   : true,
+  });
+  const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return {
     recordId    : grantId,
     contextId   : grantId,
-    encodedData : btoa(JSON.stringify({
-      dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: 'Messages', method: 'Read' },
-      delegated   : true,
-    })),
-    descriptor: {
+    encodedData : encoded,
+    descriptor  : {
       interface    : 'Records',
       method       : 'Write',
       protocol     : 'https://identity.foundation/dwn/permissions',
@@ -905,7 +909,7 @@ function buildMockGrantRecord(grantId: string): any {
     contextId   : grantId,
     encodedData : btoa(JSON.stringify({
       dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: 'Records', method: 'Read', protocol: 'https://test.xyz' },
+      scope       : { interface: 'Messages', method: 'Read', protocol: 'https://test.xyz' },
       delegated   : true,
     })),
     descriptor: {

@@ -248,6 +248,53 @@ export function resolveIdentityDids(
   return { connectedDid, delegateDid };
 }
 
+// ─── deriveSyncScopeFromGrants ──────────────────────────────────
+
+/**
+ * Derive the sync protocol scope from a set of parsed permission grants.
+ *
+ * Only `Messages.Read` grants authorize sync operations. Other grant types
+ * (Records.Write, Protocols.Query, etc.) are ignored even if they contain a
+ * `protocol` field — they do not authorize `MessagesSync`.
+ *
+ * - Unscoped `Messages.Read` (no `protocol`) → `'all'` (full replica)
+ * - Scoped `Messages.Read` grants → collected protocol URIs
+ * - No sync-relevant grants → `[]` (caller should unregister)
+ *
+ * Expired grants are excluded.
+ *
+ * @internal
+ */
+export function deriveSyncScopeFromGrants(grants: DwnPermissionGrant[]): 'all' | string[] {
+  const now = new Date().toISOString();
+  const protocols = new Set<string>();
+
+  for (const grant of grants) {
+    const scope = grant.scope as any;
+
+    // Only Messages.Read grants authorize sync.
+    if (scope.interface !== 'Messages' || scope.method !== 'Read') {
+      continue;
+    }
+
+    // Skip expired grants.
+    if (grant.dateExpires && grant.dateExpires <= now) {
+      continue;
+    }
+
+    const protocol = scope.protocol as string | undefined;
+    if (protocol === undefined) {
+      // Unrestricted Messages.Read — delegate can sync all protocols.
+      return 'all';
+    }
+    if (protocol !== PermissionsProtocol.uri) {
+      protocols.add(protocol);
+    }
+  }
+
+  return [...protocols];
+}
+
 // ─── processConnectedGrants ─────────────────────────────────────
 
 /**
@@ -266,7 +313,6 @@ export async function processConnectedGrants(params: {
   grants: DwnDataEncodedRecordsWriteMessage[];
 }): Promise<'all' | string[]> {
   const { agent, connectedDid, delegateDid, grants } = params;
-  const connectedProtocols = new Set<string>();
 
   // Two-phase write strategy:
   //
@@ -371,21 +417,9 @@ export async function processConnectedGrants(params: {
     throw connectedFailure.reason;
   }
 
-  // ── Collect protocols ─────────────────────────────────────────────
+  // ── Derive sync scope from the processed grants ──────────────────
 
-  for (const { grant } of parsed) {
-    const scope = grant.scope;
-    const protocol = scope.protocol;
-    if (protocol === undefined && (scope as any).interface === 'Messages') {
-      // Unrestricted Messages grant (no protocol scope) — delegate can sync all protocols.
-      return 'all';
-    }
-    if (protocol && protocol !== PermissionsProtocol.uri) {
-      connectedProtocols.add(protocol);
-    }
-  }
-
-  return [...connectedProtocols];
+  return deriveSyncScopeFromGrants(parsed.map((p) => p.grant));
 }
 
 // ─── importDelegateAndSetupSync ─────────────────────────────────
@@ -564,54 +598,15 @@ export async function finalizeDelegateSession(params: {
   // so they survive agent restarts.  Delegate keys are stored in the
   // vault-backed SecretStore (encrypted at rest), while non-secret
   // session markers go into the plaintext StorageAdapter.
-  const delegateDecryptionKeys = (identity as any)._delegateDecryptionKeys as DelegateDecryptionKey[] | undefined;
   const extraStorageKeys: Record<string, string> = {
     [STORAGE_KEYS.DELEGATE_DID]  : delegateDid,
     [STORAGE_KEYS.CONNECTED_DID] : connectedDid,
   };
-  const delegateContextKeys = (identity as any)._delegateContextKeys as DelegateContextKey[] | undefined;
 
-  // Store delegate keys in the SecretStore (encrypted at rest).
-  // When keys are absent from the new session, actively clear stale values
-  // from prior sessions so that a reconnect with fewer capabilities
-  // doesn't retain old decryption material.
-  const secretWrites: Promise<void>[] = [];
-  if (delegateDecryptionKeys?.length) {
-    secretWrites.push(
-      userAgent.secrets.put(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, Convert.string(JSON.stringify(delegateDecryptionKeys)).toUint8Array()),
-    );
-  } else {
-    secretWrites.push(userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS).then(() => {}).catch(() => {}));
-    secretWrites.push(storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS).catch(() => {}));
-  }
-  if (delegateContextKeys?.length) {
-    secretWrites.push(
-      userAgent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, Convert.string(JSON.stringify(delegateContextKeys)).toUint8Array()),
-    );
-  } else {
-    secretWrites.push(userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).then(() => {}).catch(() => {}));
-    secretWrites.push(storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}));
-  }
-  await Promise.all(secretWrites);
-  // Best-effort cleanup of any legacy plaintext copies when new keys were written.
-  if (delegateDecryptionKeys?.length || delegateContextKeys?.length) {
-    try { await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS); } catch { /* best-effort */ }
-    try { await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
-  }
-
-  const delegateMultiPartyProtocols = (identity as any)._delegateMultiPartyProtocols as string[] | undefined;
-  if (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0) {
-    extraStorageKeys[STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS] = JSON.stringify(delegateMultiPartyProtocols);
-  } else {
-    try { await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS); } catch { /* best-effort */ }
-  }
-
-  const sessionRevocations = (identity as any)._sessionRevocations as { grantId: string; revocationGrantId: string }[] | undefined;
-  if (sessionRevocations && sessionRevocations.length > 0) {
-    extraStorageKeys[STORAGE_KEYS.SESSION_REVOCATIONS] = JSON.stringify(sessionRevocations);
-  } else {
-    try { await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS); } catch { /* best-effort */ }
-  }
+  // Persist or clear delegate keys/revocations. Clearing stale values
+  // from prior sessions prevents a reconnect with fewer capabilities
+  // from retaining old decryption material.
+  await persistOrClearDelegateSecrets(userAgent, storage, identity, extraStorageKeys);
 
   // Wire post-connect context key persistence: when the owner creates a
   // new multi-party context, the agent injects the key into the delegate
@@ -720,4 +715,51 @@ export async function finalizeSession(params: {
   });
 
   return session;
+}
+
+// ─── persistOrClearDelegateSecrets ──────────────────────────────
+
+/** @internal */
+async function persistOrClearDelegateSecrets(
+  userAgent: EnboxUserAgent,
+  storage: StorageAdapter,
+  identity: BearerIdentity,
+  extraStorageKeys: Record<string, string>,
+): Promise<void> {
+  const delegateDecryptionKeys = (identity as any)._delegateDecryptionKeys as DelegateDecryptionKey[] | undefined;
+  const delegateContextKeys = (identity as any)._delegateContextKeys as DelegateContextKey[] | undefined;
+
+  // Persist or clear keys in the SecretStore + legacy StorageAdapter.
+  const secretWrites: Promise<void>[] = [];
+  const putOrDelete = (key: string, data: unknown[] | undefined): void => {
+    if (data?.length) {
+      secretWrites.push(userAgent.secrets.put(key, Convert.string(JSON.stringify(data)).toUint8Array()));
+    } else {
+      secretWrites.push(userAgent.secrets.delete(key).then(() => {}).catch(() => {}));
+      secretWrites.push(storage.remove(key).catch(() => {}));
+    }
+  };
+  putOrDelete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, delegateDecryptionKeys);
+  putOrDelete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, delegateContextKeys);
+  await Promise.all(secretWrites);
+
+  // Best-effort cleanup of legacy plaintext copies when new keys were written.
+  if (delegateDecryptionKeys?.length || delegateContextKeys?.length) {
+    try { await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS); } catch { /* best-effort */ }
+    try { await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
+  }
+
+  const delegateMultiPartyProtocols = (identity as any)._delegateMultiPartyProtocols as string[] | undefined;
+  if (delegateMultiPartyProtocols?.length) {
+    extraStorageKeys[STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS] = JSON.stringify(delegateMultiPartyProtocols);
+  } else {
+    try { await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS); } catch { /* best-effort */ }
+  }
+
+  const sessionRevocations = (identity as any)._sessionRevocations as { grantId: string; revocationGrantId: string }[] | undefined;
+  if (sessionRevocations?.length) {
+    extraStorageKeys[STORAGE_KEYS.SESSION_REVOCATIONS] = JSON.stringify(sessionRevocations);
+  } else {
+    try { await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS); } catch { /* best-effort */ }
+  }
 }

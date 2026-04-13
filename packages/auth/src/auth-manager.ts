@@ -47,7 +47,7 @@ import { normalizeProtocolRequests } from './permissions.js';
 import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
 import { walletConnect } from './connect/wallet.js';
-import { ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './connect/lifecycle.js';
+import { deriveSyncScopeFromGrants, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './connect/lifecycle.js';
 import { importFromPhrase, importFromPortable } from './connect/import.js';
 
 /**
@@ -830,22 +830,7 @@ export class AuthManager {
       ? await this._deriveProtocolsFromGrants(delegateDid)
       : undefined;
 
-    if (delegateDid && derivedProtocols !== undefined && derivedProtocols !== 'all' && derivedProtocols.length === 0) {
-      // Zero grants — this delegate has no permissions. Remove any
-      // stale sync registration so revoked protocols stop syncing.
-      try {
-        await this._userAgent.sync.unregisterIdentity(connectedDid);
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : '';
-        if (!msg.includes('is not registered')) { throw error; }
-      }
-    } else {
-      const protocols: 'all' | [string, ...string[]] =
-        derivedProtocols === 'all' ? 'all'
-          : derivedProtocols && derivedProtocols.length > 0 ? derivedProtocols as [string, ...string[]]
-            : 'all';
-      await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
-    }
+    await this._repairSyncRegistration(connectedDid, delegateDid, derivedProtocols);
 
     await startSyncIfEnabled(this._userAgent, this._defaultSync);
 
@@ -1136,23 +1121,15 @@ export class AuthManager {
       },
     });
 
-    const protocols: string[] = [];
-    if (response.reply.status.code === 200 && response.reply.entries) {
-      for (const entry of response.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
-        const grant = DwnPermissionGrant.parse(entry);
-        const scope = grant.scope as any;
-        const scopeProtocol = scope.protocol as string | undefined;
-        if (scopeProtocol === undefined && scope.interface === 'Messages') {
-          // Unrestricted Messages grant (no protocol scope) — delegate can sync all protocols.
-          return 'all';
-        }
-        if (scopeProtocol && scopeProtocol !== PermissionsProtocol.uri) {
-          protocols.push(scopeProtocol);
-        }
-      }
+    if (response.reply.status.code !== 200 || !response.reply.entries) {
+      return [];
     }
 
-    return [...new Set(protocols)];
+    const grants = (response.reply.entries as DwnDataEncodedRecordsWriteMessage[]).map(
+      (entry) => DwnPermissionGrant.parse(entry),
+    );
+
+    return deriveSyncScopeFromGrants(grants);
   }
 
   /**
@@ -1177,6 +1154,43 @@ export class AuthManager {
         throw error;
       }
     }
+  }
+
+  /**
+   * Repair the sync registration for a connected DID based on derived protocols.
+   * - `'all'` or non-empty list → register or update
+   * - Empty list (zero grants) for a delegate → unregister stale registration
+   * - Non-delegate with no derived protocols → register with `'all'`
+   */
+  private async _repairSyncRegistration(
+    connectedDid: string,
+    delegateDid: string | undefined,
+    derivedProtocols: 'all' | string[] | undefined,
+  ): Promise<void> {
+    const isZeroGrantDelegate = delegateDid
+      && derivedProtocols !== undefined
+      && derivedProtocols !== 'all'
+      && derivedProtocols.length === 0;
+
+    if (isZeroGrantDelegate) {
+      try {
+        await this._userAgent.sync.unregisterIdentity(connectedDid);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : '';
+        if (!msg.includes('is not registered')) { throw error; }
+      }
+      return;
+    }
+
+    let protocols: 'all' | [string, ...string[]];
+    if (derivedProtocols === 'all') {
+      protocols = 'all';
+    } else if (derivedProtocols && derivedProtocols.length > 0) {
+      protocols = derivedProtocols as [string, ...string[]];
+    } else {
+      protocols = 'all';
+    }
+    await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
   }
 
   private _setState(state: AuthState): void {

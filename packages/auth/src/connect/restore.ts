@@ -22,7 +22,7 @@ import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
-import { ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
+import { deriveSyncScopeFromGrants, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Decrypt a stored key blob.
@@ -613,21 +613,13 @@ async function deriveProtocolsFromGrants(
     },
   });
 
-  const protocols: string[] = [];
-  if (response.reply.status.code === 200 && response.reply.entries) {
-    for (const entry of response.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
-      const grant = DwnPermissionGrant.parse(entry);
-      const scope = grant.scope;
-      const scopeProtocol = scope.protocol;
-      if (scopeProtocol === undefined && (scope as any).interface === 'Messages') {
-        // Unrestricted Messages grant (no protocol scope) — delegate can sync all protocols.
-        return 'all';
-      }
-      if (scopeProtocol && scopeProtocol !== PermissionsProtocol.uri) {
-        protocols.push(scopeProtocol);
-      }
-    }
+  if (response.reply.status.code !== 200 || !response.reply.entries) {
+    return [];
   }
 
-  return [...new Set(protocols)];
+  const grants = (response.reply.entries as DwnDataEncodedRecordsWriteMessage[]).map(
+    (entry) => DwnPermissionGrant.parse(entry),
+  );
+
+  return deriveSyncScopeFromGrants(grants);
 }

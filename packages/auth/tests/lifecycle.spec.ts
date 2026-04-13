@@ -6,21 +6,23 @@ import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants } from '../src/connect/lifecycle.js';
+import { deriveSyncScopeFromGrants, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants } from '../src/connect/lifecycle.js';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
 /** Build a mock unscoped (unrestricted) grant — no protocol in scope. */
 function buildUnscopedGrantMessage(grantId: string, scopeInterface = 'Messages', scopeMethod = 'Read'): any {
+  const grantData = JSON.stringify({
+    dateExpires : '2040-06-25T16:09:16.693356Z',
+    scope       : { interface: scopeInterface, method: scopeMethod },
+    delegated   : true,
+  });
+  const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return {
     recordId    : grantId,
     contextId   : grantId,
-    encodedData : btoa(JSON.stringify({
-      dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: scopeInterface, method: scopeMethod },
-      delegated   : true,
-    })),
-    descriptor: {
+    encodedData : encoded,
+    descriptor  : {
       interface    : 'Records',
       method       : 'Write',
       protocol     : 'https://identity.foundation/dwn/permissions',
@@ -41,15 +43,17 @@ function buildUnscopedGrantMessage(grantId: string, scopeInterface = 'Messages',
 
 /** Build a mock DwnDataEncodedRecordsWriteMessage (grant) that DwnPermissionGrant.parse accepts. */
 function buildGrantMessage(protocol: string, grantId: string): any {
+  const grantData = JSON.stringify({
+    dateExpires : '2040-06-25T16:09:16.693356Z',
+    scope       : { interface: 'Messages', method: 'Read', protocol },
+    delegated   : true,
+  });
+  const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return {
     recordId    : grantId,
     contextId   : grantId,
-    encodedData : btoa(JSON.stringify({
-      dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: 'Records', method: 'Read', protocol },
-      delegated   : true,
-    })),
-    descriptor: {
+    encodedData : encoded,
+    descriptor  : {
       interface    : 'Records',
       method       : 'Write',
       protocol     : 'https://identity.foundation/dwn/permissions',
@@ -67,6 +71,76 @@ function buildGrantMessage(protocol: string, grantId: string): any {
     },
   };
 }
+
+describe('deriveSyncScopeFromGrants', () => {
+  /** Build a minimal mock grant object (no DWN parse overhead). */
+  function mockGrant(scope: any, dateExpires = '2040-01-01T00:00:00Z'): any {
+    return { scope, dateExpires };
+  }
+
+  test('returns all for unscoped Messages.Read grant', () => {
+    const grants = [mockGrant({ interface: 'Messages', method: 'Read' })];
+    expect(deriveSyncScopeFromGrants(grants)).toBe('all');
+  });
+
+  test('returns protocol list for scoped Messages.Read grants', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/a' }),
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/b' }),
+    ];
+    const result = deriveSyncScopeFromGrants(grants);
+    expect(result).toEqual(['https://proto.example/a', 'https://proto.example/b']);
+  });
+
+  test('deduplicates protocol URIs', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/a' }),
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/a' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://proto.example/a']);
+  });
+
+  test('ignores non-Messages grants (Records.Write does not authorize sync)', () => {
+    const grants = [
+      mockGrant({ interface: 'Records', method: 'Write', protocol: 'https://proto.example/chat' }),
+      mockGrant({ interface: 'Protocols', method: 'Query', protocol: 'https://proto.example/chat' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
+
+  test('ignores Messages grants with method !== Read', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Subscribe', protocol: 'https://proto.example/chat' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
+
+  test('excludes expired Messages.Read grants', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/a' }, '2020-01-01T00:00:00Z'),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
+
+  test('includes non-expired and excludes expired grants in the same set', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/expired' }, '2020-01-01T00:00:00Z'),
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/valid' }, '2040-01-01T00:00:00Z'),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://proto.example/valid']);
+  });
+
+  test('returns empty array when no grants are provided', () => {
+    expect(deriveSyncScopeFromGrants([])).toEqual([]);
+  });
+
+  test('excludes PermissionsProtocol.uri from collected protocols', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://identity.foundation/dwn/permissions' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
+});
 
 describe('processConnectedGrants', () => {
   describe('grant rollback on delegate partition write failure', () => {

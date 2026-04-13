@@ -1314,7 +1314,7 @@ describe('AuthManager', () => {
                     dateExpires : '2040-01-01T00:00:00.000Z',
                     scope       : { interface: 'Messages', method: 'Read' },
                     delegated   : true,
-                  })),
+                  })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
                   descriptor: {
                     interface    : 'Records',
                     method       : 'Write',
