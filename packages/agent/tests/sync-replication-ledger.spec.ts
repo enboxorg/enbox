@@ -91,6 +91,7 @@ describe('ReplicationLedger', () => {
       expect(link.delegateDid).toBe('did:example:delegate');
       expect(link.protocol).toBe('https://protocol.xyz');
     });
+
   });
 
   describe('saveLink', () => {

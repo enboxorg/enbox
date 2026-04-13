@@ -212,8 +212,8 @@ export class SyncEngineLevel implements SyncEngine {
   // Live sync state
   // ---------------------------------------------------------------------------
 
-  /** Current sync mode, set by `startSync`. */
-  private _syncMode: SyncMode = 'poll';
+  /** Current sync mode, set by `startSync`. Reset to `undefined` by `stopSync`/`clear`. */
+  private _syncMode: SyncMode | undefined = 'poll';
 
   /**
    * Monotonic session generation counter. Incremented on every teardown.
@@ -341,6 +341,11 @@ export class SyncEngineLevel implements SyncEngine {
     this._syncTargetsCacheGeneration++;
   }
 
+  get hasActiveSubscriptions(): boolean {
+    return this._liveSubscriptions.length > 0 ||
+           this._localSubscriptions.length > 0;
+  }
+
   get connectivityState(): SyncConnectivityState {
     // Aggregate per-link connectivity: if any link is online, report online.
     // If all are offline, report offline. If all unknown, report unknown.
@@ -381,6 +386,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
+    this._syncMode = undefined;
     await this._permissionsApi.clear();
     await this._db.clear();
   }
@@ -406,6 +412,11 @@ export class SyncEngineLevel implements SyncEngine {
     await registeredIdentities.put(did, JSON.stringify(options));
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
+
+    // If live sync is active, hot-add subscriptions for this identity.
+    if (this._syncMode === 'live') {
+      await this.addIdentityToLiveSync(did, options);
+    }
   }
 
   public async unregisterIdentity(did: string): Promise<void> {
@@ -413,6 +424,11 @@ export class SyncEngineLevel implements SyncEngine {
     const existing = await this.getIdentityOptions(did);
     if (!existing) {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
+    }
+
+    // If live sync is active, hot-remove subscriptions for this identity.
+    if (this._syncMode === 'live') {
+      await this.removeIdentityFromLiveSync(did);
     }
 
     await registeredIdentities.del(did);
@@ -448,6 +464,12 @@ export class SyncEngineLevel implements SyncEngine {
     await registeredIdentities.put(did, JSON.stringify(options));
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
+
+    // If live sync is active, rebuild subscriptions with the new options.
+    if (this._syncMode === 'live' && this.hasActiveLinksForDid(did)) {
+      await this.removeIdentityFromLiveSync(did);
+      await this.addIdentityToLiveSync(did, options);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -574,6 +596,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
     await this.teardownLiveSync();
+    this._syncMode = undefined;
   }
 
   // ---------------------------------------------------------------------------
@@ -650,95 +673,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Step 2: Initialize replication links and open live subscriptions.
     // Each target's link initialization is independent — process concurrently.
     const syncTargets = await this.getSyncTargets();
-    await Promise.allSettled(syncTargets.map(async (target) => {
-      let link: ReplicationLinkState | undefined;
-      try {
-        // Get or create the link in the durable ledger.
-        // Use protocol-scoped scope when a protocol is specified, otherwise full-tenant.
-        const linkScope: SyncScope = target.protocol
-          ? { kind: 'protocol', protocol: target.protocol }
-          : { kind: 'full' };
-        link = await this.ledger.getOrCreateLink({
-          tenantDid      : target.did,
-          remoteEndpoint : target.dwnUrl,
-          scope          : linkScope,
-          delegateDid    : target.delegateDid,
-          protocol       : target.protocol,
-        });
-
-        // Cache the link for fast access by subscription handlers.
-        // Use scopeId from the link for consistent runtime identity.
-        const linkKey = this.buildLinkKey(target.did, target.dwnUrl, link.scopeId);
-
-        // One-time migration: if the link has no pull checkpoint, check for
-        // a legacy cursor in the old syncCursors sublevel. The legacy key
-        // used protocol, not scopeId, so we must build it the old way.
-        if (!link.pull.contiguousAppliedToken) {
-          const legacyKey = buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
-          const legacyCursor = await this.getCursor(legacyKey);
-          if (legacyCursor) {
-            ReplicationLedger.resetCheckpoint(link.pull, legacyCursor);
-            await this.ledger.saveLink(link);
-            await this.deleteLegacyCursor(legacyKey);
-          }
-        }
-
-        this._activeLinks.set(linkKey, link);
-
-        // Open subscriptions — only transition to live if both succeed.
-        // If pull succeeds but push fails, close the pull subscription to
-        // avoid a resource leak with inconsistent state.
-        const targetWithKey = { ...target, linkKey };
-        await this.openLivePullSubscription(targetWithKey);
-        try {
-          await this.openLocalPushSubscription(targetWithKey);
-        } catch (pushError) {
-          // Close the already-opened pull subscription.
-          const pullSub = this._liveSubscriptions.find((s) => s.linkKey === linkKey);
-          if (pullSub) {
-            try { await pullSub.close(); } catch { /* best effort */ }
-            this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
-          }
-          throw pushError;
-        }
-
-        this.emitEvent({ type: 'link:status-change', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, from: 'initializing', to: 'live' });
-        await this.ledger.setStatus(link, 'live');
-
-        // If the link was marked dirty in a previous session, schedule
-        // immediate reconciliation now that subscriptions are open.
-        if (link.needsReconcile) {
-          this.scheduleReconcile(linkKey, 1000);
-        }
-      } catch (error: any) {
-        const linkKey = link
-          ? this.buildLinkKey(target.did, target.dwnUrl, link.scopeId)
-          : buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
-
-        // Detect ProgressGap (410) — the cursor is stale, link needs SMT repair.
-        if (error.isProgressGap && link) {
-          console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
-          this.emitEvent({ type: 'gap:detected', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, reason: 'ProgressGap' });
-          const gapInfo = error.gapInfo;
-          await this.transitionToRepairing(linkKey, link, {
-            resumeToken: gapInfo?.latestAvailable,
-          });
-          return;
-        }
-
-        console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
-
-        // Clean up in-memory state for the failed link so it doesn't appear
-        // active to later code. The durable link remains at 'initializing'.
-        this._activeLinks.delete(linkKey);
-        this._linkRuntimes.delete(linkKey);
-
-        // Recompute connectivity — if no live subscriptions remain, reset to unknown.
-        if (this._liveSubscriptions.length === 0) {
-          this._connectivityState = 'unknown';
-        }
-      }
-    }));
+    await Promise.allSettled(syncTargets.map(t => this.initializeLinkTarget(t)));
 
     // Step 3: Schedule infrequent SMT integrity check.
     const integrityCheck = async (): Promise<void> => {
@@ -1329,6 +1264,172 @@ export class SyncEngineLevel implements SyncEngine {
     // Clear the in-memory link and runtime state.
     this._activeLinks.clear();
     this._linkRuntimes.clear();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Per-target link initialization (shared by startLiveSync + addIdentityToLiveSync)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Initialize a single replication link target: create or resume the durable
+   * link, migrate legacy cursors, open pull + push subscriptions, and
+   * transition the link to `'live'`.
+   */
+  private async initializeLinkTarget(target: {
+    did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
+  }): Promise<void> {
+    let link: ReplicationLinkState | undefined;
+    try {
+      const linkScope: SyncScope = target.protocol
+        ? { kind: 'protocol', protocol: target.protocol }
+        : { kind: 'full' };
+      link = await this.ledger.getOrCreateLink({
+        tenantDid      : target.did,
+        remoteEndpoint : target.dwnUrl,
+        scope          : linkScope,
+        delegateDid    : target.delegateDid,
+        protocol       : target.protocol,
+      });
+
+      const linkKey = this.buildLinkKey(target.did, target.dwnUrl, link.scopeId);
+
+      if (!link.pull.contiguousAppliedToken) {
+        const legacyKey = buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
+        const legacyCursor = await this.getCursor(legacyKey);
+        if (legacyCursor) {
+          ReplicationLedger.resetCheckpoint(link.pull, legacyCursor);
+          await this.ledger.saveLink(link);
+          await this.deleteLegacyCursor(legacyKey);
+        }
+      }
+
+      this._activeLinks.set(linkKey, link);
+
+      const targetWithKey = { ...target, linkKey };
+      await this.openLivePullSubscription(targetWithKey);
+      try {
+        await this.openLocalPushSubscription(targetWithKey);
+      } catch (pushError) {
+        const pullSub = this._liveSubscriptions.find((s) => s.linkKey === linkKey);
+        if (pullSub) {
+          try { await pullSub.close(); } catch { /* best effort */ }
+          this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
+        }
+        throw pushError;
+      }
+
+      this.emitEvent({ type: 'link:status-change', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, from: 'initializing', to: 'live' });
+      await this.ledger.setStatus(link, 'live');
+
+      if (link.needsReconcile) {
+        this.scheduleReconcile(linkKey, 1000);
+      }
+    } catch (error: any) {
+      const linkKey = link
+        ? this.buildLinkKey(target.did, target.dwnUrl, link.scopeId)
+        : buildLegacyCursorKey(target.did, target.dwnUrl, target.protocol);
+
+      if (error.isProgressGap && link) {
+        console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
+        this.emitEvent({ type: 'gap:detected', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: target.protocol, reason: 'ProgressGap' });
+        await this.transitionToRepairing(linkKey, link, {
+          resumeToken: error.gapInfo?.latestAvailable,
+        });
+        return;
+      }
+
+      console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
+
+      this._activeLinks.delete(linkKey);
+      this._linkRuntimes.delete(linkKey);
+
+      if (this._liveSubscriptions.length === 0) {
+        this._connectivityState = 'unknown';
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hot-add / hot-remove: per-identity live sync management
+  // ---------------------------------------------------------------------------
+
+  /** Check whether a link key belongs to a given DID. */
+  private isLinkKeyForDid(key: string, did: string): boolean {
+    return key.startsWith(did + '^') || key.startsWith(did + '_');
+  }
+
+  /** Check whether this DID has any active links. */
+  private hasActiveLinksForDid(did: string): boolean {
+    for (const key of this._activeLinks.keys()) {
+      if (this.isLinkKeyForDid(key, did)) { return true; }
+    }
+    return false;
+  }
+
+  /** Hot-add a single identity to the active live sync session. */
+  private async addIdentityToLiveSync(did: string, options: SyncIdentityOptions): Promise<void> {
+    const { protocols, delegateDid } = options;
+    const dwnEndpointUrls = await this.agent.dwn.getDwnEndpointUrlsForTarget(did);
+    if (dwnEndpointUrls.length === 0) { return; }
+
+    const targets: { did: string; dwnUrl: string; delegateDid?: string; protocol?: string }[] = [];
+    for (const dwnUrl of dwnEndpointUrls) {
+      if (protocols.length === 0) {
+        targets.push({ did, delegateDid, dwnUrl });
+      } else {
+        for (const protocol of protocols) {
+          targets.push({ did, delegateDid, dwnUrl, protocol });
+        }
+      }
+    }
+
+    await Promise.allSettled(targets.map(t => this.initializeLinkTarget(t)));
+  }
+
+  /** Hot-remove a single identity from the active live sync session. */
+  private async removeIdentityFromLiveSync(did: string): Promise<void> {
+    for (const sub of this._liveSubscriptions.filter(s => s.did === did)) {
+      try { await sub.close(); } catch { /* best effort */ }
+    }
+    this._liveSubscriptions = this._liveSubscriptions.filter(s => s.did !== did);
+
+    for (const sub of this._localSubscriptions.filter(s => s.did === did)) {
+      try { await sub.close(); } catch { /* best effort */ }
+    }
+    this._localSubscriptions = this._localSubscriptions.filter(s => s.did !== did);
+
+    for (const [key, runtime] of this._pushRuntimes) {
+      if (runtime.did === did) {
+        if (runtime.timer) { clearTimeout(runtime.timer); }
+        this._pushRuntimes.delete(key);
+      }
+    }
+
+    for (const [key, timer] of this._degradedPollTimers) {
+      if (this.isLinkKeyForDid(key, did)) { clearInterval(timer); this._degradedPollTimers.delete(key); }
+    }
+    for (const key of this._repairAttempts.keys()) {
+      if (this.isLinkKeyForDid(key, did)) { this._repairAttempts.delete(key); }
+    }
+    for (const key of this._activeRepairs.keys()) {
+      if (this.isLinkKeyForDid(key, did)) { this._activeRepairs.delete(key); }
+    }
+    for (const key of this._repairContext.keys()) {
+      if (this.isLinkKeyForDid(key, did)) { this._repairContext.delete(key); }
+    }
+    for (const [key, timer] of this._repairRetryTimers) {
+      if (this.isLinkKeyForDid(key, did)) { clearTimeout(timer); this._repairRetryTimers.delete(key); }
+    }
+    for (const [key, timer] of this._reconcileTimers) {
+      if (this.isLinkKeyForDid(key, did)) { clearTimeout(timer); this._reconcileTimers.delete(key); }
+    }
+    for (const key of this._reconcileInFlight.keys()) {
+      if (this.isLinkKeyForDid(key, did)) { this._reconcileInFlight.delete(key); }
+    }
+    for (const key of this._activeLinks.keys()) {
+      if (this.isLinkKeyForDid(key, did)) { this._activeLinks.delete(key); this._linkRuntimes.delete(key); }
+    }
+    this._closureContexts.delete(did);
   }
 
   // ---------------------------------------------------------------------------

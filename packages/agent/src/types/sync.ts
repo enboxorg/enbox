@@ -328,12 +328,32 @@ export interface SyncEngine {
   readonly connectivityState: SyncConnectivityState;
 
   /**
+   * Whether at least one live pull or push subscription is open.
+   *
+   * This is specifically about live-mode subscriptions — it is `false` in
+   * poll mode and `false` when only the integrity timer remains (e.g. after
+   * the last identity was removed). Callers use this to avoid calling
+   * `startSync()` when live subscriptions are active, which would tear
+   * them all down and rebuild from scratch.
+   */
+  readonly hasActiveSubscriptions: boolean;
+
+  /**
    * Register an identity to be managed by the SyncEngine for syncing.
    * The options can define specific protocols that should only be synced, or a delegate DID that should be used to sign the sync messages.
+   *
+   * When live sync is active, the new identity is hot-added: its replication
+   * links are created and subscriptions opened immediately, without tearing
+   * down existing subscriptions for other identities. This enables
+   * multi-identity agents (e.g. ElectroBun desktop DWN, multi-persona dApps)
+   * to add identities at runtime without disrupting sync for others.
    */
   registerIdentity(params: { did: string, options?: SyncIdentityOptions }): Promise<void>;
   /**
    * Unregister an identity from the SyncEngine, this will stop syncing messages for this identity.
+   *
+   * When live sync is active, the identity is hot-removed: its subscriptions
+   * are closed and runtime state cleaned up without affecting other identities.
    */
   unregisterIdentity(did: string): Promise<void>;
   /**

@@ -166,6 +166,7 @@ export async function startSyncIfEnabled(
     return;
   }
 
+  if (userAgent.sync.hasActiveSubscriptions) { return; } // registerIdentity() hot-adds inline
   const syncMode = sync === undefined ? 'live' : 'poll';
   const syncInterval = sync ?? (syncMode === 'live' ? '5m' : '2m');
 

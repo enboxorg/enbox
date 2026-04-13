@@ -395,4 +395,48 @@ describe('localConnect', () => {
     expect(createCalls).toHaveLength(0);
     expect(session.did).toBe('did:dht:testagent');
   });
+
+  test('skips startSync when sync is already running (hot-add path)', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const startSyncCalls: any[] = [];
+
+    const agent = createMockAgent({
+      firstLaunch                : async () => false,
+      identityList               : async () => [createMockIdentity()],
+      syncStartSync              : async (params) => { startSyncCalls.push(params); },
+      syncHasActiveSubscriptions : true,
+    });
+
+    await localConnect(
+      { userAgent: agent, emitter, storage },
+      { password: 'test-pass' },
+    );
+
+    // startSync should NOT have been called because sync is already running.
+    // registerIdentity would have hot-added the identity inline.
+    expect(startSyncCalls).toHaveLength(0);
+  });
+
+  test('calls startSync when sync is not yet running', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const startSyncCalls: any[] = [];
+
+    const agent = createMockAgent({
+      firstLaunch                : async () => false,
+      identityList               : async () => [createMockIdentity()],
+      syncStartSync              : async (params) => { startSyncCalls.push(params); },
+      syncHasActiveSubscriptions : false,
+    });
+
+    await localConnect(
+      { userAgent: agent, emitter, storage },
+      { password: 'test-pass' },
+    );
+
+    // startSync should have been called because sync is not running yet.
+    expect(startSyncCalls).toHaveLength(1);
+    expect(startSyncCalls[0]).toEqual({ mode: 'live', interval: '5m' });
+  });
 });
