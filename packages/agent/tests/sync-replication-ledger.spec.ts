@@ -168,6 +168,77 @@ describe('ReplicationLedger', () => {
     });
   });
 
+  describe('updateDelegateDid', () => {
+    it('should update delegateDid on all links for a tenant and persist', async () => {
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://a.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:old-delegate',
+      });
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://b.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:old-delegate',
+      });
+
+      // Unrelated tenant — should NOT be updated.
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:bob',
+        remoteEndpoint : 'https://a.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:bob-delegate',
+      });
+
+      const updated = await ledger.updateDelegateDid('did:example:alice', 'did:example:new-delegate');
+      expect(updated).toHaveLength(2);
+      expect(updated.every(l => l.delegateDid === 'did:example:new-delegate')).toBe(true);
+
+      // Verify persistence by reloading from LevelDB.
+      const reloaded = await ledger.getLinksForTenant('did:example:alice');
+      expect(reloaded.every(l => l.delegateDid === 'did:example:new-delegate')).toBe(true);
+
+      // Verify unrelated tenant was not affected.
+      const bobLinks = await ledger.getLinksForTenant('did:example:bob');
+      expect(bobLinks[0].delegateDid).toBe('did:example:bob-delegate');
+    });
+
+    it('should skip links that already have the target delegateDid', async () => {
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://a.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:current',
+      });
+
+      const updated = await ledger.updateDelegateDid('did:example:alice', 'did:example:current');
+      expect(updated).toHaveLength(0);
+    });
+
+    it('should handle clearing delegateDid to undefined', async () => {
+      await ledger.getOrCreateLink({
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://a.example.com',
+        scope          : { kind: 'full' },
+        delegateDid    : 'did:example:some-delegate',
+      });
+
+      const updated = await ledger.updateDelegateDid('did:example:alice', undefined);
+      expect(updated).toHaveLength(1);
+      expect(updated[0].delegateDid).toBeUndefined();
+
+      // Verify persistence.
+      const reloaded = await ledger.getLinksForTenant('did:example:alice');
+      expect(reloaded[0].delegateDid).toBeUndefined();
+    });
+
+    it('should return empty array when no links exist for tenant', async () => {
+      const updated = await ledger.updateDelegateDid('did:example:nonexistent', 'did:example:delegate');
+      expect(updated).toHaveLength(0);
+    });
+  });
+
   describe('setStatus', () => {
     it('should update status and persist', async () => {
       const link = await ledger.getOrCreateLink({

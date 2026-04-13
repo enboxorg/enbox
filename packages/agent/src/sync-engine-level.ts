@@ -465,7 +465,16 @@ export class SyncEngineLevel implements SyncEngine {
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
 
-    // If live sync is active, rebuild subscriptions with the new options.
+    // Always persist the new delegate to durable links, regardless of
+    // sync mode. If sync is stopped or polling, existing persisted links
+    // would otherwise keep the old delegateDid. When live sync starts
+    // later, initializeLinkTarget() loads the link from LevelDB without
+    // normalizing delegateDid, so repair/reconcile paths could use stale
+    // delegate data.
+    await this.ledger.updateDelegateDid(did, options.delegateDid);
+
+    // If live sync is active, tear down and rebuild subscriptions with
+    // the new options.
     if (this._syncMode === 'live' && this.hasActiveLinksForDid(did)) {
       await this.removeIdentityFromLiveSync(did);
       await this.addIdentityToLiveSync(did, options);
@@ -884,6 +893,11 @@ export class SyncEngineLevel implements SyncEngine {
     // mutating state — preventing the race where repair continues after teardown.
     const generation = this._engineGeneration;
 
+    // Identity guard helper: if the DID was hot-removed and quickly re-added,
+    // `_activeLinks` may contain a *different* link object for the same key.
+    // The old repair closure must not mutate the replacement link's state.
+    const isStaleLink = (): boolean => this._activeLinks.get(linkKey) !== link;
+
     const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, protocol } = link;
 
     this.emitEvent({ type: 'repair:started', tenantDid: did, remoteEndpoint: dwnUrl, protocol, attempt: (this._repairAttempts.get(linkKey) ?? 0) + 1 });
@@ -893,7 +907,7 @@ export class SyncEngineLevel implements SyncEngine {
     // Step 1: Close existing subscriptions FIRST to stop old events from
     // mutating local state while repair runs.
     await this.closeLinkSubscriptions(link);
-    if (this._engineGeneration !== generation) { return; } // Teardown occurred.
+    if (this._engineGeneration !== generation || isStaleLink()) { return; }
 
     // Step 2: Clear runtime ordinals immediately — stale state must not
     // persist across repair attempts (successful or failed).
@@ -905,7 +919,7 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       // Step 3: Run SMT reconciliation for this link.
       const reconcileOutcome = await this.createLinkReconciler(
-        () => this._engineGeneration === generation
+        () => this._engineGeneration === generation && !isStaleLink()
       ).reconcile({ did, dwnUrl, delegateDid, protocol });
       if (reconcileOutcome.aborted) { return; }
 
@@ -919,7 +933,7 @@ export class SyncEngineLevel implements SyncEngine {
       const resumeToken = repairCtx?.resumeToken ?? link.pull.contiguousAppliedToken;
       ReplicationLedger.resetCheckpoint(link.pull, resumeToken);
       await this.ledger.saveLink(link);
-      if (this._engineGeneration !== generation) { return; }
+      if (this._engineGeneration !== generation || isStaleLink()) { return; }
 
       // Step 5: Reopen subscriptions.
       // Mark needsReconcile BEFORE reopening — local push starts from "now",
@@ -929,7 +943,7 @@ export class SyncEngineLevel implements SyncEngine {
       // if roots already match).
       link.needsReconcile = true;
       await this.ledger.saveLink(link);
-      if (this._engineGeneration !== generation) { return; }
+      if (this._engineGeneration !== generation || isStaleLink()) { return; }
 
       const target = { did, dwnUrl, delegateDid, protocol, linkKey };
       try {
@@ -939,13 +953,13 @@ export class SyncEngineLevel implements SyncEngine {
           console.warn(`SyncEngineLevel: Stale pull resume token for ${did} -> ${dwnUrl}, resetting to start fresh`);
           ReplicationLedger.resetCheckpoint(link.pull);
           await this.ledger.saveLink(link);
-          if (this._engineGeneration !== generation) { return; }
+          if (this._engineGeneration !== generation || isStaleLink()) { return; }
           await this.openLivePullSubscription(target);
         } else {
           throw pullErr;
         }
       }
-      if (this._engineGeneration !== generation) { return; }
+      if (this._engineGeneration !== generation || isStaleLink()) { return; }
       try {
         await this.openLocalPushSubscription(target);
       } catch (pushError) {
@@ -956,7 +970,7 @@ export class SyncEngineLevel implements SyncEngine {
         }
         throw pushError;
       }
-      if (this._engineGeneration !== generation) { return; }
+      if (this._engineGeneration !== generation || isStaleLink()) { return; }
 
       // Note: post-repair reconcile to close the repair-window gap is
       // scheduled by repairLink() AFTER _activeRepairs is cleared — not
@@ -984,8 +998,9 @@ export class SyncEngineLevel implements SyncEngine {
       this.emitEvent({ type: 'link:status-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: 'repairing', to: 'live' });
 
     } catch (error: any) {
-      // If teardown occurred during repair, don't retry or enter degraded_poll.
-      if (this._engineGeneration !== generation) { return; }
+      // If teardown occurred during repair or the link was replaced by a
+      // hot-remove + re-add, don't retry or enter degraded_poll.
+      if (this._engineGeneration !== generation || isStaleLink()) { return; }
 
       console.error(`SyncEngineLevel: Repair failed for ${did} -> ${dwnUrl} (attempt ${attempts})`, error);
       this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, protocol, attempt: attempts, error: String(error.message ?? error) });
@@ -1063,9 +1078,12 @@ export class SyncEngineLevel implements SyncEngine {
         return;
       }
 
-      // If the link was transitioned out of degraded_poll externally (e.g.,
-      // by teardown or manual intervention), stop polling.
-      if (link.status !== 'degraded_poll') {
+      // Resolve the *current* link from _activeLinks on each tick, not the
+      // captured closure reference. After hot-remove + re-add, the captured
+      // `link` object is stale and must not be used for status checks or
+      // ledger writes.
+      const currentLink = this._activeLinks.get(linkKey);
+      if (!currentLink || currentLink.status !== 'degraded_poll') {
         clearInterval(timer);
         this._degradedPollTimers.delete(linkKey);
         return;
@@ -1075,11 +1093,11 @@ export class SyncEngineLevel implements SyncEngine {
         // Attempt repair. Reset attempt counter so repairLink doesn't
         // immediately re-enter degraded_poll on failure.
         this._repairAttempts.set(linkKey, 0);
-        await this.ledger.setStatus(link, 'repairing');
+        await this.ledger.setStatus(currentLink, 'repairing');
         await this.repairLink(linkKey);
 
         // If repairLink succeeded, link is now 'live' — stop polling.
-        if ((link.status as string) === 'live') {
+        if ((currentLink.status as string) === 'live') {
           clearInterval(timer);
           this._degradedPollTimers.delete(linkKey);
         }
@@ -1088,7 +1106,9 @@ export class SyncEngineLevel implements SyncEngine {
         // This is critical: repairLink sets status to 'repairing' internally,
         // and if we don't restore degraded_poll, the next tick would see
         // status !== 'degraded_poll' and stop the timer permanently.
-        await this.ledger.setStatus(link, 'degraded_poll');
+        if (this._activeLinks.get(linkKey) === currentLink) {
+          await this.ledger.setStatus(currentLink, 'degraded_poll');
+        }
       }
     }, interval);
 
@@ -1500,8 +1520,16 @@ export class SyncEngineLevel implements SyncEngine {
     // NOTE: The WebSocket client fires handlers without awaiting (fire-and-forget),
     // so multiple handlers can be in-flight concurrently. The ordinal tracker
     // ensures the checkpoint advances only when all earlier deliveries are committed.
+    // Capture the link reference at subscription-open time so we can
+    // detect remove+re-add via object identity, not just key existence.
+    const capturedLink = link;
+    const isStale = (): boolean =>
+      this._engineGeneration !== handlerGeneration ||
+      !this._activeLinks.has(cursorKey) ||
+      (capturedLink !== undefined && this._activeLinks.get(cursorKey) !== capturedLink);
+
     const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
-      if (this._engineGeneration !== handlerGeneration) {
+      if (isStale()) {
         return;
       }
 
@@ -1516,15 +1544,12 @@ export class SyncEngineLevel implements SyncEngine {
 
           if (!ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
             console.warn(`SyncEngineLevel: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`);
-            await this.transitionToRepairing(cursorKey, link);
+            if (!isStale()) { await this.transitionToRepairing(cursorKey, link); }
             return;
           }
           ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
-          // Drain committed entries. Do NOT unconditionally advance to the
-          // EOSE cursor — earlier stored events may still be in-flight
-          // (handlers are fire-and-forget). The checkpoint advances only as
-          // far as the contiguous drain reaches.
           this.drainCommittedPull(cursorKey);
+          if (isStale()) { return; }
           await this.ledger.saveLink(link);
         }
         // Transport is reachable — set connectivity to online.
@@ -1558,7 +1583,7 @@ export class SyncEngineLevel implements SyncEngine {
         // Domain validation: reject tokens from a different stream/epoch.
         if (link && !ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
           console.warn(`SyncEngineLevel: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
-          await this.transitionToRepairing(cursorKey, link);
+          if (!isStale()) { await this.transitionToRepairing(cursorKey, link); }
           return;
         }
 
@@ -1571,9 +1596,11 @@ export class SyncEngineLevel implements SyncEngine {
         // reconnect/repair. This is safe because the event is intentionally
         // excluded from this scope and doesn't need processing.
         if (link && !isEventInScope(event.message, link.scope)) {
-          ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
-          ReplicationLedger.commitContiguousToken(link.pull, subMessage.cursor);
-          await this.ledger.saveLink(link);
+          if (!isStale()) {
+            ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
+            ReplicationLedger.commitContiguousToken(link.pull, subMessage.cursor);
+            await this.ledger.saveLink(link);
+          }
           return;
         }
 
@@ -1605,6 +1632,7 @@ export class SyncEngineLevel implements SyncEngine {
           }
 
           await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
+          if (isStale()) { return; }
 
           // Invalidate closure cache entries that may be affected by this message.
           // Must run before closure validation so subsequent evaluations in the
@@ -1632,6 +1660,8 @@ export class SyncEngineLevel implements SyncEngine {
               event.message, messageStore, link.scope, closureCtx
             );
 
+            if (isStale()) { return; }
+
             if (!closureResult.complete) {
               const failureCode = closureResult.failure!.code;
               const failureDetail = closureResult.failure!.detail;
@@ -1652,7 +1682,7 @@ export class SyncEngineLevel implements SyncEngine {
                 errorDetail    : failureDetail,
               });
 
-              await this.transitionToRepairing(cursorKey, link);
+              if (!isStale()) { await this.transitionToRepairing(cursorKey, link); }
               return;
             }
           }
@@ -1679,7 +1709,7 @@ export class SyncEngineLevel implements SyncEngine {
           // Guard: if the link transitioned to repairing while this handler was
           // in-flight (e.g., an earlier ordinal's handler failed concurrently),
           // skip all state mutations — the repair process owns progression now.
-          if (link && rt && link.status === 'live') {
+          if (link && rt && link.status === 'live' && !isStale()) {
             const entry = rt.inflight.get(ordinal);
             if (entry) { entry.committed = true; }
 
@@ -1730,7 +1760,7 @@ export class SyncEngineLevel implements SyncEngine {
           // Transition to repairing immediately — do NOT advance the checkpoint
           // past this failure or let later ordinals commit past it. SMT
           // reconciliation will discover and fill the gap.
-          if (link) {
+          if (link && !isStale()) {
             await this.transitionToRepairing(cursorKey, link);
           }
         }
@@ -1852,9 +1882,16 @@ export class SyncEngineLevel implements SyncEngine {
 
     const handlerGeneration = this._engineGeneration;
 
+    // Capture the link for identity-based staleness detection.
+    const capturedPushLink = this._activeLinks.get(target.linkKey);
+    const isPushStale = (): boolean =>
+      this._engineGeneration !== handlerGeneration ||
+      !this._activeLinks.has(target.linkKey) ||
+      (capturedPushLink !== undefined && this._activeLinks.get(target.linkKey) !== capturedPushLink);
+
     // Subscribe to the local DWN's EventLog.
     const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
-      if (this._engineGeneration !== handlerGeneration) {
+      if (isPushStale()) {
         return;
       }
 
@@ -1873,7 +1910,7 @@ export class SyncEngineLevel implements SyncEngine {
       // Accumulate the message CID for a debounced push.
       const targetKey = pushLinkKey;
       const cid = await Message.getCid(subMessage.event.message);
-      if (cid === undefined) {
+      if (cid === undefined || isPushStale()) {
         return;
       }
 
@@ -1934,10 +1971,24 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async flushPendingPushesForLink(linkKey: string): Promise<void> {
+    // Guard: bail if this link was hot-removed. Without this, a stale
+    // debounce timer or retry callback could send pushes after the DID
+    // was removed.
+    if (!this._activeLinks.has(linkKey)) {
+      return;
+    }
+
     const pushRuntime = this._pushRuntimes.get(linkKey);
     if (!pushRuntime) {
       return;
     }
+
+    // Capture the current active link identity so we can detect
+    // remove+re-add during the await pushMessages() call.
+    const flushLink = this._activeLinks.get(linkKey);
+    const isFlushStale = (): boolean =>
+      !this._activeLinks.has(linkKey) ||
+      (flushLink !== undefined && this._activeLinks.get(linkKey) !== flushLink);
 
     const { did, dwnUrl, delegateDid, protocol, entries: pushEntries, retryCount } = pushRuntime;
     pushRuntime.entries = [];
@@ -1960,6 +2011,10 @@ export class SyncEngineLevel implements SyncEngine {
         permissionsApi : this._permissionsApi,
       });
 
+      // If the link was replaced during pushMessages, abandon all
+      // post-push state mutations — the replacement session owns this key.
+      if (isFlushStale()) { return; }
+
       // Auto-clear dead letters for CIDs that succeeded — a previously
       // failed message may have been repaired by reconciliation.
       for (const cid of result.succeeded) {
@@ -1980,6 +2035,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       if (result.failed.length > 0) {
+        if (isFlushStale()) { return; }
         const failedSet = new Set(result.failed);
         const failedEntries = pushEntries.filter((entry) => failedSet.has(entry.cid));
         this.requeueOrReconcile(linkKey, {
@@ -1996,6 +2052,7 @@ export class SyncEngineLevel implements SyncEngine {
         }
       }
     } catch (error: any) {
+      if (isFlushStale()) { return; }
       console.error(`SyncEngineLevel: Push batch failed for ${did} -> ${dwnUrl}`, error);
       this.requeueOrReconcile(linkKey, {
         did, dwnUrl, delegateDid, protocol,
@@ -2108,6 +2165,10 @@ export class SyncEngineLevel implements SyncEngine {
     const timer = setTimeout((): void => {
       this._reconcileTimers.delete(linkKey);
       if (this._engineGeneration !== generation) { return; }
+      // Guard: bail if this link was hot-removed since the timer was
+      // scheduled. Without this, a stale timer could restart reconcile
+      // work for a DID that is no longer active.
+      if (!this._activeLinks.has(linkKey)) { return; }
       void this.reconcileLink(linkKey).catch((): void => {
         // Errors are already logged inside doReconcileLink; swallow here
         // to prevent unhandled-rejection flakes in the test runner.
@@ -2151,13 +2212,19 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const generation = this._engineGeneration;
+
+    // Identity guard: if the DID was hot-removed and re-added, this
+    // closure's captured `link` reference may no longer be the active
+    // link object. Bail before mutating the replacement's state.
+    const isStaleLink = (): boolean => this._activeLinks.get(linkKey) !== link;
+
     const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, protocol } = link;
 
     try {
       const reconcileOutcome = await this.createLinkReconciler(
-        () => this._engineGeneration === generation
+        () => this._engineGeneration === generation && !isStaleLink()
       ).reconcile({ did, dwnUrl, delegateDid, protocol }, { verifyConvergence: true });
-      if (reconcileOutcome.aborted) { return; }
+      if (reconcileOutcome.aborted || isStaleLink()) { return; }
 
       if (reconcileOutcome.converged) {
         await this.ledger.clearNeedsReconcile(link);
@@ -2169,9 +2236,10 @@ export class SyncEngineLevel implements SyncEngine {
         // Roots still differ — retry after a delay. This can happen when
         // pushMessages() had permanent failures, pullMessages() partially
         // failed, or new writes arrived during reconciliation.
-        this.scheduleReconcile(linkKey, 5000);
+        if (!isStaleLink()) { this.scheduleReconcile(linkKey, 5000); }
       }
     } catch (error: any) {
+      if (isStaleLink()) { return; }
       console.error(`SyncEngineLevel: Reconciliation failed for ${did} -> ${dwnUrl}`, error);
       // Schedule retry with longer delay.
       this.scheduleReconcile(linkKey, 5000);

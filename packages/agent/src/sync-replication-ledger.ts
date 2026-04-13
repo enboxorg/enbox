@@ -127,6 +127,31 @@ export class ReplicationLedger {
   }
 
   // ---------------------------------------------------------------------------
+  // Delegate updates
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Update the `delegateDid` on all persisted links for a tenant and persist.
+   * This ensures that repair and reconcile paths — which read `delegateDid`
+   * from the durable {@link ReplicationLinkState} — use the current delegate
+   * after a hot-swap via `updateIdentityOptions()`.
+   *
+   * @returns the links that were updated.
+   */
+  public async updateDelegateDid(tenantDid: string, delegateDid: string | undefined): Promise<ReplicationLinkState[]> {
+    const links = await this.getLinksForTenant(tenantDid);
+    const updated: ReplicationLinkState[] = [];
+    for (const link of links) {
+      if (link.delegateDid !== delegateDid) {
+        link.delegateDid = delegateDid;
+        await this.saveLink(link);
+        updated.push(link);
+      }
+    }
+    return updated;
+  }
+
+  // ---------------------------------------------------------------------------
   // Status transitions
   // ---------------------------------------------------------------------------
 

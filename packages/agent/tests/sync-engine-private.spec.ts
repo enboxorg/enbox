@@ -1058,6 +1058,7 @@ describe('SyncEngineLevel — private methods', () => {
   describe('flushPendingPushes', () => {
     it('should clear pending push entries after flushing', async () => {
       const engine = new SyncEngineLevel({ db });
+      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
@@ -1075,6 +1076,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
+      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
@@ -1109,6 +1111,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       // Simulate a push runtime left over from a previously retried batch
       // that eventually succeeded — retryCount is stale at 2.
+      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
@@ -1144,6 +1147,7 @@ describe('SyncEngineLevel — private methods', () => {
       // Simulate a runtime with stale retryCount from a prior batch,
       // plus new entries waiting. The batch-A entries will be flushed;
       // batch-B entries arrive while flush is in progress.
+      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
       const pushRuntime = {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
@@ -1186,6 +1190,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
+      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
@@ -1697,7 +1702,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._ledger = { saveLink: saveStub };
 
       await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
       });
 
       const handler = getHandler();
@@ -1722,8 +1727,19 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = new SyncEngineLevel({ db, agent });
       const consoleStub = sinon.stub(console, 'error');
 
+      // Set up a link so the event handler passes the _activeLinks guard.
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = {
+        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
+        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
+        pull           : {}, connectivity   : 'online', needsReconcile : false,
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+      (engine as any)._ledger = { saveLink: sinon.stub().resolves(), setStatus: sinon.stub().resolves() };
+
       await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
       });
 
       const handler = getHandler();
@@ -1761,9 +1777,11 @@ describe('SyncEngineLevel — private methods', () => {
         dwn      : { processRequest: processRequestStub },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const pushLinkKey = 'did:example:alice^https://dwn.example.com';
+      (engine as any)._activeLinks.set(pushLinkKey, { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
       await (engine as any).openLocalPushSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey: pushLinkKey,
       });
 
       expect(capturedHandler).toBeDefined();
@@ -1808,9 +1826,11 @@ describe('SyncEngineLevel — private methods', () => {
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const pushLinkKey = 'did:example:alice^https://dwn.example.com';
+      (engine as any)._activeLinks.set(pushLinkKey, { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
       await (engine as any).openLocalPushSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey: pushLinkKey,
       });
 
       capturedHandler({ type: 'eose', cursor: 'some-cursor' });
@@ -1837,9 +1857,11 @@ describe('SyncEngineLevel — private methods', () => {
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const pushLinkKey = 'did:example:alice^https://dwn.example.com';
+      (engine as any)._activeLinks.set(pushLinkKey, { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
       await (engine as any).openLocalPushSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
+        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey: pushLinkKey,
       });
 
       // Event with no messageCid and descriptor that won't sync-resolve
@@ -1878,6 +1900,7 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
+      (engine as any)._activeLinks.set('test-link', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
       await (engine as any).openLocalPushSubscription({
         did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey: 'test-link',
