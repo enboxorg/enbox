@@ -6,7 +6,7 @@ import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { deriveSyncScopeFromGrants, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants } from '../src/connect/lifecycle.js';
+import { deriveActiveSyncScope, deriveSyncScopeFromGrants, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants } from '../src/connect/lifecycle.js';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -139,6 +139,76 @@ describe('deriveSyncScopeFromGrants', () => {
       mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://identity.foundation/dwn/permissions' }),
     ];
     expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
+});
+
+describe('deriveActiveSyncScope', () => {
+  test('returns protocols from active Messages.Read grants', async () => {
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildGrantMessage('https://proto.example/a', 'g1'),
+            buildGrantMessage('https://proto.example/b', 'g2'),
+          ] } };
+        }
+        // No revocations.
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+    });
+
+    const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
+    expect(result).toEqual(['https://proto.example/a', 'https://proto.example/b']);
+  });
+
+  test('excludes revoked grants', async () => {
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildGrantMessage('https://proto.example/valid', 'g-valid'),
+            buildGrantMessage('https://proto.example/revoked', 'g-revoked'),
+          ] } };
+        }
+        if (filter?.protocolPath === 'grant/revocation') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            { descriptor: { parentId: 'g-revoked' } },
+          ] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+    });
+
+    const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
+    expect(result).toEqual(['https://proto.example/valid']);
+  });
+
+  test('returns empty when grant query fails', async () => {
+    const agent = createMockAgent({
+      processDwnRequest: async () => ({ reply: { status: { code: 500, detail: 'Error' } } }),
+    });
+
+    const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
+    expect(result).toEqual([]);
+  });
+
+  test('returns all for unscoped Messages.Read grant', async () => {
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildUnscopedGrantMessage('g-unscoped'),
+          ] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+    });
+
+    const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
+    expect(result).toBe('all');
   });
 });
 
