@@ -1410,7 +1410,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     const targets: { did: string; dwnUrl: string; delegateDid?: string; protocol?: string }[] = [];
     for (const dwnUrl of dwnEndpointUrls) {
-      if (protocols.length === 0) {
+      if (protocols === 'all') {
         targets.push({ did, delegateDid, dwnUrl });
       } else {
         for (const protocol of protocols) {

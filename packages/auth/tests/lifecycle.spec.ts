@@ -185,6 +185,26 @@ describe('deriveActiveSyncScope', () => {
     expect(result).toEqual(['https://proto.example/valid']);
   });
 
+  test('fails closed when revocation query fails', async () => {
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          // Grants query succeeds with active grants.
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildGrantMessage('https://proto.example/a', 'g1'),
+          ] } };
+        }
+        // Revocation query fails — cannot verify revocation status.
+        return { reply: { status: { code: 500, detail: 'Internal Error' } } };
+      },
+    });
+
+    // Should return [] (fail closed), NOT ['https://proto.example/a'].
+    const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
+    expect(result).toEqual([]);
+  });
+
   test('returns empty when grant query fails', async () => {
     const agent = createMockAgent({
       processDwnRequest: async () => ({ reply: { status: { code: 500, detail: 'Error' } } }),

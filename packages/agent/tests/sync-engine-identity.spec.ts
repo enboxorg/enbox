@@ -812,7 +812,7 @@ describe('SyncEngineLevel — identity management', () => {
       expect(ledgerStub.secondCall.args[0].scope).toEqual({ kind: 'protocol', protocol: 'https://proto2.example' });
     });
 
-    it('addIdentityToLiveSync should create a full-tenant link when protocols is empty', async () => {
+    it('addIdentityToLiveSync should create a full-tenant link when protocols is all', async () => {
       const engine = new SyncEngineLevel({ db });
       const mockAgent = {
         dwn: { getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']) },
@@ -837,7 +837,7 @@ describe('SyncEngineLevel — identity management', () => {
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
-      await (engine as any).addIdentityToLiveSync('did:example:full', { protocols: [] });
+      await (engine as any).addIdentityToLiveSync('did:example:full', { protocols: 'all' });
 
       expect(ledgerStub.calledOnce).toBe(true);
       expect(ledgerStub.firstCall.args[0].scope).toEqual({ kind: 'full' });
@@ -873,7 +873,7 @@ describe('SyncEngineLevel — identity management', () => {
       });
       sinon.stub(engine as any, 'openLocalPushSubscription').rejects(new Error('push subscription boom'));
 
-      await (engine as any).addIdentityToLiveSync('did:example:pushfail', { protocols: [] });
+      await (engine as any).addIdentityToLiveSync('did:example:pushfail', { protocols: 'all' });
 
       expect(pullCloseSpy.calledOnce).toBe(true);
       expect((engine as any)._liveSubscriptions).toHaveLength(0);

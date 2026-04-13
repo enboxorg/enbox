@@ -327,13 +327,13 @@ export async function deriveActiveSyncScope(
   if (grantResponse.reply.status.code !== 200 || !grantResponse.reply.entries) {
     return [];
   }
+  // Fail closed: if we can't verify revocations, treat as zero grants.
+  if (revocationResponse.reply.status.code !== 200) { return []; }
 
   // Build the set of revoked grant IDs from revocation parent context.
   const revokedGrantIds = new Set<string>();
-  if (revocationResponse.reply.status.code === 200 && revocationResponse.reply.entries) {
+  if (revocationResponse.reply.entries) {
     for (const entry of revocationResponse.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
-      // Revocation records sit under grant/<grantId>/revocation — the
-      // parentId (contextId minus the revocation segment) is the grant's recordId.
       const parentId = (entry as any).descriptor?.parentId ?? (entry as any).parentId;
       if (parentId) { revokedGrantIds.add(parentId); }
     }
