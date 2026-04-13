@@ -14,15 +14,13 @@ import type { StorageAdapter } from '../types.js';
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
-import type { DwnDataEncodedRecordsWriteMessage } from '@enbox/agent';
-
 import { Convert } from '@enbox/common';
-import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
-import { deriveSyncScopeFromGrants, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
+import { deriveActiveSyncScope, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Decrypt a stored key blob.
@@ -232,7 +230,7 @@ export async function restoreSession(
   let syncRepairFailed = false;
   if (delegateDid) {
     try {
-      const protocols = await deriveProtocolsFromGrants(userAgent, delegateDid);
+      const protocols = await deriveActiveSyncScope(userAgent, delegateDid);
       if (protocols === 'all' || protocols.length > 0) {
         const options = {
           delegateDid,
@@ -597,29 +595,4 @@ export async function retryOrphanedRevocations(
  * permissions protocol itself (permission records are already included
  * in each protocol's sync stream via `constructAdditionalMessageFilter`).
  */
-async function deriveProtocolsFromGrants(
-  userAgent: EnboxUserAgent,
-  delegateDid: string,
-): Promise<'all' | string[]> {
-  const response = await userAgent.processDwnRequest({
-    author        : delegateDid,
-    target        : delegateDid,
-    messageType   : DwnInterface.RecordsQuery,
-    messageParams : {
-      filter: {
-        protocol     : PermissionsProtocol.uri,
-        protocolPath : PermissionsProtocol.grantPath,
-      },
-    },
-  });
 
-  if (response.reply.status.code !== 200 || !response.reply.entries) {
-    return [];
-  }
-
-  const grants = (response.reply.entries as DwnDataEncodedRecordsWriteMessage[]).map(
-    (entry) => DwnPermissionGrant.parse(entry),
-  );
-
-  return deriveSyncScopeFromGrants(grants);
-}

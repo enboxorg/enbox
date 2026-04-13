@@ -200,11 +200,12 @@ describe('processConnectedGrants', () => {
     ).rejects.toThrow('Failed to store grant in delegate partition: Unauthorized');
   });
 
-  test('rolls back delegate-partition grants when phase 2 (connected) fails', async () => {
+  test('rolls back only newly created grants when phase 2 fails (not pre-existing 409)', async () => {
     // Track processDwnRequest calls by messageType so we can inspect
     // the rollback RecordsDelete calls separately from the writes.
     const calls: { messageType: string; recordId?: string; author?: string }[] = [];
 
+    let writeCount = 0;
     const agent = createMockAgent({
       processDwnRequest: async (params: any) => {
         calls.push({
@@ -212,6 +213,12 @@ describe('processConnectedGrants', () => {
           recordId    : params.messageParams?.recordId ?? params.rawMessage?.recordId,
           author      : params.author,
         });
+        if (params.messageType === 'RecordsWrite') {
+          writeCount++;
+          // First grant returns 409 (pre-existing), second returns 202 (new).
+          const code = writeCount === 1 ? 409 : 202;
+          return { reply: { status: { code, detail: code === 409 ? 'Conflict' : 'Accepted' } } };
+        }
         return { reply: { status: { code: 202, detail: 'Accepted' } } };
       },
       // Phase 2 uses dwn.processRawMessage — first call succeeds, second fails.
@@ -240,15 +247,12 @@ describe('processConnectedGrants', () => {
     const writes = calls.filter(c => c.messageType === 'RecordsWrite');
     expect(writes).toHaveLength(2);
 
-    // Rollback: 2 RecordsDelete calls (one per grant, delegate partition).
+    // Rollback: only the newly created grant (rec-b, 202) should be deleted.
+    // The pre-existing grant (rec-a, 409) must NOT be deleted.
     const deletes = calls.filter(c => c.messageType === 'RecordsDelete');
-    expect(deletes).toHaveLength(2);
-    // Both deletes should target the delegate partition.
-    expect(deletes.every(d => d.author === 'did:dht:delegate')).toBe(true);
-    // Both deletes should reference the original recordIds.
-    const deletedIds = new Set(deletes.map(d => d.recordId));
-    expect(deletedIds.has('rec-a')).toBe(true);
-    expect(deletedIds.has('rec-b')).toBe(true);
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].author).toBe('did:dht:delegate');
+    expect(deletes[0].recordId).toBe('rec-b');
   });
 
   test('accepts 409 (duplicate) in phase 1 for idempotent retries', async () => {

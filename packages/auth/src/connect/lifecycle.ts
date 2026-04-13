@@ -295,6 +295,58 @@ export function deriveSyncScopeFromGrants(grants: DwnPermissionGrant[]): 'all' |
   return [...protocols];
 }
 
+/**
+ * Query the delegate's stored grants and revocations, filter out revoked
+ * and expired grants, and derive the sync protocol scope.
+ *
+ * Used by both `restoreSession()` and `switchIdentity()` to compute the
+ * correct sync registration from persisted grant state.
+ *
+ * @internal
+ */
+export async function deriveActiveSyncScope(
+  userAgent: EnboxUserAgent,
+  delegateDid: string,
+): Promise<'all' | string[]> {
+  // Query grants and revocations in parallel.
+  const [grantResponse, revocationResponse] = await Promise.all([
+    userAgent.processDwnRequest({
+      author        : delegateDid,
+      target        : delegateDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : { filter: { protocol: PermissionsProtocol.uri, protocolPath: PermissionsProtocol.grantPath } },
+    }),
+    userAgent.processDwnRequest({
+      author        : delegateDid,
+      target        : delegateDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : { filter: { protocol: PermissionsProtocol.uri, protocolPath: PermissionsProtocol.revocationPath } },
+    }),
+  ]);
+
+  if (grantResponse.reply.status.code !== 200 || !grantResponse.reply.entries) {
+    return [];
+  }
+
+  // Build the set of revoked grant IDs from revocation parent context.
+  const revokedGrantIds = new Set<string>();
+  if (revocationResponse.reply.status.code === 200 && revocationResponse.reply.entries) {
+    for (const entry of revocationResponse.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
+      // Revocation records sit under grant/<grantId>/revocation — the
+      // parentId (contextId minus the revocation segment) is the grant's recordId.
+      const parentId = (entry as any).descriptor?.parentId ?? (entry as any).parentId;
+      if (parentId) { revokedGrantIds.add(parentId); }
+    }
+  }
+
+  // Parse grants and filter out revoked ones before deriving scope.
+  const grants = (grantResponse.reply.entries as DwnDataEncodedRecordsWriteMessage[])
+    .map((entry) => DwnPermissionGrant.parse(entry))
+    .filter((grant) => !revokedGrantIds.has(grant.id));
+
+  return deriveSyncScopeFromGrants(grants);
+}
+
 // ─── processConnectedGrants ─────────────────────────────────────
 
 /**
@@ -338,7 +390,11 @@ export async function processConnectedGrants(params: {
 
   // ── Phase 1: delegate partition ───────────────────────────────────
 
-  const delegateResults = await Promise.allSettled(parsed.map(async ({ rawMessage, encodedData }) => {
+  // Track which grants were actually created (202) vs already existed (409).
+  // Only newly created grants should be rolled back on failure.
+  const createdInPhase1 = new Set<number>();
+
+  const delegateResults = await Promise.allSettled(parsed.map(async ({ rawMessage, encodedData }, index) => {
     const dataStream = new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart]);
     const { reply } = await agent.processDwnRequest({
       store       : true,
@@ -350,7 +406,9 @@ export async function processConnectedGrants(params: {
       dataStream,
     });
 
-    if (reply.status.code !== 202 && reply.status.code !== 409) {
+    if (reply.status.code === 202) {
+      createdInPhase1.add(index);
+    } else if (reply.status.code !== 409) {
       throw new Error(
         `[@enbox/auth] Failed to store grant in delegate partition: ${reply.status.detail}`
       );
@@ -361,10 +419,10 @@ export async function processConnectedGrants(params: {
     (r): r is PromiseRejectedResult => r.status === 'rejected',
   );
   if (delegateFailure) {
-    // Roll back the delegate-partition grants that succeeded. We CAN
-    // delete these because we hold the delegateDid's signing key.
+    // Roll back only the grants we actually created (202), not
+    // pre-existing ones that returned 409.
     await Promise.allSettled(parsed.map(async ({ rawMessage }, i) => {
-      if (delegateResults[i].status === 'fulfilled') {
+      if (createdInPhase1.has(i)) {
         try {
           await agent.processDwnRequest({
             author        : delegateDid,
@@ -403,8 +461,9 @@ export async function processConnectedGrants(params: {
     // records are harmless: the connect flow will throw, the imported
     // identity is cleaned up by importDelegateAndSetupSync(), and
     // without a registered sync identity the grants are never used.
-    // Roll back the delegate-partition grants that we CAN clean up.
-    await Promise.allSettled(parsed.map(async ({ rawMessage }) => {
+    // Roll back only the delegate-partition grants we actually created.
+    await Promise.allSettled(parsed.map(async ({ rawMessage }, i) => {
+      if (!createdInPhase1.has(i)) { return; }
       try {
         await agent.processDwnRequest({
           author        : delegateDid,

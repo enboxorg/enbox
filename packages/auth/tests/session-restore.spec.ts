@@ -586,6 +586,59 @@ describe('restoreSession', () => {
       expect(registerCalls[0].options.protocols).not.toContain(permissionsProtoUri);
     });
 
+    test('excludes revoked grants from sync scope', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const registerCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async (params) => { registerCalls.push(params); },
+        processDwnRequest         : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            const filter = params.messageParams?.filter;
+            if (filter?.protocolPath === 'grant') {
+              // Return two grants: one valid, one that will be revoked.
+              return {
+                reply: {
+                  status  : { code: 200, detail: 'OK' },
+                  entries : [
+                    buildMockGrantEntry('https://proto.example/valid'),
+                    buildMockGrantEntry('https://proto.example/revoked'),
+                  ],
+                },
+              };
+            }
+            if (filter?.protocolPath === 'grant/revocation') {
+              // Return a revocation for the second grant.
+              return {
+                reply: {
+                  status  : { code: 200, detail: 'OK' },
+                  entries : [{ descriptor: { parentId: 'grant-https://proto.example/revoked' } }],
+                },
+              };
+            }
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(registerCalls).toHaveLength(1);
+      expect(registerCalls[0].options.protocols).toContain('https://proto.example/valid');
+      expect(registerCalls[0].options.protocols).not.toContain('https://proto.example/revoked');
+    });
+
     test('returns all for an unscoped grant (no protocol in scope)', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
