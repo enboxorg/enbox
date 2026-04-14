@@ -448,12 +448,7 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       const options = await registeredIdentities.get(did);
       if (options) {
-        const parsed = JSON.parse(options) as SyncIdentityOptions;
-        // Legacy migration: pre-upgrade registrations stored [] to mean "sync all".
-        if (Array.isArray(parsed.protocols) && parsed.protocols.length === 0) {
-          return { ...parsed, protocols: 'all' };
-        }
-        return parsed;
+        return JSON.parse(options) as SyncIdentityOptions;
       }
     } catch (error) {
       const e = error as { code: string };
@@ -3007,13 +3002,6 @@ export class SyncEngineLevel implements SyncEngine {
       } catch (error: unknown) {
         console.warn(`SyncEngineLevel: Corrupt sync options for ${did}, skipping identity:`, error);
         continue;
-      }
-
-      // Legacy migration: pre-v0.x registrations stored an empty array to
-      // mean "sync everything".  Treat [] the same as 'all' so that
-      // existing users don't silently lose sync after upgrading.
-      if (Array.isArray(parsed.protocols) && parsed.protocols.length === 0) {
-        parsed = { ...parsed, protocols: 'all' };
       }
 
       const { protocols, delegateDid } = parsed;
