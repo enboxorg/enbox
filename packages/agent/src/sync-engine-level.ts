@@ -402,6 +402,9 @@ export class SyncEngineLevel implements SyncEngine {
     if (!options || !('protocols' in options)) {
       throw new Error('SyncEngineLevel: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.');
     }
+    if (options.protocols !== 'all' && !Array.isArray(options.protocols)) {
+      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty string array.');
+    }
     if (Array.isArray(options.protocols) && options.protocols.length === 0) {
       throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.');
     }
@@ -466,6 +469,9 @@ export class SyncEngineLevel implements SyncEngine {
   public async updateIdentityOptions({ did, options }: { did: string, options: SyncIdentityOptions }): Promise<void> {
     if (!options || !('protocols' in options)) {
       throw new Error('SyncEngineLevel: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.');
+    }
+    if (options.protocols !== 'all' && !Array.isArray(options.protocols)) {
+      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty string array.');
     }
     if (Array.isArray(options.protocols) && options.protocols.length === 0) {
       throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.');

@@ -1083,10 +1083,10 @@ export class AuthManager {
       const session = await fn();
 
       // Clear in-memory delegate caches scoped to the previous session
-      // AFTER the new connect succeeds. This preserves the new session's
-      // freshly imported keys while removing the old session's stale ones.
-      // If the previous session was not delegated, this is a no-op.
-      if (previousDelegateDid) {
+      // AFTER the new connect succeeds. Skip if the new session uses the
+      // same delegate DID — the connect flow already loaded fresh keys and
+      // clearing would wipe them.
+      if (previousDelegateDid && previousDelegateDid !== session.delegateDid) {
         this._userAgent.dwn.clearDelegateDecryptionKeys(previousDelegateDid);
       }
 

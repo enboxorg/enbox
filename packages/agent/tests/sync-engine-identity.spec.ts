@@ -182,6 +182,18 @@ describe('SyncEngineLevel — identity management', () => {
       ).rejects.toThrow('options.protocols is required');
     });
 
+    it('should reject non-array non-all protocols value', async () => {
+      await expect(
+        (syncEngine as any).registerIdentity({ did: 'did:example:bad', options: { protocols: 'foo' } })
+      ).rejects.toThrow('must be \'all\' or a non-empty string array');
+    });
+
+    it('should reject undefined protocols', async () => {
+      await expect(
+        (syncEngine as any).registerIdentity({ did: 'did:example:undef', options: { protocols: undefined } })
+      ).rejects.toThrow('must be \'all\' or a non-empty string array');
+    });
+
     it('should update from protocols: all to a specific list', async () => {
       await syncEngine.registerIdentity({ did: 'did:example:scope-switch', options: { protocols: 'all' } });
       await syncEngine.updateIdentityOptions({
