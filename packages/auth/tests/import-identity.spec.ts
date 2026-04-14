@@ -263,6 +263,53 @@ describe('importFromPortable', () => {
     expect(syncCalls).toHaveLength(0);
   });
 
+  test('derives scoped sync from grants for delegate portable import', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const syncRegCalls: any[] = [];
+
+    const delegateIdentity = createMockIdentity({
+      did      : { uri: 'did:jwk:delegate' },
+      metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+    });
+
+    const grantData = JSON.stringify({
+      dateExpires : '2040-01-01T00:00:00Z',
+      scope       : { interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' },
+      delegated   : true,
+    });
+    const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    const agent = createMockAgent({
+      identityImport       : async () => delegateIdentity,
+      syncRegisterIdentity : async (params) => { syncRegCalls.push(params); },
+      processDwnRequest    : async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [{
+            recordId      : 'g1',
+            contextId     : 'g1',
+            encodedData   : encoded,
+            descriptor    : { interface: 'Records', method: 'Write', protocol: 'https://identity.foundation/dwn/permissions', protocolPath: 'grant', recipient: 'did:jwk:delegate', dateCreated: '2025-01-01T00:00:00Z', dataFormat: 'application/json', dataCid: 'bafytest', dataSize: 100 },
+            authorization : { signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner#sig' })) }] } },
+          }] } };
+        }
+        // Revocations: none.
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+    });
+
+    await importFromPortable(
+      { userAgent: agent, emitter, storage, defaultSync: '30s' },
+      { portableIdentity: {} as any },
+    );
+
+    expect(syncRegCalls).toHaveLength(1);
+    // Should register with the scoped protocol, NOT 'all'.
+    expect(syncRegCalls[0].options.protocols).toEqual(['https://proto.example/chat']);
+    expect(syncRegCalls[0].options.delegateDid).toBe('did:jwk:delegate');
+  });
+
   test('persists session info', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
