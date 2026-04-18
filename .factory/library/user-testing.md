@@ -33,6 +33,7 @@ If validation runtime becomes a bottleneck in future missions, the right fix is 
 
 - **`bun test` exit code does NOT always reflect unhandled errors between tests.** A spec can have `1 pass, 0 fail` in the summary AND an `# Unhandled error between tests` block above the summary, AND still exit with code 0. Therefore assertions that check for unhandled-error leakage MUST grep the captured output, not rely on the exit code.
 - **Forbidden-string grep can produce false positives when test names include the same text.** Example: a test title that includes `TestAgent: Agent DID is not set` will match naïve `grep` on full logs even when no runtime leak occurred. Prefer patterns anchored to runtime diagnostics (`^# Unhandled error between tests`, `LEVEL_DATABASE_NOT_OPEN`, or `TestAgent: Agent DID is not set` lines outside test title formatting) and corroborate with surrounding context.
+- **VAL-CROSS integration tests currently live in `tests/dwn-api-drain-integration.spec.ts`.** If a command like `bun test tests/dwn-api.spec.ts -t 'drain integration'` returns `0 tests`, run the dedicated integration spec directly.
 - **The failing spec `e2e-delegate-cross-device.spec.ts` is historically flaky.** The first run may pass even before the mission's fix lands (the flake is probabilistic). To prove the fix, VAL-FLAKE-001 requires 10 consecutive green runs, which makes the probabilistic flake vanishingly unlikely to hide behind.
 - **`Bun.spawn` returns a reader for stderr and stdout.** Use `new Response(proc.stderr).text()` (or similar) to capture output. Do NOT rely on timing — await the process's `.exited` promise before grepping.
 - **`sinon.stub(console, 'warn')` must be restored in `afterEach`** or the next test in the same file will see a stubbed `console.warn`.
@@ -45,3 +46,14 @@ If validation runtime becomes a bottleneck in future missions, the right fix is 
   - Ordering in `clearStorage` / `closeStorage` — drain must happen before any destructive operation.
   - Preservation of the `console.warn` message format.
 - When the user-testing validator runs, its flow-validator subagents will execute the `verificationSteps` from each feature AND the `reproduction commands` embedded in each `VAL-*` assertion. All services must be up before it starts.
+
+## Flow Validator Guidance: bun-test-shell
+
+Surface: `bun:test` + shell log inspection.
+
+Isolation and boundaries:
+- Run validators **serially** (max concurrency `1`) against the shared local DWN server on `localhost:3000`.
+- Do not start/stop Docker services from inside flow validators unless explicitly required by the assigned assertion group.
+- Stay within `/tmp/fix-eager-send` and write artifacts only to assigned report/evidence paths.
+- Set `DID_DHT_GATEWAY_URI=http://localhost:7527` in each validator command invocation.
+- Use deterministic log capture (`2>&1 | tee ...`) and `grep -c` for forbidden diagnostics; do not rely on process exit code alone for unhandled-error assertions.

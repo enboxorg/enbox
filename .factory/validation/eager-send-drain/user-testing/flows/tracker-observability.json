@@ -1,0 +1,176 @@
+{
+  "groupId": "tracker-observability",
+  "testedAt": "2026-04-18T03:19:02+00:00",
+  "isolation": {
+    "repoRoot": "/tmp/fix-eager-send",
+    "missionDir": "/home/liran/.factory/missions/ce35824c-0a9a-44e8-abb9-966ceaf71624",
+    "executionMode": "serial",
+    "serviceControl": "no service restart/stop performed",
+    "env": {
+      "DID_DHT_GATEWAY_URI": "http://localhost:7527"
+    }
+  },
+  "toolsUsed": [
+    "bun:test",
+    "shell",
+    "rg"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-TRACKER-007",
+      "title": "drain snapshot semantics — sends registered AFTER drain starts are not awaited by the in-flight drain",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run filtered drain suite in dwn-api.spec.ts",
+          "expected": "Test `should use a snapshot taken at drain-start and not await sends registered after` passes",
+          "observed": "(pass) AgentDwnApi.drainPendingEagerSends > should use a snapshot taken at drain-start and not await sends registered after [3.00ms]"
+        },
+        {
+          "action": "Check command status",
+          "expected": "Exit code 0 with no failures",
+          "observed": "Run summary: `9 pass`, `0 fail`; `BUN_EXIT_CODE=0`."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "eager-send-drain/tracker-observability/01-dwn-api-drainPendingEagerSends.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-TRACKER-008",
+      "title": "Tracker entries are released after settlement — subsequent writes are independently drainable",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run filtered drain suite in dwn-api.spec.ts",
+          "expected": "Test `should release settled entries so new sends can be drained independently` passes",
+          "observed": "(pass) AgentDwnApi.drainPendingEagerSends > should release settled entries so new sends can be drained independently [1.00ms]"
+        },
+        {
+          "action": "Check command status",
+          "expected": "Exit code 0 with no failures",
+          "observed": "Run summary: `9 pass`, `0 fail`; `BUN_EXIT_CODE=0`."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "eager-send-drain/tracker-observability/01-dwn-api-drainPendingEagerSends.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-TRACKER-009",
+      "title": "writeContextKeyRecord still returns the recordId unchanged after tracker wrapping",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run targeted writeContextKeyRecord non-blocking recordId test",
+          "expected": "Test `returns the recordId synchronously with the local write and does not block on the tracked eager send` passes",
+          "observed": "(pass) AgentDwnApi.writeContextKeyRecord > returns the recordId synchronously with the local write and does not block on the tracked eager send [4.00ms]"
+        },
+        {
+          "action": "Check command status",
+          "expected": "Exit code 0 with no failures",
+          "observed": "Run summary: `1 pass`, `0 fail`; `BUN_EXIT_CODE=0`."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "eager-send-drain/tracker-observability/04-dwn-api-recordid-nonblocking.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-TRACKER-010",
+      "title": "Observability contract — the console.warn on eager-send failure is preserved verbatim",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run filtered drain suite in dwn-api.spec.ts",
+          "expected": "Test `should preserve the console.warn message on eager-send failure` passes",
+          "observed": "(pass) AgentDwnApi.drainPendingEagerSends > should preserve the console.warn message on eager-send failure [1.00ms]"
+        },
+        {
+          "action": "Check command status",
+          "expected": "Exit code 0 with no failures",
+          "observed": "Run summary: `9 pass`, `0 fail`; `BUN_EXIT_CODE=0`."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "eager-send-drain/tracker-observability/01-dwn-api-drainPendingEagerSends.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-FLAKE-003",
+      "title": "Eager-send failure observability contract preserved (console.warn pattern intact)",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run dwn-api targeted eager-send rejection test",
+          "expected": "Test `should not fail when eager send encounters an error` passes",
+          "observed": "(pass) Key Delivery Protocol Infrastructure (PR A) > writeContextKeyRecord() > should not fail when eager send encounters an error [613.01ms]"
+        },
+        {
+          "action": "Run dwn-key-delivery targeted warn-on-failure test",
+          "expected": "Test `should fire-and-forget eagerSend and warn on failure` passes",
+          "observed": "(pass) dwn-key-delivery > writeContextKeyRecord > should fire-and-forget eagerSend and warn on failure [4.00ms]"
+        },
+        {
+          "action": "Check both command statuses",
+          "expected": "Both test runs exit 0 with 0 failures",
+          "observed": "dwn-api run: `1 pass`, `0 fail`, `BUN_EXIT_CODE=0`; dwn-key-delivery run: `1 pass`, `0 fail`, `BUN_EXIT_CODE=0`."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "eager-send-drain/tracker-observability/02-dwn-api-eager-send-error-warning.log",
+          "eager-send-drain/tracker-observability/03-dwn-key-delivery-warn-on-failure.log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-FLAKE-004",
+      "title": "No residual setTimeout \"eager send settle\" workaround hacks remain",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run ripgrep check for known setTimeout(resolve, 50|100) workaround sites",
+          "expected": "No matches in tests/dwn-api.spec.ts and tests/dwn-key-delivery.spec.ts",
+          "observed": "No matches printed; `RG_EXIT_CODE=1`."
+        },
+        {
+          "action": "Run broader ripgrep check for eager/fire-and-forget adjacent setTimeout patterns",
+          "expected": "No matches across tests/",
+          "observed": "No matches printed; `RG_EXIT_CODE=1`."
+        },
+        {
+          "action": "Confirm targeted regression tests still pass",
+          "expected": "Three targeted tests remain green while workaround patterns are absent",
+          "observed": "Drain suite run: `9 pass`, `0 fail`; dwn-api targeted run: `1 pass`, `0 fail`; dwn-key-delivery targeted run: `1 pass`, `0 fail`."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "eager-send-drain/tracker-observability/05-rg-timeout-known-sites.log",
+          "eager-send-drain/tracker-observability/06-rg-timeout-near-eager-pattern.log",
+          "eager-send-drain/tracker-observability/01-dwn-api-drainPendingEagerSends.log",
+          "eager-send-drain/tracker-observability/02-dwn-api-eager-send-error-warning.log",
+          "eager-send-drain/tracker-observability/03-dwn-key-delivery-warn-on-failure.log"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 6 assigned assertions (VAL-TRACKER-007, VAL-TRACKER-008, VAL-TRACKER-009, VAL-TRACKER-010, VAL-FLAKE-003, VAL-FLAKE-004): 6 passed, 0 failed, 0 blocked."
+}

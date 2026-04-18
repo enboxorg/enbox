@@ -1,0 +1,153 @@
+{
+  "groupId": "cross-and-flake",
+  "testedAt": "2026-04-18T03:29:54Z",
+  "isolation": {
+    "mode": "serial",
+    "repoRoot": "/tmp/fix-eager-send",
+    "missionDir": "/home/liran/.factory/missions/ce35824c-0a9a-44e8-abb9-966ceaf71624",
+    "dwnGateway": "http://localhost:7527",
+    "sharedServices": "already running; not restarted/stopped"
+  },
+  "toolsUsed": [
+    "bun:test",
+    "shell",
+    "grep"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "title": "writeContextKeyRecord + drainPendingEagerSends settles eager-send RPC deterministically",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run integration spec containing VAL-CROSS-* tests",
+          "expected": "VAL-CROSS-001 test passes",
+          "observed": "Pass line present for VAL-CROSS-001 and command exited 0"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "eager-send-drain/cross-and-flake/val-cross-integration-corrected.log"
+        ],
+        "command": "DID_DHT_GATEWAY_URI=http://localhost:7527 bun test tests/dwn-api-drain-integration.spec.ts",
+        "exitCode": 0
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "title": "After clearStorage + drain, no subsequent eager-send throws 'Agent DID is not set'",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run integration spec containing VAL-CROSS-* tests",
+          "expected": "VAL-CROSS-002 test passes",
+          "observed": "Pass line present for VAL-CROSS-002 and command exited 0"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "eager-send-drain/cross-and-flake/val-cross-integration-corrected.log"
+        ],
+        "command": "DID_DHT_GATEWAY_URI=http://localhost:7527 bun test tests/dwn-api-drain-integration.spec.ts",
+        "exitCode": 0
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "title": "Full integration path runs without unhandled rejections",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run integration spec containing VAL-CROSS-* tests",
+          "expected": "VAL-CROSS-003 test passes",
+          "observed": "Pass line present for VAL-CROSS-003 and command exited 0"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "eager-send-drain/cross-and-flake/val-cross-integration-corrected.log"
+        ],
+        "command": "DID_DHT_GATEWAY_URI=http://localhost:7527 bun test tests/dwn-api-drain-integration.spec.ts",
+        "exitCode": 0
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-FLAKE-001",
+      "title": "e2e-delegate-cross-device passes 10 consecutive runs with zero unhandled errors",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run 10-iteration loop of e2e-delegate-cross-device spec with log aggregation",
+          "expected": "All 10 runs complete, each exits 0, no forbidden diagnostics, no fail summaries",
+          "observed": "10 runs executed; 10 exit=0 lines; forbidden_count=0; fail_summary_count=0"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "eager-send-drain/cross-and-flake/val-flake-001-e2e-loop.log"
+        ],
+        "forbiddenGrepCount": 0,
+        "failSummaryGrepCount": 0,
+        "runsRecorded": 10,
+        "exitZeroCount": 10
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-FLAKE-002",
+      "title": "Full agent suite produces no orphan-eager-send signals end-to-end",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run full suite once: DID_DHT_GATEWAY_URI=http://localhost:7527 bun run test:node",
+          "expected": "Exit 0 with 0 fail summary and no runtime orphan diagnostics",
+          "observed": "exit=0, final summary includes '0 fail'; refined runtime diagnostic checks: runtime_diag_count=0 and unhandled_banner_count=0"
+        },
+        {
+          "action": "Run naive combined forbidden grep",
+          "expected": "May include false positives from test titles; verify context",
+          "observed": "forbidden_count=2, both matches are in (pass) test-title lines, not runtime diagnostics"
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "eager-send-drain/cross-and-flake/val-flake-002-full-suite.log"
+        ],
+        "exitCode": 0,
+        "failSummaryGrepCount": 0,
+        "zeroFailSummaryCount": 1,
+        "naiveForbiddenGrepCount": 2,
+        "runtimeDiagCountExcludingTestTitles": 0,
+        "unhandledErrorBannerCount": 0
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "The required cross-area command target (`tests/dwn-api.spec.ts -t 'drain integration'`) matched 0 tests because cross-area tests currently live in `tests/dwn-api-drain-integration.spec.ts`.",
+      "resolved": true,
+      "resolution": "Executed the dedicated integration spec file directly to validate VAL-CROSS-001/002/003.",
+      "affectedAssertions": [
+        "VAL-CROSS-001",
+        "VAL-CROSS-002",
+        "VAL-CROSS-003"
+      ],
+      "evidence": "eager-send-drain/cross-and-flake/val-cross-integration.log"
+    },
+    {
+      "description": "Naive forbidden-string grep on full-suite log produced false positives from passing test titles.",
+      "resolved": true,
+      "resolution": "Applied context-aware checks (`runtime_diag_count=0`, `unhandled_banner_count=0`) to verify no runtime orphan-eager-send diagnostics.",
+      "affectedAssertions": [
+        "VAL-FLAKE-002"
+      ],
+      "evidence": "eager-send-drain/cross-and-flake/val-flake-002-full-suite.log"
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 5 assigned assertions (VAL-CROSS-001/002/003, VAL-FLAKE-001/002): all passed. Cross-area validation required switching to the dedicated integration spec file, and full-suite forbidden-string analysis required filtering out test-title false positives; runtime diagnostic checks were clean."
+}
