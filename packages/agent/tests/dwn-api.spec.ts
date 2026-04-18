@@ -3899,8 +3899,9 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
 
       expect(typeof recordId).toBe('string');
 
-      // The eager send is fire-and-forget — wait a tick for the async call to complete
-      await new Promise((resolve: (value: void) => void) => setTimeout(resolve, 100));
+      // The eager send is fire-and-forget — deterministically await the
+      // in-flight promise via the AgentDwnApi tracker instead of timing hacks.
+      await testHarness.agent.dwn.drainPendingEagerSends();
 
       // Verify the RPC send was called with the contextKey message
       expect(sendDwnRequestStub.called).toBe(true);
@@ -3953,8 +3954,9 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
 
       expect(typeof recordId).toBe('string');
 
-      // Wait for the fire-and-forget to complete
-      await new Promise((resolve: (value: void) => void) => setTimeout(resolve, 100));
+      // Deterministically await the fire-and-forget eager-send to settle
+      // via the AgentDwnApi tracker instead of a timing hack.
+      await testHarness.agent.dwn.drainPendingEagerSends();
 
       // Verify a warning was logged about the failed eager send
       expect(warnStub.called).toBe(true);

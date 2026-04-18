@@ -201,6 +201,18 @@ describe('dwn-key-delivery', () => {
       const eagerSend = sinon.stub().rejects(new Error('eager send failed'));
       const consoleStub = sinon.stub(console, 'warn');
 
+      // Tracker-aware `trackEagerSend` stub that mirrors `AgentDwnApi.trackEagerSend`:
+      // records each in-flight fire-and-forget promise in a local Set, then
+      // auto-removes on settlement via `.finally`. Used below in place of a
+      // `setTimeout(…, 50)` timing hack to deterministically await every
+      // tracked send via `Promise.allSettled`.
+      const trackedSends = new Set<Promise<void>>();
+      const trackEagerSend = (p: Promise<void>): Promise<void> => {
+        trackedSends.add(p);
+        p.finally((): void => { trackedSends.delete(p); });
+        return p;
+      };
+
       const recordId = await writeContextKeyRecord(
         {} as any,
         {
@@ -213,11 +225,14 @@ describe('dwn-key-delivery', () => {
         processRequest,
         ensureProtocol,
         eagerSend,
-        passthroughTrackEagerSend,
+        trackEagerSend,
       );
 
-      // Wait for the fire-and-forget promise to settle
-      await new Promise((resolve): void => { setTimeout(resolve, 50); });
+      // Deterministic drain: wait for every recorded fire-and-forget promise
+      // to settle. `allSettled` never rejects, preserving the verbatim
+      // observability contract (the .catch handler in writeContextKeyRecord
+      // emits console.warn before the promise settles).
+      await Promise.allSettled([...trackedSends]);
 
       expect(recordId).toBe('rec-eager-fail');
       expect(consoleStub.called).toBe(true);
