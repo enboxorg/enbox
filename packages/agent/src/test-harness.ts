@@ -105,6 +105,12 @@ export class PlatformAgentTestHarness {
     // first stop any ongoing sync operations
     await this.agent.sync.stopSync();
 
+    // Drain any in-flight fire-and-forget eager-send promises dispatched by
+    // `AgentDwnApi.writeContextKeyRecord` so they cannot outlive the agent
+    // and touch a nulled `agentDid` or a cleared LevelDB store. Fast path
+    // when the tracker is empty (no pending sends).
+    await this.agent.dwn.drainPendingEagerSends();
+
     // @ts-expect-error since normally this property shouldn't be set to undefined.
     this.agent.agentDid = undefined;
     await this.didResolverCache.clear();
@@ -158,6 +164,12 @@ export class PlatformAgentTestHarness {
   }
 
   public async closeStorage(): Promise<void> {
+    // Drain any in-flight fire-and-forget eager-send promises dispatched by
+    // `AgentDwnApi.writeContextKeyRecord` before closing the LevelDB-backed
+    // stores. Prevents orphan promises from hitting closed handles with
+    // `LEVEL_DATABASE_NOT_OPEN` after teardown. Fast path when empty.
+    await this.agent.dwn.drainPendingEagerSends();
+
     await this.didResolverCache.close();
     await this.dwnDataStore.close();
     await this.dwnStateIndex.close();
