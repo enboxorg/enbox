@@ -229,6 +229,17 @@ export class AgentDwnApi {
   /** Lazy-initialized local DWN discovery instance. */
   private _localDwnDiscovery?: LocalDwnDiscovery;
 
+  /**
+   * Tracks fire-and-forget eager-send promises dispatched by
+   * `writeContextKeyRecord`. The set is consumed by `drainPendingEagerSends()`
+   * during test-harness teardown so orphan promises cannot outlive the agent
+   * and touch closed LevelDB handles or nulled state.
+   *
+   * Entries auto-remove on settlement via the `.finally` attached in
+   * `trackEagerSend`.
+   */
+  private readonly _pendingEagerSends: Set<Promise<void>> = new Set();
+
   constructor(params: DwnApiParams) {
     const { agent, localDwnStrategy = 'prefer' } = params;
 
@@ -1931,6 +1942,48 @@ export class AgentDwnApi {
   }
 
   /**
+   * Registers a fire-and-forget eager-send promise in the in-flight tracker so
+   * it can be awaited by `drainPendingEagerSends()` during teardown. The entry
+   * auto-removes on settlement via `.finally`.
+   *
+   * The promise is returned **unchanged** so callers can still chain `.catch`
+   * on it for observability (e.g. the existing `console.warn` on failure).
+   *
+   * @param p - The eager-send promise to track. Must always resolve (callers
+   *   are expected to attach a `.catch` handler before passing).
+   * @returns The same `p`, unchanged.
+   */
+  private trackEagerSend(p: Promise<void>): Promise<void> {
+    this._pendingEagerSends.add(p);
+    p.finally((): void => { this._pendingEagerSends.delete(p); });
+    return p;
+  }
+
+  /**
+   * Waits for all currently-tracked eager-send promises to settle. Used by
+   * the test harness during teardown (`clearStorage()`/`closeStorage()`) to
+   * prevent orphan promises from touching closed stores or nulled state.
+   *
+   * Snapshot semantics: awaits only the sends tracked at the moment of
+   * invocation. Sends registered **after** this call begins are not joined
+   * into its drain — a subsequent `drainPendingEagerSends()` is needed to
+   * await them.
+   *
+   * Fast path: when no sends are tracked, resolves immediately without
+   * invoking `Promise.allSettled([])`.
+   *
+   * @returns A promise that resolves to `undefined` once all snapshotted
+   *   sends have settled. Never rejects (uses `allSettled` semantics).
+   */
+  public async drainPendingEagerSends(): Promise<void> {
+    if (this._pendingEagerSends.size === 0) {
+      return;
+    }
+    const snapshot = [...this._pendingEagerSends];
+    await Promise.allSettled(snapshot);
+  }
+
+  /**
    * Writes a `contextKey` record to the owner's DWN, delivering an encrypted
    * context key to a participant.
    *
@@ -1950,6 +2003,7 @@ export class AgentDwnApi {
       this.processRequest.bind(this),
       this.ensureKeyDeliveryProtocol.bind(this),
       this.eagerSendContextKeyRecord.bind(this),
+      this.trackEagerSend.bind(this),
     );
   }
 

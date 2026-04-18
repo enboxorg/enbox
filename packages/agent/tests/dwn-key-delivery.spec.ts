@@ -94,6 +94,14 @@ describe('dwn-key-delivery', () => {
       derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
     };
 
+    /**
+     * Passthrough `trackEagerSend` stub used by the unit-level tests below.
+     * Simulates the `AgentDwnApi.trackEagerSend` contract: returns `p`
+     * unchanged so the fire-and-forget `.catch(...)` observability chain
+     * remains intact. Does not register anything in a real tracker.
+     */
+    const passthroughTrackEagerSend = (p: Promise<void>): Promise<void> => p;
+
     it('should write a context key record without recipient key (fallback path)', async () => {
       const message = { recordId: 'rec-1' };
       const processRequest = sinon.stub().resolves({
@@ -115,6 +123,7 @@ describe('dwn-key-delivery', () => {
         processRequest,
         ensureProtocol,
         eagerSend,
+        passthroughTrackEagerSend,
       );
 
       expect(recordId).toBe('rec-1');
@@ -149,6 +158,7 @@ describe('dwn-key-delivery', () => {
         processRequest,
         ensureProtocol,
         eagerSend,
+        passthroughTrackEagerSend,
       );
 
       expect(recordId).toBe('rec-2');
@@ -177,6 +187,7 @@ describe('dwn-key-delivery', () => {
         processRequest,
         ensureProtocol,
         eagerSend,
+        passthroughTrackEagerSend,
       )).rejects.toThrow('Failed to write contextKey record');
     });
 
@@ -202,6 +213,7 @@ describe('dwn-key-delivery', () => {
         processRequest,
         ensureProtocol,
         eagerSend,
+        passthroughTrackEagerSend,
       );
 
       // Wait for the fire-and-forget promise to settle
