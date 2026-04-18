@@ -1,3 +1,4 @@
+import path from 'node:path';
 import sinon from 'sinon';
 import { afterAll, afterEach, describe, expect, it } from 'bun:test';
 
@@ -273,7 +274,7 @@ describe('PlatformAgentTestHarness teardown subprocess', () => {
         '-t', innerFilter,
       ],
       {
-        cwd    : '/tmp/fix-eager-send/packages/agent',
+        cwd    : path.resolve(import.meta.dir, '..'),
         env    : process.env,
         stderr : 'pipe',
         stdout : 'pipe',
