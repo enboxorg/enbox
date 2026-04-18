@@ -75,18 +75,31 @@ await agent.sync.sync();
 ## Development
 
 ```bash
-# Build
-bun run build
+# Build (rebuild dwn-sdk-js first if it changed)
+bun run --filter @enbox/dwn-sdk-js build
+bun run --filter @enbox/agent build
 
-# Test (Mocha + Chai, NOT bun test)
+# Start test infrastructure (Pkarr relay, Postgres, MySQL, NATS) from repo root
+docker compose -f docker-compose.test.yaml up -d --wait
+export DID_DHT_GATEWAY_URI=http://localhost:7527
+
+# Full agent test suite (bun:test)
 bun run test:node
 
 # Single test file
-bun run build:tests:node && bunx mocha --spec 'tests/compiled/tests/store-key.spec.js' --timeout 30000 --exit
+bun test tests/store-key.spec.ts
 
-# Lint
+# Filter by test name
+bun test tests/dwn-api.spec.ts -t 'AgentDwnApi.drainPendingEagerSends'
+
+# Lint (from repo root)
 bun run lint
 ```
+
+Tests use the native `bun test` runner (see `bun:test` + `sinon` in each spec file).
+`PlatformAgentTestHarness.clearStorage()` and `closeStorage()` drain any in-flight
+eager-send coroutines before releasing storage, so downstream consumers can safely
+tear down between tests without `LEVEL_DATABASE_NOT_OPEN` noise.
 
 ## License
 
