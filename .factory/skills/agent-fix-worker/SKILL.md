@@ -38,14 +38,16 @@ None. This mission has no browser, CLI, or desktop-app surface — only `bun tes
    ```
    Note the pre-change pass count in your handoff's `verification.commandsRun`.
 
-### 1. Write tests first (RED)
+### 1. Write tests first (RED-or-confirm-GREEN)
 
 For every VAL-* assertion in your feature's `fulfills`:
 
-1. Write a failing `it('should ...', ...)` that exercises the assertion through the public surface described in the contract. Use `bun:test` + `sinon`.
-2. The test MUST fail for the reason the assertion describes — not for a stub/mock setup issue. Run it with `bun test <file> -t '<partial name>'` and confirm the failure mode matches the contract's "fail criteria".
+1. Write an `it('should ...', ...)` that exercises the assertion through the public surface described in the contract. Use `bun:test` + `sinon`.
+2. Run it with `bun test <file> -t '<partial name>'` and observe the starting state:
+   - **RED (preferred):** If the test fails for the reason the contract's "fail criteria" describes, that is strict TDD. Proceed to Step 2.
+   - **Already GREEN (acceptable for dependency-followup features):** If the test passes immediately because a PRIOR feature in this milestone (e.g., tracker API or harness drain) already landed the underlying production change, document this explicitly in your handoff's `tests.coverage` field (name the prior feature that made it green). The test still provides regression value and is still valid coverage. Do NOT fabricate a failure by weakening production to force a RED.
 3. For assertions that require a sub-process (VAL-HARNESS-005), write the outer test that `Bun.spawn`s the inner spec and greps its stderr.
-4. Commit all new tests in ONE `git add && git commit -m 'test(agent): failing tests for <feature>'` (do NOT push yet; do not mix with production code).
+4. **Commit policy:** Per AGENTS.md, this mission uses ONE commit per feature. Do NOT split test and implementation into separate commits. After tests + implementation are both in place, a single `git commit -m 'fix(agent): <summary>'` records the combined change. Tests are still authored first locally — you just don't commit them separately.
 
 ### 2. Implement (GREEN)
 
@@ -74,12 +76,16 @@ If any step fails:
 - If caused by the new code: fix it.
 - If caused by a pre-existing issue unrelated to the mission: DO NOT mask it. Note it in `whatWasLeftUndone` / `discoveredIssues` and return to orchestrator.
 
-### 3. Commit the production change
+### 3. Commit the feature (ONE commit)
+
+Per AGENTS.md, this mission uses ONE commit per feature combining tests + production:
 
 ```bash
-git add <prod-files>
+git add <test-files> <prod-files>
 git commit -m 'fix(agent): <concise description>'
 ```
+
+If the feature is test-only (e.g., Feature 3 removes setTimeout hacks, Feature 4 is verification-only with a changeset), the commit is still one commit containing all the test/config changes.
 
 Match the commit-message style from `git log --oneline -10` on `main`.
 
