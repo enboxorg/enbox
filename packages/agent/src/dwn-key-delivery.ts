@@ -116,6 +116,9 @@ export async function ensureKeyDeliveryProtocol(
  * @param processRequest - The agent's processRequest method (bound)
  * @param ensureProtocol - Function to ensure key delivery protocol is installed
  * @param eagerSend - Function to eagerly send the record to the remote DWN
+ * @param trackEagerSend - Tracker callback that registers the fire-and-forget
+ *   eager-send promise so it can be awaited during teardown via
+ *   `AgentDwnApi.drainPendingEagerSends()`. Returns the same promise unchanged.
  * @returns The recordId of the written contextKey record
  */
 export async function writeContextKeyRecord(
@@ -124,6 +127,7 @@ export async function writeContextKeyRecord(
   processRequest: ProcessRequestFn,
   ensureProtocol: (tenantDid: string) => Promise<void>,
   eagerSend: (tenantDid: string, message: DwnMessage[DwnInterface.RecordsWrite]) => Promise<void>,
+  trackEagerSend: (p: Promise<void>) => Promise<void>,
 ): Promise<string> {
   const { tenantDid, recipientDid, contextKeyData, sourceProtocol, sourceContextId, recipientKeyDeliveryPublicKey } = params;
 
@@ -198,12 +202,14 @@ export async function writeContextKeyRecord(
   // Eagerly send the contextKey record to the tenant's remote DWN so that
   // participants can fetch it immediately without waiting for sync.
   // This is fire-and-forget — sync will guarantee eventual consistency.
-  eagerSend(tenantDid, message).catch((err: Error) => {
+  // `trackEagerSend` registers the promise with `AgentDwnApi` so it can be
+  // drained during teardown (prevents orphan promises leaking past close).
+  trackEagerSend(eagerSend(tenantDid, message).catch((err: Error) => {
     console.warn(
       `AgentDwnApi: Eager send of contextKey record '${message.recordId}' ` +
       `to remote DWN failed: ${err.message}. Sync will deliver it later.`
     );
-  });
+  }));
 
   return message.recordId;
 }

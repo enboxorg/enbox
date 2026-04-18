@@ -3899,8 +3899,9 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
 
       expect(typeof recordId).toBe('string');
 
-      // The eager send is fire-and-forget — wait a tick for the async call to complete
-      await new Promise((resolve: (value: void) => void) => setTimeout(resolve, 100));
+      // The eager send is fire-and-forget — deterministically await the
+      // in-flight promise via the AgentDwnApi tracker instead of timing hacks.
+      await testHarness.agent.dwn.drainPendingEagerSends();
 
       // Verify the RPC send was called with the contextKey message
       expect(sendDwnRequestStub.called).toBe(true);
@@ -3953,8 +3954,9 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
 
       expect(typeof recordId).toBe('string');
 
-      // Wait for the fire-and-forget to complete
-      await new Promise((resolve: (value: void) => void) => setTimeout(resolve, 100));
+      // Deterministically await the fire-and-forget eager-send to settle
+      // via the AgentDwnApi tracker instead of a timing hack.
+      await testHarness.agent.dwn.drainPendingEagerSends();
 
       // Verify a warning was logged about the failed eager send
       expect(warnStub.called).toBe(true);
@@ -5592,4 +5594,365 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     const decryptedText = new TextDecoder().decode(decryptedBytes);
     expect(decryptedText).toBe(largePayload);
   }, 30000);
+});
+
+/**
+ * Unit tests for the eager-send tracker on `AgentDwnApi`.
+ *
+ * These tests exercise the public `drainPendingEagerSends()` API and the
+ * tracker wiring around `writeContextKeyRecord` using stubs on the
+ * instance's internal methods. They avoid a real `PlatformAgentTestHarness`
+ * so that behavior can be verified deterministically.
+ *
+ * The tracker's `_pendingEagerSends` Set is **never** inspected directly —
+ * verification is always through observable behavior of `drainPendingEagerSends()`.
+ *
+ * Validation contract: VAL-TRACKER-001 through VAL-TRACKER-010.
+ */
+describe('AgentDwnApi.drainPendingEagerSends', () => {
+  type Deferred<T> = {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (err: Error) => void;
+  };
+
+  function createDeferred<T>(): Deferred<T> {
+    let resolve!: (value: T) => void;
+    let reject!: (err: Error) => void;
+    const promise = new Promise<T>((res, rej): void => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  /**
+   * Races a drain promise against a macrotask sentinel (setTimeout 0). Returns
+   * `'drain'` when the drain already resolved (microtask beats macrotask),
+   * `'tick'` when the drain is still pending by the time the sentinel fires.
+   *
+   * The drain promise is not consumed by this race — callers may still await it.
+   */
+  async function raceAgainstTick(drain: Promise<void>): Promise<'drain' | 'tick'> {
+    const TICK = 'tick' as const;
+    const winner = await Promise.race<'drain' | 'tick'>([
+      drain.then((): 'drain' => 'drain'),
+      new Promise<'tick'>((resolve): void => { setTimeout((): void => resolve(TICK), 0); }),
+    ]);
+    return winner;
+  }
+
+  const baseWriteParams = {
+    tenantDid      : 'did:example:alice',
+    recipientDid   : 'did:example:bob',
+    contextKeyData : {
+      rootKeyId         : 'root-1',
+      derivationScheme  : 'protocolContext',
+      derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' },
+    } as any,
+    sourceProtocol  : 'https://proto.example.com',
+    sourceContextId : 'ctx-1',
+  };
+
+  let dwnApi: AgentDwnApi;
+  let eagerSendStub: sinon.SinonStub;
+
+  beforeEach(() => {
+    const mockAgent: any = {
+      rpc      : {},
+      agentDid : 'did:example:agent',
+      did      : {},
+    };
+    const mockDwn = ({} as unknown) as Dwn;
+    dwnApi = new AgentDwnApi({ agent: mockAgent, dwn: mockDwn });
+
+    // Stub processRequest so writeContextKeyRecord's local write succeeds
+    // with a fresh recordId per invocation.
+    let recordCounter = 0;
+    sinon.stub(dwnApi as any, 'processRequest').callsFake(async (): Promise<any> => {
+      recordCounter += 1;
+      return {
+        reply      : { status: { code: 202, detail: 'Accepted' } },
+        message    : { recordId: `rec-${recordCounter}` },
+        messageCid : `cid-${recordCounter}`,
+      };
+    });
+
+    // Stub ensureKeyDeliveryProtocol to resolve immediately — no real protocol install.
+    sinon.stub(dwnApi as any, 'ensureKeyDeliveryProtocol').resolves();
+
+    // Stub eagerSendContextKeyRecord — each test sets up return behavior.
+    eagerSendStub = sinon.stub(dwnApi as any, 'eagerSendContextKeyRecord');
+  });
+
+  afterEach(() => {
+    sinon.restore();
+  });
+
+  it('should resolve immediately when no sends are pending', async () => {
+    // VAL-TRACKER-001
+    const drain = dwnApi.drainPendingEagerSends();
+    expect(await raceAgainstTick(drain)).toBe('drain');
+    await expect(drain).resolves.toBeUndefined();
+  });
+
+  it('should wait for a single in-flight successful eager send', async () => {
+    // VAL-TRACKER-002
+    const deferred = createDeferred<void>();
+    eagerSendStub.returns(deferred.promise);
+
+    await dwnApi.writeContextKeyRecord(baseWriteParams);
+
+    const drain = dwnApi.drainPendingEagerSends();
+    expect(await raceAgainstTick(drain)).toBe('tick');
+
+    deferred.resolve();
+    await expect(drain).resolves.toBeUndefined();
+  });
+
+  it('should wait for a single in-flight eager send that rejects', async () => {
+    // VAL-TRACKER-003
+    const deferred = createDeferred<void>();
+    eagerSendStub.returns(deferred.promise);
+    const warnStub = sinon.stub(console, 'warn');
+
+    await dwnApi.writeContextKeyRecord(baseWriteParams);
+
+    const drain = dwnApi.drainPendingEagerSends();
+    expect(await raceAgainstTick(drain)).toBe('tick');
+
+    deferred.reject(new Error('boom'));
+    await expect(drain).resolves.toBeUndefined();
+
+    expect(warnStub.callCount).toBe(1);
+    warnStub.restore();
+  });
+
+  it('should wait for all concurrently in-flight eager sends', async () => {
+    // VAL-TRACKER-004
+    const d1 = createDeferred<void>();
+    const d2 = createDeferred<void>();
+    eagerSendStub.onFirstCall().returns(d1.promise);
+    eagerSendStub.onSecondCall().returns(d2.promise);
+
+    await dwnApi.writeContextKeyRecord(baseWriteParams);
+    await dwnApi.writeContextKeyRecord({ ...baseWriteParams, recipientDid: 'did:example:carol' });
+
+    const drain = dwnApi.drainPendingEagerSends();
+    expect(await raceAgainstTick(drain)).toBe('tick');
+
+    d1.resolve();
+    expect(await raceAgainstTick(drain)).toBe('tick');
+
+    d2.resolve();
+    await expect(drain).resolves.toBeUndefined();
+  });
+
+  it('should not reject even when every tracked send rejects', async () => {
+    // VAL-TRACKER-005
+    const d1 = createDeferred<void>();
+    const d2 = createDeferred<void>();
+    eagerSendStub.onFirstCall().returns(d1.promise);
+    eagerSendStub.onSecondCall().returns(d2.promise);
+    const warnStub = sinon.stub(console, 'warn');
+
+    await dwnApi.writeContextKeyRecord(baseWriteParams);
+    await dwnApi.writeContextKeyRecord({ ...baseWriteParams, recipientDid: 'did:example:carol' });
+
+    const drain = dwnApi.drainPendingEagerSends();
+    d1.reject(new Error('first failed'));
+    d2.reject(new Error('second failed'));
+
+    await expect(drain).resolves.toBeUndefined();
+    expect(warnStub.callCount).toBe(2);
+    warnStub.restore();
+  });
+
+  it('should be idempotent after the tracker has drained', async () => {
+    // VAL-TRACKER-006
+    const deferred = createDeferred<void>();
+    eagerSendStub.returns(deferred.promise);
+
+    await dwnApi.writeContextKeyRecord(baseWriteParams);
+
+    const drain1 = dwnApi.drainPendingEagerSends();
+    deferred.resolve();
+    await drain1;
+
+    const drain2 = dwnApi.drainPendingEagerSends();
+    expect(await raceAgainstTick(drain2)).toBe('drain');
+    await expect(drain2).resolves.toBeUndefined();
+
+    const drain3 = dwnApi.drainPendingEagerSends();
+    expect(await raceAgainstTick(drain3)).toBe('drain');
+    await expect(drain3).resolves.toBeUndefined();
+  });
+
+  it('should use a snapshot taken at drain-start and not await sends registered after', async () => {
+    // VAL-TRACKER-007
+    const d1 = createDeferred<void>();
+    const d2 = createDeferred<void>();
+    eagerSendStub.onFirstCall().returns(d1.promise);
+    eagerSendStub.onSecondCall().returns(d2.promise);
+
+    await dwnApi.writeContextKeyRecord(baseWriteParams);
+
+    const drain = dwnApi.drainPendingEagerSends();
+    expect(await raceAgainstTick(drain)).toBe('tick');
+
+    // Register a new send AFTER the drain has started.
+    await dwnApi.writeContextKeyRecord({ ...baseWriteParams, recipientDid: 'did:example:carol' });
+
+    // Settling d1 should be sufficient to resolve the first drain — it does
+    // NOT wait for d2, which was registered after the drain snapshot.
+    d1.resolve();
+    await expect(drain).resolves.toBeUndefined();
+
+    // A fresh drain should still be blocked by d2.
+    const drain2 = dwnApi.drainPendingEagerSends();
+    expect(await raceAgainstTick(drain2)).toBe('tick');
+
+    d2.resolve();
+    await expect(drain2).resolves.toBeUndefined();
+  });
+
+  it('should release settled entries so new sends can be drained independently', async () => {
+    // VAL-TRACKER-008
+    const d1 = createDeferred<void>();
+    const d2 = createDeferred<void>();
+    eagerSendStub.onFirstCall().returns(d1.promise);
+    eagerSendStub.onSecondCall().returns(d2.promise);
+
+    await dwnApi.writeContextKeyRecord(baseWriteParams);
+    d1.resolve();
+    await dwnApi.drainPendingEagerSends();
+
+    // After the first drain, the first entry should be released. A second
+    // `writeContextKeyRecord` should queue d2 and d2 alone — the new drain
+    // must not resolve until d2 settles.
+    await dwnApi.writeContextKeyRecord({ ...baseWriteParams, recipientDid: 'did:example:carol' });
+
+    const drain2 = dwnApi.drainPendingEagerSends();
+    expect(await raceAgainstTick(drain2)).toBe('tick');
+
+    d2.resolve();
+    await expect(drain2).resolves.toBeUndefined();
+  });
+
+  it('should preserve the console.warn message on eager-send failure', async () => {
+    // VAL-TRACKER-010
+    const warnStub = sinon.stub(console, 'warn');
+    eagerSendStub.rejects(new Error('boom'));
+
+    await dwnApi.writeContextKeyRecord(baseWriteParams);
+    await dwnApi.drainPendingEagerSends();
+
+    expect(warnStub.called).toBe(true);
+    const warnArgs = warnStub.args.map((args: any[]): unknown => args[0]);
+    const matchedArg = warnArgs.find(
+      (msg: unknown): boolean => typeof msg === 'string'
+        && /AgentDwnApi: Eager send of contextKey record '.+' to remote DWN failed: .+\. Sync will deliver it later\./.test(msg),
+    );
+    expect(matchedArg).toBeDefined();
+    expect(matchedArg as string).toContain('boom');
+    warnStub.restore();
+  });
+});
+
+/**
+ * Separate describe block for VAL-TRACKER-009 so the test path matches
+ * `AgentDwnApi.writeContextKeyRecord > returns the recordId ...` (as called
+ * out in the feature's `verificationSteps`). This assertion is about
+ * `writeContextKeyRecord`'s return contract under the tracker wrapping,
+ * not the drain API itself.
+ */
+describe('AgentDwnApi.writeContextKeyRecord', () => {
+  type Deferred<T> = {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (err: Error) => void;
+  };
+
+  function createDeferred<T>(): Deferred<T> {
+    let resolve!: (value: T) => void;
+    let reject!: (err: Error) => void;
+    const promise = new Promise<T>((res, rej): void => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  async function raceAgainstTick(drain: Promise<void>): Promise<'drain' | 'tick'> {
+    const TICK = 'tick' as const;
+    return Promise.race<'drain' | 'tick'>([
+      drain.then((): 'drain' => 'drain'),
+      new Promise<'tick'>((resolve): void => { setTimeout((): void => resolve(TICK), 0); }),
+    ]);
+  }
+
+  let dwnApi: AgentDwnApi;
+  let eagerSendStub: sinon.SinonStub;
+
+  const baseWriteParams = {
+    tenantDid      : 'did:example:alice',
+    recipientDid   : 'did:example:bob',
+    contextKeyData : {
+      rootKeyId         : 'root-1',
+      derivationScheme  : 'protocolContext',
+      derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' },
+    } as any,
+    sourceProtocol  : 'https://proto.example.com',
+    sourceContextId : 'ctx-1',
+  };
+
+  beforeEach(() => {
+    const mockAgent: any = {
+      rpc      : {},
+      agentDid : 'did:example:agent',
+      did      : {},
+    };
+    const mockDwn = ({} as unknown) as Dwn;
+    dwnApi = new AgentDwnApi({ agent: mockAgent, dwn: mockDwn });
+
+    let recordCounter = 0;
+    sinon.stub(dwnApi as any, 'processRequest').callsFake(async (): Promise<any> => {
+      recordCounter += 1;
+      return {
+        reply      : { status: { code: 202, detail: 'Accepted' } },
+        message    : { recordId: `rec-${recordCounter}` },
+        messageCid : `cid-${recordCounter}`,
+      };
+    });
+    sinon.stub(dwnApi as any, 'ensureKeyDeliveryProtocol').resolves();
+    eagerSendStub = sinon.stub(dwnApi as any, 'eagerSendContextKeyRecord');
+  });
+
+  afterEach(() => {
+    sinon.restore();
+  });
+
+  it('returns the recordId synchronously with the local write and does not block on the tracked eager send', async () => {
+    // VAL-TRACKER-009
+    const deferred = createDeferred<void>();
+    eagerSendStub.returns(deferred.promise);
+
+    // The local write should resolve well before the eager-send deferred.
+    const recordIdPromise = dwnApi.writeContextKeyRecord(baseWriteParams);
+    const recordId = await Promise.race<string>([
+      recordIdPromise,
+      new Promise<string>((_, reject): void => {
+        setTimeout((): void => reject(new Error('writeContextKeyRecord blocked on eager send')), 250);
+      }),
+    ]);
+    expect(typeof recordId).toBe('string');
+    expect(recordId.length).toBeGreaterThan(0);
+
+    // The tracker should still hold a pending entry — drain must block on it.
+    const drain = dwnApi.drainPendingEagerSends();
+    expect(await raceAgainstTick(drain)).toBe('tick');
+
+    deferred.resolve();
+    await expect(drain).resolves.toBeUndefined();
+  });
 });
