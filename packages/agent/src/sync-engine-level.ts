@@ -1083,7 +1083,7 @@ export class SyncEngineLevel implements SyncEngine {
       // `link` object is stale and must not be used for status checks or
       // ledger writes.
       const currentLink = this._activeLinks.get(linkKey);
-      if (!currentLink || currentLink.status !== 'degraded_poll') {
+      if (currentLink?.status !== 'degraded_poll') {
         clearInterval(timer);
         this._degradedPollTimers.delete(linkKey);
         return;
