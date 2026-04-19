@@ -10,26 +10,67 @@ describe('SyncEngineLevel — private methods', () => {
   let db: Level<string, string>;
   let syncEngine: SyncEngineLevel;
 
+  // Track every SyncEngineLevel created in this suite so `afterEach` can
+  // clear any pending timers before the next test (and before `afterAll`
+  // closes the shared Level DB). Tests that exercise code paths which
+  // schedule setTimeout/setInterval callbacks (repair retries, reconcile,
+  // degraded polling, push debounces) would otherwise let those callbacks
+  // fire after teardown, triggering unhandled `LEVEL_DATABASE_NOT_OPEN`
+  // rejections when `ledger.saveLink()` hits the closed DB.
+  const createdEngines: SyncEngineLevel[] = [];
+  const createEngine = (params: ConstructorParameters<typeof SyncEngineLevel>[0]): SyncEngineLevel => {
+    const engine = new SyncEngineLevel(params);
+    createdEngines.push(engine);
+    return engine;
+  };
+
+  const clearEngineTimers = (engine: SyncEngineLevel): void => {
+    // Invalidate any async work already checkpointed against the engine's
+    // current generation — callbacks that race past the `clearTimeout`
+    // below will see a mismatched generation and bail.
+    (engine as any)._engineGeneration++;
+
+    if ((engine as any)._syncIntervalId !== undefined) {
+      clearInterval((engine as any)._syncIntervalId);
+      (engine as any)._syncIntervalId = undefined;
+    }
+
+    const pushRuntimes = (engine as any)._pushRuntimes as Map<string, { timer?: ReturnType<typeof setTimeout> }>;
+    for (const runtime of pushRuntimes.values()) {
+      if (runtime.timer !== undefined) {
+        clearTimeout(runtime.timer);
+      }
+    }
+    pushRuntimes.clear();
+
+    const reconcileTimers = (engine as any)._reconcileTimers as Map<string, ReturnType<typeof setTimeout>>;
+    for (const timer of reconcileTimers.values()) {
+      clearTimeout(timer);
+    }
+    reconcileTimers.clear();
+
+    const repairRetryTimers = (engine as any)._repairRetryTimers as Map<string, ReturnType<typeof setTimeout>>;
+    for (const timer of repairRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    repairRetryTimers.clear();
+
+    const degradedPollTimers = (engine as any)._degradedPollTimers as Map<string, ReturnType<typeof setInterval>>;
+    for (const timer of degradedPollTimers.values()) {
+      clearInterval(timer);
+    }
+    degradedPollTimers.clear();
+  };
+
   beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-engine-private-spec');
-    syncEngine = new SyncEngineLevel({ db });
+    syncEngine = createEngine({ db });
   });
 
   afterEach(async () => {
     sinon.restore();
-    // Clear timers that might have been set
-    if ((syncEngine as any)._syncIntervalId) {
-      clearInterval((syncEngine as any)._syncIntervalId);
-      (syncEngine as any)._syncIntervalId = undefined;
-    }
-    const pushRuntimes = (syncEngine as any)._pushRuntimes as Map<string, { timer?: ReturnType<typeof setTimeout> }> | undefined;
-    if (pushRuntimes) {
-      for (const runtime of pushRuntimes.values()) {
-        if (runtime.timer) {
-          clearTimeout(runtime.timer);
-        }
-      }
-      pushRuntimes.clear();
+    for (const engine of createdEngines) {
+      clearEngineTimers(engine);
     }
     await db.clear();
   });
@@ -169,27 +210,27 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('getDefaultHashHex', () => {
     it('should return hex-encoded default hash for depth 0', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const hash = await (engine as any).getDefaultHashHex(0);
       expect(typeof hash).toBe('string');
       expect(hash.length).toBeGreaterThan(0);
     });
 
     it('should return different hashes for different depths', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const hash0 = await (engine as any).getDefaultHashHex(0);
       const hash1 = await (engine as any).getDefaultHashHex(1);
       expect(hash0).not.toBe(hash1);
     });
 
     it('should return empty string for depth beyond MAX_DIFF_DEPTH (16)', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const hash = await (engine as any).getDefaultHashHex(17);
       expect(hash).toBe('');
     });
 
     it('should cache results after first call', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       expect((engine as any)._defaultHashHex).toBeUndefined();
       await (engine as any).getDefaultHashHex(0);
       expect((engine as any)._defaultHashHex).toBeDefined();
@@ -211,7 +252,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should throw when permission fetch fails for a delegate DID', async () => {
       const mockAgent = { agentDid: 'did:example:agent' } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       (engine as any)._permissionsApi = {
         getPermissionForRequest : sinon.stub().rejects(new Error('not found')),
@@ -225,7 +266,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should return grant ID when delegate permission is found', async () => {
       const mockAgent = { agentDid: 'did:example:agent' } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       (engine as any)._permissionsApi = {
         getPermissionForRequest : sinon.stub().resolves({ grant: { id: 'grant-123' } }),
@@ -247,7 +288,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid : 'did:example:agent',
         dwn      : { getDwnEndpointUrlsForTarget: sinon.stub() },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const targets = await (engine as any).getSyncTargets();
       expect(targets).toEqual([]);
@@ -260,7 +301,7 @@ describe('SyncEngineLevel — private methods', () => {
           getDwnEndpointUrlsForTarget: sinon.stub().resolves([]),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       await engine.registerIdentity({ did: 'did:example:no-endpoints' });
 
       const targets = await (engine as any).getSyncTargets();
@@ -274,7 +315,7 @@ describe('SyncEngineLevel — private methods', () => {
           getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       await engine.registerIdentity({ did: 'did:example:alice', options: { protocols: [] } });
 
       const targets = await (engine as any).getSyncTargets();
@@ -291,7 +332,7 @@ describe('SyncEngineLevel — private methods', () => {
           getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       await engine.registerIdentity({
         did     : 'did:example:bob',
         options : { protocols: ['https://proto1.example.com', 'https://proto2.example.com'] },
@@ -310,7 +351,7 @@ describe('SyncEngineLevel — private methods', () => {
           getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       await engine.registerIdentity({
         did     : 'did:example:carol',
         options : { protocols: [], delegateDid: 'did:example:delegate' },
@@ -328,7 +369,7 @@ describe('SyncEngineLevel — private methods', () => {
           getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       // Manually write invalid JSON to the sublevel
       const identities = db.sublevel('registeredIdentities');
@@ -348,7 +389,7 @@ describe('SyncEngineLevel — private methods', () => {
   describe('sync() — SMT tree comparison', () => {
     it('should skip targets where local root matches remote root', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
@@ -364,7 +405,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should walk tree diff and pull/push when roots differ', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
@@ -386,7 +427,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should only pull when direction is "pull"', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
@@ -408,7 +449,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should only push when direction is "push"', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
@@ -430,7 +471,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should skip when diff has empty onlyRemote for pull', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
@@ -452,7 +493,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should skip remaining targets for a DWN URL that errored', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
@@ -470,7 +511,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should set connectivity to online after successful sync with targets', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
@@ -485,7 +526,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should increment consecutive failures and set offline on error', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       // Set initial state to online
       (engine as any)._connectivityState = 'online';
@@ -504,7 +545,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should reconcile different dwnUrl groups concurrently', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       // Two targets on different dwnUrls.
       sinon.stub(engine as any, 'getSyncTargets').resolves([
@@ -541,7 +582,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should stay online when one URL group fails but another succeeds', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._connectivityState = 'online';
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
@@ -567,7 +608,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should aggregate per-link connectivity: online if any link is online', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       (engine as any)._activeLinks.set('link-1', { connectivity: 'online' });
       (engine as any)._activeLinks.set('link-2', { connectivity: 'offline' });
 
@@ -575,7 +616,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should aggregate per-link connectivity: offline if all links are offline', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       (engine as any)._activeLinks.set('link-1', { connectivity: 'offline' });
       (engine as any)._activeLinks.set('link-2', { connectivity: 'offline' });
 
@@ -583,21 +624,21 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should aggregate per-link connectivity: unknown if all links are unknown', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       (engine as any)._activeLinks.set('link-1', { connectivity: 'unknown' });
 
       expect(engine.connectivityState).toBe('unknown');
     });
 
     it('should fall back to global state when no active links exist', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       (engine as any)._connectivityState = 'offline';
 
       expect(engine.connectivityState).toBe('offline');
     });
 
     it('should set link connectivity to offline on transitionToRepairing', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const link = { status: 'live', connectivity: 'online', pull: {} } as any;
       const linkKey = 'test-link';
       (engine as any)._activeLinks.set(linkKey, link);
@@ -613,7 +654,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should reset consecutive failures on success', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       (engine as any)._consecutiveFailures = 3;
 
@@ -636,7 +677,7 @@ describe('SyncEngineLevel — private methods', () => {
   describe('startSync / stopSync — poll mode', () => {
     it('should start and stop poll mode sync', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const syncStub = sinon.stub(engine, 'sync').resolves();
 
@@ -649,7 +690,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should clear existing interval when starting new sync', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const syncStub = sinon.stub(engine, 'sync').resolves();
 
@@ -671,7 +712,7 @@ describe('SyncEngineLevel — private methods', () => {
   describe('startSync / stopSync — live mode', () => {
     it('should start live mode with initial catch-up sync', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const syncStub = sinon.stub(engine, 'sync').resolves();
       sinon.stub(engine as any, 'getSyncTargets').resolves([]);
@@ -685,7 +726,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should handle error during initial live sync catch-up', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine, 'sync').rejects(new Error('initial sync failed'));
       sinon.stub(engine as any, 'getSyncTargets').resolves([]);
@@ -699,7 +740,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should tear down previous live subscriptions when starting new sync', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const closeStub = sinon.stub().resolves();
       (engine as any)._liveSubscriptions = [{ did: 'did:1', dwnUrl: 'url', close: closeStub }];
@@ -802,7 +843,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should open a subscription and add it to _liveSubscriptions', async () => {
       const { agent, rpcStub } = createPullMockAgent();
-      const engine = new SyncEngineLevel({ db, agent });
+      const engine = createEngine({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await (engine as any).openLivePullSubscription({
@@ -820,7 +861,7 @@ describe('SyncEngineLevel — private methods', () => {
         status       : { code: 500, detail: 'Error' },
         subscription : undefined,
       });
-      const engine = new SyncEngineLevel({ db, agent });
+      const engine = createEngine({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await expect(
@@ -834,7 +875,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should include protocol in subscription filters when provided', async () => {
       const { agent, processRequestStub } = createPullMockAgent();
-      const engine = new SyncEngineLevel({ db, agent });
+      const engine = createEngine({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await (engine as any).openLivePullSubscription({
@@ -850,7 +891,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should include protocolPathPrefix in subscription filters when link scope has it', async () => {
       const { agent, processRequestStub } = createPullMockAgent();
-      const engine = new SyncEngineLevel({ db, agent });
+      const engine = createEngine({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       // Set up a link with protocolPathPrefixes in the scope.
@@ -885,7 +926,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should use existing cursor from link pull checkpoint', async () => {
       const { agent, processRequestStub } = createPullMockAgent();
-      const engine = new SyncEngineLevel({ db, agent });
+      const engine = createEngine({ db, agent });
       const savedCursor = { streamId: 's1', epoch: 'e1', position: '42', messageCid: 'cid-42' };
 
       // Set cursor on the link's pull checkpoint (not legacy getCursor).
@@ -909,7 +950,7 @@ describe('SyncEngineLevel — private methods', () => {
     it('should look up delegate permission when delegateDid is provided', async () => {
       const permStub = sinon.stub().resolves({ grant: { id: 'sub-grant-1' } });
       const { agent } = createPullMockAgent();
-      const engine = new SyncEngineLevel({ db, agent });
+      const engine = createEngine({ db, agent });
       (engine as any)._permissionsApi = {
         getPermissionForRequest : permStub,
         clear                   : sinon.stub(),
@@ -929,7 +970,7 @@ describe('SyncEngineLevel — private methods', () => {
     it('should throw when permission grant lookup fails', async () => {
       const permStub = sinon.stub().rejects(new Error('no grant'));
       const { agent, rpcStub } = createPullMockAgent();
-      const engine = new SyncEngineLevel({ db, agent });
+      const engine = createEngine({ db, agent });
       (engine as any)._permissionsApi = {
         getPermissionForRequest : permStub,
         clear                   : sinon.stub(),
@@ -966,7 +1007,7 @@ describe('SyncEngineLevel — private methods', () => {
           }),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       await (engine as any).openLocalPushSubscription({
         did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
@@ -990,7 +1031,7 @@ describe('SyncEngineLevel — private methods', () => {
           }),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       await expect(
         (engine as any).openLocalPushSubscription({
@@ -1008,7 +1049,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid : 'did:example:agent',
         dwn      : { processRequest: processRequestStub },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = {
         getPermissionForRequest : permStub,
         clear                   : sinon.stub(),
@@ -1036,7 +1077,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid : 'did:example:agent',
         dwn      : { processRequest: processRequestStub },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       await (engine as any).openLocalPushSubscription({
         did      : 'did:example:alice',
@@ -1057,7 +1098,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('flushPendingPushes', () => {
     it('should clear pending push entries after flushing', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
@@ -1073,7 +1114,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should skip targets with empty entries array', async () => {
       const mockAgent = { agentDid: 'did:example:agent' } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
@@ -1106,7 +1147,7 @@ describe('SyncEngineLevel — private methods', () => {
           sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       // Simulate a push runtime left over from a previously retried batch
@@ -1141,7 +1182,7 @@ describe('SyncEngineLevel — private methods', () => {
           sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       // Simulate a runtime with stale retryCount from a prior batch,
@@ -1187,7 +1228,7 @@ describe('SyncEngineLevel — private methods', () => {
         },
         rpc: { sendDwnRequest: sinon.stub().rejects(new Error('network error')) },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
@@ -1223,7 +1264,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid : 'did:example:agent',
         dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       const root = await (engine as any).getLocalRoot('did:example:alice');
@@ -1243,7 +1284,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid : 'did:example:agent',
         dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       await (engine as any).getLocalRoot('did:example:alice', undefined, 'https://proto.example.com');
@@ -1268,7 +1309,7 @@ describe('SyncEngineLevel — private methods', () => {
           }),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       const root = await (engine as any).getRemoteRoot('did:example:alice', 'https://dwn.example.com');
@@ -1292,7 +1333,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid : 'did:example:agent',
         dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const hash = await (engine as any).getLocalSubtreeHash('did:example:alice', '01');
       expect(hash).toBeTruthy();
@@ -1310,7 +1351,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid : 'did:example:agent',
         dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const hash = await (engine as any).getLocalSubtreeHash('did:example:alice', '01');
       // The hash should be a hex string (even if it's the default/empty hash)
@@ -1326,7 +1367,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid : 'did:example:agent',
         dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const leaves = await (engine as any).getLocalLeaves('did:example:alice', '01');
       expect(leaves).toEqual(['cid-a', 'cid-b']);
@@ -1342,7 +1383,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid : 'did:example:agent',
         dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const leaves = await (engine as any).getLocalLeaves('did:example:alice', '01');
       expect(leaves).toEqual([]);
@@ -1358,7 +1399,7 @@ describe('SyncEngineLevel — private methods', () => {
     it('clear should clear permissionsApi and db', async () => {
       const mockAgent = { agentDid: 'did:example:agent' } as any;
       const clearDb = new Level<string, string>('__TESTDATA__/sync-engine-clear-spec');
-      const engine = new SyncEngineLevel({ db: clearDb, agent: mockAgent });
+      const engine = createEngine({ db: clearDb, agent: mockAgent });
       (engine as any)._permissionsApi = { clear: sinon.stub().resolves() };
 
       await engine.registerIdentity({ did: 'did:example:test' });
@@ -1373,7 +1414,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('close should close the db', async () => {
       const closeDb = new Level<string, string>('__TESTDATA__/sync-engine-close-spec');
-      const engine = new SyncEngineLevel({ db: closeDb });
+      const engine = createEngine({ db: closeDb });
 
       await engine.close();
       // After closing, operations should fail
@@ -1388,7 +1429,7 @@ describe('SyncEngineLevel — private methods', () => {
   describe('startPollSync — intervalSync closure', () => {
     it('should execute intervalSync callback and apply backoff on failure', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       // Sync succeeds on first call (immediate), then fails on second (interval callback)
       let callCount = 0;
@@ -1416,7 +1457,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should skip intervalSync when syncLock is held', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const syncStub = sinon.stub(engine, 'sync').resolves();
 
@@ -1444,7 +1485,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should handle sync error in intervalSync and continue', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const consoleStub = sinon.stub(console, 'error');
       // First call succeeds (immediate sync at line 377), second call fails (intervalSync closure)
@@ -1476,7 +1517,7 @@ describe('SyncEngineLevel — private methods', () => {
   describe('startLiveSync — integrityCheck closure', () => {
     it('should execute integrityCheck interval and handle errors', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       let syncCallCount = 0;
       const consoleStub = sinon.stub(console, 'error');
@@ -1507,7 +1548,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should skip integrityCheck when syncLock is held', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       const syncStub = sinon.stub(engine, 'sync').resolves();
       sinon.stub(engine as any, 'getSyncTargets').resolves([]);
@@ -1539,7 +1580,7 @@ describe('SyncEngineLevel — private methods', () => {
   describe('startLiveSync — partial setup failure cleanup', () => {
     it('should clean up in-memory state when push subscription fails', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       // Stub sync() to no-op (initial catch-up).
       sinon.stub(engine, 'sync').resolves();
@@ -1589,7 +1630,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should reset connectivity to unknown when no subscriptions remain after failure', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine, 'sync').resolves();
       sinon.stub(engine as any, 'getSyncTargets').resolves([
@@ -1650,7 +1691,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should process eose events by updating link checkpoint and connectivity', async () => {
       const { agent, getHandler } = createCallbackMockAgent();
-      const engine = new SyncEngineLevel({ db, agent });
+      const engine = createEngine({ db, agent });
 
       // Set up a link so the EOSE handler uses the link path.
       const linkKey = 'did:example:alice^https://dwn.example.com';
@@ -1686,7 +1727,7 @@ describe('SyncEngineLevel — private methods', () => {
     it('should process event messages by calling processRawMessage', async () => {
       const processMessageStub = sinon.stub().resolves({ status: { code: 202 } });
       const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
-      const engine = new SyncEngineLevel({ db, agent });
+      const engine = createEngine({ db, agent });
 
       // Set up a link so the event handler uses the link path.
       const linkKey = 'did:example:alice^https://dwn.example.com';
@@ -1724,7 +1765,7 @@ describe('SyncEngineLevel — private methods', () => {
     it('should handle processMessage errors gracefully in event handler', async () => {
       const processMessageStub = sinon.stub().rejects(new Error('process failed'));
       const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
-      const engine = new SyncEngineLevel({ db, agent });
+      const engine = createEngine({ db, agent });
       const consoleStub = sinon.stub(console, 'error');
 
       // Set up a link so the event handler passes the _activeLinks guard.
@@ -1776,7 +1817,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid : 'did:example:agent',
         dwn      : { processRequest: processRequestStub },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       const pushLinkKey = 'did:example:alice^https://dwn.example.com';
       (engine as any)._activeLinks.set(pushLinkKey, { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
@@ -1825,7 +1866,7 @@ describe('SyncEngineLevel — private methods', () => {
           }),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       const pushLinkKey = 'did:example:alice^https://dwn.example.com';
       (engine as any)._activeLinks.set(pushLinkKey, { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
@@ -1856,7 +1897,7 @@ describe('SyncEngineLevel — private methods', () => {
           }),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       const pushLinkKey = 'did:example:alice^https://dwn.example.com';
       (engine as any)._activeLinks.set(pushLinkKey, { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
@@ -1898,7 +1939,7 @@ describe('SyncEngineLevel — private methods', () => {
           sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
       (engine as any)._activeLinks.set('test-link', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
@@ -1960,7 +2001,7 @@ describe('SyncEngineLevel — private methods', () => {
           }),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       // Should not throw
@@ -1988,7 +2029,7 @@ describe('SyncEngineLevel — private methods', () => {
           sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
         },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       await (engine as any).pushMessages({
@@ -2066,7 +2107,7 @@ describe('SyncEngineLevel — private methods', () => {
     }
 
     it('should advance checkpoint only when all earlier ordinals are committed', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       // Set up link and runtime state.
@@ -2102,7 +2143,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should advance checkpoint through sparse positions from filtered streams', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
@@ -2128,7 +2169,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should NOT advance checkpoint past a failed event (failure blocks progression)', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
@@ -2179,7 +2220,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('repairLink', () => {
     it('should transition link from repairing to live after successful SMT reconciliation', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
@@ -2207,7 +2248,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should track repair attempts and enter degraded_poll after max attempts', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
@@ -2240,7 +2281,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should deduplicate concurrent repair calls for the same link', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
@@ -2279,7 +2320,7 @@ describe('SyncEngineLevel — private methods', () => {
         dwn      : { processRequest: processRequestStub },
         rpc      : { sendDwnRequest: rpcStub },
       } as any;
-      const engine = new SyncEngineLevel({ db, agent });
+      const engine = createEngine({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       try {
@@ -2296,7 +2337,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('in-flight handler guard', () => {
     it('should skip checkpoint mutations when link status is repairing', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       function token(pos: number): any {
@@ -2326,7 +2367,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('degraded_poll', () => {
     it('should set up a polling timer when entering degraded_poll', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
@@ -2354,7 +2395,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('transitionToRepairing and retry scheduling', () => {
     it('should schedule a retry when first repair fails', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
@@ -2387,7 +2428,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should clear retry timer on teardown', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'test-link';
 
       (engine as any)._repairRetryTimers.set(linkKey, setTimeout(() => {}, 60_000));
@@ -2399,7 +2440,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should store resumeToken from ProgressGap for use during repair', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const resumeToken = { streamId: 's1', epoch: 'e1', position: '99', messageCid: 'cid-99' };
@@ -2426,7 +2467,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('doRepairLink — post-repair checkpoint', () => {
     it('should set checkpoint to resumeToken from ProgressGap after successful repair', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const resumeToken = { streamId: 's1', epoch: 'e1', position: '99', messageCid: 'cid-99' };
@@ -2460,7 +2501,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should not leave checkpoint undefined after non-gap repair', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const existingToken = { streamId: 's1', epoch: 'e1', position: '50', messageCid: 'cid-50' };
@@ -2491,7 +2532,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should reopen local push subscription without a cursor (opportunistic push)', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
@@ -2523,7 +2564,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should bail if teardown occurs during repair (generation check)', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
@@ -2562,7 +2603,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should schedule post-repair reconcile after _activeRepairs is cleared', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
@@ -2610,7 +2651,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('closeLinkSubscriptions', () => {
     it('should close both pull and push subscriptions for a link', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const pullClose = sinon.stub().resolves();
       const pushClose = sinon.stub().resolves();
 
@@ -2638,7 +2679,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should handle missing subscriptions gracefully', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       (engine as any)._liveSubscriptions = [];
       (engine as any)._localSubscriptions = [];
 
@@ -2657,7 +2698,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('scheduleRepairRetry', () => {
     it('should not schedule if link is in degraded_poll', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       (engine as any)._activeLinks.set(linkKey, { status: 'degraded_poll' });
@@ -2668,7 +2709,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should not schedule if retry is already pending', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       (engine as any)._activeLinks.set(linkKey, { status: 'repairing' });
@@ -2683,7 +2724,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should schedule a timer for repairing links without existing timer', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       (engine as any)._activeLinks.set(linkKey, { status: 'repairing' });
@@ -2796,7 +2837,7 @@ describe('SyncEngineLevel — private methods', () => {
   describe('subset scope link creation', () => {
     it('should create protocol-scoped links when target has a protocol', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine, 'sync').resolves();
       sinon.stub(engine as any, 'getSyncTargets').resolves([
@@ -2834,7 +2875,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should create full-tenant links when target has no protocol', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine, 'sync').resolves();
       sinon.stub(engine as any, 'getSyncTargets').resolves([
@@ -2873,7 +2914,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('opportunistic push + needsReconcile', () => {
     it('should mark link needsReconcile when push retries are exhausted', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
@@ -2904,7 +2945,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should re-queue push entries when retries remain', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       (engine as any).requeueOrReconcile(linkKey, {
@@ -2953,7 +2994,7 @@ describe('SyncEngineLevel — private methods', () => {
     }
 
     it('should clear needsReconcile when roots converge after reconciliation', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
@@ -2985,7 +3026,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should NOT clear needsReconcile when roots still differ after reconciliation', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
@@ -3012,7 +3053,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should skip reconciliation when link is not live', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink({ status: 'repairing' });
       (engine as any)._activeLinks.set(linkKey, link);
@@ -3026,7 +3067,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should skip reconciliation when _activeRepairs contains the link', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
@@ -3040,7 +3081,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should skip reconciliation when roots already match (short-circuit)', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
@@ -3062,7 +3103,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should bail on generation mismatch during reconciliation', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
@@ -3083,7 +3124,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should schedule retry on reconciliation error', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
@@ -3100,7 +3141,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('reconcileLink should deduplicate concurrent calls', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
@@ -3122,7 +3163,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('scheduleReconcile should not schedule if timer already exists', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       (engine as any).scheduleReconcile(linkKey, 10000);
@@ -3138,7 +3179,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('scheduleReconcile should not schedule if _activeRepairs contains the link', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       (engine as any)._activeRepairs.set(linkKey, Promise.resolve());
 
@@ -3148,7 +3189,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('scheduleReconcile should not schedule if reconcile is already in-flight', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       (engine as any)._reconcileInFlight.set(linkKey, Promise.resolve());
 
@@ -3158,7 +3199,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('doReconcileLink should pull onlyRemote and push onlyLocal', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
@@ -3200,7 +3241,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('sync event emission', () => {
     it('should emit link:status-change when transitioning to repairing', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const events: any[] = [];
       engine.on((event) => { events.push(event); });
 
@@ -3236,7 +3277,7 @@ describe('SyncEngineLevel — private methods', () => {
       // checkpoint:pull-advance is emitted AFTER saveLink succeeds in the
       // subscription handler, not in drainCommittedPull itself. This ensures
       // "advanced" means durably persisted.
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const events: any[] = [];
       engine.on((event) => { events.push(event); });
 
@@ -3264,7 +3305,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should return an unsubscribe function from on()', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       const events: any[] = [];
       const unsubscribe = engine.on((event) => { events.push(event); });
 
@@ -3278,7 +3319,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should not propagate listener errors into sync engine', () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       engine.on(() => { throw new Error('listener crash'); });
 
       // Should not throw.
@@ -3322,7 +3363,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should register online, offline, and visibilitychange listeners when browser APIs are available', () => {
       installBrowserStubs();
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       (engine as any).startBrowserConnectivityListeners();
 
@@ -3333,7 +3374,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should remove listeners on stopBrowserConnectivityListeners', () => {
       installBrowserStubs();
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       (engine as any).startBrowserConnectivityListeners();
       expect(registeredListeners.has('online')).toBe(true);
@@ -3348,7 +3389,7 @@ describe('SyncEngineLevel — private methods', () => {
       const saved = globalThis.addEventListener;
       delete (globalThis as any).addEventListener;
 
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       // Should not throw.
       expect(() => {
@@ -3361,7 +3402,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should set _connectivityState to offline on offline event', () => {
       installBrowserStubs();
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       (engine as any)._connectivityState = 'online';
 
       (engine as any).startBrowserConnectivityListeners();
@@ -3375,7 +3416,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should transition all active links to offline and update public connectivityState', () => {
       installBrowserStubs();
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       // Simulate two active links that are online.
       const linkA: Record<string, unknown> = { tenantDid: 'did:a', remoteEndpoint: 'https://a.com', protocol: undefined, connectivity: 'online', scope: { kind: 'full' } };
@@ -3401,7 +3442,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should trigger sync on online event without prematurely setting connectivity', async () => {
       installBrowserStubs();
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       (engine as any)._connectivityState = 'offline';
 
       // Stub sync() to track whether it was called.
@@ -3426,7 +3467,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should not trigger sync on online event when _syncLock is held', async () => {
       installBrowserStubs();
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       let syncCalled = false;
       (engine as any).sync = async (): Promise<void> => { syncCalled = true; };
@@ -3443,7 +3484,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should ignore events after engine generation changes (teardown)', () => {
       installBrowserStubs();
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       (engine as any)._connectivityState = 'online';
 
       (engine as any).startBrowserConnectivityListeners();
@@ -3460,7 +3501,7 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should clean up on repeated startBrowserConnectivityListeners calls', () => {
       installBrowserStubs();
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       (engine as any).startBrowserConnectivityListeners();
       const firstOnline = registeredListeners.get('online');
@@ -3480,7 +3521,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('unregisterIdentity', () => {
     it('should remove a registered identity', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
       await engine.registerIdentity({ did: 'did:example:unreg-test' });
 
       const before = await engine.getIdentityOptions('did:example:unreg-test');
@@ -3493,7 +3534,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should throw when unregistering an identity that is not registered', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       await expect(
         engine.unregisterIdentity('did:example:not-registered')
@@ -3704,7 +3745,7 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('dead letter tracking', () => {
     it('should record and retrieve a dead letter entry', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       await engine.recordDeadLetter({
         messageCid     : 'bafyrei-dead-1',
@@ -3725,7 +3766,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should filter dead letters by tenant', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       await engine.recordDeadLetter({
         messageCid  : 'bafyrei-dead-a',
@@ -3749,7 +3790,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should clear a single dead letter entry', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       await engine.recordDeadLetter({
         messageCid  : 'bafyrei-dead-clear',
@@ -3770,7 +3811,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should clear all dead letter entries', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       await engine.recordDeadLetter({ messageCid: 'dl-1', tenantDid: 'did:a', category: 'push-permanent', errorDetail: 'x' });
       await engine.recordDeadLetter({ messageCid: 'dl-2', tenantDid: 'did:b', category: 'closure', errorDetail: 'y' });
@@ -3781,7 +3822,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should clear dead letters scoped to a tenant', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       await engine.recordDeadLetter({ messageCid: 'dl-scoped-1', tenantDid: 'did:keep', category: 'push-permanent', errorDetail: 'x' });
       await engine.recordDeadLetter({ messageCid: 'dl-scoped-2', tenantDid: 'did:remove', category: 'push-permanent', errorDetail: 'y' });
@@ -3794,7 +3835,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should store separate entries for the same CID on different remotes', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       await engine.recordDeadLetter({
         messageCid     : 'dl-multi',
@@ -3819,7 +3860,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should clear a specific CID+remote pair without affecting other remotes', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       await engine.recordDeadLetter({ messageCid: 'dl-pair', tenantDid: 'did:x', remoteEndpoint: 'https://a.com', category: 'push-permanent', errorDetail: 'a' });
       await engine.recordDeadLetter({ messageCid: 'dl-pair', tenantDid: 'did:x', remoteEndpoint: 'https://b.com', category: 'push-permanent', errorDetail: 'b' });
@@ -3834,7 +3875,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should clear all entries for a CID across remotes when no remote is specified', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       await engine.recordDeadLetter({ messageCid: 'dl-all-remotes', tenantDid: 'did:x', remoteEndpoint: 'https://a.com', category: 'push-permanent', errorDetail: 'a' });
       await engine.recordDeadLetter({ messageCid: 'dl-all-remotes', tenantDid: 'did:x', remoteEndpoint: 'https://b.com', category: 'push-permanent', errorDetail: 'b' });
@@ -3847,7 +3888,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should return sync health summary', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       await engine.recordDeadLetter({ messageCid: 'dl-health-1', tenantDid: 'did:x', category: 'push-permanent', errorDetail: 'x' });
       await engine.recordDeadLetter({ messageCid: 'dl-health-2', tenantDid: 'did:y', category: 'closure', errorDetail: 'y' });
@@ -3859,7 +3900,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should clear dead letters scoped to protocol — sibling protocol failures survive', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       // Two failures for the same (tenantDid, remoteEndpoint) but different protocols.
       await engine.recordDeadLetter({
@@ -3897,7 +3938,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should clear dead letters for full-tenant link without affecting protocol-scoped entries', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       // Full-tenant failure (no protocol).
       await engine.recordDeadLetter({
@@ -3933,7 +3974,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should auto-clear dead letter when same CID later succeeds on push', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       await engine.recordDeadLetter({
         messageCid     : 'dl-auto-push',
@@ -3952,7 +3993,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should only suppress LEVEL_DATABASE_NOT_OPEN in recordDeadLetter', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       // Stub _deadLetters.put to throw a non-DB-closed error.
       const origDeadLetters = (engine as any)._deadLetters;
@@ -3977,7 +4018,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should count degraded links from durable ledger, not just in-memory state', async () => {
-      const engine = new SyncEngineLevel({ db });
+      const engine = createEngine({ db });
 
       // Create links via the ledger (durable) — these survive restart.
       const ledger = (engine as any).ledger;
