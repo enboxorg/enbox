@@ -2899,6 +2899,403 @@ describe('SyncEngineLevel', () => {
         consoleErrorStub.restore();
       });
     });
+
+    // -----------------------------------------------------------------------
+    // Issue #898: Multi-identity live sync correctness hardening
+    // -----------------------------------------------------------------------
+
+    describe('multi-identity live sync hardening (#898)', () => {
+
+      // -----------------------------------------------------------------------
+      // Item 1: delegateDid updates persist to durable ReplicationLinkState
+      // -----------------------------------------------------------------------
+
+      describe('delegateDid persistence on existing links', () => {
+
+        it('should persist new delegateDid to the ledger before hot-swap during updateIdentityOptions', async () => {
+          const did = alice.did.uri;
+
+          // Register the identity.
+          await syncEngine.registerIdentity({
+            did,
+            options: { protocols: [], delegateDid: 'did:example:old-delegate' },
+          });
+
+          // Put the engine in live mode but stub out the subscription methods to
+          // avoid real WebSocket connections.
+          syncEngine['_syncMode'] = 'live';
+
+          // Manually create a link in the ledger to simulate an already-live link.
+          const ledger = syncEngine['ledger'];
+          const link = await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+            delegateDid    : 'did:example:old-delegate',
+          });
+          expect(link.delegateDid).toBe('did:example:old-delegate');
+
+          // Set the link as active so hasActiveLinksForDid returns true.
+          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
+          syncEngine['_activeLinks'].set(linkKey, link);
+
+          // Stub removeIdentityFromLiveSync and addIdentityToLiveSync to capture
+          // the ledger state at the time of the hot-swap.
+          let delegateAtRemoveTime: string | undefined;
+          const removeStub = sinon.stub(syncEngine as any, 'removeIdentityFromLiveSync').callsFake(async (): Promise<void> => {
+            // Read the link from the ledger at remove time.
+            const links = await ledger.getLinksForTenant(did);
+            delegateAtRemoveTime = links[0]?.delegateDid;
+          });
+          const addStub = sinon.stub(syncEngine as any, 'addIdentityToLiveSync').resolves();
+
+          await syncEngine.updateIdentityOptions({
+            did,
+            options: { protocols: [], delegateDid: 'did:example:new-delegate' },
+          });
+
+          // The new delegate should have been persisted BEFORE removeIdentityFromLiveSync.
+          expect(delegateAtRemoveTime).toBe('did:example:new-delegate');
+
+          // Verify the ledger was durably updated.
+          const reloadedLinks = await ledger.getLinksForTenant(did);
+          expect(reloadedLinks[0].delegateDid).toBe('did:example:new-delegate');
+
+          expect(removeStub.calledOnce).toBe(true);
+          expect(addStub.calledOnce).toBe(true);
+        });
+
+        it('should persist delegateDid to durable links even when sync is not in live mode', async () => {
+          const did = alice.did.uri;
+
+          await syncEngine.registerIdentity({
+            did,
+            options: { protocols: [], delegateDid: 'did:example:old-delegate' },
+          });
+
+          // Engine is NOT in live mode — _syncMode is undefined.
+          expect(syncEngine['_syncMode']).toBeUndefined();
+
+          // Create a durable link in the ledger to simulate a prior session.
+          const ledger = syncEngine['ledger'];
+          await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+            delegateDid    : 'did:example:old-delegate',
+          });
+
+          // Update options with a new delegate while sync is stopped.
+          await syncEngine.updateIdentityOptions({
+            did,
+            options: { protocols: [], delegateDid: 'did:example:new-delegate' },
+          });
+
+          // The durable link should have the new delegate even though
+          // we never entered live mode.
+          const reloadedLinks = await ledger.getLinksForTenant(did);
+          expect(reloadedLinks[0].delegateDid).toBe('did:example:new-delegate');
+        });
+
+        it('should persist cleared delegateDid (undefined) when delegate is removed', async () => {
+          const did = alice.did.uri;
+
+          await syncEngine.registerIdentity({
+            did,
+            options: { protocols: [], delegateDid: 'did:example:some-delegate' },
+          });
+
+          syncEngine['_syncMode'] = 'live';
+
+          const ledger = syncEngine['ledger'];
+          const link = await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+            delegateDid    : 'did:example:some-delegate',
+          });
+          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
+          syncEngine['_activeLinks'].set(linkKey, link);
+
+          sinon.stub(syncEngine as any, 'removeIdentityFromLiveSync').resolves();
+          sinon.stub(syncEngine as any, 'addIdentityToLiveSync').resolves();
+
+          // Update with no delegate.
+          await syncEngine.updateIdentityOptions({
+            did,
+            options: { protocols: [] },
+          });
+
+          const reloadedLinks = await ledger.getLinksForTenant(did);
+          expect(reloadedLinks[0].delegateDid).toBeUndefined();
+        });
+      });
+
+      // -----------------------------------------------------------------------
+      // Item 2: Late subscription callbacks bail after hot-remove
+      // -----------------------------------------------------------------------
+
+      describe('late callback invalidation after hot-remove', () => {
+
+        it('should not flush pushes when flushPendingPushesForLink fires after hot-remove', async () => {
+          const did = alice.did.uri;
+
+          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          syncEngine['_syncMode'] = 'live';
+
+          const ledger = syncEngine['ledger'];
+          const link = await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+          });
+          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
+          link.status = 'live';
+          syncEngine['_activeLinks'].set(linkKey, link);
+
+          // Manually inject a push runtime to simulate pending pushes.
+          syncEngine['_pushRuntimes'].set(linkKey, {
+            did,
+            dwnUrl     : testDwnUrls[0],
+            entries    : [{ cid: 'cid-1' }],
+            retryCount : 0,
+          });
+
+          // Hot-remove.
+          await syncEngine['removeIdentityFromLiveSync'](did);
+
+          // Try to flush — the guard in flushPendingPushesForLink should bail.
+          const pushStub = sinon.stub(syncEngine as any, 'pushMessages');
+          pushStub.resolves({ succeeded: [], failed: [], permanentlyFailed: [] });
+
+          await syncEngine['flushPendingPushesForLink'](linkKey);
+
+          expect(pushStub.called).toBe(false);
+        });
+
+        it('should abort in-flight flush when link is replaced during pushMessages', async () => {
+          const did = alice.did.uri;
+
+          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          syncEngine['_syncMode'] = 'live';
+
+          const ledger = syncEngine['ledger'];
+          const link = await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+          });
+          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
+          link.status = 'live';
+          syncEngine['_activeLinks'].set(linkKey, link);
+
+          syncEngine['_pushRuntimes'].set(linkKey, {
+            did,
+            dwnUrl     : testDwnUrls[0],
+            entries    : [{ cid: 'cid-1' }],
+            retryCount : 1,
+          });
+
+          // flushPendingPushesForLink calls the imported pushMessages function
+          // directly, not this.pushMessages. Stub the agent.dwn.processRequest
+          // that pushMessages eventually calls, and replace the link mid-flight.
+          const requeueSpy = sinon.spy(syncEngine as any, 'requeueOrReconcile');
+          const processStub = sinon.stub(testHarness.agent.dwn, 'processRequest').callsFake(async () => {
+            // Mid-flight: replace the link with a new object.
+            const replacementLink = { ...link };
+            syncEngine['_activeLinks'].set(linkKey, replacementLink);
+            return {
+              reply: {
+                status : { code: 200 },
+                entry  : { message: { descriptor: { interface: 'Records', method: 'Write' } } },
+              },
+            } as any;
+          });
+
+          // Stub rpc to return a failure so the code path reaches requeueOrReconcile
+          // (if it weren't for the stale check).
+          const rpcStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({ status: { code: 500 } } as any);
+
+          await syncEngine['flushPendingPushesForLink'](linkKey);
+
+          // requeueOrReconcile should NOT have been called — the isFlushStale
+          // check after pushMessages detected the replacement and bailed.
+          expect(requeueSpy.called).toBe(false);
+
+          processStub.restore();
+          rpcStub.restore();
+        });
+
+        it('should not start reconcile when a stale reconcile timer fires after hot-remove', async () => {
+          const did = alice.did.uri;
+
+          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          syncEngine['_syncMode'] = 'live';
+
+          const ledger = syncEngine['ledger'];
+          const link = await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+          });
+          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
+          link.status = 'live';
+          syncEngine['_activeLinks'].set(linkKey, link);
+
+          // Schedule a reconcile (sets a timer).
+          const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+          syncEngine['scheduleReconcile'](linkKey, 500);
+          expect(syncEngine['_reconcileTimers'].has(linkKey)).toBe(true);
+
+          // Hot-remove clears the timer.
+          await syncEngine['removeIdentityFromLiveSync'](did);
+          expect(syncEngine['_reconcileTimers'].has(linkKey)).toBe(false);
+
+          // Even if a stale timer fires, the _activeLinks guard prevents execution.
+          const reconcileSpy = sinon.spy(syncEngine as any, 'reconcileLink');
+
+          const staleGeneration = syncEngine['_engineGeneration'];
+          clock.setTimeout((): void => {
+            if (syncEngine['_engineGeneration'] !== staleGeneration) { return; }
+            if (!syncEngine['_activeLinks'].has(linkKey)) { return; }
+            syncEngine['reconcileLink'](linkKey);
+          }, 500);
+
+          await clock.tickAsync(600);
+
+          expect(reconcileSpy.called).toBe(false);
+
+          clock.restore();
+        });
+      });
+
+      // -----------------------------------------------------------------------
+      // Item 3: Same link key stale repair/reconcile isolation
+      // -----------------------------------------------------------------------
+
+      describe('same link key — stale repair and reconcile isolation', () => {
+
+        it('should detect stale link via object identity after remove and re-add', async () => {
+          const did = alice.did.uri;
+
+          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          syncEngine['_syncMode'] = 'live';
+
+          const ledger = syncEngine['ledger'];
+          const originalLink = await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+          });
+          const linkKey = `${did}^${testDwnUrls[0]}^${originalLink.scopeId}`;
+          originalLink.status = 'repairing';
+          syncEngine['_activeLinks'].set(linkKey, originalLink);
+
+          // Reload from ledger — same data, different object identity.
+          const replacementLink = await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+          });
+          expect(replacementLink).not.toBe(originalLink);
+
+          // Replace the link in _activeLinks.
+          syncEngine['_activeLinks'].set(linkKey, replacementLink);
+
+          // The original link is stale; the replacement is not.
+          expect(syncEngine['_activeLinks'].get(linkKey) !== originalLink).toBe(true);
+          expect(syncEngine['_activeLinks'].get(linkKey) !== replacementLink).toBe(false);
+        });
+
+        it('should bail old reconcile when the same link key is re-added during in-flight reconcile', async () => {
+          const did = alice.did.uri;
+
+          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          syncEngine['_syncMode'] = 'live';
+
+          const ledger = syncEngine['ledger'];
+          const originalLink = await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+          });
+          const linkKey = `${did}^${testDwnUrls[0]}^${originalLink.scopeId}`;
+          originalLink.status = 'live';
+          originalLink.needsReconcile = true;
+          syncEngine['_activeLinks'].set(linkKey, originalLink);
+
+          // Stub createLinkReconciler to capture the shouldContinue callback.
+          let capturedShouldContinue: (() => boolean) | undefined;
+          sinon.stub(syncEngine as any, 'createLinkReconciler').callsFake((sc?: () => boolean) => {
+            capturedShouldContinue = sc;
+            return {
+              reconcile: async (): Promise<{ aborted: boolean; converged: boolean }> => {
+                // Simulate: during reconciliation, the link gets removed and re-added.
+                const newLink = { ...originalLink };
+                syncEngine['_activeLinks'].set(linkKey, newLink);
+
+                // shouldContinue should now return false.
+                if (capturedShouldContinue && !capturedShouldContinue()) {
+                  return { aborted: true, converged: false };
+                }
+                return { aborted: false, converged: true };
+              },
+            };
+          });
+
+          await syncEngine['doReconcileLink'](linkKey);
+
+          expect(capturedShouldContinue).toBeDefined();
+          // The old reconcile aborted — needsReconcile was NOT cleared.
+          const currentLink = syncEngine['_activeLinks'].get(linkKey)!;
+          expect(currentLink.needsReconcile).toBe(true);
+        });
+
+        it('should bail old repair when the same link key is re-added during in-flight repair', async () => {
+          const did = alice.did.uri;
+
+          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          syncEngine['_syncMode'] = 'live';
+
+          const ledger = syncEngine['ledger'];
+          const link = await ledger.getOrCreateLink({
+            tenantDid      : did,
+            remoteEndpoint : testDwnUrls[0],
+            scope          : { kind: 'full' },
+          });
+          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
+          link.status = 'repairing';
+          syncEngine['_activeLinks'].set(linkKey, link);
+
+          // Stub closeLinkSubscriptions.
+          sinon.stub(syncEngine as any, 'closeLinkSubscriptions').resolves();
+
+          let capturedShouldContinue: (() => boolean) | undefined;
+          sinon.stub(syncEngine as any, 'createLinkReconciler').callsFake((sc?: () => boolean) => {
+            capturedShouldContinue = sc;
+            return {
+              reconcile: async (): Promise<{ aborted: boolean }> => {
+                // Mid-repair: replace the link in _activeLinks.
+                const newLink = { ...link };
+                syncEngine['_activeLinks'].set(linkKey, newLink);
+
+                if (capturedShouldContinue && !capturedShouldContinue()) {
+                  return { aborted: true };
+                }
+                return { aborted: false };
+              },
+            };
+          });
+
+          await syncEngine['doRepairLink'](linkKey);
+
+          expect(capturedShouldContinue).toBeDefined();
+          // Repair aborted — subscriptions were NOT reopened.
+          expect(syncEngine['_activeLinks'].has(linkKey)).toBe(true);
+          expect(syncEngine['_activeLinks'].get(linkKey)).not.toBe(link);
+        });
+      });
+    });
   });
 
   describe('topologicalSort', () => {
@@ -3161,4 +3558,5 @@ describe('SyncEngineLevel', () => {
       syncSpy.restore();
     });
   });
+
 });
