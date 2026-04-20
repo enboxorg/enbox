@@ -178,6 +178,86 @@ describe('importFromPhrase', () => {
 
     expect(registrationSucceeded).toBe(true);
   });
+
+  test('registers sync with derived scope for delegate identity on first launch', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const syncCalls: any[] = [];
+
+    const grantData = JSON.stringify({
+      dateExpires : '2040-06-25T16:09:16.693356Z',
+      scope       : { interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' },
+      delegated   : true,
+    });
+    const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const grantEntry = {
+      recordId    : 'grant-1',
+      contextId   : 'grant-1',
+      encodedData : encoded,
+      descriptor  : {
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : 'https://identity.foundation/dwn/permissions',
+        protocolPath : 'grant',
+        recipient    : 'did:dht:external',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+        dataFormat   : 'application/json',
+        dataCid      : 'bafytest',
+        dataSize     : 100,
+      },
+      authorization: { signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner1#sig' })) }] } },
+    };
+
+    const delegateIdentity = createMockIdentity({
+      metadata: { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+    });
+
+    const agent = createMockAgent({
+      firstLaunch          : async () => true,
+      identityList         : async () => [],
+      identityCreate       : async () => delegateIdentity,
+      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+      processDwnRequest    : async () => ({
+        reply: { status: { code: 200 }, entries: [grantEntry] },
+      }),
+    });
+
+    await importFromPhrase(
+      { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      { recoveryPhrase: 'phrase', password: 'pass' },
+    );
+
+    expect(syncCalls).toHaveLength(1);
+    expect(syncCalls[0].options.protocols).toEqual(['https://proto.example/chat']);
+    expect(syncCalls[0].options.delegateDid).toBe('did:dht:testuser123');
+  });
+
+  test('skips sync registration for delegate with zero grants', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const syncCalls: any[] = [];
+
+    const delegateIdentity = createMockIdentity({
+      metadata: { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+    });
+
+    const agent = createMockAgent({
+      firstLaunch          : async () => true,
+      identityList         : async () => [],
+      identityCreate       : async () => delegateIdentity,
+      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+      processDwnRequest    : async () => ({
+        reply: { status: { code: 200 }, entries: [] },
+      }),
+    });
+
+    await importFromPhrase(
+      { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      { recoveryPhrase: 'phrase', password: 'pass' },
+    );
+
+    expect(syncCalls).toHaveLength(0);
+  });
 });
 
 describe('importFromPortable', () => {

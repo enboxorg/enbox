@@ -734,6 +734,89 @@ describe('restoreSession', () => {
       expect(unregisterCalls[0]).toBe('did:dht:external');
     });
 
+    test('sets syncRepairFailed when registerIdentity throws non-registration error', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const grantData = JSON.stringify({
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        scope       : { interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' },
+        delegated   : true,
+      });
+      const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const grantEntry = {
+        recordId    : 'grant-1',
+        contextId   : 'grant-1',
+        encodedData : encoded,
+        descriptor  : {
+          interface    : 'Records',
+          method       : 'Write',
+          protocol     : 'https://identity.foundation/dwn/permissions',
+          protocolPath : 'grant',
+          recipient    : 'did:dht:external',
+          dateCreated  : '2025-01-01T00:00:00.000000Z',
+          dataFormat   : 'application/json',
+          dataCid      : 'bafytest',
+          dataSize     : 100,
+        },
+        authorization: { signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner1#sig' })) }] } },
+      };
+
+      const syncStartCalls: any[] = [];
+      const unregisterCalls: string[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async () => { throw new Error('database write error'); },
+        syncUnregisterIdentity    : async (did) => { unregisterCalls.push(did); },
+        syncStartSync             : async (params) => { syncStartCalls.push(params); },
+        processDwnRequest         : async () => ({
+          reply: { status: { code: 200 }, entries: [grantEntry] },
+        }),
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(syncStartCalls).toHaveLength(0);
+      expect(unregisterCalls).toHaveLength(1);
+    });
+
+    test('sets syncRepairFailed when zero-grant unregister throws I/O error', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const syncStartCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncUnregisterIdentity    : async () => { throw new Error('LEVEL_IO_ERROR'); },
+        syncStartSync             : async (params) => { syncStartCalls.push(params); },
+        processDwnRequest         : async () => ({
+          reply: { status: { code: 200 }, entries: [] },
+        }),
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(syncStartCalls).toHaveLength(0);
+    });
+
     test('repairs delegate registration even when sync is off', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
