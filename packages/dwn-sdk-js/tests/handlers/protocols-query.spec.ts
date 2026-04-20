@@ -438,15 +438,16 @@ export function testProtocolsQueryHandler(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
-          // Set up timestamps
+          // Use an explicit offset instead of Time.minimalSleep() to avoid
+          // flaky failures when wall-clock timestamps collide on fast CI runners.
           const protocolsQueryTimestamp = Time.getCurrentTimestamp();
-          await Time.minimalSleep(); // to ensure granted created will be after the query timestamp
+          const dateGranted = Time.createOffsetTimestamp({ seconds: 1 }, protocolsQueryTimestamp);
 
           // Alice gives Bob a permission grant with scope ProtocolsQuery
           const permissionGrant = await PermissionsProtocol.createGrant({
             signer      : Jws.createSigner(alice),
             grantedTo   : bob.did,
-            dateGranted : Time.getCurrentTimestamp(),
+            dateGranted,
             dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
             scope       : { interface: DwnInterfaceName.Protocols, method: DwnMethodName.Query }
           });
