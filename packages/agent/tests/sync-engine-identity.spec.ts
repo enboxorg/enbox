@@ -414,17 +414,17 @@ describe('SyncEngineLevel — identity management', () => {
       expect(hotAddStub.firstCall.args[1]).toEqual({ protocols: ['https://proto.example'] });
     });
 
-    it('should pass default options to addIdentityToLiveSync when none provided', async () => {
+    it('should pass options to addIdentityToLiveSync when protocols is all', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncMode = 'live';
       (engine as any)._liveSubscriptions = [{ linkKey: 'existing', did: 'did:example:existing', dwnUrl: 'https://dwn.example.com', close: sinon.stub() }];
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
 
-      await engine.registerIdentity({ did: 'did:example:hotadd-default' });
+      await engine.registerIdentity({ did: 'did:example:hotadd-default', options: { protocols: 'all' } });
 
       expect(hotAddStub.calledOnce).toBe(true);
-      expect(hotAddStub.firstCall.args[1]).toEqual({ protocols: [] });
+      expect(hotAddStub.firstCall.args[1]).toEqual({ protocols: 'all' });
     });
 
     it('should not call addIdentityToLiveSync when sync mode is poll', async () => {
@@ -434,7 +434,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
 
-      await engine.registerIdentity({ did: 'did:example:nohot-poll' });
+      await engine.registerIdentity({ did: 'did:example:nohot-poll', options: { protocols: 'all' } });
 
       expect(hotAddStub.called).toBe(false);
     });
@@ -446,7 +446,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
 
-      await engine.registerIdentity({ did: 'did:example:hot-after-removal' });
+      await engine.registerIdentity({ did: 'did:example:hot-after-removal', options: { protocols: 'all' } });
 
       // Hot-add should fire because _syncMode is 'live', even with zero
       // existing subscriptions. This handles the case where the last
@@ -462,20 +462,20 @@ describe('SyncEngineLevel — identity management', () => {
       sinon.stub(engine as any, 'addIdentityToLiveSync').rejects(new Error('hot-add boom'));
 
       await expect(
-        engine.registerIdentity({ did: 'did:example:hotadd-fail' })
+        engine.registerIdentity({ did: 'did:example:hotadd-fail', options: { protocols: 'all' } })
       ).rejects.toThrow('hot-add boom');
 
       // The identity should still be persisted because the put happens before hot-add.
       const options = await engine.getIdentityOptions('did:example:hotadd-fail');
       expect(options).toBeDefined();
-      expect(options!.protocols).toEqual([]);
+      expect(options!.protocols).toBe('all');
     });
 
     // --- unregisterIdentity hot-remove triggers ---
 
     it('should call removeIdentityFromLiveSync when unregistering during active live sync', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:hotrem1' });
+      await engine.registerIdentity({ did: 'did:example:hotrem1', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'live';
       (engine as any)._liveSubscriptions = [{ linkKey: 'existing', did: 'did:example:existing', dwnUrl: 'https://dwn.example.com', close: sinon.stub() }];
@@ -490,7 +490,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not call removeIdentityFromLiveSync when sync mode is poll', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:nohotrem-poll' });
+      await engine.registerIdentity({ did: 'did:example:nohotrem-poll', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'poll';
       (engine as any)._liveSubscriptions = [];
@@ -879,7 +879,7 @@ describe('SyncEngineLevel — identity management', () => {
   describe('updateIdentityOptions — live subscription refresh', () => {
     it('should hot-remove and hot-add when updating options during live sync', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:update1' });
+      await engine.registerIdentity({ did: 'did:example:update1', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'live';
       (engine as any)._activeLinks.set('did:example:update1^https://dwn.example.com', { tenantDid: 'did:example:update1' });
@@ -899,7 +899,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not hot-remove/add when updating options while sync is not live', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:update-poll' });
+      await engine.registerIdentity({ did: 'did:example:update-poll', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'poll';
 
@@ -914,7 +914,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not hot-remove/add when identity has no active links (not yet syncing)', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:update-nolinks' });
+      await engine.registerIdentity({ did: 'did:example:update-nolinks', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'live';
       // No active links for this DID
@@ -930,7 +930,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should persist new options even if not in live mode', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:persist-opts' });
+      await engine.registerIdentity({ did: 'did:example:persist-opts', options: { protocols: 'all' } });
 
       const newOptions = { protocols: ['https://persisted.example'] };
       await engine.updateIdentityOptions({ did: 'did:example:persist-opts', options: newOptions });
@@ -955,7 +955,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
 
-      await engine.registerIdentity({ did: 'did:example:after-last-removed' });
+      await engine.registerIdentity({ did: 'did:example:after-last-removed', options: { protocols: 'all' } });
 
       // Hot-add should fire because _syncMode is 'live'.
       expect(hotAddStub.calledOnce).toBe(true);
@@ -988,7 +988,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
 
-      await engine.registerIdentity({ did: 'did:example:after-stop' });
+      await engine.registerIdentity({ did: 'did:example:after-stop', options: { protocols: 'all' } });
 
       // _syncMode should have been reset by stopSync, so no hot-add.
       expect(hotAddStub.called).toBe(false);
@@ -996,7 +996,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not hot-remove when sync was explicitly stopped', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:stop-then-unreg' });
+      await engine.registerIdentity({ did: 'did:example:stop-then-unreg', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'live';
       await engine.stopSync();

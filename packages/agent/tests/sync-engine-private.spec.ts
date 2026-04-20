@@ -376,9 +376,8 @@ describe('SyncEngineLevel — private methods', () => {
       await identities.put('did:example:broken', 'not-valid-json');
 
       const targets = await (engine as any).getSyncTargets();
-      // Should fall back to { protocols: 'all' } and produce one target
-      expect(targets).toHaveLength(1);
-      expect(targets[0].did).toBe('did:example:broken');
+      // Corrupt entries are skipped rather than falling back to global sync.
+      expect(targets).toHaveLength(0);
     });
   });
 

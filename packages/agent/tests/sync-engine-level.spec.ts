@@ -2947,7 +2947,7 @@ describe('SyncEngineLevel', () => {
           // Register the identity.
           await syncEngine.registerIdentity({
             did,
-            options: { protocols: [], delegateDid: 'did:example:old-delegate' },
+            options: { protocols: 'all', delegateDid: 'did:example:old-delegate' },
           });
 
           // Put the engine in live mode but stub out the subscription methods to
@@ -2980,7 +2980,7 @@ describe('SyncEngineLevel', () => {
 
           await syncEngine.updateIdentityOptions({
             did,
-            options: { protocols: [], delegateDid: 'did:example:new-delegate' },
+            options: { protocols: 'all', delegateDid: 'did:example:new-delegate' },
           });
 
           // The new delegate should have been persisted BEFORE removeIdentityFromLiveSync.
@@ -2999,7 +2999,7 @@ describe('SyncEngineLevel', () => {
 
           await syncEngine.registerIdentity({
             did,
-            options: { protocols: [], delegateDid: 'did:example:old-delegate' },
+            options: { protocols: 'all', delegateDid: 'did:example:old-delegate' },
           });
 
           // Engine is NOT in live mode — _syncMode is undefined.
@@ -3017,7 +3017,7 @@ describe('SyncEngineLevel', () => {
           // Update options with a new delegate while sync is stopped.
           await syncEngine.updateIdentityOptions({
             did,
-            options: { protocols: [], delegateDid: 'did:example:new-delegate' },
+            options: { protocols: 'all', delegateDid: 'did:example:new-delegate' },
           });
 
           // The durable link should have the new delegate even though
@@ -3031,7 +3031,7 @@ describe('SyncEngineLevel', () => {
 
           await syncEngine.registerIdentity({
             did,
-            options: { protocols: [], delegateDid: 'did:example:some-delegate' },
+            options: { protocols: 'all', delegateDid: 'did:example:some-delegate' },
           });
 
           syncEngine['_syncMode'] = 'live';
@@ -3052,7 +3052,7 @@ describe('SyncEngineLevel', () => {
           // Update with no delegate.
           await syncEngine.updateIdentityOptions({
             did,
-            options: { protocols: [] },
+            options: { protocols: 'all' },
           });
 
           const reloadedLinks = await ledger.getLinksForTenant(did);
@@ -3069,7 +3069,7 @@ describe('SyncEngineLevel', () => {
         it('should not flush pushes when flushPendingPushesForLink fires after hot-remove', async () => {
           const did = alice.did.uri;
 
-          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
           syncEngine['_syncMode'] = 'live';
 
           const ledger = syncEngine['ledger'];
@@ -3105,7 +3105,7 @@ describe('SyncEngineLevel', () => {
         it('should abort in-flight flush when link is replaced during pushMessages', async () => {
           const did = alice.did.uri;
 
-          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
           syncEngine['_syncMode'] = 'live';
 
           const ledger = syncEngine['ledger'];
@@ -3158,7 +3158,7 @@ describe('SyncEngineLevel', () => {
         it('should not start reconcile when a stale reconcile timer fires after hot-remove', async () => {
           const did = alice.did.uri;
 
-          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
           syncEngine['_syncMode'] = 'live';
 
           const ledger = syncEngine['ledger'];
@@ -3207,7 +3207,7 @@ describe('SyncEngineLevel', () => {
         it('should detect stale link via object identity after remove and re-add', async () => {
           const did = alice.did.uri;
 
-          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
           syncEngine['_syncMode'] = 'live';
 
           const ledger = syncEngine['ledger'];
@@ -3239,7 +3239,7 @@ describe('SyncEngineLevel', () => {
         it('should bail old reconcile when the same link key is re-added during in-flight reconcile', async () => {
           const did = alice.did.uri;
 
-          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
           syncEngine['_syncMode'] = 'live';
 
           const ledger = syncEngine['ledger'];
@@ -3283,7 +3283,7 @@ describe('SyncEngineLevel', () => {
         it('should bail old repair when the same link key is re-added during in-flight repair', async () => {
           const did = alice.did.uri;
 
-          await syncEngine.registerIdentity({ did, options: { protocols: [] } });
+          await syncEngine.registerIdentity({ did, options: { protocols: 'all' } });
           syncEngine['_syncMode'] = 'live';
 
           const ledger = syncEngine['ledger'];

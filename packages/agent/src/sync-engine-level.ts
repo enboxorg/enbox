@@ -259,6 +259,19 @@ export class SyncEngineLevel implements SyncEngine {
   /** Maximum entries in the echo-loop suppression cache. */
   private static readonly ECHO_SUPPRESS_MAX_ENTRIES = 10_000;
 
+  /** Validate `SyncIdentityOptions` for `registerIdentity` and `updateIdentityOptions`. */
+  private static validateSyncIdentityOptions(options: SyncIdentityOptions): void {
+    if (!options || !('protocols' in options)) {
+      throw new Error('SyncEngineLevel: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.');
+    }
+    if (options.protocols !== 'all' && !Array.isArray(options.protocols)) {
+      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty string array.');
+    }
+    if (Array.isArray(options.protocols) && options.protocols.length === 0) {
+      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.');
+    }
+  }
+
   /**
    * Cached sync targets result from the last {@link getSyncTargets} call.
    * Invalidated on identity registration/unregistration/update.
@@ -399,15 +412,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async registerIdentity({ did, options }: { did: string; options: SyncIdentityOptions }): Promise<void> {
-    if (!options || !('protocols' in options)) {
-      throw new Error('SyncEngineLevel: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.');
-    }
-    if (options.protocols !== 'all' && !Array.isArray(options.protocols)) {
-      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty string array.');
-    }
-    if (Array.isArray(options.protocols) && options.protocols.length === 0) {
-      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.');
-    }
+    SyncEngineLevel.validateSyncIdentityOptions(options);
 
     const registeredIdentities = this._db.sublevel('registeredIdentities');
 
@@ -462,15 +467,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async updateIdentityOptions({ did, options }: { did: string, options: SyncIdentityOptions }): Promise<void> {
-    if (!options || !('protocols' in options)) {
-      throw new Error('SyncEngineLevel: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.');
-    }
-    if (options.protocols !== 'all' && !Array.isArray(options.protocols)) {
-      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty string array.');
-    }
-    if (Array.isArray(options.protocols) && options.protocols.length === 0) {
-      throw new Error('SyncEngineLevel: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.');
-    }
+    SyncEngineLevel.validateSyncIdentityOptions(options);
 
     const registeredIdentities = this._db.sublevel('registeredIdentities');
     const existingOptions = await this.getIdentityOptions(did);
