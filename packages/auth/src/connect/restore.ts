@@ -14,15 +14,13 @@ import type { StorageAdapter } from '../types.js';
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
-import type { DwnDataEncodedRecordsWriteMessage } from '@enbox/agent';
-
 import { Convert } from '@enbox/common';
-import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
-import { ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
+import { deriveActiveSyncScope, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Decrypt a stored key blob.
@@ -227,28 +225,48 @@ export async function restoreSession(
   // which causes the sync engine to attempt syncing the permissions protocol
   // and fail with "No permissions found for MessagesSync".
   // Derive the correct protocol list from stored grants and update.
-  if (delegateDid && ctx.defaultSync !== 'off') {
+  // Always repair regardless of sync state — a stale registration persists
+  // on disk and would take effect if sync is later enabled.
+  let syncRepairFailed = false;
+  if (delegateDid) {
     try {
-      const protocols = await deriveProtocolsFromGrants(userAgent, delegateDid);
-      const options = { delegateDid, protocols };
-      try {
-        await userAgent.sync.registerIdentity({ did: connectedDid, options });
-      } catch (regError: unknown) {
-        const msg = regError instanceof Error ? regError.message : '';
-        if (msg.includes('already registered')) {
-          await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
+      const protocols = await deriveActiveSyncScope(userAgent, delegateDid);
+      if (protocols === 'all' || protocols.length > 0) {
+        const options = {
+          delegateDid,
+          protocols: protocols === 'all' ? 'all' as const : protocols as [string, ...string[]],
+        };
+        try {
+          await userAgent.sync.registerIdentity({ did: connectedDid, options });
+        } catch (regError: unknown) {
+          const msg = regError instanceof Error ? regError.message : '';
+          if (msg.includes('already registered')) {
+            await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
+          } else {
+            throw regError;
+          }
         }
-        // Other errors are ignored — sync will still work with existing registration.
+      } else {
+        // Zero grants — remove any stale sync registration so revoked protocols stop syncing.
+        try {
+          await userAgent.sync.unregisterIdentity(connectedDid);
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : '';
+          if (!msg.includes('is not registered')) { throw error; }
+        }
       }
     } catch {
-      // Best-effort — don't block restore if grant query fails.
+      // Grant query or registration repair failed — don't block restore,
+      // but don't let a stale registration remain usable.
+      syncRepairFailed = true;
+      // Best-effort: remove any existing registration so a later manual
+      // startSync() cannot use stale scope for this connected DID.
+      try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* already gone or store error */ }
     }
   }
 
-  // Start sync after the registration is correct.
-  await startSyncIfEnabled(userAgent, ctx.defaultSync);
-
-  // Restore delegate decryption keys and context keys.
+  // Restore delegate decryption/context keys BEFORE starting sync so that
+  // the first sync cycle can decrypt encrypted records.
   //
   // Keys are loaded from the vault-backed SecretStore (preferred). When
   // the SecretStore is empty, we fall back to the legacy StorageAdapter
@@ -301,6 +319,12 @@ export async function restoreSession(
         await userAgent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, bytes);
       } catch { /* best effort — keys will be re-derived on next connect */ }
     };
+  }
+
+  // Start sync only if the registration repair succeeded (or was not needed).
+  // If repair failed, don't start sync with potentially stale scope.
+  if (!syncRepairFailed) {
+    await startSyncIfEnabled(userAgent, ctx.defaultSync);
   }
 
   // Persist session info, build AuthSession, and emit lifecycle events.
@@ -571,32 +595,4 @@ export async function retryOrphanedRevocations(
  * permissions protocol itself (permission records are already included
  * in each protocol's sync stream via `constructAdditionalMessageFilter`).
  */
-async function deriveProtocolsFromGrants(
-  userAgent: EnboxUserAgent,
-  delegateDid: string,
-): Promise<string[]> {
-  const response = await userAgent.processDwnRequest({
-    author        : delegateDid,
-    target        : delegateDid,
-    messageType   : DwnInterface.RecordsQuery,
-    messageParams : {
-      filter: {
-        protocol     : PermissionsProtocol.uri,
-        protocolPath : PermissionsProtocol.grantPath,
-      },
-    },
-  });
 
-  const protocols: string[] = [];
-  if (response.reply.status.code === 200 && response.reply.entries) {
-    for (const entry of response.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
-      const grant = DwnPermissionGrant.parse(entry);
-      const scopeProtocol = grant.scope.protocol;
-      if (scopeProtocol && scopeProtocol !== PermissionsProtocol.uri) {
-        protocols.push(scopeProtocol);
-      }
-    }
-  }
-
-  return [...new Set(protocols)];
-}

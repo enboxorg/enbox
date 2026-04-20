@@ -514,7 +514,7 @@ export function testPermissions(): void {
           description : 'Requesting to subscribe from Alice test-context',
           scope       : {
             interface : DwnInterfaceName.Messages,
-            method    : DwnMethodName.Subscribe,
+            method    : DwnMethodName.Read,
             protocol  : 'https://example.com/protocol/test',
           }
         });

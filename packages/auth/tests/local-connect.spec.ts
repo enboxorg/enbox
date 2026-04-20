@@ -143,7 +143,7 @@ describe('localConnect', () => {
 
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].did).toBe('did:dht:testuser123');
-    expect(syncCalls[0].options.protocols).toEqual([]);
+    expect(syncCalls[0].options.protocols).toBe('all');
   });
 
   test('skips sync registration when sync is off', async () => {

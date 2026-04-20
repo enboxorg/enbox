@@ -24,14 +24,14 @@ describe('SyncEngineLevel — identity management', () => {
   });
 
   describe('registerIdentity', () => {
-    it('should register an identity with default options', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:register1' });
+    it('should register an identity with protocols: all', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:register1', options: { protocols: 'all' } });
       const options = await syncEngine.getIdentityOptions('did:example:register1');
       expect(options).toBeDefined();
-      expect(options!.protocols).toEqual([]);
+      expect(options!.protocols).toBe('all');
     });
 
-    it('should register an identity with custom options', async () => {
+    it('should register an identity with specific protocols and delegateDid', async () => {
       await syncEngine.registerIdentity({
         did     : 'did:example:register2',
         options : { protocols: ['https://example.com/protocol1'], delegateDid: 'did:example:delegate' },
@@ -43,16 +43,16 @@ describe('SyncEngineLevel — identity management', () => {
     });
 
     it('should throw when registering an already registered identity', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:dup' });
+      await syncEngine.registerIdentity({ did: 'did:example:dup', options: { protocols: 'all' } });
       await expect(
-        syncEngine.registerIdentity({ did: 'did:example:dup' })
+        syncEngine.registerIdentity({ did: 'did:example:dup', options: { protocols: 'all' } })
       ).rejects.toThrow('is already registered');
     });
   });
 
   describe('unregisterIdentity', () => {
     it('should unregister a registered identity', async () => {
-      await syncEngine.registerIdentity({ did: 'did:example:unreg1' });
+      await syncEngine.registerIdentity({ did: 'did:example:unreg1', options: { protocols: 'all' } });
       await syncEngine.unregisterIdentity('did:example:unreg1');
       const options = await syncEngine.getIdentityOptions('did:example:unreg1');
       expect(options).toBeUndefined();
@@ -69,6 +69,13 @@ describe('SyncEngineLevel — identity management', () => {
     it('should return undefined for a non-registered identity', async () => {
       const options = await syncEngine.getIdentityOptions('did:example:unknown');
       expect(options).toBeUndefined();
+    });
+
+    it('should not normalize non-empty protocol arrays', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:specific', options: { protocols: ['https://proto.example'] } });
+      const options = await syncEngine.getIdentityOptions('did:example:specific');
+      expect(options).toBeDefined();
+      expect(options!.protocols).toEqual(['https://proto.example']);
     });
 
     it('should throw on unexpected Level errors', async () => {
@@ -99,9 +106,202 @@ describe('SyncEngineLevel — identity management', () => {
       await expect(
         syncEngine.updateIdentityOptions({
           did     : 'did:example:nonexistent',
-          options : { protocols: [] },
+          options : { protocols: 'all' },
         })
       ).rejects.toThrow('is not registered');
+    });
+
+    it('should reject an empty protocols array', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:upd-empty', options: { protocols: ['old'] } });
+      await expect(
+        syncEngine.updateIdentityOptions({
+          did     : 'did:example:upd-empty',
+          options : { protocols: [] } as any,
+        })
+      ).rejects.toThrow('empty array is ambiguous');
+    });
+
+    it('should reject when options is missing entirely (JS caller)', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:upd-no-opts', options: { protocols: ['old'] } });
+      await expect(
+        (syncEngine as any).updateIdentityOptions({ did: 'did:example:upd-no-opts' })
+      ).rejects.toThrow('options.protocols is required');
+    });
+  });
+
+  describe('explicit protocol scope', () => {
+    it('should persist protocols: all and retrieve it as the string all', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:scope-all', options: { protocols: 'all' } });
+      const options = await syncEngine.getIdentityOptions('did:example:scope-all');
+      expect(options).toBeDefined();
+      expect(options!.protocols).toBe('all');
+      expect(typeof options!.protocols).toBe('string');
+    });
+
+    it('should persist a specific protocol list and retrieve it as an array', async () => {
+      const protos = ['https://proto.example.com/chat/1.0', 'https://proto.example.com/notes/1.0'];
+      await syncEngine.registerIdentity({ did: 'did:example:scope-list', options: { protocols: protos } });
+      const options = await syncEngine.getIdentityOptions('did:example:scope-list');
+      expect(options).toBeDefined();
+      expect(Array.isArray(options!.protocols)).toBe(true);
+      expect(options!.protocols).toEqual(protos);
+    });
+
+    it('should reject an empty protocols array at registration time', async () => {
+      await expect(
+        syncEngine.registerIdentity({ did: 'did:example:scope-empty', options: { protocols: [] } })
+      ).rejects.toThrow('empty array is ambiguous');
+    });
+
+    it('should reject when options is missing entirely (JS caller)', async () => {
+      await expect(
+        (syncEngine as any).registerIdentity({ did: 'did:example:no-opts' })
+      ).rejects.toThrow('options.protocols is required');
+    });
+
+    it('should reject non-array non-all protocols value', async () => {
+      await expect(
+        (syncEngine as any).registerIdentity({ did: 'did:example:bad', options: { protocols: 'foo' } })
+      ).rejects.toThrow('must be \'all\' or a non-empty string array');
+    });
+
+    it('should reject undefined protocols', async () => {
+      await expect(
+        (syncEngine as any).registerIdentity({ did: 'did:example:undef', options: { protocols: undefined } })
+      ).rejects.toThrow('must be \'all\' or a non-empty string array');
+    });
+
+    it('should update from protocols: all to a specific list', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:scope-switch', options: { protocols: 'all' } });
+      await syncEngine.updateIdentityOptions({
+        did     : 'did:example:scope-switch',
+        options : { protocols: ['https://proto.example.com/notes/1.0'] },
+      });
+      const options = await syncEngine.getIdentityOptions('did:example:scope-switch');
+      expect(options!.protocols).toEqual(['https://proto.example.com/notes/1.0']);
+    });
+
+    it('should update from a specific list to protocols: all', async () => {
+      await syncEngine.registerIdentity({
+        did     : 'did:example:scope-widen',
+        options : { protocols: ['https://proto.example.com/notes/1.0'] },
+      });
+      await syncEngine.updateIdentityOptions({
+        did     : 'did:example:scope-widen',
+        options : { protocols: 'all' },
+      });
+      const options = await syncEngine.getIdentityOptions('did:example:scope-widen');
+      expect(options!.protocols).toBe('all');
+    });
+  });
+
+  describe('getSyncTargets — protocol scope handling', () => {
+    it('should produce one unscoped target per URL when protocols is all', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn1.example.com', 'https://dwn2.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      await engine.registerIdentity({ did: 'did:example:all-protos', options: { protocols: 'all' } });
+      const targets = await (engine as any).getSyncTargets();
+
+      expect(targets).toHaveLength(2);
+      expect(targets[0].protocol).toBeUndefined();
+      expect(targets[1].protocol).toBeUndefined();
+      expect(targets[0].dwnUrl).toBe('https://dwn1.example.com');
+      expect(targets[1].dwnUrl).toBe('https://dwn2.example.com');
+    });
+
+    it('should produce one target per protocol per URL when protocols is a list', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      await engine.registerIdentity({
+        did     : 'did:example:scoped',
+        options : { protocols: ['https://proto1.example.com', 'https://proto2.example.com'] },
+      });
+      const targets = await (engine as any).getSyncTargets();
+
+      expect(targets).toHaveLength(2);
+      expect(targets[0].protocol).toBe('https://proto1.example.com');
+      expect(targets[1].protocol).toBe('https://proto2.example.com');
+    });
+
+    it('should skip identity when stored JSON is corrupt', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      // Write corrupt JSON directly to the sublevel.
+      const identities = db.sublevel('registeredIdentities');
+      await identities.put('did:example:corrupt', '}{not-json');
+
+      const warnStub = sinon.stub(console, 'warn');
+      const targets = await (engine as any).getSyncTargets();
+
+      // Corrupt identity is skipped — no targets generated.
+      expect(targets).toHaveLength(0);
+      expect(warnStub.calledOnce).toBe(true);
+      warnStub.restore();
+    });
+
+    it('should include delegateDid in targets from registration options', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      await engine.registerIdentity({
+        did     : 'did:example:delegated',
+        options : { protocols: 'all', delegateDid: 'did:example:delegate' },
+      });
+      const targets = await (engine as any).getSyncTargets();
+
+      expect(targets).toHaveLength(1);
+      expect(targets[0].delegateDid).toBe('did:example:delegate');
+    });
+
+    it('should handle mixed all and scoped registrations', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+        },
+      } as any;
+      const engine = new SyncEngineLevel({ db, agent: mockAgent });
+
+      await engine.registerIdentity({
+        did     : 'did:example:alice',
+        options : { protocols: 'all' },
+      });
+      await engine.registerIdentity({
+        did     : 'did:example:bob',
+        options : { protocols: ['https://proto.example.com/chat/1.0'] },
+      });
+
+      const targets = await (engine as any).getSyncTargets();
+
+      // Alice produces 1 unscoped target, Bob produces 1 scoped target.
+      expect(targets).toHaveLength(2);
+      const aliceTarget = targets.find((t: any) => t.did === 'did:example:alice');
+      const bobTarget = targets.find((t: any) => t.did === 'did:example:bob');
+      expect(aliceTarget!.protocol).toBeUndefined();
+      expect(bobTarget!.protocol).toBe('https://proto.example.com/chat/1.0');
     });
   });
 
@@ -111,7 +311,7 @@ describe('SyncEngineLevel — identity management', () => {
       const mockAgent = { agentDid: 'did:example:agent' } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
-      await engine.registerIdentity({ did: 'did:example:clear1' });
+      await engine.registerIdentity({ did: 'did:example:clear1', options: { protocols: 'all' } });
       expect(await engine.getIdentityOptions('did:example:clear1')).toBeDefined();
 
       await engine.clear();
@@ -214,17 +414,17 @@ describe('SyncEngineLevel — identity management', () => {
       expect(hotAddStub.firstCall.args[1]).toEqual({ protocols: ['https://proto.example'] });
     });
 
-    it('should pass default options to addIdentityToLiveSync when none provided', async () => {
+    it('should pass options to addIdentityToLiveSync when protocols is all', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._syncMode = 'live';
       (engine as any)._liveSubscriptions = [{ linkKey: 'existing', did: 'did:example:existing', dwnUrl: 'https://dwn.example.com', close: sinon.stub() }];
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
 
-      await engine.registerIdentity({ did: 'did:example:hotadd-default' });
+      await engine.registerIdentity({ did: 'did:example:hotadd-default', options: { protocols: 'all' } });
 
       expect(hotAddStub.calledOnce).toBe(true);
-      expect(hotAddStub.firstCall.args[1]).toEqual({ protocols: [] });
+      expect(hotAddStub.firstCall.args[1]).toEqual({ protocols: 'all' });
     });
 
     it('should not call addIdentityToLiveSync when sync mode is poll', async () => {
@@ -234,7 +434,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
 
-      await engine.registerIdentity({ did: 'did:example:nohot-poll' });
+      await engine.registerIdentity({ did: 'did:example:nohot-poll', options: { protocols: 'all' } });
 
       expect(hotAddStub.called).toBe(false);
     });
@@ -246,7 +446,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
 
-      await engine.registerIdentity({ did: 'did:example:hot-after-removal' });
+      await engine.registerIdentity({ did: 'did:example:hot-after-removal', options: { protocols: 'all' } });
 
       // Hot-add should fire because _syncMode is 'live', even with zero
       // existing subscriptions. This handles the case where the last
@@ -262,20 +462,20 @@ describe('SyncEngineLevel — identity management', () => {
       sinon.stub(engine as any, 'addIdentityToLiveSync').rejects(new Error('hot-add boom'));
 
       await expect(
-        engine.registerIdentity({ did: 'did:example:hotadd-fail' })
+        engine.registerIdentity({ did: 'did:example:hotadd-fail', options: { protocols: 'all' } })
       ).rejects.toThrow('hot-add boom');
 
       // The identity should still be persisted because the put happens before hot-add.
       const options = await engine.getIdentityOptions('did:example:hotadd-fail');
       expect(options).toBeDefined();
-      expect(options!.protocols).toEqual([]);
+      expect(options!.protocols).toBe('all');
     });
 
     // --- unregisterIdentity hot-remove triggers ---
 
     it('should call removeIdentityFromLiveSync when unregistering during active live sync', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:hotrem1' });
+      await engine.registerIdentity({ did: 'did:example:hotrem1', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'live';
       (engine as any)._liveSubscriptions = [{ linkKey: 'existing', did: 'did:example:existing', dwnUrl: 'https://dwn.example.com', close: sinon.stub() }];
@@ -290,7 +490,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not call removeIdentityFromLiveSync when sync mode is poll', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:nohotrem-poll' });
+      await engine.registerIdentity({ did: 'did:example:nohotrem-poll', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'poll';
       (engine as any)._liveSubscriptions = [];
@@ -556,7 +756,7 @@ describe('SyncEngineLevel — identity management', () => {
       expect(ledgerStub.secondCall.args[0].scope).toEqual({ kind: 'protocol', protocol: 'https://proto2.example' });
     });
 
-    it('addIdentityToLiveSync should create a full-tenant link when protocols is empty', async () => {
+    it('addIdentityToLiveSync should create a full-tenant link when protocols is all', async () => {
       const engine = new SyncEngineLevel({ db });
       const mockAgent = {
         dwn: { getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']) },
@@ -581,7 +781,7 @@ describe('SyncEngineLevel — identity management', () => {
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
-      await (engine as any).addIdentityToLiveSync('did:example:full', { protocols: [] });
+      await (engine as any).addIdentityToLiveSync('did:example:full', { protocols: 'all' });
 
       expect(ledgerStub.calledOnce).toBe(true);
       expect(ledgerStub.firstCall.args[0].scope).toEqual({ kind: 'full' });
@@ -617,7 +817,7 @@ describe('SyncEngineLevel — identity management', () => {
       });
       sinon.stub(engine as any, 'openLocalPushSubscription').rejects(new Error('push subscription boom'));
 
-      await (engine as any).addIdentityToLiveSync('did:example:pushfail', { protocols: [] });
+      await (engine as any).addIdentityToLiveSync('did:example:pushfail', { protocols: 'all' });
 
       expect(pullCloseSpy.calledOnce).toBe(true);
       expect((engine as any)._liveSubscriptions).toHaveLength(0);
@@ -679,7 +879,7 @@ describe('SyncEngineLevel — identity management', () => {
   describe('updateIdentityOptions — live subscription refresh', () => {
     it('should hot-remove and hot-add when updating options during live sync', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:update1' });
+      await engine.registerIdentity({ did: 'did:example:update1', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'live';
       (engine as any)._activeLinks.set('did:example:update1^https://dwn.example.com', { tenantDid: 'did:example:update1' });
@@ -699,7 +899,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not hot-remove/add when updating options while sync is not live', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:update-poll' });
+      await engine.registerIdentity({ did: 'did:example:update-poll', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'poll';
 
@@ -714,7 +914,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not hot-remove/add when identity has no active links (not yet syncing)', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:update-nolinks' });
+      await engine.registerIdentity({ did: 'did:example:update-nolinks', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'live';
       // No active links for this DID
@@ -730,7 +930,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should persist new options even if not in live mode', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:persist-opts' });
+      await engine.registerIdentity({ did: 'did:example:persist-opts', options: { protocols: 'all' } });
 
       const newOptions = { protocols: ['https://persisted.example'] };
       await engine.updateIdentityOptions({ did: 'did:example:persist-opts', options: newOptions });
@@ -755,7 +955,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
 
-      await engine.registerIdentity({ did: 'did:example:after-last-removed' });
+      await engine.registerIdentity({ did: 'did:example:after-last-removed', options: { protocols: 'all' } });
 
       // Hot-add should fire because _syncMode is 'live'.
       expect(hotAddStub.calledOnce).toBe(true);
@@ -788,7 +988,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
 
-      await engine.registerIdentity({ did: 'did:example:after-stop' });
+      await engine.registerIdentity({ did: 'did:example:after-stop', options: { protocols: 'all' } });
 
       // _syncMode should have been reset by stopSync, so no hot-add.
       expect(hotAddStub.called).toBe(false);
@@ -796,7 +996,7 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should not hot-remove when sync was explicitly stopped', async () => {
       const engine = new SyncEngineLevel({ db });
-      await engine.registerIdentity({ did: 'did:example:stop-then-unreg' });
+      await engine.registerIdentity({ did: 'did:example:stop-then-unreg', options: { protocols: 'all' } });
 
       (engine as any)._syncMode = 'live';
       await engine.stopSync();

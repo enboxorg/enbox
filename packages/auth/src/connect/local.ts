@@ -96,7 +96,7 @@ export async function localConnect(
   if (isNewIdentity && sync !== 'off') {
     await userAgent.sync.registerIdentity({
       did     : connectedDid,
-      options : { delegateDid, protocols: [] },
+      options : { delegateDid, protocols: 'all' },
     });
   }
 

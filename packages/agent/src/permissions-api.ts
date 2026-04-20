@@ -445,11 +445,15 @@ export class AgentPermissionsApi implements PermissionsApi {
     const scope = grant.scope;
     const scopeMessageType = scope.interface + scope.method;
 
-    // Messages.Read is a unified scope that covers Messages.Read, Messages.Sync, and Messages.Subscribe.
-    // When looking for a MessagesSync or MessagesSubscribe grant, also accept a MessagesRead grant.
-    const isMessagesScopeMatch = scopeMessageType === messageType
-      || (scopeMessageType === DwnInterface.MessagesRead
-        && (messageType === DwnInterface.MessagesSync || messageType === DwnInterface.MessagesSubscribe));
+    // Messages.Read is the only valid Messages scope and covers Read, Sync, and Subscribe operations.
+    // Defensively require method === Read so malformed/legacy grants with method Sync/Subscribe
+    // are rejected rather than treated as valid scopes.
+    const isMessagesScopeMatch = scope.interface === 'Messages'
+      ? scope.method === 'Read'
+        && (messageType === DwnInterface.MessagesRead
+          || messageType === DwnInterface.MessagesSync
+          || messageType === DwnInterface.MessagesSubscribe)
+      : scopeMessageType === messageType;
 
     if (isMessagesScopeMatch) {
       if (isRecordsType(messageType)) {

@@ -146,8 +146,15 @@ export class GrantAuthorization {
       );
     }
 
-    // For the Messages interface, a `Read` scope is a unified scope that also covers `Subscribe` and `Sync`.
-    if (dwnInterface === DwnInterfaceName.Messages && permissionGrant.scope.method === DwnMethodName.Read) {
+    // Messages.Read is the only valid Messages scope and covers Read, Subscribe, and Sync operations.
+    // Reject any Messages grant with method !== Read (malformed or legacy stored data).
+    if (dwnInterface === DwnInterfaceName.Messages) {
+      if (permissionGrant.scope.method !== DwnMethodName.Read) {
+        throw new DwnError(
+          DwnErrorCode.GrantAuthorizationMethodMismatch,
+          `messages permission grant must have method 'Read', got '${permissionGrant.scope.method}' for grant ${permissionGrant.id}`
+        );
+      }
       const allowedMethods = [DwnMethodName.Read, DwnMethodName.Subscribe, DwnMethodName.Sync];
       if (!allowedMethods.includes(dwnMethod as DwnMethodName)) {
         throw new DwnError(

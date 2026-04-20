@@ -9,12 +9,6 @@
           "$ref": "https://identity.foundation/dwn/json-schemas/permissions/scopes.json#/$defs/messages-read-scope"
         },
         {
-          "$ref": "https://identity.foundation/dwn/json-schemas/permissions/scopes.json#/$defs/messages-subscribe-scope"
-        },
-        {
-          "$ref": "https://identity.foundation/dwn/json-schemas/permissions/scopes.json#/$defs/messages-sync-scope"
-        },
-        {
           "$ref": "https://identity.foundation/dwn/json-schemas/permissions/scopes.json#/$defs/protocols-configure-scope"
         },
         {

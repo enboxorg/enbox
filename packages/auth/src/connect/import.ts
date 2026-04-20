@@ -12,7 +12,7 @@ import type { ImportFromPhraseOptions, ImportFromPortableOptions } from '../type
 
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
-import { createDefaultIdentity, ensureVaultReady, finalizeSession, resolveIdentityDids, startSyncIfEnabled } from './lifecycle.js';
+import { createDefaultIdentity, deriveActiveSyncScope, ensureVaultReady, finalizeSession, resolveIdentityDids, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Import (or recover) an identity from a BIP-39 recovery phrase.
@@ -69,11 +69,24 @@ export async function importFromPhrase(
   }
 
   // Register sync for new identities.
-  if (isNewIdentity && sync !== 'off') {
-    await userAgent.sync.registerIdentity({
-      did     : connectedDid,
-      options : { delegateDid, protocols: [] },
-    });
+  if (isNewIdentity) {
+    if (delegateDid) {
+      const protocols = await deriveActiveSyncScope(userAgent, delegateDid);
+      if (protocols === 'all' || protocols.length > 0) {
+        await userAgent.sync.registerIdentity({
+          did     : connectedDid,
+          options : {
+            delegateDid,
+            protocols: protocols === 'all' ? 'all' as const : protocols as [string, ...string[]],
+          },
+        });
+      }
+    } else if (sync !== 'off') {
+      await userAgent.sync.registerIdentity({
+        did     : connectedDid,
+        options : { delegateDid, protocols: 'all' },
+      });
+    }
   }
 
   // Start sync.
@@ -127,11 +140,22 @@ export async function importFromPortable(
     );
   }
 
-  // Register and start sync.
-  if (sync !== 'off') {
+  // Register sync. For delegates, derive scope from grants (not 'all').
+  if (delegateDid) {
+    const protocols = await deriveActiveSyncScope(userAgent, delegateDid);
+    if (protocols === 'all' || protocols.length > 0) {
+      await userAgent.sync.registerIdentity({
+        did     : connectedDid,
+        options : {
+          delegateDid,
+          protocols: protocols === 'all' ? 'all' as const : protocols as [string, ...string[]],
+        },
+      });
+    }
+  } else if (sync !== 'off') {
     await userAgent.sync.registerIdentity({
       did     : connectedDid,
-      options : { delegateDid, protocols: [] },
+      options : { delegateDid, protocols: 'all' },
     });
   }
 

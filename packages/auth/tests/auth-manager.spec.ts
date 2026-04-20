@@ -373,6 +373,63 @@ describe('AuthManager', () => {
     });
   });
 
+  describe('in-memory cache cleanup on reconnect', () => {
+    test('clears previous delegate keys on successful reconnect', async () => {
+      const clearCalls: (string | undefined)[] = [];
+      const identity = createMockIdentity({
+        did      : { uri: 'did:delegate:old' },
+        metadata : { name: 'Old', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected' },
+      });
+      const agent = createMockAgent({
+        firstLaunch                    : async () => false,
+        identityList                   : async () => [identity],
+        dwnClearDelegateDecryptionKeys : (did?: string) => { clearCalls.push(did); },
+      });
+      const manager = createTestManager(agent);
+
+      // First connect — no previous session, so no clear.
+      await manager.connect({ password: 'test' });
+      expect(clearCalls).toHaveLength(0);
+
+      // Reconnect — should clear the previous delegate's keys.
+      await manager.connect({ password: 'test' });
+      expect(clearCalls).toHaveLength(1);
+      expect(clearCalls[0]).toBe('did:delegate:old');
+    });
+
+    test('does not clear delegate keys when connect fails', async () => {
+      const clearCalls: (string | undefined)[] = [];
+      const agent = createMockAgent({
+        firstLaunch                    : async () => false,
+        identityList                   : async () => [], // no identities → first launch
+        start                          : async () => { throw new Error('vault unlock failed'); },
+        dwnClearDelegateDecryptionKeys : (did?: string) => { clearCalls.push(did); },
+      });
+      const manager = createTestManager(agent);
+
+      await expect(manager.connect({ password: 'test' })).rejects.toThrow();
+
+      // Keys should NOT have been cleared since the connect failed —
+      // a prior active session's keys must survive.
+      expect(clearCalls).toHaveLength(0);
+    });
+
+    test('does not wipe newly imported keys on first delegated connect', async () => {
+      const clearCalls: (string | undefined)[] = [];
+      const agent = createMockAgent({
+        firstLaunch                    : async () => false,
+        identityList                   : async () => [createMockIdentity()],
+        dwnClearDelegateDecryptionKeys : (did?: string) => { clearCalls.push(did); },
+      });
+      const manager = createTestManager(agent);
+
+      // First connect with no prior session — clear should not be called,
+      // preserving any keys the connect flow just imported.
+      await manager.connect({ password: 'test' });
+      expect(clearCalls).toHaveLength(0);
+    });
+  });
+
   describe('concurrency guard', () => {
     test('throws when connect is called concurrently', async () => {
       const agent = createMockAgent({
@@ -1208,10 +1265,33 @@ describe('AuthManager', () => {
 
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].did).toBe('did:dht:testuser123');
-      expect(registerCalls[0].options.protocols).toEqual([]);
+      expect(registerCalls[0].options.protocols).toBe('all');
     });
 
-    test('passes delegateDid for wallet-connected identity', async () => {
+    test('unregisters sync for delegate with zero grants', async () => {
+      const registerCalls: any[] = [];
+      const unregisterCalls: string[] = [];
+      const identity = createMockIdentity({
+        did      : { uri: 'did:delegate' },
+        metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:external' },
+      });
+      const agent = createMockAgent({
+        identityGet            : async () => identity,
+        syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
+        syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+        syncStartSync          : async () => {},
+      });
+      const manager = createTestManager(agent, { sync: '10s' });
+
+      await manager.switchIdentity('did:delegate');
+
+      // Zero grants — should unregister (not register) to clear stale scope.
+      expect(registerCalls).toHaveLength(0);
+      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls[0]).toBe('did:external');
+    });
+
+    test('registers with all for delegate with unscoped grant', async () => {
       const registerCalls: any[] = [];
       const identity = createMockIdentity({
         did      : { uri: 'did:delegate' },
@@ -1221,16 +1301,64 @@ describe('AuthManager', () => {
         identityGet          : async () => identity,
         syncRegisterIdentity : async (params) => { registerCalls.push(params); },
         syncStartSync        : async () => {},
+        // Return an unscoped grant (no protocol in scope).
+        processDwnRequest    : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [{
+                  recordId    : 'grant-unrestricted',
+                  contextId   : 'grant-unrestricted',
+                  encodedData : btoa(JSON.stringify({
+                    dateExpires : '2040-01-01T00:00:00.000Z',
+                    scope       : { interface: 'Messages', method: 'Read' },
+                    delegated   : true,
+                  })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+                  descriptor: {
+                    interface    : 'Records',
+                    method       : 'Write',
+                    protocol     : 'https://identity.foundation/dwn/permissions',
+                    protocolPath : 'grant',
+                    recipient    : 'did:delegate',
+                    dateCreated  : '2025-01-01T00:00:00.000000Z',
+                    dataFormat   : 'application/json',
+                    dataCid      : 'bafytest',
+                    dataSize     : 100,
+                  },
+                  authorization: {
+                    signature: {
+                      signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner#sig' })) }],
+                    },
+                  },
+                }],
+              },
+            };
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
       });
       const manager = createTestManager(agent, { sync: '10s' });
 
       await manager.switchIdentity('did:delegate');
 
       expect(registerCalls).toHaveLength(1);
-      expect(registerCalls[0].did).toBe('did:external');
-      expect(registerCalls[0].options.delegateDid).toBe('did:delegate');
-      // Delegate protocols derived from grants — empty because mock returns no entries.
-      expect(registerCalls[0].options.protocols).toEqual([]);
+      expect(registerCalls[0].options.protocols).toBe('all');
+    });
+
+    test('rethrows I/O errors from unregisterIdentity', async () => {
+      const identity = createMockIdentity({
+        did      : { uri: 'did:delegate' },
+        metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:external' },
+      });
+      const agent = createMockAgent({
+        identityGet            : async () => identity,
+        syncUnregisterIdentity : async () => { throw new Error('LEVEL_IO_ERROR'); },
+        syncStartSync          : async () => {},
+      });
+      const manager = createTestManager(agent, { sync: '10s' });
+
+      await expect(manager.switchIdentity('did:delegate')).rejects.toThrow('LEVEL_IO_ERROR');
     });
 
     test('handles already-registered identity gracefully', async () => {
@@ -1251,18 +1379,45 @@ describe('AuthManager', () => {
       expect(updateCalls[0].did).toBe('did:dht:testuser123');
     });
 
-    test('skips registration when sync is off', async () => {
+    test('repairs registration but does not start sync when sync is off', async () => {
       const registerCalls: any[] = [];
+      const syncStartCalls: any[] = [];
       const identity = createMockIdentity();
       const agent = createMockAgent({
         identityGet          : async () => identity,
         syncRegisterIdentity : async (params) => { registerCalls.push(params); },
+        syncStartSync        : async (params) => { syncStartCalls.push(params); },
       });
       const manager = createTestManager(agent, { sync: 'off' });
 
       await manager.switchIdentity('did:dht:testuser123');
 
+      // Registration still happens (to keep on-disk state correct).
+      expect(registerCalls).toHaveLength(1);
+      // But sync does not start.
+      expect(syncStartCalls).toHaveLength(0);
+    });
+
+    test('unregisters delegate with zero grants even when sync is off', async () => {
+      const unregisterCalls: string[] = [];
+      const registerCalls: any[] = [];
+      const identity = createMockIdentity({
+        did      : { uri: 'did:delegate' },
+        metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:external' },
+      });
+      const agent = createMockAgent({
+        identityGet            : async () => identity,
+        syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
+        syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+      });
+      const manager = createTestManager(agent, { sync: 'off' });
+
+      await manager.switchIdentity('did:delegate');
+
+      // Zero grants → should unregister stale scope even with sync off.
       expect(registerCalls).toHaveLength(0);
+      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls[0]).toBe('did:external');
     });
   });
 

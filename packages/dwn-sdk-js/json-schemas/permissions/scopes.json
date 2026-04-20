@@ -22,44 +22,6 @@
         }
       }
     },
-    "messages-subscribe-scope": {
-      "type": "object",
-      "additionalProperties": false,
-      "required" : [
-        "interface",
-        "method"
-      ],
-      "properties": {
-        "interface": {
-          "const": "Messages"
-        },
-        "method": {
-          "const": "Subscribe"
-        },
-        "protocol": {
-          "type": "string"
-        }
-      }
-    },
-    "messages-sync-scope": {
-      "type": "object",
-      "additionalProperties": false,
-      "required" : [
-        "interface",
-        "method"
-      ],
-      "properties": {
-        "interface": {
-          "const": "Messages"
-        },
-        "method": {
-          "const": "Sync"
-        },
-        "protocol": {
-          "type": "string"
-        }
-      }
-    },
     "protocols-configure-scope": {
       "type": "object",
       "additionalProperties": false,

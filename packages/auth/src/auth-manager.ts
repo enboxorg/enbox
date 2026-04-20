@@ -32,10 +32,8 @@ import type {
   WalletConnectOptions,
 } from './types.js';
 
-import type { DwnDataEncodedRecordsWriteMessage } from '@enbox/agent';
-
 import { Convert } from '@enbox/common';
-import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant, EnboxUserAgent } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
@@ -47,7 +45,7 @@ import { normalizeProtocolRequests } from './permissions.js';
 import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
 import { walletConnect } from './connect/wallet.js';
-import { ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './connect/lifecycle.js';
+import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './connect/lifecycle.js';
 import { importFromPhrase, importFromPortable } from './connect/import.js';
 
 /**
@@ -823,16 +821,16 @@ export class AuthManager {
       connectedDid : identity.metadata.connectedDid,
     };
 
-    // Register the identity for sync and restart sync.
-    const sync = this._defaultSync;
-    if (sync !== 'off') {
-      const protocols = delegateDid
-        ? await this._deriveProtocolsFromGrants(delegateDid)
-        : [];
+    // Always repair the sync registration regardless of sync state — a stale
+    // registration persists on disk and would take effect when sync is later
+    // enabled. This matches restoreSession()'s behavior.
+    const derivedProtocols = delegateDid
+      ? await this._deriveProtocolsFromGrants(delegateDid)
+      : undefined;
 
-      await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
-      await startSyncIfEnabled(this._userAgent, sync);
-    }
+    await this._repairSyncRegistration(connectedDid, delegateDid, derivedProtocols);
+
+    await startSyncIfEnabled(this._userAgent, this._defaultSync);
 
     this._session = new AuthSession({
       agent    : this._userAgent,
@@ -1077,8 +1075,21 @@ export class AuthManager {
     this._guardConcurrency();
     this._isConnecting = true;
 
+    // Capture the previous session's delegate DID so we can clear only
+    // its in-memory keys after the new connect succeeds.
+    const previousDelegateDid = this._session?.delegateDid;
+
     try {
       const session = await fn();
+
+      // Clear in-memory delegate caches scoped to the previous session
+      // AFTER the new connect succeeds. Skip if the new session uses the
+      // same delegate DID — the connect flow already loaded fresh keys and
+      // clearing would wipe them.
+      if (previousDelegateDid && previousDelegateDid !== session.delegateDid) {
+        this._userAgent.dwn.clearDelegateDecryptionKeys(previousDelegateDid);
+      }
+
       this._session = session;
       this._setState('connected');
       return session;
@@ -1095,31 +1106,8 @@ export class AuthManager {
    * permissions protocol itself (the delegate doesn't need to sync
    * grant records — they're imported locally during the connect flow).
    */
-  private async _deriveProtocolsFromGrants(delegateDid: string): Promise<string[]> {
-    const response = await this._userAgent.processDwnRequest({
-      author        : delegateDid,
-      target        : delegateDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.grantPath,
-        },
-      },
-    });
-
-    const protocols: string[] = [];
-    if (response.reply.status.code === 200 && response.reply.entries) {
-      for (const entry of response.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
-        const grant = DwnPermissionGrant.parse(entry);
-        const scopeProtocol = (grant.scope as any).protocol as string | undefined;
-        if (scopeProtocol && scopeProtocol !== PermissionsProtocol.uri) {
-          protocols.push(scopeProtocol);
-        }
-      }
-    }
-
-    return [...new Set(protocols)];
+  private async _deriveProtocolsFromGrants(delegateDid: string): Promise<'all' | string[]> {
+    return deriveActiveSyncScope(this._userAgent, delegateDid);
   }
 
   /**
@@ -1131,7 +1119,7 @@ export class AuthManager {
   private async _registerOrUpdateSyncIdentity(
     connectedDid: string,
     delegateDid: string | undefined,
-    protocols: string[],
+    protocols: 'all' | [string, ...string[]],
   ): Promise<void> {
     const options = { delegateDid, protocols };
     try {
@@ -1144,6 +1132,43 @@ export class AuthManager {
         throw error;
       }
     }
+  }
+
+  /**
+   * Repair the sync registration for a connected DID based on derived protocols.
+   * - `'all'` or non-empty list → register or update
+   * - Empty list (zero grants) for a delegate → unregister stale registration
+   * - Non-delegate with no derived protocols → register with `'all'`
+   */
+  private async _repairSyncRegistration(
+    connectedDid: string,
+    delegateDid: string | undefined,
+    derivedProtocols: 'all' | string[] | undefined,
+  ): Promise<void> {
+    const isZeroGrantDelegate = delegateDid
+      && derivedProtocols !== undefined
+      && derivedProtocols !== 'all'
+      && derivedProtocols.length === 0;
+
+    if (isZeroGrantDelegate) {
+      try {
+        await this._userAgent.sync.unregisterIdentity(connectedDid);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : '';
+        if (!msg.includes('is not registered')) { throw error; }
+      }
+      return;
+    }
+
+    let protocols: 'all' | [string, ...string[]];
+    if (derivedProtocols === 'all') {
+      protocols = 'all';
+    } else if (derivedProtocols && derivedProtocols.length > 0) {
+      protocols = derivedProtocols as [string, ...string[]];
+    } else {
+      protocols = 'all';
+    }
+    await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
   }
 
   private _setState(state: AuthState): void {

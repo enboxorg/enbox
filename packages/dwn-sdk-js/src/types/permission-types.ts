@@ -89,13 +89,12 @@ export type ProtocolPermissionScope = {
 /**
  * Permission scope for the Messages interface.
  *
- * A `Read` scope is a unified scope that authorizes `MessagesRead`, `MessagesSubscribe`, and `MessagesSync` operations.
- * The `Subscribe` and `Sync` method values are retained for backward compatibility with existing grants but are
- * functionally equivalent to `Read` — new grants SHOULD use `Read` exclusively.
+ * `Read` is the only valid method and acts as a unified scope that authorizes
+ * `MessagesRead`, `MessagesSubscribe`, and `MessagesSync` operations.
  */
 export type MessagesPermissionScope = {
   interface: DwnInterfaceName.Messages;
-  method: DwnMethodName.Read | DwnMethodName.Subscribe | DwnMethodName.Sync;
+  method: DwnMethodName.Read;
   protocol?: string;
 };
 

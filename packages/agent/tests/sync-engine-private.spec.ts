@@ -302,13 +302,13 @@ describe('SyncEngineLevel — private methods', () => {
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
-      await engine.registerIdentity({ did: 'did:example:no-endpoints' });
+      await engine.registerIdentity({ did: 'did:example:no-endpoints', options: { protocols: 'all' } });
 
       const targets = await (engine as any).getSyncTargets();
       expect(targets).toEqual([]);
     });
 
-    it('should produce one target per DWN URL when protocols is empty', async () => {
+    it('should produce one target per DWN URL when protocols is all', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
@@ -316,7 +316,7 @@ describe('SyncEngineLevel — private methods', () => {
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
-      await engine.registerIdentity({ did: 'did:example:alice', options: { protocols: [] } });
+      await engine.registerIdentity({ did: 'did:example:alice', options: { protocols: 'all' } });
 
       const targets = await (engine as any).getSyncTargets();
       expect(targets).toHaveLength(1);
@@ -354,7 +354,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
       await engine.registerIdentity({
         did     : 'did:example:carol',
-        options : { protocols: [], delegateDid: 'did:example:delegate' },
+        options : { protocols: 'all', delegateDid: 'did:example:delegate' },
       });
 
       const targets = await (engine as any).getSyncTargets();
@@ -376,9 +376,8 @@ describe('SyncEngineLevel — private methods', () => {
       await identities.put('did:example:broken', 'not-valid-json');
 
       const targets = await (engine as any).getSyncTargets();
-      // Should fall back to { protocols: [] } and produce one target
-      expect(targets).toHaveLength(1);
-      expect(targets[0].did).toBe('did:example:broken');
+      // Corrupt entries are skipped rather than falling back to global sync.
+      expect(targets).toHaveLength(0);
     });
   });
 
@@ -1402,7 +1401,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db: clearDb, agent: mockAgent });
       (engine as any)._permissionsApi = { clear: sinon.stub().resolves() };
 
-      await engine.registerIdentity({ did: 'did:example:test' });
+      await engine.registerIdentity({ did: 'did:example:test', options: { protocols: 'all' } });
       expect(await engine.getIdentityOptions('did:example:test')).toBeDefined();
 
       await engine.clear();
@@ -1418,7 +1417,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       await engine.close();
       // After closing, operations should fail
-      await expect(engine.registerIdentity({ did: 'did:example:after-close' })).rejects.toThrow();
+      await expect(engine.registerIdentity({ did: 'did:example:after-close', options: { protocols: 'all' } })).rejects.toThrow();
     });
   });
 
@@ -3522,7 +3521,7 @@ describe('SyncEngineLevel — private methods', () => {
   describe('unregisterIdentity', () => {
     it('should remove a registered identity', async () => {
       const engine = createEngine({ db });
-      await engine.registerIdentity({ did: 'did:example:unreg-test' });
+      await engine.registerIdentity({ did: 'did:example:unreg-test', options: { protocols: 'all' } });
 
       const before = await engine.getIdentityOptions('did:example:unreg-test');
       expect(before).toBeDefined();

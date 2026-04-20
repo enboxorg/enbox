@@ -11,9 +11,11 @@ export type SyncIdentityOptions = {
    */
   delegateDid?: string;
   /**
-   * The protocols that should be synced for this identity, if an empty array is provided, all messages for all protocols will be synced.
+   * The protocols that should be synced for this identity.
+   * - `'all'` — sync all protocols (full replica).
+   * - `string[]` — sync only the listed protocol URIs.
    */
-  protocols: string[];
+  protocols: 'all' | [string, ...string[]];
 };
 
 /**
@@ -340,7 +342,9 @@ export interface SyncEngine {
 
   /**
    * Register an identity to be managed by the SyncEngine for syncing.
-   * The options can define specific protocols that should only be synced, or a delegate DID that should be used to sign the sync messages.
+   * Callers must explicitly specify which protocols to sync (`'all'` for a
+   * full replica, or a list of protocol URIs) so that sync scope is always
+   * a deliberate choice rather than an invisible default.
    *
    * When live sync is active, the new identity is hot-added: its replication
    * links are created and subscriptions opened immediately, without tearing
@@ -348,7 +352,7 @@ export interface SyncEngine {
    * multi-identity agents (e.g. ElectroBun desktop DWN, multi-persona dApps)
    * to add identities at runtime without disrupting sync for others.
    */
-  registerIdentity(params: { did: string, options?: SyncIdentityOptions }): Promise<void>;
+  registerIdentity(params: { did: string, options: SyncIdentityOptions }): Promise<void>;
   /**
    * Unregister an identity from the SyncEngine, this will stop syncing messages for this identity.
    *

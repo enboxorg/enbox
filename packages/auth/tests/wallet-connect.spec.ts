@@ -11,6 +11,65 @@ import { WalletConnect } from '../src/wallet-connect-client.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import { processConnectedGrants, walletConnect } from '../src/connect/wallet.js';
 
+/** Build a well-formed Messages.Read grant message that DwnPermissionGrant.parse() accepts. */
+function buildTestGrant(protocol: string, grantId: string): any {
+  const grantData = JSON.stringify({
+    dateExpires : '2040-06-25T16:09:16.693356Z',
+    scope       : { interface: 'Messages', method: 'Read', protocol },
+    delegated   : true,
+  });
+  // Use base64url encoding (required by DwnPermissionGrant.parse → Encoder.base64UrlToObject).
+  const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return {
+    recordId    : grantId,
+    contextId   : grantId,
+    encodedData : encoded,
+    descriptor  : {
+      interface    : 'Records',
+      method       : 'Write',
+      protocol     : 'https://identity.foundation/dwn/permissions',
+      protocolPath : 'grant',
+      recipient    : 'did:jwk:delegate1',
+      dateCreated  : '2025-01-01T00:00:00.000000Z',
+      dataFormat   : 'application/json',
+      dataCid      : 'bafytest',
+      dataSize     : 100,
+    },
+    authorization: {
+      signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner#sig' })) }] },
+    },
+  };
+}
+
+/** Build a non-Messages grant (Records.Write) — should NOT contribute to sync scope. */
+function buildTestGrantNonMessages(grantId: string): any {
+  const grantData = JSON.stringify({
+    dateExpires : '2040-06-25T16:09:16.693356Z',
+    scope       : { interface: 'Records', method: 'Write', protocol: 'https://proto.example/other' },
+    delegated   : true,
+  });
+  const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return {
+    recordId    : grantId,
+    contextId   : grantId,
+    encodedData : encoded,
+    descriptor  : {
+      interface    : 'Records',
+      method       : 'Write',
+      protocol     : 'https://identity.foundation/dwn/permissions',
+      protocolPath : 'grant',
+      recipient    : 'did:jwk:delegate1',
+      dateCreated  : '2025-01-01T00:00:00.000000Z',
+      dataFormat   : 'application/json',
+      dataCid      : 'bafytest',
+      dataSize     : 100,
+    },
+    authorization: {
+      signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner#sig' })) }] },
+    },
+  };
+}
+
 function createInitClientResult(delegateGrants: any[] = []): any {
   return {
     delegatePortableDid : { uri: 'did:dht:delegate123' },
@@ -23,9 +82,24 @@ let initClientStub: sinon.SinonStub;
 
 function setupStubs(): void {
   initClientStub = sinon.stub(WalletConnect, 'initClient').resolves(createInitClientResult());
-  sinon.stub(DwnPermissionGrant, 'parse').callsFake(((message: any): any => ({
-    scope: message._scope ?? {},
-  })) as any);
+  sinon.stub(DwnPermissionGrant, 'parse').callsFake(((message: any): any => {
+    // Decode scope from encodedData (base64url) to match real PermissionGrant.parse behavior.
+    let scope = {};
+    let dateExpires = '2040-01-01T00:00:00Z';
+    try {
+      const decoded = JSON.parse(atob(message.encodedData.replace(/-/g, '+').replace(/_/g, '/')));
+      scope = decoded.scope ?? {};
+      dateExpires = decoded.dateExpires ?? dateExpires;
+    } catch { /* fallback to empty scope */ }
+    return {
+      id          : message.recordId,
+      grantor     : 'did:dht:owner',
+      grantee     : message.descriptor?.recipient ?? 'did:jwk:delegate1',
+      dateGranted : message.descriptor?.dateCreated,
+      scope,
+      dateExpires,
+    };
+  }) as any);
 }
 
 describe('processConnectedGrants', () => {
@@ -55,30 +129,13 @@ describe('processConnectedGrants', () => {
         processCalls.push(params);
         return { reply: { status: { code: 202, detail: 'Accepted' } } };
       },
+      dwnProcessRawMessage: async () => ({ status: { code: 202, detail: 'Accepted' } }),
     });
 
     const grants = [
-      {
-        _scope        : { protocol: 'https://proto.example/chat' },
-        encodedData   : 'dGVzdA',
-        recordId      : 'rec1',
-        descriptor    : {},
-        authorization : {},
-      },
-      {
-        _scope        : { protocol: 'https://proto.example/notes' },
-        encodedData   : 'dGVzdA',
-        recordId      : 'rec2',
-        descriptor    : {},
-        authorization : {},
-      },
-      {
-        _scope        : {}, // no protocol — should be excluded
-        encodedData   : 'dGVzdA',
-        recordId      : 'rec3',
-        descriptor    : {},
-        authorization : {},
-      },
+      buildTestGrant('https://proto.example/chat', 'rec1'),
+      buildTestGrant('https://proto.example/notes', 'rec2'),
+      buildTestGrantNonMessages('rec3'), // Records grant — should not contribute to sync scope
     ] as any;
 
     const result = await processConnectedGrants({
@@ -110,18 +167,8 @@ describe('processConnectedGrants', () => {
     });
 
     const grants = [
-      {
-        _scope      : { protocol: 'https://proto.example/chat' },
-        encodedData : 'dGVzdA',
-        recordId    : 'rec1',
-        descriptor  : {},
-      },
-      {
-        _scope      : { protocol: 'https://proto.example/chat' },
-        encodedData : 'dGVzdA',
-        recordId    : 'rec2',
-        descriptor  : {},
-      },
+      buildTestGrant('https://proto.example/chat', 'rec1'),
+      buildTestGrant('https://proto.example/chat', 'rec2'),
     ] as any;
 
     const result = await processConnectedGrants({
@@ -141,14 +188,7 @@ describe('processConnectedGrants', () => {
       }),
     });
 
-    const grants = [
-      {
-        _scope      : { protocol: 'https://proto.example/chat' },
-        encodedData : 'dGVzdA',
-        recordId    : 'rec1',
-        descriptor  : {},
-      },
-    ] as any;
+    const grants = [buildTestGrant('https://proto.example/chat', 'rec1')] as any;
 
     await expect(
       processConnectedGrants({
@@ -160,11 +200,12 @@ describe('processConnectedGrants', () => {
     ).rejects.toThrow('Failed to store grant in delegate partition: Unauthorized');
   });
 
-  test('rolls back delegate-partition grants when phase 2 (connected) fails', async () => {
+  test('rolls back only newly created grants when phase 2 fails (not pre-existing 409)', async () => {
     // Track processDwnRequest calls by messageType so we can inspect
     // the rollback RecordsDelete calls separately from the writes.
     const calls: { messageType: string; recordId?: string; author?: string }[] = [];
 
+    let writeCount = 0;
     const agent = createMockAgent({
       processDwnRequest: async (params: any) => {
         calls.push({
@@ -172,6 +213,12 @@ describe('processConnectedGrants', () => {
           recordId    : params.messageParams?.recordId ?? params.rawMessage?.recordId,
           author      : params.author,
         });
+        if (params.messageType === 'RecordsWrite') {
+          writeCount++;
+          // First grant returns 409 (pre-existing), second returns 202 (new).
+          const code = writeCount === 1 ? 409 : 202;
+          return { reply: { status: { code, detail: code === 409 ? 'Conflict' : 'Accepted' } } };
+        }
         return { reply: { status: { code: 202, detail: 'Accepted' } } };
       },
       // Phase 2 uses dwn.processRawMessage — first call succeeds, second fails.
@@ -188,8 +235,8 @@ describe('processConnectedGrants', () => {
     });
 
     const grants = [
-      { _scope: { protocol: 'https://proto.example/a' }, encodedData: 'dGVzdA', recordId: 'rec-a', descriptor: {} },
-      { _scope: { protocol: 'https://proto.example/b' }, encodedData: 'dGVzdA', recordId: 'rec-b', descriptor: {} },
+      buildTestGrant('https://proto.example/a', 'rec-a'),
+      buildTestGrant('https://proto.example/b', 'rec-b'),
     ] as any;
 
     await expect(
@@ -200,15 +247,12 @@ describe('processConnectedGrants', () => {
     const writes = calls.filter(c => c.messageType === 'RecordsWrite');
     expect(writes).toHaveLength(2);
 
-    // Rollback: 2 RecordsDelete calls (one per grant, delegate partition).
+    // Rollback: only the newly created grant (rec-b, 202) should be deleted.
+    // The pre-existing grant (rec-a, 409) must NOT be deleted.
     const deletes = calls.filter(c => c.messageType === 'RecordsDelete');
-    expect(deletes).toHaveLength(2);
-    // Both deletes should target the delegate partition.
-    expect(deletes.every(d => d.author === 'did:dht:delegate')).toBe(true);
-    // Both deletes should reference the original recordIds.
-    const deletedIds = new Set(deletes.map(d => d.recordId));
-    expect(deletedIds.has('rec-a')).toBe(true);
-    expect(deletedIds.has('rec-b')).toBe(true);
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].author).toBe('did:dht:delegate');
+    expect(deletes[0].recordId).toBe('rec-b');
   });
 
   test('accepts 409 (duplicate) in phase 1 for idempotent retries', async () => {
@@ -226,8 +270,8 @@ describe('processConnectedGrants', () => {
     });
 
     const grants = [
-      { _scope: { protocol: 'https://proto.example/a' }, encodedData: 'dGVzdA', recordId: 'rec-a', descriptor: {} },
-      { _scope: { protocol: 'https://proto.example/b' }, encodedData: 'dGVzdA', recordId: 'rec-b', descriptor: {} },
+      buildTestGrant('https://proto.example/a', 'rec-a'),
+      buildTestGrant('https://proto.example/b', 'rec-b'),
     ] as any;
 
     // Should succeed — 409 is treated as idempotent success.
@@ -496,14 +540,7 @@ describe('walletConnect', () => {
       },
     });
 
-    const grantData = [
-      {
-        _scope      : { protocol: 'https://proto.example/chat' },
-        encodedData : 'dGVzdA',
-        recordId    : 'rec1',
-        descriptor  : {},
-      },
-    ];
+    const grantData = [buildTestGrant('https://proto.example/chat', 'rec1')];
 
     initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
@@ -568,7 +605,9 @@ describe('walletConnect', () => {
       syncRegisterIdentity : async () => { throw new Error('sync reg failed'); },
     });
 
-    initClientStub.onFirstCall().resolves(createInitClientResult());
+    // Provide a grant so connectedProtocols is non-empty and sync registration is attempted.
+    const grantData = [buildTestGrant('https://proto.example/chat', 'rec1')];
+    initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
     await expect(
       walletConnect(
@@ -603,7 +642,9 @@ describe('walletConnect', () => {
       syncRegisterIdentity : async () => { throw new Error('trigger cleanup'); },
     });
 
-    initClientStub.onFirstCall().resolves(createInitClientResult());
+    // Provide a Messages.Read grant so sync registration is attempted.
+    const grantData = [buildTestGrant('https://proto.example/chat', 'rec1')];
+    initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
     // Should not throw from cleanup — only from the original error
     await expect(

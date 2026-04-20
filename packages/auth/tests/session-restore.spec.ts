@@ -360,6 +360,19 @@ describe('restoreSession', () => {
         identityConnectedIdentity : async () => identity,
         syncRegisterIdentity      : async () => { throw new Error('already registered'); },
         syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
+        // Return a mock grant so deriveProtocolsFromGrants produces a non-empty
+        // protocol list and the sync registration path is actually exercised.
+        processDwnRequest         : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [buildMockGrantEntry('https://proto.example.com/notes')],
+              },
+            };
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
       });
 
       const session = await restoreSession(
@@ -369,6 +382,160 @@ describe('restoreSession', () => {
       expect(session).toBeDefined();
       expect(updateCalls).toHaveLength(1);
       expect(updateCalls[0].did).toBe('did:dht:external');
+    });
+
+    test('registers sync successfully when delegate has grants', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const registerCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async (params) => { registerCalls.push(params); },
+        processDwnRequest         : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [buildMockGrantEntry('https://proto.example.com/notes')],
+              },
+            };
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(registerCalls).toHaveLength(1);
+      expect(registerCalls[0].options.protocols).toContain('https://proto.example.com/notes');
+    });
+
+    test('does not start sync when registerIdentity fails with non-registration error', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const syncStartCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async () => { throw new Error('database unavailable'); },
+        syncStartSync             : async (params) => { syncStartCalls.push(params); },
+        processDwnRequest         : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [buildMockGrantEntry('https://proto.example.com/notes')],
+              },
+            };
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
+      });
+
+      // Restore succeeds but sync should NOT start — repair failed.
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(syncStartCalls).toHaveLength(0);
+    });
+
+    test('unregisters sync when delegate has zero grants', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const registerCalls: any[] = [];
+      const unregisterCalls: string[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async (params) => { registerCalls.push(params); },
+        syncUnregisterIdentity    : async (did) => { unregisterCalls.push(did); },
+        // Default processDwnRequest returns empty entries for RecordsQuery,
+        // so deriveProtocolsFromGrants returns [] → unregister stale registration.
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(registerCalls).toHaveLength(0);
+      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls[0]).toBe('did:dht:external');
+    });
+
+    test('tolerates unregister failure when identity was never registered', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncUnregisterIdentity    : async () => { throw new Error('is not registered'); },
+      });
+
+      // Should not throw — unregister failure is silently ignored in restore.
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+    });
+  });
+
+  describe('stale state isolation', () => {
+    test('does not rehydrate cleared delegate keys after a write-only reconnect', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const importedDecryptionKeys: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch                     : async () => false,
+        identityConnectedIdentity       : async () => identity,
+        dwnImportDelegateDecryptionKeys : (did: string, keys: any[]) => { importedDecryptionKeys.push(...keys); },
+      });
+
+      // SecretStore and legacy storage are both empty (cleared by prior reconnect).
+      // Restore should NOT import any decryption keys.
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(importedDecryptionKeys).toHaveLength(0);
     });
   });
 
@@ -417,6 +584,264 @@ describe('restoreSession', () => {
       // Only the custom protocol should appear, not the permissions protocol.
       expect(registerCalls[0].options.protocols).toContain(customProtoUri);
       expect(registerCalls[0].options.protocols).not.toContain(permissionsProtoUri);
+    });
+
+    test('excludes revoked grants from sync scope', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const registerCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async (params) => { registerCalls.push(params); },
+        processDwnRequest         : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            const filter = params.messageParams?.filter;
+            if (filter?.protocolPath === 'grant') {
+              // Return two grants: one valid, one that will be revoked.
+              return {
+                reply: {
+                  status  : { code: 200, detail: 'OK' },
+                  entries : [
+                    buildMockGrantEntry('https://proto.example/valid'),
+                    buildMockGrantEntry('https://proto.example/revoked'),
+                  ],
+                },
+              };
+            }
+            if (filter?.protocolPath === 'grant/revocation') {
+              // Return a revocation for the second grant.
+              return {
+                reply: {
+                  status  : { code: 200, detail: 'OK' },
+                  entries : [{ descriptor: { parentId: 'grant-https://proto.example/revoked' } }],
+                },
+              };
+            }
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(registerCalls).toHaveLength(1);
+      expect(registerCalls[0].options.protocols).toContain('https://proto.example/valid');
+      expect(registerCalls[0].options.protocols).not.toContain('https://proto.example/revoked');
+    });
+
+    test('returns all for an unscoped grant (no protocol in scope)', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const registerCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async (params) => { registerCalls.push(params); },
+        processDwnRequest         : async (params: any) => {
+          if (params?.messageType === 'RecordsQuery') {
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [buildUnscopedMockGrantEntry('grant-unrestricted')],
+              },
+            };
+          }
+          return { reply: { status: { code: 202, detail: 'Accepted' } } };
+        },
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(registerCalls).toHaveLength(1);
+      expect(registerCalls[0].options.protocols).toBe('all');
+    });
+
+    test('does not start sync when repair fails with I/O error', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const syncStartCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncUnregisterIdentity    : async () => { throw new Error('LEVEL_IO_ERROR'); },
+        syncStartSync             : async (params) => { syncStartCalls.push(params); },
+      });
+
+      // Restore succeeds but sync should NOT start — repair failed.
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(syncStartCalls).toHaveLength(0);
+    });
+
+    test('removes stale registration when repair fails so later sync cannot use it', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const unregisterCalls: string[] = [];
+      const syncStartCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncStartSync             : async (params) => { syncStartCalls.push(params); },
+        syncUnregisterIdentity    : async (did) => { unregisterCalls.push(did); },
+        // Make grant derivation fail to trigger the repair-failure path.
+        processDwnRequest         : async () => { throw new Error('store unavailable'); },
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      // Repair failed → sync should not start.
+      expect(syncStartCalls).toHaveLength(0);
+      // Stale registration should be best-effort removed so a later
+      // manual startSync() cannot use stale scope.
+      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls[0]).toBe('did:dht:external');
+    });
+
+    test('sets syncRepairFailed when registerIdentity throws non-registration error', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const grantData = JSON.stringify({
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        scope       : { interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' },
+        delegated   : true,
+      });
+      const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const grantEntry = {
+        recordId    : 'grant-1',
+        contextId   : 'grant-1',
+        encodedData : encoded,
+        descriptor  : {
+          interface    : 'Records',
+          method       : 'Write',
+          protocol     : 'https://identity.foundation/dwn/permissions',
+          protocolPath : 'grant',
+          recipient    : 'did:dht:external',
+          dateCreated  : '2025-01-01T00:00:00.000000Z',
+          dataFormat   : 'application/json',
+          dataCid      : 'bafytest',
+          dataSize     : 100,
+        },
+        authorization: { signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner1#sig' })) }] } },
+      };
+
+      const syncStartCalls: any[] = [];
+      const unregisterCalls: string[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncRegisterIdentity      : async () => { throw new Error('database write error'); },
+        syncUnregisterIdentity    : async (did) => { unregisterCalls.push(did); },
+        syncStartSync             : async (params) => { syncStartCalls.push(params); },
+        processDwnRequest         : async () => ({
+          reply: { status: { code: 200 }, entries: [grantEntry] },
+        }),
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(syncStartCalls).toHaveLength(0);
+      expect(unregisterCalls).toHaveLength(1);
+    });
+
+    test('sets syncRepairFailed when zero-grant unregister throws I/O error', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const syncStartCalls: any[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncUnregisterIdentity    : async () => { throw new Error('LEVEL_IO_ERROR'); },
+        syncStartSync             : async (params) => { syncStartCalls.push(params); },
+        processDwnRequest         : async () => ({
+          reply: { status: { code: 200 }, entries: [] },
+        }),
+      });
+
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      );
+
+      expect(session).toBeDefined();
+      expect(syncStartCalls).toHaveLength(0);
+    });
+
+    test('repairs delegate registration even when sync is off', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+      const identity = createMockIdentity({
+        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+      });
+
+      const unregisterCalls: string[] = [];
+      const agent = createMockAgent({
+        firstLaunch               : async () => false,
+        identityConnectedIdentity : async () => identity,
+        syncUnregisterIdentity    : async (did) => { unregisterCalls.push(did); },
+      });
+
+      // Sync is off — repair should still run to clean up stale registrations.
+      const session = await restoreSession(
+        { userAgent: agent, emitter, storage, defaultSync: 'off' },
+      );
+
+      expect(session).toBeDefined();
+      // Zero grants (default mock) → unregister called.
+      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls[0]).toBe('did:dht:external');
     });
   });
 
@@ -551,15 +976,48 @@ describe('restoreSession', () => {
  * Used by deriveProtocolsFromGrants tests.
  */
 function buildMockGrantEntry(protocol: string): any {
+  const grantData = JSON.stringify({
+    dateExpires : '2040-06-25T16:09:16.693356Z',
+    scope       : { interface: 'Messages', method: 'Read', protocol },
+    delegated   : true,
+  });
+  const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return {
     recordId    : `grant-${protocol}`,
     contextId   : `grant-${protocol}`,
-    encodedData : btoa(JSON.stringify({
-      dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: 'Records', method: 'Read', protocol },
-      delegated   : true,
-    })),
-    descriptor: {
+    encodedData : encoded,
+    descriptor  : {
+      interface    : 'Records',
+      method       : 'Write',
+      protocol     : 'https://identity.foundation/dwn/permissions',
+      protocolPath : 'grant',
+      recipient    : 'did:dht:testuser123',
+      dateCreated  : '2025-01-01T00:00:00.000000Z',
+      dataFormat   : 'application/json',
+      dataCid      : 'bafytest',
+      dataSize     : 100,
+    },
+    authorization: {
+      signature: {
+        signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:testagent#sig' })) }],
+      },
+    },
+  };
+}
+
+/** Build an unscoped grant entry — no protocol in scope (unrestricted). */
+function buildUnscopedMockGrantEntry(grantId: string): any {
+  const grantData = JSON.stringify({
+    dateExpires : '2040-06-25T16:09:16.693356Z',
+    scope       : { interface: 'Messages', method: 'Read' },
+    delegated   : true,
+  });
+  const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return {
+    recordId    : grantId,
+    contextId   : grantId,
+    encodedData : encoded,
+    descriptor  : {
       interface    : 'Records',
       method       : 'Write',
       protocol     : 'https://identity.foundation/dwn/permissions',
@@ -587,7 +1045,7 @@ function buildMockGrantRecord(grantId: string): any {
     contextId   : grantId,
     encodedData : btoa(JSON.stringify({
       dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: 'Records', method: 'Read', protocol: 'https://test.xyz' },
+      scope       : { interface: 'Messages', method: 'Read', protocol: 'https://test.xyz' },
       delegated   : true,
     })),
     descriptor: {

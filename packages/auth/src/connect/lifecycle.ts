@@ -248,6 +248,105 @@ export function resolveIdentityDids(
   return { connectedDid, delegateDid };
 }
 
+// ─── deriveSyncScopeFromGrants ──────────────────────────────────
+
+/**
+ * Derive the sync protocol scope from a set of parsed permission grants.
+ *
+ * Only `Messages.Read` grants authorize sync operations. Other grant types
+ * (Records.Write, Protocols.Query, etc.) are ignored even if they contain a
+ * `protocol` field — they do not authorize `MessagesSync`.
+ *
+ * - Unscoped `Messages.Read` (no `protocol`) → `'all'` (full replica)
+ * - Scoped `Messages.Read` grants → collected protocol URIs
+ * - No sync-relevant grants → `[]` (caller should unregister)
+ *
+ * Expired grants are excluded.
+ *
+ * @internal
+ */
+export function deriveSyncScopeFromGrants(grants: DwnPermissionGrant[]): 'all' | string[] {
+  const now = new Date().toISOString();
+  const protocols = new Set<string>();
+
+  for (const grant of grants) {
+    const scope = grant.scope as any;
+
+    // Only Messages.Read grants authorize sync.
+    if (scope.interface !== 'Messages' || scope.method !== 'Read') {
+      continue;
+    }
+
+    // Skip expired grants.
+    if (grant.dateExpires && grant.dateExpires <= now) {
+      continue;
+    }
+
+    const protocol = scope.protocol as string | undefined;
+    if (protocol === undefined) {
+      // Unrestricted Messages.Read — delegate can sync all protocols.
+      return 'all';
+    }
+    if (protocol !== PermissionsProtocol.uri) {
+      protocols.add(protocol);
+    }
+  }
+
+  return [...protocols];
+}
+
+/**
+ * Query the delegate's stored grants and revocations, filter out revoked
+ * and expired grants, and derive the sync protocol scope.
+ *
+ * Used by both `restoreSession()` and `switchIdentity()` to compute the
+ * correct sync registration from persisted grant state.
+ *
+ * @internal
+ */
+export async function deriveActiveSyncScope(
+  userAgent: EnboxUserAgent,
+  delegateDid: string,
+): Promise<'all' | string[]> {
+  // Query grants and revocations in parallel.
+  const [grantResponse, revocationResponse] = await Promise.all([
+    userAgent.processDwnRequest({
+      author        : delegateDid,
+      target        : delegateDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : { filter: { protocol: PermissionsProtocol.uri, protocolPath: PermissionsProtocol.grantPath } },
+    }),
+    userAgent.processDwnRequest({
+      author        : delegateDid,
+      target        : delegateDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : { filter: { protocol: PermissionsProtocol.uri, protocolPath: PermissionsProtocol.revocationPath } },
+    }),
+  ]);
+
+  if (grantResponse.reply.status.code !== 200 || !grantResponse.reply.entries) {
+    return [];
+  }
+  // Fail closed: if we can't verify revocations, treat as zero grants.
+  if (revocationResponse.reply.status.code !== 200) { return []; }
+
+  // Build the set of revoked grant IDs from revocation parent context.
+  const revokedGrantIds = new Set<string>();
+  if (revocationResponse.reply.entries) {
+    for (const entry of revocationResponse.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
+      const parentId = (entry as any).descriptor?.parentId ?? (entry as any).parentId;
+      if (parentId) { revokedGrantIds.add(parentId); }
+    }
+  }
+
+  // Parse grants and filter out revoked ones before deriving scope.
+  const grants = (grantResponse.reply.entries as DwnDataEncodedRecordsWriteMessage[])
+    .map((entry) => DwnPermissionGrant.parse(entry))
+    .filter((grant) => !revokedGrantIds.has(grant.id));
+
+  return deriveSyncScopeFromGrants(grants);
+}
+
 // ─── processConnectedGrants ─────────────────────────────────────
 
 /**
@@ -264,9 +363,8 @@ export async function processConnectedGrants(params: {
   connectedDid: string;
   delegateDid: string;
   grants: DwnDataEncodedRecordsWriteMessage[];
-}): Promise<string[]> {
+}): Promise<'all' | string[]> {
   const { agent, connectedDid, delegateDid, grants } = params;
-  const connectedProtocols = new Set<string>();
 
   // Two-phase write strategy:
   //
@@ -292,7 +390,11 @@ export async function processConnectedGrants(params: {
 
   // ── Phase 1: delegate partition ───────────────────────────────────
 
-  const delegateResults = await Promise.allSettled(parsed.map(async ({ rawMessage, encodedData }) => {
+  // Track which grants were actually created (202) vs already existed (409).
+  // Only newly created grants should be rolled back on failure.
+  const createdInPhase1 = new Set<number>();
+
+  const delegateResults = await Promise.allSettled(parsed.map(async ({ rawMessage, encodedData }, index) => {
     const dataStream = new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart]);
     const { reply } = await agent.processDwnRequest({
       store       : true,
@@ -304,7 +406,9 @@ export async function processConnectedGrants(params: {
       dataStream,
     });
 
-    if (reply.status.code !== 202 && reply.status.code !== 409) {
+    if (reply.status.code === 202) {
+      createdInPhase1.add(index);
+    } else if (reply.status.code !== 409) {
       throw new Error(
         `[@enbox/auth] Failed to store grant in delegate partition: ${reply.status.detail}`
       );
@@ -315,10 +419,10 @@ export async function processConnectedGrants(params: {
     (r): r is PromiseRejectedResult => r.status === 'rejected',
   );
   if (delegateFailure) {
-    // Roll back the delegate-partition grants that succeeded. We CAN
-    // delete these because we hold the delegateDid's signing key.
+    // Roll back only the grants we actually created (202), not
+    // pre-existing ones that returned 409.
     await Promise.allSettled(parsed.map(async ({ rawMessage }, i) => {
-      if (delegateResults[i].status === 'fulfilled') {
+      if (createdInPhase1.has(i)) {
         try {
           await agent.processDwnRequest({
             author        : delegateDid,
@@ -357,8 +461,9 @@ export async function processConnectedGrants(params: {
     // records are harmless: the connect flow will throw, the imported
     // identity is cleaned up by importDelegateAndSetupSync(), and
     // without a registered sync identity the grants are never used.
-    // Roll back the delegate-partition grants that we CAN clean up.
-    await Promise.allSettled(parsed.map(async ({ rawMessage }) => {
+    // Roll back only the delegate-partition grants we actually created.
+    await Promise.allSettled(parsed.map(async ({ rawMessage }, i) => {
+      if (!createdInPhase1.has(i)) { return; }
       try {
         await agent.processDwnRequest({
           author        : delegateDid,
@@ -371,16 +476,9 @@ export async function processConnectedGrants(params: {
     throw connectedFailure.reason;
   }
 
-  // ── Collect protocols ─────────────────────────────────────────────
+  // ── Derive sync scope from the processed grants ──────────────────
 
-  for (const { grant } of parsed) {
-    const protocol = grant.scope.protocol;
-    if (protocol && protocol !== PermissionsProtocol.uri) {
-      connectedProtocols.add(protocol);
-    }
-  }
-
-  return [...connectedProtocols];
+  return deriveSyncScopeFromGrants(parsed.map((p) => p.grant));
 }
 
 // ─── importDelegateAndSetupSync ─────────────────────────────────
@@ -467,21 +565,29 @@ export async function importDelegateAndSetupSync(params: {
     // Register (or update) the identity for protocol-scoped sync.
     // If the identity is already registered from a prior session, update
     // the protocol list so it matches the new grants — otherwise a stale
-    // `protocols: []` (global sync) would remain and the sync engine
-    // would try to sync every protocol including the DWN permissions
-    // protocol, which the delegate has no grant for.
-    const syncOptions = {
-      delegateDid : delegatePortableDid.uri,
-      protocols   : connectedProtocols,
-    };
-    try {
-      await userAgent.sync.registerIdentity({ did: connectedDid, options: syncOptions });
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : '';
-      if (msg.includes('already registered')) {
-        await userAgent.sync.updateIdentityOptions({ did: connectedDid, options: syncOptions });
-      } else {
-        throw error;
+    // registration would remain.
+    if (connectedProtocols === 'all' || connectedProtocols.length > 0) {
+      const syncOptions = {
+        delegateDid : delegatePortableDid.uri,
+        protocols   : connectedProtocols === 'all' ? 'all' as const : connectedProtocols as [string, ...string[]],
+      };
+      try {
+        await userAgent.sync.registerIdentity({ did: connectedDid, options: syncOptions });
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : '';
+        if (msg.includes('already registered')) {
+          await userAgent.sync.updateIdentityOptions({ did: connectedDid, options: syncOptions });
+        } else {
+          throw error;
+        }
+      }
+    } else {
+      // Zero grants — remove any stale sync registration so revoked protocols stop syncing.
+      try {
+        await userAgent.sync.unregisterIdentity(connectedDid);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : '';
+        if (!msg.includes('is not registered')) { throw error; }
       }
     }
 
@@ -551,40 +657,15 @@ export async function finalizeDelegateSession(params: {
   // so they survive agent restarts.  Delegate keys are stored in the
   // vault-backed SecretStore (encrypted at rest), while non-secret
   // session markers go into the plaintext StorageAdapter.
-  const delegateDecryptionKeys = (identity as any)._delegateDecryptionKeys as DelegateDecryptionKey[] | undefined;
   const extraStorageKeys: Record<string, string> = {
     [STORAGE_KEYS.DELEGATE_DID]  : delegateDid,
     [STORAGE_KEYS.CONNECTED_DID] : connectedDid,
   };
-  const delegateContextKeys = (identity as any)._delegateContextKeys as DelegateContextKey[] | undefined;
 
-  // Store delegate keys in the SecretStore (encrypted at rest).
-  // Both writes are independent and can run in parallel.
-  const secretWrites: Promise<void>[] = [];
-  if (delegateDecryptionKeys?.length) {
-    secretWrites.push(
-      userAgent.secrets.put(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, Convert.string(JSON.stringify(delegateDecryptionKeys)).toUint8Array()),
-    );
-  }
-  if (delegateContextKeys?.length) {
-    secretWrites.push(
-      userAgent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, Convert.string(JSON.stringify(delegateContextKeys)).toUint8Array()),
-    );
-  }
-  if (secretWrites.length > 0) {
-    await Promise.all(secretWrites);
-    // Best-effort cleanup of any legacy plaintext copies.
-    try { await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS); } catch { /* best-effort */ }
-    try { await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
-  }
-  const delegateMultiPartyProtocols = (identity as any)._delegateMultiPartyProtocols as string[] | undefined;
-  if (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0) {
-    extraStorageKeys[STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS] = JSON.stringify(delegateMultiPartyProtocols);
-  }
-  const sessionRevocations = (identity as any)._sessionRevocations as { grantId: string; revocationGrantId: string }[] | undefined;
-  if (sessionRevocations && sessionRevocations.length > 0) {
-    extraStorageKeys[STORAGE_KEYS.SESSION_REVOCATIONS] = JSON.stringify(sessionRevocations);
-  }
+  // Persist or clear delegate keys/revocations. Clearing stale values
+  // from prior sessions prevents a reconnect with fewer capabilities
+  // from retaining old decryption material.
+  await persistOrClearDelegateSecrets(userAgent, storage, identity, extraStorageKeys);
 
   // Wire post-connect context key persistence: when the owner creates a
   // new multi-party context, the agent injects the key into the delegate
@@ -693,4 +774,51 @@ export async function finalizeSession(params: {
   });
 
   return session;
+}
+
+// ─── persistOrClearDelegateSecrets ──────────────────────────────
+
+/** @internal */
+async function persistOrClearDelegateSecrets(
+  userAgent: EnboxUserAgent,
+  storage: StorageAdapter,
+  identity: BearerIdentity,
+  extraStorageKeys: Record<string, string>,
+): Promise<void> {
+  const delegateDecryptionKeys = (identity as any)._delegateDecryptionKeys as DelegateDecryptionKey[] | undefined;
+  const delegateContextKeys = (identity as any)._delegateContextKeys as DelegateContextKey[] | undefined;
+
+  // Persist or clear keys in the SecretStore + legacy StorageAdapter.
+  const secretWrites: Promise<void>[] = [];
+  const putOrDelete = (key: string, data: unknown[] | undefined): void => {
+    if (data?.length) {
+      secretWrites.push(userAgent.secrets.put(key, Convert.string(JSON.stringify(data)).toUint8Array()));
+    } else {
+      secretWrites.push(userAgent.secrets.delete(key).then(() => {}).catch(() => {}));
+      secretWrites.push(storage.remove(key).catch(() => {}));
+    }
+  };
+  putOrDelete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, delegateDecryptionKeys);
+  putOrDelete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, delegateContextKeys);
+  await Promise.all(secretWrites);
+
+  // Best-effort cleanup of legacy plaintext copies when new keys were written.
+  if (delegateDecryptionKeys?.length || delegateContextKeys?.length) {
+    try { await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS); } catch { /* best-effort */ }
+    try { await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
+  }
+
+  const delegateMultiPartyProtocols = (identity as any)._delegateMultiPartyProtocols as string[] | undefined;
+  if (delegateMultiPartyProtocols?.length) {
+    extraStorageKeys[STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS] = JSON.stringify(delegateMultiPartyProtocols);
+  } else {
+    try { await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS); } catch { /* best-effort */ }
+  }
+
+  const sessionRevocations = (identity as any)._sessionRevocations as { grantId: string; revocationGrantId: string }[] | undefined;
+  if (sessionRevocations?.length) {
+    extraStorageKeys[STORAGE_KEYS.SESSION_REVOCATIONS] = JSON.stringify(sessionRevocations);
+  } else {
+    try { await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS); } catch { /* best-effort */ }
+  }
 }
