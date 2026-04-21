@@ -68,13 +68,16 @@ export async function importFromPhrase(
     );
   }
 
-  // Register sync for new identities.
-  if (isNewIdentity) {
-    if (delegateDid) {
-      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
-    } else if (sync !== 'off') {
-      await registerSyncScopeForIdentity({ userAgent, connectedDid });
-    }
+  // Register sync. For delegate identities, always repair the registration
+  // (derive scope from active grants — revoked grants must not remain in a
+  // stale registration), regardless of whether the identity was just
+  // created or restored from storage. For local identities, register
+  // `protocols: 'all'` only on first creation; a pre-existing local
+  // identity was already registered during its initial flow.
+  if (delegateDid) {
+    await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
+  } else if (isNewIdentity && sync !== 'off') {
+    await registerSyncScopeForIdentity({ userAgent, connectedDid });
   }
 
   // Start sync.
