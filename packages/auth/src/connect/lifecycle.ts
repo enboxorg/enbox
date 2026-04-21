@@ -366,6 +366,73 @@ export function toSyncIdentityProtocols(
   return scope as [string, ...string[]];
 }
 
+// ─── registerSyncScopeForIdentity ───────────────────────────────
+
+/**
+ * Register (or update, or clear) the sync registration for an identity based on
+ * its derived protocol scope.
+ *
+ * - For a **delegate session**: queries the delegate's active grants via
+ *   {@link deriveActiveSyncScope}, then registers with `protocols: 'all'` or a
+ *   scoped list when grants are present, or unregisters the identity when no
+ *   sync-relevant grants remain (so revoked protocols stop syncing). The
+ *   "is not registered" error from unregister is silently tolerated;
+ *   `"already registered"` from register falls back to `updateIdentityOptions`.
+ *
+ * - For a **local session** (no `delegateDid`): registers with
+ *   `protocols: 'all'` (a local identity is a full replica of its own DWN).
+ *   The `"already registered"` error falls back to `updateIdentityOptions`.
+ *
+ * @internal
+ */
+export async function registerSyncScopeForIdentity(params: {
+  userAgent: EnboxUserAgent;
+  connectedDid: string;
+  delegateDid?: string;
+}): Promise<void> {
+  const { userAgent, connectedDid, delegateDid } = params;
+
+  if (delegateDid !== undefined) {
+    const scope = await deriveActiveSyncScope(userAgent, delegateDid);
+    const narrowed = toSyncIdentityProtocols(scope);
+    if (narrowed !== undefined) {
+      const options = { delegateDid, protocols: narrowed };
+      try {
+        await userAgent.sync.registerIdentity({ did: connectedDid, options });
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : '';
+        if (msg.includes('already registered')) {
+          await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
+        } else {
+          throw error;
+        }
+      }
+    } else {
+      // Zero grants — clear any stale sync registration so revoked protocols stop syncing.
+      try {
+        await userAgent.sync.unregisterIdentity(connectedDid);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : '';
+        if (!msg.includes('is not registered')) { throw error; }
+      }
+    }
+    return;
+  }
+
+  // Local session — register with full-replica scope.
+  const options = { protocols: 'all' as const };
+  try {
+    await userAgent.sync.registerIdentity({ did: connectedDid, options });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : '';
+    if (msg.includes('already registered')) {
+      await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
+    } else {
+      throw error;
+    }
+  }
+}
+
 // ─── processConnectedGrants ─────────────────────────────────────
 
 /**

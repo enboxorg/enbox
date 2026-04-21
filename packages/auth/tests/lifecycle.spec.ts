@@ -6,7 +6,7 @@ import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { deriveActiveSyncScope, deriveSyncScopeFromGrants, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants, toSyncIdentityProtocols } from '../src/connect/lifecycle.js';
+import { deriveActiveSyncScope, deriveSyncScopeFromGrants, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants, registerSyncScopeForIdentity, toSyncIdentityProtocols } from '../src/connect/lifecycle.js';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -765,6 +765,208 @@ describe('toSyncIdentityProtocols', () => {
   test('returns the array for multi-element scopes', () => {
     expect(toSyncIdentityProtocols(['https://proto.example/a', 'https://proto.example/b']))
       .toEqual(['https://proto.example/a', 'https://proto.example/b']);
+  });
+});
+
+describe('registerSyncScopeForIdentity', () => {
+  test('delegate with scoped grants: calls registerIdentity with the right protocols', async () => {
+    const syncCalls: any[] = [];
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildGrantMessage('https://proto.example/chat', 'g1'),
+            buildGrantMessage('https://proto.example/notes', 'g2'),
+          ] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+      syncRegisterIdentity: async (params) => { syncCalls.push(params); },
+    });
+
+    await registerSyncScopeForIdentity({
+      userAgent    : agent,
+      connectedDid : 'did:dht:connected1',
+      delegateDid  : 'did:jwk:delegate1',
+    });
+
+    expect(syncCalls).toHaveLength(1);
+    expect(syncCalls[0].did).toBe('did:dht:connected1');
+    expect(syncCalls[0].options.delegateDid).toBe('did:jwk:delegate1');
+    expect(syncCalls[0].options.protocols).toEqual(['https://proto.example/chat', 'https://proto.example/notes']);
+  });
+
+  test('delegate with unscoped Messages.Read grant: calls registerIdentity with protocols: all', async () => {
+    const syncCalls: any[] = [];
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildUnscopedGrantMessage('g-unscoped'),
+          ] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+      syncRegisterIdentity: async (params) => { syncCalls.push(params); },
+    });
+
+    await registerSyncScopeForIdentity({
+      userAgent    : agent,
+      connectedDid : 'did:dht:connected1',
+      delegateDid  : 'did:jwk:delegate1',
+    });
+
+    expect(syncCalls).toHaveLength(1);
+    expect(syncCalls[0].options.delegateDid).toBe('did:jwk:delegate1');
+    expect(syncCalls[0].options.protocols).toBe('all');
+  });
+
+  test('delegate with zero grants: calls unregisterIdentity and tolerates "is not registered"', async () => {
+    const unregisterCalls: string[] = [];
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+      syncUnregisterIdentity: async (did: string) => {
+        unregisterCalls.push(did);
+        throw new Error('identity is not registered');
+      },
+    });
+
+    // Should not throw — unregister failure with "is not registered" is tolerated.
+    await registerSyncScopeForIdentity({
+      userAgent    : agent,
+      connectedDid : 'did:dht:connected1',
+      delegateDid  : 'did:jwk:delegate1',
+    });
+
+    expect(unregisterCalls).toEqual(['did:dht:connected1']);
+  });
+
+  test('delegate with zero grants: rethrows non-"not registered" errors from unregister', async () => {
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+      syncUnregisterIdentity: async () => { throw new Error('LEVEL_IO_ERROR'); },
+    });
+
+    await expect(
+      registerSyncScopeForIdentity({
+        userAgent    : agent,
+        connectedDid : 'did:dht:connected1',
+        delegateDid  : 'did:jwk:delegate1',
+      })
+    ).rejects.toThrow('LEVEL_IO_ERROR');
+  });
+
+  test('delegate already-registered: falls back to updateIdentityOptions', async () => {
+    const updateCalls: any[] = [];
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildGrantMessage('https://proto.example/chat', 'g1'),
+          ] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+      syncRegisterIdentity      : async () => { throw new Error('already registered'); },
+      syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
+    });
+
+    await registerSyncScopeForIdentity({
+      userAgent    : agent,
+      connectedDid : 'did:dht:connected1',
+      delegateDid  : 'did:jwk:delegate1',
+    });
+
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].did).toBe('did:dht:connected1');
+    expect(updateCalls[0].options.delegateDid).toBe('did:jwk:delegate1');
+    expect(updateCalls[0].options.protocols).toContain('https://proto.example/chat');
+  });
+
+  test('delegate: rethrows non-"already registered" errors from registerIdentity', async () => {
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildGrantMessage('https://proto.example/chat', 'g1'),
+          ] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+      syncRegisterIdentity: async () => { throw new Error('database unavailable'); },
+    });
+
+    await expect(
+      registerSyncScopeForIdentity({
+        userAgent    : agent,
+        connectedDid : 'did:dht:connected1',
+        delegateDid  : 'did:jwk:delegate1',
+      })
+    ).rejects.toThrow('database unavailable');
+  });
+
+  test('local (no delegateDid): calls registerIdentity with protocols: all', async () => {
+    const syncCalls: any[] = [];
+    const agent = createMockAgent({
+      syncRegisterIdentity: async (params) => { syncCalls.push(params); },
+    });
+
+    await registerSyncScopeForIdentity({
+      userAgent    : agent,
+      connectedDid : 'did:dht:connected1',
+    });
+
+    expect(syncCalls).toHaveLength(1);
+    expect(syncCalls[0].did).toBe('did:dht:connected1');
+    expect(syncCalls[0].options.protocols).toBe('all');
+    // Local session — delegateDid should not be present in the options payload.
+    expect(syncCalls[0].options.delegateDid).toBeUndefined();
+  });
+
+  test('local already-registered: falls back to updateIdentityOptions', async () => {
+    const updateCalls: any[] = [];
+    const agent = createMockAgent({
+      syncRegisterIdentity      : async () => { throw new Error('already registered') ; },
+      syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
+    });
+
+    await registerSyncScopeForIdentity({
+      userAgent    : agent,
+      connectedDid : 'did:dht:connected1',
+    });
+
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].did).toBe('did:dht:connected1');
+    expect(updateCalls[0].options.protocols).toBe('all');
+  });
+
+  test('local: rethrows non-"already registered" errors from registerIdentity', async () => {
+    const agent = createMockAgent({
+      syncRegisterIdentity: async () => { throw new Error('database unavailable'); },
+    });
+
+    await expect(
+      registerSyncScopeForIdentity({
+        userAgent    : agent,
+        connectedDid : 'did:dht:connected1',
+      })
+    ).rejects.toThrow('database unavailable');
   });
 });
 
