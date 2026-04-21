@@ -347,6 +347,25 @@ export async function deriveActiveSyncScope(
   return deriveSyncScopeFromGrants(grants);
 }
 
+// ─── toSyncIdentityProtocols ────────────────────────────────────
+
+/**
+ * Narrow a derived sync scope (`'all' | string[]`) to the form required by
+ * `SyncIdentityOptions.protocols` (`'all' | [string, ...string[]]`).
+ *
+ * Returns `undefined` when the scope is an empty array, signalling the
+ * caller should unregister the identity rather than register it.
+ *
+ * @internal
+ */
+export function toSyncIdentityProtocols(
+  scope: 'all' | string[],
+): 'all' | [string, ...string[]] | undefined {
+  if (scope === 'all') { return 'all'; }
+  if (scope.length === 0) { return undefined; }
+  return scope as [string, ...string[]];
+}
+
 // ─── processConnectedGrants ─────────────────────────────────────
 
 /**
@@ -566,10 +585,11 @@ export async function importDelegateAndSetupSync(params: {
     // If the identity is already registered from a prior session, update
     // the protocol list so it matches the new grants — otherwise a stale
     // registration would remain.
-    if (connectedProtocols === 'all' || connectedProtocols.length > 0) {
+    const narrowedProtocols = toSyncIdentityProtocols(connectedProtocols);
+    if (narrowedProtocols !== undefined) {
       const syncOptions = {
         delegateDid : delegatePortableDid.uri,
-        protocols   : connectedProtocols === 'all' ? 'all' as const : connectedProtocols as [string, ...string[]],
+        protocols   : narrowedProtocols,
       };
       try {
         await userAgent.sync.registerIdentity({ did: connectedDid, options: syncOptions });

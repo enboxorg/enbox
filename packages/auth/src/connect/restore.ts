@@ -20,7 +20,7 @@ import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
-import { deriveActiveSyncScope, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
+import { deriveActiveSyncScope, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './lifecycle.js';
 
 /**
  * Decrypt a stored key blob.
@@ -231,10 +231,11 @@ export async function restoreSession(
   if (delegateDid) {
     try {
       const protocols = await deriveActiveSyncScope(userAgent, delegateDid);
-      if (protocols === 'all' || protocols.length > 0) {
+      const narrowed = toSyncIdentityProtocols(protocols);
+      if (narrowed !== undefined) {
         const options = {
           delegateDid,
-          protocols: protocols === 'all' ? 'all' as const : protocols as [string, ...string[]],
+          protocols: narrowed,
         };
         try {
           await userAgent.sync.registerIdentity({ did: connectedDid, options });

@@ -45,7 +45,7 @@ import { normalizeProtocolRequests } from './permissions.js';
 import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
 import { walletConnect } from './connect/wallet.js';
-import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './connect/lifecycle.js';
+import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
 import { importFromPhrase, importFromPortable } from './connect/import.js';
 
 /**
@@ -1099,12 +1099,16 @@ export class AuthManager {
   }
 
   /**
-   * Derive the protocol list for a delegate's sync scope by querying
-   * stored grant records and extracting their `scope.protocol` fields.
+   * Derive the sync scope for a delegate by querying stored grants and
+   * revocations.
    *
-   * Returns a deduplicated array of protocol URIs, excluding the DWN
-   * permissions protocol itself (the delegate doesn't need to sync
-   * grant records — they're imported locally during the connect flow).
+   * Returns `'all'` when any active `Messages.Read` grant is unscoped
+   * (authorizing a full replica), otherwise a deduplicated array of
+   * protocol URIs derived from scoped `Messages.Read` grants. The DWN
+   * permissions protocol itself is excluded because grant records are
+   * imported locally during connect rather than replicated via sync.
+   *
+   * Delegates to {@link deriveActiveSyncScope}.
    */
   private async _deriveProtocolsFromGrants(delegateDid: string): Promise<'all' | string[]> {
     return deriveActiveSyncScope(this._userAgent, delegateDid);
@@ -1145,30 +1149,26 @@ export class AuthManager {
     delegateDid: string | undefined,
     derivedProtocols: 'all' | string[] | undefined,
   ): Promise<void> {
-    const isZeroGrantDelegate = delegateDid
-      && derivedProtocols !== undefined
-      && derivedProtocols !== 'all'
-      && derivedProtocols.length === 0;
-
-    if (isZeroGrantDelegate) {
-      try {
-        await this._userAgent.sync.unregisterIdentity(connectedDid);
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : '';
-        if (!msg.includes('is not registered')) { throw error; }
+    // Only delegates with an explicit zero-grant derivation should be
+    // unregistered. A non-delegate identity defaults to `'all'` when no
+    // derivation was performed.
+    if (delegateDid && derivedProtocols !== undefined) {
+      const narrowed = toSyncIdentityProtocols(derivedProtocols);
+      if (narrowed === undefined) {
+        try {
+          await this._userAgent.sync.unregisterIdentity(connectedDid);
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : '';
+          if (!msg.includes('is not registered')) { throw error; }
+        }
+        return;
       }
+      await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, narrowed);
       return;
     }
 
-    let protocols: 'all' | [string, ...string[]];
-    if (derivedProtocols === 'all') {
-      protocols = 'all';
-    } else if (derivedProtocols && derivedProtocols.length > 0) {
-      protocols = derivedProtocols as [string, ...string[]];
-    } else {
-      protocols = 'all';
-    }
-    await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, protocols);
+    // Non-delegate identity: register with `'all'` (full-replica sync).
+    await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, 'all');
   }
 
   private _setState(state: AuthState): void {

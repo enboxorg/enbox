@@ -258,6 +258,144 @@ describe('importFromPhrase', () => {
 
     expect(syncCalls).toHaveLength(0);
   });
+
+  test('registers sync with protocols: all for delegate with unscoped Messages.Read grant', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const syncCalls: any[] = [];
+
+    const grantData = JSON.stringify({
+      dateExpires : '2040-06-25T16:09:16.693356Z',
+      scope       : { interface: 'Messages', method: 'Read' },
+      delegated   : true,
+    });
+    const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const grantEntry = {
+      recordId    : 'grant-unscoped',
+      contextId   : 'grant-unscoped',
+      encodedData : encoded,
+      descriptor  : {
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : 'https://identity.foundation/dwn/permissions',
+        protocolPath : 'grant',
+        recipient    : 'did:dht:external',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+        dataFormat   : 'application/json',
+        dataCid      : 'bafytest',
+        dataSize     : 100,
+      },
+      authorization: { signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner1#sig' })) }] } },
+    };
+
+    const delegateIdentity = createMockIdentity({
+      metadata: { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+    });
+
+    const agent = createMockAgent({
+      firstLaunch          : async () => true,
+      identityList         : async () => [],
+      identityCreate       : async () => delegateIdentity,
+      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+      processDwnRequest    : async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status: { code: 200 }, entries: [grantEntry] } };
+        }
+        return { reply: { status: { code: 200 }, entries: [] } };
+      },
+    });
+
+    await importFromPhrase(
+      { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      { recoveryPhrase: 'phrase', password: 'pass' },
+    );
+
+    expect(syncCalls).toHaveLength(1);
+    expect(syncCalls[0].options.protocols).toBe('all');
+    expect(syncCalls[0].options.delegateDid).toBe('did:dht:testuser123');
+  });
+
+  test('unregisters identity for delegate with zero grants (clears stale registration)', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const unregisterCalls: string[] = [];
+
+    const delegateIdentity = createMockIdentity({
+      metadata: { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+    });
+
+    const agent = createMockAgent({
+      firstLaunch            : async () => true,
+      identityList           : async () => [],
+      identityCreate         : async () => delegateIdentity,
+      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+      processDwnRequest      : async () => ({
+        reply: { status: { code: 200 }, entries: [] },
+      }),
+    });
+
+    await importFromPhrase(
+      { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      { recoveryPhrase: 'phrase', password: 'pass' },
+    );
+
+    expect(unregisterCalls).toHaveLength(1);
+    expect(unregisterCalls[0]).toBe('did:dht:external');
+  });
+
+  test('tolerates "is not registered" error when unregistering zero-grant delegate', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+
+    const delegateIdentity = createMockIdentity({
+      metadata: { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+    });
+
+    const agent = createMockAgent({
+      firstLaunch            : async () => true,
+      identityList           : async () => [],
+      identityCreate         : async () => delegateIdentity,
+      syncUnregisterIdentity : async () => { throw new Error('is not registered'); },
+      processDwnRequest      : async () => ({
+        reply: { status: { code: 200 }, entries: [] },
+      }),
+    });
+
+    // Should complete without throwing.
+    const session = await importFromPhrase(
+      { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      { recoveryPhrase: 'phrase', password: 'pass' },
+    );
+
+    expect(session).toBeDefined();
+  });
+
+  test('rethrows I/O errors from unregisterIdentity on zero-grant delegate path', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+
+    const delegateIdentity = createMockIdentity({
+      metadata: { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+    });
+
+    const agent = createMockAgent({
+      firstLaunch            : async () => true,
+      identityList           : async () => [],
+      identityCreate         : async () => delegateIdentity,
+      syncUnregisterIdentity : async () => { throw new Error('LEVEL_IO_ERROR'); },
+      processDwnRequest      : async () => ({
+        reply: { status: { code: 200 }, entries: [] },
+      }),
+    });
+
+    await expect(
+      importFromPhrase(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+        { recoveryPhrase: 'phrase', password: 'pass' },
+      )
+    ).rejects.toThrow('LEVEL_IO_ERROR');
+  });
 });
 
 describe('importFromPortable', () => {
@@ -454,5 +592,127 @@ describe('importFromPortable', () => {
     );
 
     expect(registrationSucceeded).toBe(true);
+  });
+
+  test('registers sync with protocols: all for delegate with unscoped Messages.Read grant', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const syncRegCalls: any[] = [];
+
+    const delegateIdentity = createMockIdentity({
+      did      : { uri: 'did:jwk:delegate' },
+      metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+    });
+
+    const grantData = JSON.stringify({
+      dateExpires : '2040-01-01T00:00:00Z',
+      scope       : { interface: 'Messages', method: 'Read' },
+      delegated   : true,
+    });
+    const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    const agent = createMockAgent({
+      identityImport       : async () => delegateIdentity,
+      syncRegisterIdentity : async (params) => { syncRegCalls.push(params); },
+      processDwnRequest    : async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [{
+            recordId      : 'g-unscoped',
+            contextId     : 'g-unscoped',
+            encodedData   : encoded,
+            descriptor    : { interface: 'Records', method: 'Write', protocol: 'https://identity.foundation/dwn/permissions', protocolPath: 'grant', recipient: 'did:jwk:delegate', dateCreated: '2025-01-01T00:00:00Z', dataFormat: 'application/json', dataCid: 'bafytest', dataSize: 100 },
+            authorization : { signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner#sig' })) }] } },
+          }] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+    });
+
+    await importFromPortable(
+      { userAgent: agent, emitter, storage, defaultSync: '30s' },
+      { portableIdentity: {} as any },
+    );
+
+    expect(syncRegCalls).toHaveLength(1);
+    expect(syncRegCalls[0].options.protocols).toBe('all');
+    expect(syncRegCalls[0].options.delegateDid).toBe('did:jwk:delegate');
+  });
+
+  test('unregisters identity for delegate with zero grants (clears stale registration)', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const unregisterCalls: string[] = [];
+
+    const delegateIdentity = createMockIdentity({
+      did      : { uri: 'did:jwk:delegate' },
+      metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+    });
+
+    const agent = createMockAgent({
+      identityImport         : async () => delegateIdentity,
+      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+      processDwnRequest      : async () => ({
+        reply: { status: { code: 200, detail: 'OK' }, entries: [] },
+      }),
+    });
+
+    await importFromPortable(
+      { userAgent: agent, emitter, storage, defaultSync: '30s' },
+      { portableIdentity: {} as any },
+    );
+
+    expect(unregisterCalls).toHaveLength(1);
+    expect(unregisterCalls[0]).toBe('did:dht:owner');
+  });
+
+  test('tolerates "is not registered" error when unregistering zero-grant delegate', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+
+    const delegateIdentity = createMockIdentity({
+      did      : { uri: 'did:jwk:delegate' },
+      metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+    });
+
+    const agent = createMockAgent({
+      identityImport         : async () => delegateIdentity,
+      syncUnregisterIdentity : async () => { throw new Error('is not registered'); },
+      processDwnRequest      : async () => ({
+        reply: { status: { code: 200, detail: 'OK' }, entries: [] },
+      }),
+    });
+
+    const session = await importFromPortable(
+      { userAgent: agent, emitter, storage, defaultSync: '30s' },
+      { portableIdentity: {} as any },
+    );
+
+    expect(session).toBeDefined();
+  });
+
+  test('rethrows I/O errors from unregisterIdentity on zero-grant delegate path', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+
+    const delegateIdentity = createMockIdentity({
+      did      : { uri: 'did:jwk:delegate' },
+      metadata : { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner' },
+    });
+
+    const agent = createMockAgent({
+      identityImport         : async () => delegateIdentity,
+      syncUnregisterIdentity : async () => { throw new Error('LEVEL_IO_ERROR'); },
+      processDwnRequest      : async () => ({
+        reply: { status: { code: 200, detail: 'OK' }, entries: [] },
+      }),
+    });
+
+    await expect(
+      importFromPortable(
+        { userAgent: agent, emitter, storage, defaultSync: '30s' },
+        { portableIdentity: {} as any },
+      )
+    ).rejects.toThrow('LEVEL_IO_ERROR');
   });
 });

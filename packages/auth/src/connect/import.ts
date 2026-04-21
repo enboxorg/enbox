@@ -12,7 +12,7 @@ import type { ImportFromPhraseOptions, ImportFromPortableOptions } from '../type
 
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
-import { createDefaultIdentity, deriveActiveSyncScope, ensureVaultReady, finalizeSession, resolveIdentityDids, startSyncIfEnabled } from './lifecycle.js';
+import { createDefaultIdentity, deriveActiveSyncScope, ensureVaultReady, finalizeSession, resolveIdentityDids, startSyncIfEnabled, toSyncIdentityProtocols } from './lifecycle.js';
 
 /**
  * Import (or recover) an identity from a BIP-39 recovery phrase.
@@ -72,14 +72,23 @@ export async function importFromPhrase(
   if (isNewIdentity) {
     if (delegateDid) {
       const protocols = await deriveActiveSyncScope(userAgent, delegateDid);
-      if (protocols === 'all' || protocols.length > 0) {
+      const narrowed = toSyncIdentityProtocols(protocols);
+      if (narrowed !== undefined) {
         await userAgent.sync.registerIdentity({
           did     : connectedDid,
           options : {
             delegateDid,
-            protocols: protocols === 'all' ? 'all' as const : protocols as [string, ...string[]],
+            protocols: narrowed,
           },
         });
+      } else {
+        // Zero grants — clear any stale sync registration so revoked protocols stop syncing.
+        try {
+          await userAgent.sync.unregisterIdentity(connectedDid);
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : '';
+          if (!msg.includes('is not registered')) { throw error; }
+        }
       }
     } else if (sync !== 'off') {
       await userAgent.sync.registerIdentity({
@@ -143,14 +152,23 @@ export async function importFromPortable(
   // Register sync. For delegates, derive scope from grants (not 'all').
   if (delegateDid) {
     const protocols = await deriveActiveSyncScope(userAgent, delegateDid);
-    if (protocols === 'all' || protocols.length > 0) {
+    const narrowed = toSyncIdentityProtocols(protocols);
+    if (narrowed !== undefined) {
       await userAgent.sync.registerIdentity({
         did     : connectedDid,
         options : {
           delegateDid,
-          protocols: protocols === 'all' ? 'all' as const : protocols as [string, ...string[]],
+          protocols: narrowed,
         },
       });
+    } else {
+      // Zero grants — clear any stale sync registration so revoked protocols stop syncing.
+      try {
+        await userAgent.sync.unregisterIdentity(connectedDid);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : '';
+        if (!msg.includes('is not registered')) { throw error; }
+      }
     }
   } else if (sync !== 'off') {
     await userAgent.sync.registerIdentity({

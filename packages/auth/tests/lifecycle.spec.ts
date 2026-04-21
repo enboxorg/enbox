@@ -6,16 +6,21 @@ import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { deriveActiveSyncScope, deriveSyncScopeFromGrants, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants } from '../src/connect/lifecycle.js';
+import { deriveActiveSyncScope, deriveSyncScopeFromGrants, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants, toSyncIdentityProtocols } from '../src/connect/lifecycle.js';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
 /** Build a mock unscoped (unrestricted) grant — no protocol in scope. */
-function buildUnscopedGrantMessage(grantId: string, scopeInterface = 'Messages', scopeMethod = 'Read'): any {
+function buildUnscopedGrantMessage(
+  grantId: string,
+  scopeInterface = 'Messages',
+  scopeMethod = 'Read',
+  dateExpires = '2040-06-25T16:09:16.693356Z',
+): any {
   const grantData = JSON.stringify({
-    dateExpires : '2040-06-25T16:09:16.693356Z',
-    scope       : { interface: scopeInterface, method: scopeMethod },
-    delegated   : true,
+    dateExpires,
+    scope     : { interface: scopeInterface, method: scopeMethod },
+    delegated : true,
   });
   const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return {
@@ -140,6 +145,74 @@ describe('deriveSyncScopeFromGrants', () => {
     ];
     expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
   });
+
+  test('returns all when wildcard grant appears first among scoped grants', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Read' }),
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' }),
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/notes' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toBe('all');
+  });
+
+  test('returns all when wildcard grant appears last among scoped grants', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' }),
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/notes' }),
+      mockGrant({ interface: 'Messages', method: 'Read' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toBe('all');
+  });
+
+  test('does not return all when the only wildcard grant is expired', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Read' }, '2020-01-01T00:00:00Z'),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
+
+  test('ignores unscoped Messages.Subscribe grants (not Messages.Read)', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Subscribe' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
+
+  test('ignores scoped Messages.Subscribe grants (not Messages.Read)', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Subscribe', protocol: 'https://proto.example/chat' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
+
+  test('ignores unscoped Messages.Sync-like method grants (only Read authorizes)', () => {
+    const grants = [
+      // `Sync` is not `Read` — must be ignored even unscoped.
+      mockGrant({ interface: 'Messages', method: 'Sync' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
+
+  test('ignores scoped Messages.Sync-like method grants', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Sync', protocol: 'https://proto.example/chat' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
+
+  test('ignores unscoped Protocols.Query grants', () => {
+    const grants = [
+      mockGrant({ interface: 'Protocols', method: 'Query' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
+
+  test('ignores unscoped Records.Read grants', () => {
+    const grants = [
+      mockGrant({ interface: 'Records', method: 'Read' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
+  });
 });
 
 describe('deriveActiveSyncScope', () => {
@@ -220,6 +293,63 @@ describe('deriveActiveSyncScope', () => {
         const filter = params?.messageParams?.filter;
         if (filter?.protocolPath === 'grant') {
           return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildUnscopedGrantMessage('g-unscoped'),
+          ] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+    });
+
+    const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
+    expect(result).toBe('all');
+  });
+
+  test('excludes revoked wildcard grant', async () => {
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildUnscopedGrantMessage('g-unscoped'),
+          ] } };
+        }
+        if (filter?.protocolPath === 'grant/revocation') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            { descriptor: { parentId: 'g-unscoped' } },
+          ] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+    });
+
+    const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
+    expect(result).toEqual([]);
+  });
+
+  test('excludes expired wildcard grant', async () => {
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildUnscopedGrantMessage('g-expired', 'Messages', 'Read', '2020-01-01T00:00:00Z'),
+          ] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+    });
+
+    const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
+    expect(result).toEqual([]);
+  });
+
+  test('wildcard wins when mixed with scoped grants', async () => {
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        if (filter?.protocolPath === 'grant') {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildGrantMessage('https://proto.example/chat', 'g-scoped'),
             buildUnscopedGrantMessage('g-unscoped'),
           ] } };
         }
@@ -552,6 +682,89 @@ describe('importDelegateAndSetupSync', () => {
         })
       ).rejects.toThrow('database unavailable');
     });
+
+    test('registers with all when any grant is unscoped even with other scoped grants', async () => {
+      const syncCalls: any[] = [];
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent({
+        identityImport       : async () => identity,
+        syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+        dwnProcessRawMessage : async () => ({ status: { code: 202, detail: 'Accepted' } }),
+      });
+
+      const grants = [
+        buildGrantMessage('https://proto.example/chat', 'grant-chat'),
+        buildUnscopedGrantMessage('grant-unrestricted'),
+        buildGrantMessage('https://proto.example/notes', 'grant-notes'),
+      ];
+
+      await importDelegateAndSetupSync({
+        userAgent           : agent,
+        delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+        connectedDid        : 'did:dht:connected1',
+        delegateGrants      : grants,
+        flowName            : 'test',
+      });
+
+      expect(syncCalls).toHaveLength(1);
+      expect(syncCalls[0].options.protocols).toBe('all');
+    });
+
+    test('ignores unscoped Messages.Subscribe grant (only Messages.Read authorizes sync)', async () => {
+      const syncCalls: any[] = [];
+      const unregisterCalls: string[] = [];
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate1' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      const agent = createMockAgent({
+        identityImport         : async () => identity,
+        syncRegisterIdentity   : async (params) => { syncCalls.push(params); },
+        syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+        dwnProcessRawMessage   : async () => ({ status: { code: 202, detail: 'Accepted' } }),
+      });
+
+      const grants = [buildUnscopedGrantMessage('grant-subscribe', 'Messages', 'Subscribe')];
+
+      await importDelegateAndSetupSync({
+        userAgent           : agent,
+        delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+        connectedDid        : 'did:dht:connected1',
+        delegateGrants      : grants,
+        flowName            : 'test',
+      });
+
+      // Should NOT register with 'all' — Messages.Subscribe does not authorize sync.
+      expect(syncCalls).toHaveLength(0);
+      // Should unregister since no sync-relevant protocols were found.
+      expect(unregisterCalls).toHaveLength(1);
+    });
+  });
+});
+
+describe('toSyncIdentityProtocols', () => {
+  test('passes through the `all` literal unchanged', () => {
+    expect(toSyncIdentityProtocols('all')).toBe('all');
+  });
+
+  test('returns undefined for an empty array (caller should unregister)', () => {
+    expect(toSyncIdentityProtocols([])).toBeUndefined();
+  });
+
+  test('returns the array for a single-element scope', () => {
+    expect(toSyncIdentityProtocols(['https://proto.example/a'])).toEqual(['https://proto.example/a']);
+  });
+
+  test('returns the array for multi-element scopes', () => {
+    expect(toSyncIdentityProtocols(['https://proto.example/a', 'https://proto.example/b']))
+      .toEqual(['https://proto.example/a', 'https://proto.example/b']);
   });
 });
 
