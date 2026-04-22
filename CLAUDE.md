@@ -79,13 +79,17 @@ Code style in this repo is **strictly enforced** and routinely corrects drift. A
 
 Bun workspace monorepo for decentralized web infrastructure. Runtime is **Bun** (>=1.0.0). The repo root pins a **`packageManager`** field (see root `package.json`) so local Bun matches CI and lockfile expectations.
 
-**Task orchestration:** `bun run build`, `bun run lint`, and `bun run test:node` at the repo root invoke **Turbo** (`turbo.json`, pinned to `turbo@2.8.13` in root `devDependencies`). `build`, `lint`, `lint:fix`, and `test:node` all declare `dependsOn: ["^build"]`, so dependents build before their tasks run. `test:node` sets `cache: false` (runs are never cached); `build` declares `outputs: ["dist/**"]`.
+**Task orchestration:** `bun run build`, `bun run lint`, and `bun run test:node` at the repo root invoke **Turbo** (`turbo.json`, pinned to `turbo@2.8.13` in root `devDependencies`):
+
+- **`build`:** `dependsOn: ["^build"]`, `outputs: ["dist/**"]` — each package builds after its workspace dependencies.
+- **`test:node`:** `dependsOn: ["^build"]`, `cache: false` — tests run after upstream packages in the graph have built (matches CI type-check expectations).
+- **`lint` / `lint:fix`:** no `dependsOn` in `turbo.json` — they do **not** automatically run `^build` first. If a package’s ESLint setup assumes fresh `dist/` (rare), run `bun run build` before `bun run lint`.
 
 Root filter semantics:
 
 - `bun run build` excludes `@enbox/docs` (uses Biome/Next.js) **and** `@enbox/electrobun-dwn` (private desktop shell). Build `electrobun-dwn` explicitly with `bun run --filter @enbox/electrobun-dwn build` when working on it.
 - `bun run lint` / `lint:fix` exclude only `@enbox/docs`.
-- `bun run test:node` excludes only `@enbox/docs`. Note that `@enbox/dwn-sql-store` and `@enbox/dwn-server` name their suite `test` (not `test:node`), so they are skipped by the root `test:node` task. Run them directly: `bun run --filter @enbox/dwn-sql-store test`, `bun run --filter @enbox/dwn-server test`.
+- `bun run test:node` excludes only `@enbox/docs`. Turbo schedules `test:node` only in packages that **define** that script. **`@enbox/dwn-sql-store`** exposes **`test`** but not **`test:node`**, so it is omitted from root `turbo run test:node` — run `bun run --filter @enbox/dwn-sql-store test`. **`@enbox/dwn-server`** **does** define **`test:node`** and is included. **`@enbox/dwn-server-admin-ui`** defines a no-op **`test:node`** stub; **`@enbox/electrobun-dwn`** has no **`test:node`** script.
 
 ### Package Dependency Graph (build order)
 
@@ -183,7 +187,7 @@ gh api repos/enboxorg/enbox/pulls/<PR_NUMBER> -X PATCH -F body=@pr-body.md
 
 ### Running Tests
 
-All packages use **`bun test`** (Bun's native test runner).
+Most packages use **`bun test`** (Bun’s native test runner). **`@enbox/browser`** uses **Vitest** with the browser runner instead (see table below).
 
 #### Test framework by package
 
@@ -192,8 +196,8 @@ All packages use **`bun test`** (Bun's native test runner).
 | `@enbox/agent` | `bun test` | `bun run test:node` |
 | `@enbox/api` | `bun test` | `bun run test:node` |
 | `@enbox/dwn-sdk-js` | `bun test` | `bun run test:node` |
-| `@enbox/dwn-server` | `bun test` | `bun run test` |
-| `@enbox/dwn-sql-store` | `bun test` | `bun run test` |
+| `@enbox/dwn-server` | `bun test` | `bun run test:node` |
+| `@enbox/dwn-sql-store` | `bun test` | `bun run test` (no `test:node` script — not in root `turbo run test:node`) |
 | `@enbox/common` | `bun test` | `bun run test:node` |
 | `@enbox/crypto` | `bun test` | `bun run test:node` |
 | `@enbox/dids` | `bun test` | `bun run test:node` |
@@ -295,8 +299,11 @@ export DID_DHT_GATEWAY_URI=http://localhost:7527
 # Now run tests — these will all pass:
 bun run --filter @enbox/agent test:node       # 748 pass, 0 fail
 bun run --filter @enbox/api test:node         # all pass
+bun run --filter @enbox/auth test:node        # all pass (same Pkarr env)
 bun run --filter @enbox/dids test:node        # all pass
 bun run --filter @enbox/dwn-sdk-js test:node  # 978 pass, 0 fail
+bun run --filter @enbox/dwn-server test:node  # set NATS_URL for NatsEventLog tests
+bun run --filter @enbox/dwn-sql-store test    # script is named `test`, not `test:node`
 ```
 
 Alternatively, `./scripts/test-with-server.sh` automates the full cycle (start containers, build, run tests, tear down). If `did:dht` tests fail with `Failed to put Pkarr record`, the relay is not running.

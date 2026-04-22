@@ -70,7 +70,7 @@ When changing public APIs, assume **multiple external apps** pin different semve
 
 Minimum bar (from `CLAUDE.md`): **`bun run lint`**, **`bun run --filter @enbox/agent build`** (rebuild `dwn-sdk-js` first if you touched it), and **agent tests** with **`DID_DHT_GATEWAY_URI`** set. Full verification uses Docker test services and often a local DWN on port 3000 — details are in `CLAUDE.md` (“Local Test Infrastructure”).
 
-Turbo runs `test:node` only after upstream packages in the graph **`build`**, which matches how CI discovers type errors.
+In `turbo.json`, **`test:node`** declares `dependsOn: ["^build"]`, so it runs only after upstream workspace packages **`build`**. **`lint`** / **`lint:fix`** do not use that dependency — they are scheduled without an automatic `^build` first. Root **`turbo run test:node`** skips **`@enbox/dwn-sql-store`** because that package only defines **`test`**; run `bun run --filter @enbox/dwn-sql-store test` when you need its suite.
 
 ## Where to make common kinds of changes
 
