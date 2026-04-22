@@ -12,9 +12,18 @@ Enbox is a **Bun** monorepo for **Decentralized Web Nodes (DWN)**, **DIDs** (`di
 - **Shared protocol definitions** (`@enbox/protocols`) and optional **codegen** (`@enbox/protocol-codegen`).
 - **`apps/docs`**: the public documentation site (Fumadocs + Next.js); it uses its own linter (Biome), not the ESLint graph used by packages.
 
-## Non-negotiable rule (tests vs production)
+## Non-negotiable rules
 
-**Never weaken production code only to satisfy tests.** If a test fails because mocks are wrong, fix the test or the stub — see the “Inviolable Rules” section in `CLAUDE.md`.
+1. **Never weaken production code only to satisfy tests.** If a test fails because mocks are wrong, fix the test or the stub — see the “Inviolable Rules” section in `CLAUDE.md`.
+2. **Always work in a fresh worktree off the latest base branch** (default `main`, or whichever branch the user names). Never do long-running work on the primary clone, and never force-push shared branches.
+   ```bash
+   git fetch origin
+   git worktree add ../enbox-<task> -b <type>/<short-desc> origin/main
+   ```
+3. **Ship through a PR.** `main` is protected — every change (including doc-only ones) goes through `gh pr create` against the requested base. Use conventional commit titles (`fix(...)`, `feat(...)`, `docs: ...`, `chore(deps): ...`) matching the existing log.
+4. **Watch CI until it is green.** `gh pr checks <N> --watch`, `gh run view <id> --log-failed`. If CI fails, reproduce locally, fix forward in the same PR, and never merge with known failures or disable checks to unblock. Treat Quality Gate / coverage regressions as failures.
+5. **Style is non-negotiable.** Run `bun run lint` (and `bun run lint:fix`) before pushing. Match the conventions in `CLAUDE.md` → “Coding Style” and “Test Style”: type-import grouping, colon alignment in multi-key object literals, explicit return types and visibility, `.js` extensions on relative imports, kebab-case filenames, `.spec.ts` tests.
+6. **`@enbox/dwn-sdk-js` is the gold-standard package.** When a convention is ambiguous (errors, JSDoc, module layout, test shape, JSON Schema placement), follow `dwn-sdk-js` rather than any other package.
 
 ## Workspace layout
 
@@ -38,7 +47,15 @@ Published / primary packages live under `packages/`. Root `package.json` lists a
 | `@enbox/dwn-server-admin-ui` | Admin UI bundle consumed by the server |
 | `@enbox/electrobun-dwn` | **Private** desktop wrapper embedding the server |
 
-**Dependency direction (high level):** `common` → `crypto` → `dids` → `dwn-sdk-js` → (`dwn-sql-store`, `dwn-clients`) → `agent` → `auth` → `api`; `protocols` builds on `api` + `dwn-sdk-js`; `browser` sits above `agent`/`api`/`auth`; `dwn-server` combines `dwn-sdk-js`, `dwn-sql-store`, and `dwn-clients`. Exact edges are in each package’s `package.json` (`workspace:*`).
+**Dependency direction (high level):**
+
+- Core chain: `common` → `crypto` → `dids` → `dwn-sdk-js` → `dwn-clients` → `agent` → `auth` → `api`.
+- Server chain: `dwn-sdk-js` → `dwn-sql-store` → `dwn-server` (which also consumes `dwn-clients`).
+- `protocols` builds on `api` + `dwn-sdk-js`.
+- `browser` sits above `agent` + `api` + `auth` + `dids`; it does **not** pull in `dwn-server` or `dwn-sql-store`.
+- `agent` does **not** depend on `dwn-sql-store` — only `dwn-server` does. Agents talk to a DWN over `dwn-clients`.
+
+Exact edges live in each package’s `package.json` (`workspace:*`).
 
 ## How apps use Enbox in practice
 
@@ -47,7 +64,7 @@ Downstream repos typically consume **npm releases** of scoped `@enbox/*` package
 - **web-wallet** (package `@enbox/dweb-wallet`): Full stack — `agent`, `api`, `auth`, `browser`, `dwn-clients`, `protocols`, plus crypto/dids/common. Typical pattern: Vite + React, PWA, node stdlib browser shims, Vitest/Playwright.
 - **nutsd** (package `@enbox/nutsd`): Narrower surface — e.g. **`@enbox/browser`** (and Cashu) for wallet/DID UX without pulling the full DWN server stack into the app bundle.
 
-When changing public APIs, assume **multiple external apps** pin different semver ranges; follow the changeset workflow in `CLAUDE.md` for releases.
+When changing public APIs, assume **multiple external apps** pin different semver ranges; follow the changeset workflow in `CLAUDE.md` for releases. `.changeset/config.json` sets `updateInternalDependencies: "patch"`, so bumping one package (e.g. `dwn-sdk-js` as `minor`) auto-patches every direct consumer in the graph — keep that in mind when drafting changeset files.
 
 ## What to run before proposing a PR
 

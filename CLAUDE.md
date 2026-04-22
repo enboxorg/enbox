@@ -8,11 +8,84 @@ Production code must NEVER be weakened, loosened, or given special-case handling
 
 If a test fails because new production code interacts badly with a stubbed environment, the fix belongs **entirely in the test**: update the stubs to properly simulate reality, or stub the new production method directly on the handler/class instance. The production code path must remain exactly as strict as the real-world scenario demands.
 
+## Contributor Workflow
+
+The workflow below is non-optional. Follow it for every change, no matter how small.
+
+### 1. Always work in a fresh worktree off the latest base branch
+
+Never run destructive operations (rebase, force-push, branch reset) on the repo's main clone — use a dedicated worktree per task so your in-flight work is always isolated. Default base branch is **`main`** unless the user explicitly requests another branch.
+
+```bash
+cd /path/to/enbox            # the main clone
+git fetch origin             # always refresh first
+git worktree add ../enbox-<short-task-name> -b <type>/<short-desc> origin/main
+cd ../enbox-<short-task-name>
+bun install                  # first-time per worktree
+```
+
+If the user nominates a different base (`release/x.y`, a feature integration branch, etc.), substitute it for `origin/main` above. When the task is done and merged, clean up:
+
+```bash
+git worktree remove ../enbox-<short-task-name>
+git branch -d <type>/<short-desc>   # only after the PR is merged
+```
+
+Branch naming follows the existing convention in `git log`: `fix/...`, `feat/...`, `chore/...`, `docs/...`, `perf/...`. Keep it concise.
+
+### 2. Open a PR — do not push to `main`
+
+`main` is protected (see `BRANCH_PROTECTION_SETUP.md`). Every change — including doc-only updates and one-line fixes — goes through a pull request:
+
+1. Commit with a conventional message (`<type>(<scope>): <summary>`) matching the log (e.g. `fix(agent): …`, `feat(auth): …`, `docs: …`, `chore(deps): …`).
+2. Push your branch to `origin` (never force-push shared branches).
+3. Open the PR against the requested base branch (default `main`) with `gh pr create`.
+4. Keep the PR description tight: **Summary**, **Test plan** (checklist), and any migration/rollout notes.
+
+See “GitHub CLI (`gh`) — use REST API for mutations” below for the known `gh pr edit --body` gotcha.
+
+### 3. Verify CI — never walk away from a red pipeline
+
+Opening a PR is not the end of the job. Watch CI through to green:
+
+```bash
+gh pr checks <PR_NUMBER> --watch        # live tail until all checks finish
+gh run view <run-id> --log-failed       # inspect a failed workflow
+gh pr view <PR_NUMBER> --json statusCheckRollup
+```
+
+If CI fails:
+
+- **Reproduce locally first.** Match the failing command (lint, build, `test:node`, coverage, docs build, deploy) exactly. CI log paths map 1:1 to the `scripts/` and root `package.json` entries.
+- **Fix forward in the same PR** — do not merge with known failures and do not disable checks.
+- **Transient failures:** re-run with `gh run rerun <run-id> --failed` only after you’ve confirmed the failure is genuinely environmental (e.g. registry flake). Document the rationale in a PR comment; never silently re-run to mask a real bug.
+- **Quality Gate (SonarCloud) / coverage regressions** count as CI failures — address them, don’t override.
+
+Merging the PR is the final step of the task, not opening it.
+
+### 4. Style matters — match the codebase, not your preference
+
+Code style in this repo is **strictly enforced** and routinely corrects drift. Always:
+
+- Run `bun run lint` locally before pushing; run `bun run lint:fix` to auto-fix the fixable subset. The shared flat config (`eslint.config.cjs`) is the source of truth for every package except `apps/docs` (Biome).
+- Follow the conventions in the [Coding Style](#coding-style) and [Test Style](#test-style) sections below: type-import grouping, colon alignment in multi-key object literals, explicit return types and visibility modifiers, `.js` extensions on relative imports, kebab-case files, `.spec.ts` tests, etc.
+- Read the diff you’re producing. Style drift in a PR (inconsistent quote style, stray `any`, unsorted imports, missing return types) is the single most common reason PRs get bounced. ESLint catches most of it; a careful human review catches the rest.
+
+### 5. When in doubt, read `dwn-sdk-js`
+
+`@enbox/dwn-sdk-js` is the **gold-standard package** in this monorepo — the oldest, the most reviewed, and the template every other package is measured against for both style and structure. When a convention is ambiguous (error types, JSDoc density, module layout, test shape, `DwnError` + `DwnErrorCode`, JSON Schema organization, `todo-plz` usage), **follow `dwn-sdk-js`** rather than whatever another package happens to do.
+
 ## Monorepo Overview
 
 Bun workspace monorepo for decentralized web infrastructure. Runtime is **Bun** (>=1.0.0). The repo root pins a **`packageManager`** field (see root `package.json`) so local Bun matches CI and lockfile expectations.
 
-**Task orchestration:** `bun run build`, `bun run lint`, and `bun run test:node` at the repo root invoke **Turbo** (`turbo.json`). Package `test:node` tasks declare `dependsOn: ["^build"]`, so dependents build before tests. Root scripts exclude `@enbox/docs` (Biome/Next.js) and `@enbox/electrobun-dwn` from the default `build` graph; build `electrobun-dwn` explicitly when working on that package.
+**Task orchestration:** `bun run build`, `bun run lint`, and `bun run test:node` at the repo root invoke **Turbo** (`turbo.json`, pinned to `turbo@2.8.13` in root `devDependencies`). `build`, `lint`, `lint:fix`, and `test:node` all declare `dependsOn: ["^build"]`, so dependents build before their tasks run. `test:node` sets `cache: false` (runs are never cached); `build` declares `outputs: ["dist/**"]`.
+
+Root filter semantics:
+
+- `bun run build` excludes `@enbox/docs` (uses Biome/Next.js) **and** `@enbox/electrobun-dwn` (private desktop shell). Build `electrobun-dwn` explicitly with `bun run --filter @enbox/electrobun-dwn build` when working on it.
+- `bun run lint` / `lint:fix` exclude only `@enbox/docs`.
+- `bun run test:node` excludes only `@enbox/docs`. Note that `@enbox/dwn-sql-store` and `@enbox/dwn-server` name their suite `test` (not `test:node`), so they are skipped by the root `test:node` task. Run them directly: `bun run --filter @enbox/dwn-sql-store test`, `bun run --filter @enbox/dwn-server test`.
 
 ### Package Dependency Graph (build order)
 
@@ -24,14 +97,20 @@ Core stack (simplified — follow `workspace:*` in each `package.json` for exact
     @enbox/dids (did:dht, did:jwk, resolution)
       @enbox/dwn-sdk-js (DWN protocol engine, handlers, in-memory stores, JSON Schemas)
         @enbox/dwn-sql-store (Postgres/MySQL/SQLite DWN stores, Kysely migrations)
-          @enbox/dwn-server (HTTP/WebSocket DWN server, registration, admin API)
-        @enbox/dwn-clients (DWN JSON-RPC / transport clients — depends on dwn-sdk-js)
-        @enbox/agent (identity vault, DWN-backed stores, sync — uses dwn-clients)
-        @enbox/auth (AuthManager, sessions, connect flows — uses agent + dwn-clients)
-        @enbox/api (high-level app SDK — uses agent + auth + dwn-clients)
-        @enbox/protocols (published protocol definitions — uses api + dwn-sdk-js)
-      @enbox/browser (BrowserConnectHandler, DWeb connect UI helpers — uses agent, api, auth, dids)
+        @enbox/dwn-clients (DWN JSON-RPC / transport clients)
+          @enbox/dwn-server (HTTP/WebSocket DWN server, registration, admin API — uses dwn-sdk-js + dwn-sql-store + dwn-clients)
+          @enbox/agent (identity vault, DWN-backed stores, sync — uses dwn-sdk-js + dwn-clients)
+            @enbox/auth (AuthManager, sessions, connect flows — uses agent + dwn-sdk-js + dwn-clients)
+              @enbox/api (high-level app SDK — uses agent + auth + dwn-clients)
+                @enbox/protocols (published protocol definitions — uses api + dwn-sdk-js)
+                @enbox/browser (BrowserConnectHandler, DWeb connect UI helpers — uses agent + api + auth + dids)
 ```
+
+Notes on the graph:
+
+- `@enbox/agent` does **not** depend on `@enbox/dwn-sql-store`; only `@enbox/dwn-server` does. The agent talks to a DWN over `@enbox/dwn-clients`.
+- `@enbox/auth` depends directly on `@enbox/agent`, `@enbox/dwn-sdk-js`, and `@enbox/dwn-clients` (plus `common`/`crypto`/`dids`).
+- `@enbox/browser` composes `agent` + `api` + `auth` + `dids`; it does not pull in `dwn-server` or `dwn-sql-store`.
 
 **Tooling / UI packages (not in the core server graph above):**
 
@@ -48,7 +127,11 @@ bun run --filter @enbox/dwn-sdk-js build
 bun run --filter @enbox/agent build
 ```
 
-`@enbox/agent` and `@enbox/api` also run a **`build:browser`** step (bundled `browser.mjs` entry) for browser bundlers; run full `build` in those packages when changing browser-facing exports.
+Most packages expose a `build:browser` script, but it means different things:
+
+- **`@enbox/agent`** and **`@enbox/api`** emit a bundled `dist/browser.mjs` via `build/browser-bundle.js` (esbuild) with node-stdlib shims (`--node-shims`). Run their full `build` after changing browser-facing exports.
+- **`@enbox/common`**, **`@enbox/crypto`**, **`@enbox/dids`**, **`@enbox/dwn-sdk-js`**, and **`@enbox/browser`** expose `build:browser` as a pass-through (often aliased to `build:esm`); there is no separate browser bundle artifact.
+- **`@enbox/auth`**, **`@enbox/dwn-clients`**, **`@enbox/dwn-server`**, **`@enbox/dwn-sql-store`**, **`@enbox/protocols`**, and **`@enbox/protocol-codegen`** do not define `build:browser`.
 
 ### Key Directories
 
@@ -75,6 +158,9 @@ bun run --filter @enbox/agent build
 | `apps/docs/content/docs/` | MDX content (guides + API reference) |
 | `apps/docs/src/` | Next.js app source (layouts, components, styles) |
 | `docs/` | Existing markdown docs (HOSTING.md, TESTING.md, architecture/) |
+| `scripts/` | CI / release helpers — `publish.sh`, `ci-setup.sh`, `run-node-coverage.sh`, `run-browser-coverage.sh`, `merge-lcov.mjs`, `test-with-server.sh` |
+| `build/` | Shared build helpers — `browser-bundle.js` (esbuild browser bundler for `@enbox/agent` / `@enbox/api`) |
+| `turbo.json`, `eslint.config.cjs` | Root Turbo task graph and shared ESLint flat config used by every package except `apps/docs` (which uses Biome) |
 
 ## Pre-Push Requirements
 
@@ -115,7 +201,7 @@ All packages use **`bun test`** (Bun's native test runner).
 | `@enbox/dwn-clients` | `bun test` | `bun run test:node` |
 | `@enbox/protocols` | `bun test` | `bun run test:node` |
 | `@enbox/protocol-codegen` | `bun test` | `bun run test:node` |
-| `@enbox/browser` | `bun test` / Vitest | `bun run test:node` (subset); `bun run test:browser` for browser tests |
+| `@enbox/browser` | Vitest (browser runner) | `bun run test:browser` — **no `test:node` suite**; browser-only via `@vitest/browser-playwright` |
 
 #### Agent / API / Auth tests (bun:test)
 
@@ -171,7 +257,7 @@ Without `DID_DHT_GATEWAY_URI`, tests in `agent`, `api`, `auth`, and `dids` that 
 
 | Service | Container | Port | Used by |
 |---|---|---|---|
-| Pkarr relay | `enbox-test-pkarr` | `localhost:7527` | `dids`, `agent`, `api` (did:dht publishing) |
+| Pkarr relay | `enbox-test-pkarr` | `localhost:7527` | `dids`, `agent`, `api`, `auth` (did:dht publishing) |
 | PostgreSQL 15 | `enbox-test-postgres` | `localhost:5433` | `dwn-server`, `dwn-sql-store` |
 | PostgreSQL 13 | `enbox-test-postgres-sdk` | `localhost:5432` | `dwn-sql-store` (SDK test suite) |
 | MySQL 8 | `enbox-test-mysql` | `localhost:3306` | `dwn-sql-store` |
@@ -308,6 +394,8 @@ feat: add provider-auth-v0 client methods and Web5.connect() integration
 ## Coding Style
 
 Style is derived from `dwn-sdk-js` (gold standard). ESLint enforces most rules.
+
+**Linter boundary:** every workspace package uses the shared ESLint flat config at the repo root (`eslint.config.cjs`); `apps/docs` is the only member that uses **Biome** instead and is explicitly filtered out of `bun run lint` / `lint:fix`. Do not run `eslint` against `apps/docs` and do not run Biome against `packages/*`.
 
 ### Imports
 
