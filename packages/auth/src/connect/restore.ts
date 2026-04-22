@@ -20,7 +20,7 @@ import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
-import { deriveActiveSyncScope, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
+import { ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Decrypt a stored key blob.
@@ -230,31 +230,7 @@ export async function restoreSession(
   let syncRepairFailed = false;
   if (delegateDid) {
     try {
-      const protocols = await deriveActiveSyncScope(userAgent, delegateDid);
-      if (protocols === 'all' || protocols.length > 0) {
-        const options = {
-          delegateDid,
-          protocols: protocols === 'all' ? 'all' as const : protocols as [string, ...string[]],
-        };
-        try {
-          await userAgent.sync.registerIdentity({ did: connectedDid, options });
-        } catch (regError: unknown) {
-          const msg = regError instanceof Error ? regError.message : '';
-          if (msg.includes('already registered')) {
-            await userAgent.sync.updateIdentityOptions({ did: connectedDid, options });
-          } else {
-            throw regError;
-          }
-        }
-      } else {
-        // Zero grants — remove any stale sync registration so revoked protocols stop syncing.
-        try {
-          await userAgent.sync.unregisterIdentity(connectedDid);
-        } catch (error: unknown) {
-          const msg = error instanceof Error ? error.message : '';
-          if (!msg.includes('is not registered')) { throw error; }
-        }
-      }
+      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
     } catch {
       // Grant query or registration repair failed — don't block restore,
       // but don't let a stale registration remain usable.

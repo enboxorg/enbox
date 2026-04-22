@@ -12,7 +12,7 @@ import type { ImportFromPhraseOptions, ImportFromPortableOptions } from '../type
 
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
-import { createDefaultIdentity, deriveActiveSyncScope, ensureVaultReady, finalizeSession, resolveIdentityDids, startSyncIfEnabled } from './lifecycle.js';
+import { createDefaultIdentity, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, startSyncIfEnabled } from './lifecycle.js';
 
 /**
  * Import (or recover) an identity from a BIP-39 recovery phrase.
@@ -68,25 +68,16 @@ export async function importFromPhrase(
     );
   }
 
-  // Register sync for new identities.
-  if (isNewIdentity) {
-    if (delegateDid) {
-      const protocols = await deriveActiveSyncScope(userAgent, delegateDid);
-      if (protocols === 'all' || protocols.length > 0) {
-        await userAgent.sync.registerIdentity({
-          did     : connectedDid,
-          options : {
-            delegateDid,
-            protocols: protocols === 'all' ? 'all' as const : protocols as [string, ...string[]],
-          },
-        });
-      }
-    } else if (sync !== 'off') {
-      await userAgent.sync.registerIdentity({
-        did     : connectedDid,
-        options : { delegateDid, protocols: 'all' },
-      });
-    }
+  // Register sync. For delegate identities, always repair the registration
+  // (derive scope from active grants — revoked grants must not remain in a
+  // stale registration), regardless of whether the identity was just
+  // created or restored from storage. For local identities, register
+  // `protocols: 'all'` only on first creation; a pre-existing local
+  // identity was already registered during its initial flow.
+  if (delegateDid) {
+    await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
+  } else if (isNewIdentity && sync !== 'off') {
+    await registerSyncScopeForIdentity({ userAgent, connectedDid });
   }
 
   // Start sync.
@@ -142,21 +133,9 @@ export async function importFromPortable(
 
   // Register sync. For delegates, derive scope from grants (not 'all').
   if (delegateDid) {
-    const protocols = await deriveActiveSyncScope(userAgent, delegateDid);
-    if (protocols === 'all' || protocols.length > 0) {
-      await userAgent.sync.registerIdentity({
-        did     : connectedDid,
-        options : {
-          delegateDid,
-          protocols: protocols === 'all' ? 'all' as const : protocols as [string, ...string[]],
-        },
-      });
-    }
+    await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
   } else if (sync !== 'off') {
-    await userAgent.sync.registerIdentity({
-      did     : connectedDid,
-      options : { delegateDid, protocols: 'all' },
-    });
+    await registerSyncScopeForIdentity({ userAgent, connectedDid });
   }
 
   await startSyncIfEnabled(userAgent, sync);
