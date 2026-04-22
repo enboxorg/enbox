@@ -10,21 +10,36 @@ If a test fails because new production code interacts badly with a stubbed envir
 
 ## Monorepo Overview
 
-Bun workspace monorepo for decentralized web infrastructure. Runtime is **Bun** (>=1.0.0).
+Bun workspace monorepo for decentralized web infrastructure. Runtime is **Bun** (>=1.0.0). The repo root pins a **`packageManager`** field (see root `package.json`) so local Bun matches CI and lockfile expectations.
+
+**Task orchestration:** `bun run build`, `bun run lint`, and `bun run test:node` at the repo root invoke **Turbo** (`turbo.json`). Package `test:node` tasks declare `dependsOn: ["^build"]`, so dependents build before tests. Root scripts exclude `@enbox/docs` (Biome/Next.js) and `@enbox/electrobun-dwn` from the default `build` graph; build `electrobun-dwn` explicitly when working on that package.
 
 ### Package Dependency Graph (build order)
 
+Core stack (simplified — follow `workspace:*` in each `package.json` for exact edges):
+
 ```
-@enbox/common          (shared utilities, TtlCache, LevelStore)
-  @enbox/crypto        (Ed25519, X25519, secp256k1, AES, JWE)
-    @enbox/dids        (did:dht, did:jwk, resolution)
-      @enbox/dwn-sdk-js  (DWN protocol engine, message handlers, stores)
-        @enbox/agent     (agent framework: identity, key management, DWN stores, sync)
-          @enbox/api     (high-level SDK for apps)
-      @enbox/dwn-sql-store (SQL-backed DWN storage)
-        @enbox/dwn-server  (HTTP/WS DWN server)
-    @enbox/browser     (browser-specific DID tools)
+@enbox/common (TtlCache, LevelStore, shared utilities)
+  @enbox/crypto (Ed25519, X25519, secp256k1, AES, JWE)
+    @enbox/dids (did:dht, did:jwk, resolution)
+      @enbox/dwn-sdk-js (DWN protocol engine, handlers, in-memory stores, JSON Schemas)
+        @enbox/dwn-sql-store (Postgres/MySQL/SQLite DWN stores, Kysely migrations)
+          @enbox/dwn-server (HTTP/WebSocket DWN server, registration, admin API)
+        @enbox/dwn-clients (DWN JSON-RPC / transport clients — depends on dwn-sdk-js)
+        @enbox/agent (identity vault, DWN-backed stores, sync — uses dwn-clients)
+        @enbox/auth (AuthManager, sessions, connect flows — uses agent + dwn-clients)
+        @enbox/api (high-level app SDK — uses agent + auth + dwn-clients)
+        @enbox/protocols (published protocol definitions — uses api + dwn-sdk-js)
+      @enbox/browser (BrowserConnectHandler, DWeb connect UI helpers — uses agent, api, auth, dids)
 ```
+
+**Tooling / UI packages (not in the core server graph above):**
+
+| Package | Role |
+|---|---|
+| `@enbox/protocol-codegen` | CLI (`protocol-codegen`) — TypeScript types from protocol definitions / JSON Schema |
+| `@enbox/dwn-server-admin-ui` | Bundled Preact admin UI assets for the server |
+| `@enbox/electrobun-dwn` | **Private** — Electrobun desktop shell that embeds `@enbox/dwn-server` for a local DWN |
 
 Build from the bottom up. If you change `dwn-sdk-js`, rebuild it before building `agent`:
 
@@ -32,6 +47,8 @@ Build from the bottom up. If you change `dwn-sdk-js`, rebuild it before building
 bun run --filter @enbox/dwn-sdk-js build
 bun run --filter @enbox/agent build
 ```
+
+`@enbox/agent` and `@enbox/api` also run a **`build:browser`** step (bundled `browser.mjs` entry) for browser bundlers; run full `build` in those packages when changing browser-facing exports.
 
 ### Key Directories
 
@@ -47,6 +64,13 @@ bun run --filter @enbox/agent build
 | `packages/agent/src/test-harness.ts` | `PlatformAgentTestHarness` — test infrastructure (exported as public API) |
 | `packages/dwn-sdk-js/src/` | DWN SDK source (gold-standard for style) |
 | `packages/dwn-sdk-js/json-schemas/` | JSON Schema definitions for DWN messages |
+| `packages/dwn-clients/src/` | DWN client transport / JSON-RPC |
+| `packages/auth/src/` | `AuthManager`, storage adapters, connect and discovery helpers |
+| `packages/protocols/src/` | Shared protocol definitions consumed by apps |
+| `packages/protocol-codegen/src/` | Codegen CLI implementation |
+| `packages/dwn-server-admin-ui/` | Admin UI bundle source and build scripts |
+| `packages/electrobun-dwn/` | Electrobun-embedded local DWN (private package) |
+| `examples/dapp-demo/`, `examples/web-wallet/` | Sample Vite apps (not workspace members; link or copy local packages as needed) |
 | `apps/docs/` | Documentation site (Fumadocs + Next.js, deployed to Cloudflare Pages) |
 | `apps/docs/content/docs/` | MDX content (guides + API reference) |
 | `apps/docs/src/` | Next.js app source (layouts, components, styles) |
@@ -87,10 +111,15 @@ All packages use **`bun test`** (Bun's native test runner).
 | `@enbox/common` | `bun test` | `bun run test:node` |
 | `@enbox/crypto` | `bun test` | `bun run test:node` |
 | `@enbox/dids` | `bun test` | `bun run test:node` |
+| `@enbox/auth` | `bun test` | `bun run test:node` |
+| `@enbox/dwn-clients` | `bun test` | `bun run test:node` |
+| `@enbox/protocols` | `bun test` | `bun run test:node` |
+| `@enbox/protocol-codegen` | `bun test` | `bun run test:node` |
+| `@enbox/browser` | `bun test` / Vitest | `bun run test:node` (subset); `bun run test:browser` for browser tests |
 
-#### Agent / API tests (bun:test)
+#### Agent / API / Auth tests (bun:test)
 
-**Important:** Always set `DID_DHT_GATEWAY_URI` before running agent or API tests. Without it, ~115 agent tests and ~23 API tests will fail with Pkarr errors.
+**Important:** Always set `DID_DHT_GATEWAY_URI` before running **agent**, **api**, or **auth** tests. Without it, a large subset of tests will fail with Pkarr / `did:dht` publishing errors.
 
 ```bash
 export DID_DHT_GATEWAY_URI=http://localhost:7527
@@ -136,7 +165,7 @@ export DID_DHT_GATEWAY_URI=http://localhost:7527
 export NATS_URL=nats://localhost:4222
 ```
 
-Without `DID_DHT_GATEWAY_URI`, tests in `agent` (~115 tests), `api` (~23 tests), and `dids` (~1 test) will fail with `DidError: internalError: Failed to put Pkarr record`. These are NOT real test failures — the tests are correct, they just need the gateway.
+Without `DID_DHT_GATEWAY_URI`, tests in `agent`, `api`, `auth`, and `dids` that publish `did:dht` will fail with `DidError: internalError: Failed to put Pkarr record`. These are NOT real test failures — the tests are correct, they just need the gateway.
 
 ### Services provided by `docker-compose.test.yaml`
 
