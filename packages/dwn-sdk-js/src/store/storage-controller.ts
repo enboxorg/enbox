@@ -79,8 +79,13 @@ export class StorageController {
     }
 
     if (message.descriptor.prune) {
-      // purge/hard-delete all descendent records
-      await StorageController.purgeRecordDescendants(tenant, message.descriptor.recordId, this.messageStore, this.dataStore, this.stateIndex);
+      // purge/hard-delete all descendant records. Cascade is intentionally protocol-agnostic:
+      // `parentContextId` is a structural link, and a prune removes the whole subtree regardless
+      // of which protocol a descendant lives in. Cross-protocol composing children (linked via
+      // `$ref`/`uses`) participate in the cascade. See issue #298 for the design discussion.
+      await StorageController.purgeRecordDescendants(
+        tenant, message.descriptor.recordId, this.messageStore, this.dataStore, this.stateIndex
+      );
     }
 
     // delete all existing messages that are not newest, except for the initial write
@@ -191,7 +196,21 @@ export class StorageController {
   }
 
   /**
-   * Purges (permanent hard-delete) all descendant's data of the given `recordId`.
+   * Purges (permanent hard-delete) all descendants of the given `recordId`, recursively.
+   *
+   * The cascade is intentionally protocol-agnostic: `parentContextId` is a structural link,
+   * so pruning a parent removes every record hanging off it regardless of which protocol a
+   * descendant lives in. Cross-protocol composing children (records in a different protocol
+   * that reference the parent via `$ref` / `uses`) are included in the cascade.
+   *
+   * Rationale (closes #298 as working-as-intended):
+   * - A DWN is tenant-owned storage. The tenant's prune authority extends across the whole
+   *   subtree they rooted, regardless of which protocol a descendant declares itself under.
+   * - Preserving cross-protocol orphans creates a half-alive state (readable but not
+   *   updatable, since `validateReferentialIntegrity` requires the pruned parent) that is
+   *   worse for callers than simply cascading.
+   * - Same-protocol cascade is already protocol-agnostic at every hop via `parentId`,
+   *   so treating cross-protocol boundaries differently was inconsistent.
    */
   public static async purgeRecordDescendants(
     tenant: string,
@@ -200,16 +219,15 @@ export class StorageController {
     dataStore: DataStore,
     stateIndex: StateIndex
   ): Promise<void> {
-    const filter = {
+    const filter: Filter = {
       interface : DwnInterfaceName.Records,
-      parentId  : recordId
+      parentId  : recordId,
     };
     const { messages: childMessages } = await messageStore.query(tenant, [filter]);
 
     // group the child messages by `recordId`
     const recordIdToMessagesMap = new Map<string, GenericMessage[]>();
     for (const message of childMessages) {
-      // get the recordId
       let recordId;
       if (Records.isRecordsWrite(message)) {
         recordId = message.recordId;
@@ -225,13 +243,10 @@ export class StorageController {
       }
     }
 
-    // purge all child's descendants first
     for (const childRecordId of recordIdToMessagesMap.keys()) {
-      // purge the child's descendent messages first
       await StorageController.purgeRecordDescendants(tenant, childRecordId, messageStore, dataStore, stateIndex);
     }
 
-    // then purge the child messages themselves
     for (const childRecordId of recordIdToMessagesMap.keys()) {
       await StorageController.purgeRecordMessages(tenant, recordIdToMessagesMap.get(childRecordId)!, messageStore, dataStore, stateIndex);
     }
