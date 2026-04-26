@@ -1,5 +1,14 @@
 # @enbox/api
 
+## 0.6.22
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @enbox/agent@0.6.7
+  - @enbox/auth@0.6.30
+  - @enbox/dwn-clients@0.3.3
+
 ## 0.6.21
 
 ### Patch Changes
