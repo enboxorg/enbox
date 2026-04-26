@@ -275,4 +275,132 @@ describe('General JWS Sign/Verify', () => {
     sinon.assert.calledTwice(cacheSetSpy);
   });
 
+  describe('GeneralJwsVerifierGetPublicKeyNotFound diagnostics', () => {
+    const buildJwsForKid = async (kid: string): Promise<{ jws: any; }> => {
+      const { privateJwk } = await Ed25519.generateKeyPair();
+      const payloadBytes = new TextEncoder().encode('anyPayloadValue');
+      const jwsBuilder = await GeneralJwsBuilder.create(payloadBytes, [new PrivateKeySigner({ privateJwk, keyId: kid })]);
+      return { jws: jwsBuilder.getJws() };
+    };
+
+    it('should include the resolution error code and message when the DID cannot be resolved', async () => {
+      const kid = 'did:dht:absent#0';
+      const { jws } = await buildJwsForKid(kid);
+
+      const resolverStub = sinon.createStubInstance(UniversalResolver, {
+        // @ts-ignore
+        resolve: sinon.stub().resolves({
+          didResolutionMetadata : { error: 'notFound', errorMessage: 'BEP44 record not found' },
+          didDocument           : null,
+          didDocumentMetadata   : {},
+        }),
+      });
+
+      let caught: DwnError | undefined;
+      try {
+        await GeneralJwsVerifier.verifySignatures(jws, resolverStub);
+      } catch (error) {
+        caught = error as DwnError;
+      }
+
+      expect(caught).toBeInstanceOf(DwnError);
+      expect(caught!.code).toBe(DwnErrorCode.GeneralJwsVerifierGetPublicKeyNotFound);
+      expect(caught!.message).toContain('did:dht:absent');
+      expect(caught!.message).toContain(kid);
+      expect(caught!.message).toContain('notFound');
+      expect(caught!.message).toContain('BEP44 record not found');
+    });
+
+    it('should explain when the DID Document is missing without an explicit resolution error', async () => {
+      const kid = 'did:dht:silent#0';
+      const { jws } = await buildJwsForKid(kid);
+
+      const resolverStub = sinon.createStubInstance(UniversalResolver, {
+        // @ts-ignore
+        resolve: sinon.stub().resolves({
+          didResolutionMetadata : {},
+          didDocument           : undefined,
+          didDocumentMetadata   : {},
+        }),
+      });
+
+      let caught: DwnError | undefined;
+      try {
+        await GeneralJwsVerifier.verifySignatures(jws, resolverStub);
+      } catch (error) {
+        caught = error as DwnError;
+      }
+
+      expect(caught).toBeInstanceOf(DwnError);
+      expect(caught!.code).toBe(DwnErrorCode.GeneralJwsVerifierGetPublicKeyNotFound);
+      expect(caught!.message).toContain('DID Document not found');
+      expect(caught!.message).toContain('did:dht:silent');
+      expect(caught!.message).toContain(kid);
+    });
+
+    it('should list the available verification method ids when the kid does not match any', async () => {
+      const { privateJwk } = await Ed25519.generateKeyPair();
+      const { publicJwk: otherPublicJwk } = await Ed25519.generateKeyPair();
+      const payloadBytes = new TextEncoder().encode('anyPayloadValue');
+      const kid = 'did:jank:alice#missing-key';
+      const jwsBuilder = await GeneralJwsBuilder.create(payloadBytes, [new PrivateKeySigner({ privateJwk, keyId: kid })]);
+      const jws = jwsBuilder.getJws();
+
+      const resolverStub = sinon.createStubInstance(UniversalResolver, {
+        // @ts-ignore
+        resolve: sinon.stub().withArgs('did:jank:alice').resolves({
+          didResolutionMetadata : {},
+          didDocument           : {
+            verificationMethod: [
+              { id: 'did:jank:alice#sig', type: 'JsonWebKey2020', controller: 'did:jank:alice', publicKeyJwk: otherPublicJwk },
+              { id: 'did:jank:alice#enc', type: 'JsonWebKey2020', controller: 'did:jank:alice', publicKeyJwk: otherPublicJwk },
+            ],
+          },
+          didDocumentMetadata: {},
+        }),
+      });
+
+      let caught: DwnError | undefined;
+      try {
+        await GeneralJwsVerifier.verifySignatures(jws, resolverStub);
+      } catch (error) {
+        caught = error as DwnError;
+      }
+
+      expect(caught).toBeInstanceOf(DwnError);
+      expect(caught!.code).toBe(DwnErrorCode.GeneralJwsVerifierGetPublicKeyNotFound);
+      expect(caught!.message).toContain(kid);
+      expect(caught!.message).toContain('available verification methods');
+      expect(caught!.message).toContain('did:jank:alice#sig');
+      expect(caught!.message).toContain('did:jank:alice#enc');
+    });
+
+    it('should report when the DID Document has no verification methods', async () => {
+      const kid = 'did:jank:empty#0';
+      const { jws } = await buildJwsForKid(kid);
+
+      const resolverStub = sinon.createStubInstance(UniversalResolver, {
+        // @ts-ignore
+        resolve: sinon.stub().withArgs('did:jank:empty').resolves({
+          didResolutionMetadata : {},
+          didDocument           : { verificationMethod: [] },
+          didDocumentMetadata   : {},
+        }),
+      });
+
+      let caught: DwnError | undefined;
+      try {
+        await GeneralJwsVerifier.verifySignatures(jws, resolverStub);
+      } catch (error) {
+        caught = error as DwnError;
+      }
+
+      expect(caught).toBeInstanceOf(DwnError);
+      expect(caught!.code).toBe(DwnErrorCode.GeneralJwsVerifierGetPublicKeyNotFound);
+      expect(caught!.message).toContain('has no verification methods');
+      expect(caught!.message).toContain('did:jank:empty');
+      expect(caught!.message).toContain(kid);
+    });
+  });
+
 });
