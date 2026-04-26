@@ -35,7 +35,10 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          # Stored as a secret (not a variable) for setup convenience — the
+          # value isn't actually sensitive (Client IDs are visible on the App's
+          # public settings page) but treating it as a secret is harmless.
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - name: Checkout repository
