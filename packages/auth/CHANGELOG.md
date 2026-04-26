@@ -1,5 +1,39 @@
 # @enbox/auth
 
+## 0.6.29
+
+### Patch Changes
+
+- [#871](https://github.com/enboxorg/enbox/pull/871) [`b35f5cb`](https://github.com/enboxorg/enbox/commit/b35f5cb8eb726dd26bcb83b2082d3190a83a36f7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - perf: eliminate startup and reload bottlenecks
+
+  - Cache vault `getDid()` result (avoids JWE decrypt + BearerDid.import on every call)
+  - Eliminate duplicate X25519 context key derivation in `postWriteKeyDelivery()`
+  - Parallelize grant processing, vault encryptions, storage writes, and post-write operations
+  - Cache sync targets with 30s TTL (avoids DID resolution on every sync tick)
+  - Cache `encryptionRequired` / `hasEncryptedTypes` at construction time
+  - Replace protocol init TtlCache with permanent Set
+  - Skip unnecessary `lock()` in `unlock()` when already locked
+
+- [#904](https://github.com/enboxorg/enbox/pull/904) [`149e0b7`](https://github.com/enboxorg/enbox/commit/149e0b79ded21a7f558ecd8e2c5e6268b4d6ba2e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(auth): close gaps in wildcard delegate grant handling (#897)
+
+  - Clear stale sync registration in `importFromPhrase`/`importFromPortable`
+    when a delegate has zero active grants (matches behavior in `restoreSession`
+    and `importDelegateAndSetupSync`).
+  - Extract `toSyncIdentityProtocols()` helper in `connect/lifecycle.ts` and use
+    it across all sync-registration call sites in `connect/lifecycle.ts`,
+    `connect/restore.ts`, `connect/import.ts`, and `auth-manager.ts`, eliminating
+    duplicated `'all' | string[] → 'all' | [string, ...string[]]` narrowing
+    casts.
+  - Update stale docstring on `AuthManager._deriveProtocolsFromGrants` to
+    reflect the current `'all' | string[]` return type.
+  - Add test coverage for: mixed wildcard+scoped grants, expired wildcard
+    grant, revoked wildcard grant, `Messages.Subscribe`/`Messages.Sync`
+    unscoped grant rejection, `importFromPhrase`/`importFromPortable` wildcard
+    and zero-grant flows, and `toSyncIdentityProtocols` narrowing.
+
+- Updated dependencies [[`1240bb1`](https://github.com/enboxorg/enbox/commit/1240bb167ffedc051f5a1e4beb08463080d18ae0), [`b35f5cb`](https://github.com/enboxorg/enbox/commit/b35f5cb8eb726dd26bcb83b2082d3190a83a36f7)]:
+  - @enbox/agent@0.6.6
+
 ## 0.6.28
 
 ### Patch Changes
