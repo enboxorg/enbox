@@ -1,5 +1,21 @@
 # @enbox/agent
 
+## 0.6.6
+
+### Patch Changes
+
+- [#900](https://github.com/enboxorg/enbox/pull/900) [`1240bb1`](https://github.com/enboxorg/enbox/commit/1240bb167ffedc051f5a1e4beb08463080d18ae0) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(agent): drain in-flight eager contextKey sends before agent teardown so tests don't surface LEVEL_DATABASE_NOT_OPEN or 'Agent DID is not set' as unhandled errors between tests
+
+- [#871](https://github.com/enboxorg/enbox/pull/871) [`b35f5cb`](https://github.com/enboxorg/enbox/commit/b35f5cb8eb726dd26bcb83b2082d3190a83a36f7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - perf: eliminate startup and reload bottlenecks
+
+  - Cache vault `getDid()` result (avoids JWE decrypt + BearerDid.import on every call)
+  - Eliminate duplicate X25519 context key derivation in `postWriteKeyDelivery()`
+  - Parallelize grant processing, vault encryptions, storage writes, and post-write operations
+  - Cache sync targets with 30s TTL (avoids DID resolution on every sync tick)
+  - Cache `encryptionRequired` / `hasEncryptedTypes` at construction time
+  - Replace protocol init TtlCache with permanent Set
+  - Skip unnecessary `lock()` in `unlock()` when already locked
+
 ## 0.6.5
 
 ### Patch Changes
