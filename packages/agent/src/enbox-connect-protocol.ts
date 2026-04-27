@@ -115,12 +115,26 @@ import {
 import { DwnInterfaceName, DwnMethodName, HdKey, KeyDerivationScheme, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
-import { concatenateUrl } from './utils.js';
 import { DwnInterface } from './types/dwn.js';
 import { getEncryptionKeyInfo } from './dwn-encryption.js';
 import { isMultiPartyContext } from './protocol-utils.js';
 import { isRecordPermissionScope } from './dwn-api.js';
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
+import { concatenateUrl, mapConcurrent, mapConcurrentSettled } from './utils.js';
+
+// ---------------------------------------------------------------------------
+// Tunables
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum number of in-flight DWN-endpoint sends issued by the connect flow
+ * (permission grants + revocation grants). Caps total concurrency across all
+ * `(grant, endpoint)` pairs so that a request with many permissions and/or a
+ * tenant with many DWN endpoints cannot stampede the network. Tuned to be
+ * generous enough to hide endpoint latency while staying well under typical
+ * per-host browser connection limits and server-side rate limits.
+ */
+const CONNECT_FANOUT_CONCURRENCY = 8;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -690,53 +704,55 @@ async function createPermissionGrants(
   const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
   logger.log(`Sending ${permissionGrants.length} permission grants to ${dwnEndpointUrls.length} DWN endpoint(s)...`);
 
-  const messagePromises = permissionGrants.map(async (grant) => {
+  // Flatten (grant, endpoint) tuples into a single list of sends so that one
+  // global concurrency cap governs total in-flight requests during the
+  // connect flow — important when either dimension grows large.
+  const sendTasks = permissionGrants.flatMap((grant, grantIndex) => {
     const { encodedData, ...rawMessage } = grant.message;
     const data = Convert.base64Url(encodedData).toUint8Array();
-
-    // The rawMessage is already signed by createGrant(), so we send it
-    // directly to each endpoint without re-constructing.
-    // Fan out to all endpoints concurrently so total wall-time is
-    // O(slowest endpoint) rather than O(sum of endpoint latencies).
-    const endpointResults = await Promise.allSettled(
-      dwnEndpointUrls.map((dwnUrl) =>
-        agent.rpc.sendDwnRequest({
-          dwnUrl,
-          targetDid : selectedDid,
-          message   : rawMessage,
-          data      : new Blob([data as BlobPart]),
-        }).then((reply) => ({ dwnUrl, reply }))
-      )
-    );
-
-    let atLeastOneSuccess = false;
-    for (const result of endpointResults) {
-      if (result.status === 'rejected') {
-        const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
-        logger.error(`Grant send failed: ${reason}`);
-        continue;
-      }
-      const { dwnUrl, reply } = result.value;
-      if (reply.status.code === 202 || reply.status.code === 409) {
-        atLeastOneSuccess = true;
-      } else {
-        logger.error(`Grant send to ${dwnUrl} returned ${reply.status.code}: ${reply.status.detail}`);
-      }
-    }
-
-    if (!atLeastOneSuccess) {
-      throw new Error('Could not send permission grant to any DWN endpoint.');
-    }
-
-    return grant.message;
+    return dwnEndpointUrls.map((dwnUrl) => ({ grantIndex, dwnUrl, rawMessage, data }));
   });
 
-  try {
-    return await Promise.all(messagePromises);
-  } catch (error) {
-    logger.error(`Error during batch-send of permission grants: ${error}`);
-    throw error;
+  const settled = await mapConcurrentSettled(
+    sendTasks,
+    CONNECT_FANOUT_CONCURRENCY,
+    async ({ grantIndex, dwnUrl, rawMessage, data }) => {
+      const reply = await agent.rpc.sendDwnRequest({
+        dwnUrl,
+        targetDid : selectedDid,
+        message   : rawMessage,
+        data      : new Blob([data as BlobPart]),
+      });
+      return { grantIndex, dwnUrl, reply };
+    },
+  );
+
+  // Aggregate results back per grant: each grant must have at least one
+  // endpoint accept it (status 202 or 409 — already-stored is acceptable).
+  const successPerGrant = new Array<boolean>(permissionGrants.length).fill(false);
+  for (let i = 0; i < settled.length; i++) {
+    const result = settled[i];
+    if (result.status === 'rejected') {
+      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      logger.error(`Grant send to ${sendTasks[i].dwnUrl} failed: ${reason}`);
+      continue;
+    }
+    const { grantIndex, dwnUrl, reply } = result.value;
+    if (reply.status.code === 202 || reply.status.code === 409) {
+      successPerGrant[grantIndex] = true;
+    } else {
+      logger.error(`Grant send to ${dwnUrl} returned ${reply.status.code}: ${reply.status.detail}`);
+    }
   }
+
+  for (let g = 0; g < permissionGrants.length; g++) {
+    if (!successPerGrant[g]) {
+      logger.error(`Error during batch-send of permission grants: grant ${g} reached no DWN endpoint.`);
+      throw new Error('Could not send permission grant to any DWN endpoint.');
+    }
+  }
+
+  return permissionGrants.map((g) => g.message);
 }
 
 // ---------------------------------------------------------------------------
@@ -1252,11 +1268,14 @@ async function submitConnectResponse(
   // below, but we must NOT iterate over them (they are meta-grants, not session grants).
   const sessionGrantCount = delegateGrants.length;
 
-  // Phase 1: create all revocation grants locally in parallel. createGrant only
-  // touches local storage / signing keys, so concurrency here is safe and saves
-  // wall-time when there are many session grants.
-  const revGrantResults = await Promise.all(
-    delegateGrants.slice(0, sessionGrantCount).map((grantMessage) =>
+  // Phase 1: create all revocation grants locally with bounded concurrency.
+  // createGrant is local-only (storage + signing) so it's cheap, but we still
+  // cap parallelism to avoid head-of-line blocking when sessionGrantCount is
+  // large (e.g. dapp requesting many scopes at once).
+  const revGrantResults = await mapConcurrent(
+    delegateGrants.slice(0, sessionGrantCount),
+    CONNECT_FANOUT_CONCURRENCY,
+    (grantMessage) =>
       permissionsApi.createGrant({
         delegated : true,
         store     : true,
@@ -1269,16 +1288,14 @@ async function submitConnectResponse(
         },
         dateExpires : '2040-06-25T16:09:16.693356Z',
         author      : selectedDid,
-      }).then((revGrant) => ({ grantMessage, revGrant }))
-    )
+      }).then((revGrant) => ({ grantMessage, revGrant })),
   );
 
-  // Phase 2: fan out every revocation grant to every owner DWN endpoint
-  // concurrently. This is best-effort (sync delivers eventually), so we use
-  // Promise.allSettled and discard errors. Doing it in parallel turns
-  // O(grants × endpoints) sequential network calls into O(1) wall-time.
-  const revFanoutPromises: Promise<unknown>[] = [];
-  for (const { grantMessage, revGrant } of revGrantResults) {
+  // Phase 2: fan out every revocation grant to every owner DWN endpoint with
+  // a single global concurrency cap so that (grants × endpoints) cannot blow
+  // up. This is best-effort (sync delivers eventually) so individual failures
+  // are tolerated by `mapConcurrentSettled`.
+  const revSendTasks = revGrantResults.flatMap(({ grantMessage, revGrant }) => {
     sessionRevocations.push({
       grantId           : grantMessage.recordId,
       revocationGrantId : revGrant.message.recordId,
@@ -1286,27 +1303,25 @@ async function submitConnectResponse(
 
     const { encodedData: revEncoded, ...revRawMessage } = revGrant.message;
     const revData = Convert.base64Url(revEncoded).toUint8Array();
-    for (const dwnUrl of revGrantEndpoints) {
-      revFanoutPromises.push(
+
+    // Include the revocation grant in the delegate grants for distribution.
+    delegateGrants.push(revGrant.message);
+
+    return revGrantEndpoints.map((dwnUrl) => ({ revRawMessage, revData, dwnUrl }));
+  });
+
+  if (revSendTasks.length > 0) {
+    await mapConcurrentSettled(
+      revSendTasks,
+      CONNECT_FANOUT_CONCURRENCY,
+      ({ revRawMessage, revData, dwnUrl }) =>
         agent.rpc.sendDwnRequest({
           dwnUrl,
           targetDid : selectedDid,
           message   : revRawMessage,
           data      : new Blob([revData as BlobPart]),
-        }).catch(() => {
-          // Best-effort — sync will deliver eventually.
         }),
-      );
-    }
-
-    // Include the revocation grant in the delegate grants for distribution.
-    delegateGrants.push(revGrant.message);
-  }
-
-  // Wait for all best-effort fan-outs to settle before building the response.
-  // We don't rethrow — individual failures are swallowed in the .catch above.
-  if (revFanoutPromises.length > 0) {
-    await Promise.allSettled(revFanoutPromises);
+    );
   }
 
   logger.log('Building connect response...');

@@ -7,6 +7,8 @@ import {
   getRecordMessageCid,
   getRecordProtocolRole,
   isRecordsWrite,
+  mapConcurrent,
+  mapConcurrentSettled,
   pollWithTtl,
 } from '../src/utils.js';
 
@@ -324,6 +326,111 @@ describe('Utils', () => {
 
       const urls = await getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any);
       expect(urls).toEqual(['https://dwn.example.com']);
+    });
+  });
+
+  describe('mapConcurrent', () => {
+    it('should preserve input order in the output array', async () => {
+      const input = [3, 1, 4, 1, 5, 9, 2, 6, 5];
+      const output = await mapConcurrent(input, 3, async (n) => {
+        // Stagger so that earlier-indexed items intentionally finish later.
+        await new Promise((resolve) => setTimeout(resolve, n * 5));
+        return n * 2;
+      });
+      expect(output).toEqual(input.map((n) => n * 2));
+    });
+
+    it('should return an empty array for empty input', async () => {
+      const fn = mock(async (n: number) => n);
+      const result = await mapConcurrent([], 4, fn);
+      expect(result).toEqual([]);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    it('should never exceed the configured concurrency limit', async () => {
+      const concurrency = 3;
+      let inFlight = 0;
+      let observedMax = 0;
+      const items = Array.from({ length: 20 }, (_, i) => i);
+
+      const result = await mapConcurrent(items, concurrency, async (n) => {
+        inFlight++;
+        if (inFlight > observedMax) {
+          observedMax = inFlight;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inFlight--;
+        return n;
+      });
+
+      expect(result).toEqual(items);
+      expect(observedMax).toBeLessThanOrEqual(concurrency);
+      expect(observedMax).toBe(concurrency);
+    });
+
+    it('should reject on the first task rejection (Promise.all-like semantics)', async () => {
+      const fn = mock(async (n: number) => {
+        if (n === 1) {
+          throw new Error('boom');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return n;
+      });
+
+      await expect(mapConcurrent([0, 1, 2, 3], 2, fn)).rejects.toThrow('boom');
+    });
+
+    it('should throw on non-positive-integer concurrency', async () => {
+      await expect(mapConcurrent([1, 2], 0, async (n) => n)).rejects.toThrow(/concurrency/);
+      await expect(mapConcurrent([1, 2], -1, async (n) => n)).rejects.toThrow(/concurrency/);
+      await expect(mapConcurrent([1, 2], 1.5, async (n) => n)).rejects.toThrow(/concurrency/);
+    });
+
+    it('should pass the index as the second argument to the mapper', async () => {
+      const seenIndices: number[] = [];
+      await mapConcurrent(['a', 'b', 'c'], 2, async (_value, index) => {
+        seenIndices.push(index);
+        return index;
+      });
+      expect(seenIndices.sort()).toEqual([0, 1, 2]);
+    });
+  });
+
+  describe('mapConcurrentSettled', () => {
+    it('should never reject — capturing per-task outcomes', async () => {
+      const items = [0, 1, 2, 3];
+      const results = await mapConcurrentSettled(items, 2, async (n) => {
+        if (n % 2 === 0) {
+          return n * 10;
+        }
+        throw new Error(`odd-${n}`);
+      });
+
+      expect(results).toHaveLength(items.length);
+      expect(results[0]).toEqual({ status: 'fulfilled', value: 0 });
+      expect(results[1]).toMatchObject({ status: 'rejected' });
+      expect((results[1] as PromiseRejectedResult).reason.message).toBe('odd-1');
+      expect(results[2]).toEqual({ status: 'fulfilled', value: 20 });
+      expect(results[3]).toMatchObject({ status: 'rejected' });
+    });
+
+    it('should respect the concurrency limit', async () => {
+      const concurrency = 4;
+      let inFlight = 0;
+      let observedMax = 0;
+      const items = Array.from({ length: 30 }, (_, i) => i);
+
+      await mapConcurrentSettled(items, concurrency, async () => {
+        inFlight++;
+        if (inFlight > observedMax) {
+          observedMax = inFlight;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+      });
+
+      expect(observedMax).toBeLessThanOrEqual(concurrency);
+      expect(observedMax).toBe(concurrency);
     });
   });
 });

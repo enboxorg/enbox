@@ -169,3 +169,72 @@ export function concatenateUrl(baseUrl: string, path: string): string {
 
   return `${baseUrl}/${path}`;
 }
+
+/**
+ * Map over an array with bounded concurrency, preserving input order in the
+ * output array. Uses a sliding-window pool of workers so the next item is
+ * picked up as soon as any in-flight task settles — strictly better than a
+ * fixed chunked-batch pattern (no stalling on the slowest item per batch).
+ *
+ * Semantics match `Promise.all`: the returned promise rejects on the first
+ * task rejection. Use {@link mapConcurrentSettled} when individual failures
+ * should not abort the whole batch (e.g. best-effort fan-out).
+ *
+ * @param items Input items to map over.
+ * @param concurrency Maximum number of in-flight tasks. Must be >= 1.
+ * @param fn Per-item async function. Receives the item and its index.
+ * @returns An array of results in the same order as `items`.
+ */
+export async function mapConcurrent<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error(`mapConcurrent: concurrency must be a positive integer, got ${concurrency}`);
+  }
+  if (items.length === 0) {
+    return [];
+  }
+
+  const results = new Array<R>(items.length);
+  let next = 0;
+
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) {
+        return;
+      }
+      results[i] = await fn(items[i], i);
+    }
+  };
+
+  const workerCount = Math.min(concurrency, items.length);
+  const workers: Promise<void>[] = [];
+  for (let w = 0; w < workerCount; w++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Settled variant of {@link mapConcurrent}: never rejects — every task's
+ * outcome is captured as a `PromiseSettledResult`. Use this for best-effort
+ * fan-outs where partial success is acceptable.
+ */
+export async function mapConcurrentSettled<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  return mapConcurrent(items, concurrency, async (item, index) => {
+    try {
+      const value = await fn(item, index);
+      return { status: 'fulfilled', value } as PromiseFulfilledResult<R>;
+    } catch (reason) {
+      return { status: 'rejected', reason } as PromiseRejectedResult;
+    }
+  });
+}
