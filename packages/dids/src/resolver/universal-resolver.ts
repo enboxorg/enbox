@@ -74,6 +74,17 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
   private readonly didResolvers: Map<string, DidMethodResolver> = new Map();
 
   /**
+   * Tracks in-flight DID resolutions so that concurrent calls for the same
+   * DID share a single underlying network resolution instead of stampeding
+   * the resolver (which, for `did:dht`, means hammering the BEP44 relay).
+   *
+   * The promise is kept until the resolution settles; the entry is removed
+   * regardless of success or failure so that a transient error does not
+   * permanently mask a recoverable DID.
+   */
+  private readonly _inFlight: Map<string, Promise<DidResolutionResult>> = new Map();
+
+  /**
    * Constructs a new `DidResolver`.
    *
    * @param params - The parameters for constructing the `DidResolver`.
@@ -140,14 +151,54 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
 
     if (cachedResolutionResult) {
       return cachedResolutionResult;
-    } else {
-      const resolutionResult = await resolver.resolve(parsedDid.uri, options);
-      if (!resolutionResult.didResolutionMetadata.error) {
-        // Cache the resolution result if it was successful.
-        await this.cache.set(parsedDid.uri, resolutionResult);
-      }
+    }
 
-      return resolutionResult;
+    // Single-flight: coalesce concurrent resolutions of the same DID so we
+    // never issue more than one network round-trip per cache miss. Without
+    // this, parallel callers (e.g. the wallet connect flow which kicks off
+    // N permission preparations at once) each issue an independent BEP44
+    // lookup against the relay, multiplying wall time by N and saturating
+    // browser per-host connection limits.
+    //
+    // Coalescing is only safe when no per-call `options` are supplied: the
+    // in-flight Map is keyed by DID URI only, so two concurrent callers
+    // with divergent options (e.g. different `gatewayUri` for did:dht)
+    // would silently share the first caller's result. Callers passing
+    // options resolve independently — the common no-options path (the
+    // wallet's parallelized prepareProtocol fan-out) still benefits.
+    const coalesceable = options === undefined || Object.keys(options).length === 0;
+
+    if (coalesceable) {
+      const existing = this._inFlight.get(parsedDid.uri);
+      if (existing) {
+        return existing;
+      }
+    }
+
+    const resolution = (async (): Promise<DidResolutionResult> => {
+      const result = await resolver.resolve(parsedDid.uri, options);
+      if (!result.didResolutionMetadata.error) {
+        try {
+          await this.cache.set(parsedDid.uri, result);
+        } catch {
+          // Cache write errors are non-fatal: a transient cache failure
+          // (LevelDB I/O, IndexedDB quota) must not reject every coalesced
+          // caller awaiting this single-flight promise, otherwise they
+          // would all lose an otherwise-successful network resolution.
+        }
+      }
+      return result;
+    })();
+
+    if (!coalesceable) {
+      return resolution;
+    }
+
+    this._inFlight.set(parsedDid.uri, resolution);
+    try {
+      return await resolution;
+    } finally {
+      this._inFlight.delete(parsedDid.uri);
     }
   }
 

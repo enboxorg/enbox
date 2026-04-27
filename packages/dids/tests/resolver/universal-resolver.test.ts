@@ -2,7 +2,7 @@ import type { UnwrapPromise } from '@enbox/common';
 
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-import type { DidResource } from '../../src/types/did-core.js';
+import type { DidResolutionResult, DidResource } from '../../src/types/did-core.js';
 
 import { DidJwk } from '../../src/methods/did-jwk.js';
 import DidJwkResolveTestVector from '../fixtures/web5-spec-vectors/did_jwk/resolve.json' with { type: 'json' };
@@ -137,6 +137,219 @@ describe('UniversalResolver', () => {
 
           expect(didResolutionResult).toEqual(vector.output);
         }
+    });
+
+    describe('single-flight (in-flight coalescing)', () => {
+      it('coalesces concurrent resolutions of the same DID into a single underlying call', async () => {
+        const did = 'did:jwk:single-flight-coalesce-1';
+        let inFlight = 0;
+        let maxConcurrent = 0;
+
+        // Slow resolver: tracks how many simultaneous calls are made.
+        const didMethodResolver = spyOn(DidJwk, 'resolve').mockImplementation(async () => {
+          inFlight += 1;
+          maxConcurrent = Math.max(maxConcurrent, inFlight);
+          await new Promise<void>((resolve) => setTimeout(resolve, 25));
+          inFlight -= 1;
+          return {
+            didResolutionMetadata : {},
+            didDocument           : { id: did },
+            didDocumentMetadata   : {},
+          };
+        });
+
+        const results = await Promise.all([
+          didResolver.resolve(did),
+          didResolver.resolve(did),
+          didResolver.resolve(did),
+          didResolver.resolve(did),
+        ]);
+
+        expect(didMethodResolver).toHaveBeenCalledTimes(1);
+        expect(maxConcurrent).toBe(1);
+        for (const r of results) {
+          expect(r.didDocument).toEqual({ id: did });
+        }
+      });
+
+      it('does not coalesce resolutions of different DIDs', async () => {
+        const didA = 'did:jwk:single-flight-different-a';
+        const didB = 'did:jwk:single-flight-different-b';
+
+        const didMethodResolver = spyOn(DidJwk, 'resolve').mockImplementation(async (uri: string) => ({
+          didResolutionMetadata : {},
+          didDocument           : { id: uri },
+          didDocumentMetadata   : {},
+        }));
+
+        await Promise.all([didResolver.resolve(didA), didResolver.resolve(didB)]);
+
+        expect(didMethodResolver).toHaveBeenCalledTimes(2);
+      });
+
+      it('serves a follow-up resolution from cache rather than re-issuing the underlying resolve', async () => {
+        const did = 'did:jwk:single-flight-cache-followup';
+
+        // Use an in-memory cache (the default `DidResolverCacheNoop` would
+        // never serve from cache, defeating this test).
+        const cache = new Map<string, DidResolutionResult>();
+        const cachingResolver = new UniversalResolver({
+          didResolvers : [DidJwk],
+          cache        : {
+            open   : (): Promise<void> => Promise.resolve(),
+            close  : (): Promise<void> => Promise.resolve(),
+            get    : (key: string): Promise<DidResolutionResult | undefined> => Promise.resolve(cache.get(key)),
+            set    : (key: string, value: DidResolutionResult): Promise<void> => { cache.set(key, value); return Promise.resolve(); },
+            delete : (key: string): Promise<void> => { cache.delete(key); return Promise.resolve(); },
+            clear  : (): Promise<void> => { cache.clear(); return Promise.resolve(); },
+          },
+        });
+
+        const didMethodResolver = spyOn(DidJwk, 'resolve').mockResolvedValue({
+          didResolutionMetadata : {},
+          didDocument           : { id: did },
+          didDocumentMetadata   : {},
+        });
+
+        await cachingResolver.resolve(did);
+        await cachingResolver.resolve(did);
+
+        // First call invokes the resolver and populates the cache; second
+        // call returns the cached result without invoking the resolver again.
+        expect(didMethodResolver).toHaveBeenCalledTimes(1);
+      });
+
+      it('clears the in-flight entry after success so future cache misses re-resolve', async () => {
+        const did = 'did:jwk:single-flight-clears-after-success';
+
+        const didMethodResolver = spyOn(DidJwk, 'resolve').mockResolvedValue({
+          didResolutionMetadata : {},
+          didDocument           : { id: did },
+          didDocumentMetadata   : {},
+        });
+
+        // Two sequential calls (no concurrency) — with the default no-op
+        // cache, both calls must hit the underlying resolver, proving the
+        // in-flight entry was cleared after the first resolution settled.
+        await didResolver.resolve(did);
+        await didResolver.resolve(did);
+
+        expect(didMethodResolver).toHaveBeenCalledTimes(2);
+      });
+
+      it('clears the in-flight entry after failure so a retry re-resolves', async () => {
+        const did = 'did:jwk:single-flight-clears-after-failure';
+
+        const didMethodResolver = spyOn(DidJwk, 'resolve').mockRejectedValueOnce(
+          new Error('transient network error'),
+        ).mockResolvedValueOnce({
+          didResolutionMetadata : {},
+          didDocument           : { id: did },
+          didDocumentMetadata   : {},
+        });
+
+        await expect(didResolver.resolve(did)).rejects.toThrow('transient network error');
+
+        // The next call should not be poisoned by the failed in-flight entry.
+        const result = await didResolver.resolve(did);
+        expect(result.didDocument).toEqual({ id: did });
+        expect(didMethodResolver).toHaveBeenCalledTimes(2);
+      });
+
+      it('all concurrent callers reject with the same error if the underlying resolver fails', async () => {
+        const did = 'did:jwk:single-flight-shared-failure';
+
+        const didMethodResolver = spyOn(DidJwk, 'resolve').mockImplementation(async () => {
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+          throw new Error('shared underlying failure');
+        });
+
+        const settled = await Promise.allSettled([
+          didResolver.resolve(did),
+          didResolver.resolve(did),
+          didResolver.resolve(did),
+        ]);
+
+        expect(didMethodResolver).toHaveBeenCalledTimes(1);
+        for (const s of settled) {
+          expect(s.status).toBe('rejected');
+          if (s.status === 'rejected') {
+            expect((s.reason as Error).message).toBe('shared underlying failure');
+          }
+        }
+      });
+
+      it('does NOT coalesce when callers pass per-call options — each gets its own resolution', async () => {
+        const did = 'did:jwk:single-flight-bypassed-with-options';
+
+        const seenOptions: any[] = [];
+        const didMethodResolver = spyOn(DidJwk, 'resolve').mockImplementation(async (_uri: string, opts?: any) => {
+          seenOptions.push(opts);
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+          return {
+            didResolutionMetadata : {},
+            didDocument           : { id: did },
+            didDocumentMetadata   : {},
+          };
+        });
+
+        // Two concurrent callers with different `options` payloads. Single-flight
+        // is keyed by DID URI only, so coalescing here would silently hand
+        // caller B caller A's options — a real correctness/security hazard if
+        // options ever carries a gateway URI, accept header, or signal. The
+        // implementation must bypass single-flight when options are present.
+        await Promise.all([
+          didResolver.resolve(did, { gatewayUri: 'A' } as any),
+          didResolver.resolve(did, { gatewayUri: 'B' } as any),
+        ]);
+
+        expect(didMethodResolver).toHaveBeenCalledTimes(2);
+        expect(seenOptions).toHaveLength(2);
+        expect(seenOptions[0]).toEqual({ gatewayUri: 'A' });
+        expect(seenOptions[1]).toEqual({ gatewayUri: 'B' });
+      });
+
+      it('does not poison concurrent callers when cache.set throws after a successful resolution', async () => {
+        const did = 'did:jwk:single-flight-cache-set-throws';
+
+        const failingCache = {
+          open   : (): Promise<void> => Promise.resolve(),
+          close  : (): Promise<void> => Promise.resolve(),
+          get    : (): Promise<undefined> => Promise.resolve(undefined),
+          set    : (): Promise<void> => Promise.reject(new Error('cache write failed')),
+          delete : (): Promise<void> => Promise.resolve(),
+          clear  : (): Promise<void> => Promise.resolve(),
+        };
+        const resolverWithFailingCache = new UniversalResolver({
+          didResolvers : [DidJwk],
+          cache        : failingCache,
+        });
+
+        const didMethodResolver = spyOn(DidJwk, 'resolve').mockImplementation(async () => {
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+          return {
+            didResolutionMetadata : {},
+            didDocument           : { id: did },
+            didDocumentMetadata   : {},
+          };
+        });
+
+        // Three concurrent callers share one in-flight resolution. The underlying
+        // network resolve succeeds; only the cache write fails. All three must
+        // receive the successful result — a cache-write error must not cascade
+        // across coalesced callers.
+        const results = await Promise.all([
+          resolverWithFailingCache.resolve(did),
+          resolverWithFailingCache.resolve(did),
+          resolverWithFailingCache.resolve(did),
+        ]);
+
+        expect(didMethodResolver).toHaveBeenCalledTimes(1);
+        for (const r of results) {
+          expect(r.didDocument).toEqual({ id: did });
+          expect(r.didResolutionMetadata.error).toBeUndefined();
+        }
+      });
     });
   });
 
