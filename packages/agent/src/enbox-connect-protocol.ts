@@ -696,23 +696,31 @@ async function createPermissionGrants(
 
     // The rawMessage is already signed by createGrant(), so we send it
     // directly to each endpoint without re-constructing.
-    let atLeastOneSuccess = false;
-    for (const dwnUrl of dwnEndpointUrls) {
-      try {
-        const reply = await agent.rpc.sendDwnRequest({
+    // Fan out to all endpoints concurrently so total wall-time is
+    // O(slowest endpoint) rather than O(sum of endpoint latencies).
+    const endpointResults = await Promise.allSettled(
+      dwnEndpointUrls.map((dwnUrl) =>
+        agent.rpc.sendDwnRequest({
           dwnUrl,
           targetDid : selectedDid,
           message   : rawMessage,
           data      : new Blob([data as BlobPart]),
-        });
+        }).then((reply) => ({ dwnUrl, reply }))
+      )
+    );
 
-        if (reply.status.code === 202 || reply.status.code === 409) {
-          atLeastOneSuccess = true;
-        } else {
-          logger.error(`Grant send to ${dwnUrl} returned ${reply.status.code}: ${reply.status.detail}`);
-        }
-      } catch (error: any) {
-        logger.error(`Grant send to ${dwnUrl} failed: ${error.message}`);
+    let atLeastOneSuccess = false;
+    for (const result of endpointResults) {
+      if (result.status === 'rejected') {
+        const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+        logger.error(`Grant send failed: ${reason}`);
+        continue;
+      }
+      const { dwnUrl, reply } = result.value;
+      if (reply.status.code === 202 || reply.status.code === 409) {
+        atLeastOneSuccess = true;
+      } else {
+        logger.error(`Grant send to ${dwnUrl} returned ${reply.status.code}: ${reply.status.detail}`);
       }
     }
 
@@ -1243,46 +1251,62 @@ async function submitConnectResponse(
   // Snapshot the current length — revocation grants are appended to delegateGrants
   // below, but we must NOT iterate over them (they are meta-grants, not session grants).
   const sessionGrantCount = delegateGrants.length;
-  for (let i = 0; i < sessionGrantCount; i++) {
-    const grantMessage = delegateGrants[i];
-    const revGrant = await permissionsApi.createGrant({
-      delegated : true,
-      store     : true,
-      grantedTo : delegateBearerDid.uri,
-      scope     : {
-        interface : DwnInterfaceName.Records,
-        method    : DwnMethodName.Write,
-        protocol  : PermissionsProtocol.uri,
-        contextId : grantMessage.recordId,
-      },
-      dateExpires : '2040-06-25T16:09:16.693356Z',
-      author      : selectedDid,
-    });
+
+  // Phase 1: create all revocation grants locally in parallel. createGrant only
+  // touches local storage / signing keys, so concurrency here is safe and saves
+  // wall-time when there are many session grants.
+  const revGrantResults = await Promise.all(
+    delegateGrants.slice(0, sessionGrantCount).map((grantMessage) =>
+      permissionsApi.createGrant({
+        delegated : true,
+        store     : true,
+        grantedTo : delegateBearerDid.uri,
+        scope     : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Write,
+          protocol  : PermissionsProtocol.uri,
+          contextId : grantMessage.recordId,
+        },
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        author      : selectedDid,
+      }).then((revGrant) => ({ grantMessage, revGrant }))
+    )
+  );
+
+  // Phase 2: fan out every revocation grant to every owner DWN endpoint
+  // concurrently. This is best-effort (sync delivers eventually), so we use
+  // Promise.allSettled and discard errors. Doing it in parallel turns
+  // O(grants × endpoints) sequential network calls into O(1) wall-time.
+  const revFanoutPromises: Promise<unknown>[] = [];
+  for (const { grantMessage, revGrant } of revGrantResults) {
     sessionRevocations.push({
       grantId           : grantMessage.recordId,
       revocationGrantId : revGrant.message.recordId,
     });
 
-    // Fan out the revocation grant to all owner DWN endpoints (same
-    // as session grants) so that immediate disconnect can send a
-    // delegated revocation to a remote DWN that recognises the grant.
     const { encodedData: revEncoded, ...revRawMessage } = revGrant.message;
     const revData = Convert.base64Url(revEncoded).toUint8Array();
     for (const dwnUrl of revGrantEndpoints) {
-      try {
-        await agent.rpc.sendDwnRequest({
+      revFanoutPromises.push(
+        agent.rpc.sendDwnRequest({
           dwnUrl,
           targetDid : selectedDid,
           message   : revRawMessage,
           data      : new Blob([revData as BlobPart]),
-        });
-      } catch {
-        // Best-effort — sync will deliver eventually.
-      }
+        }).catch(() => {
+          // Best-effort — sync will deliver eventually.
+        }),
+      );
     }
 
-    // Include the revocation grant in the delegate grants for distribution
+    // Include the revocation grant in the delegate grants for distribution.
     delegateGrants.push(revGrant.message);
+  }
+
+  // Wait for all best-effort fan-outs to settle before building the response.
+  // We don't rethrow — individual failures are swallowed in the .catch above.
+  if (revFanoutPromises.length > 0) {
+    await Promise.allSettled(revFanoutPromises);
   }
 
   logger.log('Building connect response...');
