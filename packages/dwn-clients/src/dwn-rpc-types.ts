@@ -95,6 +95,22 @@ export type DwnRpcRequest = {
   targetDid: string;
 
   /**
+   * Optional caller-provided abort signal. When supplied, the underlying
+   * HTTP client races each attempt against this signal in addition to its
+   * own per-attempt timeout via `AbortSignal.any([signal, perAttemptTimeout])`.
+   *
+   * Pass `AbortSignal.timeout(budgetMs)` from latency-sensitive paths
+   * (e.g. the wallet-connect "Authorizing" hot path) to cap the worst-case
+   * wall-clock time a single request can consume. Aborting short-circuits
+   * the retry loop — `AbortError` is treated as non-retryable, so the
+   * request fails fast rather than burning the full retry budget.
+   *
+   * Currently honoured by `HttpDwnRpcClient`. WebSocket transport ignores
+   * this field (subscription cancellation is handled separately).
+   */
+  signal?: AbortSignal;
+
+  /**
    * Subscription options — only set for subscribe requests.
    * Groups the handler, resubscribe factory, and any future subscription
    * options into a single coherent object.

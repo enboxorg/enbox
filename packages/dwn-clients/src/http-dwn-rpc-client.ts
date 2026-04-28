@@ -133,6 +133,11 @@ export class HttpDwnRpcClient implements DwnRpc {
     const fetchOpts: RequestInit = {
       method  : 'POST',
       headers : requestHeaders,
+      // Caller-provided signal is honoured by `fetchWithRetry` via
+      // `AbortSignal.any([signal, perAttemptTimeoutSignal])`. Aborting
+      // short-circuits the retry loop (AbortError is non-retryable) so
+      // latency-sensitive callers can cap worst-case wall-clock time.
+      ...(request.signal ? { signal: request.signal } : {}),
     };
 
     if (request.data) {
