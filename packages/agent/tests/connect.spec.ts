@@ -707,10 +707,17 @@ describe('enbox connect', () => {
   });
 
   describe('submitConnectResponse', () => {
-    it('should not attempt to configure the protocol if it already exists', async () => {
-      // scenario: the wallet gets a request for a protocol that it already has configured
-      // the wallet should not attempt to re-configure, but instead ensure that the protocol is
-      // sent to the remote DWN for the requesting client to be able to sync it down later
+    it('should skip the redundant remote ProtocolsConfigure when the protocol is already installed locally', async () => {
+      // Scenario: the wallet's own `prepareProtocol` (in @enbox/web-wallet) ran
+      // BEFORE `submitConnectResponse` and pushed the protocol to every owner
+      // DWN endpoint. The agent's internal `prepareProtocol` should detect the
+      // protocol is already installed locally and short-circuit — issuing
+      // exactly one local `ProtocolsQuery` and zero remote sends.
+      //
+      // This is the regression-prevention test for the "Authorizing…" hang:
+      // a redundant per-protocol `agent.sendDwnRequest` would queue behind
+      // the underlying HTTP client's 4×30 s retry budget for any unhealthy
+      // endpoint, multiplying user-visible latency by `N protocols × 30 s`.
 
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
       // Stub per-grant revocation createGrant calls
@@ -737,15 +744,23 @@ describe('enbox connect', () => {
       // stub the processDwnRequest method to return a protocol entry
       const protocolMessage = {} as DwnMessage[DwnInterface.ProtocolsConfigure];
 
-      // spy send request
+      // Spy on both transport methods. Neither agent.sendDwnRequest nor
+      // agent.rpc.sendDwnRequest should be invoked when the protocol is
+      // already installed locally — that is the whole point of the fix.
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         messageCid : '',
         reply      : { status: { code: 202, detail: 'OK' } }
       });
+      const rpcSendRequestSpy = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
+        status: { code: 202, detail: 'Accepted' }
+      } as any);
 
       const processDwnRequestStub = sinon
         .stub(testHarness.agent, 'processDwnRequest')
         .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [ protocolMessage ] } });
+
+      // Stub fetch so the relay POST does not escape the test environment.
+      sinon.stub(globalThis, 'fetch').resolves(new Response());
 
       // call submitAuthResponse
       await EnboxConnectProtocol.submitConnectResponse(
@@ -755,21 +770,28 @@ describe('enbox connect', () => {
         testHarness.agent
       );
 
-      // expect the process request to only be called once for ProtocolsQuery
-      // (per-grant revocation goes through the stubbed AgentPermissionsApi.prototype.createGrant)
+      // Exactly one local read — the ProtocolsQuery — and nothing else.
       expect(processDwnRequestStub.callCount).toBe(1);
       expect(processDwnRequestStub.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsQuery);
 
-      // send request should be called once as a ProtocolsConfigure
-      expect(sendRequestSpy.callCount).toBe(1);
-      expect(sendRequestSpy.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
+      // No redundant remote ProtocolsConfigure send via either transport.
+      expect(sendRequestSpy.callCount).toBe(0);
+      expect(
+        rpcSendRequestSpy.getCalls().some(
+          (c) => (c.args[0]?.message as any)?.descriptor?.method === 'Configure'
+        ),
+      ).toBe(false);
     });
 
-    it('should configure the protocol if it does not exist', async () => {
-      // scenario: the wallet gets a request for a protocol that it does not have configured
-      // the wallet should attempt to configure the protocol and then send the protocol to the remote DWN
-
-      // looks for a response of 404, empty entries array or missing entries array
+    it('should configure the protocol locally and fan out to all owner DWN endpoints when the protocol is missing locally', async () => {
+      // Scenario: the agent's `prepareProtocol` runs in the safety-fallback
+      // path (caller did not pre-install). It must (a) configure the protocol
+      // on the LOCAL DWN via `processDwnRequest` so the agent can sign / encrypt
+      // grants for it, and (b) push the configure message to every owner DWN
+      // endpoint in PARALLEL via `agent.rpc.sendDwnRequest` (best-effort).
+      //
+      // The legacy `agent.sendDwnRequest` path — which iterated owner endpoints
+      // sequentially and is the historical bottleneck — must NOT be used.
 
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
       // Stub per-grant revocation createGrant calls
@@ -793,17 +815,36 @@ describe('enbox connect', () => {
       };
       connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
-      // spy send request
+      // Spy on both transports — only `agent.rpc.sendDwnRequest` should fire.
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         messageCid : '',
         reply      : { status: { code: 202, detail: 'OK' } }
       });
+      const rpcSendRequestSpy = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
+        status: { code: 202, detail: 'Accepted' }
+      } as any);
 
-      const processDwnRequestStub = sinon
-        .stub(testHarness.agent, 'processDwnRequest')
-        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [ ] } });
+      // Stub endpoint resolution to two URLs so we can observe parallel fan-out.
+      const endpointUrls = ['https://dwn-a.example/', 'https://dwn-b.example/'];
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves(endpointUrls);
 
-      // call submitAuthResponse
+      // ProtocolsQuery → empty entries (missing locally) on first call;
+      // local ProtocolsConfigure → 202 with a synthetic descriptor on second.
+      const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      processDwnRequestStub
+        .onFirstCall()
+        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [] } });
+      processDwnRequestStub
+        .onSecondCall()
+        .resolves({
+          messageCid : '',
+          reply      : { status: { code: 202, detail: 'OK' } },
+          message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
+        });
+
+      // Stub fetch so the relay POST does not escape the test environment.
+      sinon.stub(globalThis, 'fetch').resolves(new Response());
+
       await EnboxConnectProtocol.submitConnectResponse(
         providerIdentity.did.uri,
         connectRequest,
@@ -811,42 +852,41 @@ describe('enbox connect', () => {
         testHarness.agent
       );
 
-      // expect the process request to be called for query and configure
+      // processDwnRequest is called twice: ProtocolsQuery, then a LOCAL
+      // ProtocolsConfigure (with messageParams + optional encryption).
       expect(processDwnRequestStub.callCount).toBe(2);
       expect(processDwnRequestStub.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsQuery);
       expect(processDwnRequestStub.secondCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
+      expect((processDwnRequestStub.secondCall.args[0] as any).messageParams?.definition?.protocol)
+        .toBe(protocolDefinition.protocol);
 
-      // send request should be called once as a ProtocolsConfigure
-      expect(sendRequestSpy.callCount).toBe(1);
-      expect(sendRequestSpy.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
+      // The legacy `agent.sendDwnRequest` is no longer used by prepareProtocol.
+      expect(sendRequestSpy.callCount).toBe(0);
 
-      // reset the spys
-      processDwnRequestStub.resetHistory();
-      sendRequestSpy.resetHistory();
-
-      // processDwnRequestStub should resolve a 200 with no entires
-      processDwnRequestStub.resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' } } });
-
-      // call submitAuthResponse
-      await EnboxConnectProtocol.submitConnectResponse(
-        providerIdentity.did.uri,
-        connectRequest,
-        randomPin,
-        testHarness.agent
+      // Each owner DWN endpoint receives the configure message exactly once via
+      // the parallel `mapConcurrentSettled` fan-out.
+      const configureSends = rpcSendRequestSpy.getCalls().filter(
+        (c) => (c.args[0]?.message as any)?.descriptor?.method === 'Configure',
       );
+      expect(configureSends.length).toBe(endpointUrls.length);
+      expect(new Set(configureSends.map((c) => c.args[0].dwnUrl))).toEqual(new Set(endpointUrls));
 
-      // expect the process request to be called for query and configure
-      expect(processDwnRequestStub.callCount).toBe(2);
-      expect(processDwnRequestStub.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsQuery);
-      expect(processDwnRequestStub.secondCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
-
-      // send request should be called once as a ProtocolsConfigure
-      expect(sendRequestSpy.callCount).toBe(1);
-      expect(sendRequestSpy.firstCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
+      // Every per-request send carries the connect-flow per-request abort
+      // budget so a single unhealthy endpoint cannot stall the hot path.
+      for (const call of configureSends) {
+        expect(call.args[0].signal).toBeInstanceOf(AbortSignal);
+      }
     });
 
-    it('should fail if the send request fails for newly configured protocol', async () => {
+    it('should treat a 200 reply with no entries field as missing locally and trigger the safety fallback', async () => {
+      // Some local DWN replies omit the `entries` array entirely (empty result).
+      // The agent must treat that as "not installed" identically to `entries: []`.
+
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -863,34 +903,59 @@ describe('enbox connect', () => {
       };
       connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
-      // spy send request
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
-        reply      : { status: { code: 500, detail: 'Internal Server Error' } },
-        messageCid : ''
+        messageCid : '',
+        reply      : { status: { code: 202, detail: 'OK' } }
       });
+      const rpcSendRequestSpy = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
+        status: { code: 202, detail: 'Accepted' }
+      } as any);
 
-      // return without any entries
-      const _processDwnRequestStub = sinon
-        .stub(testHarness.agent, 'processDwnRequest')
+      // Endpoint resolution returns empty → local-only configuration, no fan-out.
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
+
+      const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      processDwnRequestStub
+        .onFirstCall()
         .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' } } });
+      processDwnRequestStub
+        .onSecondCall()
+        .resolves({
+          messageCid : '',
+          reply      : { status: { code: 202, detail: 'OK' } },
+          message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
+        });
 
-      try {
-        // call submitAuthResponse
-        await EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri,
-          connectRequest,
-          randomPin,
-          testHarness.agent
-        );
+      sinon.stub(globalThis, 'fetch').resolves(new Response());
 
-        throw new Error('should have thrown an error');
-      } catch (error: any) {
-        expect(error.message).toBe('Could not send protocol: Internal Server Error');
-        expect(sendRequestSpy.callCount).toBe(1);
-      }
+      await EnboxConnectProtocol.submitConnectResponse(
+        providerIdentity.did.uri,
+        connectRequest,
+        randomPin,
+        testHarness.agent
+      );
+
+      // Treated as missing → local configure attempted.
+      expect(processDwnRequestStub.callCount).toBe(2);
+      expect(processDwnRequestStub.secondCall.args[0].messageType).toBe(DwnInterface.ProtocolsConfigure);
+
+      // No endpoints → no remote fan-out, no legacy send.
+      expect(sendRequestSpy.callCount).toBe(0);
+      expect(
+        rpcSendRequestSpy.getCalls().some(
+          (c) => (c.args[0]?.message as any)?.descriptor?.method === 'Configure'
+        ),
+      ).toBe(false);
     });
 
-    it('should fail if the send request fails for existing protocol', async () => {
+    it('should fail if local ProtocolsConfigure fails when the protocol is missing locally', async () => {
+      // Scenario: the agent's safety-fallback path attempts to install the
+      // protocol locally before fanning out remotely. If the local install
+      // itself fails (non-202/409), the connect flow MUST throw — without
+      // a locally installed protocol, the agent cannot sign / encrypt grants.
+      // Remote endpoint failures, in contrast, are best-effort (sync delivers
+      // missed copies), so they do NOT abort the connect.
+
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
@@ -908,22 +973,23 @@ describe('enbox connect', () => {
       };
       connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
-      // stub the processDwnRequest method to return a protocol entry
-      const protocolMessage = {} as DwnMessage[DwnInterface.ProtocolsConfigure];
-
-      // spy send request
       const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         reply      : { status: { code: 500, detail: 'Internal Server Error' } },
         messageCid : ''
       });
 
-      // mock returning the protocol entry
-      const processDwnRequestStub = sinon
-        .stub(testHarness.agent, 'processDwnRequest')
-        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [ protocolMessage ] } });
+      // ProtocolsQuery → empty (missing locally). Local ProtocolsConfigure → 500.
+      const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      processDwnRequestStub
+        .onFirstCall()
+        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [] } });
+      processDwnRequestStub
+        .onSecondCall()
+        .resolves({ messageCid: '', reply: { status: { code: 500, detail: 'Local DWN error' } } });
+
+      sinon.stub(globalThis, 'fetch').resolves(new Response());
 
       try {
-        // call submitAuthResponse
         await EnboxConnectProtocol.submitConnectResponse(
           providerIdentity.did.uri,
           connectRequest,
@@ -933,10 +999,80 @@ describe('enbox connect', () => {
 
         throw new Error('should have thrown an error');
       } catch (error: any) {
-        expect(error.message).toBe('Could not send protocol: Internal Server Error');
-        expect(processDwnRequestStub.callCount).toBe(1);
-        expect(sendRequestSpy.callCount).toBe(1);
+        expect(error.message).toBe('Could not configure protocol locally: Local DWN error');
+        // Local query + local configure = two processDwnRequest calls; no
+        // legacy `agent.sendDwnRequest` calls because the new path uses the
+        // RPC client directly and the failure happens before fan-out.
+        expect(processDwnRequestStub.callCount).toBe(2);
+        expect(sendRequestSpy.callCount).toBe(0);
       }
+    });
+
+    it('should NOT throw when remote endpoints are unhealthy after a successful local configure', async () => {
+      // Scenario: the local install succeeds but every owner DWN endpoint
+      // returns 5xx / aborts. The fan-out is best-effort — sync will
+      // eventually deliver missing copies — so the connect must succeed.
+      // This guards the "Authorizing…" hot path against a single bad
+      // endpoint dragging the user into an error state.
+
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
+      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+
+      const options = {
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        permissionRequests : [{ protocolDefinition, permissionScopes }],
+        callbackUrl        : callbackUrl,
+      };
+      connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
+
+      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
+        messageCid : '',
+        reply      : { status: { code: 202, detail: 'OK' } }
+      });
+      const rpcSendRequestSpy = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
+        .rejects(new Error('every endpoint is unhealthy'));
+
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget')
+        .resolves(['https://dwn-a.example/', 'https://dwn-b.example/']);
+
+      const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      processDwnRequestStub
+        .onFirstCall()
+        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [] } });
+      processDwnRequestStub
+        .onSecondCall()
+        .resolves({
+          messageCid : '',
+          reply      : { status: { code: 202, detail: 'OK' } },
+          message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
+        });
+
+      sinon.stub(globalThis, 'fetch').resolves(new Response());
+
+      // Must not throw — best-effort fan-out swallows individual failures.
+      await EnboxConnectProtocol.submitConnectResponse(
+        providerIdentity.did.uri,
+        connectRequest,
+        randomPin,
+        testHarness.agent
+      );
+
+      // The fan-out was attempted on every endpoint despite the failures.
+      const configureSends = rpcSendRequestSpy.getCalls().filter(
+        (c) => (c.args[0]?.message as any)?.descriptor?.method === 'Configure',
+      );
+      expect(configureSends.length).toBe(2);
     });
 
     it('should throw if protocol could not be fetched at all', async () => {
@@ -985,9 +1121,13 @@ describe('enbox connect', () => {
       }
     });
 
-    it('should pass encryption: true when configuring a protocol with encryptionRequired types', async () => {
-      // scenario: the wallet gets a request for a protocol that has encryptionRequired types
-      // prepareProtocol should detect this and pass encryption: true to the sendDwnRequest
+    it('should pass encryption: true to the LOCAL ProtocolsConfigure when the protocol has encryptionRequired types', async () => {
+      // Scenario: the agent's safety-fallback installs a protocol whose types
+      // declare `encryptionRequired: true`. The LOCAL configure (via
+      // `processDwnRequest`) must carry `encryption: true` so the local DWN
+      // derives and injects `$encryption` keys from the owner's X25519 root.
+      // The remote fan-out then re-uses the resulting raw message — no
+      // `encryption` flag is needed on the per-endpoint sends.
 
       const encryptedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://encrypted-protocol.xyz',
@@ -1030,14 +1170,28 @@ describe('enbox connect', () => {
       };
       connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
 
-      // spy send request
-      const sendRequestSpy = sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
+      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
         messageCid : '',
         reply      : { status: { code: 202, detail: 'OK' } }
       });
+      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
+        status: { code: 202, detail: 'Accepted' }
+      } as any);
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
 
-      sinon.stub(testHarness.agent, 'processDwnRequest')
+      const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      processDwnRequestStub
+        .onFirstCall()
         .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [] } });
+      processDwnRequestStub
+        .onSecondCall()
+        .resolves({
+          messageCid : '',
+          reply      : { status: { code: 202, detail: 'OK' } },
+          message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
+        });
+
+      sinon.stub(globalThis, 'fetch').resolves(new Response());
 
       await EnboxConnectProtocol.submitConnectResponse(
         providerIdentity.did.uri,
@@ -1046,9 +1200,9 @@ describe('enbox connect', () => {
         testHarness.agent
       );
 
-      // Verify that sendDwnRequest was called with encryption: true for the ProtocolsConfigure
-      const configureCall = sendRequestSpy.getCalls().find(
-        (call) => call.args[0].messageType === DwnInterface.ProtocolsConfigure
+      // Verify the LOCAL ProtocolsConfigure carried `encryption: true`.
+      const configureCall = processDwnRequestStub.getCalls().find(
+        (call) => call.args[0].messageType === DwnInterface.ProtocolsConfigure,
       );
       expect(configureCall).toBeDefined();
       expect((configureCall!.args[0] as any).encryption).toBe(true);
@@ -1168,13 +1322,18 @@ describe('enbox connect', () => {
         endpoint : 'callback',
       });
 
-      const mismatchedScopes = [...permissionScopes];
+      // Deep-clone before mutating so this test does not leak state into
+      // subsequent tests in the same describe block (the spread above is a
+      // shallow copy — `mismatchedScopes[0]` IS `permissionScopes[0]`).
+      const mismatchedScopes = permissionScopes.map((s) => ({ ...s }));
       mismatchedScopes[0].protocol = 'http://profile-protocol.xyz/other';
 
       const options = {
         appName            : 'Sample App',
         clientDid          : clientEphemeralPortableDid.uri,
-        permissionRequests : [{ protocolDefinition, permissionScopes }],
+        // Use the deep-cloned mismatched scopes so the validation actually
+        // fires regardless of whether the prior shallow-copy bug existed.
+        permissionRequests : [{ protocolDefinition, permissionScopes: mismatchedScopes }],
         callbackUrl        : callbackUrl,
       };
       connectRequest = await EnboxConnectProtocol.createConnectRequest(options);
@@ -1192,6 +1351,246 @@ describe('enbox connect', () => {
       } catch (error: any) {
         expect(error.message).toBe('All permission scopes must match the protocol URI they are provided with.');
       }
+    });
+
+    describe('connect-flow fan-out parallelism (regression: "Authorizing…" hang)', () => {
+      it('should fan the safety-fallback ProtocolsConfigure out to all owner DWN endpoints in PARALLEL, not sequentially', async () => {
+        // Each per-endpoint send takes 250 ms. With 4 endpoints, sequential
+        // execution would take ≥ 1000 ms; parallel execution should take
+        // ~250 ms. This test asserts a generous-but-still-meaningful upper
+        // bound (700 ms) to prevent any future regression that re-introduces
+        // sequential per-endpoint iteration in the connect hot path.
+        const endpointUrls = [
+          'https://dwn-a.example/',
+          'https://dwn-b.example/',
+          'https://dwn-c.example/',
+          'https://dwn-d.example/',
+        ];
+        const PER_SEND_DELAY_MS = 250;
+
+        sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+        sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+          grant   : {} as any,
+          message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+        });
+        sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+        sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+
+        const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+          baseURL  : 'http://localhost:3000',
+          endpoint : 'callback',
+        });
+
+        connectRequest = await EnboxConnectProtocol.createConnectRequest({
+          appName            : 'Sample App',
+          clientDid          : clientEphemeralPortableDid.uri,
+          permissionRequests : [{ protocolDefinition, permissionScopes }],
+          callbackUrl        : callbackUrl,
+        });
+
+        sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves(endpointUrls);
+        sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
+          messageCid : '',
+          reply      : { status: { code: 202, detail: 'OK' } }
+        });
+        const rpcSendRequestStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
+          .callsFake(async () => {
+            await new Promise<void>((resolve) => setTimeout(resolve, PER_SEND_DELAY_MS));
+            return { status: { code: 202, detail: 'Accepted' } } as any;
+          });
+
+        const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
+        processDwnRequestStub
+          .onFirstCall()
+          .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [] } });
+        processDwnRequestStub
+          .onSecondCall()
+          .resolves({
+            messageCid : '',
+            reply      : { status: { code: 202, detail: 'OK' } },
+            message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
+          });
+
+        sinon.stub(globalThis, 'fetch').resolves(new Response());
+
+        const start = Date.now();
+        await EnboxConnectProtocol.submitConnectResponse(
+          providerIdentity.did.uri,
+          connectRequest,
+          randomPin,
+          testHarness.agent,
+        );
+        const elapsed = Date.now() - start;
+
+        // Sequential lower bound: 4 × 250 ms = 1000 ms. Parallel should be
+        // close to 250 ms; we allow generous slack for scheduling, GC, the
+        // surrounding submitConnectResponse work, and CI noise.
+        expect(elapsed).toBeLessThan(700);
+
+        const configureSends = rpcSendRequestStub.getCalls().filter(
+          (c) => (c.args[0]?.message as any)?.descriptor?.method === 'Configure',
+        );
+        expect(configureSends.length).toBe(endpointUrls.length);
+      });
+
+      it('should attach a per-request AbortSignal with a bounded timeout to every connect-flow fan-out send', async () => {
+        // The connect flow caps each `agent.rpc.sendDwnRequest` with
+        // `AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS)` so a single
+        // unhealthy endpoint cannot consume the full HTTP retry budget
+        // (4 × 30 s) and stall the user-visible "Authorizing…" spinner.
+        // This test asserts a signal is present on every send, that it is
+        // an AbortSignal, and that it is NOT already aborted at dispatch
+        // time (i.e. the budget genuinely starts when the request begins).
+        sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+        sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+          grant   : {} as any,
+          message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+        });
+        sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+        sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+
+        const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+          baseURL  : 'http://localhost:3000',
+          endpoint : 'callback',
+        });
+
+        connectRequest = await EnboxConnectProtocol.createConnectRequest({
+          appName            : 'Sample App',
+          clientDid          : clientEphemeralPortableDid.uri,
+          permissionRequests : [{ protocolDefinition, permissionScopes }],
+          callbackUrl        : callbackUrl,
+        });
+
+        sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget')
+          .resolves(['https://dwn-a.example/', 'https://dwn-b.example/']);
+        sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
+          messageCid : '',
+          reply      : { status: { code: 202, detail: 'OK' } }
+        });
+        const rpcSendRequestSpy = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
+          .resolves({ status: { code: 202, detail: 'Accepted' } } as any);
+
+        const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
+        processDwnRequestStub
+          .onFirstCall()
+          .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [] } });
+        processDwnRequestStub
+          .onSecondCall()
+          .resolves({
+            messageCid : '',
+            reply      : { status: { code: 202, detail: 'OK' } },
+            message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
+          });
+
+        sinon.stub(globalThis, 'fetch').resolves(new Response());
+
+        await EnboxConnectProtocol.submitConnectResponse(
+          providerIdentity.did.uri,
+          connectRequest,
+          randomPin,
+          testHarness.agent,
+        );
+
+        // EVERY connect-flow send (configure fan-out + permission grants +
+        // revocation grants) must carry a non-aborted AbortSignal so the
+        // HttpDwnRpcClient enforces the per-request budget.
+        expect(rpcSendRequestSpy.callCount).toBeGreaterThan(0);
+        for (const call of rpcSendRequestSpy.getCalls()) {
+          const signal = call.args[0]?.signal;
+          expect(signal).toBeInstanceOf(AbortSignal);
+          expect(signal!.aborted).toBe(false);
+        }
+      });
+
+      it('should still complete when one endpoint hangs forever \u2014 the abort signal short-circuits the retry budget', async () => {
+        // Reproduces the original "Authorizing… for minutes" symptom: one
+        // unhealthy endpoint that never responds. Without per-request abort
+        // plumbing, `AbortSignal.timeout(...)` from the connect flow would
+        // not reach the underlying fetch and the request would burn the
+        // full 4 × 30 s retry budget. We simulate that by giving the second
+        // endpoint a fake `sendDwnRequest` that respects the caller's
+        // AbortSignal — exactly as the real HttpDwnRpcClient now does.
+        sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+        sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+          grant   : {} as any,
+          message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+        });
+        sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+        sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+
+        const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+          baseURL  : 'http://localhost:3000',
+          endpoint : 'callback',
+        });
+
+        connectRequest = await EnboxConnectProtocol.createConnectRequest({
+          appName            : 'Sample App',
+          clientDid          : clientEphemeralPortableDid.uri,
+          permissionRequests : [{ protocolDefinition, permissionScopes }],
+          callbackUrl        : callbackUrl,
+        });
+
+        const healthyUrl = 'https://dwn-healthy.example/';
+        const hangingUrl = 'https://dwn-hanging.example/';
+        sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget')
+          .resolves([healthyUrl, hangingUrl]);
+        sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
+          messageCid : '',
+          reply      : { status: { code: 202, detail: 'OK' } }
+        });
+
+        // Healthy endpoint resolves fast; hanging endpoint waits forever
+        // unless the caller's AbortSignal fires (mirroring real HTTP fetch
+        // semantics through `AbortSignal.any([caller, perAttemptTimeout])`).
+        sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake((req) => {
+          if (req.dwnUrl === hangingUrl) {
+            return new Promise((_resolve, reject) => {
+              const signal = req.signal!;
+              const onAbort = (): void => {
+                reject(new DOMException('aborted', 'AbortError'));
+              };
+              if (signal.aborted) {
+                onAbort();
+              } else {
+                signal.addEventListener('abort', onAbort, { once: true });
+              }
+            });
+          }
+          return Promise.resolve({ status: { code: 202, detail: 'Accepted' } } as any);
+        });
+
+        const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
+        processDwnRequestStub
+          .onFirstCall()
+          .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [] } });
+        processDwnRequestStub
+          .onSecondCall()
+          .resolves({
+            messageCid : '',
+            reply      : { status: { code: 202, detail: 'OK' } },
+            message    : { descriptor: { interface: 'Protocols', method: 'Configure' } } as any,
+          });
+
+        sinon.stub(globalThis, 'fetch').resolves(new Response());
+
+        const start = Date.now();
+        await EnboxConnectProtocol.submitConnectResponse(
+          providerIdentity.did.uri,
+          connectRequest,
+          randomPin,
+          testHarness.agent,
+        );
+        const elapsed = Date.now() - start;
+
+        // The per-request budget is 10 s. submitConnectResponse runs three
+        // sequential phases that each touch every endpoint (prepareProtocol
+        // fan-out, permission-grant fan-out — stubbed here, and revocation
+        // fan-out), so a fully hung endpoint costs at most one budget per
+        // unstubbed phase. We assert 25 s to leave generous CI slack while
+        // still failing loudly on regressions that bypass the abort signal
+        // (without this fix, the same scenario takes minutes).
+        expect(elapsed).toBeLessThan(25_000);
+      }, 60_000); // bun:test per-test timeout, kept above the assertion budget
     });
   });
 

@@ -612,6 +612,87 @@ describe('HttpDwnRpcClient', () => {
     });
   });
 
+  describe('caller-provided AbortSignal', () => {
+    it('should pass the caller signal through to fetch so an abort cancels the in-flight request', async () => {
+      // Capture whatever signal `fetch` ultimately receives so we can prove
+      // it propagates from the DwnRpcRequest down through fetchWithRetry.
+      let capturedSignal: AbortSignal | undefined;
+      sinon.stub(globalThis, 'fetch').callsFake((async (_url: any, init?: any) => {
+        capturedSignal = init?.signal as AbortSignal | undefined;
+        // Hang forever unless the signal aborts.
+        return await new Promise<Response>((_resolve, reject) => {
+          const sig = init?.signal as AbortSignal | undefined;
+          if (sig) {
+            const onAbort = (): void => reject(new DOMException('aborted', 'AbortError'));
+            if (sig.aborted) {
+              onAbort();
+            } else {
+              sig.addEventListener('abort', onAbort, { once: true });
+            }
+          }
+        });
+      }) as any);
+
+      const client = new HttpDwnRpcClient(undefined, { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 50 });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      const controller = new AbortController();
+      const sendPromise = client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+        signal    : controller.signal,
+      });
+
+      // Give the stubbed fetch a tick to capture the signal, then abort.
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      controller.abort();
+
+      await expect(sendPromise).rejects.toThrow();
+      expect(capturedSignal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('should short-circuit the retry loop when the caller signal aborts (AbortError is non-retryable)', async () => {
+      // If the caller-supplied signal aborts, the retry loop must NOT keep
+      // trying — that would defeat the entire latency-budget mechanism. We
+      // assert exactly one fetch attempt despite a retry budget of 3.
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.callsFake((async (_url: any, init?: any) => {
+        return await new Promise<Response>((_resolve, reject) => {
+          const sig = init?.signal as AbortSignal | undefined;
+          if (sig) {
+            const onAbort = (): void => reject(new DOMException('aborted', 'AbortError'));
+            if (sig.aborted) {
+              onAbort();
+            } else {
+              sig.addEventListener('abort', onAbort, { once: true });
+            }
+          }
+        });
+      }) as any);
+
+      const client = new HttpDwnRpcClient(undefined, { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 50 });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      const sendPromise = client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+        signal    : AbortSignal.timeout(20),
+      });
+
+      await expect(sendPromise).rejects.toThrow();
+      // One attempt only — AbortError must NOT be treated as retryable.
+      expect(fetchStub.callCount).toBe(1);
+    });
+  });
+
   describe('getServerInfo', () => {
     it('fetches server info from a DWN server', async () => {
       const serverInfo = await client.getServerInfo(testDwnUrl);

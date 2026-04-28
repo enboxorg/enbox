@@ -136,6 +136,21 @@ import { concatenateUrl, mapConcurrent, mapConcurrentSettled } from './utils.js'
  */
 const CONNECT_FANOUT_CONCURRENCY = 8;
 
+/**
+ * Per-request abort budget applied to every DWN-endpoint `sendDwnRequest`
+ * issued during the connect flow. The HttpDwnRpcClient's default per-attempt
+ * timeout is 30 s with 3 retries (~120 s worst-case per request) — that
+ * scales unacceptably when bounded fan-out has to wait for every settled
+ * task. With this budget, an unhealthy / cold endpoint short-circuits the
+ * retry loop within a few seconds (AbortError is non-retryable), keeping
+ * the user-visible "Authorizing…" wait bounded even when one of N DWN
+ * endpoints is misbehaving.
+ *
+ * Sync delivers any missed copies eventually, so aborting fast is safe:
+ * the connect-flow fan-outs are best-effort and tolerate per-task failure.
+ */
+const CONNECT_REQUEST_TIMEOUT_MS = 10_000;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -722,6 +737,7 @@ async function createPermissionGrants(
         targetDid : selectedDid,
         message   : rawMessage,
         data      : new Blob([data as BlobPart]),
+        signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
       });
       return { grantIndex, dwnUrl, reply };
     },
@@ -760,24 +776,31 @@ async function createPermissionGrants(
 // ---------------------------------------------------------------------------
 
 /**
- * Installs a DWN protocol on the provider's DWN if it doesn't already exist.
- * Ensures the protocol is available on both the local and remote DWN.
+ * Ensures the protocol is installed on the provider's local DWN so that the
+ * agent can sign and (when applicable) encrypt grants for it during
+ * `submitConnectResponse`.
  *
- * When the protocol definition contains types with `encryptionRequired: true`,
- * the protocol is installed with `encryption: true` so that the agent injects
- * `$encryption` keys (derived from the owner's X25519 root key) into the
- * protocol definition. This ensures the protocol is immediately usable for
- * encrypted record operations by both the owner and any delegates.
+ * Remote installation (push to every owner DWN endpoint) is the
+ * responsibility of the calling client (the wallet's own `prepareProtocol`
+ * runs *before* `submitConnectResponse` and fans out to every endpoint in
+ * parallel). When the protocol already exists locally — the common case —
+ * this function performs a single local `ProtocolsQuery` and returns: there
+ * is no remote send, so a slow/unhealthy DWN endpoint cannot block the
+ * "Authorizing…" hot path.
+ *
+ * When the protocol is *not* installed locally — a safety fallback for
+ * callers that did not pre-install — the protocol is configured locally
+ * (with `encryption: true` when any type declares `encryptionRequired: true`,
+ * so the agent injects `$encryption` keys derived from the owner's X25519
+ * root key) and then fanned out to every owner DWN endpoint with bounded
+ * concurrency and a short per-request budget. Endpoint failures are
+ * non-fatal — sync delivers any missing copies eventually.
  */
 async function prepareProtocol(
   selectedDid: string,
   agent: EnboxPlatformAgent,
   protocolDefinition: DwnProtocolDefinition
 ): Promise<void> {
-  // Detect whether any type in the protocol requires encryption.
-  const needsEncryption = Object.values(protocolDefinition.types ?? {})
-    .some((type: any) => type?.encryptionRequired === true);
-
   const queryMessage = await agent.processDwnRequest({
     author        : selectedDid,
     messageType   : DwnInterface.ProtocolsQuery,
@@ -787,42 +810,66 @@ async function prepareProtocol(
 
   if (queryMessage.reply.status.code !== 200) {
     throw new Error(`Could not fetch protocol: ${queryMessage.reply.status.detail}`);
-  } else if (queryMessage.reply.entries === undefined || queryMessage.reply.entries.length === 0) {
-    logger.log(`Protocol does not exist, creating: ${protocolDefinition.protocol}`);
-
-    const { reply: sendReply, message: configureMessage } = await agent.sendDwnRequest({
-      author        : selectedDid,
-      target        : selectedDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: protocolDefinition },
-      encryption    : needsEncryption || undefined,
-    });
-
-    if (sendReply.status.code !== 202 && sendReply.status.code !== 409) {
-      throw new Error(`Could not send protocol: ${sendReply.status.detail}`);
-    }
-
-    await agent.processDwnRequest({
-      author      : selectedDid,
-      target      : selectedDid,
-      messageType : DwnInterface.ProtocolsConfigure,
-      rawMessage  : configureMessage
-    });
-  } else {
-    logger.log(`Protocol already exists: ${protocolDefinition.protocol}`);
-
-    const configureMessage = queryMessage.reply.entries![0];
-    const { reply: sendReply } = await agent.sendDwnRequest({
-      author      : selectedDid,
-      target      : selectedDid,
-      messageType : DwnInterface.ProtocolsConfigure,
-      rawMessage  : configureMessage,
-    });
-
-    if (sendReply.status.code !== 202 && sendReply.status.code !== 409) {
-      throw new Error(`Could not send protocol: ${sendReply.status.detail}`);
-    }
   }
+
+  const isInstalledLocally = queryMessage.reply.entries !== undefined
+    && queryMessage.reply.entries.length > 0;
+
+  if (isInstalledLocally) {
+    // Already installed locally. The wallet's pre-call `prepareProtocol`
+    // is responsible for fanning the protocol out to every owner DWN
+    // endpoint; sync delivers any missing copies eventually. Skipping the
+    // remote send here turns this hot path into a single local DB read
+    // (~10 ms) instead of a sequential per-endpoint network round-trip
+    // with retries — the latter could take minutes if any endpoint was
+    // slow or unreachable.
+    logger.log(`Protocol already installed locally: ${protocolDefinition.protocol}`);
+    return;
+  }
+
+  // Safety fallback — protocol is missing locally, so the caller did not
+  // pre-install. Configure it locally (with encryption derivation if any
+  // type requires it) so the agent can sign/encrypt grants, then push to
+  // every owner DWN endpoint in parallel with a short per-request budget.
+  logger.log(`Protocol not installed, configuring locally: ${protocolDefinition.protocol}`);
+  const needsEncryption = Object.values(protocolDefinition.types ?? {})
+    .some((type: any) => type?.encryptionRequired === true);
+
+  const { reply: configureReply, message: configureMessage } = await agent.processDwnRequest({
+    author        : selectedDid,
+    target        : selectedDid,
+    messageType   : DwnInterface.ProtocolsConfigure,
+    messageParams : { definition: protocolDefinition },
+    encryption    : needsEncryption || undefined,
+  });
+
+  if (configureReply.status.code !== 202 && configureReply.status.code !== 409) {
+    throw new Error(`Could not configure protocol locally: ${configureReply.status.detail}`);
+  }
+
+  let dwnEndpointUrls: string[] = [];
+  try {
+    dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
+  } catch {
+    // Endpoint resolution failure — protocol stays local-only until sync.
+  }
+
+  if (dwnEndpointUrls.length === 0) {
+    return;
+  }
+
+  // Best-effort remote fan-out with bounded concurrency and a per-request
+  // abort signal. Failures are tolerated (sync delivers eventually).
+  await mapConcurrentSettled(
+    dwnEndpointUrls,
+    CONNECT_FANOUT_CONCURRENCY,
+    (dwnUrl) => agent.rpc.sendDwnRequest({
+      dwnUrl,
+      targetDid : selectedDid,
+      message   : configureMessage!,
+      signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
+    }),
+  );
 }
 
 /**
@@ -1320,6 +1367,7 @@ async function submitConnectResponse(
           targetDid : selectedDid,
           message   : revRawMessage,
           data      : new Blob([revData as BlobPart]),
+          signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
         }),
     );
   }
