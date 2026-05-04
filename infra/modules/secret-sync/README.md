@@ -52,11 +52,28 @@ aws secretsmanager rotate-secret \
   --rotate-immediately
 ```
 
-## Idempotency
+## Idempotency and retry semantics
 
-The Lambda compares the composed URL against the current target secret value
-and short-circuits with `status=no-op` when they already match. Repeated
-invocations on a stable cluster are zero-cost.
+The Lambda treats rotation events and the periodic drift-check schedule
+differently to stay safe under partial-rollout failure modes:
+
+* **Rotation events** (`detail-type: AWS Service Event via CloudTrail`,
+  `eventName: RotationSucceeded`) always force a redeploy of every service
+  in `ecs_service_names`, even when the consumer secret already matches the
+  master. This is what makes the rollout retryable: if a previous invocation
+  succeeded on the secret update and on rolling `dwn-<env>-http` but failed
+  on `dwn-<env>-ws`, the Lambda async retry would otherwise see "secret
+  already matches" and never roll the failed service. `UpdateService` with
+  `force-new-deployment` is idempotent for ECS — repeating it just supersedes
+  any in-flight deployment — so this is safe.
+* **Drift-check events** (synthetic `{"source": "drift-check"}` payload from
+  the schedule) only roll services when a drift was actually detected,
+  otherwise the schedule would trigger four unnecessary redeploys per day.
+
+Per-service failures inside `_force_redeploy_services` are aggregated; one
+bad service does not prevent the others from being attempted in the same
+invocation, and the Lambda raises with the list of failed services so async
+retry / DLQ kicks in.
 
 ## Failure modes
 

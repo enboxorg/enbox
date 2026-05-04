@@ -9,8 +9,6 @@ This Lambda is intentionally conservative:
 
 * It validates that the inbound event refers to *our* master secret before
   doing anything (defense in depth on top of the EventBridge rule filter).
-* It is idempotent: when the consumer secret already matches, no write or
-  redeploy is performed.
 * It always pulls the live cluster endpoint via DescribeDBClusters rather than
   trusting the host inside the rotated secret payload, so a writer failover
   cannot leave us pointing at a stale endpoint.
@@ -19,6 +17,28 @@ This Lambda is intentionally conservative:
   break a naively concatenated URL.
 * It emits CloudWatch EMF metrics so a single CloudWatch alarm can monitor
   the success / failure / drift signal across environments.
+
+Retry semantics
+---------------
+
+The Lambda must remain safely retryable when a rotation event triggers a
+partial rollout: e.g. PutSecretValue succeeds, UpdateService(http) succeeds,
+UpdateService(ws) fails. If the next retry short-circuited on "secret already
+matches", the failed service would never be rolled and would keep running
+with the stale credentials baked into its env vars at task launch.
+
+To handle that:
+
+* Per-service errors are aggregated rather than aborted on the first failure,
+  so one bad service does not prevent the others from being attempted in the
+  same invocation.
+* On rotation events we always force a redeploy of every service, even when
+  the consumer secret already matches the master. UpdateService is idempotent
+  for ECS (a no-op force-deployment just supersedes any in-flight deployment),
+  so this is safe to repeat across retries until every service succeeds.
+* On the periodic drift-check schedule we only roll services when we actually
+  had to update the secret, since the schedule is a safety net, not a recurring
+  rollout trigger.
 """
 
 import json
@@ -67,10 +87,16 @@ def _emit_metric(name: str, value: float = 1.0, unit: str = "Count") -> None:
     print(json.dumps(emf))
 
 
+def _is_drift_check(event: dict[str, Any]) -> bool:
+    """True when the invocation came from the periodic drift-check schedule
+    rather than a Secrets Manager rotation event."""
+    return event.get("source") == "drift-check"
+
+
 def _is_relevant_event(event: dict[str, Any]) -> bool:
     """Accept events that relate to *our* master secret or that are synthetic
     drift-check invocations. Reject anything else loudly."""
-    if event.get("source") == "drift-check":
+    if _is_drift_check(event):
         return True
 
     detail = event.get("detail") or {}
@@ -119,20 +145,35 @@ def _put_target_secret(value: str) -> None:
     secrets_client.put_secret_value(SecretId=TARGET_SECRET_ARN, SecretString=value)
 
 
-def _force_redeploy_services() -> list[str]:
+def _force_redeploy_services() -> tuple[list[str], list[dict[str, str]]]:
+    """Force a new deployment on every configured service.
+
+    Errors on individual services are collected rather than re-raised so that
+    a transient failure on one service cannot prevent the others from being
+    rolled in the same invocation. The caller is responsible for raising when
+    the returned ``failed`` list is non-empty so Lambda async retry kicks in.
+    """
     rolled: list[str] = []
+    failed: list[dict[str, str]] = []
     for service in ECS_SERVICE_NAMES:
-        ecs_client.update_service(
-            cluster=ECS_CLUSTER_NAME,
-            service=service,
-            forceNewDeployment=True,
-        )
-        rolled.append(service)
-        logger.info(
-            "forced new deployment",
-            extra={"cluster": ECS_CLUSTER_NAME, "service": service},
-        )
-    return rolled
+        try:
+            ecs_client.update_service(
+                cluster=ECS_CLUSTER_NAME,
+                service=service,
+                forceNewDeployment=True,
+            )
+            rolled.append(service)
+            logger.info(
+                "forced new deployment",
+                extra={"cluster": ECS_CLUSTER_NAME, "service": service},
+            )
+        except Exception as exc:
+            logger.exception(
+                "failed to roll service",
+                extra={"cluster": ECS_CLUSTER_NAME, "service": service},
+            )
+            failed.append({"service": service, "error": str(exc)})
+    return rolled, failed
 
 
 def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
@@ -142,28 +183,48 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         logger.info("event does not match our master secret, ignoring")
         return {"status": "ignored", "environment": ENVIRONMENT}
 
+    drift_check = _is_drift_check(event)
+
     try:
         username, password = _read_master_credentials()
         endpoint, port = _read_cluster_endpoint()
         new_url = _compose_url(username, password, endpoint, port)
 
         current = _read_target_secret()
-        if current == new_url:
+        secret_drifted = current != new_url
+
+        if secret_drifted:
+            _put_target_secret(new_url)
+            logger.info("updated target secret")
+            _emit_metric("SecretSyncDrifted")
+        else:
             logger.info("target secret already up-to-date")
+
+        # Always roll on rotation events so a previous partial-rollout
+        # failure can be recovered on retry. On the drift-check schedule we
+        # only roll when we actually had to update the secret, otherwise we
+        # would force four redeploys per day for no operational reason.
+        should_roll = (not drift_check) or secret_drifted
+
+        if not should_roll:
             _emit_metric("SecretSyncNoOp")
             return {"status": "no-op", "environment": ENVIRONMENT}
 
-        _put_target_secret(new_url)
-        logger.info("updated target secret")
-        _emit_metric("SecretSyncDrifted")
+        rolled, failed = _force_redeploy_services()
 
-        rolled = _force_redeploy_services()
+        if failed:
+            failed_services = [item["service"] for item in failed]
+            raise RuntimeError(
+                f"failed to roll {len(failed)} service(s): {failed_services}; "
+                f"succeeded: {rolled}"
+            )
+
         _emit_metric("SecretSyncSucceeded")
-
         return {
-            "status": "updated",
+            "status": "updated" if secret_drifted else "rolled",
             "environment": ENVIRONMENT,
             "rolled_services": rolled,
+            "secret_drifted": secret_drifted,
         }
 
     except Exception:
