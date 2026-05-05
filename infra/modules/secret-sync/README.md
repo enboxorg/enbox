@@ -57,20 +57,32 @@ aws secretsmanager rotate-secret \
 The rollout decision is event-type-agnostic: every invocation calls
 `DescribeSecret` for the consumer secret (`dwn/<env>/database-url`) to read
 its `LastChangedDate`, then `DescribeServices` for the configured ECS
-services and rolls only the services that have no deployment recorded at or
-after that timestamp. This makes the Lambda safely retryable under partial
-rollout failures regardless of which trigger fired the original invocation:
+services and rolls only the services that lack a healthy deployment at or
+after that timestamp. A service is considered "rolled" iff at least one of
+its deployments has `createdAt >= LastChangedDate` AND
+`rolloutState != FAILED` — both `IN_PROGRESS` and `COMPLETED` count, so
+we don't supersede an in-flight rollout, but the deployment circuit-breaker
+rollback case (where `UpdateService` succeeds and ECS later marks the
+deployment FAILED and rolls back) is correctly detected as not-rolled.
+
+This makes the Lambda safely retryable under every observed failure mode:
 
 * **Initial rotation or drift-fixup**: PutSecretValue updates
   `LastChangedDate`. Every service has its previous deployment created
   earlier, so every service is rolled.
 * **Partial-rollout retry** (e.g. PutSecretValue + UpdateService(http)
-  succeeded last time, UpdateService(ws) failed): the http service now has a
-  deployment newer than `LastChangedDate` and is left alone, the ws service
-  still has only the old deployment and is rolled again. This works whether
-  the original event was a rotation or a drift-check.
-* **Drift-check on a stable cluster**: every service already has a
+  succeeded last time, UpdateService(ws) failed): the http service now has
+  a deployment newer than `LastChangedDate` and is left alone, the ws
+  service still has only the old deployment and is rolled again. Works
+  whether the original event was a rotation or a drift-check.
+* **Drift-check on a stable cluster**: every service already has a healthy
   deployment newer than `LastChangedDate`, the function returns no-op.
+* **Circuit-breaker rollback recovery**: a deployment that `UpdateService`
+  accepted but ECS later marked `FAILED` (because new tasks failed their
+  health checks and ECS rolled back to the previous task set) is treated
+  as not-rolled, so the next invocation re-rolls the service rather than
+  silently believing it was up to date. Repeated failure flows through to
+  Lambda async retries → DLQ → CloudWatch alarm.
 
 Per-service failures inside `_force_redeploy_services` are aggregated; one
 bad service does not prevent the others from being attempted in the same

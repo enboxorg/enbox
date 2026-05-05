@@ -31,7 +31,13 @@ when the latter is the one that found the drift.
 
 The fix is to ignore event type for the rollout decision and instead consult
 ECS directly for each service: a service "needs a roll" iff none of its
-deployments were created at or after the consumer secret's LastChangedDate.
+deployments were created at or after the consumer secret's LastChangedDate
+AND in a non-FAILED rollout state. The FAILED filter matters because the
+ECS service module enables the deployment circuit breaker with rollback —
+``UpdateService`` can succeed, the Lambda can return success, and minutes
+later the new tasks can fail their health checks and ECS rolls back to the
+previous task set, leaving the service running on tasks that cached the
+*old* secret value at launch.
 
 * Initial happy path: PutSecretValue updates LastChangedDate, every service
   has its previous deployment created earlier, so every service is rolled.
@@ -40,6 +46,10 @@ deployments were created at or after the consumer secret's LastChangedDate.
   service that failed is rolled again.
 * Drift-check on a stable cluster: every service already has a deployment
   newer than LastChangedDate, the function returns no-op.
+* Circuit-breaker rollback recovery: a deployment that ``UpdateService``
+  accepted but ECS later marked FAILED is treated as not-rolled, so the
+  next invocation re-rolls the service rather than silently believing it
+  was up to date.
 
 Per-service errors are aggregated rather than aborting the loop, so one bad
 service cannot prevent the others from being attempted in the same
@@ -169,10 +179,21 @@ def _read_target_last_changed() -> datetime:
 
 def _services_needing_roll(secret_last_changed: datetime) -> list[str]:
     """Return the subset of configured services that have *not* been told to
-    deploy at or after ``secret_last_changed``. A service is considered up to
-    date as soon as it has any deployment with ``createdAt >= last_changed``,
-    regardless of that deployment's rollout state — calling UpdateService
-    again would just supersede an already-superseded deployment."""
+    deploy at or after ``secret_last_changed`` with a healthy rollout.
+
+    A service is considered up to date iff it has at least one deployment
+    with ``createdAt >= secret_last_changed`` AND ``rolloutState != FAILED``.
+    Both ``IN_PROGRESS`` and ``COMPLETED`` count, so we don't supersede an
+    in-flight rollout from a prior invocation; ``FAILED`` does not, because
+    the ECS service module enables the deployment circuit breaker with
+    rollback (see ``infra/modules/ecs-service/main.tf``). That means a
+    deployment can reach ``UpdateService`` success, the Lambda can return
+    success, and minutes later the new tasks can fail their health checks
+    and ECS rolls back to the previous task set — leaving the service back
+    on tasks that cached the *old* secret value at launch. The next drift
+    check would otherwise see the FAILED deployment timestamp and no-op,
+    silently leaving the service stale.
+    """
     response = ecs_client.describe_services(
         cluster=ECS_CLUSTER_NAME,
         services=ECS_SERVICE_NAMES,
@@ -191,17 +212,27 @@ def _services_needing_roll(secret_last_changed: datetime) -> list[str]:
     for name in ECS_SERVICE_NAMES:
         deployments = by_name[name].get("deployments") or []
         rolled_post_update = any(
-            d.get("createdAt") is not None and d["createdAt"] >= secret_last_changed
+            d.get("createdAt") is not None
+            and d["createdAt"] >= secret_last_changed
+            and d.get("rolloutState") != "FAILED"
             for d in deployments
         )
         if not rolled_post_update:
             needing_roll.append(name)
             logger.info(
-                "service has no deployment after secret update — needs roll",
+                "service has no healthy deployment after secret update — needs roll",
                 extra={
                     "cluster": ECS_CLUSTER_NAME,
                     "service": name,
                     "secret_last_changed": secret_last_changed.isoformat(),
+                    "deployments": [
+                        {
+                            "createdAt": d.get("createdAt").isoformat() if d.get("createdAt") else None,
+                            "rolloutState": d.get("rolloutState"),
+                            "status": d.get("status"),
+                        }
+                        for d in deployments
+                    ],
                 },
             )
     return needing_roll
