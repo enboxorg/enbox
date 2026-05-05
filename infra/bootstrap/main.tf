@@ -77,10 +77,10 @@ resource "aws_ecr_lifecycle_policy" "dwn_server" {
         rulePriority = 1
         description  = "Keep last 20 tagged images"
         selection = {
-          tagStatus   = "tagged"
+          tagStatus     = "tagged"
           tagPrefixList = ["v", "sha-"]
-          countType   = "imageCountMoreThan"
-          countNumber = 20
+          countType     = "imageCountMoreThan"
+          countNumber   = 20
         }
         action = {
           type = "expire"
@@ -184,10 +184,11 @@ data "aws_iam_policy_document" "terraform_permissions" {
       # VPC
       "ec2:Describe*",
       "ec2:CreateVpc", "ec2:DeleteVpc", "ec2:ModifyVpcAttribute",
-      "ec2:CreateSubnet", "ec2:DeleteSubnet",
+      "ec2:CreateSubnet", "ec2:DeleteSubnet", "ec2:ModifySubnetAttribute",
       "ec2:CreateInternetGateway", "ec2:DeleteInternetGateway",
       "ec2:AttachInternetGateway", "ec2:DetachInternetGateway",
       "ec2:CreateNatGateway", "ec2:DeleteNatGateway",
+      "ec2:CreateVpcEndpoint", "ec2:DeleteVpcEndpoints", "ec2:ModifyVpcEndpoint",
       "ec2:AllocateAddress", "ec2:ReleaseAddress", "ec2:AssociateAddress", "ec2:DisassociateAddress",
       "ec2:CreateRouteTable", "ec2:DeleteRouteTable",
       "ec2:CreateRoute", "ec2:DeleteRoute",
@@ -198,6 +199,20 @@ data "aws_iam_policy_document" "terraform_permissions" {
       "ec2:CreateTags", "ec2:DeleteTags",
       # ECS
       "ecs:*",
+      # ECS service auto scaling
+      "application-autoscaling:DescribeScalableTargets",
+      "application-autoscaling:DescribeScalingActivities",
+      "application-autoscaling:DescribeScalingPolicies",
+      "application-autoscaling:DescribeScheduledActions",
+      "application-autoscaling:ListTagsForResource",
+      "application-autoscaling:RegisterScalableTarget",
+      "application-autoscaling:DeregisterScalableTarget",
+      "application-autoscaling:PutScalingPolicy",
+      "application-autoscaling:DeleteScalingPolicy",
+      "application-autoscaling:PutScheduledAction",
+      "application-autoscaling:DeleteScheduledAction",
+      "application-autoscaling:TagResource",
+      "application-autoscaling:UntagResource",
       # ELB
       "elasticloadbalancing:*",
     ]
@@ -231,6 +246,7 @@ data "aws_iam_policy_document" "terraform_permissions" {
       "iam:ListRolePolicies",
       "iam:ListAttachedRolePolicies",
       "iam:ListInstanceProfilesForRole",
+      "iam:ListRoleTags",
       "iam:TagRole",
       "iam:UntagRole",
       "iam:UpdateAssumeRolePolicy",
@@ -238,8 +254,34 @@ data "aws_iam_policy_document" "terraform_permissions" {
     ]
     resources = [
       "arn:aws:iam::${var.account_id}:role/enbox-*",
+      "arn:aws:iam::${var.account_id}:role/dwn-*",
       "arn:aws:iam::${var.account_id}:role/aws-service-role/*",
     ]
+  }
+
+  statement {
+    sid    = "LambdaEventBridgeSqs"
+    effect = "Allow"
+    actions = [
+      "lambda:*",
+      "events:*",
+      "sqs:*",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "CloudWatchAlarms"
+    effect = "Allow"
+    actions = [
+      "cloudwatch:DescribeAlarms",
+      "cloudwatch:PutMetricAlarm",
+      "cloudwatch:DeleteAlarms",
+      "cloudwatch:TagResource",
+      "cloudwatch:UntagResource",
+      "cloudwatch:ListTagsForResource",
+    ]
+    resources = ["*"]
   }
 
   statement {
@@ -281,10 +323,13 @@ data "aws_iam_policy_document" "terraform_permissions" {
       "secretsmanager:GetSecretValue",
       "secretsmanager:PutSecretValue",
       "secretsmanager:TagResource",
+      "secretsmanager:UntagResource",
       "secretsmanager:GetResourcePolicy",
     ]
     resources = [
       "arn:aws:secretsmanager:${var.region}:${var.account_id}:secret:enbox-*",
+      "arn:aws:secretsmanager:${var.region}:${var.account_id}:secret:dwn/*",
+      "arn:aws:secretsmanager:${var.region}:${var.account_id}:secret:rds!cluster-*",
     ]
   }
 
@@ -300,7 +345,18 @@ data "aws_iam_policy_document" "terraform_permissions" {
       "servicediscovery:DeleteService",
       "servicediscovery:GetService",
       "servicediscovery:TagResource",
+      "servicediscovery:UntagResource",
+      "servicediscovery:ListTagsForResource",
       "servicediscovery:GetOperation",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ElasticFileSystem"
+    effect = "Allow"
+    actions = [
+      "elasticfilesystem:*",
     ]
     resources = ["*"]
   }
@@ -310,10 +366,14 @@ data "aws_iam_policy_document" "terraform_permissions" {
     effect = "Allow"
     actions = [
       "route53:GetHostedZone",
+      "route53:CreateHostedZone",
+      "route53:DeleteHostedZone",
       "route53:ListHostedZones",
       "route53:ChangeResourceRecordSets",
       "route53:GetChange",
       "route53:ListResourceRecordSets",
+      "route53:ListTagsForResource",
+      "route53:ChangeTagsForResource",
     ]
     resources = ["*"]
   }
