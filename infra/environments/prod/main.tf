@@ -115,6 +115,7 @@ module "s3_data" {
 
   name              = local.s3_bucket_name
   allowed_role_arns = [module.dwn_http.task_role_arn, module.dwn_ws.task_role_arn]
+  admin_arns        = ["arn:aws:iam::387235730938:user/enbox-admin", "arn:aws:iam::387235730938:role/github-actions-terraform"]
 
   tags = local.tags
 }

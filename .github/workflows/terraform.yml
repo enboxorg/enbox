@@ -261,7 +261,7 @@ jobs:
         run: terraform apply -no-color -input=false plan.tfplan
 
   # ---------------------------------------------------------------------------
-  # Apply Prod — requires manual approval via GitHub Environment protection
+  # Apply Prod — requires explicit opt-in and production variables.
   # ---------------------------------------------------------------------------
   apply-prod:
     name: Apply (prod)
@@ -273,7 +273,10 @@ jobs:
       (needs.apply-dev.result == 'success' || needs.apply-dev.result == 'skipped') &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.detect-changes.outputs.prod == 'true'
+      needs.detect-changes.outputs.prod == 'true' &&
+      vars.TF_APPLY_PROD == 'true' &&
+      vars.TF_CERT_ARN_PROD != '' &&
+      vars.TF_DWN_IMAGE_PROD != ''
     runs-on: ubuntu-latest
     environment: production
 
