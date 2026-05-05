@@ -21,24 +21,30 @@ This Lambda is intentionally conservative:
 Retry semantics
 ---------------
 
-The Lambda must remain safely retryable when a rotation event triggers a
+The Lambda must remain safely retryable when any invocation triggers a
 partial rollout: e.g. PutSecretValue succeeds, UpdateService(http) succeeds,
 UpdateService(ws) fails. If the next retry short-circuited on "secret already
 matches", the failed service would never be rolled and would keep running
-with the stale credentials baked into its env vars at task launch.
+with the stale credentials baked into its env vars at task launch — and this
+applies equally to rotation events and to the periodic drift-check schedule
+when the latter is the one that found the drift.
 
-To handle that:
+The fix is to ignore event type for the rollout decision and instead consult
+ECS directly for each service: a service "needs a roll" iff none of its
+deployments were created at or after the consumer secret's LastChangedDate.
 
-* Per-service errors are aggregated rather than aborted on the first failure,
-  so one bad service does not prevent the others from being attempted in the
-  same invocation.
-* On rotation events we always force a redeploy of every service, even when
-  the consumer secret already matches the master. UpdateService is idempotent
-  for ECS (a no-op force-deployment just supersedes any in-flight deployment),
-  so this is safe to repeat across retries until every service succeeds.
-* On the periodic drift-check schedule we only roll services when we actually
-  had to update the secret, since the schedule is a safety net, not a recurring
-  rollout trigger.
+* Initial happy path: PutSecretValue updates LastChangedDate, every service
+  has its previous deployment created earlier, so every service is rolled.
+* Partial-rollout retry: services that succeeded on the prior invocation now
+  have a deployment created after LastChangedDate and are skipped; the
+  service that failed is rolled again.
+* Drift-check on a stable cluster: every service already has a deployment
+  newer than LastChangedDate, the function returns no-op.
+
+Per-service errors are aggregated rather than aborting the loop, so one bad
+service cannot prevent the others from being attempted in the same
+invocation, and the function raises once at the end if any services failed
+so Lambda async retry / DLQ kicks in.
 """
 
 import json
@@ -46,6 +52,7 @@ import logging
 import os
 import time
 import urllib.parse
+from datetime import datetime
 from typing import Any
 
 import boto3
@@ -145,8 +152,63 @@ def _put_target_secret(value: str) -> None:
     secrets_client.put_secret_value(SecretId=TARGET_SECRET_ARN, SecretString=value)
 
 
-def _force_redeploy_services() -> tuple[list[str], list[dict[str, str]]]:
-    """Force a new deployment on every configured service.
+def _read_target_last_changed() -> datetime:
+    """Return the consumer secret's LastChangedDate. This is the timestamp the
+    rollout is measured against — any ECS deployment created at or after this
+    instant is considered to have launched tasks that pulled the current
+    secret value."""
+    response = secrets_client.describe_secret(SecretId=TARGET_SECRET_ARN)
+    last_changed = response.get("LastChangedDate") or response.get("CreatedDate")
+    if last_changed is None:
+        raise RuntimeError(
+            f"target secret {TARGET_SECRET_ARN} has neither LastChangedDate "
+            "nor CreatedDate in DescribeSecret response"
+        )
+    return last_changed
+
+
+def _services_needing_roll(secret_last_changed: datetime) -> list[str]:
+    """Return the subset of configured services that have *not* been told to
+    deploy at or after ``secret_last_changed``. A service is considered up to
+    date as soon as it has any deployment with ``createdAt >= last_changed``,
+    regardless of that deployment's rollout state — calling UpdateService
+    again would just supersede an already-superseded deployment."""
+    response = ecs_client.describe_services(
+        cluster=ECS_CLUSTER_NAME,
+        services=ECS_SERVICE_NAMES,
+    )
+
+    failures = response.get("failures") or []
+    if failures:
+        raise RuntimeError(f"DescribeServices failures: {failures}")
+
+    by_name = {service["serviceName"]: service for service in response.get("services", [])}
+    missing = [name for name in ECS_SERVICE_NAMES if name not in by_name]
+    if missing:
+        raise RuntimeError(f"ECS services not found in cluster {ECS_CLUSTER_NAME}: {missing}")
+
+    needing_roll: list[str] = []
+    for name in ECS_SERVICE_NAMES:
+        deployments = by_name[name].get("deployments") or []
+        rolled_post_update = any(
+            d.get("createdAt") is not None and d["createdAt"] >= secret_last_changed
+            for d in deployments
+        )
+        if not rolled_post_update:
+            needing_roll.append(name)
+            logger.info(
+                "service has no deployment after secret update — needs roll",
+                extra={
+                    "cluster": ECS_CLUSTER_NAME,
+                    "service": name,
+                    "secret_last_changed": secret_last_changed.isoformat(),
+                },
+            )
+    return needing_roll
+
+
+def _force_redeploy_services(services: list[str]) -> tuple[list[str], list[dict[str, str]]]:
+    """Force a new deployment on each given service.
 
     Errors on individual services are collected rather than re-raised so that
     a transient failure on one service cannot prevent the others from being
@@ -155,7 +217,7 @@ def _force_redeploy_services() -> tuple[list[str], list[dict[str, str]]]:
     """
     rolled: list[str] = []
     failed: list[dict[str, str]] = []
-    for service in ECS_SERVICE_NAMES:
+    for service in services:
         try:
             ecs_client.update_service(
                 cluster=ECS_CLUSTER_NAME,
@@ -183,8 +245,6 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         logger.info("event does not match our master secret, ignoring")
         return {"status": "ignored", "environment": ENVIRONMENT}
 
-    drift_check = _is_drift_check(event)
-
     try:
         username, password = _read_master_credentials()
         endpoint, port = _read_cluster_endpoint()
@@ -200,17 +260,25 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         else:
             logger.info("target secret already up-to-date")
 
-        # Always roll on rotation events so a previous partial-rollout
-        # failure can be recovered on retry. On the drift-check schedule we
-        # only roll when we actually had to update the secret, otherwise we
-        # would force four redeploys per day for no operational reason.
-        should_roll = (not drift_check) or secret_drifted
+        # The rollout decision is event-type-agnostic: a service needs to be
+        # rolled iff it has no deployment recorded at or after the consumer
+        # secret's LastChangedDate. This makes us safely retryable whether the
+        # original failure happened on a rotation event or a drift-check
+        # invocation: services that already rolled in a prior attempt show up
+        # as "up to date" and are skipped, services that were never rolled
+        # are picked up.
+        secret_last_changed = _read_target_last_changed()
+        services_to_roll = _services_needing_roll(secret_last_changed)
 
-        if not should_roll:
+        if not services_to_roll:
             _emit_metric("SecretSyncNoOp")
-            return {"status": "no-op", "environment": ENVIRONMENT}
+            return {
+                "status": "no-op",
+                "environment": ENVIRONMENT,
+                "secret_last_changed": secret_last_changed.isoformat(),
+            }
 
-        rolled, failed = _force_redeploy_services()
+        rolled, failed = _force_redeploy_services(services_to_roll)
 
         if failed:
             failed_services = [item["service"] for item in failed]
@@ -225,6 +293,7 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             "environment": ENVIRONMENT,
             "rolled_services": rolled,
             "secret_drifted": secret_drifted,
+            "secret_last_changed": secret_last_changed.isoformat(),
         }
 
     except Exception:

@@ -7,6 +7,10 @@
 crash.log
 crash.*.log
 
+# Python bytecode (e.g. from local Lambda handler smoke tests)
+__pycache__/
+*.pyc
+
 # Lock files in reusable modules (only commit in root configs like bootstrap/)
 modules/**/.terraform.lock.hcl
 override.tf
