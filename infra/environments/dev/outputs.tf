@@ -43,25 +43,36 @@ output "dwn_ws_log_group" {
   value       = module.dwn_ws.log_group_name
 }
 
+output "secret_sync_lambda_name" {
+  description = "Name of the Lambda that keeps dwn/dev/database-url in sync with the Aurora master secret."
+  value       = module.secret_sync.lambda_function_name
+}
+
 output "post_apply_instructions" {
   description = "Steps to complete after first apply."
   value       = <<-EOT
-    1. Get the Aurora master password:
-       aws secretsmanager get-secret-value --secret-id ${module.aurora.master_secret_arn} \
-         --query SecretString --output text | jq -r .password
+    1. Populate dwn/dev/database-url from the Aurora master secret (idempotent;
+       this also rolls the ECS services). Repeated invocations are no-ops.
+       aws lambda invoke \
+         --function-name ${module.secret_sync.lambda_function_name} \
+         --payload '{"source": "drift-check"}' \
+         --cli-binary-format raw-in-base64-out \
+         /tmp/secret-sync-out.json && cat /tmp/secret-sync-out.json
 
-    2. Update the database URL secret with the real password:
-       aws secretsmanager put-secret-value \
-         --secret-id ${aws_secretsmanager_secret.database_url.id} \
-         --secret-string "postgres://postgres:REAL_PASSWORD@${module.aurora.cluster_endpoint}:${module.aurora.port}/dwn"
-
-    3. Update the admin token secret:
+    2. Set the admin token (one-time):
        aws secretsmanager put-secret-value \
          --secret-id ${aws_secretsmanager_secret.admin_token.id} \
          --secret-string "$(openssl rand -hex 32)"
 
-    4. Force new ECS deployments to pick up the updated secrets:
-       aws ecs update-service --cluster ${module.ecs_cluster.cluster_name} --service ${module.dwn_http.service_name} --force-new-deployment
-       aws ecs update-service --cluster ${module.ecs_cluster.cluster_name} --service ${module.dwn_ws.service_name} --force-new-deployment
+    3. Set the provider-auth JWT secret (one-time):
+       aws secretsmanager put-secret-value \
+         --secret-id ${aws_secretsmanager_secret.provider_auth_jwt_secret.id} \
+         --secret-string "$(openssl rand -hex 32)"
+
+    Subsequent Aurora rotations are propagated automatically by the secret-sync
+    Lambda. To force a rotation for testing:
+      aws secretsmanager rotate-secret \
+        --secret-id ${module.aurora.master_secret_arn} \
+        --rotate-immediately
   EOT
 }

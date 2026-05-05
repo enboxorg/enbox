@@ -268,6 +268,29 @@ resource "aws_iam_role_policy" "dwn_ws_s3" {
 }
 
 ################################################################################
+# Secret Sync — keep dwn/<env>/database-url in sync with the Aurora master
+# secret rotated by AWS, and roll ECS services so they pick up the new value.
+################################################################################
+
+module "secret_sync" {
+  source = "../../modules/secret-sync"
+
+  name              = local.name
+  environment       = local.environment
+  target_secret_arn = aws_secretsmanager_secret.database_url.arn
+  master_secret_arn = module.aurora.master_secret_arn
+  rds_cluster_id    = module.aurora.cluster_id
+  rds_cluster_arn   = module.aurora.cluster_arn
+  db_name           = "dwn"
+  ecs_cluster_name  = module.ecs_cluster.cluster_name
+  ecs_cluster_arn   = module.ecs_cluster.cluster_arn
+  ecs_service_names = [module.dwn_http.service_name, module.dwn_ws.service_name]
+  sns_topic_arn     = var.sns_topic_arn
+
+  tags = local.tags
+}
+
+################################################################################
 # Monitoring — CloudWatch alarms with SNS notifications
 ################################################################################
 

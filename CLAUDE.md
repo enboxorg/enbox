@@ -800,7 +800,7 @@ The `infra/` directory contains Terraform configurations for the AWS deployment.
 | `infra/bootstrap/` | One-time Terraform state backend (S3 bucket + DynamoDB lock table) |
 | `infra/environments/dev/` | Dev environment Terraform config |
 | `infra/environments/prod/` | Prod environment Terraform config |
-| `infra/modules/` | Reusable Terraform modules (alb, aurora, ecs-cluster, ecs-service, monitoring, nats, s3-data, vpc) |
+| `infra/modules/` | Reusable Terraform modules (alb, aurora, ecs-cluster, ecs-service, monitoring, nats, s3-data, secret-sync, vpc) |
 
 ### Dev Environment Architecture
 
@@ -815,8 +815,9 @@ The `infra/` directory contains Terraform configurations for the AWS deployment.
 | **ALB** | Internet-facing, TLS 1.3, WebSocket routing via `Upgrade` header |
 | **Aurora** | PostgreSQL 15, `db.t4g.medium`, encrypted |
 | **S3** | `dwn-dev-store-us-east-1` (data storage) |
-| **Secrets** | `dwn/dev/database-url`, `dwn/dev/admin-token`, `dwn/dev/provider-auth-jwt-secret` (Secrets Manager) |
-| **Monitoring** | CloudWatch alarms for ALB 5xx, latency P95, ECS CPU/memory, Aurora CPU |
+| **Secrets** | `dwn/dev/database-url`, `dwn/dev/admin-token`, `dwn/dev/provider-auth-jwt-secret` (Secrets Manager). Aurora master credentials (`rds!cluster-...`) are AWS-managed and rotate automatically. |
+| **Secret Sync** | `dwn-<env>-secret-sync` Lambda + EventBridge rule auto-propagates Aurora master rotations into `dwn/<env>/database-url` and forces an ECS rolling redeploy. See [`infra/modules/secret-sync/README.md`](infra/modules/secret-sync/README.md). |
+| **Monitoring** | CloudWatch alarms for ALB 5xx, latency P95, ECS CPU/memory, Aurora CPU, secret-sync errors / DLQ depth / staleness |
 
 ### CI/CD Pipeline
 

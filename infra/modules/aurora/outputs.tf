@@ -22,3 +22,13 @@ output "master_secret_arn" {
   description = "ARN of the Secrets Manager secret containing master credentials."
   value       = aws_rds_cluster.this.master_user_secret[0].secret_arn
 }
+
+output "cluster_id" {
+  description = "Identifier of the Aurora cluster."
+  value       = aws_rds_cluster.this.cluster_identifier
+}
+
+output "cluster_arn" {
+  description = "ARN of the Aurora cluster."
+  value       = aws_rds_cluster.this.arn
+}
