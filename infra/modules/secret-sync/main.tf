@@ -306,16 +306,17 @@ resource "aws_cloudwatch_metric_alarm" "dlq_depth" {
 }
 
 # Catches the case where EventBridge silently stops triggering us. The
-# drift-check schedule alone fires 4×/day, so two consecutive days of zero
-# invocations always indicates a wiring problem.
+# drift-check schedule fires 6×/hour, so a full hour of zero invocations is
+# a strong signal of a wiring problem (broken rule, IAM, or async retry
+# exhaustion) rather than a transient EventBridge hiccup.
 resource "aws_cloudwatch_metric_alarm" "stale" {
   alarm_name          = "${local.function_name}-stale"
-  alarm_description   = "Lambda ${local.function_name} has not been invoked in 2 days (EventBridge wiring may be broken)"
+  alarm_description   = "Lambda ${local.function_name} has not been invoked in 1 hour (EventBridge wiring may be broken; drift-check should fire 6×/hour)"
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 1
   metric_name         = "Invocations"
   namespace           = "AWS/Lambda"
-  period              = 86400
+  period              = 3600
   statistic           = "Sum"
   threshold           = 1
   treat_missing_data  = "breaching"

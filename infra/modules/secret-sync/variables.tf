@@ -62,9 +62,9 @@ variable "log_retention_days" {
 }
 
 variable "drift_check_schedule" {
-  description = "EventBridge schedule expression for the drift-check safety net invocation."
+  description = "EventBridge schedule expression for the drift-check safety net invocation. Default rate(10 minutes) bounds the worst-case credential-staleness window if a rotation event is missed; cost is ~$0.20/env/month."
   type        = string
-  default     = "rate(6 hours)"
+  default     = "rate(10 minutes)"
 }
 
 variable "lambda_timeout" {

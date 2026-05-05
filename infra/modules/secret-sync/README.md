@@ -20,16 +20,19 @@ Aurora rotation -> Secrets Manager event -> EventBridge -> Lambda
                                                               +-> ecs:UpdateService --force-new-deployment
 ```
 
-A second EventBridge rule fires the same Lambda every 6 hours as a drift-check
-safety net — even if the rotation event is ever missed, the consumer secret
-will self-heal within 6 hours.
+A second EventBridge rule fires the same Lambda every 10 minutes as a
+drift-check safety net — even if the rotation event is ever missed, the
+consumer secret self-heals within ~10 minutes (plus the ECS rolling-deploy
+window). The drift-check is a backstop for the primary rotation-event path,
+not the path itself; cost is ~$0.20/env/month. For zero-window rotations,
+see [#917](https://github.com/enboxorg/enbox/issues/917) (RDS Proxy follow-up).
 
 ## Triggers
 
 | Trigger | Event |
 |---|---|
 | `aws_cloudwatch_event_rule.rotation` | Filtered on `source=aws.secretsmanager`, `detail.eventName=RotationSucceeded`, `additionalEventData.SecretId=<master_secret_arn>` |
-| `aws_cloudwatch_event_rule.drift_check` | `rate(6 hours)` schedule with payload `{"source": "drift-check"}` |
+| `aws_cloudwatch_event_rule.drift_check` | `rate(10 minutes)` schedule with payload `{"source": "drift-check"}` |
 
 ## Manual invocation
 
@@ -96,7 +99,7 @@ retry / DLQ kicks in.
 | Lambda raises | Async retried by Lambda (default 2 retries), then dead-lettered to `${name}-secret-sync-dlq` |
 | `Errors` alarm | Fires on any Lambda error in the last 5 minutes |
 | `dlq-depth` alarm | Fires when there is at least one unprocessed message in the DLQ |
-| `stale` alarm | Fires when the Lambda has not been invoked in 24 hours (drift-check fires 4×/day) |
+| `stale` alarm | Fires when the Lambda has not been invoked in 1 hour (drift-check fires 6×/hour) |
 
 ## Required inputs
 
