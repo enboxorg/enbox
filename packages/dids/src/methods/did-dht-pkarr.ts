@@ -5,12 +5,9 @@ import type { Bep44Message } from './did-dht-types.js';
 
 import bencode from 'bencode';
 import { Ed25519 } from '@enbox/crypto';
-
 import { assertPublicUrl, Convert } from '@enbox/common';
-
-import { decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/dns-packet';
-
 import { DidError, DidErrorCode } from '../did-error.js';
+import { decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/dns-packet';
 
 /**
  * Constructs a Pkarr URL from public key bytes and a gateway URI.
@@ -32,7 +29,7 @@ function validatePkarrUrl(url: string, allowPrivateGatewayUri = false): void {
   try {
     assertPublicUrl(url, 'Pkarr gateway URL');
   } catch (error: any) {
-    throw new DidError(DidErrorCode.InternalError, error.message);
+    throw new DidError(DidErrorCode.InvalidGatewayUri, error.message);
   }
 }
 

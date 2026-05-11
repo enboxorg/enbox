@@ -56,10 +56,7 @@ export function concatenateUrl(baseUrl: string, path: string): string {
   const sanitizedPath = path.replaceAll(/^\/+/g, '');
   const segments = sanitizedPath.split('/');
 
-  if (segments.some((segment) => {
-    const decodedSegment = decodeURIComponent(segment);
-    return segment === '..' || decodedSegment === '..' || decodedSegment.includes('/') || decodedSegment.includes('\\');
-  })) {
+  if (segments.some(isUnsafePathSegment)) {
     throw new Error('Path must not contain parent directory segments.');
   }
 
@@ -72,6 +69,29 @@ export function concatenateUrl(baseUrl: string, path: string): string {
   }
 
   return url.toString();
+}
+
+/**
+ * Returns true when a single path segment is unsafe to append to a base URL.
+ *
+ * A segment is unsafe when it contains parent-directory traversal (`..`), embedded path
+ * separators (`/` or `\`) — including any percent-encoded variants — or malformed percent
+ * encoding (which is always rejected so callers cannot smuggle traversal past `decodeURIComponent`
+ * by triggering a `URIError`).
+ */
+function isUnsafePathSegment(segment: string): boolean {
+  if (segment === '..') {
+    return true;
+  }
+
+  let decodedSegment: string;
+  try {
+    decodedSegment = decodeURIComponent(segment);
+  } catch {
+    return true;
+  }
+
+  return decodedSegment === '..' || decodedSegment.includes('/') || decodedSegment.includes('\\');
 }
 
 function parseIpv4(hostname: string): [number, number, number, number] | undefined {

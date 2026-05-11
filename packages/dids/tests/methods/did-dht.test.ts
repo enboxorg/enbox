@@ -321,6 +321,30 @@ describe('DidDht', () => {
       expect(fetchStub).not.toHaveBeenCalled();
     });
 
+    it('does not publish to a private gateway URI by default', async () => {
+      try {
+        await DidDht.create({ options: { gatewayUri: 'http://127.0.0.1:7527' } });
+        throw new Error('Expected DidDht.create() to throw.');
+      } catch (error: any) {
+        expect(error.code).toBe(DidErrorCode.InvalidGatewayUri);
+        expect(error.message).toContain('private, loopback, or link-local');
+        expect(fetchStub).not.toHaveBeenCalled();
+      }
+    });
+
+    it('allows publishing to a private gateway URI when explicitly enabled', async () => {
+      const did = await DidDht.create({
+        options: {
+          gatewayUri             : 'http://127.0.0.1:7527',
+          allowPrivateGatewayUri : true,
+        }
+      });
+
+      expect(did.metadata).toHaveProperty('published', true);
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(fetchStub.mock.calls[0][0]).toContain('http://127.0.0.1:7527/');
+    });
+
     it('returns a version ID in DID metadata when published', async () => {
       const did = await DidDht.create();
       expect(did.metadata).toHaveProperty('versionId');
@@ -798,7 +822,7 @@ describe('DidDht', () => {
       });
 
       expect(fetchStub).not.toHaveBeenCalled();
-      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InvalidGatewayUri);
       expect(didResolutionResult.didResolutionMetadata.errorMessage).toContain('private, loopback, or link-local');
     });
 
@@ -810,7 +834,7 @@ describe('DidDht', () => {
       });
 
       expect(fetchStub).not.toHaveBeenCalled();
-      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InvalidGatewayUri);
       expect(didResolutionResult.didResolutionMetadata.errorMessage).toContain('private, loopback, or link-local');
     });
 

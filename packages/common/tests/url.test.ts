@@ -63,5 +63,10 @@ describe('url utilities', () => {
       expect(() => concatenateUrl('https://example.com/api', '..%2fadmin')).toThrow('parent directory');
       expect(() => concatenateUrl('https://example.com/api', '..%5cadmin')).toThrow('parent directory');
     });
+
+    it('rejects malformed percent-encoded segments rather than surfacing URIError', () => {
+      expect(() => concatenateUrl('https://example.com/api', '%E0%A4')).toThrow('parent directory');
+      expect(() => concatenateUrl('https://example.com/api', '%')).toThrow('parent directory');
+    });
   });
 });

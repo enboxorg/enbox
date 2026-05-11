@@ -97,6 +97,27 @@ const DEFAULT_GATEWAY_URI_FROM_ENV = process.env.DID_DHT_GATEWAY_URI !== undefin
 const DEFAULT_GATEWAY_URI = process.env.DID_DHT_GATEWAY_URI || 'https://enbox-did-dht.fly.dev';
 
 /**
+ * Applies the default gateway URI when none is supplied and decides whether private hosts are
+ * allowed for the resulting URI.
+ *
+ * The caller's explicit `allowPrivateGatewayUri` always wins. As an additional convenience,
+ * private hosts are allowed whenever the resolved URI exactly matches the `DID_DHT_GATEWAY_URI`
+ * environment variable so local development and CI workflows can target a private gateway
+ * without sprinkling `allowPrivateGatewayUri: true` through their call sites.
+ */
+function resolveGatewayUri(gatewayUri: string | undefined, allowPrivateGatewayUri: boolean | undefined): {
+  gatewayUri: string;
+  allowPrivateGatewayUri: boolean;
+} {
+  const resolvedUri = gatewayUri ?? DEFAULT_GATEWAY_URI;
+  const matchesEnvDefault = DEFAULT_GATEWAY_URI_FROM_ENV && resolvedUri === DEFAULT_GATEWAY_URI;
+  return {
+    gatewayUri             : resolvedUri,
+    allowPrivateGatewayUri : (allowPrivateGatewayUri ?? false) || matchesEnvDefault,
+  };
+}
+
+/**
  * The `DidDht` class provides an implementation of the `did:dht` DID method.
  *
  * Features:
@@ -386,21 +407,18 @@ export class DidDht extends DidMethod {
    * @param params - The parameters for the `publish` operation.
    * @param params.did - The `BearerDid` object representing the DID to be published.
    * @param params.gatewayUri - Optional. The URI of a DID DHT Gateway or Pkarr Relay.
+   * @param params.allowPrivateGatewayUri - Optional. Allow the resulting gateway URI to target a
+   *                                        private, loopback, or link-local host. See
+   *                                        {@link DidDhtCreateOptions} for guidance on safe usage.
    * @returns A promise that resolves to a {@link DidRegistrationResult} object.
    */
-  public static async publish({ did, gatewayUri = DEFAULT_GATEWAY_URI, allowPrivateGatewayUri = false }: {
+  public static async publish({ did, gatewayUri, allowPrivateGatewayUri }: {
     did: BearerDid;
     gatewayUri?: string;
     allowPrivateGatewayUri?: boolean;
   }): Promise<DidRegistrationResult> {
-    const shouldAllowPrivateGatewayUri = allowPrivateGatewayUri === true || (gatewayUri === DEFAULT_GATEWAY_URI && DEFAULT_GATEWAY_URI_FROM_ENV);
-    const registrationResult = await DidDhtDocument.put({
-      did,
-      gatewayUri,
-      allowPrivateGatewayUri: shouldAllowPrivateGatewayUri,
-    });
-
-    return registrationResult;
+    const resolved = resolveGatewayUri(gatewayUri, allowPrivateGatewayUri);
+    return DidDhtDocument.put({ did, ...resolved });
   }
 
   /**
@@ -412,8 +430,7 @@ export class DidDht extends DidMethod {
    */
   public static async resolve(didUri: string, options: DidResolutionOptions = {}): Promise<DidResolutionResult> {
     // To execute the read method operation, use the given gateway URI or a default.
-    const gatewayUri = options.gatewayUri ?? DEFAULT_GATEWAY_URI;
-    const allowPrivateGatewayUri = (options.allowPrivateGatewayUri ?? false) || (options.gatewayUri === undefined && DEFAULT_GATEWAY_URI_FROM_ENV);
+    const { gatewayUri, allowPrivateGatewayUri } = resolveGatewayUri(options.gatewayUri, options.allowPrivateGatewayUri);
 
     try {
       // Attempt to decode the z-base-32-encoded identifier.
