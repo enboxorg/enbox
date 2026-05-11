@@ -210,6 +210,13 @@ describe('Utils', () => {
     it('should handle both trailing and leading slashes', () => {
       expect(concatenateUrl('https://example.com/', '/api/v1')).toBe('https://example.com/api/v1');
     });
+
+    it('rejects parent directory path segments', () => {
+      expect(() => concatenateUrl('https://example.com/connect', '../admin')).toThrow('parent directory');
+      expect(() => concatenateUrl('https://example.com/connect', '%2e%2e/admin')).toThrow('parent directory');
+      expect(() => concatenateUrl('https://example.com/connect', '..%2fadmin')).toThrow('parent directory');
+      expect(() => concatenateUrl('https://example.com/connect', '..%5cadmin')).toThrow('parent directory');
+    });
   });
 
   describe('pollWithTtl', () => {

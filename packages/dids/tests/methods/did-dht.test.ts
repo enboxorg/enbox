@@ -791,6 +791,42 @@ describe('DidDht', () => {
       expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'notFound');
     });
 
+    it('does not fetch from a private gateway URI by default', async () => {
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const didResolutionResult = await DidDht.resolve(did, {
+        gatewayUri: 'http://127.0.0.1:7527',
+      });
+
+      expect(fetchStub).not.toHaveBeenCalled();
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
+      expect(didResolutionResult.didResolutionMetadata.errorMessage).toContain('private, loopback, or link-local');
+    });
+
+    it('does not fetch from a private gateway URI when explicitly disabled', async () => {
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const didResolutionResult = await DidDht.resolve(did, {
+        gatewayUri             : 'http://127.0.0.1:7527',
+        allowPrivateGatewayUri : false,
+      });
+
+      expect(fetchStub).not.toHaveBeenCalled();
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InternalError);
+      expect(didResolutionResult.didResolutionMetadata.errorMessage).toContain('private, loopback, or link-local');
+    });
+
+    it('allows private gateway URI fetches when explicitly requested', async () => {
+      fetchStub.mockResolvedValue(fetchNotFoundResponse());
+
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const didResolutionResult = await DidDht.resolve(did, {
+        gatewayUri             : 'http://127.0.0.1:7527',
+        allowPrivateGatewayUri : true,
+      });
+
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.NotFound);
+    });
+
     it('returns a invalidDidDocumentLength error if the Pkarr relay returns smaller than the 72 byte minimum', async () => {
       // Mock the response from the Pkarr relay rather than calling over the network.
       fetchStub.mockResolvedValue(fetchOkResponse(

@@ -4,10 +4,13 @@ import type { Signer } from '@enbox/crypto';
 import type { Bep44Message } from './did-dht-types.js';
 
 import bencode from 'bencode';
-import { Convert } from '@enbox/common';
 import { Ed25519 } from '@enbox/crypto';
-import { DidError, DidErrorCode } from '../did-error.js';
+
+import { assertPublicUrl, Convert } from '@enbox/common';
+
 import { decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/dns-packet';
+
+import { DidError, DidErrorCode } from '../did-error.js';
 
 /**
  * Constructs a Pkarr URL from public key bytes and a gateway URI.
@@ -21,6 +24,18 @@ function pkarrUrl(publicKeyBytes: Uint8Array, gatewayUri: string): string {
   return new URL(identifier, gatewayUri).href;
 }
 
+function validatePkarrUrl(url: string, allowPrivateGatewayUri = false): void {
+  if (allowPrivateGatewayUri) {
+    return;
+  }
+
+  try {
+    assertPublicUrl(url, 'Pkarr gateway URL');
+  } catch (error: any) {
+    throw new DidError(DidErrorCode.InternalError, error.message);
+  }
+}
+
 /**
  * Retrieves a signed BEP44 message from a DID DHT Gateway or Pkarr Relay server.
  *
@@ -31,15 +46,17 @@ function pkarrUrl(publicKeyBytes: Uint8Array, gatewayUri: string): string {
  * @param params.publicKeyBytes - The public key bytes of the Identity Key, z-base-32 encoded.
  * @returns A promise resolving to a BEP44 message containing the signed DNS packet.
  */
-export async function pkarrGet({ gatewayUri, publicKeyBytes }: {
+export async function pkarrGet({ gatewayUri, publicKeyBytes, allowPrivateGatewayUri = false }: {
   publicKeyBytes: Uint8Array;
   gatewayUri: string;
+  allowPrivateGatewayUri?: boolean;
 }): Promise<Bep44Message> {
   // The identifier (key in the DHT) is the z-base-32 encoding of the Identity Key.
   const identifier = Convert.uint8Array(publicKeyBytes).toBase32Z();
 
   // Concatenate the gateway URI with the identifier to form the full URL.
   const url = pkarrUrl(publicKeyBytes, gatewayUri);
+  validatePkarrUrl(url, allowPrivateGatewayUri);
 
   // Transmit the Get request to the DID DHT Gateway or Pkarr Relay and get the response.
   let response: Response;
@@ -91,15 +108,17 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes }: {
  * @param params.bep44Message - The BEP44 message to be published, containing the signed DNS packet.
  * @returns A promise resolving to `true` if the message was successfully published, otherwise `false`.
  */
-export async function pkarrPut({ gatewayUri, bep44Message }: {
+export async function pkarrPut({ gatewayUri, bep44Message, allowPrivateGatewayUri = false }: {
   bep44Message: Bep44Message;
   gatewayUri: string;
+  allowPrivateGatewayUri?: boolean;
 }): Promise<boolean> {
   // The identifier (key in the DHT) is the z-base-32 encoding of the Identity Key.
   const identifier = Convert.uint8Array(bep44Message.k).toBase32Z();
 
   // Concatenate the gateway URI with the identifier to form the full URL.
   const url = pkarrUrl(bep44Message.k, gatewayUri);
+  validatePkarrUrl(url, allowPrivateGatewayUri);
 
   // Construct the body of the request according to the Pkarr relay specification.
   const body = new Uint8Array(bep44Message.v.length + 72);

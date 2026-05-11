@@ -4,6 +4,8 @@ import type { PaginationCursor, RecordsDeleteMessage, RecordsWrite, RecordsWrite
 import { utils as didUtils } from '@enbox/dids';
 import { DateSort, DwnInterfaceName, DwnMethodName, Jws, Message } from '@enbox/dwn-sdk-js';
 
+export { concatenateUrl } from '@enbox/common';
+
 export async function getDwnServiceEndpointUrls(didUri: string, dereferencer: DidUrlDereferencer): Promise<string[]> {
   // Attempt to dereference the DID service with ID fragment #dwn.
   const dereferencingResult = await dereferencer.dereference(`${didUri}#dwn`);
@@ -153,21 +155,6 @@ export function pollWithTtl(
 
     poll();
   });
-}
-
-/** Concatenates a base URL and a path ensuring that there is exactly one slash between them */
-export function concatenateUrl(baseUrl: string, path: string): string {
-  // Remove trailing slash from baseUrl if it exists
-  if (baseUrl.endsWith('/')) {
-    baseUrl = baseUrl.slice(0, -1);
-  }
-
-  // Remove leading slash from path if it exists
-  if (path.startsWith('/')) {
-    path = path.slice(1);
-  }
-
-  return `${baseUrl}/${path}`;
 }
 
 /**

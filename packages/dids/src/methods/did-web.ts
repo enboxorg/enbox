@@ -24,47 +24,11 @@ import { Did } from '../did.js';
 import { DidMethod } from './did-method.js';
 import { EMPTY_DID_RESOLUTION_RESULT } from '../types/did-resolution.js';
 import { extractDidFragment } from '../utils.js';
+import { isPrivateHostname } from '@enbox/common';
 import { DidError, DidErrorCode } from '../did-error.js';
 
 /** Default fetch timeout for DID document retrieval (30 seconds). */
 const FETCH_TIMEOUT_MS = 30_000;
-
-/**
- * Returns `true` when the hostname is a private, loopback, or link-local
- * address.  Used to block SSRF via crafted `did:web` identifiers such as
- * `did:web:169.254.169.254` or `did:web:localhost`.
- */
-function isPrivateHostname(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-
-  if (h === 'localhost' || h === 'localhost.') { return true; }
-
-  // IPv4 literal check
-  const parts = h.split('.');
-  if (parts.length === 4) {
-    const octets = parts.map(Number);
-    if (octets.every((o) => !Number.isNaN(o) && o >= 0 && o <= 255)) {
-      const [a, b] = octets;
-      if (a === 10) { return true; } // 10.0.0.0/8
-      if (a === 172 && b >= 16 && b <= 31) { return true; } // 172.16.0.0/12
-      if (a === 192 && b === 168) { return true; } // 192.168.0.0/16
-      if (a === 127) { return true; } // 127.0.0.0/8
-      if (a === 169 && b === 254) { return true; } // 169.254.0.0/16
-      if (a === 0) { return true; } // 0.0.0.0/8
-    }
-  }
-
-  // IPv6 literal check (bracket-wrapped by URL parser)
-  let v6 = h;
-  if (v6.startsWith('[') && v6.endsWith(']')) { v6 = v6.slice(1, -1); }
-  if (v6.includes(':')) {
-    if (v6 === '::1' || v6 === '::') { return true; }
-    if (v6.startsWith('fe80:') || v6.startsWith('fe80%')) { return true; }
-    if (v6.startsWith('fc') || v6.startsWith('fd')) { return true; }
-  }
-
-  return false;
-}
 
 /**
  * Defines the set of options available when creating a new Decentralized Identifier (DID) with the

@@ -23,5 +23,12 @@ describe('utils', () => {
     it('handles multi-segment paths', () => {
       expect(concatenateUrl('https://example.com/api', 'v1/resource')).toBe('https://example.com/api/v1/resource');
     });
+
+    it('rejects parent directory path segments', () => {
+      expect(() => concatenateUrl('https://example.com/api', '../admin')).toThrow('parent directory');
+      expect(() => concatenateUrl('https://example.com/api', '%2e%2e/admin')).toThrow('parent directory');
+      expect(() => concatenateUrl('https://example.com/api', '..%2fadmin')).toThrow('parent directory');
+      expect(() => concatenateUrl('https://example.com/api', '..%5cadmin')).toThrow('parent directory');
+    });
   });
 });
