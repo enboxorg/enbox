@@ -172,7 +172,7 @@ Before any commits get pushed and PRs opened, ALL of the following MUST pass:
 
 1. **Lint** — `bun run lint` (use `bun run lint:fix` to auto-fix issues)
 2. **Build** — `bun run --filter @enbox/agent build` (rebuild `dwn-sdk-js` first if changed)
-3. **Tests** — `export DID_DHT_GATEWAY_URI=http://localhost:7527 && bun run test:node` from `packages/agent/`
+3. **Tests** — `export DID_DHT_GATEWAY_URI=http://localhost:7527 DID_DHT_ALLOW_PRIVATE_GATEWAY=1 && bun run test:node` from `packages/agent/`
 
 Do not push or open a PR until all three checks pass locally. See [Local Test Infrastructure](#local-test-infrastructure) for required services.
 
@@ -209,10 +209,11 @@ Most packages use **`bun test`** (Bun’s native test runner). **`@enbox/browser
 
 #### Agent / API / Auth tests (bun:test)
 
-**Important:** Always set `DID_DHT_GATEWAY_URI` before running **agent**, **api**, or **auth** tests. Without it, a large subset of tests will fail with Pkarr / `did:dht` publishing errors.
+**Important:** Always set `DID_DHT_GATEWAY_URI` *and* `DID_DHT_ALLOW_PRIVATE_GATEWAY=1` before running **agent**, **api**, or **auth** tests. Without `DID_DHT_GATEWAY_URI`, a large subset of tests will fail with Pkarr / `did:dht` publishing errors. Without `DID_DHT_ALLOW_PRIVATE_GATEWAY=1`, the `did:dht` SSRF check rejects the local relay because it targets a loopback host (the env var is the dev/CI opt-in for the documented `allowPrivateGatewayUri: false` default; production deployments leave it unset).
 
 ```bash
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
 
 # Full agent test suite (from packages/agent/):
 bun run test:node
@@ -248,14 +249,16 @@ Several packages (`dids`, `agent`, `api`, `dwn-server`, `dwn-sql-store`) require
 # Start all test services (Pkarr relay, Postgres, MySQL, NATS):
 docker compose -f docker-compose.test.yaml up -d --wait
 
-# Set the Pkarr gateway env var (REQUIRED for did:dht tests):
+# Set the Pkarr gateway env vars (REQUIRED for did:dht tests):
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+# Opt in to the local (loopback) Pkarr relay; production code paths leave this unset.
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
 
 # Set the NATS URL (REQUIRED for dwn-server NatsEventLog tests):
 export NATS_URL=nats://localhost:4222
 ```
 
-Without `DID_DHT_GATEWAY_URI`, tests in `agent`, `api`, `auth`, and `dids` that publish `did:dht` will fail with `DidError: internalError: Failed to put Pkarr record`. These are NOT real test failures — the tests are correct, they just need the gateway.
+Without `DID_DHT_GATEWAY_URI`, tests in `agent`, `api`, `auth`, and `dids` that publish `did:dht` will fail with `DidError: internalError: Failed to put Pkarr record`. Without `DID_DHT_ALLOW_PRIVATE_GATEWAY=1`, the same tests will fail with `invalidGatewayUri: Pkarr gateway URL must not target a private, loopback, or link-local host: localhost` because the SSRF check rejects the local relay. These are NOT real test failures — the tests are correct, they just need the gateway.
 
 ### Services provided by `docker-compose.test.yaml`
 
@@ -279,6 +282,7 @@ If not running, start it (requires built packages):
 
 ```bash
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
 export DS_PORT=3000
 export DWN_BASE_URL=http://localhost:3000
 export DWN_TTL_CACHE_URL="postgres://dwn_user:dwn_password@localhost:5433/dwn"
@@ -295,6 +299,7 @@ bun packages/dwn-server/dist/esm/src/main.js &
 # Ensure services are up:
 docker compose -f docker-compose.test.yaml up -d --wait
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
 
 # Now run tests — these will all pass:
 bun run --filter @enbox/agent test:node       # 748 pass, 0 fail

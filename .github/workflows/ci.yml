@@ -480,6 +480,9 @@ jobs:
           export DWN_STORAGE_STATE_INDEX=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DID_DHT_GATEWAY_URI=http://localhost:7527
+          # The DWN server itself talks to the local Pkarr relay; opt in to private gateways for
+          # this dev/CI process. Production deployments leave this unset.
+          export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
           export DWN_RATE_LIMIT_REQUESTS_PER_SECOND=0
           export DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND=0
 
@@ -498,6 +501,9 @@ jobs:
       - name: Run tests with coverage
         run: |
           export DID_DHT_GATEWAY_URI=http://localhost:7527
+          # Opt-in for the test process so the agent / DWN can talk to the local Pkarr relay
+          # without each call site having to pass `allowPrivateGatewayUri: true`.
+          export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
           bun run --filter @enbox/dids         test:node:coverage
           bun run --filter @enbox/dwn-clients  test:node:coverage
           bun run --filter @enbox/agent        test:node:coverage
@@ -605,6 +611,7 @@ jobs:
           export DWN_STORAGE_STATE_INDEX=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DID_DHT_GATEWAY_URI=http://localhost:7527
+          export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
           export DWN_RATE_LIMIT_REQUESTS_PER_SECOND=0
           export DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND=0
 
@@ -623,6 +630,7 @@ jobs:
       - name: Run e2e tests
         run: |
           export DID_DHT_GATEWAY_URI=http://localhost:7527
+          export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
           bun run --filter @enbox/agent test:e2e
 
       - name: Stop services
