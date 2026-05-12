@@ -20,14 +20,16 @@ The `Enbox` class is the entry point. You create an instance with `Enbox.connect
 ```ts
 import { Enbox } from '@enbox/api';
 
-const enbox = Enbox.connect({ agent, connectedDid: did });
+const { enbox, session } = await Enbox.connect({ createIdentity: true });
 ```
 
-The `agent` manages signing keys, DWN sync, and identity storage. The `connectedDid` is the user's DID. If you use `@enbox/auth` for authentication, you can pass the session directly:
+`Enbox.connect()` creates the default auth/session lifecycle and returns the `Enbox` API, active session, and underlying auth manager. If you manage sessions yourself with `@enbox/auth` or `@enbox/agent`, pass the session directly:
 
 ```ts
-const enbox = Enbox.connect({ session });
+const enbox = Enbox.fromSession(session);
 ```
+
+For raw agent integration, use `Enbox.from({ agent, connectedDid })`.
 
 The `Enbox` instance exposes:
 

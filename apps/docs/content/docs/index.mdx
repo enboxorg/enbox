@@ -49,14 +49,14 @@ const TaskProtocol = defineProtocol({
 ```ts
 import { Enbox } from '@enbox/api';
 
-const enbox = Enbox.connect({ agent, connectedDid: did });
+const { enbox } = await Enbox.connect({ createIdentity: true });
 const tasks = enbox.using(TaskProtocol);
 ```
 
-`Enbox.connect()` takes an `agent` and `connectedDid` — the agent manages signing keys and DWN sync, while `connectedDid` is the user's DID. The protocol is automatically configured on the first operation. If you use `@enbox/auth`, you can pass the session directly:
+`Enbox.connect()` creates the default session lifecycle for common apps. The protocol is automatically configured on the first operation. If you manage sessions yourself with `@enbox/auth` or `@enbox/agent`, pass the session directly:
 
 ```ts
-const enbox = Enbox.connect({ session });
+const enbox = Enbox.fromSession(session);
 ```
 
 ### 3. CRUD operations

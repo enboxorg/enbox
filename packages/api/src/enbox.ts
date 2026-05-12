@@ -4,14 +4,15 @@
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
-import type { AuthSession } from '@enbox/auth';
 import type { DidMethodResolver } from '@enbox/dids';
 import type { EnboxAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { AuthManagerOptions, AuthSession, ConnectOptions } from '@enbox/auth';
 
 import type { SchemaMap, TypedProtocol } from './protocol-types.js';
 
 import { AnonymousDwnApi } from '@enbox/agent';
+import { AuthManager } from '@enbox/auth/auth-manager';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
@@ -47,7 +48,7 @@ export type EnboxAnonymousApi = {
  * Parameters for constructing an {@link Enbox} instance.
  *
  * These are the minimal primitives needed to interact with the DWN network.
- * Typically obtained from an {@link AuthSession} via `@enbox/auth`.
+ * Typically obtained from an agent session via `@enbox/auth`.
  */
 export type EnboxParams = {
   /**
@@ -64,23 +65,74 @@ export type EnboxParams = {
 };
 
 /**
+ * Session-shaped parameters accepted by {@link Enbox.fromSession} and
+ * {@link Enbox.connect}.
+ *
+ * This is structural so callers can pass an `AuthSession` from `@enbox/auth`,
+ * an `AgentSession` from `@enbox/agent`, or any compatible custom session.
+ */
+export type EnboxSessionParams = {
+  /** The authenticated Enbox agent managing keys, DIDs, and DWN access. */
+  agent: EnboxAgent;
+
+  /** The DID of the tenant under which all requests are performed. */
+  did: string;
+
+  /** The DID that will sign messages using grants from the connected DID. */
+  delegateDid?: string;
+};
+
+/** Legacy object wrapper for passing a session into {@link Enbox.connect}. */
+export type EnboxSessionWrapper = {
+  /** An active agent/auth session. */
+  session: EnboxSessionParams;
+};
+
+/** Existing connection inputs that can be adapted synchronously. */
+export type EnboxConnectionInput = EnboxParams | EnboxSessionParams | EnboxSessionWrapper;
+
+/**
+ * High-level connection options for {@link Enbox.connect}.
+ *
+ * Options are split internally between `AuthManager.create()` and
+ * `auth.connect()`. For advanced flows, pass an explicit `connect` object to
+ * control the exact `AuthManager.connect()` options.
+ */
+export type EnboxConnectOptions = AuthManagerOptions & ConnectOptions & {
+  /** Explicit options to pass to `AuthManager.connect()`. */
+  connect?: ConnectOptions;
+};
+
+/** The result of a high-level asynchronous {@link Enbox.connect} call. */
+export type EnboxConnectResult = {
+  /** The AuthManager that owns the session lifecycle. */
+  auth: AuthManager;
+
+  /** The high-level Enbox API instance. */
+  enbox: Enbox;
+
+  /** The active session returned by `AuthManager.connect()`. */
+  session: AuthSession;
+};
+
+/**
  * The main Enbox API interface. It provides protocol-scoped access to
  * Decentralized Web Nodes (DWNs), Decentralized Identifiers (DIDs),
  * and Verifiable Credentials (VCs).
  *
- * Authentication and identity management are handled externally by
- * `@enbox/auth`. Use {@link Enbox.connect} to create an instance from
- * an {@link AuthSession} or raw parameters.
+ * For common app flows, use the asynchronous {@link Enbox.connect} helper.
+ * For custom auth/session flows, use {@link Enbox.fromSession} or
+ * {@link Enbox.from} with existing session primitives.
  *
  * @example
  * ```ts
- * import { AuthManager } from '@enbox/auth';
  * import { Enbox } from '@enbox/api';
  *
- * const auth = await AuthManager.create({ sync: '15s' });
- * const session = await auth.connect();
+ * const { enbox } = await Enbox.connect({
+ *   createIdentity: true,
+ *   sync: '15s',
+ * });
  *
- * const enbox = Enbox.connect({ session });
  * const social = enbox.using(SocialProtocol);
  * ```
  */
@@ -229,37 +281,137 @@ export class Enbox {
   }
 
   /**
-   * Creates an {@link Enbox} instance from an {@link AuthSession} or raw parameters.
+   * Creates an {@link Enbox} instance from raw agent + DID parameters.
    *
-   * This is a thin factory — all authentication, identity management, vault
-   * initialization, DWN registration, and sync setup are handled externally
-   * by `@enbox/auth` via {@link AuthSession}.
+   * Use this when you own the agent and connected DID lifecycle yourself.
+   */
+  public static from(params: EnboxParams): Enbox {
+    return new Enbox(params);
+  }
+
+  /**
+   * Creates an {@link Enbox} instance from a session-shaped object.
    *
-   * @param params - Either `{ session }` with an {@link AuthSession} from
-   *   `@enbox/auth`, or raw `{ agent, connectedDid, delegateDid? }` parameters.
-   * @returns A new {@link Enbox} instance ready for use.
+   * Accepts `AuthSession`, `AgentSession`, or any compatible custom session
+   * with `{ agent, did, delegateDid? }`.
+   */
+  public static fromSession(session: EnboxSessionParams): Enbox {
+    return new Enbox({
+      agent        : session.agent,
+      connectedDid : session.did,
+      delegateDid  : session.delegateDid,
+    });
+  }
+
+  /**
+   * Creates an {@link Enbox} API from high-level auth options, an existing
+   * session, or raw agent parameters.
+   *
+   * With no existing session/raw parameters, this creates an `AuthManager`,
+   * calls `auth.connect()`, and returns `{ auth, session, enbox }`.
+   *
+   * Existing synchronous forms remain supported for compatibility. Prefer
+   * {@link Enbox.fromSession} or {@link Enbox.from} in new custom-session code.
    *
    * @example
    * ```ts
-   * // Using an AuthSession from @enbox/auth
-   * import { AuthManager } from '@enbox/auth';
-   * const auth = await AuthManager.create({ sync: '15s' });
-   * const session = await auth.connect();
-   * const enbox = Enbox.connect({ session });
+   * // Common app flow
+   * const { enbox, session } = await Enbox.connect({ createIdentity: true });
+   *
+   * // Existing session
+   * const enbox = Enbox.fromSession(session);
    *
    * // Using raw parameters
-   * const enbox = Enbox.connect({ agent, connectedDid: did });
+   * const enbox = Enbox.from({ agent, connectedDid: did });
    * ```
    */
-  public static connect(params: { session: AuthSession } | EnboxParams): Enbox {
-    if ('session' in params) {
-      const { session } = params;
-      return new Enbox({
-        agent        : session.agent,
-        connectedDid : session.did,
-        delegateDid  : session.delegateDid,
-      });
+  public static connect(params: EnboxSessionWrapper): Enbox;
+  public static connect(params: EnboxParams): Enbox;
+  public static connect(session: EnboxSessionParams): Enbox;
+  public static connect(options?: EnboxConnectOptions): Promise<EnboxConnectResult>;
+  public static connect(params?: EnboxConnectionInput | EnboxConnectOptions): Enbox | Promise<EnboxConnectResult> {
+    if (params === undefined) {
+      return Enbox.createConnection({});
     }
-    return new Enbox(params);
+
+    if ('session' in params) {
+      return Enbox.fromSession(params.session);
+    }
+
+    if ('connectedDid' in params) {
+      return Enbox.from(params);
+    }
+
+    if ('did' in params) {
+      return Enbox.fromSession(params);
+    }
+
+    return Enbox.createConnection(params);
+  }
+
+  private static async createConnection(options: EnboxConnectOptions): Promise<EnboxConnectResult> {
+    const auth = await AuthManager.create(Enbox.toAuthManagerOptions(options));
+    const session = await auth.connect(Enbox.toAuthConnectOptions(options));
+    const enbox = Enbox.fromSession(session);
+
+    return { auth, enbox, session };
+  }
+
+  private static toAuthManagerOptions(options: EnboxConnectOptions): AuthManagerOptions {
+    const authOptions: AuthManagerOptions = {};
+
+    Enbox.copyDefined(options, authOptions, [
+      'agent',
+      'agentVault',
+      'localDwnStrategy',
+      'dataPath',
+      'storage',
+      'password',
+      'passwordProvider',
+      'sync',
+      'dwnEndpoints',
+      'registration',
+      'connectHandler',
+    ]);
+
+    return authOptions;
+  }
+
+  private static toAuthConnectOptions(options: EnboxConnectOptions): ConnectOptions | undefined {
+    if (options.connect !== undefined) {
+      return options.connect;
+    }
+
+    const connectOptions: Record<string, unknown> = {};
+
+    Enbox.copyDefined(options, connectOptions, [
+      'password',
+      'recoveryPhrase',
+      'sync',
+      'dwnEndpoints',
+      'metadata',
+      'createIdentity',
+      'protocols',
+      'connectHandler',
+    ]);
+
+    return Object.keys(connectOptions).length === 0
+      ? undefined
+      : connectOptions as ConnectOptions;
+  }
+
+  private static copyDefined<TTarget extends object>(
+    source: object,
+    target: TTarget,
+    keys: string[],
+  ): void {
+    const sourceRecord = source as Record<string, unknown>;
+    const targetRecord = target as Record<string, unknown>;
+
+    for (const key of keys) {
+      if (sourceRecord[key] !== undefined) {
+        targetRecord[key] = sourceRecord[key];
+      }
+    }
   }
 }

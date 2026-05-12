@@ -8,17 +8,14 @@
  * @example Single-import dapp setup
  * ```ts
  * import {
- *   Enbox, AuthManager, BrowserConnectHandler,
+ *   Enbox, BrowserConnectHandler,
  *   defineProtocol, repository,
- *   type AuthSession,
  * } from '@enbox/browser';
  *
- * const auth = await AuthManager.create({
+ * const { enbox, session } = await Enbox.connect({
  *   connectHandler: BrowserConnectHandler({ appName: 'My App' }),
+ *   protocols: [MyProtocol],
  * });
- *
- * const session = await auth.connect({ protocols: [MyProtocol] });
- * const enbox = Enbox.connect({ session });
  * ```
  *
  * For non-browser environments (Node.js, CLI, desktop), import from

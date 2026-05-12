@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
+import { AuthManager } from '@enbox/auth/auth-manager';
 import {
   DwnInterface,
   EnboxUserAgent,
@@ -339,6 +340,21 @@ describe('Enbox API', () => {
       expect(enbox.agent).toBe(testHarness.agent);
     });
 
+    it('should create an Enbox instance with from()', async () => {
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Raw' },
+        didMethod : 'jwk',
+      });
+
+      const enbox = Enbox.from({
+        agent        : testHarness.agent,
+        connectedDid : identity.did.uri,
+      });
+
+      expect(enbox).toBeInstanceOf(Enbox);
+      expect(enbox.agent).toBe(testHarness.agent);
+    });
+
     it('should create an Enbox instance from raw params with a delegateDid', async () => {
       const identity = await testHarness.agent.identity.create({
         metadata  : { name: 'Delegate' },
@@ -402,6 +418,106 @@ describe('Enbox API', () => {
 
       expect(enbox).toBeInstanceOf(Enbox);
       expect(enbox.agent).toBe(testHarness.agent);
+    });
+
+    it('should create an Enbox instance from direct session params', async () => {
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Direct Session' },
+        didMethod : 'jwk',
+      });
+
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+      };
+
+      const enbox = Enbox.connect(session);
+
+      expect(enbox).toBeInstanceOf(Enbox);
+      expect(enbox.agent).toBe(testHarness.agent);
+    });
+
+    it('should create an Enbox instance with fromSession()', async () => {
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Session' },
+        didMethod : 'jwk',
+      });
+
+      const enbox = Enbox.fromSession({
+        agent : testHarness.agent,
+        did   : identity.did.uri,
+      });
+
+      expect(enbox).toBeInstanceOf(Enbox);
+      expect(enbox.agent).toBe(testHarness.agent);
+    });
+
+    it('should create a high-level connection through AuthManager', async () => {
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'High Level' },
+        didMethod : 'jwk',
+      });
+
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'High Level' },
+      };
+      const connect = sinon.stub().resolves(session);
+      const auth = { connect };
+      const create = sinon.stub(AuthManager, 'create').resolves(auth as any);
+
+      const result = await Enbox.connect({
+        password       : 'test-password',
+        createIdentity : true,
+        sync           : 'off',
+      });
+
+      expect(result.enbox).toBeInstanceOf(Enbox);
+      expect(result.session).toBe(session);
+      expect(result.auth).toBe(auth);
+      expect(create.firstCall.args[0]).toEqual({
+        password : 'test-password',
+        sync     : 'off',
+      });
+      expect(connect.firstCall.args[0]).toEqual({
+        password       : 'test-password',
+        sync           : 'off',
+        createIdentity : true,
+      });
+    });
+
+    it('should pass explicit connect options to AuthManager.connect', async () => {
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Explicit Connect' },
+        didMethod : 'jwk',
+      });
+
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'Explicit Connect' },
+      };
+      const connect = sinon.stub().resolves(session);
+      const auth = { connect };
+      const create = sinon.stub(AuthManager, 'create').resolves(auth as any);
+
+      await Enbox.connect({
+        password : 'manager-password',
+        connect  : {
+          password       : 'connect-password',
+          createIdentity : true,
+        },
+      });
+
+      expect(create.firstCall.args[0]).toEqual({ password: 'manager-password' });
+      expect(connect.firstCall.args[0]).toEqual({
+        password       : 'connect-password',
+        createIdentity : true,
+      });
     });
 
   });

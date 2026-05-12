@@ -4,7 +4,7 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { ConnectPermissionRequest, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+import type { AgentSessionIdentity, ConnectPermissionRequest, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 import type { PasswordProvider } from './password-provider.js';
 
@@ -80,19 +80,7 @@ export type AuthEventHandler<E extends AuthEvent = AuthEvent> =
 // ─── Identity ────────────────────────────────────────────────────
 
 /** Lightweight metadata about a stored identity. */
-export interface IdentityInfo {
-  /** The DID URI for this identity. */
-  didUri: string;
-
-  /** Human-readable name. */
-  name: string;
-
-  /**
-   * Present when this identity is a delegate of another DID
-   * (i.e. connected via wallet connect).
-   */
-  connectedDid?: string;
-}
+export type IdentityInfo = AgentSessionIdentity;
 
 /** Serializable session info for the `session-start` event. */
 export interface AuthSessionInfo {

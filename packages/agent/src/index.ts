@@ -1,4 +1,5 @@
 export type * from './types/agent.js';
+export * from './agent-session.js';
 export * from './types/dwn.js';
 export type * from './types/identity.js';
 export type * from './types/identity-vault.js';

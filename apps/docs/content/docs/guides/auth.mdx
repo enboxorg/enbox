@@ -23,24 +23,22 @@ npm install @enbox/auth @enbox/agent
 
 ```ts
 import { AuthManager } from '@enbox/auth';
-import { EnboxAgent } from '@enbox/agent';
 
-const agent = await EnboxAgent.create();
-const auth = new AuthManager({ agent });
+const auth = await AuthManager.create({ password: userPassword });
 
 // Create a new identity
-await auth.connect();
+const session = await auth.connectLocal({ createIdentity: true });
 
 // Check connection state
 console.log(auth.state); // 'connected'
-console.log(auth.did);   // 'did:dht:...'
+console.log(session.did); // 'did:dht:...'
 ```
 
 ## Connection flows
 
 ### 1. First-time setup
 
-When no identity exists, `connect()` creates a new DID, generates encryption keys, and bootstraps the agent with a local DWN.
+When no identity exists, `connectLocal({ createIdentity: true })` creates a new DID, generates encryption keys, and bootstraps the agent with a local DWN.
 
 ### 2. Returning user
 
@@ -51,26 +49,16 @@ If an identity already exists in the vault, `connect()` unlocks the vault and re
 For cross-device identity sharing, use the wallet connect flow with permission scopes:
 
 ```ts
-import { AuthManager, ConnectPermissionRequest } from '@enbox/auth';
+import { AuthManager } from '@enbox/auth';
 
-const permissions: ConnectPermissionRequest = {
-  permissionScopes: [
-    {
-      interface: 'Records',
-      method: 'Write',
-      protocol: 'https://example.com/protocol',
-    },
-  ],
-};
-
-await auth.connect({ connectOptions: permissions });
+const session = await auth.connect({ protocols: [NotesProtocol] });
 ```
 
 ### 4. Disconnect
 
 ```ts
 await auth.disconnect();
-console.log(auth.state); // 'disconnected'
+console.log(auth.state); // 'unlocked'
 ```
 
 ### 5. Lock / Unlock
@@ -79,7 +67,7 @@ console.log(auth.state); // 'disconnected'
 await auth.lock();
 console.log(auth.state); // 'locked'
 
-await auth.unlock('my-passphrase');
+await auth.restoreSession({ password: 'my-passphrase' });
 console.log(auth.state); // 'connected'
 ```
 

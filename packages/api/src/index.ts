@@ -4,16 +4,18 @@
  * The SDK provides protocol-scoped access to DWN records with compile-time
  * type safety, DID management, and Verifiable Credential operations.
  *
- * Authentication and identity management are handled by `@enbox/auth`.
+ * Common authentication and identity setup is available through
+ * `Enbox.connect()`. Advanced session management can use `@enbox/auth` or
+ * `@enbox/agent` directly.
  *
  * @example
  * ```ts
- * import { AuthManager } from '@enbox/auth';
  * import { Enbox } from '@enbox/api';
  *
- * const auth = await AuthManager.create({ sync: '15s' });
- * const session = await auth.connect();
- * const enbox = Enbox.connect({ session });
+ * const { enbox } = await Enbox.connect({
+ *   createIdentity: true,
+ *   sync: '15s',
+ * });
  * ```
  *
  * [Link to GitHub Repo](https://github.com/enboxorg/enbox)
