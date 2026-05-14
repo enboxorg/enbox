@@ -27,6 +27,7 @@ export * from './define-protocol.js';
 export * from './did-api.js';
 export * from './dwn-reader-api.js';
 export * from './enbox.js';
+export type * from './enbox-types.js';
 export * from './grant-revocation.js';
 export * from './live-query.js';
 export * from './permission-grant.js';

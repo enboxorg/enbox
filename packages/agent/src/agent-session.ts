@@ -12,8 +12,15 @@ export interface AgentSessionIdentity {
   connectedDid?: string;
 }
 
-/** Parameters used to construct an {@link AgentSession}. */
-export type AgentSessionParams = {
+/**
+ * The minimal session shape shared across higher-level packages.
+ *
+ * Every Enbox session — whether produced by `@enbox/agent`, `@enbox/auth`, or
+ * a custom flow — has at least these three primitives. `@enbox/api` and other
+ * downstream packages depend on this base type rather than re-declaring the
+ * same fields, so any change to the session shape happens in one place.
+ */
+export type AgentSessionPrimitives = {
   /** The authenticated Enbox agent managing keys, DIDs, and DWN access. */
   agent: EnboxAgent;
 
@@ -22,7 +29,10 @@ export type AgentSessionParams = {
 
   /** The delegate DID URI, present when connected via delegated wallet access. */
   delegateDid?: string;
+};
 
+/** Parameters used to construct an {@link AgentSession}. */
+export type AgentSessionParams = AgentSessionPrimitives & {
   /** The BIP-39 recovery phrase, present only on first-time local connect. */
   recoveryPhrase?: string;
 

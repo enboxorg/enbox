@@ -4,11 +4,20 @@
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
-import type { DidMethodResolver } from '@enbox/dids';
 import type { EnboxAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { AuthManagerOptions, AuthSession, ConnectOptions } from '@enbox/auth';
+import type { AuthManagerOptions, ConnectOptions } from '@enbox/auth';
 
+import type {
+  EnboxAnonymousApi,
+  EnboxAnonymousOptions,
+  EnboxConnectionInput,
+  EnboxConnectOptions,
+  EnboxConnectResult,
+  EnboxParams,
+  EnboxSessionParams,
+  EnboxSessionWrapper,
+} from './enbox-types.js';
 import type { SchemaMap, TypedProtocol } from './protocol-types.js';
 
 import { AnonymousDwnApi } from '@enbox/agent';
@@ -21,99 +30,6 @@ import { DwnApi } from './dwn-api.js';
 import { DwnReaderApi } from './dwn-reader-api.js';
 import { TypedEnbox } from './typed-enbox.js';
 import { VcApi } from './vc-api.js';
-
-/**
- * Options for creating an anonymous (read-only) Enbox instance via {@link Enbox.anonymous}.
- *
- * @beta
- */
-export type EnboxAnonymousOptions = {
-  /** Override the default DID method resolvers. Defaults to `[DidDht, DidJwk, DidKey, DidWeb]`. */
-  didResolvers?: DidMethodResolver[];
-};
-
-/**
- * The result of calling {@link Enbox.anonymous}.
- *
- * Contains only a read-only `dwn` property — no `did`, `vc`, or `agent`.
- *
- * @beta
- */
-export type EnboxAnonymousApi = {
-  /** A read-only DWN API for querying public data on remote DWNs. */
-  dwn: DwnReaderApi;
-};
-
-/**
- * Parameters for constructing an {@link Enbox} instance.
- *
- * These are the minimal primitives needed to interact with the DWN network.
- * Typically obtained from an agent session via `@enbox/auth`.
- */
-export type EnboxParams = {
-  /**
-   * A {@link EnboxAgent} instance that handles DIDs, DWNs and VCs requests. The agent manages the
-   * user keys and identities, and is responsible to sign and verify messages.
-   */
-  agent: EnboxAgent;
-
-  /** The DID of the tenant under which all DID, DWN, and VC requests are being performed. */
-  connectedDid: string;
-
-  /** The DID that will be signing messages using grants from the connectedDid. */
-  delegateDid?: string;
-};
-
-/**
- * Session-shaped parameters accepted by {@link Enbox.fromSession} and
- * {@link Enbox.connect}.
- *
- * This is structural so callers can pass an `AuthSession` from `@enbox/auth`,
- * an `AgentSession` from `@enbox/agent`, or any compatible custom session.
- */
-export type EnboxSessionParams = {
-  /** The authenticated Enbox agent managing keys, DIDs, and DWN access. */
-  agent: EnboxAgent;
-
-  /** The DID of the tenant under which all requests are performed. */
-  did: string;
-
-  /** The DID that will sign messages using grants from the connected DID. */
-  delegateDid?: string;
-};
-
-/** Legacy object wrapper for passing a session into {@link Enbox.connect}. */
-export type EnboxSessionWrapper = {
-  /** An active agent/auth session. */
-  session: EnboxSessionParams;
-};
-
-/** Existing connection inputs that can be adapted synchronously. */
-export type EnboxConnectionInput = EnboxParams | EnboxSessionParams | EnboxSessionWrapper;
-
-/**
- * High-level connection options for {@link Enbox.connect}.
- *
- * Options are split internally between `AuthManager.create()` and
- * `auth.connect()`. For advanced flows, pass an explicit `connect` object to
- * control the exact `AuthManager.connect()` options.
- */
-export type EnboxConnectOptions = AuthManagerOptions & ConnectOptions & {
-  /** Explicit options to pass to `AuthManager.connect()`. */
-  connect?: ConnectOptions;
-};
-
-/** The result of a high-level asynchronous {@link Enbox.connect} call. */
-export type EnboxConnectResult = {
-  /** The AuthManager that owns the session lifecycle. */
-  auth: AuthManager;
-
-  /** The high-level Enbox API instance. */
-  enbox: Enbox;
-
-  /** The active session returned by `AuthManager.connect()`. */
-  session: AuthSession;
-};
 
 /**
  * The main Enbox API interface. It provides protocol-scoped access to
