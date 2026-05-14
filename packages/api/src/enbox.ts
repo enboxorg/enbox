@@ -48,14 +48,22 @@ function omitUndefined<T extends object>(input: T): Partial<T> {
 type AgentWithSync = { sync: Pick<SyncEngine, 'stopSync'> };
 
 /**
- * Type guard for agents that expose the sync engine. The narrow
- * {@link EnboxAgent} interface does not declare `sync`, but every
- * platform agent shipped in this repo does. Isolating the duck-type check
- * here keeps the call site in {@link Enbox.disconnect} typed and cast-free.
+ * Type guard for agents that expose the sync engine.
+ *
+ * The narrow {@link EnboxAgent} interface does not declare `sync`, but every
+ * platform agent shipped in this repo does. Walk the unknown property with
+ * `in`-narrowing and `typeof` checks so the call site in
+ * {@link Enbox.disconnect} can call `agent.sync.stopSync()` against a fully
+ * narrowed type — no `as` cast needed.
  */
 function hasSync(agent: EnboxAgent): agent is EnboxAgent & AgentWithSync {
-  const sync = (agent as Partial<AgentWithSync>).sync;
-  return typeof sync?.stopSync === 'function';
+  return (
+    'sync' in agent
+    && typeof agent.sync === 'object'
+    && agent.sync !== null
+    && 'stopSync' in agent.sync
+    && typeof agent.sync.stopSync === 'function'
+  );
 }
 
 /**
