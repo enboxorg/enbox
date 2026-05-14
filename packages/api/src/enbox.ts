@@ -4,19 +4,17 @@
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
-import type { EnboxAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { AuthManagerOptions, ConnectOptions } from '@enbox/auth';
+import type { AuthManagerOptions, ConnectOptions, HandlerConnectOptions, LocalConnectOptions } from '@enbox/auth';
+import type { EnboxAgent, SyncEngine } from '@enbox/agent';
 
 import type {
   EnboxAnonymousApi,
   EnboxAnonymousOptions,
-  EnboxConnectionInput,
   EnboxConnectOptions,
   EnboxConnectResult,
   EnboxParams,
   EnboxSessionParams,
-  EnboxSessionWrapper,
 } from './enbox-types.js';
 import type { SchemaMap, TypedProtocol } from './protocol-types.js';
 
@@ -30,6 +28,35 @@ import { DwnApi } from './dwn-api.js';
 import { DwnReaderApi } from './dwn-reader-api.js';
 import { TypedEnbox } from './typed-enbox.js';
 import { VcApi } from './vc-api.js';
+
+/**
+ * Returns a new object containing only the entries of `input` whose values
+ * are not `undefined`. Pure — never mutates the input.
+ */
+function omitUndefined<T extends object>(input: T): Partial<T> {
+  const result: Partial<T> = {};
+  for (const key of Object.keys(input) as (keyof T)[]) {
+    const value = input[key];
+    if (value !== undefined) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+/** Subset of {@link EnboxPlatformAgent} required to stop background sync. */
+type AgentWithSync = { sync: Pick<SyncEngine, 'stopSync'> };
+
+/**
+ * Type guard for agents that expose the sync engine. The narrow
+ * {@link EnboxAgent} interface does not declare `sync`, but every
+ * platform agent shipped in this repo does. Isolating the duck-type check
+ * here keeps the call site in {@link Enbox.disconnect} typed and cast-free.
+ */
+function hasSync(agent: EnboxAgent): agent is EnboxAgent & AgentWithSync {
+  const sync = (agent as Partial<AgentWithSync>).sync;
+  return typeof sync?.stopSync === 'function';
+}
 
 /**
  * The main Enbox API interface. It provides protocol-scoped access to
@@ -157,9 +184,8 @@ export class Enbox {
    * @beta
    */
   public async disconnect(timeout?: number): Promise<void> {
-    // Stop any active sync.
-    if ('sync' in this.agent && typeof (this.agent as any).sync?.stopSync === 'function') {
-      await (this.agent as any).sync.stopSync(timeout);
+    if (hasSync(this.agent)) {
+      await this.agent.sync.stopSync(timeout);
     }
 
     // Clear cached TypedEnbox instances so they are not accidentally reused.
@@ -230,75 +256,31 @@ export class Enbox {
   }
 
   /**
-   * Creates an {@link Enbox} API from high-level auth options, an existing
-   * session, or raw agent parameters.
+   * High-level entry point that creates an {@link AuthManager}, runs
+   * `auth.connect()`, and returns the resulting `{ auth, session, enbox }`.
    *
-   * With no existing session/raw parameters, this creates an `AuthManager`,
-   * calls `auth.connect()`, and returns `{ auth, session, enbox }`. When the
-   * input matches a sync shape, the method returns an `Enbox` instance
-   * synchronously without touching `AuthManager`.
+   * For callers that already own an agent and DID, use the dedicated
+   * synchronous factories instead:
+   * - {@link Enbox.from} for raw `{ agent, connectedDid }` parameters
+   * - {@link Enbox.fromSession} for session-shaped objects
    *
-   * **Sync vs async dispatch.** Input is routed by checking, in order,
-   * `session`, `connectedDid`, and `did`. The first match wins and any
-   * unrelated keys on the input are **silently ignored** — for example,
-   * `Enbox.connect({ agent, connectedDid, password })` returns synchronously
-   * via {@link Enbox.from} and the `password` never reaches `AuthManager`.
-   * If you need to combine raw/session inputs with auth options, prefer
-   * {@link Enbox.from} / {@link Enbox.fromSession} for the sync case and use
-   * the async `Enbox.connect({...})` form (no `session`/`connectedDid`/`did`)
-   * with an explicit `connect` slot for the auth case.
-   *
-   * **Handler vs local routing (async path).** When the input contains both
-   * handler signals (`protocols`, `connectHandler`) and local-style defaults
-   * (`password`, `dwnEndpoints`, `metadata`, `createIdentity`,
-   * `recoveryPhrase`), handler routing wins: the local-only keys are forwarded
-   * to `AuthManager.create()` as manager-wide defaults but are stripped from
-   * the per-call `auth.connect()` options so the handler flow runs. Pass an
-   * explicit `connect` slot to override this normalization.
-   *
-   * Existing synchronous forms remain supported for compatibility. Prefer
-   * {@link Enbox.fromSession} or {@link Enbox.from} in new custom-session code.
+   * When `options` contains handler signals (`protocols` or `connectHandler`)
+   * alongside local-style defaults (`password`, `dwnEndpoints`, `metadata`,
+   * `createIdentity`, `recoveryPhrase`), handler routing wins: the local-only
+   * keys are still forwarded to `AuthManager.create()` as manager-wide
+   * defaults, but the per-call `auth.connect()` payload contains only the
+   * handler-relevant keys. Pass an explicit `connect` slot to override that
+   * normalization.
    *
    * @example
    * ```ts
-   * // Common app flow
    * const { enbox, session, auth } = await Enbox.connect({ createIdentity: true });
    * // ...
    * await enbox.disconnect();
    * await auth.shutdown(); // release vault + storage handles
-   *
-   * // Existing session
-   * const enbox = Enbox.fromSession(session);
-   *
-   * // Using raw parameters
-   * const enbox = Enbox.from({ agent, connectedDid: did });
    * ```
    */
-  public static connect(params: EnboxSessionWrapper): Enbox;
-  public static connect(params: EnboxParams): Enbox;
-  public static connect(session: EnboxSessionParams): Enbox;
-  public static connect(options?: EnboxConnectOptions): Promise<EnboxConnectResult>;
-  public static connect(params?: EnboxConnectionInput | EnboxConnectOptions): Enbox | Promise<EnboxConnectResult> {
-    if (params === undefined) {
-      return Enbox.createConnection({});
-    }
-
-    if ('session' in params) {
-      return Enbox.fromSession(params.session);
-    }
-
-    if ('connectedDid' in params) {
-      return Enbox.from(params);
-    }
-
-    if ('did' in params) {
-      return Enbox.fromSession(params);
-    }
-
-    return Enbox.createConnection(params);
-  }
-
-  private static async createConnection(options: EnboxConnectOptions): Promise<EnboxConnectResult> {
+  public static async connect(options: EnboxConnectOptions = {}): Promise<EnboxConnectResult> {
     const auth = await AuthManager.create(Enbox.toAuthManagerOptions(options));
 
     try {
@@ -317,23 +299,19 @@ export class Enbox {
   }
 
   private static toAuthManagerOptions(options: EnboxConnectOptions): AuthManagerOptions {
-    const authOptions: AuthManagerOptions = {};
-
-    Enbox.copyDefined(options, authOptions, [
-      'agent',
-      'agentVault',
-      'localDwnStrategy',
-      'dataPath',
-      'storage',
-      'password',
-      'passwordProvider',
-      'sync',
-      'dwnEndpoints',
-      'registration',
-      'connectHandler',
-    ]);
-
-    return authOptions;
+    return omitUndefined<AuthManagerOptions>({
+      agent            : options.agent,
+      agentVault       : options.agentVault,
+      localDwnStrategy : options.localDwnStrategy,
+      dataPath         : options.dataPath,
+      storage          : options.storage,
+      password         : options.password,
+      passwordProvider : options.passwordProvider,
+      sync             : options.sync,
+      dwnEndpoints     : options.dwnEndpoints,
+      registration     : options.registration,
+      connectHandler   : options.connectHandler,
+    });
   }
 
   private static toAuthConnectOptions(options: EnboxConnectOptions): ConnectOptions | undefined {
@@ -341,64 +319,35 @@ export class Enbox {
       return options.connect;
     }
 
-    const connectOptions: Record<string, unknown> = {};
+    const hasHandlerSignals =
+      options.protocols !== undefined || options.connectHandler !== undefined;
 
-    // When handler signals are present, forward only handler-relevant keys
-    // so the per-call options remain minimal and semantically clean. Local
-    // defaults like `password`, `dwnEndpoints`, and `metadata` are still
-    // forwarded to `AuthManager.create()` as manager-wide defaults via
-    // `toAuthManagerOptions`. This also serves as defense in depth against
-    // any future regression in `AuthManager._isLocalConnect()` routing
-    // precedence: stripping local-only keys here guarantees the handler
-    // flow regardless of how the manager interprets mixed signals.
-    if (Enbox.hasDefined(options, ['protocols', 'connectHandler'])) {
-      Enbox.copyDefined(options, connectOptions, [
-        'protocols',
-        'connectHandler',
-        'sync',
-      ]);
-
-      return connectOptions as ConnectOptions;
+    // Handler flow: forward only handler-relevant keys so the per-call
+    // options stay semantically clean. Local-style keys are still forwarded
+    // to `AuthManager.create()` via `toAuthManagerOptions` as manager-wide
+    // defaults. This is also defense in depth against a future regression
+    // in `AuthManager._isLocalConnect()` routing precedence.
+    if (hasHandlerSignals) {
+      return omitUndefined<HandlerConnectOptions>({
+        protocols      : options.protocols,
+        connectHandler : options.connectHandler,
+        sync           : options.sync,
+      });
     }
 
-    // `password`, `sync`, and `dwnEndpoints` are intentionally copied to both
-    // `AuthManager.create()` (via toAuthManagerOptions) and local
-    // `auth.connect()` calls (here). The former sets manager-wide defaults;
-    // the latter applies per-call overrides, which keeps behavior consistent
-    // for restored sessions and avoids drift between the active call and the
-    // manager's configured defaults.
-    Enbox.copyDefined(options, connectOptions, [
-      'password',
-      'recoveryPhrase',
-      'sync',
-      'dwnEndpoints',
-      'metadata',
-      'createIdentity',
-    ]);
+    // Local flow: `password`, `sync`, and `dwnEndpoints` are intentionally
+    // forwarded to both `AuthManager.create()` (manager-wide defaults) and
+    // here (per-call overrides), keeping behavior consistent for restored
+    // sessions.
+    const local = omitUndefined<LocalConnectOptions>({
+      password       : options.password,
+      recoveryPhrase : options.recoveryPhrase,
+      sync           : options.sync,
+      dwnEndpoints   : options.dwnEndpoints,
+      metadata       : options.metadata,
+      createIdentity : options.createIdentity,
+    });
 
-    return Object.keys(connectOptions).length === 0
-      ? undefined
-      : connectOptions as ConnectOptions;
-  }
-
-  private static copyDefined<TTarget extends object>(
-    source: object,
-    target: TTarget,
-    keys: string[],
-  ): void {
-    const sourceRecord = source as Record<string, unknown>;
-    const targetRecord = target as Record<string, unknown>;
-
-    for (const key of keys) {
-      if (sourceRecord[key] !== undefined) {
-        targetRecord[key] = sourceRecord[key];
-      }
-    }
-  }
-
-  private static hasDefined(source: object, keys: string[]): boolean {
-    const sourceRecord = source as Record<string, unknown>;
-
-    return keys.some(key => sourceRecord[key] !== undefined);
+    return Object.keys(local).length === 0 ? undefined : local;
   }
 }

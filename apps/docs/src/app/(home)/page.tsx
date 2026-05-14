@@ -313,7 +313,7 @@ const Notes = defineProtocol({
 });
 
 // Connect and use the protocol
-const enbox = Enbox.connect({ agent, connectedDid: did });
+const enbox = Enbox.from({ agent, connectedDid: did });
 const notes = enbox.using(Notes);
 
 // Create

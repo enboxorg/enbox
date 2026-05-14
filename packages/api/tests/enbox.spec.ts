@@ -303,7 +303,7 @@ describe('Enbox API', () => {
     });
   });
 
-  describe('connect()', () => {
+  describe('from() / fromSession() / connect()', () => {
     let testHarness: PlatformAgentTestHarness;
 
     beforeAll(async () => {
@@ -325,22 +325,7 @@ describe('Enbox API', () => {
       await testHarness.closeStorage();
     });
 
-    it('should create an Enbox instance from raw params', async () => {
-      const identity = await testHarness.agent.identity.create({
-        metadata  : { name: 'Raw' },
-        didMethod : 'jwk',
-      });
-
-      const enbox = Enbox.connect({
-        agent        : testHarness.agent,
-        connectedDid : identity.did.uri,
-      });
-
-      expect(enbox).toBeInstanceOf(Enbox);
-      expect(enbox.agent).toBe(testHarness.agent);
-    });
-
-    it('should create an Enbox instance with from()', async () => {
+    it('Enbox.from() returns an instance bound to raw params', async () => {
       const identity = await testHarness.agent.identity.create({
         metadata  : { name: 'Raw' },
         didMethod : 'jwk',
@@ -355,20 +340,20 @@ describe('Enbox API', () => {
       expect(enbox.agent).toBe(testHarness.agent);
     });
 
-    it('should create an Enbox instance from raw params with a delegateDid', async () => {
-      const identity = await testHarness.agent.identity.create({
-        metadata  : { name: 'Delegate' },
+    it('Enbox.from() carries delegateDid through to the constructor', async () => {
+      const connectedIdentity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Connected' },
         didMethod : 'jwk',
       });
 
       const delegateIdentity = await testHarness.agent.identity.create({
-        metadata  : { name: 'Delegate DID' },
+        metadata  : { name: 'Delegate' },
         didMethod : 'jwk',
       });
 
-      const enbox = Enbox.connect({
+      const enbox = Enbox.from({
         agent        : testHarness.agent,
-        connectedDid : identity.did.uri,
+        connectedDid : connectedIdentity.did.uri,
         delegateDid  : delegateIdentity.did.uri,
       });
 
@@ -376,13 +361,28 @@ describe('Enbox API', () => {
       expect(enbox.agent).toBe(testHarness.agent);
     });
 
-    it('should create an Enbox instance from an AuthSession', async () => {
+    it('Enbox.fromSession() accepts a minimal { agent, did } shape', async () => {
       const identity = await testHarness.agent.identity.create({
         metadata  : { name: 'Session' },
         didMethod : 'jwk',
       });
 
-      // Create a mock AuthSession — duck-typed object with agent, did, delegateDid.
+      const enbox = Enbox.fromSession({
+        agent : testHarness.agent,
+        did   : identity.did.uri,
+      });
+
+      expect(enbox).toBeInstanceOf(Enbox);
+      expect(enbox.agent).toBe(testHarness.agent);
+    });
+
+    it('Enbox.fromSession() accepts an AuthSession-shaped object', async () => {
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Session' },
+        didMethod : 'jwk',
+      });
+
+      // Duck-typed AuthSession: any extra fields (like `identity`) are ignored.
       const session = {
         agent       : testHarness.agent,
         did         : identity.did.uri,
@@ -390,13 +390,13 @@ describe('Enbox API', () => {
         identity    : { didUri: identity.did.uri, name: 'Session' },
       };
 
-      const enbox = Enbox.connect({ session: session as any });
+      const enbox = Enbox.fromSession(session);
 
       expect(enbox).toBeInstanceOf(Enbox);
       expect(enbox.agent).toBe(testHarness.agent);
     });
 
-    it('should create an Enbox instance from an AuthSession with delegateDid', async () => {
+    it('Enbox.fromSession() carries delegateDid through to the constructor', async () => {
       const connectedIdentity = await testHarness.agent.identity.create({
         metadata  : { name: 'Connected' },
         didMethod : 'jwk',
@@ -414,40 +414,7 @@ describe('Enbox API', () => {
         identity    : { didUri: connectedIdentity.did.uri, name: 'Connected' },
       };
 
-      const enbox = Enbox.connect({ session: session as any });
-
-      expect(enbox).toBeInstanceOf(Enbox);
-      expect(enbox.agent).toBe(testHarness.agent);
-    });
-
-    it('should create an Enbox instance from direct session params', async () => {
-      const identity = await testHarness.agent.identity.create({
-        metadata  : { name: 'Direct Session' },
-        didMethod : 'jwk',
-      });
-
-      const session = {
-        agent       : testHarness.agent,
-        did         : identity.did.uri,
-        delegateDid : undefined,
-      };
-
-      const enbox = Enbox.connect(session);
-
-      expect(enbox).toBeInstanceOf(Enbox);
-      expect(enbox.agent).toBe(testHarness.agent);
-    });
-
-    it('should create an Enbox instance with fromSession()', async () => {
-      const identity = await testHarness.agent.identity.create({
-        metadata  : { name: 'Session' },
-        didMethod : 'jwk',
-      });
-
-      const enbox = Enbox.fromSession({
-        agent : testHarness.agent,
-        did   : identity.did.uri,
-      });
+      const enbox = Enbox.fromSession(session);
 
       expect(enbox).toBeInstanceOf(Enbox);
       expect(enbox.agent).toBe(testHarness.agent);

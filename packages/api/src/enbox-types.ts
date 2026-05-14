@@ -11,7 +11,13 @@
 import type { AgentSessionPrimitives } from '@enbox/agent';
 import type { AuthManager } from '@enbox/auth/auth-manager';
 import type { DidMethodResolver } from '@enbox/dids';
-import type { AuthManagerOptions, AuthSession, ConnectOptions } from '@enbox/auth';
+import type {
+  AuthManagerOptions,
+  AuthSession,
+  ConnectOptions,
+  HandlerConnectOptions,
+  LocalConnectOptions,
+} from '@enbox/auth';
 
 import type { DwnReaderApi } from './dwn-reader-api.js';
 import type { Enbox } from './enbox.js';
@@ -54,35 +60,35 @@ export type EnboxParams = Omit<AgentSessionPrimitives, 'did'> & {
 };
 
 /**
- * Session-shaped parameters accepted by {@link Enbox.fromSession} and
- * {@link Enbox.connect}.
+ * Session-shaped parameters accepted by {@link Enbox.fromSession}.
  *
- * This is an alias for {@link AgentSessionPrimitives} so callers can pass an
+ * Alias for {@link AgentSessionPrimitives} so callers can pass an
  * `AuthSession` from `@enbox/auth`, an `AgentSession` from `@enbox/agent`, or
  * any compatible custom session without duplicating field declarations.
  */
 export type EnboxSessionParams = AgentSessionPrimitives;
 
-/** Legacy object wrapper for passing a session into {@link Enbox.connect}. */
-export type EnboxSessionWrapper = {
-  /** An active agent/auth session. */
-  session: EnboxSessionParams;
-};
-
-/** Existing connection inputs that can be adapted synchronously. */
-export type EnboxConnectionInput = EnboxParams | EnboxSessionParams | EnboxSessionWrapper;
-
 /**
  * High-level connection options for {@link Enbox.connect}.
  *
- * Options are split internally between `AuthManager.create()` and
- * `auth.connect()`. For advanced flows, pass an explicit `connect` object to
- * control the exact `AuthManager.connect()` options.
+ * Flat intersection of every option `Enbox.connect()` understands. The
+ * underlying `ConnectOptions` is a union of `HandlerConnectOptions` and
+ * `LocalConnectOptions`; widening to their intersection here lets callers
+ * mix handler and local-style fields freely (e.g. supplying both
+ * `protocols` and `password`) without TypeScript forcing a discriminator.
+ * `Enbox.connect()` performs the handler-vs-local split at runtime.
+ *
+ * For advanced flows, pass an explicit `connect` object to control the
+ * exact options forwarded to `AuthManager.connect()`.
  */
-export type EnboxConnectOptions = AuthManagerOptions & ConnectOptions & {
-  /** Explicit options to pass to `AuthManager.connect()`. */
-  connect?: ConnectOptions;
-};
+export type EnboxConnectOptions =
+  & AuthManagerOptions
+  & HandlerConnectOptions
+  & LocalConnectOptions
+  & {
+    /** Explicit options to pass to `AuthManager.connect()`. */
+    connect?: ConnectOptions;
+  };
 
 /** The result of a high-level asynchronous {@link Enbox.connect} call. */
 export type EnboxConnectResult = {
