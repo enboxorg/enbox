@@ -241,12 +241,14 @@ export class AuthManager {
       const restored = await restoreSession(this._flowContext());
       if (restored) { return restored; }
 
-      // 2. Route to the appropriate flow.
+      // 2. Route to the appropriate flow. `_isLocalConnect` is a type guard
+      // so the two branches receive correctly narrowed `options` types
+      // without casts.
       if (this._isLocalConnect(options)) {
-        return localConnect(this._flowContext(), options as LocalConnectOptions);
+        return localConnect(this._flowContext(), options);
       }
 
-      return this._handlerConnect(options as HandlerConnectOptions | undefined);
+      return this._handlerConnect(options);
     });
   }
 
@@ -961,32 +963,23 @@ export class AuthManager {
    * cross-device connect is desired, with local-style keys acting as
    * manager-wide defaults or fallbacks rather than overriding the flow.
    *
-   * Local connect is otherwise indicated by `password`, `createIdentity`,
-   * `recoveryPhrase`, `dwnEndpoints`, or `metadata` — signals that the
-   * caller is managing its own vault / identity lifecycle. Local connect is
-   * also the fallback when no explicit signals are present.
+   * Local connect is the fallback for every other input shape, including
+   * the no-options case. `password`, `createIdentity`, `recoveryPhrase`,
+   * `dwnEndpoints`, and `metadata` route to local because the absence of
+   * handler signals is sufficient — the function only needs to assert that
+   * no handler signal is set.
+   *
+   * Acts as a TypeScript type guard: a `true` return narrows `options` to
+   * `LocalConnectOptions | undefined` at call sites, so the routing in
+   * {@link AuthManager.connect} can dispatch without unsafe casts.
    */
-  private _isLocalConnect(options?: ConnectOptions): boolean {
-    const o = (options ?? {}) as Record<string, unknown>;
+  private _isLocalConnect(options?: ConnectOptions): options is LocalConnectOptions | undefined {
+    if (options === undefined) { return true; }
 
-    // 1. Handler signals win when present, regardless of local-style keys.
-    const hasHandlerSignals = (
-      o.protocols !== undefined ||
-      o.connectHandler !== undefined
-    );
-    if (hasHandlerSignals) { return false; }
+    // Handler signals win when present, regardless of any local-style keys.
+    if ('protocols' in options && options.protocols !== undefined) { return false; }
+    if ('connectHandler' in options && options.connectHandler !== undefined) { return false; }
 
-    // 2. Local-connect-specific keys → local connect.
-    const hasLocalSignals = (
-      o.password !== undefined ||
-      o.createIdentity !== undefined ||
-      o.recoveryPhrase !== undefined ||
-      o.dwnEndpoints !== undefined ||
-      o.metadata !== undefined
-    );
-    if (hasLocalSignals) { return true; }
-
-    // 3. No explicit signals → default to local connect.
     return true;
   }
 
