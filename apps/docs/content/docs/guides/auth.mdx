@@ -17,6 +17,7 @@ description: How authentication works in Enbox — connect, lock, disconnect, an
 
 ```bash
 npm install @enbox/auth @enbox/agent
+npm install @enbox/browser # for browser wallet-connect handlers
 ```
 
 ## Basic usage
@@ -50,6 +51,11 @@ For cross-device identity sharing, use the wallet connect flow with permission s
 
 ```ts
 import { AuthManager } from '@enbox/auth';
+import { BrowserConnectHandler } from '@enbox/browser';
+
+const auth = await AuthManager.create({
+  connectHandler: BrowserConnectHandler({ appName: 'Notes App' }),
+});
 
 const session = await auth.connect({ protocols: [NotesProtocol] });
 ```

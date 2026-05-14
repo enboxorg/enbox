@@ -376,10 +376,20 @@ export class Enbox {
 
   private static async createConnection(options: EnboxConnectOptions): Promise<EnboxConnectResult> {
     const auth = await AuthManager.create(Enbox.toAuthManagerOptions(options));
-    const session = await auth.connect(Enbox.toAuthConnectOptions(options));
-    const enbox = Enbox.fromSession(session);
 
-    return { auth, enbox, session };
+    try {
+      const session = await auth.connect(Enbox.toAuthConnectOptions(options));
+      const enbox = Enbox.fromSession(session);
+
+      return { auth, enbox, session };
+    } catch (error: unknown) {
+      try {
+        await auth.shutdown();
+      } catch {
+        // Preserve the original connection failure.
+      }
+      throw error;
+    }
   }
 
   private static toAuthManagerOptions(options: EnboxConnectOptions): AuthManagerOptions {
@@ -409,13 +419,22 @@ export class Enbox {
 
     const connectOptions: Record<string, unknown> = {};
 
-    // `password`, `sync`, `dwnEndpoints`, and `connectHandler` are intentionally
-    // copied to both `AuthManager.create()` (via toAuthManagerOptions) and
-    // `auth.connect()` (here). The former sets manager-wide defaults; the
-    // latter applies per-call overrides. Forwarding the same value to both
-    // keeps behavior consistent regardless of which connect flow ends up
-    // running (e.g. handler-based vs local), and avoids a future bug where
-    // restored sessions inherit different defaults than the active call.
+    if (Enbox.hasDefined(options, ['protocols', 'connectHandler'])) {
+      Enbox.copyDefined(options, connectOptions, [
+        'protocols',
+        'connectHandler',
+        'sync',
+      ]);
+
+      return connectOptions as ConnectOptions;
+    }
+
+    // `password`, `sync`, and `dwnEndpoints` are intentionally copied to both
+    // `AuthManager.create()` (via toAuthManagerOptions) and local
+    // `auth.connect()` calls (here). The former sets manager-wide defaults;
+    // the latter applies per-call overrides. Handler-style flows are handled
+    // above because `AuthManager.connect()` routes any local-only key (for
+    // example `password`) to local connect before checking handler options.
     Enbox.copyDefined(options, connectOptions, [
       'password',
       'recoveryPhrase',
@@ -423,8 +442,6 @@ export class Enbox {
       'dwnEndpoints',
       'metadata',
       'createIdentity',
-      'protocols',
-      'connectHandler',
     ]);
 
     return Object.keys(connectOptions).length === 0
@@ -445,5 +462,11 @@ export class Enbox {
         targetRecord[key] = sourceRecord[key];
       }
     }
+  }
+
+  private static hasDefined(source: object, keys: string[]): boolean {
+    const sourceRecord = source as Record<string, unknown>;
+
+    return keys.some(key => sourceRecord[key] !== undefined);
   }
 }

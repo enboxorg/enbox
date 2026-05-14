@@ -520,6 +520,59 @@ describe('Enbox API', () => {
       });
     });
 
+    it('should preserve handler connect when local defaults are also provided', async () => {
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Handler Connect' },
+        didMethod : 'jwk',
+      });
+
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'Handler Connect' },
+      };
+      const connect = sinon.stub().resolves(session);
+      const auth = { connect };
+      const create = sinon.stub(AuthManager, 'create').resolves(auth as any);
+      const connectHandler = { requestAccess: sinon.stub().resolves(undefined) };
+      const protocols: ProtocolDefinition[] = [];
+
+      await Enbox.connect({
+        password       : 'test-password',
+        dwnEndpoints   : ['https://dwn.example.com'],
+        createIdentity : true,
+        metadata       : { name: 'Local Default' },
+        sync           : 'off',
+        connectHandler,
+        protocols,
+      });
+
+      expect(create.firstCall.args[0]).toEqual({
+        password     : 'test-password',
+        sync         : 'off',
+        dwnEndpoints : ['https://dwn.example.com'],
+        connectHandler,
+      });
+      expect(connect.firstCall.args[0]).toEqual({
+        protocols,
+        connectHandler,
+        sync: 'off',
+      });
+    });
+
+    it('should shut down the AuthManager when high-level connect fails', async () => {
+      const connectError = new Error('connect failed');
+      const connect = sinon.stub().rejects(connectError);
+      const shutdown = sinon.stub().resolves();
+      const auth = { connect, shutdown };
+      sinon.stub(AuthManager, 'create').resolves(auth as any);
+
+      await expect(Enbox.connect({ createIdentity: true })).rejects.toThrow('connect failed');
+
+      expect(shutdown.calledOnce).toBe(true);
+    });
+
   });
 
   describe('anonymous()', () => {
