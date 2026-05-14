@@ -1487,11 +1487,12 @@ describe('DidDhtDocument', () => {
   describe('Web5TestVectorsDidDht', () => {
     it('resolve', async () => {
       // These vectors hit the real (CI / local) Pkarr relay configured via DID_DHT_GATEWAY_URI,
-      // which is typically a private host (e.g. http://localhost:7527). Dev/CI shells set
-      // DID_DHT_ALLOW_PRIVATE_GATEWAY=1 to opt into private hosts; this integration test relies
-      // on that env opt-in.
+      // which is typically a private host (e.g. http://localhost:7527). Pass
+      // `allowPrivateGatewayUri: true` explicitly so this integration test is self-contained and
+      // does not depend on the caller having `DID_DHT_ALLOW_PRIVATE_GATEWAY=1` exported in their
+      // shell — talking to a local relay is the documented intent of the test.
       for (const vector of resolveTestVectors.vectors as any[]) {
-        const didResolutionResult = await DidDht.resolve(vector.input.didUri);
+        const didResolutionResult = await DidDht.resolve(vector.input.didUri, { allowPrivateGatewayUri: true });
         expect(didResolutionResult.didResolutionMetadata.error).toBe(vector.output.didResolutionMetadata.error);
       }
     }, 30000); // Set timeout to 30 seconds for this test for did:dht resolution timeout test
