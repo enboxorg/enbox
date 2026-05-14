@@ -3,10 +3,6 @@
  * @module
  */
 
-import type { AgentSessionParams } from '@enbox/agent';
-
-import type { IdentityInfo } from './types.js';
-
 import { AgentSession } from '@enbox/agent';
 
 /**
@@ -23,9 +19,10 @@ import { AgentSession } from '@enbox/agent';
  * const session = await auth.connect();
  * const enbox = Enbox.fromSession(session);
  * ```
+ *
+ * Structurally identical to {@link AgentSession} — it exists as a separate
+ * exported class for backwards compatibility and to keep `@enbox/auth`'s
+ * public surface self-contained. `IdentityInfo` is an alias for
+ * `AgentSessionIdentity`, so the inherited constructor handles every field.
  */
-export class AuthSession extends AgentSession {
-  public constructor(params: Omit<AgentSessionParams, 'identity'> & { identity: IdentityInfo }) {
-    super(params);
-  }
-}
+export class AuthSession extends AgentSession {}
