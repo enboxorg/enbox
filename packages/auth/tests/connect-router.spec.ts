@@ -54,4 +54,21 @@ describe('_isLocalConnect heuristic (tested via reflection)', () => {
   test('sync-only option → defaults to local connect', () => {
     expect(isLocalConnect({ sync: '15s' })).toBe(true);
   });
+
+  test('protocols + password → handler connect (handler signal wins)', () => {
+    expect(isLocalConnect({ protocols: [], password: 'test' })).toBe(false);
+  });
+
+  test('connectHandler + createIdentity → handler connect (handler signal wins)', () => {
+    const handler = { requestAccess: async (): Promise<undefined> => undefined };
+    expect(isLocalConnect({ connectHandler: handler, createIdentity: true })).toBe(false);
+  });
+
+  test('protocols + dwnEndpoints + metadata → handler connect (handler signal wins)', () => {
+    expect(isLocalConnect({
+      protocols    : [],
+      dwnEndpoints : ['https://dwn.example.com'],
+      metadata     : { name: 'Alice' },
+    })).toBe(false);
+  });
 });

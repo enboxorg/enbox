@@ -332,6 +332,14 @@ export class Enbox {
    * the async `Enbox.connect({...})` form (no `session`/`connectedDid`/`did`)
    * with an explicit `connect` slot for the auth case.
    *
+   * **Handler vs local routing (async path).** When the input contains both
+   * handler signals (`protocols`, `connectHandler`) and local-style defaults
+   * (`password`, `dwnEndpoints`, `metadata`, `createIdentity`,
+   * `recoveryPhrase`), handler routing wins: the local-only keys are forwarded
+   * to `AuthManager.create()` as manager-wide defaults but are stripped from
+   * the per-call `auth.connect()` options so the handler flow runs. Pass an
+   * explicit `connect` slot to override this normalization.
+   *
    * Existing synchronous forms remain supported for compatibility. Prefer
    * {@link Enbox.fromSession} or {@link Enbox.from} in new custom-session code.
    *
@@ -419,6 +427,14 @@ export class Enbox {
 
     const connectOptions: Record<string, unknown> = {};
 
+    // When handler signals are present, forward only handler-relevant keys
+    // so the per-call options remain minimal and semantically clean. Local
+    // defaults like `password`, `dwnEndpoints`, and `metadata` are still
+    // forwarded to `AuthManager.create()` as manager-wide defaults via
+    // `toAuthManagerOptions`. This also serves as defense in depth against
+    // any future regression in `AuthManager._isLocalConnect()` routing
+    // precedence: stripping local-only keys here guarantees the handler
+    // flow regardless of how the manager interprets mixed signals.
     if (Enbox.hasDefined(options, ['protocols', 'connectHandler'])) {
       Enbox.copyDefined(options, connectOptions, [
         'protocols',
@@ -432,9 +448,9 @@ export class Enbox {
     // `password`, `sync`, and `dwnEndpoints` are intentionally copied to both
     // `AuthManager.create()` (via toAuthManagerOptions) and local
     // `auth.connect()` calls (here). The former sets manager-wide defaults;
-    // the latter applies per-call overrides. Handler-style flows are handled
-    // above because `AuthManager.connect()` routes any local-only key (for
-    // example `password`) to local connect before checking handler options.
+    // the latter applies per-call overrides, which keeps behavior consistent
+    // for restored sessions and avoids drift between the active call and the
+    // manager's configured defaults.
     Enbox.copyDefined(options, connectOptions, [
       'password',
       'recoveryPhrase',

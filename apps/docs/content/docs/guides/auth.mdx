@@ -47,17 +47,20 @@ If an identity already exists in the vault, `connect()` unlocks the vault and re
 
 ### 3. Wallet connect
 
-For cross-device identity sharing, use the wallet connect flow with permission scopes:
+For cross-device identity sharing, configure an `AuthManager` with a
+`connectHandler` and request the protocols you need. The handler drives the
+permission-scope UX (e.g. via a browser overlay) and returns a delegate
+session bound to the connecting wallet.
 
 ```ts
 import { AuthManager } from '@enbox/auth';
 import { BrowserConnectHandler } from '@enbox/browser';
 
-const auth = await AuthManager.create({
+const walletAuth = await AuthManager.create({
   connectHandler: BrowserConnectHandler({ appName: 'Notes App' }),
 });
 
-const session = await auth.connect({ protocols: [NotesProtocol] });
+const session = await walletAuth.connect({ protocols: [NotesProtocol] });
 ```
 
 ### 4. Disconnect

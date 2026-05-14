@@ -954,15 +954,29 @@ export class AuthManager {
   /**
    * Determine whether the given options indicate a local connect flow.
    *
-   * Local connect is indicated by the presence of `password`,
-   * `createIdentity`, or `recoveryPhrase` — signals that the caller
-   * is managing its own vault/identity lifecycle. In non-browser
-   * environments, local connect is the fallback.
+   * Handler signals take precedence: passing `protocols` or `connectHandler`
+   * routes to the handler-based flow even when local-style defaults like
+   * `password` or `dwnEndpoints` are also present. This matches caller
+   * intent — explicit handler options are a strong signal that wallet /
+   * cross-device connect is desired, with local-style keys acting as
+   * manager-wide defaults or fallbacks rather than overriding the flow.
+   *
+   * Local connect is otherwise indicated by `password`, `createIdentity`,
+   * `recoveryPhrase`, `dwnEndpoints`, or `metadata` — signals that the
+   * caller is managing its own vault / identity lifecycle. Local connect is
+   * also the fallback when no explicit signals are present.
    */
   private _isLocalConnect(options?: ConnectOptions): boolean {
     const o = (options ?? {}) as Record<string, unknown>;
 
-    // If any local-connect-specific keys are present, it's definitely local.
+    // 1. Handler signals win when present, regardless of local-style keys.
+    const hasHandlerSignals = (
+      o.protocols !== undefined ||
+      o.connectHandler !== undefined
+    );
+    if (hasHandlerSignals) { return false; }
+
+    // 2. Local-connect-specific keys → local connect.
     const hasLocalSignals = (
       o.password !== undefined ||
       o.createIdentity !== undefined ||
@@ -972,16 +986,7 @@ export class AuthManager {
     );
     if (hasLocalSignals) { return true; }
 
-    // If any handler-connect signals are present, use the handler flow.
-    const hasHandlerSignals = (
-      o.protocols !== undefined ||
-      o.connectHandler !== undefined
-    );
-    if (hasHandlerSignals) { return false; }
-
-    // No explicit signals → default to local connect.
-    // Callers that want handler-based connect must provide protocols
-    // or a connectHandler.
+    // 3. No explicit signals → default to local connect.
     return true;
   }
 
