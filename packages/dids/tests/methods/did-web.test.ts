@@ -41,6 +41,51 @@ describe('DidWeb', () => {
 
       fetchStub.mockRestore();
     });
+
+    it('does not fetch for did:web identifiers that resolve to private hosts (SSRF protection)', async () => {
+      const fetchStub = spyOn(globalThis as any, 'fetch');
+      fetchStub.mockImplementation(() => Promise.resolve(fetchNotFoundResponse()));
+
+      const resolutionResult = await DidWeb.resolve('did:web:127.0.0.1');
+
+      expect(resolutionResult.didResolutionMetadata.error).toBe('notFound');
+      expect(fetchStub).not.toHaveBeenCalled();
+
+      fetchStub.mockRestore();
+    });
+
+    it('blocks did:web document fetches that redirect to a private host (SSRF via redirect)', async () => {
+      // The initial public domain passes the URL check, but the server returns a 302 pointing at
+      // a metadata-service IP. `fetchPublicUrl` must re-validate every Location header, so this
+      // resolves to `notFound` and only the first fetch is performed.
+      const fetchStub = spyOn(globalThis as any, 'fetch');
+      fetchStub.mockResolvedValue(new Response(null, {
+        status  : 302,
+        headers : { location: 'http://169.254.169.254/latest/meta-data/' },
+      }));
+
+      const resolutionResult = await DidWeb.resolve('did:web:public.example.com');
+
+      expect(resolutionResult.didResolutionMetadata.error).toBe('notFound');
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+
+      fetchStub.mockRestore();
+    });
+
+    it('blocks did:web document fetches that redirect to a non-http(s) scheme', async () => {
+      const fetchStub = spyOn(globalThis as any, 'fetch');
+      fetchStub.mockResolvedValue(new Response(null, {
+        status  : 302,
+        headers : { location: 'file:///etc/hosts' },
+      }));
+
+      const resolutionResult = await DidWeb.resolve('did:web:public.example.com');
+
+      expect(resolutionResult.didResolutionMetadata.error).toBe('notFound');
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+
+      fetchStub.mockRestore();
+    });
   });
 
   describe('create()', () => {

@@ -35,24 +35,113 @@ export function isPrivateHostname(hostname: string): boolean {
   return false;
 }
 
+/** Default protocols accepted by {@link assertPublicUrl} when no explicit list is given. */
+const DEFAULT_PUBLIC_URL_PROTOCOLS: readonly string[] = ['http:', 'https:'];
+
 /**
- * Parses and validates that a URL does not target a private hostname.
- *
- * This intentionally does not perform DNS resolution, so callers handling
- * high-risk server-side fetches should still consider DNS rebinding defenses.
+ * Thrown by {@link assertPublicUrl} (and surfaced by {@link fetchPublicUrl}) when a URL — or a
+ * redirect target — fails public-URL validation. Distinct from generic `Error` so callers can
+ * map validation failures to a specific error code (e.g. `invalidGatewayUri`) without
+ * accidentally also mapping unrelated network failures.
  */
-export function assertPublicUrl(url: string | URL, description = 'URL'): URL {
+export class PublicUrlValidationError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'PublicUrlValidationError';
+  }
+}
+
+/**
+ * Parses and validates that a URL targets a routable public host over an allowed network scheme.
+ *
+ * Rejects:
+ * - URLs whose protocol is not in `allowedProtocols` (defaults to `http:` / `https:`), so callers
+ *   cannot smuggle `file:`, `javascript:`, `data:`, `ws:`, etc. past a downstream `fetch()`.
+ * - URLs without a hostname.
+ * - URLs whose hostname is a loopback, private, link-local, or otherwise non-routable literal per
+ *   {@link isPrivateHostname}.
+ *
+ * This intentionally does not perform DNS resolution, so callers handling high-risk server-side
+ * fetches should still consider DNS rebinding defenses (and use {@link fetchPublicUrl} to also
+ * validate every redirect target).
+ */
+export function assertPublicUrl(url: string | URL, description = 'URL', options?: { allowedProtocols?: readonly string[] }): URL {
   const parsedUrl = typeof url === 'string' ? new URL(url) : new URL(url.toString());
+  const allowedProtocols = options?.allowedProtocols ?? DEFAULT_PUBLIC_URL_PROTOCOLS;
+
+  if (!allowedProtocols.includes(parsedUrl.protocol)) {
+    throw new PublicUrlValidationError(`${description} must use one of the allowed schemes (${allowedProtocols.join(', ')}): ${parsedUrl.protocol}`);
+  }
+
+  if (parsedUrl.hostname === '') {
+    throw new PublicUrlValidationError(`${description} must specify a hostname.`);
+  }
 
   if (isPrivateHostname(parsedUrl.hostname)) {
-    throw new Error(`${description} must not target a private, loopback, or link-local host: ${parsedUrl.hostname}`);
+    throw new PublicUrlValidationError(`${description} must not target a private, loopback, or link-local host: ${parsedUrl.hostname}`);
   }
 
   return parsedUrl;
 }
 
-/** Concatenates a base URL and a path ensuring that there is exactly one slash between them. */
+/**
+ * Maximum number of HTTP redirects {@link fetchPublicUrl} will follow before giving up. Public
+ * relays and DID document servers should rarely chain more than 1–2 redirects; this leaves enough
+ * headroom for those while still bounding worst-case behavior.
+ */
+const DEFAULT_MAX_REDIRECTS = 5;
+
+const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * Performs a `fetch()` whose target — and every subsequent redirect target — is validated by
+ * {@link assertPublicUrl}. Defends against SSRF via redirect-based bypasses where a public
+ * gateway returns `Location: http://127.0.0.1/...` after the initial validation succeeded.
+ *
+ * Manually drives the redirect loop so each `Location` is re-validated. A 3xx response without a
+ * `Location` header (e.g. `304 Not Modified`) is returned to the caller unchanged.
+ */
+export async function fetchPublicUrl(url: string | URL, init?: RequestInit, options?: {
+  description?: string;
+  allowedProtocols?: readonly string[];
+  maxRedirects?: number;
+}): Promise<Response> {
+  const description = options?.description ?? 'URL';
+  const maxRedirects = options?.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+  let currentUrl = assertPublicUrl(url, description, { allowedProtocols: options?.allowedProtocols }).href;
+
+  for (let attempt = 0; attempt <= maxRedirects; attempt++) {
+    const response = await fetch(currentUrl, { ...init, redirect: 'manual' });
+
+    if (!REDIRECT_STATUS_CODES.has(response.status)) {
+      return response;
+    }
+
+    const location = response.headers.get('location');
+    if (location === null) {
+      return response;
+    }
+
+    currentUrl = assertPublicUrl(new URL(location, currentUrl), description, { allowedProtocols: options?.allowedProtocols }).href;
+  }
+
+  throw new Error(`${description} exceeded the maximum number of redirects (${maxRedirects}).`);
+}
+
+/**
+ * Concatenates a base URL and a path ensuring that there is exactly one slash between them.
+ *
+ * The `path` argument must be a pure URL pathname — raw `?` (query) and `#` (fragment) delimiters
+ * are rejected because they are silently percent-encoded by the WHATWG URL parser when assigned
+ * to `pathname`, which would otherwise change the endpoint a caller meant to reach. Callers that
+ * need to attach a query string or fragment should construct the URL explicitly. Percent-encoded
+ * `%3F` / `%23` are preserved so genuine path segments containing those characters work.
+ */
 export function concatenateUrl(baseUrl: string, path: string): string {
+  if (path.includes('?') || path.includes('#')) {
+    throw new Error('Path must not contain a raw query string or fragment; build the URL explicitly instead.');
+  }
+
   const sanitizedPath = path.replaceAll(/^\/+/g, '');
   const segments = sanitizedPath.split('/');
 

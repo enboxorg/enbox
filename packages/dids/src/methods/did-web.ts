@@ -24,7 +24,7 @@ import { Did } from '../did.js';
 import { DidMethod } from './did-method.js';
 import { EMPTY_DID_RESOLUTION_RESULT } from '../types/did-resolution.js';
 import { extractDidFragment } from '../utils.js';
-import { isPrivateHostname } from '@enbox/common';
+import { fetchPublicUrl } from '@enbox/common';
 import { DidError, DidErrorCode } from '../did-error.js';
 
 /** Default fetch timeout for DID document retrieval (30 seconds). */
@@ -387,19 +387,13 @@ export class DidWeb extends DidMethod {
       `${baseUrl}/.well-known/did.json`;
 
     try {
-      // Block requests to private/loopback/link-local addresses (SSRF protection).
-      const parsedUrl = new URL(didDocumentUrl);
-      if (isPrivateHostname(parsedUrl.hostname)) {
-        return {
-          ...EMPTY_DID_RESOLUTION_RESULT,
-          didResolutionMetadata: { error: 'notFound' }
-        };
-      }
-
-      // Perform an HTTP GET request to obtain the DID document.
-      const response = await fetch(didDocumentUrl, {
+      // Perform an HTTP GET request to obtain the DID document. `fetchPublicUrl` blocks the
+      // initial URL — and every redirect target — from pointing at a private/loopback/link-local
+      // host or a non-http(s) scheme, so a public hosting domain cannot 302 us to 127.0.0.1 or
+      // file:///etc/hosts after the first check passes.
+      const response = await fetchPublicUrl(didDocumentUrl, {
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
+      }, { description: 'did:web document URL' });
 
       // If the response status code is not 200, return an error.
       if (!response.ok) {throw new Error('HTTP error status code returned');}

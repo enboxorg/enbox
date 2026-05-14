@@ -89,31 +89,50 @@ import {
   validatePreviousDidProof,
 } from './did-dht-utils.js';
 
-/**
- * The default DID DHT Gateway or Pkarr Relay server to use when publishing and resolving DID
- * documents.
- */
-const DEFAULT_GATEWAY_URI_FROM_ENV = process.env.DID_DHT_GATEWAY_URI !== undefined;
-const DEFAULT_GATEWAY_URI = process.env.DID_DHT_GATEWAY_URI || 'https://enbox-did-dht.fly.dev';
+/** The default DID DHT Gateway / Pkarr Relay used when no `gatewayUri` is supplied. */
+const FALLBACK_GATEWAY_URI = 'https://enbox-did-dht.fly.dev';
 
 /**
- * Applies the default gateway URI when none is supplied and decides whether private hosts are
- * allowed for the resulting URI.
+ * Returns the default gateway URI, deferring the `DID_DHT_GATEWAY_URI` env lookup until call
+ * time so the env var reflects late mutations (e.g. test setup) rather than the value captured
+ * at module load.
  *
- * The caller's explicit `allowPrivateGatewayUri` always wins. As an additional convenience,
- * private hosts are allowed whenever the resolved URI exactly matches the `DID_DHT_GATEWAY_URI`
- * environment variable so local development and CI workflows can target a private gateway
- * without sprinkling `allowPrivateGatewayUri: true` through their call sites.
+ * Setting `DID_DHT_GATEWAY_URI` only changes the default *URI*. It deliberately does NOT widen
+ * `allowPrivateGatewayUri`: dev/CI workflows that target a private Pkarr relay must opt in via
+ * the separate `DID_DHT_ALLOW_PRIVATE_GATEWAY=1` env var, or by passing
+ * `allowPrivateGatewayUri: true` per call.
+ */
+function getDefaultGatewayUri(): string {
+  return process.env.DID_DHT_GATEWAY_URI || FALLBACK_GATEWAY_URI;
+}
+
+/**
+ * Returns the default value for `allowPrivateGatewayUri` when the caller does not supply one.
+ * Dev/CI shells set `DID_DHT_ALLOW_PRIVATE_GATEWAY=1` to opt in to local Pkarr relays without
+ * sprinkling `allowPrivateGatewayUri: true` through every call site; production deployments
+ * leave it unset so the documented default of `false` applies.
+ *
+ * This env var is intentionally *separate* from `DID_DHT_GATEWAY_URI` so that simply pointing
+ * at a different (possibly private) relay does not silently disable SSRF protection.
+ */
+function getDefaultAllowPrivateGatewayUri(): boolean {
+  return process.env.DID_DHT_ALLOW_PRIVATE_GATEWAY === '1';
+}
+
+/**
+ * Applies the default gateway URI when none is supplied. The caller's explicit
+ * `allowPrivateGatewayUri` (including an explicit `false`) always wins over the env-driven
+ * default — this is the contract pinned by the regression tests in `did-dht.test.ts`.
  */
 function resolveGatewayUri(gatewayUri: string | undefined, allowPrivateGatewayUri: boolean | undefined): {
   gatewayUri: string;
   allowPrivateGatewayUri: boolean;
 } {
-  const resolvedUri = gatewayUri ?? DEFAULT_GATEWAY_URI;
-  const matchesEnvDefault = DEFAULT_GATEWAY_URI_FROM_ENV && resolvedUri === DEFAULT_GATEWAY_URI;
+  // Use `??` (not `||`) so an explicit `false` from the caller short-circuits the env-default
+  // bypass instead of being OR-ed away.
   return {
-    gatewayUri             : resolvedUri,
-    allowPrivateGatewayUri : (allowPrivateGatewayUri ?? false) || matchesEnvDefault,
+    gatewayUri             : gatewayUri ?? getDefaultGatewayUri(),
+    allowPrivateGatewayUri : allowPrivateGatewayUri ?? getDefaultAllowPrivateGatewayUri(),
   };
 }
 
