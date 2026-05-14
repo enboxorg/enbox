@@ -119,7 +119,46 @@ function getChangedLines() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Cross-reference and compute diff-coverage
+// 3. Detect type-only TypeScript files
+// ---------------------------------------------------------------------------
+
+/**
+ * Heuristic for files that have no runtime-instrumentable code.
+ *
+ * A TypeScript file is considered type-only when none of its top-level
+ * exports declare a runtime value (`const`, `let`, `var`, `function`,
+ * `class`, `enum`, or `default`). Type-only files compile to empty .js
+ * output and therefore never appear in LCOV — counting their changed
+ * lines as 0% covered would be incorrect.
+ *
+ * @param {string} filePath
+ * @returns {boolean}
+ */
+function isTypeOnlyFile(filePath) {
+  if (!existsSync(filePath)) { return false; }
+
+  let source;
+  try {
+    source = readFileSync(filePath, 'utf8');
+  } catch {
+    return false;
+  }
+
+  // Strip block comments so we don't mis-detect runtime keywords inside docs.
+  const stripped = source.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  // Any line-anchored `export <runtime-keyword>` or `export default <expr>`
+  // makes the file emit runtime code.
+  const runtimeExportRe =
+    /^\s*export\s+(?:default\s+|async\s+|abstract\s+)?(const|let|var|function|class|enum)\b/m;
+  if (runtimeExportRe.test(stripped)) { return false; }
+  if (/^\s*export\s+default\s+/m.test(stripped)) { return false; }
+
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// 4. Cross-reference and compute diff-coverage
 // ---------------------------------------------------------------------------
 
 function main() {
@@ -163,7 +202,19 @@ function main() {
     }
 
     if (!lcovEntry) {
-      // File not in coverage data — might be a new file with no tests
+      // File not in coverage data. Could be:
+      //  (a) a type-only file (interfaces/types/no runtime emit) — LCOV
+      //      never records these because there is nothing to instrument.
+      //      Counting them as 0% covered is wrong; they have zero
+      //      instrumentable lines, not zero coverage.
+      //  (b) a genuine untested new file with runtime code.
+      // Distinguish by inspecting the source: if it has no runtime exports
+      // (no `export {const, let, var, function, class, enum}`), treat it
+      // as type-only and skip. Otherwise, count as 0%.
+      if (isTypeOnlyFile(filePath)) {
+        fileResults.push({ file: filePath, changed: 0, covered: 0, pct: 100, typeOnly: true });
+        continue;
+      }
       const count = lines.size;
       totalChanged += count;
       fileResults.push({ file: filePath, changed: count, covered: 0, pct: 0 });
@@ -218,8 +269,9 @@ function main() {
 
   for (const r of fileResults) {
     const shortFile = r.file.length > 58 ? '...' + r.file.slice(-55) : r.file;
-    const marker = r.pct < THRESHOLD ? ' <--' : '';
-    console.log(`${shortFile.padEnd(60)} ${String(r.changed).padStart(8)} ${String(r.covered).padStart(8)} ${(r.pct + '%').padStart(7)}${marker}`);
+    const marker = r.typeOnly ? ' (type-only)' : (r.pct < THRESHOLD ? ' <--' : '');
+    const pctCol = r.typeOnly ? '   n/a' : (r.pct + '%').padStart(7);
+    console.log(`${shortFile.padEnd(60)} ${String(r.changed).padStart(8)} ${String(r.covered).padStart(8)} ${pctCol}${marker}`);
 
     if (r.uncoveredLines && r.uncoveredLines.length > 0) {
       const lineStr = r.uncoveredLines.join(', ');
