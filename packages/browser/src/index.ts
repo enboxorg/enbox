@@ -35,8 +35,13 @@ export {
 } from '@enbox/api';
 
 export type {
-  EnboxParams,
   EnboxAnonymousOptions,
+  EnboxConnectOptions,
+  EnboxConnectResult,
+  EnboxConnectionInput,
+  EnboxParams,
+  EnboxSessionParams,
+  EnboxSessionWrapper,
 } from '@enbox/api';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────

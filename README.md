@@ -68,7 +68,7 @@ Create an Enbox instance. Data syncs to whatever DWN endpoint(s) you configure -
 import { Enbox, defineProtocol } from '@enbox/api';
 
 const { enbox } = await Enbox.connect({
-  dwnEndpoints  : ['https://enbox-dwn.fly.dev'],   // ← any DWN server
+  dwnEndpoints   : ['https://enbox-dwn.fly.dev'],   // ← any DWN server
   createIdentity : true,
 });
 ```

@@ -9,7 +9,7 @@ description: How authentication works in Enbox — connect, lock, disconnect, an
 
 - **Identity creation** and agent bootstrapping
 - **Wallet-based connection** for cross-device identity sharing
-- **Session locking** and unlocking with a passphrase
+- **Vault locking** and session restoration with a passphrase
 - **Multi-identity** support (switching between DIDs)
 - **DWN registration** with remote nodes
 
@@ -73,11 +73,11 @@ console.log(auth.state); // 'connected'
 
 ## Events
 
-The auth manager emits state change events:
+The auth manager emits state change events. The handler receives a payload with the `previous` and `current` states:
 
 ```ts
-auth.on('state-change', (newState) => {
-  console.log('Auth state changed to:', newState);
+auth.on('state-change', ({ previous, current }) => {
+  console.log(`Auth state changed: ${previous} → ${current}`);
 });
 ```
 

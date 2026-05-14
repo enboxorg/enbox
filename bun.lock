@@ -7,7 +7,6 @@
       "devDependencies": {
         "@changesets/changelog-github": "0.5.2",
         "@changesets/cli": "2.29.8",
-        "@enbox/protocols": "workspace:*",
         "@eslint/js": "9.3.0",
         "@stylistic/eslint-plugin": "2.13.0",
         "@typescript-eslint/eslint-plugin": "8.32.1",

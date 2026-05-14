@@ -220,12 +220,22 @@ export class Enbox {
    * disconnecting to cleanly release background resources. After calling
    * `disconnect()`, the `Enbox` instance should not be reused.
    *
+   * This method only tears down the Enbox-side state. When the instance was
+   * created via the async {@link Enbox.connect} flow, the returned
+   * `AuthManager` owns the vault and storage handles — call
+   * `auth.shutdown()` (or `auth.disconnect()` to keep the vault) in addition
+   * to `enbox.disconnect()` for a clean shutdown.
+   *
    * @param timeout - Maximum milliseconds to wait for an in-progress sync
    *   cycle to finish before force-stopping. Defaults to `2000`.
    *
    * @example
    * ```ts
+   * // Full teardown when using the async Enbox.connect() flow
+   * const { enbox, auth } = await Enbox.connect({ createIdentity: true });
+   * // ...
    * await enbox.disconnect();
+   * await auth.shutdown();
    * ```
    *
    * @beta
@@ -308,7 +318,19 @@ export class Enbox {
    * session, or raw agent parameters.
    *
    * With no existing session/raw parameters, this creates an `AuthManager`,
-   * calls `auth.connect()`, and returns `{ auth, session, enbox }`.
+   * calls `auth.connect()`, and returns `{ auth, session, enbox }`. When the
+   * input matches a sync shape, the method returns an `Enbox` instance
+   * synchronously without touching `AuthManager`.
+   *
+   * **Sync vs async dispatch.** Input is routed by checking, in order,
+   * `session`, `connectedDid`, and `did`. The first match wins and any
+   * unrelated keys on the input are **silently ignored** — for example,
+   * `Enbox.connect({ agent, connectedDid, password })` returns synchronously
+   * via {@link Enbox.from} and the `password` never reaches `AuthManager`.
+   * If you need to combine raw/session inputs with auth options, prefer
+   * {@link Enbox.from} / {@link Enbox.fromSession} for the sync case and use
+   * the async `Enbox.connect({...})` form (no `session`/`connectedDid`/`did`)
+   * with an explicit `connect` slot for the auth case.
    *
    * Existing synchronous forms remain supported for compatibility. Prefer
    * {@link Enbox.fromSession} or {@link Enbox.from} in new custom-session code.
@@ -316,7 +338,10 @@ export class Enbox {
    * @example
    * ```ts
    * // Common app flow
-   * const { enbox, session } = await Enbox.connect({ createIdentity: true });
+   * const { enbox, session, auth } = await Enbox.connect({ createIdentity: true });
+   * // ...
+   * await enbox.disconnect();
+   * await auth.shutdown(); // release vault + storage handles
    *
    * // Existing session
    * const enbox = Enbox.fromSession(session);
@@ -384,6 +409,13 @@ export class Enbox {
 
     const connectOptions: Record<string, unknown> = {};
 
+    // `password`, `sync`, `dwnEndpoints`, and `connectHandler` are intentionally
+    // copied to both `AuthManager.create()` (via toAuthManagerOptions) and
+    // `auth.connect()` (here). The former sets manager-wide defaults; the
+    // latter applies per-call overrides. Forwarding the same value to both
+    // keeps behavior consistent regardless of which connect flow ends up
+    // running (e.g. handler-based vs local), and avoids a future bug where
+    // restored sessions inherit different defaults than the active call.
     Enbox.copyDefined(options, connectOptions, [
       'password',
       'recoveryPhrase',
