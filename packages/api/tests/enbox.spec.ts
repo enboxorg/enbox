@@ -303,7 +303,7 @@ describe('Enbox API', () => {
     });
   });
 
-  describe('from() / fromSession() / connect()', () => {
+  describe('fromSession() / connect() / constructor', () => {
     let testHarness: PlatformAgentTestHarness;
 
     beforeAll(async () => {
@@ -325,13 +325,13 @@ describe('Enbox API', () => {
       await testHarness.closeStorage();
     });
 
-    it('Enbox.from() returns an instance bound to raw params', async () => {
+    it('public constructor returns an instance bound to raw params', async () => {
       const identity = await testHarness.agent.identity.create({
         metadata  : { name: 'Raw' },
         didMethod : 'jwk',
       });
 
-      const enbox = Enbox.from({
+      const enbox = new Enbox({
         agent        : testHarness.agent,
         connectedDid : identity.did.uri,
       });
@@ -340,7 +340,7 @@ describe('Enbox API', () => {
       expect(enbox.agent).toBe(testHarness.agent);
     });
 
-    it('Enbox.from() carries delegateDid through to the constructor', async () => {
+    it('public constructor carries delegateDid through', async () => {
       const connectedIdentity = await testHarness.agent.identity.create({
         metadata  : { name: 'Connected' },
         didMethod : 'jwk',
@@ -351,7 +351,7 @@ describe('Enbox API', () => {
         didMethod : 'jwk',
       });
 
-      const enbox = Enbox.from({
+      const enbox = new Enbox({
         agent        : testHarness.agent,
         connectedDid : connectedIdentity.did.uri,
         delegateDid  : delegateIdentity.did.uri,
@@ -456,7 +456,7 @@ describe('Enbox API', () => {
       });
     });
 
-    it('should pass explicit connect options to AuthManager.connect', async () => {
+    it('connectOverride replaces the auto-derived per-call payload', async () => {
       const identity = await testHarness.agent.identity.create({
         metadata  : { name: 'Explicit Connect' },
         didMethod : 'jwk',
@@ -473,14 +473,16 @@ describe('Enbox API', () => {
       const create = sinon.stub(AuthManager, 'create').resolves(auth as any);
 
       await Enbox.connect({
-        password : 'manager-password',
-        connect  : {
+        password        : 'manager-password',
+        connectOverride : {
           password       : 'connect-password',
           createIdentity : true,
         },
       });
 
+      // Manager-wide options exclude the override slot entirely.
       expect(create.firstCall.args[0]).toEqual({ password: 'manager-password' });
+      // Per-call payload comes from `connectOverride` verbatim.
       expect(connect.firstCall.args[0]).toEqual({
         password       : 'connect-password',
         createIdentity : true,
@@ -503,7 +505,12 @@ describe('Enbox API', () => {
       const auth = { connect };
       const create = sinon.stub(AuthManager, 'create').resolves(auth as any);
       const connectHandler = { requestAccess: sinon.stub().resolves(undefined) };
-      const protocols: ProtocolDefinition[] = [];
+      // Non-empty protocols array — an empty array no longer counts as a
+      // handler signal (see `_isHandlerConnect`), so we exercise the real
+      // handler-routing path with at least one protocol.
+      const protocols: ProtocolDefinition[] = [
+        { protocol: 'https://example.com/p', published: true, types: {}, structure: {} } as ProtocolDefinition,
+      ];
 
       await Enbox.connect({
         password       : 'test-password',
@@ -521,10 +528,19 @@ describe('Enbox API', () => {
         dwnEndpoints : ['https://dwn.example.com'],
         connectHandler,
       });
+      // After the API-layer refactor we forward every per-call signal
+      // verbatim and let `AuthManager._isLocalConnect` pick the flow.
+      // Handler flow ignores local-only keys (`createIdentity`,
+      // `metadata`, `recoveryPhrase`) but they're still passed so adding
+      // a new per-call option doesn't require coordinated edits here.
       expect(connect.firstCall.args[0]).toEqual({
         protocols,
         connectHandler,
-        sync: 'off',
+        password       : 'test-password',
+        sync           : 'off',
+        dwnEndpoints   : ['https://dwn.example.com'],
+        createIdentity : true,
+        metadata       : { name: 'Local Default' },
       });
     });
 
@@ -538,6 +554,205 @@ describe('Enbox API', () => {
       await expect(Enbox.connect({ createIdentity: true })).rejects.toThrow('connect failed');
 
       expect(shutdown.calledOnce).toBe(true);
+    });
+
+    it('should preserve the original connect error when auth.shutdown() also throws', async () => {
+      // Regression for the catch-swallow at packages/api/src/enbox.ts:300.
+      // When the recovery shutdown fails, the caller must still see the
+      // original `connect` rejection, not the shutdown error.
+      const connectError = new Error('original connect failure');
+      const shutdownError = new Error('shutdown also failed');
+      const connect = sinon.stub().rejects(connectError);
+      const shutdown = sinon.stub().rejects(shutdownError);
+      const auth = { connect, shutdown };
+      sinon.stub(AuthManager, 'create').resolves(auth as any);
+
+      await expect(Enbox.connect({ createIdentity: true }))
+        .rejects.toThrow('original connect failure');
+
+      expect(shutdown.calledOnce).toBe(true);
+    });
+
+    it('should call AuthManager.create with {} and auth.connect with undefined when no options are given', async () => {
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'No-args' },
+        didMethod : 'jwk',
+      });
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'No-args' },
+      };
+      const connect = sinon.stub().resolves(session);
+      const auth = { connect };
+      const create = sinon.stub(AuthManager, 'create').resolves(auth as any);
+
+      await Enbox.connect();
+
+      expect(create.firstCall.args[0]).toEqual({});
+      expect(connect.firstCall.args[0]).toBeUndefined();
+    });
+
+    it('Enbox.connect({ connectHandler, connectOverride: {} }) does NOT bypass the manager-level handler', async () => {
+      // Regression for the #1 block-on bug: an empty override slot was
+      // forwarded verbatim and routed to local, silently skipping the
+      // configured handler. An empty `{}` now falls through to auto-derived
+      // smart routing, which picks handler flow because connectHandler is set.
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Bypass Regression' },
+        didMethod : 'jwk',
+      });
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'Bypass Regression' },
+      };
+      const connect = sinon.stub().resolves(session);
+      const auth = { connect };
+      sinon.stub(AuthManager, 'create').resolves(auth as any);
+      const connectHandler = { requestAccess: sinon.stub().resolves(undefined) };
+
+      await Enbox.connect({ connectHandler, connectOverride: {} });
+
+      // The handler must be forwarded — not silently dropped to local flow.
+      expect(connect.firstCall.args[0]).toEqual({ connectHandler });
+    });
+
+    it('per-call password in handler flow is forwarded to auth.connect', async () => {
+      // Regression for #3: previously, handler routing silently dropped
+      // any per-call password. The agent vault now unlocks with the
+      // caller's password override.
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Per-call password' },
+        didMethod : 'jwk',
+      });
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'Per-call password' },
+      };
+      const connect = sinon.stub().resolves(session);
+      const auth = { connect };
+      const create = sinon.stub(AuthManager, 'create').resolves(auth as any);
+      const connectHandler = { requestAccess: sinon.stub().resolves(undefined) };
+      const protocols: ProtocolDefinition[] = [
+        { protocol: 'https://example.com/p', published: true, types: {}, structure: {} } as ProtocolDefinition,
+      ];
+
+      await Enbox.connect({
+        password: 'per-call-password',
+        protocols,
+        connectHandler,
+      });
+
+      expect(create.firstCall.args[0]).toEqual({
+        password: 'per-call-password',
+        connectHandler,
+      });
+      expect(connect.firstCall.args[0]).toEqual({
+        protocols,
+        connectHandler,
+        password: 'per-call-password',
+      });
+    });
+
+    it('throws when two concurrent Enbox.connect() calls share the same data path', async () => {
+      // Regression for #4. Each call constructs its own AuthManager that
+      // would open the same LevelDB path; the API-layer guard turns the
+      // ensuing LEVEL_LOCKED into a domain-level error before any I/O.
+      let resolveFirstConnect!: (s: any) => void;
+      const firstConnectPromise = new Promise((res) => { resolveFirstConnect = res; });
+      const firstAuth = {
+        connect  : sinon.stub().returns(firstConnectPromise),
+        shutdown : sinon.stub().resolves(),
+      };
+      sinon.stub(AuthManager, 'create').resolves(firstAuth as any);
+
+      const inFlight = Enbox.connect({ password: 'pw' });
+
+      // Second call against the (default) same data path must reject
+      // synchronously — not race on the LevelDB lock.
+      await expect(Enbox.connect({ password: 'pw' }))
+        .rejects.toThrow(/already in progress/);
+
+      // Let the first call complete so we don't leak a hanging promise.
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Concurrent' },
+        didMethod : 'jwk',
+      });
+      resolveFirstConnect({
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'Concurrent' },
+      });
+      await inFlight;
+    });
+
+    it('allows concurrent Enbox.connect() with distinct dataPaths', async () => {
+      // The guard is keyed by dataPath. Different paths don't conflict.
+      const identityA = await testHarness.agent.identity.create({
+        metadata  : { name: 'Path A' },
+        didMethod : 'jwk',
+      });
+      const identityB = await testHarness.agent.identity.create({
+        metadata  : { name: 'Path B' },
+        didMethod : 'jwk',
+      });
+      const sessionA = {
+        agent       : testHarness.agent,
+        did         : identityA.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identityA.did.uri, name: 'Path A' },
+      };
+      const sessionB = {
+        agent       : testHarness.agent,
+        did         : identityB.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identityB.did.uri, name: 'Path B' },
+      };
+      // Two stubs returning different sessions — sufficient for the test.
+      const create = sinon.stub(AuthManager, 'create');
+      create.onCall(0).resolves({ connect: sinon.stub().resolves(sessionA) } as any);
+      create.onCall(1).resolves({ connect: sinon.stub().resolves(sessionB) } as any);
+
+      const [resultA, resultB] = await Promise.all([
+        Enbox.connect({ dataPath: '/tmp/path-a' }),
+        Enbox.connect({ dataPath: '/tmp/path-b' }),
+      ]);
+
+      expect(resultA.session).toBe(sessionA);
+      expect(resultB.session).toBe(sessionB);
+    });
+
+    it('empty protocols array routes to local connect (not handler)', async () => {
+      // Regression for #11: protocols:[] carries no permission intent and
+      // must not produce a zero-grant "connected" handler session.
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Empty protocols' },
+        didMethod : 'jwk',
+      });
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'Empty protocols' },
+      };
+      const connect = sinon.stub().resolves(session);
+      const auth = { connect };
+      sinon.stub(AuthManager, 'create').resolves(auth as any);
+
+      await Enbox.connect({ password: 'pw', protocols: [], createIdentity: true });
+
+      // Local flow forwards local-style keys; no `protocols` array, no
+      // connectHandler — empty array was filtered out as a non-signal.
+      expect(connect.firstCall.args[0]).toEqual({
+        password       : 'pw',
+        createIdentity : true,
+      });
     });
 
   });

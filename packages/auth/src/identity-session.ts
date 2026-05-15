@@ -1,5 +1,5 @@
 /**
- * AuthSession represents an active, authenticated session with a specific identity.
+ * `AuthSession` is an alias for {@link AgentSession} from `@enbox/agent`.
  * @module
  */
 
@@ -20,9 +20,10 @@ import { AgentSession } from '@enbox/agent';
  * const enbox = Enbox.fromSession(session);
  * ```
  *
- * Structurally identical to {@link AgentSession} — it exists as a separate
- * exported class for backwards compatibility and to keep `@enbox/auth`'s
- * public surface self-contained. `IdentityInfo` is an alias for
- * `AgentSessionIdentity`, so the inherited constructor handles every field.
+ * This is a direct re-export of {@link AgentSession} — `new AuthSession(...)`
+ * constructs an `AgentSession`, and `instanceof AuthSession` and
+ * `instanceof AgentSession` both succeed on any session created through
+ * either name. The alias exists so `@enbox/auth`'s public surface stays
+ * self-contained; new code should prefer `AgentSession` directly.
  */
-export class AuthSession extends AgentSession {}
+export { AgentSession as AuthSession };

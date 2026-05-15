@@ -91,11 +91,15 @@ export async function resolvePassword(
 
   password ??= INSECURE_DEFAULT_PASSWORD;
 
-  if (password === INSECURE_DEFAULT_PASSWORD) {
+  // Two cases reach this branch: no password was supplied at any level
+  // (and we fell through to the insecure default), or the caller explicitly
+  // supplied an empty string. Both produce a vault with effectively zero
+  // password protection — surface a single warning in both cases.
+  if (password === INSECURE_DEFAULT_PASSWORD || password.length === 0) {
     console.warn(
-      '[@enbox/auth] SECURITY WARNING: No password set. Using insecure default. ' +
-      'Set a password via AuthManager.create({ password }) or connect({ password }) ' +
-      'to protect your identity vault.'
+      '[@enbox/auth] SECURITY WARNING: No password set (or an empty string was supplied). ' +
+      'Using an insecure default; this leaves the identity vault unprotected. ' +
+      'Set a non-empty password via AuthManager.create({ password }) or connect({ password }).'
     );
   }
 

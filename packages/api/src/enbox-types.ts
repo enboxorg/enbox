@@ -71,23 +71,42 @@ export type EnboxSessionParams = AgentSessionPrimitives;
 /**
  * High-level connection options for {@link Enbox.connect}.
  *
- * Flat intersection of every option `Enbox.connect()` understands. The
- * underlying `ConnectOptions` is a union of `HandlerConnectOptions` and
- * `LocalConnectOptions`; widening to their intersection here lets callers
- * mix handler and local-style fields freely (e.g. supplying both
- * `protocols` and `password`) without TypeScript forcing a discriminator.
- * `Enbox.connect()` performs the handler-vs-local split at runtime.
+ * Composed of three parts:
  *
- * For advanced flows, pass an explicit `connect` object to control the
- * exact options forwarded to `AuthManager.connect()`.
+ * 1. **Manager-wide defaults** ({@link AuthManagerOptions}) — `password`,
+ *    `sync`, `dwnEndpoints`, `connectHandler`, etc. Forwarded to
+ *    `AuthManager.create()` and reused across reconnects.
+ * 2. **Per-call signals** ({@link HandlerConnectOptions} ∪
+ *    {@link LocalConnectOptions}) — `protocols`, `createIdentity`,
+ *    `recoveryPhrase`, `metadata`, etc. Forwarded to
+ *    `AuthManager.connect()` and used to route handler vs local flow.
+ * 3. **An optional explicit override** ({@link connectOverride}) for
+ *    advanced flows that need full control of the per-call payload.
+ *
+ * Several fields (`password`, `sync`, `dwnEndpoints`, `connectHandler`)
+ * appear on multiple parents. The intersection keeps a single `?:`-typed
+ * field; the value flows to both the manager (as a default) and the
+ * per-call payload — matching the behavior of restored sessions.
+ *
+ * Routing between local and handler flow happens at runtime inside
+ * `AuthManager._isLocalConnect` based on whether `protocols` or
+ * `connectHandler` is provided. See `Enbox.connect()` for examples.
  */
 export type EnboxConnectOptions =
   & AuthManagerOptions
   & HandlerConnectOptions
   & LocalConnectOptions
   & {
-    /** Explicit options to pass to `AuthManager.connect()`. */
-    connect?: ConnectOptions;
+    /**
+     * Explicit replacement payload for `AuthManager.connect()`. When
+     * non-empty, this **replaces** the auto-derived per-call payload
+     * entirely. An empty `{}` is treated as "no override" so callers
+     * can't accidentally bypass a manager-level `connectHandler` by
+     * passing a placeholder slot — omit the field instead.
+     *
+     * @see {@link ConnectOptions}
+     */
+    connectOverride?: ConnectOptions;
   };
 
 /** The result of a high-level asynchronous {@link Enbox.connect} call. */

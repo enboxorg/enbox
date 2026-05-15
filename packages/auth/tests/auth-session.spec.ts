@@ -1,56 +1,26 @@
+import { AgentSession } from '@enbox/agent';
 import { describe, expect, test } from 'bun:test';
 
 import { AuthSession } from '../src/identity-session.js';
 
 describe('AuthSession', () => {
-  test('constructor sets all readonly properties', () => {
-    const mockAgent = { agentDid: { uri: 'did:example:agent' } } as any;
-    const identity = { didUri: 'did:example:test', name: 'Test Identity' };
+  // `AuthSession` is a direct re-export of `AgentSession` (see
+  // identity-session.ts). The constructor / readonly-property contract is
+  // covered exhaustively in `@enbox/agent`'s `agent-session.spec.ts` — here
+  // we only verify the alias relationship so a future divergence is caught.
 
-    const session = new AuthSession({
-      agent          : mockAgent,
-      did            : 'did:example:test',
-      delegateDid    : 'did:example:delegate',
-      recoveryPhrase : 'word1 word2 word3',
-      identity,
-    });
-
-    expect(session.agent).toBe(mockAgent);
-    expect(session.did).toBe('did:example:test');
-    expect(session.delegateDid).toBe('did:example:delegate');
-    expect(session.recoveryPhrase).toBe('word1 word2 word3');
-    expect(session.identity).toEqual(identity);
+  test('AuthSession === AgentSession (same class reference)', () => {
+    expect(AuthSession).toBe(AgentSession);
   });
 
-  test('optional fields are undefined when not provided', () => {
+  test('instances created via `new AuthSession()` are AgentSession instances', () => {
     const mockAgent = { agentDid: { uri: 'did:example:agent' } } as any;
-    const identity = { didUri: 'did:example:test', name: 'Test' };
-
     const session = new AuthSession({
-      agent : mockAgent,
-      did   : 'did:example:test',
-      identity,
+      agent    : mockAgent,
+      did      : 'did:example:test',
+      identity : { didUri: 'did:example:test', name: 'Test' },
     });
-
-    expect(session.delegateDid).toBeUndefined();
-    expect(session.recoveryPhrase).toBeUndefined();
-  });
-
-  test('identity info contains connectedDid when present', () => {
-    const mockAgent = { agentDid: { uri: 'did:example:agent' } } as any;
-    const identity = {
-      didUri       : 'did:example:wallet',
-      name         : 'Wallet Identity',
-      connectedDid : 'did:example:external',
-    };
-
-    const session = new AuthSession({
-      agent       : mockAgent,
-      did         : 'did:example:wallet',
-      delegateDid : 'did:example:delegate',
-      identity,
-    });
-
-    expect(session.identity.connectedDid).toBe('did:example:external');
+    expect(session).toBeInstanceOf(AgentSession);
+    expect(session).toBeInstanceOf(AuthSession);
   });
 });

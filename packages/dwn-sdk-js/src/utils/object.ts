@@ -27,6 +27,13 @@ export function removeEmptyObjects(obj: Record<string, unknown>): void {
 
 /**
  * Recursively removes all properties with `undefined` as its value from the given object.
+ *
+ * NOTE: A near-duplicate of this helper lives in `@enbox/common/object.ts`.
+ * The DWN engine keeps its own copy intentionally so this package stays
+ * self-contained for upstream syncs; do not replace this with an import from
+ * `@enbox/common`. If you need a non-mutating / typed variant, use
+ * `omitUndefined` from `@enbox/common` in the higher-level package rather
+ * than adding a third variant here.
  */
 export function removeUndefinedProperties(obj: Record<string, unknown>): void {
   Object.keys(obj).forEach(key => {

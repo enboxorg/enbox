@@ -1,4 +1,4 @@
-import type { EnboxAgent } from './types/agent.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 
 /** Lightweight metadata about the identity bound to an agent session. */
 export interface AgentSessionIdentity {
@@ -19,10 +19,16 @@ export interface AgentSessionIdentity {
  * a custom flow — has at least these three primitives. `@enbox/api` and other
  * downstream packages depend on this base type rather than re-declaring the
  * same fields, so any change to the session shape happens in one place.
+ *
+ * `agent` is typed as {@link EnboxPlatformAgent} rather than the narrow
+ * `EnboxAgent` because every real session is bound to a platform-shaped
+ * agent (vault, sync, secrets are required for session lifecycle). This
+ * lets consumers like `@enbox/api` call `session.agent.sync.stopSync()`
+ * without a runtime guard or unsafe cast.
  */
 export type AgentSessionPrimitives = {
   /** The authenticated Enbox agent managing keys, DIDs, and DWN access. */
-  agent: EnboxAgent;
+  agent: EnboxPlatformAgent;
 
   /** The DID URI of the connected identity. */
   did: string;
@@ -48,7 +54,7 @@ export type AgentSessionParams = AgentSessionPrimitives & {
  */
 export class AgentSession {
   /** The authenticated Enbox agent managing keys, DIDs, and DWN access. */
-  public readonly agent: EnboxAgent;
+  public readonly agent: EnboxPlatformAgent;
 
   /** The DID URI of the connected identity. */
   public readonly did: string;

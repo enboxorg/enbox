@@ -3,6 +3,14 @@
  *
  * Replaces `Enbox.connect()` (formerly `Web5.connect()`) with a composable,
  * multi-identity-aware auth system that works in both browser and CLI environments.
+ *
+ * NOTE: this file is also exposed as the `@enbox/auth/auth-manager` subpath
+ * export so `@enbox/api` can import the AuthManager class without pulling in
+ * the full barrel. The subpath is **internal to the monorepo** — external
+ * consumers should import from `@enbox/auth` (or `@enbox/browser`) instead;
+ * the subpath's file layout is not part of any stability guarantee.
+ *
+ * @internal
  * @module
  */
 
@@ -307,6 +315,7 @@ export class AuthManager {
    * This replaces the manual `previouslyConnected` localStorage pattern.
    */
   async restoreSession(options?: RestoreSessionOptions): Promise<AuthSession | undefined> {
+    this._guardShutdown();
     this._guardConcurrency();
     this._isConnecting = true;
 
@@ -347,6 +356,7 @@ export class AuthManager {
    * ```
    */
   async connectHeadless(options?: HeadlessConnectOptions): Promise<AuthSession> {
+    this._guardShutdown();
     let password = options?.password ?? this._defaultPassword;
     const isFirstLaunch = await this._userAgent.firstLaunch();
 
@@ -956,41 +966,55 @@ export class AuthManager {
   /**
    * Determine whether the given options indicate a local connect flow.
    *
-   * Handler signals take precedence: passing `protocols` or `connectHandler`
-   * routes to the handler-based flow even when local-style defaults like
-   * `password` or `dwnEndpoints` are also present. This matches caller
-   * intent — explicit handler options are a strong signal that wallet /
-   * cross-device connect is desired, with local-style keys acting as
-   * manager-wide defaults or fallbacks rather than overriding the flow.
-   *
-   * Local connect is the fallback for every other input shape, including
-   * the no-options case. `password`, `createIdentity`, `recoveryPhrase`,
-   * `dwnEndpoints`, and `metadata` route to local because the absence of
-   * handler signals is sufficient — the function only needs to assert that
-   * no handler signal is set.
+   * Routing is decided by the inverse of {@link AuthManager._isHandlerConnect}:
+   * if no handler signal is present, the local flow runs. Local connect is
+   * the fallback for every input shape — `password`, `createIdentity`,
+   * `recoveryPhrase`, `dwnEndpoints`, `metadata`, and the no-options case
+   * all route to local because the absence of handler signals is sufficient.
    *
    * Acts as a TypeScript type guard: a `true` return narrows `options` to
    * `LocalConnectOptions | undefined` at call sites, so the routing in
    * {@link AuthManager.connect} can dispatch without unsafe casts.
    */
   private _isLocalConnect(options?: ConnectOptions): options is LocalConnectOptions | undefined {
-    if (options === undefined) { return true; }
+    return !AuthManager._isHandlerConnect(options);
+  }
 
-    // Handler signals win when present, regardless of any local-style keys.
-    if ('protocols' in options && options.protocols !== undefined) { return false; }
-    if ('connectHandler' in options && options.connectHandler !== undefined) { return false; }
-
-    return true;
+  /**
+   * Determine whether the given options indicate a handler-based connect flow.
+   *
+   * Positive narrowing: handler intent is asserted by the presence of a
+   * non-empty `protocols` array OR a non-null `connectHandler`. An empty
+   * `protocols` array is intentionally NOT a handler signal — it carries no
+   * permission scopes for the handler to authorize, so treating it as
+   * handler-flow would produce a zero-grant "connected" session
+   * indistinguishable from a denied connect. Handler signals take precedence
+   * over any local-style defaults that may also be present on the same
+   * options object. The checks tolerate `null` (JS callers may pass it) by
+   * using `Array.isArray` and truthiness, so neither value triggers a
+   * routing crash.
+   */
+  private static _isHandlerConnect(options?: ConnectOptions): options is HandlerConnectOptions {
+    if (options === undefined || options === null) { return false; }
+    const protocols = (options as HandlerConnectOptions).protocols;
+    if (Array.isArray(protocols) && protocols.length > 0) { return true; }
+    const handler = (options as HandlerConnectOptions).connectHandler;
+    if (handler !== undefined && handler !== null) { return true; }
+    return false;
   }
 
   /**
    * Run a handler-based (delegated) connect flow.
    *
-   * 1. Initialize the vault (agent-only, no identity).
-   * 2. Normalize protocol permission requests.
-   * 3. Delegate to the connect handler for credential acquisition.
-   * 4. Import the delegate DID, process grants, set up sync.
-   * 5. Finalize and return the AuthSession.
+   * Handler resolution happens BEFORE any vault I/O so a misconfigured call
+   * (no handler reachable) fails fast without mutating on-disk state.
+   *
+   * 1. Resolve the connect handler (fast-fail when none is reachable).
+   * 2. Initialize the vault (agent-only, no identity).
+   * 3. Normalize protocol permission requests.
+   * 4. Delegate to the connect handler for credential acquisition.
+   * 5. Import the delegate DID, process grants, set up sync.
+   * 6. Finalize and return the AuthSession.
    */
   private async _handlerConnect(
     options?: HandlerConnectOptions,
@@ -999,15 +1023,8 @@ export class AuthManager {
     const { userAgent, emitter, storage } = ctx;
     const sync = options?.sync ?? ctx.defaultSync;
 
-    // 1. Initialize vault (agent-only, no identity).
-    const isFirstLaunch = await userAgent.firstLaunch();
-    const password = await resolvePassword(ctx, undefined, isFirstLaunch);
-    await ensureVaultReady({ userAgent, emitter, password, isFirstLaunch });
-
-    // 2. Normalize protocol requests.
-    const permissionRequests = normalizeProtocolRequests(options?.protocols);
-
-    // 3. Resolve the handler.
+    // 1. Resolve the handler FIRST. Anything past this point may mutate the
+    //    vault on disk, so misconfiguration must fail before that happens.
     const handler = options?.connectHandler ?? this._connectHandler;
     if (!handler) {
       throw new Error(
@@ -1016,6 +1033,16 @@ export class AuthManager {
         'or provide a custom ConnectHandler.'
       );
     }
+
+    // 2. Initialize vault (agent-only, no identity). The per-call password
+    //    (when supplied via `HandlerConnectOptions.password`) wins over the
+    //    manager default, matching the behavior of the local-connect flow.
+    const isFirstLaunch = await userAgent.firstLaunch();
+    const password = await resolvePassword(ctx, options?.password, isFirstLaunch);
+    await ensureVaultReady({ userAgent, emitter, password, isFirstLaunch });
+
+    // 3. Normalize protocol requests.
+    const permissionRequests = normalizeProtocolRequests(options?.protocols);
 
     // 4. Delegate to the handler.
     const result = await handler.requestAccess({ permissionRequests });
@@ -1068,8 +1095,13 @@ export class AuthManager {
    * Consolidates the duplicated concurrency guard, `_isConnecting` flag management,
    * session assignment, and state transition across `connect()`, `walletConnect()`,
    * `importFromPhrase()`, and `importFromPortable()`.
+   *
+   * Also short-circuits if the manager has already been shut down — using
+   * a closed manager would otherwise fail deep inside sync/storage with an
+   * unhelpful error.
    */
   private async _withConnect(fn: () => Promise<AuthSession>): Promise<AuthSession> {
+    this._guardShutdown();
     this._guardConcurrency();
     this._isConnecting = true;
 
@@ -1181,6 +1213,15 @@ export class AuthManager {
       throw new Error(
         '[@enbox/auth] A connection attempt is already in progress. ' +
         'Wait for it to complete before starting another.'
+      );
+    }
+  }
+
+  private _guardShutdown(): void {
+    if (this._isShutDown) {
+      throw new Error(
+        '[@enbox/auth] AuthManager has been shut down and cannot be reused. ' +
+        'Create a new instance via AuthManager.create().'
       );
     }
   }

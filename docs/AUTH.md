@@ -609,7 +609,7 @@ Pass the session to `@enbox/api`:
 const enbox = Enbox.fromSession(session);
 
 // Or manually:
-const enbox = Enbox.from({
+const enbox = new Enbox({
   agent:        session.agent,
   connectedDid: session.did,
   delegateDid:  session.delegateDid,

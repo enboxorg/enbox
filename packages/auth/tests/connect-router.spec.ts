@@ -42,8 +42,15 @@ describe('_isLocalConnect heuristic (tested via reflection)', () => {
     expect(isLocalConnect({ metadata: { name: 'Alice' } })).toBe(true);
   });
 
-  test('protocols option → handler connect', () => {
-    expect(isLocalConnect({ protocols: [] })).toBe(false);
+  test('non-empty protocols option → handler connect', () => {
+    expect(isLocalConnect({ protocols: [{ protocol: 'x', published: true, types: {}, structure: {} } as any] })).toBe(false);
+  });
+
+  test('empty protocols array → local connect (no scopes for handler to authorize)', () => {
+    // An empty array carries no permission intent; treating it as a handler
+    // signal would produce a zero-grant "connected" session that's
+    // indistinguishable from a denied connect.
+    expect(isLocalConnect({ protocols: [] })).toBe(true);
   });
 
   test('connectHandler option → handler connect', () => {
@@ -55,8 +62,9 @@ describe('_isLocalConnect heuristic (tested via reflection)', () => {
     expect(isLocalConnect({ sync: '15s' })).toBe(true);
   });
 
-  test('protocols + password → handler connect (handler signal wins)', () => {
-    expect(isLocalConnect({ protocols: [], password: 'test' })).toBe(false);
+  test('non-empty protocols + password → handler connect (handler signal wins)', () => {
+    const proto = { protocol: 'x', published: true, types: {}, structure: {} } as any;
+    expect(isLocalConnect({ protocols: [proto], password: 'test' })).toBe(false);
   });
 
   test('connectHandler + createIdentity → handler connect (handler signal wins)', () => {
@@ -64,11 +72,25 @@ describe('_isLocalConnect heuristic (tested via reflection)', () => {
     expect(isLocalConnect({ connectHandler: handler, createIdentity: true })).toBe(false);
   });
 
-  test('protocols + dwnEndpoints + metadata → handler connect (handler signal wins)', () => {
+  test('non-empty protocols + dwnEndpoints + metadata → handler connect (handler signal wins)', () => {
+    const proto = { protocol: 'x', published: true, types: {}, structure: {} } as any;
     expect(isLocalConnect({
-      protocols    : [],
+      protocols    : [proto],
       dwnEndpoints : ['https://dwn.example.com'],
       metadata     : { name: 'Alice' },
     })).toBe(false);
+  });
+
+  test('protocols: null is treated as no handler signal → local connect', () => {
+    // Defensive: a caller using JS may pass null. `'protocols' in options &&
+    // options.protocols !== undefined` would be true for null, but
+    // null.length throws — guarding via length > 0 also covers this.
+    expect(isLocalConnect({ protocols: null as any })).toBe(true);
+  });
+
+  test('connectHandler: null → local connect', () => {
+    // The `!== undefined` predicate intentionally tolerates explicit-null
+    // handler. A null handler is not actionable, so route to local.
+    expect(isLocalConnect({ connectHandler: null as any })).toBe(true);
   });
 });

@@ -439,4 +439,60 @@ describe('localConnect', () => {
     expect(startSyncCalls).toHaveLength(1);
     expect(startSyncCalls[0]).toEqual({ mode: 'live', interval: '5m' });
   });
+
+  test('empty-string password fires the security warning (regression for #12)', async () => {
+    // Empty string previously survived `??=` nullish-coalescing in
+    // resolvePassword and reached `userAgent.initialize` silently — leaving
+    // the vault encrypted with nothing. The warning now fires whenever
+    // the effective password has zero length, in addition to the
+    // INSECURE_DEFAULT_PASSWORD branch.
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]): void => { warnings.push(args.join(' ')); };
+    try {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      const agent = createMockAgent({
+        firstLaunch  : async () => true,
+        initialize   : async () => 'phrase',
+        identityList : async () => [],
+      });
+
+      await localConnect(
+        { userAgent: agent, emitter, storage },
+        { password: '' },
+      );
+
+      expect(warnings.some((w) => w.includes('SECURITY WARNING') && w.includes('empty string'))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test('no-password (insecure default) still fires the security warning', async () => {
+    // Companion to the empty-string case above — verifies the original
+    // INSECURE_DEFAULT_PASSWORD branch is still triggered when no
+    // password is supplied anywhere.
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]): void => { warnings.push(args.join(' ')); };
+    try {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      const agent = createMockAgent({
+        firstLaunch  : async () => true,
+        initialize   : async () => 'phrase',
+        identityList : async () => [],
+      });
+
+      await localConnect(
+        { userAgent: agent, emitter, storage },
+        {},
+      );
+
+      expect(warnings.some((w) => w.includes('SECURITY WARNING'))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
 });

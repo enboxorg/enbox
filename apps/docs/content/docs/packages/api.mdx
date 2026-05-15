@@ -29,7 +29,7 @@ const { enbox, session } = await Enbox.connect({ createIdentity: true });
 const enbox = Enbox.fromSession(session);
 ```
 
-For raw agent integration, use `Enbox.from({ agent, connectedDid })`.
+For raw agent integration, use the public constructor: `new Enbox({ agent, connectedDid })`.
 
 The `Enbox` instance exposes:
 

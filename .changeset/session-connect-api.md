@@ -1,10 +1,45 @@
 ---
 "@enbox/agent": minor
-"@enbox/api": minor
-"@enbox/auth": patch
+"@enbox/api": major
+"@enbox/auth": minor
 "@enbox/browser": patch
+"@enbox/common": minor
 ---
 
 Add shared agent sessions and high-level Enbox connection helpers.
 
-`@enbox/agent` now exports `AgentSession` plus the `AgentSessionPrimitives` base, so the minimal `{ agent, did, delegateDid? }` session shape lives in one place. `@enbox/auth` keeps `AuthSession` as a compatible subclass and exposes the `@enbox/auth/auth-manager` subpath. `@enbox/api` adds three single-purpose factories: synchronous `Enbox.from(params)` for raw `{ agent, connectedDid }`, synchronous `Enbox.fromSession(session)` for any session-shaped object, and asynchronous `Enbox.connect(options?)` that creates an `AuthManager`, runs `auth.connect()`, and returns `{ auth, enbox, session }`. The three factories have non-overlapping inputs and a single return type each — no polymorphic overload, no `'X' in params` dispatch, no input-shape silent fallthrough. `AuthManager.connect()` continues to prefer handler routing when handler signals (`protocols`, `connectHandler`) are present alongside local-style defaults. `@enbox/browser` re-exports the new `EnboxSession*` / `EnboxConnect*` types so dapps don't have to reach into `@enbox/api` for explicit annotations.
+**Breaking changes** (pre-1.0; documented here per AGENTS.md):
+
+- **`Enbox.connect()` signature changed from synchronous → async.** It now returns `Promise<{ auth, enbox, session }>` instead of `Enbox`. Code like `const enbox = Enbox.connect({ session })` must migrate to either `const enbox = Enbox.fromSession(session)` (caller-owned session) or `const { enbox } = await Enbox.connect({...})` (high-level managed flow). `@enbox/api` is bumped **major** because of this.
+- **`AuthManager._isLocalConnect()` precedence flipped.** Handler signals (`protocols`, `connectHandler`) now win over local-style defaults (`password`, `dwnEndpoints`, `metadata`, `createIdentity`, `recoveryPhrase`). A non-empty `protocols` array OR a `connectHandler` selects the handler flow; everything else (including the no-options case, an empty `protocols: []`, and a `null` handler) routes to local. `@enbox/auth` is bumped **minor**.
+- **`AgentSessionPrimitives.agent` widened from `EnboxAgent` to `EnboxPlatformAgent`.** Every real session is bound to a platform-shaped agent (vault, sync, secrets), so the previous narrow type lied about what consumers could call. Code that constructed an `AgentSession`/`AuthSession` with a non-platform `EnboxAgent` will need to pass a platform agent.
+
+**New surface in `@enbox/agent`:**
+
+- `AgentSession` class plus the `AgentSessionPrimitives` base, so the minimal `{ agent, did, delegateDid? }` session shape lives in one place.
+
+**New surface in `@enbox/api`:**
+
+- `Enbox.fromSession(session)` — synchronous, accepts any session-shaped object (including `AuthSession` and custom shapes).
+- `Enbox.connect(options?)` — asynchronous, creates an `AuthManager`, runs `auth.connect()`, and returns `{ auth, enbox, session }`. Owns the `AuthManager` lifecycle: a single `await enbox.disconnect()` tears down vault + storage + sync.
+- For raw `{ agent, connectedDid }` access, use `new Enbox(params)` (the public constructor — `Enbox.from()` from earlier iterations of this PR was removed).
+- `EnboxConnectOptions` flat-intersects manager + per-call options with an optional `connectOverride` slot. An empty `connectOverride: {}` is treated as "no override" so it can't accidentally bypass smart routing or a manager-level `connectHandler`.
+- Concurrency guard: two parallel `Enbox.connect()` invocations against the same `dataPath` reject the second with a clear domain-level error instead of racing on the LevelDB lock.
+- `auth.shutdown()` failures during error recovery are now surfaced via `console.warn` while the original `connect` error still propagates.
+
+**New surface in `@enbox/auth`:**
+
+- `AuthSession` is now an alias for `AgentSession` from `@enbox/agent` (`export { AgentSession as AuthSession }`). The constructor contract is unchanged; `instanceof` checks succeed against both names.
+- `IdentityInfo` is a `@deprecated` alias for `AgentSessionIdentity`.
+- `HandlerConnectOptions.password?` accepts a per-call password override (previously silently dropped).
+- The auth-manager exposes the `@enbox/auth/auth-manager` subpath; it's marked `@internal` and is intended for monorepo use only.
+- `_handlerConnect` now resolves the connect handler **before** initializing the vault, so a misconfigured handler-flow call cannot leak an initialized vault to disk.
+- `_isLocalConnect` rewritten as a TypeScript type-guard with companion `_isHandlerConnect`. The handler predicate uses positive narrowing: a non-empty `protocols` array OR a non-null `connectHandler` selects handler flow.
+- All `connect` / `restoreSession` / `connectHeadless` entry points guard against re-use after `shutdown()` and throw a clear domain error rather than failing deep in sync/storage internals.
+- The "no password set" security warning now also fires when an explicit empty-string password is supplied.
+
+**New surface in `@enbox/common`:**
+
+- `omitUndefined<T>(input)` — immutable, shallow, typed companion to `removeUndefinedProperties` (which remains mutating and recursive). Use the variant that matches the call site.
+
+**`@enbox/browser`** re-exports the new `EnboxSession*` / `EnboxConnect*` types so dapps don't have to reach into `@enbox/api` for explicit annotations.

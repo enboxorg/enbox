@@ -4,9 +4,9 @@
  */
 /// <reference types="@enbox/dwn-sdk-js" />
 
+import type { EnboxPlatformAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { AuthManagerOptions, ConnectOptions, HandlerConnectOptions, LocalConnectOptions } from '@enbox/auth';
-import type { EnboxAgent, SyncEngine } from '@enbox/agent';
+import type { AuthManagerOptions, ConnectOptions } from '@enbox/auth';
 
 import type {
   EnboxAnonymousApi,
@@ -21,6 +21,7 @@ import type { SchemaMap, TypedProtocol } from './protocol-types.js';
 import { AnonymousDwnApi } from '@enbox/agent';
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
+import { omitUndefined } from '@enbox/common';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
 import { DidApi } from './did-api.js';
@@ -30,41 +31,20 @@ import { TypedEnbox } from './typed-enbox.js';
 import { VcApi } from './vc-api.js';
 
 /**
- * Returns a new object containing only the entries of `input` whose values
- * are not `undefined`. Pure — never mutates the input.
- */
-function omitUndefined<T extends object>(input: T): Partial<T> {
-  const result: Partial<T> = {};
-  for (const key of Object.keys(input) as (keyof T)[]) {
-    const value = input[key];
-    if (value !== undefined) {
-      result[key] = value;
-    }
-  }
-  return result;
-}
-
-/** Subset of {@link EnboxPlatformAgent} required to stop background sync. */
-type AgentWithSync = { sync: Pick<SyncEngine, 'stopSync'> };
-
-/**
- * Type guard for agents that expose the sync engine.
+ * Module-level registry of in-flight {@link Enbox.connect} calls, keyed by
+ * the resolved data path (or a sentinel for "default path").
  *
- * The narrow {@link EnboxAgent} interface does not declare `sync`, but every
- * platform agent shipped in this repo does. Walk the unknown property with
- * `in`-narrowing and `typeof` checks so the call site in
- * {@link Enbox.disconnect} can call `agent.sync.stopSync()` against a fully
- * narrowed type — no `as` cast needed.
+ * `AuthManager.create()` opens LevelDB handles at the agent's `dataPath`;
+ * LevelDB enforces an exclusive lock per directory, so two parallel
+ * `Enbox.connect()` invocations on the same path would race on the lock
+ * and surface a cryptic `LEVEL_LOCKED` error to the caller. The registry
+ * detects the race at the API boundary and throws a clear, domain-level
+ * error instead. Custom `storage` adapters that don't share a path with
+ * the agent's vault can still race below this guard — but for the default
+ * path that every dapp uses, this catches the common case.
  */
-function hasSync(agent: EnboxAgent): agent is EnboxAgent & AgentWithSync {
-  return (
-    'sync' in agent
-    && typeof agent.sync === 'object'
-    && agent.sync !== null
-    && 'stopSync' in agent.sync
-    && typeof agent.sync.stopSync === 'function'
-  );
-}
+const DEFAULT_DATA_PATH_KEY = '\x00default\x00';
+const inflightConnects = new Map<string, Promise<unknown>>();
 
 /**
  * The main Enbox API interface. It provides protocol-scoped access to
@@ -72,8 +52,8 @@ function hasSync(agent: EnboxAgent): agent is EnboxAgent & AgentWithSync {
  * and Verifiable Credentials (VCs).
  *
  * For common app flows, use the asynchronous {@link Enbox.connect} helper.
- * For custom auth/session flows, use {@link Enbox.fromSession} or
- * {@link Enbox.from} with existing session primitives.
+ * For custom auth/session flows, use {@link Enbox.fromSession} with an
+ * existing session, or the public constructor with raw `{ agent, connectedDid }`.
  *
  * @example
  * ```ts
@@ -89,10 +69,13 @@ function hasSync(agent: EnboxAgent): agent is EnboxAgent & AgentWithSync {
  */
 export class Enbox {
   /**
-   * A {@link EnboxAgent} instance that handles DIDs, DWNs and VCs requests. The agent manages the
-   * user keys and identities, and is responsible to sign and verify messages.
+   * The {@link EnboxPlatformAgent} this instance is bound to. The platform
+   * agent handles DIDs, DWN access, signing keys, and DWN sync — every
+   * Enbox session needs all of those, so the type is narrower than the
+   * minimal {@link EnboxAgent} interface and the constructor refuses
+   * non-platform agents at compile time.
    */
-  public agent: EnboxAgent;
+  public agent: EnboxPlatformAgent;
 
   /** Exposed instance to the DID APIs, allow users to create and resolve DIDs. */
   public did: DidApi;
@@ -111,6 +94,14 @@ export class Enbox {
 
   /** Exposed instance to the VC APIs, allow users to issue, present and verify VCs. */
   public vc: VcApi;
+
+  /**
+   * The `AuthManager` this instance owns and is responsible for tearing down
+   * during {@link Enbox.disconnect}. Set only by the async
+   * {@link Enbox.connect} factory; never populated by the public constructor,
+   * {@link Enbox.from}, or {@link Enbox.fromSession}.
+   */
+  private _ownedAuth?: AuthManager;
 
   constructor({ agent, connectedDid, delegateDid }: EnboxParams) {
     this.agent = agent;
@@ -165,39 +156,55 @@ export class Enbox {
   }
 
   /**
-   * Stops DWN sync and clears the cached {@link TypedEnbox} instances.
+   * Stops DWN sync, clears the cached {@link TypedEnbox} instances, and (if
+   * this instance was created via the async {@link Enbox.connect} factory)
+   * shuts down the underlying `AuthManager` so vault and storage handles are
+   * released. After calling `disconnect()`, the `Enbox` instance should not
+   * be reused.
    *
-   * Call this when the application is shutting down or the user is
-   * disconnecting to cleanly release background resources. After calling
-   * `disconnect()`, the `Enbox` instance should not be reused.
-   *
-   * This method only tears down the Enbox-side state. When the instance was
-   * created via the async {@link Enbox.connect} flow, the returned
-   * `AuthManager` owns the vault and storage handles — call
-   * `auth.shutdown()` (or `auth.disconnect()` to keep the vault) in addition
-   * to `enbox.disconnect()` for a clean shutdown.
+   * When the instance was created from a caller-owned session
+   * ({@link Enbox.fromSession}) or raw agent ({@link Enbox.from} or the
+   * public constructor), this method only tears down Enbox-side state — the
+   * caller remains responsible for the agent / `AuthManager` lifecycle.
    *
    * @param timeout - Maximum milliseconds to wait for an in-progress sync
    *   cycle to finish before force-stopping. Defaults to `2000`.
    *
    * @example
    * ```ts
-   * // Full teardown when using the async Enbox.connect() flow
-   * const { enbox, auth } = await Enbox.connect({ createIdentity: true });
-   * // ...
+   * // High-level flow: a single disconnect() does the full teardown.
+   * const { enbox } = await Enbox.connect({ createIdentity: true });
    * await enbox.disconnect();
-   * await auth.shutdown();
+   *
+   * // Caller-owned auth: shut down separately when you're done.
+   * const auth = await AuthManager.create({...});
+   * const session = await auth.connect();
+   * const enbox = Enbox.fromSession(session);
+   * await enbox.disconnect();   // Enbox-side only
+   * await auth.shutdown();      // caller's responsibility
    * ```
    *
    * @beta
    */
   public async disconnect(timeout?: number): Promise<void> {
-    if (hasSync(this.agent)) {
-      await this.agent.sync.stopSync(timeout);
-    }
+    await this.agent.sync.stopSync(timeout);
 
     // Clear cached TypedEnbox instances so they are not accidentally reused.
     this._typedInstances.clear();
+
+    // If this Enbox owns the AuthManager (created via Enbox.connect), tear
+    // it down too — the caller has no other handle to release vault /
+    // storage / sync handles. shutdown() is idempotent and best-effort, so
+    // a failure here doesn't propagate; we surface it for diagnosis.
+    if (this._ownedAuth !== undefined) {
+      const owned = this._ownedAuth;
+      this._ownedAuth = undefined;
+      try {
+        await owned.shutdown({ timeout });
+      } catch (error: unknown) {
+        console.warn('[@enbox/api] Enbox.disconnect: AuthManager.shutdown() failed', error);
+      }
+    }
   }
 
   /**
@@ -241,19 +248,15 @@ export class Enbox {
   }
 
   /**
-   * Creates an {@link Enbox} instance from raw agent + DID parameters.
-   *
-   * Use this when you own the agent and connected DID lifecycle yourself.
-   */
-  public static from(params: EnboxParams): Enbox {
-    return new Enbox(params);
-  }
-
-  /**
    * Creates an {@link Enbox} instance from a session-shaped object.
    *
    * Accepts `AuthSession`, `AgentSession`, or any compatible custom session
-   * with `{ agent, did, delegateDid? }`.
+   * with `{ agent, did, delegateDid? }`. This is the right entry point
+   * whenever you already hold an active session — including ones produced by
+   * a caller-managed `AuthManager`.
+   *
+   * For raw `{ agent, connectedDid }` access (no session shape), use the
+   * public constructor directly: `new Enbox({ agent, connectedDid })`.
    */
   public static fromSession(session: EnboxSessionParams): Enbox {
     return new Enbox({
@@ -268,17 +271,19 @@ export class Enbox {
    * `auth.connect()`, and returns the resulting `{ auth, session, enbox }`.
    *
    * For callers that already own an agent and DID, use the dedicated
-   * synchronous factories instead:
-   * - {@link Enbox.from} for raw `{ agent, connectedDid }` parameters
+   * synchronous entry points instead:
+   * - `new Enbox({ agent, connectedDid })` for raw parameters
    * - {@link Enbox.fromSession} for session-shaped objects
    *
-   * When `options` contains handler signals (`protocols` or `connectHandler`)
-   * alongside local-style defaults (`password`, `dwnEndpoints`, `metadata`,
-   * `createIdentity`, `recoveryPhrase`), handler routing wins: the local-only
-   * keys are still forwarded to `AuthManager.create()` as manager-wide
-   * defaults, but the per-call `auth.connect()` payload contains only the
-   * handler-relevant keys. Pass an explicit `connect` slot to override that
-   * normalization.
+   * Routing happens at runtime inside `AuthManager._isLocalConnect`:
+   * presence of a non-empty `protocols` array or a `connectHandler` selects
+   * the handler flow; everything else routes to local. Local-style fields
+   * (`password`, `dwnEndpoints`, etc.) are forwarded to both the manager
+   * (as defaults) and the per-call payload, so behavior is consistent with
+   * restored sessions.
+   *
+   * Pass an explicit {@link EnboxConnectOptions.connectOverride} (non-empty)
+   * to fully replace the auto-derived per-call payload.
    *
    * @example
    * ```ts
@@ -289,73 +294,129 @@ export class Enbox {
    * ```
    */
   public static async connect(options: EnboxConnectOptions = {}): Promise<EnboxConnectResult> {
-    const auth = await AuthManager.create(Enbox.toAuthManagerOptions(options));
+    // Cross-instance concurrency guard. `AuthManager.create()` opens the
+    // agent's LevelDB at `options.dataPath` (or the platform default), and
+    // LevelDB enforces an exclusive `LOCK` file per directory — two
+    // parallel calls on the same path would otherwise race and surface
+    // `LEVEL_LOCKED` as a low-level error. Skip the guard when a custom
+    // `storage` adapter is provided (it may use a different on-disk
+    // surface than the agent vault) or a pre-built `agent` is supplied
+    // (no new handles are opened).
+    const shouldGuard = options.agent === undefined && options.storage === undefined;
+    const key = options.dataPath ?? DEFAULT_DATA_PATH_KEY;
 
-    try {
-      const session = await auth.connect(Enbox.toAuthConnectOptions(options));
-      const enbox = Enbox.fromSession(session);
+    if (shouldGuard && inflightConnects.has(key)) {
+      throw new Error(
+        `[@enbox/api] Enbox.connect() is already in progress for dataPath '${
+          options.dataPath ?? '<default>'
+        }'. Await the in-flight call before starting another, or pass a custom dataPath.`
+      );
+    }
 
-      return { auth, enbox, session };
-    } catch (error: unknown) {
+    const run = async (): Promise<EnboxConnectResult> => {
+      const auth = await AuthManager.create(Enbox.toAuthManagerOptions(options));
+
       try {
-        await auth.shutdown();
-      } catch {
-        // Preserve the original connection failure.
+        const session = await auth.connect(Enbox.toAuthConnectOptions(options));
+        const enbox = Enbox.fromSession(session);
+        // Hand AuthManager ownership to Enbox so a single `enbox.disconnect()`
+        // tears down vault / storage / sync without callers having to know
+        // about AuthManager. Callers who want manual control can still use
+        // `result.auth` (e.g. for `auth.lock()` between flows).
+        enbox._ownedAuth = auth;
+
+        return { auth, enbox, session };
+      } catch (error: unknown) {
+        try {
+          await auth.shutdown();
+        } catch (shutdownError: unknown) {
+          // Surface the recovery failure for diagnosis but preserve the
+          // original connect rejection on the rethrow path below.
+          console.warn(
+            '[@enbox/api] Enbox.connect: auth.shutdown() failed during error recovery',
+            shutdownError,
+          );
+        }
+        throw error;
       }
-      throw error;
+    };
+
+    if (!shouldGuard) {
+      return run();
+    }
+
+    const promise = run();
+    inflightConnects.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      inflightConnects.delete(key);
     }
   }
 
+  /**
+   * Split `EnboxConnectOptions` into the manager-wide defaults that
+   * `AuthManager.create()` consumes by stripping out per-call signals.
+   *
+   * Implemented as a **denylist** rather than an allowlist: any new
+   * field added to {@link AuthManagerOptions} flows through automatically
+   * without needing a corresponding edit here. The fields removed below
+   * are the only ones that don't belong on `AuthManagerOptions`.
+   */
   private static toAuthManagerOptions(options: EnboxConnectOptions): AuthManagerOptions {
-    return omitUndefined<AuthManagerOptions>({
-      agent            : options.agent,
-      agentVault       : options.agentVault,
-      localDwnStrategy : options.localDwnStrategy,
-      dataPath         : options.dataPath,
-      storage          : options.storage,
-      password         : options.password,
-      passwordProvider : options.passwordProvider,
-      sync             : options.sync,
-      dwnEndpoints     : options.dwnEndpoints,
-      registration     : options.registration,
-      connectHandler   : options.connectHandler,
-    });
+    const {
+      // Per-call connect signals (handled by `toAuthConnectOptions`).
+      protocols      : _protocols,
+      recoveryPhrase : _recoveryPhrase,
+      createIdentity : _createIdentity,
+      metadata       : _metadata,
+      // Override slot (handled by `toAuthConnectOptions`).
+      connectOverride: _connectOverride,
+      ...managerOptions
+    } = options;
+    return omitUndefined<AuthManagerOptions>(managerOptions);
   }
 
+  /**
+   * Split `EnboxConnectOptions` into the per-call payload that
+   * `AuthManager.connect()` consumes.
+   *
+   * Honors an explicit {@link EnboxConnectOptions.connectOverride}
+   * (non-empty) verbatim; otherwise strips manager-only fields and
+   * forwards the rest. Routing between local and handler flow happens
+   * inside `AuthManager._isLocalConnect`, so this function intentionally
+   * doesn't pre-split — that lets new connect options flow through
+   * without a coordinated edit here. An empty `connectOverride: {}` is
+   * treated as "no override" so callers can't accidentally bypass a
+   * manager-level handler.
+   */
   private static toAuthConnectOptions(options: EnboxConnectOptions): ConnectOptions | undefined {
-    if (options.connect !== undefined) {
-      return options.connect;
+    if (options.connectOverride !== undefined && Object.keys(options.connectOverride).length > 0) {
+      return options.connectOverride;
     }
 
-    const hasHandlerSignals =
-      options.protocols !== undefined || options.connectHandler !== undefined;
+    const {
+      // Manager-only fields are forwarded via `toAuthManagerOptions`.
+      agent            : _agent,
+      agentVault       : _agentVault,
+      localDwnStrategy : _localDwnStrategy,
+      dataPath         : _dataPath,
+      storage          : _storage,
+      passwordProvider : _passwordProvider,
+      registration     : _registration,
+      // Override slot (handled above).
+      connectOverride  : _connectOverride,
+      ...rest
+    } = options;
 
-    // Handler flow: forward only handler-relevant keys so the per-call
-    // options stay semantically clean. Local-style keys are still forwarded
-    // to `AuthManager.create()` via `toAuthManagerOptions` as manager-wide
-    // defaults. This is also defense in depth against a future regression
-    // in `AuthManager._isLocalConnect()` routing precedence.
-    if (hasHandlerSignals) {
-      return omitUndefined<HandlerConnectOptions>({
-        protocols      : options.protocols,
-        connectHandler : options.connectHandler,
-        sync           : options.sync,
-      });
+    // Drop `protocols: []` (an empty array carries no handler intent and
+    // would otherwise produce a zero-grant "connected" handler session)
+    // and any other undefined entries.
+    if (Array.isArray(rest.protocols) && rest.protocols.length === 0) {
+      delete (rest as { protocols?: unknown }).protocols;
     }
 
-    // Local flow: `password`, `sync`, and `dwnEndpoints` are intentionally
-    // forwarded to both `AuthManager.create()` (manager-wide defaults) and
-    // here (per-call overrides), keeping behavior consistent for restored
-    // sessions.
-    const local = omitUndefined<LocalConnectOptions>({
-      password       : options.password,
-      recoveryPhrase : options.recoveryPhrase,
-      sync           : options.sync,
-      dwnEndpoints   : options.dwnEndpoints,
-      metadata       : options.metadata,
-      createIdentity : options.createIdentity,
-    });
-
-    return Object.keys(local).length === 0 ? undefined : local;
+    const cleaned = omitUndefined(rest);
+    return Object.keys(cleaned).length === 0 ? undefined : (cleaned as ConnectOptions);
   }
 }

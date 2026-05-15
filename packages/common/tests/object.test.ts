@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { isEmptyObject, removeEmptyObjects, removeUndefinedProperties } from '../src/object.js';
+import { isEmptyObject, omitUndefined, removeEmptyObjects, removeUndefinedProperties } from '../src/object.js';
 
 describe('Object', () => {
 
@@ -85,6 +85,43 @@ describe('Object', () => {
       removeUndefinedProperties(mockObject);
 
       expect(mockObject).toEqual(expectedResult);
+    });
+  });
+
+  describe('omitUndefined()', () => {
+    it('returns a new object without `undefined` keys', () => {
+      const input = { a: 1, b: undefined, c: 'x' };
+      const result = omitUndefined(input);
+      expect(result).toEqual({ a: 1, c: 'x' });
+    });
+
+    it('does not mutate the input', () => {
+      const input = { a: 1, b: undefined };
+      const before = { ...input };
+      omitUndefined(input);
+      expect(input).toEqual(before);
+    });
+
+    it('preserves falsy values that are not `undefined`', () => {
+      const input = { zero: 0, empty: '', falseBool: false, nullVal: null };
+      expect(omitUndefined(input)).toEqual({ zero: 0, empty: '', falseBool: false, nullVal: null });
+    });
+
+    it('does not descend into nested objects', () => {
+      // Shallow by design — contrast with `removeUndefinedProperties`.
+      const input = { outer: { inner: undefined, kept: 1 } };
+      const result = omitUndefined(input);
+      expect(result).toEqual({ outer: { inner: undefined, kept: 1 } });
+    });
+
+    it('returns an empty object when every value is `undefined`', () => {
+      expect(omitUndefined({ a: undefined, b: undefined })).toEqual({});
+    });
+
+    it('preserves the typed shape of the input', () => {
+      type Opts = { foo?: string; bar?: number };
+      const result: Partial<Opts> = omitUndefined<Opts>({ foo: 'x', bar: undefined });
+      expect(result).toEqual({ foo: 'x' });
     });
   });
 
