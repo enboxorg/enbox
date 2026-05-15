@@ -285,90 +285,9 @@ bun run test:node
 bun run lint
 ```
 
-## Local Test Infrastructure
+## Local test infrastructure
 
-Several packages (`dids`, `agent`, `api`, `dwn-server`, `dwn-sql-store`) require external services to run their full test suites. **Always start test infrastructure before running tests.**
-
-### Quick start
-
-```bash
-# Start all test services (Pkarr relay, Postgres, MySQL, NATS):
-docker compose -f docker-compose.test.yaml up -d --wait
-
-# Set the Pkarr gateway env var (REQUIRED for did:dht tests):
-export DID_DHT_GATEWAY_URI=http://localhost:7527
-
-# Set the NATS URL (REQUIRED for dwn-server NatsEventLog tests):
-export NATS_URL=nats://localhost:4222
-```
-
-Without `DID_DHT_GATEWAY_URI`, tests in `agent`, `api`, `auth`, and `dids` that publish `did:dht` will fail with `DidError: internalError: Failed to put Pkarr record`. These are NOT real test failures — the tests are correct, they just need the gateway.
-
-### Services provided by `docker-compose.test.yaml`
-
-| Service | Container | Port | Used by |
-|---|---|---|---|
-| Pkarr relay | `enbox-test-pkarr` | `localhost:7527` | `dids`, `agent`, `api`, `auth` (did:dht publishing) |
-| PostgreSQL 15 | `enbox-test-postgres` | `localhost:5433` | `dwn-server`, `dwn-sql-store` |
-| PostgreSQL 13 | `enbox-test-postgres-sdk` | `localhost:5432` | `dwn-sql-store` (SDK test suite) |
-| MySQL 8 | `enbox-test-mysql` | `localhost:3306` | `dwn-sql-store` |
-| NATS JetStream | `enbox-test-nats` | `localhost:4222` | `dwn-server` (NatsEventLog plugin tests) |
-
-### DWN server
-
-A local DWN server on `localhost:3000` is required for `agent` and `api` tests. Check if it's running:
-
-```bash
-curl -sf http://localhost:3000/info && echo "DWN server is running"
-```
-
-If not running, start it (requires built packages):
-
-```bash
-export DID_DHT_GATEWAY_URI=http://localhost:7527
-export DS_PORT=3000
-export DWN_BASE_URL=http://localhost:3000
-export DWN_TTL_CACHE_URL="postgres://dwn_user:dwn_password@localhost:5433/dwn"
-export DWN_STORAGE_MESSAGES="postgres://dwn_user:dwn_password@localhost:5433/dwn"
-export DWN_STORAGE_DATA="postgres://dwn_user:dwn_password@localhost:5433/dwn"
-export DWN_STORAGE_STATE_INDEX="postgres://dwn_user:dwn_password@localhost:5433/dwn"
-export DWN_STORAGE_RESUMABLE_TASKS="postgres://dwn_user:dwn_password@localhost:5433/dwn"
-bun packages/dwn-server/dist/esm/src/main.js &
-```
-
-### Running tests with full infrastructure
-
-```bash
-# Ensure services are up:
-docker compose -f docker-compose.test.yaml up -d --wait
-export DID_DHT_GATEWAY_URI=http://localhost:7527
-
-# Now run tests — these will all pass:
-bun run --filter @enbox/agent test:node       # 748 pass, 0 fail
-bun run --filter @enbox/api test:node         # all pass
-bun run --filter @enbox/auth test:node        # all pass (same Pkarr env)
-bun run --filter @enbox/dids test:node        # all pass
-bun run --filter @enbox/dwn-sdk-js test:node  # 978 pass, 0 fail
-bun run --filter @enbox/dwn-server test:node  # set NATS_URL for NatsEventLog tests
-bun run --filter @enbox/dwn-sql-store test    # script is named `test`, not `test:node`
-```
-
-Alternatively, `./scripts/test-with-server.sh` automates the full cycle (start containers, build, run tests, tear down). If `did:dht` tests fail with `Failed to put Pkarr record`, the relay is not running.
-
-### CI coverage thresholds (for reference)
-
-All packages are above 90% line coverage in CI. If local coverage numbers look low, verify the test infrastructure is running.
-
-| Package | CI Coverage |
-|---|---|
-| `agent` | 90.3% |
-| `api` | 99.8% |
-| `common` | 95.7% |
-| `crypto` | 98.6% |
-| `dids` | 99.2% |
-| `dwn-sdk-js` | 98.9% |
-| `dwn-server` | 97.3% |
-| `dwn-sql-store` | 96.9% |
+Setting up Docker services (Pkarr relay, Postgres x2, MySQL, NATS, MinIO), required environment variables (`DID_DHT_GATEWAY_URI`, `NATS_URL`), running a local DWN server on `:3000`, browser-test setup, and CI coverage thresholds all live in [`docs/TESTING.md`](docs/TESTING.md). Read it before running the full test suite for `agent`, `api`, `auth`, `dids`, `dwn-server`, or `dwn-sql-store`, or before debugging a `Failed to put Pkarr record` error.
 
 ## Releasing & Publishing Packages
 
@@ -702,35 +621,12 @@ Conventions and patterns for Kysely-backed schema changes (DWN store domain + se
 
 Operational runbook for the dev/prod AWS deployment — CI/CD pipeline, manual ECR/ECS deploys, Dockerfile gotchas, Terraform plan/apply — lives in [`infra/DEPLOYMENT.md`](infra/DEPLOYMENT.md). The architecture itself (ALB, ECS, Aurora, S3, secret-sync) is described in [`infra/architecture.md`](infra/architecture.md). Read these before touching anything under `infra/`, shipping a `dwn-server` rollout, or adding a workspace package that the Dockerfile needs to copy.
 
-## Documentation Site
+## Documentation site
 
-The docs site lives at `apps/docs/` and is a **Fumadocs + Next.js** static site deployed to **Cloudflare Pages** at `https://enbox-docs.pages.dev` (future: `docs.enbox.id`).
-
-### Build & dev
-
-```bash
-bun run docs:dev        # Dev server on localhost:3000
-bun run docs:build      # Static export to apps/docs/out/
-```
-
-The docs site is excluded from the monorepo-wide `bun run build`, `bun run lint`, and `bun run test:node` commands. It uses Biome (not ESLint) and Next.js (not esbuild).
-
-### Content
-
-- `apps/docs/content/docs/` — MDX files (guides + API reference)
-- Sidebar ordering via `meta.json` files in each directory
-- Fumadocs MDX components: `<Cards>`, `<Card>`, `<Callout>`, `<Steps>`, `<Tabs>`
-
-### Design system
-
-The Fumadocs theme is overridden in `apps/docs/src/app/global.css` to map `--color-fd-*` CSS variables to Enbox design tokens. Dark mode is default. Fonts: Inter + JetBrains Mono.
-
-### Deployment
-
-CI workflow `.github/workflows/docs-deploy.yml` triggers on changes to `apps/docs/`, `docs/`, or `packages/*/src/**`. On push to `main`, it builds and deploys to Cloudflare Pages via `wrangler pages deploy`. Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets.
+Build/dev commands, MDX content layout, Fumadocs theming, and Cloudflare Pages deployment for the public docs site live in [`apps/docs/README.md`](apps/docs/README.md). Read it before editing `apps/docs/content/docs/`, changing the docs layout/theme, or debugging the docs CI workflow. The docs site is excluded from the monorepo's `bun run build`, `bun run lint`, and `bun run test:node` and uses Biome + Next.js instead.
 
 ## Related infrastructure
 
-- **Pkarr / DHT gateway** for `did:dht` tests: `docker-compose.test.yaml` (see [Local Test Infrastructure](#local-test-infrastructure)).
-- **Hosted DWN** (AWS): `infra/` and [AWS Infrastructure & Deployment](#aws-infrastructure--deployment) above.
+- **Pkarr / DHT gateway** for `did:dht` tests: `docker-compose.test.yaml` (see [`docs/TESTING.md`](docs/TESTING.md)).
+- **Hosted DWN** (AWS): [`infra/architecture.md`](infra/architecture.md) for what is deployed and [`infra/DEPLOYMENT.md`](infra/DEPLOYMENT.md) for how to deploy it.
 - **dwn-relay** is a **separate** repository (`enboxorg/dwn-relay`), not this monorepo.
