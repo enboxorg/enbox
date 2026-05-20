@@ -15,11 +15,11 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { BearerIdentity, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent } from '@enbox/agent';
+import type { AgentSessionIdentity, BearerIdentity, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
-import type { IdentityInfo, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
+import type { RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { Convert } from '@enbox/common';
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
@@ -841,8 +841,8 @@ export async function finalizeSession(params: {
   await Promise.all(storageWrites);
 
   // When identityName is undefined, no user identity exists (agent-only session).
-  // Build an IdentityInfo with the agent DID as a fallback.
-  const identityInfo: IdentityInfo = {
+  // Build an AgentSessionIdentity with the agent DID as a fallback.
+  const identityInfo: AgentSessionIdentity = {
     didUri       : connectedDid,
     name         : identityName ?? 'Agent',
     connectedDid : identityConnectedDid,

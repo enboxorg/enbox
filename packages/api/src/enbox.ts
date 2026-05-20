@@ -98,8 +98,8 @@ export class Enbox {
   /**
    * The `AuthManager` this instance owns and is responsible for tearing down
    * during {@link Enbox.disconnect}. Set only by the async
-   * {@link Enbox.connect} factory; never populated by the public constructor,
-   * {@link Enbox.from}, or {@link Enbox.fromSession}.
+   * {@link Enbox.connect} factory; never populated by the public constructor
+   * or {@link Enbox.fromSession}.
    */
   private _ownedAuth?: AuthManager;
 
@@ -163,9 +163,9 @@ export class Enbox {
    * be reused.
    *
    * When the instance was created from a caller-owned session
-   * ({@link Enbox.fromSession}) or raw agent ({@link Enbox.from} or the
-   * public constructor), this method only tears down Enbox-side state — the
-   * caller remains responsible for the agent / `AuthManager` lifecycle.
+   * ({@link Enbox.fromSession}) or raw agent (the public constructor),
+   * this method only tears down Enbox-side state — the caller remains
+   * responsible for the agent / `AuthManager` lifecycle.
    *
    * @param timeout - Maximum milliseconds to wait for an in-progress sync
    *   cycle to finish before force-stopping. Defaults to `2000`.
@@ -302,6 +302,17 @@ export class Enbox {
     // `storage` adapter is provided (it may use a different on-disk
     // surface than the agent vault) or a pre-built `agent` is supplied
     // (no new handles are opened).
+    //
+    // Limitation: the key is the raw `options.dataPath` string, not its
+    // resolved on-disk location. Two callers — one with `dataPath`
+    // omitted and another passing the explicit platform default
+    // ('DATA/AGENT' in browser, '~/.enbox' in CLI) — refer to the same
+    // directory but produce different keys, so the guard won't catch
+    // that race. Resolving the path here would require pulling in the
+    // platform-default logic from `@enbox/agent`, which we deliberately
+    // avoid to keep the helper layered above the agent. Pick one
+    // convention per app: always omit `dataPath`, or always set it
+    // explicitly.
     const shouldGuard = options.agent === undefined && options.storage === undefined;
     const key = options.dataPath ?? DEFAULT_DATA_PATH_KEY;
 
@@ -319,11 +330,17 @@ export class Enbox {
       try {
         const session = await auth.connect(Enbox.toAuthConnectOptions(options));
         const enbox = Enbox.fromSession(session);
-        // Hand AuthManager ownership to Enbox so a single `enbox.disconnect()`
-        // tears down vault / storage / sync without callers having to know
-        // about AuthManager. Callers who want manual control can still use
-        // `result.auth` (e.g. for `auth.lock()` between flows).
-        enbox._ownedAuth = auth;
+        // Take AuthManager ownership ONLY when we built the agent and
+        // storage ourselves — those are the lifecycle resources
+        // `auth.shutdown()` will tear down. If the caller supplied
+        // either `options.agent` or `options.storage`, they retain
+        // ownership; `enbox.disconnect()` must not lock their vault or
+        // close their storage handles behind their back. Callers using
+        // a pre-built agent can still call `result.auth.shutdown()`
+        // explicitly when they're done.
+        if (shouldGuard) {
+          enbox._ownedAuth = auth;
+        }
 
         return { auth, enbox, session };
       } catch (error: unknown) {

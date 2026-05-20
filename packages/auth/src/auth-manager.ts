@@ -14,7 +14,7 @@
  * @module
  */
 
-import type { BearerIdentity, HdIdentityVault, PortableIdentity } from '@enbox/agent';
+import type { AgentSessionIdentity, BearerIdentity, HdIdentityVault, PortableIdentity } from '@enbox/agent';
 
 import type { FlowContext } from './connect/lifecycle.js';
 import type { PasswordProvider } from './password-provider.js';
@@ -28,7 +28,6 @@ import type {
   DisconnectOptions,
   HandlerConnectOptions,
   HeadlessConnectOptions,
-  IdentityInfo,
   ImportFromPhraseOptions,
   ImportFromPortableOptions,
   LocalConnectOptions,
@@ -397,7 +396,7 @@ export class AuthManager {
 
     const { connectedDid, delegateDid } = resolveIdentityDids(identity);
 
-    const identityInfo: IdentityInfo = {
+    const identityInfo: AgentSessionIdentity = {
       didUri       : connectedDid,
       name         : identity.metadata.name,
       connectedDid : identity.metadata.connectedDid,
@@ -795,7 +794,7 @@ export class AuthManager {
    * Each identity has a DID URI, name, and optional connected DID
    * (for wallet-connected/delegated identities).
    */
-  async listIdentities(): Promise<IdentityInfo[]> {
+  async listIdentities(): Promise<AgentSessionIdentity[]> {
     const identities = await this._userAgent.identity.list();
     return identities.map((identity: BearerIdentity) => ({
       didUri       : identity.did.uri,
@@ -827,7 +826,7 @@ export class AuthManager {
     await this._storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
     await this._storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
 
-    const identityInfo: IdentityInfo = {
+    const identityInfo: AgentSessionIdentity = {
       didUri       : connectedDid,
       name         : identity.metadata.name,
       connectedDid : identity.metadata.connectedDid,

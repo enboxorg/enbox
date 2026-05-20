@@ -728,6 +728,66 @@ describe('Enbox API', () => {
       expect(resultB.session).toBe(sessionB);
     });
 
+    it('Enbox.connect({ agent }) does NOT take ownership: enbox.disconnect() leaves caller\'s agent alone', async () => {
+      // Regression for adversarial H1: previously, `_ownedAuth = auth` was
+      // set unconditionally, so a later `enbox.disconnect()` would
+      // `auth.shutdown()` and lock the vault / close the sync engine on
+      // a caller-supplied agent. With the fix, ownership is taken only
+      // when Enbox constructed the agent + storage itself.
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Caller-owned agent' },
+        didMethod : 'jwk',
+      });
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'Caller-owned agent' },
+      };
+      const shutdown = sinon.stub().resolves();
+      const connect = sinon.stub().resolves(session);
+      const auth = { connect, shutdown };
+      sinon.stub(AuthManager, 'create').resolves(auth as any);
+
+      // Pre-built agent supplied by the caller — Enbox.connect must not
+      // take ownership.
+      const { enbox } = await Enbox.connect({ agent: testHarness.agent });
+
+      await enbox.disconnect();
+
+      // The caller's AuthManager.shutdown() must NOT have been called by
+      // enbox.disconnect(). The caller is responsible for tearing it down.
+      expect(shutdown.called).toBe(false);
+    });
+
+    it('Enbox.connect() with default options DOES take AuthManager ownership', async () => {
+      // Counterpart to the H1 regression test above: when Enbox constructs
+      // the agent + storage itself, ownership transfers so callers don't
+      // have to know about AuthManager.
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Enbox-owned' },
+        didMethod : 'jwk',
+      });
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'Enbox-owned' },
+      };
+      const shutdown = sinon.stub().resolves();
+      const connect = sinon.stub().resolves(session);
+      const auth = { connect, shutdown };
+      sinon.stub(AuthManager, 'create').resolves(auth as any);
+
+      const { enbox } = await Enbox.connect({ password: 'pw' });
+
+      await enbox.disconnect();
+
+      // No caller-supplied agent or storage → Enbox owns the AuthManager
+      // → enbox.disconnect() tears it down.
+      expect(shutdown.calledOnce).toBe(true);
+    });
+
     it('empty protocols array routes to local connect (not handler)', async () => {
       // Regression for #11: protocols:[] carries no permission intent and
       // must not produce a zero-grant "connected" handler session.
