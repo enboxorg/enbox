@@ -64,6 +64,7 @@
   },
   "react-native": "./dist/esm/src/index.js",
   "dependencies": {
+    "@enbox/common": "workspace:*",
     "@enbox/crypto": "workspace:*",
     "@enbox/dids": "workspace:*",
     "@ipld/dag-cbor": "9.0.5",

@@ -61,10 +61,9 @@ export function removeUndefinedProperties(obj: Record<string, unknown>): void {
  * | `removeUndefinedProperties`  | yes      | yes        | no (`Record`)    |
  * | `omitUndefined`              | no       | no         | yes (preserves T)|
  *
- * Note: a near-duplicate copy of {@link removeUndefinedProperties} also lives
- * in `@enbox/dwn-sdk-js/src/utils/object.ts`. The DWN engine keeps its own
- * copy intentionally so it can stay self-contained for upstream syncs. Avoid
- * adding a third variant — add new shape-transform helpers here.
+ * Both helpers are the single source of truth for the monorepo —
+ * `@enbox/dwn-sdk-js/utils/object.ts` re-exports them rather than holding
+ * its own copy. New shape-transform helpers belong here.
  *
  * @example
  * ```ts

@@ -4,6 +4,7 @@
 "@enbox/auth": minor
 "@enbox/browser": patch
 "@enbox/common": minor
+"@enbox/dwn-sdk-js": patch
 ---
 
 Add shared agent sessions and high-level Enbox connection helpers.
@@ -41,5 +42,6 @@ Add shared agent sessions and high-level Enbox connection helpers.
 **New surface in `@enbox/common`:**
 
 - `omitUndefined<T>(input)` — immutable, shallow, typed companion to `removeUndefinedProperties` (which remains mutating and recursive). Use the variant that matches the call site.
+- `@enbox/common` is now the single source of truth for object-shape helpers across the monorepo. `@enbox/dwn-sdk-js/utils/object.ts` re-exports from `@enbox/common` rather than holding its own near-duplicate copy of `isEmptyObject` / `removeEmptyObjects` / `removeUndefinedProperties`. This is a behavior-preserving change for every existing call site **except** `isEmptyObject(null)`, which used to throw `TypeError: Object.keys(null)` and now returns `false` — a latent crash that no DWN code path was hitting in practice.
 
 **`@enbox/browser`** re-exports the new `EnboxSession*` / `EnboxConnect*` types so dapps don't have to reach into `@enbox/api` for explicit annotations.

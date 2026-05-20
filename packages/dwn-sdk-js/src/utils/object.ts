@@ -1,46 +1,10 @@
 /**
- * Checks whether the given object has any properties.
- */
-export function isEmptyObject(obj: unknown): boolean {
-  if (typeof(obj) !== 'object') {
-    return false;
-  }
-
-  return Object.keys(obj as object).length === 0;
-}
-
-/**
- * Recursively removes all properties with an empty object or array as its value from the given object.
- */
-export function removeEmptyObjects(obj: Record<string, unknown>): void {
-  Object.keys(obj).forEach(key => {
-    if (typeof(obj[key]) === 'object') {
-      // recursive remove empty object or array properties in nested objects
-      removeEmptyObjects(obj[key] as Record<string, unknown>);
-    }
-
-    if (isEmptyObject(obj[key])) {
-      delete obj[key];
-    }
-  });
-}
-
-/**
- * Recursively removes all properties with `undefined` as its value from the given object.
+ * Object helpers used throughout the DWN engine.
  *
- * NOTE: A near-duplicate of this helper lives in `@enbox/common/object.ts`.
- * The DWN engine keeps its own copy intentionally so this package stays
- * self-contained for upstream syncs; do not replace this with an import from
- * `@enbox/common`. If you need a non-mutating / typed variant, use
- * `omitUndefined` from `@enbox/common` in the higher-level package rather
- * than adding a third variant here.
+ * Re-exported from `@enbox/common` so the helpers have a single canonical
+ * implementation across the monorepo. Internal call sites continue to
+ * import from `./object.js` so the engine's own module structure stays
+ * unchanged; only the implementation moved.
  */
-export function removeUndefinedProperties(obj: Record<string, unknown>): void {
-  Object.keys(obj).forEach(key => {
-    if (obj[key] === undefined) {
-      delete obj[key];
-    } else if (typeof(obj[key]) === 'object') {
-      removeUndefinedProperties(obj[key] as Record<string, unknown>); // recursive remove `undefined` properties in nested objects
-    }
-  });
-}
+
+export { isEmptyObject, omitUndefined, removeEmptyObjects, removeUndefinedProperties } from '@enbox/common';

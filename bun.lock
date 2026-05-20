@@ -240,6 +240,7 @@
       "name": "@enbox/dwn-sdk-js",
       "version": "0.3.5",
       "dependencies": {
+        "@enbox/common": "workspace:*",
         "@enbox/crypto": "workspace:*",
         "@enbox/dids": "workspace:*",
         "@ipld/dag-cbor": "9.0.5",
