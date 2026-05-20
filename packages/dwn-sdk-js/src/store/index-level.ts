@@ -1,7 +1,7 @@
 import type { EqualFilter, Filter, KeyValues, PaginationCursor, QueryOptions, RangeFilter } from '../types/query-types.js';
 import type { LevelWrapperBatchOperation, LevelWrapperIteratorOptions, } from './level-wrapper.js';
 
-import { isEmptyObject } from '../utils/object.js';
+import { isEmptyObject } from '@enbox/common';
 import { lexicographicalCompare } from '../utils/string.js';
 import { SortDirection } from '../types/query-types.js';
 import {

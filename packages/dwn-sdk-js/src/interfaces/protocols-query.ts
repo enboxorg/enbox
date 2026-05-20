@@ -7,7 +7,7 @@ import { AbstractMessage } from '../core/abstract-message.js';
 import { Message } from '../core/message.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorization.js';
-import { removeUndefinedProperties } from '../utils/object.js';
+import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';

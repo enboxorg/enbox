@@ -3,7 +3,7 @@ import type { MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncMessage } 
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import { Message } from '../core/message.js';
-import { removeUndefinedProperties } from '../utils/object.js';
+import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
 import { validateProtocolUrlNormalized } from '../utils/url.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';

@@ -8,7 +8,7 @@ import { Encoder } from '../utils/encoder.js';
 import { GeneralJwsBuilder } from '../jose/jws/general/builder.js';
 import { Jws } from '../utils/jws.js';
 import { lexicographicalCompare } from '../utils/string.js';
-import { removeUndefinedProperties } from '../utils/object.js';
+import { removeUndefinedProperties } from '@enbox/common';
 import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 

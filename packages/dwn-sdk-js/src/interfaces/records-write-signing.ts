@@ -8,7 +8,7 @@ import { Encoder } from '../utils/encoder.js';
 import { Encryption } from '../utils/encryption.js';
 import { GeneralJwsBuilder } from '../jose/jws/general/builder.js';
 import { Jws } from '../utils/jws.js';
-import { removeUndefinedProperties } from '../utils/object.js';
+import { removeUndefinedProperties } from '@enbox/common';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 /**

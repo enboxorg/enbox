@@ -21,7 +21,7 @@ import { Message } from '../core/message.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
-import { removeUndefinedProperties } from '../utils/object.js';
+import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
 import {
   createAttestation,

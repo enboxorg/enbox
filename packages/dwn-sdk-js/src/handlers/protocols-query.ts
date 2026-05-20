@@ -5,7 +5,7 @@ import { authenticate } from '../core/auth.js';
 import { DwnErrorCode } from '../core/dwn-error.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolsQuery } from '../interfaces/protocols-query.js';
-import { removeUndefinedProperties } from '../utils/object.js';
+import { removeUndefinedProperties } from '@enbox/common';
 
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
