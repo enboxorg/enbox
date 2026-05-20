@@ -1,3 +1,4 @@
+import { sleep } from '@enbox/common';
 import { Temporal } from '@js-temporal/polyfill';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -7,11 +8,17 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 export class Time {
   /**
    * sleeps for the desired duration
+   *
+   * Delegates to `sleep` in `@enbox/common` — the single shared
+   * implementation across the monorepo. Kept as a class method so the
+   * existing `Time.sleep` / `Time.minimalSleep` API surface is stable
+   * for the many DWN test sites that call it.
+   *
    * @param durationInMillisecond the desired amount of sleep time
    * @returns when the provided duration has passed
    */
   public static async sleep(durationInMillisecond: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, durationInMillisecond));
+    return sleep(durationInMillisecond);
   }
 
   /**

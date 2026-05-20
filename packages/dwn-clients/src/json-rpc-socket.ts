@@ -1,6 +1,7 @@
 import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
 
 import { CryptoUtils } from '@enbox/crypto';
+import { sleep } from '@enbox/common';
 import { createJsonRpcSubscriptionRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
 
 /**
@@ -492,7 +493,7 @@ export class JsonRpcSocket {
       const halfExpDelay = Math.floor(expDelay / 2);
       const jitteredDelay = halfExpDelay + (crypto.getRandomValues(new Uint32Array(1))[0] % (halfExpDelay || 1));
 
-      await new Promise(resolve => setTimeout(resolve, jitteredDelay));
+      await sleep(jitteredDelay);
 
       if (this.closedByUser) {
         this.reconnecting = false;

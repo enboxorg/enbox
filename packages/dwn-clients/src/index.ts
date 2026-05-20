@@ -9,5 +9,6 @@ export * from './rate-limit-error.js';
 export * from './registration-types.js';
 export * from './rpc-client.js';
 export * from './server-info-types.js';
-export * from './utils.js';
+// `./utils.js` removed: `concatenateUrl` (its only export) lives in
+// `@enbox/common` now — import from there if you need it.
 export * from './web-socket-clients.js';

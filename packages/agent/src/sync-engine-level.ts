@@ -6,6 +6,7 @@ import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSync
 import ms from 'ms';
 
 import { Level } from 'level';
+import { sleep } from '@enbox/common';
 import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
 
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
@@ -608,7 +609,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       elapsedTimeout += 100;
-      await new Promise((resolve): void => { setTimeout(resolve, timeout < 100 ? timeout : 100); });
+      await sleep(Math.min(timeout, 100));
     }
 
     if (this._syncIntervalId) {

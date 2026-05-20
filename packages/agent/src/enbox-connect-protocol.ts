@@ -103,7 +103,7 @@ import type {
   Jwk } from '@enbox/crypto';
 
 import { type BearerDid, DidJwk } from '@enbox/dids';
-import { Convert, logger } from '@enbox/common';
+import { concatenateUrl, Convert, logger } from '@enbox/common';
 import {
   CryptoUtils,
   Ed25519,
@@ -120,7 +120,7 @@ import { getEncryptionKeyInfo } from './dwn-encryption.js';
 import { isMultiPartyContext } from './protocol-utils.js';
 import { isRecordPermissionScope } from './dwn-api.js';
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
-import { concatenateUrl, mapConcurrent, mapConcurrentSettled } from './utils.js';
+import { mapConcurrent, mapConcurrentSettled } from './utils.js';
 
 // ---------------------------------------------------------------------------
 // Tunables

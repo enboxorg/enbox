@@ -19,6 +19,7 @@
     "@enbox/agent": "workspace:*",
     "@enbox/api": "workspace:*",
     "@enbox/auth": "workspace:*",
+    "@enbox/common": "workspace:*",
     "@enbox/dwn-server": "workspace:*",
     "@enbox/protocols": "workspace:*",
     "@lit-labs/signals": "^0.2.0",

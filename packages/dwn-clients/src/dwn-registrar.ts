@@ -1,7 +1,6 @@
 import type { ProofOfWorkChallengeModel, RegistrationData, RegistrationRequest, TokenExchangeResponse } from './registration-types.js';
 
-import { concatenateUrl } from './utils.js';
-import { Convert } from '@enbox/common';
+import { concatenateUrl, Convert } from '@enbox/common';
 import { CryptoUtils, Sha256 } from '@enbox/crypto';
 
 /**

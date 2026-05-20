@@ -4,7 +4,9 @@
 "@enbox/auth": minor
 "@enbox/browser": patch
 "@enbox/common": minor
+"@enbox/dwn-clients": minor
 "@enbox/dwn-sdk-js": patch
+"@enbox/dwn-server": patch
 ---
 
 Add shared agent sessions and high-level Enbox connection helpers.
@@ -42,6 +44,12 @@ Add shared agent sessions and high-level Enbox connection helpers.
 **New surface in `@enbox/common`:**
 
 - `omitUndefined<T>(input)` — immutable, shallow, typed companion to `removeUndefinedProperties` (which remains mutating and recursive). Use the variant that matches the call site.
-- `@enbox/common` is now the single source of truth for object-shape helpers across the monorepo. `@enbox/dwn-sdk-js/utils/object.ts` re-exports from `@enbox/common` rather than holding its own near-duplicate copy of `isEmptyObject` / `removeEmptyObjects` / `removeUndefinedProperties`. This is a behavior-preserving change for every existing call site **except** `isEmptyObject(null)`, which used to throw `TypeError: Object.keys(null)` and now returns `false` — a latent crash that no DWN code path was hitting in practice.
+- `concatenateUrl(baseUrl, path)` — joins a base URL and a path with exactly one slash between them. Previously duplicated verbatim in `@enbox/agent/utils.ts` and `@enbox/dwn-clients/utils.ts`; both copies now removed.
+- `sleep(durationInMilliseconds)` — promise-based sleep primitive that replaces 7 inline `new Promise(resolve => setTimeout(resolve, ms))` patterns across `@enbox/agent`, `@enbox/dwn-clients`, `@enbox/dwn-sdk-js`, `@enbox/dwn-server`, and `@enbox/electrobun-dwn`. `Time.sleep` in `@enbox/dwn-sdk-js` is now a one-line delegate to this primitive, preserving the public `Time` API.
+- `@enbox/common` is now the single source of truth for object-shape helpers across the monorepo. The 15 source files in `@enbox/dwn-sdk-js` that used `isEmptyObject` / `removeEmptyObjects` / `removeUndefinedProperties` now import directly from `@enbox/common` (the previous re-export stub at `@enbox/dwn-sdk-js/src/utils/object.ts` is deleted). This is a behavior-preserving change for every existing call site **except** `isEmptyObject(null)`, which used to throw `TypeError: Object.keys(null)` and now returns `false` — a latent crash that no DWN code path was hitting in practice.
+
+**Breaking change in `@enbox/dwn-clients`:**
+
+- `concatenateUrl` is no longer re-exported from `@enbox/dwn-clients` (and the `./utils.js` subpath is removed). External consumers should import from `@enbox/common` instead. Internal callers (`@enbox/agent`'s `enbox-connect-protocol.ts` and `@enbox/dwn-clients`'s own `dwn-registrar.ts`) have already been migrated.
 
 **`@enbox/browser`** re-exports the new `EnboxSession*` / `EnboxConnect*` types so dapps don't have to reach into `@enbox/api` for explicit annotations.
