@@ -598,18 +598,30 @@ export class SyncEngineLevel implements SyncEngine {
   /**
    * stopSync awaits the completion of the current sync operation before stopping the sync interval
    * and tearing down any live subscriptions.
+   *
+   * @param timeout - Maximum milliseconds to wait for an in-progress
+   *   sync cycle to finish. Non-finite values (`NaN`, `Infinity`) are
+   *   coerced to the default to avoid a tight poll loop or never-exit
+   *   condition.
    */
   public async stopSync(timeout: number = 2000): Promise<void> {
+    // Coerce non-finite timeouts (NaN, Infinity) to the default. NaN
+    // comparisons are always false, so `elapsedTimeout >= NaN` would
+    // never trip the timeout exit; `Math.min(NaN, 100)` is NaN and
+    // `setTimeout(_, NaN)` clamps to 0, spinning the poll loop. Both
+    // are footguns for callers passing a computed timeout that
+    // accidentally evaluates to NaN.
+    const safeTimeout = Number.isFinite(timeout) ? timeout : 2000;
     this._engineGeneration++;
     let elapsedTimeout = 0;
 
     while (this._syncLock) {
-      if (elapsedTimeout >= timeout) {
-        throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${timeout} milliseconds.`);
+      if (elapsedTimeout >= safeTimeout) {
+        throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${safeTimeout} milliseconds.`);
       }
 
       elapsedTimeout += 100;
-      await sleep(Math.min(timeout, 100));
+      await sleep(Math.min(safeTimeout, 100));
     }
 
     if (this._syncIntervalId) {

@@ -103,6 +103,14 @@ export class Enbox {
    */
   private _ownedAuth?: AuthManager;
 
+  /**
+   * Memoized teardown promise. Two parallel `enbox.disconnect()` calls
+   * share the same promise so `agent.sync.stopSync()` (and the optional
+   * `auth.shutdown()`) run exactly once even when callers fire the
+   * teardown from independent code paths.
+   */
+  private _disconnecting?: Promise<void>;
+
   constructor({ agent, connectedDid, delegateDid }: EnboxParams) {
     this.agent = agent;
     this.did = new DidApi({ agent, connectedDid });
@@ -162,10 +170,16 @@ export class Enbox {
    * released. After calling `disconnect()`, the `Enbox` instance should not
    * be reused.
    *
-   * When the instance was created from a caller-owned session
-   * ({@link Enbox.fromSession}) or raw agent (the public constructor),
-   * this method only tears down Enbox-side state — the caller remains
-   * responsible for the agent / `AuthManager` lifecycle.
+   * **`agent.sync.stopSync()` is always called**, even when the instance
+   * was created from a caller-owned session ({@link Enbox.fromSession}),
+   * a raw agent (the public constructor), or a pre-built agent passed to
+   * `Enbox.connect({ agent })`. Stopping sync is the work Enbox does
+   * with the agent; the caller-supplied case still needs that work
+   * undone. The `auth.shutdown()` step (vault + storage handles) is
+   * **only** invoked when Enbox built the agent itself — caller-supplied
+   * agents and storage adapters keep their lifecycle.
+   *
+   * Idempotent: parallel calls share the same teardown promise.
    *
    * @param timeout - Maximum milliseconds to wait for an in-progress sync
    *   cycle to finish before force-stopping. Defaults to `2000`.
@@ -176,17 +190,31 @@ export class Enbox {
    * const { enbox } = await Enbox.connect({ createIdentity: true });
    * await enbox.disconnect();
    *
-   * // Caller-owned auth: shut down separately when you're done.
+   * // Caller-owned auth: enbox.disconnect() stops sync + clears cache.
+   * // The caller-built AuthManager is NOT shut down by enbox.disconnect()
+   * // — call auth.shutdown() yourself when you're done.
    * const auth = await AuthManager.create({...});
    * const session = await auth.connect();
    * const enbox = Enbox.fromSession(session);
-   * await enbox.disconnect();   // Enbox-side only
+   * await enbox.disconnect();   // Enbox-side only (incl. agent.sync.stopSync)
    * await auth.shutdown();      // caller's responsibility
    * ```
    *
    * @beta
    */
   public async disconnect(timeout?: number): Promise<void> {
+    // Memoize so parallel calls share the same teardown promise. Without
+    // this, two concurrent disconnect()s would each invoke
+    // agent.sync.stopSync (idempotent, but redundant) and could race on
+    // _ownedAuth ownership transfer.
+    if (this._disconnecting !== undefined) {
+      return this._disconnecting;
+    }
+    this._disconnecting = this._doDisconnect(timeout);
+    return this._disconnecting;
+  }
+
+  private async _doDisconnect(timeout?: number): Promise<void> {
     await this.agent.sync.stopSync(timeout);
 
     // Clear cached TypedEnbox instances so they are not accidentally reused.
@@ -399,17 +427,23 @@ export class Enbox {
    * `AuthManager.connect()` consumes.
    *
    * Honors an explicit {@link EnboxConnectOptions.connectOverride}
-   * (non-empty) verbatim; otherwise strips manager-only fields and
-   * forwards the rest. Routing between local and handler flow happens
-   * inside `AuthManager._isLocalConnect`, so this function intentionally
-   * doesn't pre-split — that lets new connect options flow through
-   * without a coordinated edit here. An empty `connectOverride: {}` is
-   * treated as "no override" so callers can't accidentally bypass a
-   * manager-level handler.
+   * (non-empty after `undefined` keys are dropped) verbatim; otherwise
+   * strips manager-only fields and forwards the rest. Routing between
+   * local and handler flow happens inside `AuthManager._isLocalConnect`,
+   * so this function intentionally doesn't pre-split — that lets new
+   * connect options flow through without a coordinated edit here.
+   *
+   * An empty `connectOverride: {}` (or one whose keys are all
+   * `undefined`) is treated as "no override" so callers can't
+   * accidentally bypass a manager-level handler with a placeholder slot.
    */
   private static toAuthConnectOptions(options: EnboxConnectOptions): ConnectOptions | undefined {
-    if (options.connectOverride !== undefined && Object.keys(options.connectOverride).length > 0) {
-      return options.connectOverride;
+    if (options.connectOverride !== undefined) {
+      const overrideCleaned = omitUndefined(options.connectOverride);
+      if (Object.keys(overrideCleaned).length > 0) {
+        return overrideCleaned as ConnectOptions;
+      }
+      // All-`undefined` override → fall through to auto-derived routing.
     }
 
     const {
@@ -426,14 +460,16 @@ export class Enbox {
       ...rest
     } = options;
 
-    // Drop `protocols: []` (an empty array carries no handler intent and
-    // would otherwise produce a zero-grant "connected" handler session)
-    // and any other undefined entries.
-    if (Array.isArray(rest.protocols) && rest.protocols.length === 0) {
-      delete (rest as { protocols?: unknown }).protocols;
-    }
+    // Drop `protocols: []` — an empty array carries no handler intent
+    // and would otherwise produce a zero-grant "connected" handler
+    // session. Done by spreading into a new object with `protocols`
+    // overridden to `undefined`, which `omitUndefined` then strips.
+    // Keeps the helper purely functional (no `delete`).
+    const restNormalized = (Array.isArray(rest.protocols) && rest.protocols.length === 0)
+      ? { ...rest, protocols: undefined }
+      : rest;
 
-    const cleaned = omitUndefined(rest);
+    const cleaned = omitUndefined(restNormalized);
     return Object.keys(cleaned).length === 0 ? undefined : (cleaned as ConnectOptions);
   }
 }

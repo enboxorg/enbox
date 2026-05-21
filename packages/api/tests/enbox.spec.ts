@@ -760,6 +760,49 @@ describe('Enbox API', () => {
       expect(shutdown.called).toBe(false);
     });
 
+    it('concurrency guard holds when AuthManager.create takes real async time', async () => {
+      // Hardening regression for a reviewer concern that the guard might
+      // have a TOCTOU window between `has(key)` and `set(key, ...)`. The
+      // claim was: if `AuthManager.create()` does real async work, a
+      // second `Enbox.connect()` call on the same tick could pass the
+      // has() check before set() ran. That's not how JS async works —
+      // the synchronous portion from has() through set() runs as one
+      // call-stack frame — but worth pinning the property with a stub
+      // that DOES take real async time (50ms), unlike the immediately-
+      // resolved stub used in the other concurrency test.
+      let createCallCount = 0;
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'TOCTOU' },
+        didMethod : 'jwk',
+      });
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'TOCTOU' },
+      };
+      sinon.stub(AuthManager, 'create').callsFake(async () => {
+        createCallCount++;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return { connect: sinon.stub().resolves(session), shutdown: sinon.stub().resolves() } as any;
+      });
+
+      // Fire two calls on the same synchronous tick. The second must
+      // reject synchronously, BEFORE either reaches AuthManager.create.
+      const results = await Promise.allSettled([
+        Enbox.connect({ password: 'pw' }),
+        Enbox.connect({ password: 'pw' }),
+      ]);
+
+      // Exactly one call reached AuthManager.create; the other was
+      // rejected by the guard before any I/O could happen.
+      expect(createCallCount).toBe(1);
+      const [first, second] = results;
+      expect([first.status, second.status].sort()).toEqual(['fulfilled', 'rejected']);
+      const rejection = first.status === 'rejected' ? first : second as PromiseRejectedResult;
+      expect((rejection.reason as Error).message).toMatch(/already in progress/);
+    });
+
     it('Enbox.connect() with default options DOES take AuthManager ownership', async () => {
       // Counterpart to the H1 regression test above: when Enbox constructs
       // the agent + storage itself, ownership transfers so callers don't
@@ -786,6 +829,38 @@ describe('Enbox API', () => {
       // No caller-supplied agent or storage → Enbox owns the AuthManager
       // → enbox.disconnect() tears it down.
       expect(shutdown.calledOnce).toBe(true);
+    });
+
+    it('parallel enbox.disconnect() calls share one teardown promise (stopSync runs once)', async () => {
+      // Regression for the reviewer-flagged C2: prior to memoization,
+      // two concurrent disconnect() calls would each call
+      // agent.sync.stopSync (idempotent but redundant) and could race
+      // on `_ownedAuth` ownership transfer.
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Parallel disconnect' },
+        didMethod : 'jwk',
+      });
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'Parallel disconnect' },
+      };
+      const shutdown = sinon.stub().resolves();
+      const connect = sinon.stub().resolves(session);
+      sinon.stub(AuthManager, 'create').resolves({ connect, shutdown } as any);
+      const stopSpy = sinon.spy(testHarness.agent.sync, 'stopSync');
+
+      const { enbox } = await Enbox.connect({ password: 'pw' });
+
+      // Fire two parallel disconnects on the same tick.
+      await Promise.all([enbox.disconnect(), enbox.disconnect()]);
+
+      // stopSync invoked exactly once thanks to the memoized teardown
+      // promise; AuthManager.shutdown also once.
+      expect(stopSpy.callCount).toBe(1);
+      expect(shutdown.calledOnce).toBe(true);
+      stopSpy.restore();
     });
 
     it('empty protocols array routes to local connect (not handler)', async () => {
