@@ -530,7 +530,11 @@ export class AuthManager {
                     messageParams : { filter: { recordId: revocationGrantId } },
                   });
                   if (revGrantReply.status.code === 200 && revGrantReply.entry?.recordsWrite) {
-                    const { encodedData: revGrantEncoded, ...revGrantRaw } = revGrantReply.entry.recordsWrite as any;
+                    // Strip `encodedData` from the wire payload — the
+                    // bytes are sent via `data` (Blob) on the next line.
+                    // The `_encoded` name marks the field as intentionally
+                    // discarded for ESLint's no-unused-vars rule.
+                    const { encodedData: _encoded, ...revGrantRaw } = revGrantReply.entry.recordsWrite as any;
                     const revGrantData = revGrantReply.entry.data
                       ? new Blob([await DataStream.toBytes(revGrantReply.entry.data) as BlobPart])
                       : undefined;
@@ -965,41 +969,25 @@ export class AuthManager {
   /**
    * Determine whether the given options indicate a local connect flow.
    *
-   * Routing is decided by the inverse of {@link AuthManager._isHandlerConnect}:
-   * if no handler signal is present, the local flow runs. Local connect is
-   * the fallback for every input shape — `password`, `createIdentity`,
-   * `recoveryPhrase`, `dwnEndpoints`, `metadata`, and the no-options case
-   * all route to local because the absence of handler signals is sufficient.
+   * Handler intent is asserted by the presence of a non-empty `protocols`
+   * array OR a non-null `connectHandler`; everything else (including the
+   * no-options case, an empty `protocols: []`, and `null` values from JS
+   * callers) routes to local. An empty `protocols` array is intentionally
+   * NOT a handler signal — it carries no permission scopes for the handler
+   * to authorize, so treating it as handler-flow would produce a zero-grant
+   * "connected" session indistinguishable from a denied connect.
    *
    * Acts as a TypeScript type guard: a `true` return narrows `options` to
    * `LocalConnectOptions | undefined` at call sites, so the routing in
    * {@link AuthManager.connect} can dispatch without unsafe casts.
    */
   private _isLocalConnect(options?: ConnectOptions): options is LocalConnectOptions | undefined {
-    return !AuthManager._isHandlerConnect(options);
-  }
-
-  /**
-   * Determine whether the given options indicate a handler-based connect flow.
-   *
-   * Positive narrowing: handler intent is asserted by the presence of a
-   * non-empty `protocols` array OR a non-null `connectHandler`. An empty
-   * `protocols` array is intentionally NOT a handler signal — it carries no
-   * permission scopes for the handler to authorize, so treating it as
-   * handler-flow would produce a zero-grant "connected" session
-   * indistinguishable from a denied connect. Handler signals take precedence
-   * over any local-style defaults that may also be present on the same
-   * options object. The checks tolerate `null` (JS callers may pass it) by
-   * using `Array.isArray` and truthiness, so neither value triggers a
-   * routing crash.
-   */
-  private static _isHandlerConnect(options?: ConnectOptions): options is HandlerConnectOptions {
-    if (options === undefined || options === null) { return false; }
+    if (options === undefined || options === null) { return true; }
     const protocols = (options as HandlerConnectOptions).protocols;
-    if (Array.isArray(protocols) && protocols.length > 0) { return true; }
+    if (Array.isArray(protocols) && protocols.length > 0) { return false; }
     const handler = (options as HandlerConnectOptions).connectHandler;
-    if (handler !== undefined && handler !== null) { return true; }
-    return false;
+    if (handler !== undefined && handler !== null) { return false; }
+    return true;
   }
 
   /**

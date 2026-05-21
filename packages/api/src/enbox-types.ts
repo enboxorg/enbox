@@ -14,7 +14,6 @@ import type { DidMethodResolver } from '@enbox/dids';
 import type {
   AuthManagerOptions,
   AuthSession,
-  ConnectOptions,
   HandlerConnectOptions,
   LocalConnectOptions,
 } from '@enbox/auth';
@@ -71,7 +70,7 @@ export type EnboxSessionParams = AgentSessionPrimitives;
 /**
  * High-level connection options for {@link Enbox.connect}.
  *
- * Composed of three parts:
+ * Composed of two parts:
  *
  * 1. **Manager-wide defaults** ({@link AuthManagerOptions}) — `password`,
  *    `sync`, `dwnEndpoints`, `connectHandler`, etc. Forwarded to
@@ -80,8 +79,6 @@ export type EnboxSessionParams = AgentSessionPrimitives;
  *    {@link LocalConnectOptions}) — `protocols`, `createIdentity`,
  *    `recoveryPhrase`, `metadata`, etc. Forwarded to
  *    `AuthManager.connect()` and used to route handler vs local flow.
- * 3. **An optional explicit override** ({@link connectOverride}) for
- *    advanced flows that need full control of the per-call payload.
  *
  * Several fields (`password`, `sync`, `dwnEndpoints`, `connectHandler`)
  * appear on multiple parents. The intersection keeps a single `?:`-typed
@@ -91,23 +88,15 @@ export type EnboxSessionParams = AgentSessionPrimitives;
  * Routing between local and handler flow happens at runtime inside
  * `AuthManager._isLocalConnect` based on whether `protocols` or
  * `connectHandler` is provided. See `Enbox.connect()` for examples.
+ *
+ * If you need full control of the exact options forwarded to
+ * `AuthManager.connect()`, drop down one layer: create the
+ * `AuthManager` yourself and pass its session to `Enbox.fromSession`.
  */
 export type EnboxConnectOptions =
   & AuthManagerOptions
   & HandlerConnectOptions
-  & LocalConnectOptions
-  & {
-    /**
-     * Explicit replacement payload for `AuthManager.connect()`. When
-     * non-empty, this **replaces** the auto-derived per-call payload
-     * entirely. An empty `{}` is treated as "no override" so callers
-     * can't accidentally bypass a manager-level `connectHandler` by
-     * passing a placeholder slot — omit the field instead.
-     *
-     * @see {@link ConnectOptions}
-     */
-    connectOverride?: ConnectOptions;
-  };
+  & LocalConnectOptions;
 
 /** The result of a high-level asynchronous {@link Enbox.connect} call. */
 export type EnboxConnectResult = {

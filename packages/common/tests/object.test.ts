@@ -62,6 +62,15 @@ describe('Object', () => {
 
       expect(mockObject).toEqual(expectedResult);
     });
+
+    it('does not throw when an object contains null values', () => {
+      // `typeof null === 'object'` in JavaScript, so a pre-fix
+      // recursion into `null` would call `Object.keys(null)` and throw.
+      const obj: Record<string, unknown> = { a: null, b: { c: null }, d: 'keep' };
+      expect(() => removeEmptyObjects(obj)).not.toThrow();
+      // `null` is preserved; only literal empty objects are removed.
+      expect(obj).toEqual({ a: null, b: { c: null }, d: 'keep' });
+    });
   });
 
   describe('removeUndefinedProperties()', () => {
@@ -85,6 +94,20 @@ describe('Object', () => {
       removeUndefinedProperties(mockObject);
 
       expect(mockObject).toEqual(expectedResult);
+    });
+
+    it('does not throw when an object contains null values', () => {
+      // Regression for a latent crash: `typeof null === 'object'`, so the
+      // recursive branch would otherwise call `Object.keys(null)` and
+      // throw. `null` is now skipped (not recursed into, not deleted).
+      const obj: Record<string, unknown> = {
+        a : null,
+        b : undefined,
+        c : { d: null, e: undefined },
+        f : 'keep'
+      };
+      expect(() => removeUndefinedProperties(obj)).not.toThrow();
+      expect(obj).toEqual({ a: null, c: { d: null }, f: 'keep' });
     });
   });
 

@@ -456,39 +456,6 @@ describe('Enbox API', () => {
       });
     });
 
-    it('connectOverride replaces the auto-derived per-call payload', async () => {
-      const identity = await testHarness.agent.identity.create({
-        metadata  : { name: 'Explicit Connect' },
-        didMethod : 'jwk',
-      });
-
-      const session = {
-        agent       : testHarness.agent,
-        did         : identity.did.uri,
-        delegateDid : undefined,
-        identity    : { didUri: identity.did.uri, name: 'Explicit Connect' },
-      };
-      const connect = sinon.stub().resolves(session);
-      const auth = { connect };
-      const create = sinon.stub(AuthManager, 'create').resolves(auth as any);
-
-      await Enbox.connect({
-        password        : 'manager-password',
-        connectOverride : {
-          password       : 'connect-password',
-          createIdentity : true,
-        },
-      });
-
-      // Manager-wide options exclude the override slot entirely.
-      expect(create.firstCall.args[0]).toEqual({ password: 'manager-password' });
-      // Per-call payload comes from `connectOverride` verbatim.
-      expect(connect.firstCall.args[0]).toEqual({
-        password       : 'connect-password',
-        createIdentity : true,
-      });
-    });
-
     it('should preserve handler connect when local defaults are also provided', async () => {
       const identity = await testHarness.agent.identity.create({
         metadata  : { name: 'Handler Connect' },
@@ -592,32 +559,6 @@ describe('Enbox API', () => {
 
       expect(create.firstCall.args[0]).toEqual({});
       expect(connect.firstCall.args[0]).toBeUndefined();
-    });
-
-    it('Enbox.connect({ connectHandler, connectOverride: {} }) does NOT bypass the manager-level handler', async () => {
-      // Regression for the #1 block-on bug: an empty override slot was
-      // forwarded verbatim and routed to local, silently skipping the
-      // configured handler. An empty `{}` now falls through to auto-derived
-      // smart routing, which picks handler flow because connectHandler is set.
-      const identity = await testHarness.agent.identity.create({
-        metadata  : { name: 'Bypass Regression' },
-        didMethod : 'jwk',
-      });
-      const session = {
-        agent       : testHarness.agent,
-        did         : identity.did.uri,
-        delegateDid : undefined,
-        identity    : { didUri: identity.did.uri, name: 'Bypass Regression' },
-      };
-      const connect = sinon.stub().resolves(session);
-      const auth = { connect };
-      sinon.stub(AuthManager, 'create').resolves(auth as any);
-      const connectHandler = { requestAccess: sinon.stub().resolves(undefined) };
-
-      await Enbox.connect({ connectHandler, connectOverride: {} });
-
-      // The handler must be forwarded — not silently dropped to local flow.
-      expect(connect.firstCall.args[0]).toEqual({ connectHandler });
     });
 
     it('per-call password in handler flow is forwarded to auth.connect', async () => {

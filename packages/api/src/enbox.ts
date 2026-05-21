@@ -310,8 +310,10 @@ export class Enbox {
    * (as defaults) and the per-call payload, so behavior is consistent with
    * restored sessions.
    *
-   * Pass an explicit {@link EnboxConnectOptions.connectOverride} (non-empty)
-   * to fully replace the auto-derived per-call payload.
+   * If you need exact control of the `AuthManager.connect()` payload,
+   * drop down one layer: create the `AuthManager` yourself with
+   * `AuthManager.create()`, call `auth.connect(...)` with your exact
+   * options, and pass the resulting session to `Enbox.fromSession`.
    *
    * @example
    * ```ts
@@ -415,8 +417,6 @@ export class Enbox {
       recoveryPhrase : _recoveryPhrase,
       createIdentity : _createIdentity,
       metadata       : _metadata,
-      // Override slot (handled by `toAuthConnectOptions`).
-      connectOverride: _connectOverride,
       ...managerOptions
     } = options;
     return omitUndefined<AuthManagerOptions>(managerOptions);
@@ -426,26 +426,16 @@ export class Enbox {
    * Split `EnboxConnectOptions` into the per-call payload that
    * `AuthManager.connect()` consumes.
    *
-   * Honors an explicit {@link EnboxConnectOptions.connectOverride}
-   * (non-empty after `undefined` keys are dropped) verbatim; otherwise
-   * strips manager-only fields and forwards the rest. Routing between
+   * Strips manager-only fields and forwards the rest. Routing between
    * local and handler flow happens inside `AuthManager._isLocalConnect`,
    * so this function intentionally doesn't pre-split — that lets new
    * connect options flow through without a coordinated edit here.
    *
-   * An empty `connectOverride: {}` (or one whose keys are all
-   * `undefined`) is treated as "no override" so callers can't
-   * accidentally bypass a manager-level handler with a placeholder slot.
+   * `protocols: []` is normalized away — an empty array carries no
+   * permission intent and would otherwise produce a zero-grant
+   * "connected" handler session indistinguishable from a denied connect.
    */
   private static toAuthConnectOptions(options: EnboxConnectOptions): ConnectOptions | undefined {
-    if (options.connectOverride !== undefined) {
-      const overrideCleaned = omitUndefined(options.connectOverride);
-      if (Object.keys(overrideCleaned).length > 0) {
-        return overrideCleaned as ConnectOptions;
-      }
-      // All-`undefined` override → fall through to auto-derived routing.
-    }
-
     const {
       // Manager-only fields are forwarded via `toAuthManagerOptions`.
       agent            : _agent,
@@ -455,16 +445,11 @@ export class Enbox {
       storage          : _storage,
       passwordProvider : _passwordProvider,
       registration     : _registration,
-      // Override slot (handled above).
-      connectOverride  : _connectOverride,
       ...rest
     } = options;
 
-    // Drop `protocols: []` — an empty array carries no handler intent
-    // and would otherwise produce a zero-grant "connected" handler
-    // session. Done by spreading into a new object with `protocols`
-    // overridden to `undefined`, which `omitUndefined` then strips.
-    // Keeps the helper purely functional (no `delete`).
+    // Spread `protocols: undefined` so `omitUndefined` strips it when
+    // the input array is empty. Keeps the helper purely functional.
     const restNormalized = (Array.isArray(rest.protocols) && rest.protocols.length === 0)
       ? { ...rest, protocols: undefined }
       : rest;
