@@ -14,7 +14,8 @@
  * @module
  */
 
-import type { AgentSessionIdentity, BearerIdentity, HdIdentityVault, PortableIdentity } from '@enbox/agent';
+import type { RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, HdIdentityVault, PortableIdentity } from '@enbox/agent';
 
 import type { FlowContext } from './connect/lifecycle.js';
 import type { PasswordProvider } from './password-provider.js';
@@ -507,17 +508,17 @@ export class AuthManager {
                 messageType   : DwnInterface.RecordsRead,
                 messageParams : { filter: { recordId: grantId } },
               });
-              if (readReply.status.code !== 200 || !readReply.entry) { continue; }
+              if (readReply.status.code !== 200 || !readReply.entry?.recordsWrite) { continue; }
               // Reconstruct DwnDataEncodedRecordsWriteMessage: RecordsRead returns
               // data as a stream, but PermissionGrant.parse needs encodedData.
               const grantDataBytes = readReply.entry.data
                 ? await DataStream.toBytes(readReply.entry.data)
                 : new Uint8Array(0);
-              const grantMsgWithData = {
+              const grantMsgWithData: DwnDataEncodedRecordsWriteMessage = {
                 ...readReply.entry.recordsWrite,
                 encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
               };
-              const grant = DwnPermissionGrant.parse(grantMsgWithData as any);
+              const grant = DwnPermissionGrant.parse(grantMsgWithData);
 
               // Self-healing: ensure the revocation grant is on the remote
               // DWN. The best-effort fanout at connect time may have failed.
@@ -532,9 +533,12 @@ export class AuthManager {
                   if (revGrantReply.status.code === 200 && revGrantReply.entry?.recordsWrite) {
                     // Strip `encodedData` from the wire payload — the
                     // bytes are sent via `data` (Blob) on the next line.
-                    // The `_encoded` name marks the field as intentionally
-                    // discarded for ESLint's no-unused-vars rule.
-                    const { encodedData: _encoded, ...revGrantRaw } = revGrantReply.entry.recordsWrite as any;
+                    // `RecordsWriteMessage` doesn't declare `encodedData`,
+                    // but the wire-format reply may include it; widen the
+                    // local type to acknowledge that without `any`.
+                    type RecordsWriteWireMessage = RecordsWriteMessage & { encodedData?: string };
+                    const { encodedData: _encoded, ...revGrantRaw } =
+                      revGrantReply.entry.recordsWrite as RecordsWriteWireMessage;
                     const revGrantData = revGrantReply.entry.data
                       ? new Blob([await DataStream.toBytes(revGrantReply.entry.data) as BlobPart])
                       : undefined;
@@ -567,7 +571,7 @@ export class AuthManager {
               // delivery, the owner-side authority source won't see it.
               let remoteDelivered = false;
               if (revocationMessage && remoteDwnUrls.length > 0) {
-                const { encodedData, ...rawMessage } = revocationMessage as any;
+                const { encodedData, ...rawMessage } = revocationMessage;
                 const data = encodedData
                   ? new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart])
                   : undefined;
@@ -1045,14 +1049,22 @@ export class AuthManager {
     const identity = await importDelegateAndSetupSync({
       userAgent, delegatePortableDid, connectedDid, delegateGrants,
       delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols,
-      sessionRevocations,
       flowName: 'Connect',
     });
 
-    // 6. Finalize session.
+    // 6. Finalize session. Pass the transient delegate state explicitly
+    // so `persistOrClearDelegateSecrets` doesn't need to read it back
+    // off the identity (which was the old `(identity as any)._foo`
+    // smuggling pattern).
     return finalizeDelegateSession({
       userAgent, emitter, storage, identity,
-      connectedDid, delegateDid: delegatePortableDid.uri, sync,
+      connectedDid, delegateDid   : delegatePortableDid.uri, sync,
+      delegateState : {
+        delegateDecryptionKeys,
+        delegateContextKeys,
+        delegateMultiPartyProtocols,
+        sessionRevocations,
+      },
     });
   }
 

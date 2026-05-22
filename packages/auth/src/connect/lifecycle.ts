@@ -274,9 +274,11 @@ export function deriveSyncScopeFromGrants(grants: DwnPermissionGrant[]): 'all' |
   const protocols = new Set<string>();
 
   for (const grant of grants) {
-    const scope = grant.scope as any;
-
-    // Only Messages.Read grants authorize sync.
+    // Only Messages.Read grants authorize sync. The discriminated union
+    // (`PermissionScope = Messages | Protocols | Records`) narrows
+    // `scope.protocol` to `string | undefined` after the interface +
+    // method checks — no cast needed.
+    const { scope } = grant;
     if (scope.interface !== 'Messages' || scope.method !== 'Read') {
       continue;
     }
@@ -286,7 +288,7 @@ export function deriveSyncScopeFromGrants(grants: DwnPermissionGrant[]): 'all' |
       continue;
     }
 
-    const protocol = scope.protocol as string | undefined;
+    const protocol = scope.protocol;
     if (protocol === undefined) {
       // Unrestricted Messages.Read — delegate can sync all protocols.
       return 'all';
@@ -335,10 +337,15 @@ export async function deriveActiveSyncScope(
   if (revocationResponse.reply.status.code !== 200) { return []; }
 
   // Build the set of revoked grant IDs from revocation parent context.
+  // `descriptor.parentId` is the canonical location; the top-level
+  // `parentId` is a legacy/alternate-format fallback. Typed narrowly
+  // (no `any`) so additions to the shape land in the type system.
   const revokedGrantIds = new Set<string>();
   if (revocationResponse.reply.entries) {
     for (const entry of revocationResponse.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
-      const parentId = (entry as any).descriptor?.parentId ?? (entry as any).parentId;
+      const parentId =
+        entry.descriptor.parentId
+        ?? (entry as { parentId?: string }).parentId;
       if (parentId) { revokedGrantIds.add(parentId); }
     }
   }
@@ -590,13 +597,12 @@ export async function importDelegateAndSetupSync(params: {
   delegateDecryptionKeys?: DelegateDecryptionKey[];
   delegateContextKeys?: DelegateContextKey[];
   delegateMultiPartyProtocols?: string[];
-  sessionRevocations?: { grantId: string; revocationGrantId: string }[];
   flowName: string;
 }): Promise<BearerIdentity> {
   const {
     userAgent, delegatePortableDid, connectedDid, delegateGrants,
     delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols,
-    sessionRevocations, flowName,
+    flowName,
   } = params;
 
   let identity: BearerIdentity | undefined;
@@ -687,20 +693,11 @@ export async function importDelegateAndSetupSync(params: {
     // Doing a manual pull first would double the startup burst and can
     // trigger rate limits on the remote DWN.
 
-    // Store protocol keys on the identity for finalize to persist.
-    if (delegateDecryptionKeys && delegateDecryptionKeys.length > 0) {
-      (identity as any)._delegateDecryptionKeys = delegateDecryptionKeys;
-    }
-    if (delegateContextKeys && delegateContextKeys.length > 0) {
-      (identity as any)._delegateContextKeys = delegateContextKeys;
-    }
-    if (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0) {
-      (identity as any)._delegateMultiPartyProtocols = delegateMultiPartyProtocols;
-    }
-    if (sessionRevocations && sessionRevocations.length > 0) {
-      (identity as any)._sessionRevocations = sessionRevocations;
-    }
-
+    // Delegate protocol keys / multi-party state / revocation map are
+    // passed back to the caller explicitly via the return value so
+    // `finalizeDelegateSession` can persist them. (The previous flow
+    // smuggled them through `(identity as any)._foo`, which traded
+    // type safety for one fewer return value.)
     return identity;
   } catch (error: unknown) {
     if (identity) {
@@ -725,6 +722,21 @@ export async function importDelegateAndSetupSync(params: {
 // ─── finalizeDelegateSession ────────────────────────────────────
 
 /**
+ * Transient state produced by a successful delegated connect flow that
+ * `finalizeDelegateSession` persists into the SecretStore + storage
+ * adapter. Passed explicitly through the call chain rather than
+ * smuggled via private fields on `BearerIdentity`.
+ *
+ * @internal
+ */
+export type DelegateSessionState = {
+  delegateDecryptionKeys?: DelegateDecryptionKey[];
+  delegateContextKeys?: DelegateContextKey[];
+  delegateMultiPartyProtocols?: string[];
+  sessionRevocations?: { grantId: string; revocationGrantId: string }[];
+};
+
+/**
  * Build an `AuthSession` for a delegated connect flow (DWeb Connect or
  * relay WalletConnect). Starts sync and persists delegate/connected DID
  * markers.
@@ -739,8 +751,12 @@ export async function finalizeDelegateSession(params: {
   connectedDid: string;
   delegateDid: string;
   sync: SyncOption | undefined;
+  delegateState?: DelegateSessionState;
 }): Promise<AuthSession> {
-  const { userAgent, emitter, storage, identity, connectedDid, delegateDid, sync } = params;
+  const {
+    userAgent, emitter, storage, identity, connectedDid, delegateDid, sync,
+    delegateState = {},
+  } = params;
 
   await startSyncIfEnabled(userAgent, sync);
 
@@ -756,7 +772,7 @@ export async function finalizeDelegateSession(params: {
   // Persist or clear delegate keys/revocations. Clearing stale values
   // from prior sessions prevents a reconnect with fewer capabilities
   // from retaining old decryption material.
-  await persistOrClearDelegateSecrets(userAgent, storage, identity, extraStorageKeys);
+  await persistOrClearDelegateSecrets(userAgent, storage, extraStorageKeys, delegateState);
 
   // Wire post-connect context key persistence: when the owner creates a
   // new multi-party context, the agent injects the key into the delegate
@@ -873,11 +889,15 @@ export async function finalizeSession(params: {
 async function persistOrClearDelegateSecrets(
   userAgent: EnboxUserAgent,
   storage: StorageAdapter,
-  identity: BearerIdentity,
   extraStorageKeys: Record<string, string>,
+  delegateState: DelegateSessionState,
 ): Promise<void> {
-  const delegateDecryptionKeys = (identity as any)._delegateDecryptionKeys as DelegateDecryptionKey[] | undefined;
-  const delegateContextKeys = (identity as any)._delegateContextKeys as DelegateContextKey[] | undefined;
+  const {
+    delegateDecryptionKeys,
+    delegateContextKeys,
+    delegateMultiPartyProtocols,
+    sessionRevocations,
+  } = delegateState;
 
   // Persist or clear keys in the SecretStore + legacy StorageAdapter.
   const secretWrites: Promise<void>[] = [];
@@ -899,14 +919,12 @@ async function persistOrClearDelegateSecrets(
     try { await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
   }
 
-  const delegateMultiPartyProtocols = (identity as any)._delegateMultiPartyProtocols as string[] | undefined;
   if (delegateMultiPartyProtocols?.length) {
     extraStorageKeys[STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS] = JSON.stringify(delegateMultiPartyProtocols);
   } else {
     try { await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS); } catch { /* best-effort */ }
   }
 
-  const sessionRevocations = (identity as any)._sessionRevocations as { grantId: string; revocationGrantId: string }[] | undefined;
   if (sessionRevocations?.length) {
     extraStorageKeys[STORAGE_KEYS.SESSION_REVOCATIONS] = JSON.stringify(sessionRevocations);
   } else {
