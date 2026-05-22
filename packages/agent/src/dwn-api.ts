@@ -1577,10 +1577,11 @@ export class AgentDwnApi {
     // If the message is a RecordsWrite, data will be present in the form of a stream
 
     if (isRecordsWrite(messageEntry)) {
-      // The processMessage result includes a `data` ReadableStream for
-      // RecordsWrite entries, but the RecordsWrite type doesn't declare
-      // it. Access via index signature to avoid the type mismatch.
-      const entryData = (messageEntry as unknown as Record<string, unknown>)['data'] as ReadableStream<Uint8Array> | undefined;
+      // The processMessage result attaches a `data` ReadableStream to
+      // RecordsWrite entries, but the declared type doesn't include it.
+      // Narrow structurally to the runtime shape rather than going via
+      // `Record<string, unknown>` (which loses the value type entirely).
+      const entryData = (messageEntry as { data?: ReadableStream<Uint8Array> }).data;
       if (entryData) {
         const dataBytes = await DataStream.toBytes(entryData);
         dwnMessageWithBlob.data = new Blob([ dataBytes as BlobPart ], { type: messageEntry.message.descriptor.dataFormat });

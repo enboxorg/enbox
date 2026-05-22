@@ -191,16 +191,20 @@ async function initClient({
     // Get the PIN from the user and use it as AAD to decrypt.
     const pin = await validatePin();
     const jwt = await EnboxConnectProtocol.decryptResponse(clientDid, jwe, pin);
-    const verifiedResponse = await EnboxConnectProtocol.verifyJwt<EnboxConnectResponse>({ jwt });
+    const verifiedPayload = await EnboxConnectProtocol.verifyJwt({ jwt });
+    // Runtime narrowing — see `assertConnectResponse` in @enbox/agent for
+    // the shape validated. After this line `verifiedPayload` is narrowed
+    // to `EnboxConnectResponse`.
+    EnboxConnectProtocol.assertConnectResponse(verifiedPayload);
 
     return {
-      delegateGrants              : verifiedResponse.delegateGrants,
-      delegatePortableDid         : verifiedResponse.delegatePortableDid,
-      connectedDid                : verifiedResponse.providerDid,
-      delegateDecryptionKeys      : verifiedResponse.delegateDecryptionKeys,
-      delegateContextKeys         : verifiedResponse.delegateContextKeys,
-      delegateMultiPartyProtocols : verifiedResponse.delegateMultiPartyProtocols,
-      sessionRevocations          : verifiedResponse.sessionRevocations,
+      delegateGrants              : verifiedPayload.delegateGrants,
+      delegatePortableDid         : verifiedPayload.delegatePortableDid,
+      connectedDid                : verifiedPayload.providerDid,
+      delegateDecryptionKeys      : verifiedPayload.delegateDecryptionKeys,
+      delegateContextKeys         : verifiedPayload.delegateContextKeys,
+      delegateMultiPartyProtocols : verifiedPayload.delegateMultiPartyProtocols,
+      sessionRevocations          : verifiedPayload.sessionRevocations,
     };
   }
 }

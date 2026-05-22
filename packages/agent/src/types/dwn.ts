@@ -205,33 +205,29 @@ export type DwnResponse<T extends DwnInterface> = {
 /**
  * Per-DWN-interface message factory. Only the static `create` and `parse`
  * methods are part of the contract — the underlying classes have private
- * or protected constructors (factory pattern), so the interface does not
- * declare `new ()`. That keeps `dwnMessageConstructors` typeable via
- * `satisfies` without per-entry casts.
+ * or protected constructors (factory pattern), so the interface
+ * intentionally does not declare `new ()`. Omitting `new ()` lets the
+ * mapped-type table below assign class values directly without casts:
+ * a class with a private constructor still satisfies a structural type
+ * that doesn't require constructability, as long as the static side
+ * (`create` / `parse`) lines up.
  */
 export interface DwnMessageConstructor<T extends DwnInterface> {
   create(params: DwnMessageParams[T]): Promise<DwnMessageInstance[T]>;
   parse(rawMessage: DwnMessage[T]): Promise<DwnMessageInstance[T]>;
 }
 
-// TypeScript can't link each value's class generics back to its
-// `DwnInterface` key in a plain mapped-type assignment — the class
-// types have private members that collapse the per-key intersection
-// to `never` under structural checks. `as unknown` per entry is a
-// narrower escape hatch than `as any`: callers still get the full
-// `DwnMessageConstructor<T>` interface on read (`create` / `parse`
-// statics typed correctly via the outer annotation).
 export const dwnMessageConstructors: { [T in DwnInterface]: DwnMessageConstructor<T> } = {
-  [DwnInterface.MessagesRead]       : MessagesRead as unknown as DwnMessageConstructor<DwnInterface.MessagesRead>,
-  [DwnInterface.MessagesSubscribe]  : MessagesSubscribe as unknown as DwnMessageConstructor<DwnInterface.MessagesSubscribe>,
-  [DwnInterface.MessagesSync]       : MessagesSync as unknown as DwnMessageConstructor<DwnInterface.MessagesSync>,
-  [DwnInterface.ProtocolsConfigure] : ProtocolsConfigure as unknown as DwnMessageConstructor<DwnInterface.ProtocolsConfigure>,
-  [DwnInterface.ProtocolsQuery]     : ProtocolsQuery as unknown as DwnMessageConstructor<DwnInterface.ProtocolsQuery>,
-  [DwnInterface.RecordsDelete]      : RecordsDelete as unknown as DwnMessageConstructor<DwnInterface.RecordsDelete>,
-  [DwnInterface.RecordsQuery]       : RecordsQuery as unknown as DwnMessageConstructor<DwnInterface.RecordsQuery>,
-  [DwnInterface.RecordsRead]        : RecordsRead as unknown as DwnMessageConstructor<DwnInterface.RecordsRead>,
-  [DwnInterface.RecordsSubscribe]   : RecordsSubscribe as unknown as DwnMessageConstructor<DwnInterface.RecordsSubscribe>,
-  [DwnInterface.RecordsWrite]       : RecordsWrite as unknown as DwnMessageConstructor<DwnInterface.RecordsWrite>,
+  [DwnInterface.MessagesRead]       : MessagesRead,
+  [DwnInterface.MessagesSubscribe]  : MessagesSubscribe,
+  [DwnInterface.MessagesSync]       : MessagesSync,
+  [DwnInterface.ProtocolsConfigure] : ProtocolsConfigure,
+  [DwnInterface.ProtocolsQuery]     : ProtocolsQuery,
+  [DwnInterface.RecordsDelete]      : RecordsDelete,
+  [DwnInterface.RecordsQuery]       : RecordsQuery,
+  [DwnInterface.RecordsRead]        : RecordsRead,
+  [DwnInterface.RecordsSubscribe]   : RecordsSubscribe,
+  [DwnInterface.RecordsWrite]       : RecordsWrite,
 };
 
 export interface DwnMessageInstance {

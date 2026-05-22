@@ -987,10 +987,8 @@ export class AuthManager {
    */
   private _isLocalConnect(options?: ConnectOptions): options is LocalConnectOptions | undefined {
     if (options === undefined || options === null) { return true; }
-    const protocols = (options as HandlerConnectOptions).protocols;
-    if (Array.isArray(protocols) && protocols.length > 0) { return false; }
-    const handler = (options as HandlerConnectOptions).connectHandler;
-    if (handler !== undefined && handler !== null) { return false; }
+    if ('protocols' in options && Array.isArray(options.protocols) && options.protocols.length > 0) { return false; }
+    if ('connectHandler' in options && options.connectHandler !== undefined && options.connectHandler !== null) { return false; }
     return true;
   }
 

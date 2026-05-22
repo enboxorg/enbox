@@ -6,7 +6,7 @@
 
 import type { EnboxPlatformAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { AuthManagerOptions, ConnectOptions } from '@enbox/auth';
+import type { AuthManagerOptions, ConnectOptions, HandlerConnectOptions, LocalConnectOptions } from '@enbox/auth';
 
 import type {
   EnboxAnonymousApi,
@@ -403,58 +403,83 @@ export class Enbox {
 
   /**
    * Split `EnboxConnectOptions` into the manager-wide defaults that
-   * `AuthManager.create()` consumes by stripping out per-call signals.
+   * `AuthManager.create()` consumes.
    *
-   * Implemented as a **denylist** rather than an allowlist: any new
-   * field added to {@link AuthManagerOptions} flows through automatically
-   * without needing a corresponding edit here. The fields removed below
-   * are the only ones that don't belong on `AuthManagerOptions`.
+   * Implemented as an **explicit allowlist** for the same reason as
+   * `toAuthConnectOptions`: a denylist would silently leak future
+   * `HandlerConnectOptions` / `LocalConnectOptions` fields into the
+   * manager-default record. The `satisfies Partial<AuthManagerOptions>`
+   * annotation makes the compiler verify every key in the allowlist
+   * exists on `AuthManagerOptions`, so a misspelled or stale field name
+   * is a type error.
    */
   private static toAuthManagerOptions(options: EnboxConnectOptions): AuthManagerOptions {
-    const {
-      // Per-call connect signals (handled by `toAuthConnectOptions`).
-      protocols      : _protocols,
-      recoveryPhrase : _recoveryPhrase,
-      createIdentity : _createIdentity,
-      metadata       : _metadata,
-      ...managerOptions
-    } = options;
-    return omitUndefined<AuthManagerOptions>(managerOptions);
+    // Explicit allowlist — every key must exist on `AuthManagerOptions`
+    // (verified by `satisfies` below).
+    const allowlisted = {
+      agent            : options.agent,
+      agentVault       : options.agentVault,
+      localDwnStrategy : options.localDwnStrategy,
+      dataPath         : options.dataPath,
+      storage          : options.storage,
+      password         : options.password,
+      passwordProvider : options.passwordProvider,
+      sync             : options.sync,
+      dwnEndpoints     : options.dwnEndpoints,
+      registration     : options.registration,
+      connectHandler   : options.connectHandler,
+    } satisfies Partial<AuthManagerOptions>;
+    return omitUndefined(allowlisted);
   }
 
   /**
    * Split `EnboxConnectOptions` into the per-call payload that
    * `AuthManager.connect()` consumes.
    *
-   * Strips manager-only fields and forwards the rest. Routing between
-   * local and handler flow happens inside `AuthManager._isLocalConnect`,
-   * so this function intentionally doesn't pre-split — that lets new
-   * connect options flow through without a coordinated edit here.
+   * Implemented as an **explicit allowlist** of the fields declared on
+   * {@link HandlerConnectOptions} ∪ {@link LocalConnectOptions}. A
+   * denylist (strip manager-only fields, forward the rest) would
+   * silently leak any future `AuthManagerOptions` field into
+   * `AuthManager.connect()`; the allowlist makes the type boundary
+   * explicit and the leak impossible. The trade-off is symmetric:
+   * any new connect-options field requires an edit here. That's
+   * acceptable — it's the same edit the public `ConnectOptions` type
+   * already needs, just on one extra line.
+   *
+   * The `satisfies Partial<ConnectOptions>` annotation makes the
+   * compiler verify every key in the allowlist exists on `ConnectOptions`,
+   * so misspelling a field name is a type error rather than a silent
+   * drop. Routing between local and handler flow happens inside
+   * `AuthManager._isLocalConnect` based on the presence of `protocols`
+   * / `connectHandler`.
    *
    * `protocols: []` is normalized away — an empty array carries no
    * permission intent and would otherwise produce a zero-grant
    * "connected" handler session indistinguishable from a denied connect.
    */
   private static toAuthConnectOptions(options: EnboxConnectOptions): ConnectOptions | undefined {
-    const {
-      // Manager-only fields are forwarded via `toAuthManagerOptions`.
-      agent            : _agent,
-      agentVault       : _agentVault,
-      localDwnStrategy : _localDwnStrategy,
-      dataPath         : _dataPath,
-      storage          : _storage,
-      passwordProvider : _passwordProvider,
-      registration     : _registration,
-      ...rest
-    } = options;
+    // Explicit allowlist — every key must exist on the
+    // `ConnectOptions` union (verified by `satisfies` below).
+    const allowlisted = {
+      // Shared across handler + local
+      password       : options.password,
+      sync           : options.sync,
+      dwnEndpoints   : options.dwnEndpoints,
+      // Handler-only
+      protocols      : options.protocols,
+      connectHandler : options.connectHandler,
+      // Local-only
+      recoveryPhrase : options.recoveryPhrase,
+      createIdentity : options.createIdentity,
+      metadata       : options.metadata,
+    } satisfies Partial<HandlerConnectOptions & LocalConnectOptions>;
 
-    // Spread `protocols: undefined` so `omitUndefined` strips it when
-    // the input array is empty. Keeps the helper purely functional.
-    const restNormalized = (Array.isArray(rest.protocols) && rest.protocols.length === 0)
-      ? { ...rest, protocols: undefined }
-      : rest;
+    // Normalize `protocols: []` to undefined so omitUndefined strips it.
+    const normalized = (Array.isArray(allowlisted.protocols) && allowlisted.protocols.length === 0)
+      ? { ...allowlisted, protocols: undefined }
+      : allowlisted;
 
-    const cleaned = omitUndefined(restNormalized);
-    return Object.keys(cleaned).length === 0 ? undefined : (cleaned as ConnectOptions);
+    const cleaned = omitUndefined(normalized);
+    return Object.keys(cleaned).length === 0 ? undefined : cleaned;
   }
 }
