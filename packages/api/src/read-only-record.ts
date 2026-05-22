@@ -217,7 +217,7 @@ export class ReadOnlyRecord {
       },
 
       async json<T = unknown>(): Promise<T> {
-        return await Stream.consumeToJson({ readableStream: await this.stream() }) as T;
+        return await Stream.consumeToJson<T>({ readableStream: await this.stream() });
       },
 
       async text(): Promise<string> {

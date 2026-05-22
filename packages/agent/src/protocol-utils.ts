@@ -10,12 +10,17 @@ export function getRuleSetAtPath(
   protocolDefinition: ProtocolDefinition,
   protocolPath: string,
 ): ProtocolRuleSet | undefined {
-  const segments = protocolPath.split('/');
-  let ruleSet: ProtocolRuleSet | undefined =
-    protocolDefinition.structure as unknown as ProtocolRuleSet;
-  for (const segment of segments) {
-    ruleSet = ruleSet[segment] as ProtocolRuleSet | undefined;
+  const [first, ...rest] = protocolPath.split('/');
+  // Top-level lookup uses the structure's declared `{ [key: string]:
+  // ProtocolRuleSet }` index signature directly — no top-level cast.
+  let ruleSet: ProtocolRuleSet | undefined = protocolDefinition.structure[first];
+  for (const segment of rest) {
     if (!ruleSet) { return undefined; }
+    // Nested rule sets index into a `ProtocolRuleSet`'s child map.
+    // `ProtocolRuleSet` has typed `$encryption`/`$actions`/etc. fields
+    // alongside the child index signature, so the index access here
+    // returns a union; narrow it back to `ProtocolRuleSet | undefined`.
+    ruleSet = ruleSet[segment] as ProtocolRuleSet | undefined;
   }
   return ruleSet;
 }
@@ -91,8 +96,6 @@ export function hasRelationalReadAccess(
   ofPath: string,
   protocolDefinition: ProtocolDefinition,
 ): boolean {
-  const structure = protocolDefinition.structure as unknown as ProtocolRuleSet;
-
   function walkRuleSet(rs: ProtocolRuleSet): boolean {
     // Check $actions on this node
     if (rs.$actions) {
@@ -120,7 +123,15 @@ export function hasRelationalReadAccess(
     return false;
   }
 
-  return walkRuleSet(structure);
+  // Walk every top-level type. The structure is typed as
+  // `{ [key: string]: ProtocolRuleSet }`, so each child is directly a
+  // ProtocolRuleSet — no top-level cast needed.
+  for (const key in protocolDefinition.structure) {
+    if (walkRuleSet(protocolDefinition.structure[key])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

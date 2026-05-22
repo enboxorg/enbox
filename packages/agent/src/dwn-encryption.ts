@@ -578,7 +578,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
       const keyDecrypter = await resolveKeyDecrypter(
         agent, request.author, readReply.entry.recordsWrite, request.target,
         contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
-        (request as any).granteeDid, delegateContextKeyCache,
+        (request as { granteeDid?: string }).granteeDid, delegateContextKeyCache,
       );
 
       try {
@@ -606,7 +606,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
           const keyDecrypter = await resolveKeyDecrypter(
             agent, request.author, entry as RecordsWriteMessage, request.target,
             contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
-            (request as any).granteeDid, delegateContextKeyCache,
+            (request as { granteeDid?: string }).granteeDid, delegateContextKeyCache,
           );
 
           try {

@@ -33,6 +33,18 @@ import { StorageController } from './store/storage-controller.js';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
 
+/**
+ * Structural shape for `DidResolver` implementations that expose
+ * optional lifecycle hooks (e.g. cache-backed resolvers that need to
+ * open/close a store). The base `DidResolver` interface in
+ * `@enbox/dids` doesn't declare these methods, so `Dwn.open()` /
+ * `Dwn.close()` probe via this narrowly-typed cast (no `any`).
+ */
+type LifecycleResolver = {
+  open: () => Promise<void>;
+  close: () => Promise<void>;
+};
+
 export class Dwn {
   private readonly methodHandlers: { [key:string]: MethodHandler };
   private readonly didResolver: DidResolver;
@@ -125,8 +137,12 @@ export class Dwn {
    */
   public async open(): Promise<void> {
     // Open the resolver's cache if the DWN owns it (created via defaults).
-    if (this.ownsResolver && typeof (this.didResolver as any).open === 'function') {
-      await (this.didResolver as any).open();
+    // The base `DidResolver` interface in `@enbox/dids` doesn't declare
+    // optional lifecycle hooks; cache-backed implementations expose them
+    // structurally. Narrowly-typed probe (no `any`).
+    const lifecycleResolver = this.didResolver as Partial<LifecycleResolver>;
+    if (this.ownsResolver && typeof lifecycleResolver.open === 'function') {
+      await lifecycleResolver.open();
     }
 
     await this.messageStore.open();
@@ -146,8 +162,9 @@ export class Dwn {
     await this.stateIndex.close();
 
     // Close the resolver's cache if the DWN owns it.
-    if (this.ownsResolver && typeof (this.didResolver as any).close === 'function') {
-      await (this.didResolver as any).close();
+    const lifecycleResolver = this.didResolver as Partial<LifecycleResolver>;
+    if (this.ownsResolver && typeof lifecycleResolver.close === 'function') {
+      await lifecycleResolver.close();
     }
   }
 

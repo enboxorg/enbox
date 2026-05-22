@@ -18,7 +18,7 @@ import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { RequireOnly } from '@enbox/common';
 import type { DidDocument, PortableDid } from '@enbox/dids';
-import type { DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition } from './types/dwn.js';
+import type { DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition, DwnRecordsPermissionScope } from './types/dwn.js';
 
 /**
  * The protocols of permissions requested, along with the definition and permission scopes for each protocol.
@@ -333,13 +333,20 @@ function buildConnectUrl({
 // JWT signing and verification
 // ---------------------------------------------------------------------------
 
-/** Signs an object as a JWT using an Ed25519 DID key. */
+/**
+ * Signs an object as a JWT using an Ed25519 DID key.
+ *
+ * `data` is constrained to `object` so callers don't have to widen
+ * typed payload shapes (e.g. `EnboxConnectResponse`) to
+ * `Record<string, unknown>` at the call site. `Convert.object(data)`
+ * stringifies whatever JSON-serializable shape is passed.
+ */
 async function signJwt({
   did,
   data,
 }: {
   did: BearerDid;
-  data: Record<string, unknown>;
+  data: object;
 }): Promise<string> {
   const header = Convert.object({
     alg : 'EdDSA',
@@ -358,8 +365,13 @@ async function signJwt({
   return `${header}.${payload}.${signatureBase64Url}`;
 }
 
-/** Verifies a JWT signature using the DID in the `kid` header. Returns the parsed payload. */
-async function verifyJwt({ jwt }: { jwt: string }): Promise<Record<string, unknown>> {
+/**
+ * Verifies a JWT signature using the DID in the `kid` header. Returns the
+ * parsed payload. Caller chooses the payload type via the `T` parameter
+ * (defaults to `Record<string, unknown>`); the caller is responsible for
+ * matching `T` to the actual on-the-wire payload shape.
+ */
+async function verifyJwt<T = Record<string, unknown>>({ jwt }: { jwt: string }): Promise<T> {
   const [headerB64U, payloadB64U, signatureB64U] = jwt.split('.');
 
   const header: JoseHeaderParams = Convert.base64Url(headerB64U).toObject();
@@ -394,7 +406,7 @@ async function verifyJwt({ jwt }: { jwt: string }): Promise<Record<string, unkno
     throw new Error('Connect: JWT verification failed — invalid signature.');
   }
 
-  return Convert.base64Url(payloadB64U).toObject() as Record<string, unknown>;
+  return Convert.base64Url(payloadB64U).toObject() as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -637,7 +649,7 @@ async function getConnectRequest(requestUri: string, encryptionKey: string): Pro
   const response = await fetch(requestUri, { signal: AbortSignal.timeout(30_000) });
   const jwe = await response.text();
   const jwt = await decryptRequest({ jwe, encryptionKey });
-  return (await verifyJwt({ jwt })) as unknown as EnboxConnectRequest;
+  return verifyJwt<EnboxConnectRequest>({ jwt });
 }
 
 // ---------------------------------------------------------------------------
@@ -903,10 +915,12 @@ async function deriveScopedDecryptionKeys(
     DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
   ]);
 
-  // Collect read-like scopes only.
+  // Collect read-like scopes only. `isRecordPermissionScope` narrows to
+  // `DwnRecordsPermissionScope`, which declares `protocolPath?: string`
+  // and `contextId?: string` — no `as any` needed for those reads below.
   const readScopes = scopes.filter(
-    (s): s is DwnPermissionScope & { method: string } =>
-      isRecordPermissionScope(s) && readMethods.has(s.method as DwnMethodName),
+    (s): s is DwnRecordsPermissionScope =>
+      isRecordPermissionScope(s) && readMethods.has(s.method),
   );
 
   if (readScopes.length === 0) {
@@ -915,7 +929,7 @@ async function deriveScopedDecryptionKeys(
 
   // Fail closed: reject contextId-scoped encrypted reads.
   for (const scope of readScopes) {
-    if ('contextId' in scope && (scope as any).contextId) {
+    if (scope.contextId) {
       throw new Error(
         `Encrypted delegate access scoped by contextId is not supported ` +
         `yet; use protocol-wide permissions for protocol '${protocolUri}'.`,
@@ -936,9 +950,7 @@ async function deriveScopedDecryptionKeys(
   }
 
   // Check if any scope is protocol-wide (no protocolPath).
-  const hasProtocolWideRead = readScopes.some(
-    (s) => !('protocolPath' in s) || !(s as any).protocolPath,
-  );
+  const hasProtocolWideRead = readScopes.some((s) => !s.protocolPath);
 
   const { keyId, keyUri } = await getEncryptionKeyInfo(agent, ownerDid);
 
@@ -967,8 +979,7 @@ async function deriveScopedDecryptionKeys(
   // Emit one exact-path key per unique protocolPath.
   const uniquePaths = new Set<string>();
   for (const scope of readScopes) {
-    const pp = (scope as any).protocolPath as string | undefined;
-    if (pp) { uniquePaths.add(pp); }
+    if (scope.protocolPath) { uniquePaths.add(scope.protocolPath); }
   }
 
   const keys: DelegateDecryptionKey[] = [];
@@ -1058,9 +1069,12 @@ async function deriveContextKeysForDelegate(
     DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
   ]);
 
+  // `isRecordPermissionScope` narrows to `DwnRecordsPermissionScope`,
+  // which declares `protocolPath?: string` and `contextId?: string` —
+  // no `as any` needed for the field reads below.
   const readScopes = scopes.filter(
-    (s): s is DwnPermissionScope & { method: string } =>
-      isRecordPermissionScope(s) && readMethods.has(s.method as DwnMethodName),
+    (s): s is DwnRecordsPermissionScope =>
+      isRecordPermissionScope(s) && readMethods.has(s.method),
   );
 
   if (readScopes.length === 0) {
@@ -1069,7 +1083,7 @@ async function deriveContextKeysForDelegate(
 
   // Fail closed: reject contextId-scoped reads.
   for (const scope of readScopes) {
-    if ('contextId' in scope && (scope as any).contextId) {
+    if (scope.contextId) {
       throw new Error(
         `Encrypted delegate access scoped by contextId is not supported ` +
         `yet; use protocol-wide permissions for protocol ` +
@@ -1080,7 +1094,7 @@ async function deriveContextKeysForDelegate(
 
   // Fail closed: reject protocolPath-scoped reads on multi-party protocols.
   for (const scope of readScopes) {
-    if ('protocolPath' in scope && (scope as any).protocolPath) {
+    if (scope.protocolPath) {
       throw new Error(
         `Encrypted delegate access scoped by protocolPath on multi-party ` +
         `protocols is not supported yet; use protocol-wide permissions for ` +
@@ -1113,8 +1127,7 @@ async function deriveContextKeysForDelegate(
     });
 
     for (const entry of reply.entries ?? []) {
-      const rootContextId = (entry as any).contextId?.split('/')[0]
-        || (entry as any).recordId;
+      const rootContextId = entry.contextId?.split('/')[0] ?? entry.recordId;
 
       if (!rootContextId || seenContextIds.has(rootContextId)) { continue; }
       seenContextIds.add(rootContextId);
@@ -1389,7 +1402,7 @@ async function submitConnectResponse(
   logger.log('Signing connect response...');
   const responseObjectJwt = await EnboxConnectProtocol.signJwt({
     did  : delegateBearerDid,
-    data : responseObject as unknown as Record<string, unknown>,
+    data : responseObject,
   });
 
   const clientDid = await DidJwk.resolve(connectRequest.clientDid);

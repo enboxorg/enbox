@@ -81,7 +81,7 @@ export class DwnKeyStore extends DwnDataStore<Jwk> implements AgentDataStore<Jwk
           throw new Error(`${this.name}: Failed to read encrypted key record: ${record.recordId}`);
         }
 
-        storedKey = await Stream.consumeToJson({ readableStream: readResult.entry.data }) as Jwk;
+        storedKey = await Stream.consumeToJson<Jwk>({ readableStream: readResult.entry.data });
       } else {
         // Unencrypted record (legacy or non-encrypted store) — read inline.
         if (!record.encodedData) {

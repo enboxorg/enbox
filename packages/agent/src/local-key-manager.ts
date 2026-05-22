@@ -770,9 +770,13 @@ export class LocalKeyManager implements AgentKeyManager {
     // agent DID's X25519 key, so looking up that key via the DwnKeyStore would
     // cause infinite recursion (decrypt → getPrivateKey → DwnKeyStore.get → decrypt…).
     try {
-      const agentKeyManager = this.agent?.agentDid?.keyManager;
-      if (agentKeyManager && typeof (agentKeyManager as any).exportKey === 'function') {
-        const agentKey = await (agentKeyManager as any).exportKey({ keyUri });
+      // The base `KeyManager` interface doesn't declare `exportKey` — only
+      // some implementations support raw-key export. Narrowly-typed probe
+      // (no `any`) so the call below uses the structurally correct type.
+      type ExportableKeyManager = { exportKey: (params: { keyUri: string }) => Promise<unknown> };
+      const agentKeyManager = this.agent?.agentDid?.keyManager as Partial<ExportableKeyManager> | undefined;
+      if (agentKeyManager && typeof agentKeyManager.exportKey === 'function') {
+        const agentKey = await agentKeyManager.exportKey({ keyUri });
         if (agentKey && isPrivateJwk(agentKey)) {
           return agentKey;
         }

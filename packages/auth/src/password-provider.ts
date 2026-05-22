@@ -127,13 +127,19 @@ export function readPasswordRawMode(
   });
 }
 
-/** @internal Injectable I/O for testing `readPasswordDevTty`. */
+/**
+ * @internal Injectable I/O for testing `readPasswordDevTty`.
+ *
+ * `execSync`'s `stdio` is narrowed to the literal-union Node accepts so
+ * the implementation below can call `child_process.execSync` without a
+ * `stdio: string -> stdio: StdioOptions` cast.
+ */
 export interface DevTtyIo {
   openSync(path: string, flags: string): number;
   readSync(fd: number, buf: Uint8Array, offset: number, length: number, position: null): number;
   writeSync(fd: number, data: string): number;
   closeSync(fd: number): void;
-  execSync(cmd: string, opts: { stdio: string }): void;
+  execSync(cmd: string, opts: { stdio: 'pipe' | 'ignore' | 'inherit' }): void;
 }
 
 /**
@@ -162,7 +168,7 @@ export async function readPasswordDevTty(
       readSync,
       writeSync,
       closeSync,
-      execSync: (cmd: string, opts: { stdio: string }): void => { execSync(cmd, opts as any); },
+      execSync: (cmd: string, opts: { stdio: 'pipe' | 'ignore' | 'inherit' }): void => { execSync(cmd, opts); },
     };
   }
 

@@ -126,7 +126,7 @@ async function initClient({
   // Sign the request as a JWT.
   const requestJwt = await EnboxConnectProtocol.signJwt({
     did  : clientDid,
-    data : request as unknown as Record<string, unknown>,
+    data : request,
   });
 
   if (!requestJwt) {
@@ -191,9 +191,7 @@ async function initClient({
     // Get the PIN from the user and use it as AAD to decrypt.
     const pin = await validatePin();
     const jwt = await EnboxConnectProtocol.decryptResponse(clientDid, jwe, pin);
-    const verifiedResponse = (await EnboxConnectProtocol.verifyJwt({
-      jwt,
-    })) as unknown as EnboxConnectResponse;
+    const verifiedResponse = await EnboxConnectProtocol.verifyJwt<EnboxConnectResponse>({ jwt });
 
     return {
       delegateGrants              : verifiedResponse.delegateGrants,
