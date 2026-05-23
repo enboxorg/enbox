@@ -10,9 +10,9 @@ import { sleep } from '@enbox/common';
 import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
 
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { DeadLetterCategory, DeadLetterEntry, PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
-import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
 
 import { evaluateClosure } from './sync-closure-resolver.js';
 import { MAX_PENDING_TOKENS } from './types/sync.js';
@@ -314,7 +314,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
     this._agent = agent;
-    this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
+    this._permissionsApi = new AgentPermissionsApi({ agent });
     this._db = (db) ? db : new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
   }
 
@@ -347,7 +347,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
-    this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
+    this._permissionsApi = new AgentPermissionsApi({ agent });
     // Cached sync targets were resolved through the previous agent's
     // DID resolver / endpoint lookup — invalidate so the next sync
     // tick re-resolves through the new agent.

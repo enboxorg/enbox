@@ -56,15 +56,25 @@ export interface PasswordProvider {
 
 // ─── Internal I/O interfaces (for testing) ───────────────────────
 
-/** @internal Minimal interface for an stdin-like readable stream. */
+/**
+ * Minimal interface for an stdin-like readable stream.
+ *
+ * The signature shape mirrors Node's `tty.ReadStream` closely enough
+ * that `process.stdin` is directly assignable without a cast — the
+ * payoff is that `readPasswordRawMode` is testable with a tiny in-memory
+ * stub and the production call site needs no `as` to bridge to Node's
+ * actual stdin type.
+ *
+ * @internal
+ */
 export interface TtyReadable {
   isTTY?: boolean;
-  setRawMode(mode: boolean): void;
-  setEncoding(encoding: string): void;
-  resume(): void;
-  pause(): void;
-  on(event: 'data', listener: (chunk: string) => void): void;
-  removeListener(event: 'data', listener: (chunk: string) => void): void;
+  setRawMode(mode: boolean): unknown;
+  setEncoding(encoding?: BufferEncoding): unknown;
+  resume(): unknown;
+  pause(): unknown;
+  on(event: 'data', listener: (chunk: string) => void): unknown;
+  removeListener(event: 'data', listener: (chunk: string) => void): unknown;
 }
 
 /** @internal Minimal interface for an stdout-like writable stream. */
@@ -309,7 +319,7 @@ export namespace PasswordProvider {
         }
 
         return readPasswordRawMode(
-          process.stdin as unknown as TtyReadable,
+          process.stdin,
           process.stdout,
           prompt,
         );

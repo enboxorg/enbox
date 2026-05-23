@@ -17,7 +17,7 @@ export class Stream {
    * @returns A `ReadableStream<Uint8Array>` containing the blob's data.
    */
   public static fromBlob(blob: Blob): ReadableStream<Uint8Array> {
-    return blob.stream() as ReadableStream<Uint8Array>;
+    return blob.stream();
   }
 
   /**

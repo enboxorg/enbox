@@ -225,7 +225,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     this._message = message;
 
     if (message.authorization !== undefined) {
-      this._author = Message.getAuthor(message as RecordsWriteMessage);
+      this._author = Message.getAuthor(message);
 
       this._signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature);
 
