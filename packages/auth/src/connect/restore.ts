@@ -395,7 +395,10 @@ async function ensureRevocationGrantOnRemote(
 
     // `RecordsWriteMessage` doesn't declare `encodedData`, but the
     // wire-format reply may include it; widen the local type to
-    // acknowledge that without `any`.
+    // acknowledge that without `any`. (Sonar flags this as
+    // "unnecessary" assertion, but removing it makes the
+    // `encodedData: _encoded` destructuring fail TS2339 because the
+    // property isn't on the declared `RecordsWriteMessage` shape.)
     type RecordsWriteWireMessage = RecordsWriteMessage & { encodedData?: string };
     const { encodedData: _encoded, ...rawMessage } =
       reply.entry.recordsWrite as RecordsWriteWireMessage;

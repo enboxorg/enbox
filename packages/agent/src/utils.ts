@@ -214,12 +214,12 @@ export async function mapConcurrentSettled<T, R>(
   concurrency: number,
   fn: (item: T, index: number) => Promise<R>,
 ): Promise<PromiseSettledResult<R>[]> {
-  return mapConcurrent(items, concurrency, async (item, index) => {
+  return mapConcurrent<T, PromiseSettledResult<R>>(items, concurrency, async (item, index) => {
     try {
       const value = await fn(item, index);
-      return { status: 'fulfilled', value } as PromiseFulfilledResult<R>;
+      return { status: 'fulfilled', value };
     } catch (reason) {
-      return { status: 'rejected', reason } as PromiseRejectedResult;
+      return { status: 'rejected', reason };
     }
   });
 }
