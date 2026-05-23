@@ -418,96 +418,107 @@ async function verifyJwt({ jwt }: { jwt: string }): Promise<Record<string, unkno
   return decoded as Record<string, unknown>;
 }
 
+// ─── Field-level validation helpers ─────────────────────────────────────
+//
+// The connect-request / connect-response assertions below describe their
+// expected shape declaratively in terms of these primitive checks. Each
+// helper throws a consistent `Connect: <context> — \`<field>\` <reason>`
+// message on mismatch, so per-field error formatting is centralized here
+// rather than duplicated at every call site.
+
+function fail(context: string, field: string, reason: string): never {
+  throw new Error(`Connect: ${context} — \`${field}\` ${reason}.`);
+}
+
+function requireString(payload: Record<string, unknown>, field: string, context: string): void {
+  if (typeof payload[field] !== 'string') { fail(context, field, 'must be a string'); }
+}
+
+function requireNumber(payload: Record<string, unknown>, field: string, context: string): void {
+  if (typeof payload[field] !== 'number') { fail(context, field, 'must be a number'); }
+}
+
+function requireArray(payload: Record<string, unknown>, field: string, context: string): void {
+  if (!Array.isArray(payload[field])) { fail(context, field, 'must be an array'); }
+}
+
+function requireObject(payload: Record<string, unknown>, field: string, context: string): void {
+  const value = payload[field];
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    fail(context, field, 'must be an object');
+  }
+}
+
+function requireLiteral<L extends string | number | boolean>(
+  payload: Record<string, unknown>, field: string, expected: L, context: string,
+): void {
+  if (payload[field] !== expected) { fail(context, field, `must be ${JSON.stringify(expected)}`); }
+}
+
+function requireStringArray(payload: Record<string, unknown>, field: string, context: string): void {
+  const value = payload[field];
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
+    fail(context, field, 'must be a string[]');
+  }
+}
+
+function requireOptionalString(payload: Record<string, unknown>, field: string, context: string): void {
+  if (payload[field] !== undefined && typeof payload[field] !== 'string') {
+    fail(context, field, 'must be a string when present');
+  }
+}
+
+function requireOptionalArray(payload: Record<string, unknown>, field: string, context: string): void {
+  if (payload[field] !== undefined && !Array.isArray(payload[field])) {
+    fail(context, field, 'must be an array when present');
+  }
+}
+
+// ─── Boundary assertions ────────────────────────────────────────────────
+//
+// Each `assertConnect*` describes the shape of its target type as a list
+// of per-field requirements. The structural existence/primitive checks
+// are the only validation done at the JWT-payload boundary; deeper
+// validation of nested arrays/objects (permission scopes, grants,
+// portable DID structure) happens downstream in DWN-aware validators
+// where the richer logic already lives.
+
 /**
  * Runtime assertion that a verified JWT payload has the shape of an
  * {@link EnboxConnectRequest}. Use immediately after `verifyJwt()` to narrow
- * a `Record<string, unknown>` payload to `EnboxConnectRequest` before
- * accessing fields. Throws when a required field is missing or has the
- * wrong primitive type.
- *
- * Validation is structural — the existence + primitive shape of required
- * fields is checked, but the deep contents of nested objects (e.g.
- * individual `permissionRequests` entries) are validated by the SDK at the
- * grant-processing layer, not here. This split keeps the assertion fast and
- * focused on the JWT-payload boundary.
+ * a `Record<string, unknown>` payload before accessing fields.
  */
 function assertConnectRequest(payload: Record<string, unknown>): asserts payload is EnboxConnectRequest {
-  if (typeof payload.clientDid !== 'string') {
-    throw new Error('Connect: invalid connect request — `clientDid` must be a string.');
-  }
-  if (typeof payload.appName !== 'string') {
-    throw new Error('Connect: invalid connect request — `appName` must be a string.');
-  }
-  if (!Array.isArray(payload.permissionRequests)) {
-    throw new Error('Connect: invalid connect request — `permissionRequests` must be an array.');
-  }
-  if (typeof payload.nonce !== 'string') {
-    throw new Error('Connect: invalid connect request — `nonce` must be a string.');
-  }
-  if (typeof payload.state !== 'string') {
-    throw new Error('Connect: invalid connect request — `state` must be a string.');
-  }
-  if (typeof payload.callbackUrl !== 'string') {
-    throw new Error('Connect: invalid connect request — `callbackUrl` must be a string.');
-  }
-  if (payload.responseMode !== 'direct_post') {
-    throw new Error('Connect: invalid connect request — `responseMode` must be "direct_post".');
-  }
-  if (!Array.isArray(payload.supportedDidMethods) || !payload.supportedDidMethods.every((m) => typeof m === 'string')) {
-    throw new Error('Connect: invalid connect request — `supportedDidMethods` must be a string[].');
-  }
+  const ctx = 'invalid connect request';
+  requireString(payload, 'clientDid', ctx);
+  requireString(payload, 'appName', ctx);
+  requireArray(payload, 'permissionRequests', ctx);
+  requireString(payload, 'nonce', ctx);
+  requireString(payload, 'state', ctx);
+  requireString(payload, 'callbackUrl', ctx);
+  requireLiteral(payload, 'responseMode', 'direct_post', ctx);
+  requireStringArray(payload, 'supportedDidMethods', ctx);
 }
 
 /**
  * Runtime assertion that a verified JWT payload has the shape of an
  * {@link EnboxConnectResponse}. Use immediately after `verifyJwt()` to narrow
- * a `Record<string, unknown>` payload to `EnboxConnectResponse` before
- * accessing fields. Throws when a required field is missing or has the
- * wrong primitive type.
- *
- * Validation is structural — the existence + primitive shape of required
- * fields is checked. Deep contents of `delegateGrants`,
- * `delegatePortableDid`, and the optional decryption/context-key arrays are
- * verified later by the grant-import and key-derivation pipelines, which
- * have richer DWN-aware validators than this boundary assertion needs.
+ * a `Record<string, unknown>` payload before accessing fields.
  */
 function assertConnectResponse(payload: Record<string, unknown>): asserts payload is EnboxConnectResponse {
-  if (typeof payload.providerDid !== 'string') {
-    throw new Error('Connect: invalid connect response — `providerDid` must be a string.');
-  }
-  if (typeof payload.delegateDid !== 'string') {
-    throw new Error('Connect: invalid connect response — `delegateDid` must be a string.');
-  }
-  if (typeof payload.aud !== 'string') {
-    throw new Error('Connect: invalid connect response — `aud` must be a string.');
-  }
-  if (typeof payload.iat !== 'number') {
-    throw new Error('Connect: invalid connect response — `iat` must be a number.');
-  }
-  if (typeof payload.exp !== 'number') {
-    throw new Error('Connect: invalid connect response — `exp` must be a number.');
-  }
-  if (payload.nonce !== undefined && typeof payload.nonce !== 'string') {
-    throw new Error('Connect: invalid connect response — `nonce` must be a string when present.');
-  }
-  if (!Array.isArray(payload.delegateGrants)) {
-    throw new Error('Connect: invalid connect response — `delegateGrants` must be an array.');
-  }
-  if (typeof payload.delegatePortableDid !== 'object' || payload.delegatePortableDid === null) {
-    throw new Error('Connect: invalid connect response — `delegatePortableDid` must be an object.');
-  }
-  if (payload.delegateDecryptionKeys !== undefined && !Array.isArray(payload.delegateDecryptionKeys)) {
-    throw new Error('Connect: invalid connect response — `delegateDecryptionKeys` must be an array when present.');
-  }
-  if (payload.delegateContextKeys !== undefined && !Array.isArray(payload.delegateContextKeys)) {
-    throw new Error('Connect: invalid connect response — `delegateContextKeys` must be an array when present.');
-  }
-  if (payload.delegateMultiPartyProtocols !== undefined && !Array.isArray(payload.delegateMultiPartyProtocols)) {
-    throw new Error('Connect: invalid connect response — `delegateMultiPartyProtocols` must be an array when present.');
-  }
-  if (payload.sessionRevocations !== undefined && !Array.isArray(payload.sessionRevocations)) {
-    throw new Error('Connect: invalid connect response — `sessionRevocations` must be an array when present.');
-  }
+  const ctx = 'invalid connect response';
+  requireString(payload, 'providerDid', ctx);
+  requireString(payload, 'delegateDid', ctx);
+  requireString(payload, 'aud', ctx);
+  requireNumber(payload, 'iat', ctx);
+  requireNumber(payload, 'exp', ctx);
+  requireOptionalString(payload, 'nonce', ctx);
+  requireArray(payload, 'delegateGrants', ctx);
+  requireObject(payload, 'delegatePortableDid', ctx);
+  requireOptionalArray(payload, 'delegateDecryptionKeys', ctx);
+  requireOptionalArray(payload, 'delegateContextKeys', ctx);
+  requireOptionalArray(payload, 'delegateMultiPartyProtocols', ctx);
+  requireOptionalArray(payload, 'sessionRevocations', ctx);
 }
 
 // ---------------------------------------------------------------------------

@@ -7,26 +7,14 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
  */
 export class Time {
   /**
-   * sleeps for the desired duration
-   *
-   * Delegates to `sleep` in `@enbox/common` — the single shared
-   * implementation across the monorepo. Kept as a class method so the
-   * existing `Time.sleep` / `Time.minimalSleep` API surface is stable
-   * for the many DWN test sites that call it.
-   *
-   * @param durationInMillisecond the desired amount of sleep time
-   * @returns when the provided duration has passed
-   */
-  public static async sleep(durationInMillisecond: number): Promise<void> {
-    return sleep(durationInMillisecond);
-  }
-
-  /**
    * We must sleep for at least 2ms to avoid timestamp collisions during testing.
    * https://github.com/enboxorg/enbox/issues/481
+   *
+   * For arbitrary-duration sleeps, use `sleep` from `@enbox/common`
+   * directly — this class only retains the DWN-specific minimum.
    */
   public static async minimalSleep(): Promise<void> {
-    await Time.sleep(2);
+    await sleep(2);
   }
 
   /**
