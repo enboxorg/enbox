@@ -739,6 +739,50 @@ describe('enbox connect', () => {
       )).toBe(true);
     });
 
+    it('should fail and log when callback POST returns a non-2xx response', async () => {
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
+      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
+        messageCid : '',
+        reply      : { status: { code: 200, detail: 'OK' }, entries: [{ descriptor: { interface: 'Protocols', method: 'Configure' } }] },
+      } as any);
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
+      sinon.stub(globalThis, 'fetch').resolves(new Response('server error', { status: 500 }));
+      const logStub = sinon.stub(logger, 'log');
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      const request = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        permissionRequests : [{ protocolDefinition, permissionScopes }],
+        callbackUrl,
+      });
+
+      await expect(
+        EnboxConnectProtocol.submitConnectResponse(
+          providerIdentity.did.uri,
+          request,
+          randomPin,
+          testHarness.agent,
+        )
+      ).rejects.toThrow('Connect: callback POST failed with HTTP 500.');
+
+      const logMessages = logStub.getCalls().map((call) => call.args[0]);
+      expect(logMessages.some(
+        (message) => message.includes('[connect.perf] response.callbackPost fail')
+      )).toBe(true);
+      expect(logMessages.some(
+        (message) => message.includes('[connect.perf] submitConnectResponse.total fail')
+      )).toBe(true);
+    });
+
     it('should skip the redundant remote ProtocolsConfigure when the protocol is already installed locally', async () => {
       // Scenario: the wallet's own `prepareProtocol` (in @enbox/web-wallet) ran
       // BEFORE `submitConnectResponse` and pushed the protocol to every owner

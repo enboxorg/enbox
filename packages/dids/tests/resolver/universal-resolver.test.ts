@@ -309,6 +309,70 @@ describe('UniversalResolver', () => {
         expect(seenOptions[1]).toEqual({ gatewayUri: 'B' });
       });
 
+      it('does not serve optioned resolutions from the DID-only cache', async () => {
+        const did = 'did:jwk:single-flight-optioned-cache-read-bypass';
+        const cache = new Map<string, DidResolutionResult>();
+        cache.set(did, {
+          didResolutionMetadata : {},
+          didDocument           : { id: `${did}#cached-default` },
+          didDocumentMetadata   : {},
+        });
+        const cachingResolver = new UniversalResolver({
+          didResolvers : [DidJwk],
+          cache        : {
+            open   : (): Promise<void> => Promise.resolve(),
+            close  : (): Promise<void> => Promise.resolve(),
+            get    : (key: string): Promise<DidResolutionResult | undefined> => Promise.resolve(cache.get(key)),
+            set    : (key: string, value: DidResolutionResult): Promise<void> => { cache.set(key, value); return Promise.resolve(); },
+            delete : (key: string): Promise<void> => { cache.delete(key); return Promise.resolve(); },
+            clear  : (): Promise<void> => { cache.clear(); return Promise.resolve(); },
+          },
+        });
+        const didMethodResolver = spyOn(DidJwk, 'resolve').mockResolvedValue({
+          didResolutionMetadata : {},
+          didDocument           : { id: `${did}#optioned` },
+          didDocumentMetadata   : {},
+        });
+
+        const result = await cachingResolver.resolve(did, { gatewayUri: 'https://dht.example' } as any);
+
+        expect(didMethodResolver).toHaveBeenCalledTimes(1);
+        expect(result.didDocument).toEqual({ id: `${did}#optioned` });
+      });
+
+      it('does not write optioned resolutions to the DID-only cache', async () => {
+        const did = 'did:jwk:single-flight-optioned-cache-write-bypass';
+        const cache = new Map<string, DidResolutionResult>();
+        const cachingResolver = new UniversalResolver({
+          didResolvers : [DidJwk],
+          cache        : {
+            open   : (): Promise<void> => Promise.resolve(),
+            close  : (): Promise<void> => Promise.resolve(),
+            get    : (key: string): Promise<DidResolutionResult | undefined> => Promise.resolve(cache.get(key)),
+            set    : (key: string, value: DidResolutionResult): Promise<void> => { cache.set(key, value); return Promise.resolve(); },
+            delete : (key: string): Promise<void> => { cache.delete(key); return Promise.resolve(); },
+            clear  : (): Promise<void> => { cache.clear(); return Promise.resolve(); },
+          },
+        });
+        const didMethodResolver = spyOn(DidJwk, 'resolve')
+          .mockResolvedValueOnce({
+            didResolutionMetadata : {},
+            didDocument           : { id: `${did}#optioned` },
+            didDocumentMetadata   : {},
+          })
+          .mockResolvedValueOnce({
+            didResolutionMetadata : {},
+            didDocument           : { id: `${did}#default` },
+            didDocumentMetadata   : {},
+          });
+
+        await cachingResolver.resolve(did, { gatewayUri: 'https://dht.example' } as any);
+        const result = await cachingResolver.resolve(did);
+
+        expect(didMethodResolver).toHaveBeenCalledTimes(2);
+        expect(result.didDocument).toEqual({ id: `${did}#default` });
+      });
+
       it('does not poison concurrent callers when cache.set throws after a successful resolution', async () => {
         const did = 'did:jwk:single-flight-cache-set-throws';
 

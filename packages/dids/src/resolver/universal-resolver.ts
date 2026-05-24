@@ -147,12 +147,6 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
       };
     }
 
-    const cachedResolutionResult = await this.cache.get(parsedDid.uri);
-
-    if (cachedResolutionResult) {
-      return cachedResolutionResult;
-    }
-
     // Single-flight: coalesce concurrent resolutions of the same DID so we
     // never issue more than one network round-trip per cache miss. Without
     // this, parallel callers (e.g. the wallet connect flow which kicks off
@@ -160,19 +154,23 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
     // lookup against the relay, multiplying wall time by N and saturating
     // browser per-host connection limits.
     //
-    // Coalescing is only safe when no per-call `options` are supplied: the
-    // in-flight Map is keyed by DID URI only, so two concurrent callers
-    // with divergent options (e.g. different `gatewayUri` for did:dht)
-    // would silently share the first caller's result. Callers passing
-    // options resolve independently — the common no-options path (the
-    // wallet's parallelized prepareProtocol fan-out) still benefits.
-    const coalesceable = options === undefined || Object.keys(options).length === 0;
+    // Coalescing and DID-only caching are only safe when no per-call `options`
+    // are supplied. Method-specific options (e.g. did:dht `gatewayUri`) can
+    // change the resolution source or representation, so optioned calls must
+    // not share the DID-only in-flight or cache entries.
+    if (options !== undefined) {
+      return resolver.resolve(parsedDid.uri, options);
+    }
 
-    if (coalesceable) {
-      const existing = this._inFlight.get(parsedDid.uri);
-      if (existing) {
-        return existing;
-      }
+    const cachedResolutionResult = await this.cache.get(parsedDid.uri);
+
+    if (cachedResolutionResult) {
+      return cachedResolutionResult;
+    }
+
+    const existing = this._inFlight.get(parsedDid.uri);
+    if (existing) {
+      return existing;
     }
 
     const resolution = (async (): Promise<DidResolutionResult> => {
@@ -189,10 +187,6 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
       }
       return result;
     })();
-
-    if (!coalesceable) {
-      return resolution;
-    }
 
     this._inFlight.set(parsedDid.uri, resolution);
     try {

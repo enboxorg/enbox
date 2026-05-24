@@ -1644,14 +1644,22 @@ async function submitConnectResponse(
     logger.log(`Sending connect response to: ${connectRequest.callbackUrl}`);
     await timed(
       'response.callbackPost',
-      () => fetch(connectRequest.callbackUrl, {
-        body    : formEncodedRequest,
-        method  : 'POST',
-        headers : {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        signal: AbortSignal.timeout(30_000),
-      }),
+      async () => {
+        const response = await fetch(connectRequest.callbackUrl, {
+          body    : formEncodedRequest,
+          method  : 'POST',
+          headers : {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          signal: AbortSignal.timeout(30_000),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Connect: callback POST failed with HTTP ${response.status}.`);
+        }
+
+        return response;
+      },
     );
   } catch (err) {
     outcome = 'fail';
