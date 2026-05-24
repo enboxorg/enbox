@@ -1,7 +1,7 @@
 ---
 "@enbox/dids": patch
 "@enbox/agent": patch
-"@enbox/common": minor
+"@enbox/common": patch
 ---
 
 perf(connect): single-flight DID resolver + connect.perf timing instrumentation

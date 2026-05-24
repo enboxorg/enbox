@@ -1519,7 +1519,7 @@ async function submitConnectResponse(
       });
 
       const { encodedData: revEncoded, ...revRawMessage } = revGrant.message;
-      const revData = Convert.base64Url(revEncoded).toUint8Array();
+      const revData = Uint8Array.from(Convert.base64Url(revEncoded).toUint8Array());
 
       // Include the revocation grant in the delegate grants for distribution.
       delegateGrants.push(revGrant.message);
@@ -1538,7 +1538,7 @@ async function submitConnectResponse(
               dwnUrl,
               targetDid : selectedDid,
               message   : revRawMessage,
-              data      : new Blob([revData as BlobPart]),
+              data      : new Blob([revData]),
               signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
             }),
         ),
