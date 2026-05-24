@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { sleep } from '../src/time.js';
+import { nowMs, sleep, timed } from '../src/time.js';
 
 describe('sleep', () => {
   it('returns a Promise that resolves after at least the given duration', async () => {
@@ -38,5 +38,36 @@ describe('sleep', () => {
   it('returns void on resolution', async () => {
     const result = await sleep(1);
     expect(result).toBeUndefined();
+  });
+});
+
+describe('nowMs', () => {
+  it('returns a numeric timestamp', () => {
+    expect(typeof nowMs()).toBe('number');
+  });
+});
+
+describe('timed', () => {
+  it('returns the operation result and logs success duration', async () => {
+    const messages: string[] = [];
+
+    const result = await timed('test.operation', () => Promise.resolve('ok'), {
+      log: (message) => { messages.push(message); },
+    });
+
+    expect(result).toBe('ok');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].startsWith('test.operation ok in ')).toBe(true);
+  });
+
+  it('rethrows operation errors and logs failure duration', async () => {
+    const messages: string[] = [];
+
+    await expect(timed('test.operation', () => Promise.reject(new Error('boom')), {
+      log: (message) => { messages.push(message); },
+    })).rejects.toThrow('boom');
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].startsWith('test.operation fail in ')).toBe(true);
   });
 });

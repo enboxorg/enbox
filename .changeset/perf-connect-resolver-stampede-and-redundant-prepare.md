@@ -1,6 +1,7 @@
 ---
 "@enbox/dids": patch
 "@enbox/agent": patch
+"@enbox/common": minor
 ---
 
 perf(connect): single-flight DID resolver + connect.perf timing instrumentation
@@ -19,3 +20,6 @@ perf(connect): single-flight DID resolver + connect.perf timing instrumentation
   permission grant fan-out, revocation grant creation/fan-out, response
   signing/encryption, callback POST, total) so operators can bisect remaining
   wall-time directly from wallet debug logs.
+
+- `@enbox/common`: add reusable `nowMs()` and `timed()` helpers for
+  monotonic elapsed-duration measurement and success/failure timing logs.

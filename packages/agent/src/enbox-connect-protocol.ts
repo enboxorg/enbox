@@ -103,7 +103,7 @@ import type {
   Jwk } from '@enbox/crypto';
 
 import { type BearerDid, DidJwk } from '@enbox/dids';
-import { concatenateUrl, Convert, logger } from '@enbox/common';
+import { concatenateUrl, Convert, logger, nowMs, timed } from '@enbox/common';
 import {
   CryptoUtils,
   Ed25519,
@@ -151,50 +151,8 @@ const CONNECT_FANOUT_CONCURRENCY = 8;
  */
 const CONNECT_REQUEST_TIMEOUT_MS = 10_000;
 
-// ---------------------------------------------------------------------------
-// Perf instrumentation
-// ---------------------------------------------------------------------------
-
-/**
- * Returns a high-resolution monotonic timestamp in milliseconds.
- *
- * Uses `performance.now()` when available (browser, Node 16+, Bun) so that
- * timings are immune to wall-clock adjustments; falls back to `Date.now()`
- * in the unlikely case `performance` is missing. Used by the connect-flow
- * instrumentation below.
- */
-function nowMs(): number {
-  // `performance.now()` is widely available in Node 16+, browsers and Bun.
-  // Guard for environments (e.g. very old runtimes) where it may be absent.
-  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
-    return performance.now();
-  }
-  return Date.now();
-}
-
-/**
- * Times an async operation and emits a structured `connect.perf` log line.
- *
- * Used to instrument the wallet-side connect "Authorizing" critical path so
- * that operators can bisect remaining wall-time between phases (protocol
- * install, grant creation, fan-out, response signing, etc.) directly from
- * the wallet's debug logs without needing additional tooling.
- *
- * Failures are logged and re-thrown unchanged.
- */
-async function timed<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  const start = nowMs();
-  try {
-    const result = await fn();
-    const elapsed = nowMs() - start;
-    logger.log(`[connect.perf] ${label} ok in ${elapsed.toFixed(1)}ms`);
-    return result;
-  } catch (err) {
-    const elapsed = nowMs() - start;
-    logger.log(`[connect.perf] ${label} fail in ${elapsed.toFixed(1)}ms`);
-    throw err;
-  }
-}
+/** Log namespace used for wallet-side connect critical-path timings. */
+const CONNECT_PERF_LOG_PREFIX = '[connect.perf]';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1365,12 +1323,12 @@ async function submitConnectResponse(
   let sessionGrantCount = 0;
   let outcome: 'ok' | 'fail' = 'ok';
   logger.log(
-    `[connect.perf] submitConnectResponse.start `
+    `${CONNECT_PERF_LOG_PREFIX} submitConnectResponse.start `
     + `(protocols=${numProtocols}, scopes=${numScopes})`,
   );
 
   try {
-    const delegateBearerDid = await timed('delegateDid.create', () => DidJwk.create());
+    const delegateBearerDid = await timed(`${CONNECT_PERF_LOG_PREFIX} delegateDid.create`, () => DidJwk.create());
     const delegatePortableDid = await delegateBearerDid.export();
 
     // Add X25519 key derived from the delegate's Ed25519 key.
@@ -1430,7 +1388,7 @@ async function submitConnectResponse(
     const delegateMultiPartyProtocols: string[] = [];
 
     const delegateGrants = await timed(
-      `permissionGrants.fanout (protocols=${numProtocols})`,
+      `${CONNECT_PERF_LOG_PREFIX} permissionGrants.fanout (protocols=${numProtocols})`,
       async () => {
         const delegateGrantPromises = connectRequest.permissionRequests.map(
           async (permissionRequest) => {
@@ -1529,7 +1487,7 @@ async function submitConnectResponse(
     // cap parallelism to avoid head-of-line blocking when sessionGrantCount is
     // large (e.g. dapp requesting many scopes at once).
     const revGrantResults = await timed(
-      `revocationGrants.create (n=${sessionGrantCount})`,
+      `${CONNECT_PERF_LOG_PREFIX} revocationGrants.create (n=${sessionGrantCount})`,
       () => mapConcurrent(
         delegateGrants.slice(0, sessionGrantCount),
         CONNECT_FANOUT_CONCURRENCY,
@@ -1571,7 +1529,7 @@ async function submitConnectResponse(
 
     if (revSendTasks.length > 0) {
       await timed(
-        `revocationGrants.fanout (sends=${revSendTasks.length}, endpoints=${revGrantEndpoints.length})`,
+        `${CONNECT_PERF_LOG_PREFIX} revocationGrants.fanout (sends=${revSendTasks.length}, endpoints=${revGrantEndpoints.length})`,
         () => mapConcurrentSettled(
           revSendTasks,
           CONNECT_FANOUT_CONCURRENCY,
@@ -1589,7 +1547,7 @@ async function submitConnectResponse(
 
     logger.log('Building connect response...');
     const responseObject = await timed(
-      'response.build',
+      `${CONNECT_PERF_LOG_PREFIX} response.build`,
       () => EnboxConnectProtocol.createConnectResponse({
         providerDid                 : selectedDid,
         delegateDid                 : delegateBearerDid.uri,
@@ -1606,7 +1564,7 @@ async function submitConnectResponse(
 
     logger.log('Signing connect response...');
     const responseObjectJwt = await timed(
-      'response.sign',
+      `${CONNECT_PERF_LOG_PREFIX} response.sign`,
       () => EnboxConnectProtocol.signJwt({
         did  : delegateBearerDid,
         data : responseObject,
@@ -1614,12 +1572,12 @@ async function submitConnectResponse(
     );
 
     const clientDid = await timed(
-      'clientDid.resolve',
+      `${CONNECT_PERF_LOG_PREFIX} clientDid.resolve`,
       () => DidJwk.resolve(connectRequest.clientDid),
     );
 
     const sharedKey = await timed(
-      'response.deriveSharedKey',
+      `${CONNECT_PERF_LOG_PREFIX} response.deriveSharedKey`,
       () => EnboxConnectProtocol.deriveSharedKey(
         delegateBearerDid,
         clientDid?.didDocument!,
@@ -1627,7 +1585,7 @@ async function submitConnectResponse(
     );
 
     const encryptedResponse = await timed(
-      'response.encrypt',
+      `${CONNECT_PERF_LOG_PREFIX} response.encrypt`,
       () => EnboxConnectProtocol.encryptResponse({
         jwt                  : responseObjectJwt,
         encryptionKey        : sharedKey,
@@ -1643,7 +1601,7 @@ async function submitConnectResponse(
 
     logger.log(`Sending connect response to: ${connectRequest.callbackUrl}`);
     await timed(
-      'response.callbackPost',
+      `${CONNECT_PERF_LOG_PREFIX} response.callbackPost`,
       async () => {
         const response = await fetch(connectRequest.callbackUrl, {
           body    : formEncodedRequest,
@@ -1667,7 +1625,7 @@ async function submitConnectResponse(
   } finally {
     const totalElapsed = nowMs() - submitStart;
     logger.log(
-      `[connect.perf] submitConnectResponse.total ${outcome} in ${totalElapsed.toFixed(1)}ms `
+      `${CONNECT_PERF_LOG_PREFIX} submitConnectResponse.total ${outcome} in ${totalElapsed.toFixed(1)}ms `
       + `(protocols=${numProtocols}, scopes=${numScopes}, sessionGrants=${sessionGrantCount})`,
     );
   }
