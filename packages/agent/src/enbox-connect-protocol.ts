@@ -103,7 +103,7 @@ import type {
   Jwk } from '@enbox/crypto';
 
 import { type BearerDid, DidJwk } from '@enbox/dids';
-import { concatenateUrl, Convert, logger } from '@enbox/common';
+import { concatenateUrl, Convert, logger, nowMs, timed } from '@enbox/common';
 import {
   CryptoUtils,
   Ed25519,
@@ -150,6 +150,9 @@ const CONNECT_FANOUT_CONCURRENCY = 8;
  * the connect-flow fan-outs are best-effort and tolerate per-task failure.
  */
 const CONNECT_REQUEST_TIMEOUT_MS = 10_000;
+
+/** Log namespace used for wallet-side connect critical-path timings. */
+const CONNECT_PERF_LOG_PREFIX = '[connect.perf]';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1308,261 +1311,324 @@ async function submitConnectResponse(
   pin: string | undefined,
   agent: EnboxPlatformAgent
 ): Promise<void> {
-  const delegateBearerDid = await DidJwk.create();
-  const delegatePortableDid = await delegateBearerDid.export();
-
-  // Add X25519 key derived from the delegate's Ed25519 key.
-  // did:jwk only supports one verification method, but DWN encryption
-  // requires X25519 for key agreement. Including the derived X25519
-  // private key in the PortableDid ensures the delegate agent's KMS
-  // has both keys after import. The Ed25519→X25519 conversion is a
-  // standard cryptographic operation (RFC 8032 / libsodium).
-  const delegateEdPrivateKey = delegatePortableDid.privateKeys![0];
-  const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
-    privateKey: delegateEdPrivateKey,
-  });
-  delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
-
-  // Derive the delegate's key-delivery ProtocolPath leaf public key.
-  // This is the pre-derived key that the owner will use later when writing
-  // contextKey records addressed to this delegate. The owner cannot derive
-  // this from the delegate's root public key alone (HKDF needs the private
-  // key), so we compute it now while we have temporary access to the
-  // delegate's private key material.
-  const delegateX25519PrivateKeyBytes = await X25519.privateKeyToBytes({
-    privateKey: delegateX25519PrivateKey,
-  });
-  const keyDeliveryDerivationPath = [
-    KeyDerivationScheme.ProtocolPath,
-    KeyDeliveryProtocolDefinition.protocol,
-    'contextKey',
-  ];
-  const delegateLeafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
-    delegateX25519PrivateKeyBytes, keyDeliveryDerivationPath,
+  const submitStart = nowMs();
+  const numProtocols = connectRequest.permissionRequests.length;
+  const numScopes = connectRequest.permissionRequests.reduce(
+    (sum, req) => sum + req.permissionScopes.length,
+    0,
   );
-  const delegateLeafPrivateKeyJwk = await X25519.bytesToPrivateKey({
-    privateKeyBytes: delegateLeafPrivateKeyBytes,
-  });
-  const delegateKeyDeliveryLeafPublicKey = await X25519.getPublicKey({
-    key: delegateLeafPrivateKeyJwk,
-  });
-
-  // The rootKeyId is the delegate's keyAgreement VM id (e.g. `did:jwk:...#0`).
-  // For did:jwk this is the Ed25519 VM, but getEncryptionKeyInfo() also returns
-  // this same id after Ed25519→X25519 conversion. The DWN SDK matches the JWE
-  // `kid` header against the KeyDecrypter's `rootKeyId`, so both sides must use
-  // the same id — which they do because both derive from verificationMethod.id
-  // of the keyAgreement relationship.
-  const delegateKeyAgreementVmId = delegateBearerDid.document.verificationMethod![0].id;
-  const delegateKeyDeliveryData = {
-    rootKeyId    : delegateKeyAgreementVmId,
-    publicKeyJwk : delegateKeyDeliveryLeafPublicKey,
-  };
-
-  // Derive scope-aware decryption keys for encrypted protocols.
-  // Single-party: ProtocolPath keys (protocol-wide or exact-path).
-  // Multi-party: ProtocolContext keys (per rootContextId).
-  // Write-only delegates receive no decryption capability.
-  const delegateDecryptionKeys: DelegateDecryptionKey[] = [];
-  const delegateContextKeys: DelegateContextKey[] = [];
-  const delegateMultiPartyProtocols: string[] = [];
-
-  const delegateGrantPromises = connectRequest.permissionRequests.map(
-    async (permissionRequest) => {
-      const { protocolDefinition, permissionScopes } = permissionRequest;
-
-      const grantsMatchProtocolUri = permissionScopes.every(
-        scope => 'protocol' in scope && scope.protocol === protocolDefinition.protocol
-      );
-      if (!grantsMatchProtocolUri) {
-        throw new Error('All permission scopes must match the protocol URI they are provided with.');
-      }
-
-      await prepareProtocol(selectedDid, agent, protocolDefinition);
-
-      const hasEncryptedTypes = Object.values(protocolDefinition.types ?? {})
-        .some((type: any) => type?.encryptionRequired === true);
-
-      if (hasEncryptedTypes) {
-        const { multiParty, singleParty } = classifyProtocolRoots(protocolDefinition);
-
-        if (multiParty.length > 0 && singleParty.length > 0) {
-          // Mixed protocol: some roots are multi-party, others single-party.
-          // We cannot safely model this with either key type alone.
-          throw new Error(
-            `Encrypted delegate access for protocols with mixed single-party ` +
-            `and multi-party roots is not supported yet. ` +
-            `Protocol '${protocolDefinition.protocol}' has multi-party roots ` +
-            `[${multiParty.join(', ')}] and single-party roots ` +
-            `[${singleParty.join(', ')}].`,
-          );
-        }
-
-        if (multiParty.length > 0) {
-          // Pure multi-party: derive per-context keys for existing contexts.
-          // Unsupported scope shapes (protocolPath, contextId) throw.
-          const ctxKeys = await deriveContextKeysForDelegate(
-            agent, selectedDid, protocolDefinition, permissionScopes,
-          );
-          delegateContextKeys.push(...ctxKeys);
-
-          // Only register the protocol for post-connect delivery if the
-          // delegate has at least one read-like scope. Write-only delegates
-          // must NOT receive context keys — they have no decryption need.
-          const readMethods = new Set([
-            DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
-          ]);
-          const hasReadLikeScope = permissionScopes.some(
-            (s): boolean => isRecordPermissionScope(s) && readMethods.has(s.method as DwnMethodName),
-          );
-          if (hasReadLikeScope) {
-            delegateMultiPartyProtocols.push(protocolDefinition.protocol);
-          }
-        } else {
-          // Pure single-party: derive ProtocolPath keys.
-          // Unsupported scope shapes (contextId) throw.
-          const keys = await deriveScopedDecryptionKeys(
-            agent, selectedDid, protocolDefinition.protocol,
-            permissionScopes, protocolDefinition,
-          );
-          delegateDecryptionKeys.push(...keys);
-        }
-      }
-
-      return EnboxConnectProtocol.createPermissionGrants(
-        selectedDid,
-        delegateBearerDid,
-        agent,
-        permissionScopes,
-        delegateKeyDeliveryData,
-      );
-    }
+  // Tracked across the try/finally so the aggregate `submitConnectResponse.total`
+  // log emits on both success and failure paths — operators bisecting wall-time
+  // from wallet debug logs need the total even when a phase throws.
+  let sessionGrantCount = 0;
+  let outcome: 'ok' | 'fail' = 'ok';
+  logger.log(
+    `${CONNECT_PERF_LOG_PREFIX} submitConnectResponse.start `
+    + `(protocols=${numProtocols}, scopes=${numScopes})`,
   );
 
-  const delegateGrants = (await Promise.all(delegateGrantPromises)).flat();
-
-  // Create per-grant contextId-scoped revocation grants.
-  // Each revocation grant authorizes the delegate to write a revocation
-  // ONLY for the specific session grant it corresponds to.
-  const permissionsApi = new AgentPermissionsApi({ agent });
-  const sessionRevocations: { grantId: string; revocationGrantId: string }[] = [];
-  let revGrantEndpoints: string[] = [];
   try {
-    revGrantEndpoints = await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
-  } catch {
-    // Endpoint resolution failure — revocation grants will be local-only until sync.
-  }
+    const delegateBearerDid = await timed(`${CONNECT_PERF_LOG_PREFIX} delegateDid.create`, () => DidJwk.create());
+    const delegatePortableDid = await delegateBearerDid.export();
 
-  // Snapshot the current length — revocation grants are appended to delegateGrants
-  // below, but we must NOT iterate over them (they are meta-grants, not session grants).
-  const sessionGrantCount = delegateGrants.length;
+    // Add X25519 key derived from the delegate's Ed25519 key.
+    // did:jwk only supports one verification method, but DWN encryption
+    // requires X25519 for key agreement. Including the derived X25519
+    // private key in the PortableDid ensures the delegate agent's KMS
+    // has both keys after import. The Ed25519→X25519 conversion is a
+    // standard cryptographic operation (RFC 8032 / libsodium).
+    const delegateEdPrivateKey = delegatePortableDid.privateKeys![0];
+    const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+      privateKey: delegateEdPrivateKey,
+    });
+    delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
 
-  // Phase 1: create all revocation grants locally with bounded concurrency.
-  // createGrant is local-only (storage + signing) so it's cheap, but we still
-  // cap parallelism to avoid head-of-line blocking when sessionGrantCount is
-  // large (e.g. dapp requesting many scopes at once).
-  const revGrantResults = await mapConcurrent(
-    delegateGrants.slice(0, sessionGrantCount),
-    CONNECT_FANOUT_CONCURRENCY,
-    (grantMessage) =>
-      permissionsApi.createGrant({
-        delegated : true,
-        store     : true,
-        grantedTo : delegateBearerDid.uri,
-        scope     : {
-          interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Write,
-          protocol  : PermissionsProtocol.uri,
-          contextId : grantMessage.recordId,
-        },
-        dateExpires : '2040-06-25T16:09:16.693356Z',
-        author      : selectedDid,
-      }).then((revGrant) => ({ grantMessage, revGrant })),
-  );
-
-  // Phase 2: fan out every revocation grant to every owner DWN endpoint with
-  // a single global concurrency cap so that (grants × endpoints) cannot blow
-  // up. This is best-effort (sync delivers eventually) so individual failures
-  // are tolerated by `mapConcurrentSettled`.
-  const revSendTasks = revGrantResults.flatMap(({ grantMessage, revGrant }) => {
-    sessionRevocations.push({
-      grantId           : grantMessage.recordId,
-      revocationGrantId : revGrant.message.recordId,
+    // Derive the delegate's key-delivery ProtocolPath leaf public key.
+    // This is the pre-derived key that the owner will use later when writing
+    // contextKey records addressed to this delegate. The owner cannot derive
+    // this from the delegate's root public key alone (HKDF needs the private
+    // key), so we compute it now while we have temporary access to the
+    // delegate's private key material.
+    const delegateX25519PrivateKeyBytes = await X25519.privateKeyToBytes({
+      privateKey: delegateX25519PrivateKey,
+    });
+    const keyDeliveryDerivationPath = [
+      KeyDerivationScheme.ProtocolPath,
+      KeyDeliveryProtocolDefinition.protocol,
+      'contextKey',
+    ];
+    const delegateLeafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
+      delegateX25519PrivateKeyBytes, keyDeliveryDerivationPath,
+    );
+    const delegateLeafPrivateKeyJwk = await X25519.bytesToPrivateKey({
+      privateKeyBytes: delegateLeafPrivateKeyBytes,
+    });
+    const delegateKeyDeliveryLeafPublicKey = await X25519.getPublicKey({
+      key: delegateLeafPrivateKeyJwk,
     });
 
-    const { encodedData: revEncoded, ...revRawMessage } = revGrant.message;
-    const revData = Convert.base64Url(revEncoded).toUint8Array();
+    // The rootKeyId is the delegate's keyAgreement VM id (e.g. `did:jwk:...#0`).
+    // For did:jwk this is the Ed25519 VM, but getEncryptionKeyInfo() also returns
+    // this same id after Ed25519→X25519 conversion. The DWN SDK matches the JWE
+    // `kid` header against the KeyDecrypter's `rootKeyId`, so both sides must use
+    // the same id — which they do because both derive from verificationMethod.id
+    // of the keyAgreement relationship.
+    const delegateKeyAgreementVmId = delegateBearerDid.document.verificationMethod![0].id;
+    const delegateKeyDeliveryData = {
+      rootKeyId    : delegateKeyAgreementVmId,
+      publicKeyJwk : delegateKeyDeliveryLeafPublicKey,
+    };
 
-    // Include the revocation grant in the delegate grants for distribution.
-    delegateGrants.push(revGrant.message);
+    // Derive scope-aware decryption keys for encrypted protocols.
+    // Single-party: ProtocolPath keys (protocol-wide or exact-path).
+    // Multi-party: ProtocolContext keys (per rootContextId).
+    // Write-only delegates receive no decryption capability.
+    const delegateDecryptionKeys: DelegateDecryptionKey[] = [];
+    const delegateContextKeys: DelegateContextKey[] = [];
+    const delegateMultiPartyProtocols: string[] = [];
 
-    return revGrantEndpoints.map((dwnUrl) => ({ revRawMessage, revData, dwnUrl }));
-  });
+    const delegateGrants = await timed(
+      `${CONNECT_PERF_LOG_PREFIX} permissionGrants.fanout (protocols=${numProtocols})`,
+      async () => {
+        const delegateGrantPromises = connectRequest.permissionRequests.map(
+          async (permissionRequest) => {
+            const { protocolDefinition, permissionScopes } = permissionRequest;
 
-  if (revSendTasks.length > 0) {
-    await mapConcurrentSettled(
-      revSendTasks,
-      CONNECT_FANOUT_CONCURRENCY,
-      ({ revRawMessage, revData, dwnUrl }) =>
-        agent.rpc.sendDwnRequest({
-          dwnUrl,
-          targetDid : selectedDid,
-          message   : revRawMessage,
-          data      : new Blob([revData as BlobPart]),
-          signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
-        }),
+            const grantsMatchProtocolUri = permissionScopes.every(
+              scope => 'protocol' in scope && scope.protocol === protocolDefinition.protocol
+            );
+            if (!grantsMatchProtocolUri) {
+              throw new Error('All permission scopes must match the protocol URI they are provided with.');
+            }
+
+            await prepareProtocol(selectedDid, agent, protocolDefinition);
+
+            const hasEncryptedTypes = Object.values(protocolDefinition.types ?? {})
+              .some((type: any) => type?.encryptionRequired === true);
+
+            if (hasEncryptedTypes) {
+              const { multiParty, singleParty } = classifyProtocolRoots(protocolDefinition);
+
+              if (multiParty.length > 0 && singleParty.length > 0) {
+                // Mixed protocol: some roots are multi-party, others single-party.
+                // We cannot safely model this with either key type alone.
+                throw new Error(
+                  `Encrypted delegate access for protocols with mixed single-party ` +
+                  `and multi-party roots is not supported yet. ` +
+                  `Protocol '${protocolDefinition.protocol}' has multi-party roots ` +
+                  `[${multiParty.join(', ')}] and single-party roots ` +
+                  `[${singleParty.join(', ')}].`,
+                );
+              }
+
+              if (multiParty.length > 0) {
+                // Pure multi-party: derive per-context keys for existing contexts.
+                // Unsupported scope shapes (protocolPath, contextId) throw.
+                const ctxKeys = await deriveContextKeysForDelegate(
+                  agent, selectedDid, protocolDefinition, permissionScopes,
+                );
+                delegateContextKeys.push(...ctxKeys);
+
+                // Only register the protocol for post-connect delivery if the
+                // delegate has at least one read-like scope. Write-only delegates
+                // must NOT receive context keys — they have no decryption need.
+                const readMethods = new Set([
+                  DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
+                ]);
+                const hasReadLikeScope = permissionScopes.some(
+                  (s): boolean => isRecordPermissionScope(s) && readMethods.has(s.method as DwnMethodName),
+                );
+                if (hasReadLikeScope) {
+                  delegateMultiPartyProtocols.push(protocolDefinition.protocol);
+                }
+              } else {
+                // Pure single-party: derive ProtocolPath keys.
+                // Unsupported scope shapes (contextId) throw.
+                const keys = await deriveScopedDecryptionKeys(
+                  agent, selectedDid, protocolDefinition.protocol,
+                  permissionScopes, protocolDefinition,
+                );
+                delegateDecryptionKeys.push(...keys);
+              }
+            }
+
+            return EnboxConnectProtocol.createPermissionGrants(
+              selectedDid,
+              delegateBearerDid,
+              agent,
+              permissionScopes,
+              delegateKeyDeliveryData,
+            );
+          }
+        );
+
+        return (await Promise.all(delegateGrantPromises)).flat();
+      },
+    );
+
+    // Create per-grant contextId-scoped revocation grants.
+    // Each revocation grant authorizes the delegate to write a revocation
+    // ONLY for the specific session grant it corresponds to.
+    const permissionsApi = new AgentPermissionsApi({ agent });
+    const sessionRevocations: { grantId: string; revocationGrantId: string }[] = [];
+    let revGrantEndpoints: string[] = [];
+    try {
+      revGrantEndpoints = await agent.dwn.getDwnEndpointUrlsForTarget(selectedDid);
+    } catch {
+      // Endpoint resolution failure — revocation grants will be local-only until sync.
+    }
+
+    // Snapshot the current length — revocation grants are appended to delegateGrants
+    // below, but we must NOT iterate over them (they are meta-grants, not session grants).
+    sessionGrantCount = delegateGrants.length;
+
+    // Phase 1: create all revocation grants locally with bounded concurrency.
+    // createGrant is local-only (storage + signing) so it's cheap, but we still
+    // cap parallelism to avoid head-of-line blocking when sessionGrantCount is
+    // large (e.g. dapp requesting many scopes at once).
+    const revGrantResults = await timed(
+      `${CONNECT_PERF_LOG_PREFIX} revocationGrants.create (n=${sessionGrantCount})`,
+      () => mapConcurrent(
+        delegateGrants.slice(0, sessionGrantCount),
+        CONNECT_FANOUT_CONCURRENCY,
+        (grantMessage) =>
+          permissionsApi.createGrant({
+            delegated : true,
+            store     : true,
+            grantedTo : delegateBearerDid.uri,
+            scope     : {
+              interface : DwnInterfaceName.Records,
+              method    : DwnMethodName.Write,
+              protocol  : PermissionsProtocol.uri,
+              contextId : grantMessage.recordId,
+            },
+            dateExpires : '2040-06-25T16:09:16.693356Z',
+            author      : selectedDid,
+          }).then((revGrant) => ({ grantMessage, revGrant })),
+      ),
+    );
+
+    // Phase 2: fan out every revocation grant to every owner DWN endpoint with
+    // a single global concurrency cap so that (grants × endpoints) cannot blow
+    // up. This is best-effort (sync delivers eventually) so individual failures
+    // are tolerated by `mapConcurrentSettled`.
+    const revSendTasks = revGrantResults.flatMap(({ grantMessage, revGrant }) => {
+      sessionRevocations.push({
+        grantId           : grantMessage.recordId,
+        revocationGrantId : revGrant.message.recordId,
+      });
+
+      const { encodedData: revEncoded, ...revRawMessage } = revGrant.message;
+      const revData = Uint8Array.from(Convert.base64Url(revEncoded).toUint8Array());
+
+      // Include the revocation grant in the delegate grants for distribution.
+      delegateGrants.push(revGrant.message);
+
+      return revGrantEndpoints.map((dwnUrl) => ({ revRawMessage, revData, dwnUrl }));
+    });
+
+    if (revSendTasks.length > 0) {
+      await timed(
+        `${CONNECT_PERF_LOG_PREFIX} revocationGrants.fanout (sends=${revSendTasks.length}, endpoints=${revGrantEndpoints.length})`,
+        () => mapConcurrentSettled(
+          revSendTasks,
+          CONNECT_FANOUT_CONCURRENCY,
+          ({ revRawMessage, revData, dwnUrl }) =>
+            agent.rpc.sendDwnRequest({
+              dwnUrl,
+              targetDid : selectedDid,
+              message   : revRawMessage,
+              data      : new Blob([revData]),
+              signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
+            }),
+        ),
+      );
+    }
+
+    const responseObject = await timed(
+      `${CONNECT_PERF_LOG_PREFIX} response.build`,
+      () => EnboxConnectProtocol.createConnectResponse({
+        providerDid                 : selectedDid,
+        delegateDid                 : delegateBearerDid.uri,
+        aud                         : connectRequest.clientDid,
+        nonce                       : connectRequest.nonce,
+        delegateGrants,
+        delegatePortableDid,
+        delegateDecryptionKeys      : delegateDecryptionKeys.length > 0 ? delegateDecryptionKeys : undefined,
+        delegateContextKeys         : delegateContextKeys.length > 0 ? delegateContextKeys : undefined,
+        delegateMultiPartyProtocols : delegateMultiPartyProtocols.length > 0 ? delegateMultiPartyProtocols : undefined,
+        sessionRevocations          : sessionRevocations.length > 0 ? sessionRevocations : undefined,
+      }),
+    );
+
+    const responseObjectJwt = await timed(
+      `${CONNECT_PERF_LOG_PREFIX} response.sign`,
+      () => EnboxConnectProtocol.signJwt({
+        did  : delegateBearerDid,
+        data : responseObject,
+      }),
+    );
+
+    const clientDid = await timed(
+      `${CONNECT_PERF_LOG_PREFIX} clientDid.resolve`,
+      () => DidJwk.resolve(connectRequest.clientDid),
+    );
+
+    const sharedKey = await timed(
+      `${CONNECT_PERF_LOG_PREFIX} response.deriveSharedKey`,
+      () => EnboxConnectProtocol.deriveSharedKey(
+        delegateBearerDid,
+        clientDid?.didDocument!,
+      ),
+    );
+
+    const encryptedResponse = await timed(
+      `${CONNECT_PERF_LOG_PREFIX} response.encrypt`,
+      () => EnboxConnectProtocol.encryptResponse({
+        jwt                  : responseObjectJwt,
+        encryptionKey        : sharedKey,
+        delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
+        pin,
+      }),
+    );
+
+    const formEncodedRequest = new URLSearchParams({
+      id_token : encryptedResponse,
+      state    : connectRequest.state,
+    }).toString();
+
+    await timed(
+      `${CONNECT_PERF_LOG_PREFIX} response.callbackPost`,
+      async () => {
+        const response = await fetch(connectRequest.callbackUrl, {
+          body    : formEncodedRequest,
+          method  : 'POST',
+          headers : {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          signal: AbortSignal.timeout(30_000),
+        });
+
+        if (!response.ok) {
+          // NOTE: delegate grants have already been written/fanned out by this
+          // point, so callers may observe partial owner-side state when the
+          // callback server rejects the final response delivery.
+          throw new Error(`Connect: callback POST failed with HTTP ${response.status}.`);
+        }
+
+        return response;
+      },
+    );
+  } catch (err) {
+    outcome = 'fail';
+    throw err;
+  } finally {
+    const totalElapsed = nowMs() - submitStart;
+    logger.log(
+      `${CONNECT_PERF_LOG_PREFIX} submitConnectResponse.total ${outcome} in ${totalElapsed.toFixed(1)}ms `
+      + `(protocols=${numProtocols}, scopes=${numScopes}, sessionGrants=${sessionGrantCount})`,
     );
   }
-
-  logger.log('Building connect response...');
-  const responseObject = await EnboxConnectProtocol.createConnectResponse({
-    providerDid                 : selectedDid,
-    delegateDid                 : delegateBearerDid.uri,
-    aud                         : connectRequest.clientDid,
-    nonce                       : connectRequest.nonce,
-    delegateGrants,
-    delegatePortableDid,
-    delegateDecryptionKeys      : delegateDecryptionKeys.length > 0 ? delegateDecryptionKeys : undefined,
-    delegateContextKeys         : delegateContextKeys.length > 0 ? delegateContextKeys : undefined,
-    delegateMultiPartyProtocols : delegateMultiPartyProtocols.length > 0 ? delegateMultiPartyProtocols : undefined,
-    sessionRevocations          : sessionRevocations.length > 0 ? sessionRevocations : undefined,
-  });
-
-  logger.log('Signing connect response...');
-  const responseObjectJwt = await EnboxConnectProtocol.signJwt({
-    did  : delegateBearerDid,
-    data : responseObject,
-  });
-
-  const clientDid = await DidJwk.resolve(connectRequest.clientDid);
-
-  const sharedKey = await EnboxConnectProtocol.deriveSharedKey(
-    delegateBearerDid,
-    clientDid?.didDocument!
-  );
-
-  logger.log('Encrypting connect response...');
-  const encryptedResponse = await EnboxConnectProtocol.encryptResponse({
-    jwt                  : responseObjectJwt,
-    encryptionKey        : sharedKey,
-    delegatePublicKeyJwk : delegateBearerDid.document.verificationMethod![0].publicKeyJwk!,
-    pin,
-  });
-
-  const formEncodedRequest = new URLSearchParams({
-    id_token : encryptedResponse,
-    state    : connectRequest.state,
-  }).toString();
-
-  logger.log(`Sending connect response to: ${connectRequest.callbackUrl}`);
-  await fetch(connectRequest.callbackUrl, {
-    body    : formEncodedRequest,
-    method  : 'POST',
-    headers : {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    signal: AbortSignal.timeout(30_000),
-  });
 }
 
 // ---------------------------------------------------------------------------

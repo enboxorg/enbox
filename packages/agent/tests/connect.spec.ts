@@ -5,12 +5,12 @@ import sinon from 'sinon';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
-import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { type BearerDid, DidDht, DidJwk } from '@enbox/dids';
+import { Convert, logger } from '@enbox/common';
 
 import { AgentPermissionsApi, DwnInterface } from '../src/index.js';
 import {
@@ -707,6 +707,82 @@ describe('enbox connect', () => {
   });
 
   describe('submitConnectResponse', () => {
+    it('should emit a total perf log when submission fails', async () => {
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      const request = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        permissionRequests : [{ protocolDefinition, permissionScopes }],
+        callbackUrl,
+      });
+      const logStub = sinon.stub(logger, 'log');
+      sinon.stub(DidJwk, 'create').rejects(new Error('delegate failed'));
+
+      await expect(
+        EnboxConnectProtocol.submitConnectResponse(
+          providerIdentity.did.uri,
+          request,
+          randomPin,
+          testHarness.agent,
+        )
+      ).rejects.toThrow('delegate failed');
+
+      const logMessages = logStub.getCalls().map((call) => call.args[0]);
+      expect(logMessages.some(
+        (message) => message.includes('[connect.perf] delegateDid.create fail')
+      )).toBe(true);
+      expect(logMessages.some(
+        (message) => message.includes('[connect.perf] submitConnectResponse.total fail')
+      )).toBe(true);
+    });
+
+    it('should fail and log when callback POST returns a non-2xx response', async () => {
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
+      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
+        messageCid : '',
+        reply      : { status: { code: 200, detail: 'OK' }, entries: [{ descriptor: { interface: 'Protocols', method: 'Configure' } }] },
+      } as any);
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves([]);
+      sinon.stub(globalThis, 'fetch').resolves(new Response('server error', { status: 500 }));
+      const logStub = sinon.stub(logger, 'log');
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      const request = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        permissionRequests : [{ protocolDefinition, permissionScopes }],
+        callbackUrl,
+      });
+
+      await expect(
+        EnboxConnectProtocol.submitConnectResponse(
+          providerIdentity.did.uri,
+          request,
+          randomPin,
+          testHarness.agent,
+        )
+      ).rejects.toThrow('Connect: callback POST failed with HTTP 500.');
+
+      const logMessages = logStub.getCalls().map((call) => call.args[0]);
+      expect(logMessages.some(
+        (message) => message.includes('[connect.perf] response.callbackPost fail')
+      )).toBe(true);
+      expect(logMessages.some(
+        (message) => message.includes('[connect.perf] submitConnectResponse.total fail')
+      )).toBe(true);
+    });
+
     it('should skip the redundant remote ProtocolsConfigure when the protocol is already installed locally', async () => {
       // Scenario: the wallet's own `prepareProtocol` (in @enbox/web-wallet) ran
       // BEFORE `submitConnectResponse` and pushed the protocol to every owner
