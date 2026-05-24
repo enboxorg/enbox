@@ -89,11 +89,52 @@ import {
   validatePreviousDidProof,
 } from './did-dht-utils.js';
 
+/** The default DID DHT Gateway / Pkarr Relay used when no `gatewayUri` is supplied. */
+const FALLBACK_GATEWAY_URI = 'https://enbox-did-dht.fly.dev';
+
 /**
- * The default DID DHT Gateway or Pkarr Relay server to use when publishing and resolving DID
- * documents.
+ * Returns the default gateway URI, deferring the `DID_DHT_GATEWAY_URI` env lookup until call
+ * time so the env var reflects late mutations (e.g. test setup) rather than the value captured
+ * at module load.
+ *
+ * Setting `DID_DHT_GATEWAY_URI` only changes the default *URI*. It deliberately does NOT widen
+ * `allowPrivateGatewayUri`: dev/CI workflows that target a private Pkarr relay must opt in via
+ * the separate `DID_DHT_ALLOW_PRIVATE_GATEWAY=1` env var, or by passing
+ * `allowPrivateGatewayUri: true` per call.
  */
-const DEFAULT_GATEWAY_URI = process.env.DID_DHT_GATEWAY_URI || 'https://enbox-did-dht.fly.dev';
+function getDefaultGatewayUri(): string {
+  return process.env.DID_DHT_GATEWAY_URI || FALLBACK_GATEWAY_URI;
+}
+
+/**
+ * Returns the default value for `allowPrivateGatewayUri` when the caller does not supply one.
+ * Dev/CI shells set `DID_DHT_ALLOW_PRIVATE_GATEWAY=1` to opt in to local Pkarr relays without
+ * sprinkling `allowPrivateGatewayUri: true` through every call site; production deployments
+ * leave it unset so the documented default of `false` applies.
+ *
+ * This env var is intentionally *separate* from `DID_DHT_GATEWAY_URI` so that simply pointing
+ * at a different (possibly private) relay does not silently disable SSRF protection.
+ */
+function getDefaultAllowPrivateGatewayUri(): boolean {
+  return process.env.DID_DHT_ALLOW_PRIVATE_GATEWAY === '1';
+}
+
+/**
+ * Applies the default gateway URI when none is supplied. The caller's explicit
+ * `allowPrivateGatewayUri` (including an explicit `false`) always wins over the env-driven
+ * default — this is the contract pinned by the regression tests in `did-dht.test.ts`.
+ */
+function resolveGatewayUri(gatewayUri: string | undefined, allowPrivateGatewayUri: boolean | undefined): {
+  gatewayUri: string;
+  allowPrivateGatewayUri: boolean;
+} {
+  // Use `??` (not `||`) so an explicit `false` from the caller short-circuits the env-default
+  // bypass instead of being OR-ed away.
+  return {
+    gatewayUri             : gatewayUri ?? getDefaultGatewayUri(),
+    allowPrivateGatewayUri : allowPrivateGatewayUri ?? getDefaultAllowPrivateGatewayUri(),
+  };
+}
 
 /**
  * The `DidDht` class provides an implementation of the `did:dht` DID method.
@@ -288,7 +329,11 @@ export class DidDht extends DidMethod {
 
     // By default, publish the DID document to a DHT Gateway unless explicitly disabled.
     if (options.publish ?? true) {
-      const registrationResult = await DidDht.publish({ did, gatewayUri: options.gatewayUri });
+      const registrationResult = await DidDht.publish({
+        did,
+        gatewayUri             : options.gatewayUri,
+        allowPrivateGatewayUri : options.allowPrivateGatewayUri,
+      });
       did.metadata = registrationResult.didDocumentMetadata;
     }
 
@@ -381,15 +426,18 @@ export class DidDht extends DidMethod {
    * @param params - The parameters for the `publish` operation.
    * @param params.did - The `BearerDid` object representing the DID to be published.
    * @param params.gatewayUri - Optional. The URI of a DID DHT Gateway or Pkarr Relay.
+   * @param params.allowPrivateGatewayUri - Optional. Allow the resulting gateway URI to target a
+   *                                        private, loopback, or link-local host. See
+   *                                        {@link DidDhtCreateOptions} for guidance on safe usage.
    * @returns A promise that resolves to a {@link DidRegistrationResult} object.
    */
-  public static async publish({ did, gatewayUri = DEFAULT_GATEWAY_URI }: {
+  public static async publish({ did, gatewayUri, allowPrivateGatewayUri }: {
     did: BearerDid;
     gatewayUri?: string;
+    allowPrivateGatewayUri?: boolean;
   }): Promise<DidRegistrationResult> {
-    const registrationResult = await DidDhtDocument.put({ did, gatewayUri });
-
-    return registrationResult;
+    const resolved = resolveGatewayUri(gatewayUri, allowPrivateGatewayUri);
+    return DidDhtDocument.put({ did, ...resolved });
   }
 
   /**
@@ -401,14 +449,18 @@ export class DidDht extends DidMethod {
    */
   public static async resolve(didUri: string, options: DidResolutionOptions = {}): Promise<DidResolutionResult> {
     // To execute the read method operation, use the given gateway URI or a default.
-    const gatewayUri = options?.gatewayUri ?? DEFAULT_GATEWAY_URI;
+    const { gatewayUri, allowPrivateGatewayUri } = resolveGatewayUri(options.gatewayUri, options.allowPrivateGatewayUri);
 
     try {
       // Attempt to decode the z-base-32-encoded identifier.
       await DidDhtUtils.identifierToIdentityKey({ didUri });
 
       // Attempt to retrieve the DID document and metadata from the DHT network.
-      const { didDocument, didDocumentMetadata } = await DidDhtDocument.get({ didUri, gatewayUri });
+      const { didDocument, didDocumentMetadata } = await DidDhtDocument.get({
+        didUri,
+        gatewayUri,
+        allowPrivateGatewayUri,
+      });
 
       // If the DID document was retrieved successfully, return it.
       return {
@@ -450,15 +502,20 @@ export class DidDhtDocument {
    * @param params.gatewayUri - The DID DHT Gateway or Pkarr Relay URI.
    * @returns A Promise resolving to a {@link DidResolutionResult} object.
    */
-  public static async get({ didUri, gatewayUri }: {
+  public static async get({ didUri, gatewayUri, allowPrivateGatewayUri = false }: {
     didUri: string;
     gatewayUri: string;
+    allowPrivateGatewayUri?: boolean;
   }): Promise<DidResolutionResult> {
     // Decode the z-base-32 DID identifier to public key as a byte array.
     const publicKeyBytes = DidDhtUtils.identifierToIdentityKeyBytes({ didUri });
 
     // Retrieve the signed BEP44 message from a DID DHT Gateway or Pkarr relay.
-    const bep44Message = await DidDhtDocument.pkarrGet({ gatewayUri, publicKeyBytes });
+    const bep44Message = await DidDhtDocument.pkarrGet({
+      gatewayUri,
+      publicKeyBytes,
+      allowPrivateGatewayUri,
+    });
 
     // Verify the signature of the BEP44 message and parse the value to a DNS packet.
     const dnsPacket = await DidDhtUtils.parseBep44GetMessage({ bep44Message });
@@ -480,9 +537,10 @@ export class DidDhtDocument {
    * @param params.gatewayUri - The DID DHT Gateway or Pkarr Relay URI.
    * @returns A promise that resolves to a {@link DidRegistrationResult} object.
    */
-  public static async put({ did, gatewayUri }: {
+  public static async put({ did, gatewayUri, allowPrivateGatewayUri = false }: {
     did: BearerDid;
     gatewayUri: string;
+    allowPrivateGatewayUri?: boolean;
   }): Promise<DidRegistrationResult> {
     // Convert the DID document and DID metadata (such as DID types) to a DNS packet.
     const dnsPacket = await DidDhtDocument.toDnsPacket({
@@ -499,7 +557,11 @@ export class DidDhtDocument {
     });
 
     // Publish the DNS packet to the DHT network.
-    const putResult = await DidDhtDocument.pkarrPut({ gatewayUri, bep44Message });
+    const putResult = await DidDhtDocument.pkarrPut({
+      gatewayUri,
+      bep44Message,
+      allowPrivateGatewayUri,
+    });
 
     // Return the result of processing the PUT operation, including the updated DID metadata with
     // the version ID and the publishing result.
@@ -518,6 +580,7 @@ export class DidDhtDocument {
   private static async pkarrGet(params: {
     publicKeyBytes: Uint8Array;
     gatewayUri: string;
+    allowPrivateGatewayUri?: boolean;
   }): Promise<Bep44Message> {
     return pkarrGet(params);
   }
@@ -526,6 +589,7 @@ export class DidDhtDocument {
   private static async pkarrPut(params: {
     bep44Message: Bep44Message;
     gatewayUri: string;
+    allowPrivateGatewayUri?: boolean;
   }): Promise<boolean> {
     return pkarrPut(params);
   }

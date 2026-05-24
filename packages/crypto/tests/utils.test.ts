@@ -126,6 +126,38 @@ describe('Crypto Utils', () => {
       expect(pin).toMatch(/^\d{10}$/);
     });
 
+    it('uses enough random bytes to generate the full 10-digit PIN range', () => {
+      const originalRandomBytes = CryptoUtils.randomBytes;
+      const observedLengths: number[] = [];
+
+      try {
+        CryptoUtils.randomBytes = (bytesLength: number): Uint8Array => {
+          observedLengths.push(bytesLength);
+          return numberToBytes(5_000_000_000, bytesLength);
+        };
+
+        expect(CryptoUtils.randomPin({ length: 10 })).toBe('5000000000');
+        expect(observedLengths).toEqual([5]);
+      } finally {
+        CryptoUtils.randomBytes = originalRandomBytes;
+      }
+    });
+
+    it('rejects random values outside the unbiased sampling range', () => {
+      const originalRandomBytes = CryptoUtils.randomBytes;
+      const values = [65535, 999];
+
+      try {
+        CryptoUtils.randomBytes = (bytesLength: number): Uint8Array => {
+          return numberToBytes(values.shift()!, bytesLength);
+        };
+
+        expect(CryptoUtils.randomPin({ length: 3 })).toBe('999');
+      } finally {
+        CryptoUtils.randomBytes = originalRandomBytes;
+      }
+    });
+
     it('throws an error for a PIN length less than 3', () => {
       expect(
         () => CryptoUtils.randomPin({ length: 2 })
@@ -252,3 +284,12 @@ describe('Crypto Utils', () => {
     });
   });
 });
+
+function numberToBytes(value: number, byteLength: number): Uint8Array {
+  const bytes = new Uint8Array(byteLength);
+  for (let index = byteLength - 1; index >= 0; index--) {
+    bytes[index] = value & 0xff;
+    value = Math.floor(value / 256);
+  }
+  return bytes;
+}

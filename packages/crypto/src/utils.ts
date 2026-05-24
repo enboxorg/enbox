@@ -141,42 +141,33 @@ export class CryptoUtils {
    * @memberof CryptoUtils
    * @param options - The options object containing the desired length of the generated PIN.
    * @param options.length - The desired length of the generated PIN. The value should be
-   *                         an integer between 3 and 8 inclusive.
+   *                         an integer between 3 and 10 inclusive.
    *
    * @returns A string representing the generated PIN. The PIN will be zero-padded
    *          to match the specified length, if necessary.
    *
-   * @throws Will throw an error if the requested PIN length is less than 3 or greater than 8.
+   * @throws Will throw an error if the requested PIN length is less than 3 or greater than 10.
    */
   static randomPin({ length }: { length: number }): string {
     if (3 > length || length > 10) {
       throw new Error('randomPin() can securely generate a PIN between 3 to 10 digits.');
     }
 
-    const max = Math.pow(10, length) - 1;
+    const pinRange = 10 ** length;
+    const byteLength = Math.ceil(Math.log2(pinRange) / 8);
+    const randomSpace = 2 ** (byteLength * 8);
+    const unbiasedLimit = randomSpace - (randomSpace % pinRange);
 
-    let pin;
+    let randomValue: number;
+    do {
+      randomValue = 0;
+      const randomBuffer = CryptoUtils.randomBytes(byteLength);
+      for (const byte of randomBuffer) {
+        randomValue = (randomValue * 256) + byte;
+      }
+    } while (randomValue >= unbiasedLimit);
 
-    if (length <= 6) {
-      const rejectionRange = Math.pow(10, length);
-      do {
-        // Adjust the byte generation based on length.
-        const randomBuffer = CryptoUtils.randomBytes(Math.ceil(length / 2) ); // 2 digits per byte.
-        const view = new DataView(randomBuffer.buffer);
-        // Convert the buffer to integer and take modulus based on length.
-        pin = view.getUint16(0, false) % rejectionRange;
-      } while (pin > max);
-    } else {
-      const rejectionRange = Math.pow(10, 10); // For max 10 digit number.
-      do {
-      // Generates 4 random bytes.
-        const randomBuffer = CryptoUtils.randomBytes(4);
-        // Create a DataView to read from the randomBuffer.
-        const view = new DataView(randomBuffer.buffer);
-        // Transform bytes to number (big endian).
-        pin = view.getUint32(0, false) % rejectionRange;
-      } while (pin > max); // Reject if the number is outside the desired range.
-    }
+    const pin = randomValue % pinRange;
 
     // Pad the PIN with leading zeros to the desired length.
     return pin.toString().padStart(length, '0');

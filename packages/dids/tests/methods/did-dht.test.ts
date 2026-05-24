@@ -18,6 +18,43 @@ const fetchNotFoundResponse = (): { status: number; statusText: string; ok: bool
   ok         : false
 });
 
+/**
+ * Pins the DID DHT gateway env defaults to a *public* mock host (and clears the dev-mode
+ * private-gateway bypass) for the duration of each test in the surrounding describe block. This
+ * insulates the suite from however the CI / dev shell happens to have configured the env: the
+ * happy-path tests below all stub `fetch()` and just need the URL to pass `assertPublicUrl()`
+ * without each test having to opt in to private hosts, and the blocking-behavior tests need the
+ * dev-mode bypass to be off so the documented default of `false` actually applies.
+ *
+ * The `beforeEach`/`afterEach` calls below are intentional — they register hooks on whichever
+ * `describe()` block is active when this helper is invoked. ESLint's static analysis cannot
+ * follow that, hence the targeted disables.
+ */
+function pinPublicGatewayDefault(): void {
+  let originalUri: string | undefined;
+  let originalAllow: string | undefined;
+  // eslint-disable-next-line mocha/no-top-level-hooks
+  beforeEach(() => {
+    originalUri = process.env.DID_DHT_GATEWAY_URI;
+    originalAllow = process.env.DID_DHT_ALLOW_PRIVATE_GATEWAY;
+    process.env.DID_DHT_GATEWAY_URI = 'https://test-mock-gateway.example.com';
+    delete process.env.DID_DHT_ALLOW_PRIVATE_GATEWAY;
+  });
+  // eslint-disable-next-line mocha/no-top-level-hooks
+  afterEach(() => {
+    if (originalUri === undefined) {
+      delete process.env.DID_DHT_GATEWAY_URI;
+    } else {
+      process.env.DID_DHT_GATEWAY_URI = originalUri;
+    }
+    if (originalAllow === undefined) {
+      delete process.env.DID_DHT_ALLOW_PRIVATE_GATEWAY;
+    } else {
+      process.env.DID_DHT_ALLOW_PRIVATE_GATEWAY = originalAllow;
+    }
+  });
+}
+
 // Helper function to create a mocked fetch response that is successful and returns the given
 // response.
 const fetchOkResponse = (response?: any): {
@@ -30,6 +67,8 @@ const fetchOkResponse = (response?: any): {
 });
 
 describe('DidDht', () => {
+  pinPublicGatewayDefault();
+
   let fetchStub: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
@@ -319,6 +358,30 @@ describe('DidDht', () => {
 
       expect(did.metadata).toHaveProperty('published', false);
       expect(fetchStub).not.toHaveBeenCalled();
+    });
+
+    it('does not publish to a private gateway URI by default', async () => {
+      try {
+        await DidDht.create({ options: { gatewayUri: 'http://127.0.0.1:7527' } });
+        throw new Error('Expected DidDht.create() to throw.');
+      } catch (error: any) {
+        expect(error.code).toBe(DidErrorCode.InvalidGatewayUri);
+        expect(error.message).toContain('private, loopback, or link-local');
+        expect(fetchStub).not.toHaveBeenCalled();
+      }
+    });
+
+    it('allows publishing to a private gateway URI when explicitly enabled', async () => {
+      const did = await DidDht.create({
+        options: {
+          gatewayUri             : 'http://127.0.0.1:7527',
+          allowPrivateGatewayUri : true,
+        }
+      });
+
+      expect(did.metadata).toHaveProperty('published', true);
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(fetchStub.mock.calls[0][0]).toContain('http://127.0.0.1:7527/');
     });
 
     it('returns a version ID in DID metadata when published', async () => {
@@ -789,6 +852,126 @@ describe('DidDht', () => {
       const didResolutionResult = await DidDht.resolve(did);
 
       expect(didResolutionResult.didResolutionMetadata).toHaveProperty('error', 'notFound');
+    });
+
+    it('does not fetch from a private gateway URI by default', async () => {
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const didResolutionResult = await DidDht.resolve(did, {
+        gatewayUri: 'http://127.0.0.1:7527',
+      });
+
+      expect(fetchStub).not.toHaveBeenCalled();
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InvalidGatewayUri);
+      expect(didResolutionResult.didResolutionMetadata.errorMessage).toContain('private, loopback, or link-local');
+    });
+
+    it('does not fetch from a private gateway URI when explicitly disabled', async () => {
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const didResolutionResult = await DidDht.resolve(did, {
+        gatewayUri             : 'http://127.0.0.1:7527',
+        allowPrivateGatewayUri : false,
+      });
+
+      expect(fetchStub).not.toHaveBeenCalled();
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InvalidGatewayUri);
+      expect(didResolutionResult.didResolutionMetadata.errorMessage).toContain('private, loopback, or link-local');
+    });
+
+    it('allows private gateway URI fetches when explicitly requested', async () => {
+      fetchStub.mockResolvedValue(fetchNotFoundResponse());
+
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const didResolutionResult = await DidDht.resolve(did, {
+        gatewayUri             : 'http://127.0.0.1:7527',
+        allowPrivateGatewayUri : true,
+      });
+
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.NotFound);
+    });
+
+    it('blocks a private gateway URI even when it matches DID_DHT_GATEWAY_URI (env is not a trust boundary)', async () => {
+      // Setting DID_DHT_GATEWAY_URI is a *URI* default only. It must not silently widen
+      // `allowPrivateGatewayUri` from its documented default of `false`, because env vars are
+      // not a meaningful trust boundary against SSRF. Callers wanting to talk to a private
+      // gateway must opt in explicitly. This test pins that contract by overriding the env to a
+      // private URI, calling resolve with that same URI, and asserting the request is still
+      // blocked without ever invoking fetch.
+      process.env.DID_DHT_GATEWAY_URI = 'http://127.0.0.1:7527';
+
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const didResolutionResult = await DidDht.resolve(did, { gatewayUri: 'http://127.0.0.1:7527' });
+
+      expect(fetchStub).not.toHaveBeenCalled();
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InvalidGatewayUri);
+    });
+
+    it('also blocks a private URI taken implicitly from DID_DHT_GATEWAY_URI when no gatewayUri is supplied', async () => {
+      // Same regression as above but without an explicit `gatewayUri`. The env-supplied default
+      // must NOT be auto-trusted: a caller that simply omits `gatewayUri` should still get the
+      // documented `false` default for `allowPrivateGatewayUri` and be blocked.
+      process.env.DID_DHT_GATEWAY_URI = 'http://127.0.0.1:7527';
+
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const didResolutionResult = await DidDht.resolve(did);
+
+      expect(fetchStub).not.toHaveBeenCalled();
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InvalidGatewayUri);
+    });
+
+    it('treats DID_DHT_ALLOW_PRIVATE_GATEWAY=1 as the dev/CI default opt-in (still overridable per call)', async () => {
+      // Dev/CI shells set DID_DHT_ALLOW_PRIVATE_GATEWAY=1 so local Pkarr relays work without
+      // sprinkling `allowPrivateGatewayUri: true` through every call site. Production deployments
+      // leave it unset.
+      process.env.DID_DHT_GATEWAY_URI = 'http://127.0.0.1:7527';
+      process.env.DID_DHT_ALLOW_PRIVATE_GATEWAY = '1';
+      fetchStub.mockResolvedValue(fetchNotFoundResponse());
+
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const allowed = await DidDht.resolve(did);
+
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(allowed.didResolutionMetadata.error).toBe(DidErrorCode.NotFound);
+
+      // An explicit `false` from the caller still wins, even with the env opt-in active.
+      fetchStub.mockClear();
+      const blocked = await DidDht.resolve(did, { allowPrivateGatewayUri: false });
+      expect(fetchStub).not.toHaveBeenCalled();
+      expect(blocked.didResolutionMetadata.error).toBe(DidErrorCode.InvalidGatewayUri);
+    });
+
+    it('blocks Pkarr gateway redirects to private hosts (SSRF via redirect)', async () => {
+      // A "public" gateway returns a 302 pointing at the AWS instance metadata service. The initial
+      // URL passes validation, but every redirect target must be re-validated.
+      fetchStub.mockResolvedValue(new Response(null, {
+        status  : 302,
+        headers : { location: 'http://169.254.169.254/latest/meta-data/' },
+      }));
+
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const didResolutionResult = await DidDht.resolve(did, {
+        gatewayUri: 'https://public-gateway.example.com',
+      });
+
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InvalidGatewayUri);
+      expect(didResolutionResult.didResolutionMetadata.errorMessage).toContain('private, loopback, or link-local');
+    });
+
+    it('blocks Pkarr gateway redirects to non-http(s) schemes (SSRF via redirect)', async () => {
+      fetchStub.mockResolvedValue(new Response(null, {
+        status  : 302,
+        headers : { location: 'file:///etc/hosts' },
+      }));
+
+      const did = 'did:dht:5634graogy41ow91cc78up6i45a9mcscccruwer9o4ah5wcc1xmy';
+      const didResolutionResult = await DidDht.resolve(did, {
+        gatewayUri: 'https://public-gateway.example.com',
+      });
+
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(didResolutionResult.didResolutionMetadata.error).toBe(DidErrorCode.InvalidGatewayUri);
+      expect(didResolutionResult.didResolutionMetadata.errorMessage).toContain('allowed schemes');
     });
 
     it('returns a invalidDidDocumentLength error if the Pkarr relay returns smaller than the 72 byte minimum', async () => {
@@ -1303,8 +1486,13 @@ describe('DidDhtDocument', () => {
 
   describe('Web5TestVectorsDidDht', () => {
     it('resolve', async () => {
+      // These vectors hit the real (CI / local) Pkarr relay configured via DID_DHT_GATEWAY_URI,
+      // which is typically a private host (e.g. http://localhost:7527). Pass
+      // `allowPrivateGatewayUri: true` explicitly so this integration test is self-contained and
+      // does not depend on the caller having `DID_DHT_ALLOW_PRIVATE_GATEWAY=1` exported in their
+      // shell — talking to a local relay is the documented intent of the test.
       for (const vector of resolveTestVectors.vectors as any[]) {
-        const didResolutionResult = await DidDht.resolve(vector.input.didUri);
+        const didResolutionResult = await DidDht.resolve(vector.input.didUri, { allowPrivateGatewayUri: true });
         expect(didResolutionResult.didResolutionMetadata.error).toBe(vector.output.didResolutionMetadata.error);
       }
     }, 30000); // Set timeout to 30 seconds for this test for did:dht resolution timeout test
@@ -1312,6 +1500,8 @@ describe('DidDhtDocument', () => {
 });
 
 describe('DidDhtUtils', () => {
+  pinPublicGatewayDefault();
+
   let fetchStub: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
