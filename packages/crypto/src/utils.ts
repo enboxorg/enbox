@@ -141,12 +141,12 @@ export class CryptoUtils {
    * @memberof CryptoUtils
    * @param options - The options object containing the desired length of the generated PIN.
    * @param options.length - The desired length of the generated PIN. The value should be
-   *                         an integer between 3 and 8 inclusive.
+   *                         an integer between 3 and 10 inclusive.
    *
    * @returns A string representing the generated PIN. The PIN will be zero-padded
    *          to match the specified length, if necessary.
    *
-   * @throws Will throw an error if the requested PIN length is less than 3 or greater than 8.
+   * @throws Will throw an error if the requested PIN length is less than 3 or greater than 10.
    */
   static randomPin({ length }: { length: number }): string {
     if (3 > length || length > 10) {

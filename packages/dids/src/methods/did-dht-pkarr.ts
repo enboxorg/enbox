@@ -30,6 +30,7 @@ function pkarrUrl(publicKeyBytes: Uint8Array, gatewayUri: string): string {
  * `allowPrivateGatewayUri` widens the validator to accept loopback / private targets — useful
  * for development and CI relays — but native `fetch()` will still refuse non-network schemes
  * for redirect targets, so `file:`, `javascript:`, etc. cannot be smuggled through.
+ * Enabling the bypass also disables per-hop redirect validation; only opt in for trusted local relays.
  */
 async function pkarrFetch(url: string, init: RequestInit, allowPrivateGatewayUri: boolean): Promise<Response> {
   if (allowPrivateGatewayUri) {

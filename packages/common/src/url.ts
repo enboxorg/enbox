@@ -1,4 +1,10 @@
 /**
+ * URL helpers shared across packages.
+ *
+ * @module
+ */
+
+/**
  * Returns true when the hostname is a loopback, private, link-local, or
  * otherwise non-routable literal that should not be fetched from untrusted
  * input.
@@ -247,7 +253,7 @@ function isPrivateIpv6(hostname: string): boolean {
   return false;
 }
 
-function parseIpv6(hostname: string): number[] | undefined {
+function parseIpv6(hostname: string): [number, number, number, number, number, number, number, number] | undefined {
   const [left, right, extra] = hostname.split('::');
   if (extra !== undefined) {
     return undefined;
@@ -275,7 +281,7 @@ function parseIpv6(hostname: string): number[] | undefined {
   }
 
   if (right === undefined) {
-    return parsedParts;
+    return parsedParts as [number, number, number, number, number, number, number, number];
   }
 
   const fill = new Array(8 - parsedParts.length).fill(0);
@@ -283,7 +289,7 @@ function parseIpv6(hostname: string): number[] | undefined {
     ...parsedParts.slice(0, leftParts.length),
     ...fill,
     ...parsedParts.slice(leftParts.length),
-  ];
+  ] as [number, number, number, number, number, number, number, number];
 }
 
 function expandIpv4Suffix(parts: string[]): string[] | undefined {
