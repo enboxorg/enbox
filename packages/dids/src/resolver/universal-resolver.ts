@@ -168,6 +168,9 @@ export class UniversalResolver implements DidResolver, DidUrlDereferencer {
       return cachedResolutionResult;
     }
 
+    // CAUTION: method resolvers must not re-enter `resolve()` for the same
+    // DID while this promise is active; that would await the resolver's own
+    // in-flight promise and deadlock.
     const existing = this._inFlight.get(parsedDid.uri);
     if (existing) {
       return existing;

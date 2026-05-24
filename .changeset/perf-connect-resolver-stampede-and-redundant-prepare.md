@@ -23,3 +23,5 @@ perf(connect): single-flight DID resolver + connect.perf timing instrumentation
 
 - `@enbox/common`: add reusable `nowMs()` and `timed()` helpers for
   monotonic elapsed-duration measurement and success/failure timing logs.
+  `sleep()` now explicitly clamps negative durations to `0`, matching its
+  documented behavior without relying on runtime timeout coercion.

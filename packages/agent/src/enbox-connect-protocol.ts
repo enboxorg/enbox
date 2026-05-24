@@ -1545,7 +1545,6 @@ async function submitConnectResponse(
       );
     }
 
-    logger.log('Building connect response...');
     const responseObject = await timed(
       `${CONNECT_PERF_LOG_PREFIX} response.build`,
       () => EnboxConnectProtocol.createConnectResponse({
@@ -1562,7 +1561,6 @@ async function submitConnectResponse(
       }),
     );
 
-    logger.log('Signing connect response...');
     const responseObjectJwt = await timed(
       `${CONNECT_PERF_LOG_PREFIX} response.sign`,
       () => EnboxConnectProtocol.signJwt({
@@ -1599,7 +1597,6 @@ async function submitConnectResponse(
       state    : connectRequest.state,
     }).toString();
 
-    logger.log(`Sending connect response to: ${connectRequest.callbackUrl}`);
     await timed(
       `${CONNECT_PERF_LOG_PREFIX} response.callbackPost`,
       async () => {
@@ -1613,6 +1610,9 @@ async function submitConnectResponse(
         });
 
         if (!response.ok) {
+          // NOTE: delegate grants have already been written/fanned out by this
+          // point, so callers may observe partial owner-side state when the
+          // callback server rejects the final response delivery.
           throw new Error(`Connect: callback POST failed with HTTP ${response.status}.`);
         }
 

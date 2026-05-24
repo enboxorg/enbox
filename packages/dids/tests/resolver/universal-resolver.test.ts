@@ -309,6 +309,54 @@ describe('UniversalResolver', () => {
         expect(seenOptions[1]).toEqual({ gatewayUri: 'B' });
       });
 
+      it('does not let an optioned caller consume an existing no-options in-flight resolution', async () => {
+        const did = 'did:jwk:single-flight-optioned-bypasses-default-inflight';
+
+        const didMethodResolver = spyOn(DidJwk, 'resolve').mockImplementation(async (_uri: string, opts?: any) => {
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+          const suffix = opts?.gatewayUri ?? 'default';
+          return {
+            didResolutionMetadata : {},
+            didDocument           : { id: `${did}#${suffix}` },
+            didDocumentMetadata   : {},
+          };
+        });
+
+        const noOptionsPromise = didResolver.resolve(did);
+        await Promise.resolve();
+
+        const optionedResult = await didResolver.resolve(did, { gatewayUri: 'optioned' } as any);
+        const noOptionsResult = await noOptionsPromise;
+
+        expect(didMethodResolver).toHaveBeenCalledTimes(2);
+        expect(noOptionsResult.didDocument).toEqual({ id: `${did}#default` });
+        expect(optionedResult.didDocument).toEqual({ id: `${did}#optioned` });
+      });
+
+      it('does not let a no-options caller consume an existing optioned resolution', async () => {
+        const did = 'did:jwk:single-flight-default-bypasses-optioned-inflight';
+
+        const didMethodResolver = spyOn(DidJwk, 'resolve').mockImplementation(async (_uri: string, opts?: any) => {
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+          const suffix = opts?.gatewayUri ?? 'default';
+          return {
+            didResolutionMetadata : {},
+            didDocument           : { id: `${did}#${suffix}` },
+            didDocumentMetadata   : {},
+          };
+        });
+
+        const optionedPromise = didResolver.resolve(did, { gatewayUri: 'optioned' } as any);
+        await Promise.resolve();
+
+        const noOptionsResult = await didResolver.resolve(did);
+        const optionedResult = await optionedPromise;
+
+        expect(didMethodResolver).toHaveBeenCalledTimes(2);
+        expect(optionedResult.didDocument).toEqual({ id: `${did}#optioned` });
+        expect(noOptionsResult.didDocument).toEqual({ id: `${did}#default` });
+      });
+
       it('does not serve optioned resolutions from the DID-only cache', async () => {
         const did = 'did:jwk:single-flight-optioned-cache-read-bypass';
         const cache = new Map<string, DidResolutionResult>();
