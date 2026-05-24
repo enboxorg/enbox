@@ -1,4 +1,4 @@
-import { Time } from '../../src/utils/time.js';
+import { sleep } from '@enbox/common';
 
 export class Poller {
 
@@ -39,7 +39,7 @@ export class Poller {
         }
 
         // Sleep for the retry interval before attempting again
-        await Time.sleep(retrySleep);
+        await sleep(retrySleep);
       }
     }
   }

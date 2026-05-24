@@ -24,6 +24,25 @@
  * const members = await social.group.member.query(groupContextId);
  * ```
  *
+ * ## Deliberate `as never` pattern
+ *
+ * The CRUD methods below pass their `options: Record<string, unknown>`
+ * parameter to `typed.records.{create, query, subscribe, update}` with
+ * `as never`. This is the type-system bridge between the type-erased
+ * Proxy (which doesn't carry the per-protocol generic) and the strictly-
+ * typed record methods (which take `TypedRecordCreateParams<...>` etc.).
+ *
+ * `never` is the universal bottom subtype, so any strict generic is
+ * satisfied. The structural runtime shape of `options` is validated by
+ * the DWN SDK's grant-processing layer downstream — the cast is a
+ * narrow, intentional escape hatch at the proxy boundary.
+ *
+ * SonarCloud's `typescript:S4325` flags these casts as redundant
+ * because its rule doesn't model generic-parameter constraints. We
+ * suppress S4325 at the file level (see `sonar-project.properties`)
+ * because every CRUD method uses the same pattern and per-line
+ * `// NOSONAR` would dwarf the actual code.
+ *
  * @module
  */
 
@@ -51,10 +70,12 @@ function isRecordLimitExceeded(status: { code: number; detail: string }): boolea
  * (has `$recordLimit: { max: 1 }`).
  */
 function isSingletonPath(definition: ProtocolDefinition, path: string): boolean {
-  const segments = path.split('/');
-  let node: ProtocolRuleSet | undefined = definition.structure as unknown as ProtocolRuleSet;
+  const [first, ...rest] = path.split('/');
+  // Top-level lookup uses the declared `{ [key: string]: ProtocolRuleSet }`
+  // index signature directly — no top-level cast needed.
+  let node: ProtocolRuleSet | undefined = definition.structure[first];
 
-  for (const seg of segments) {
+  for (const seg of rest) {
     if (!node || typeof node !== 'object') { return false; }
     node = (node as Record<string, ProtocolRuleSet>)[seg];
   }
@@ -72,8 +93,13 @@ function isSingletonPath(definition: ProtocolDefinition, path: string): boolean 
  * reached by the given path.
  */
 function getChildKeys(definition: ProtocolDefinition, path: string): string[] {
+  // Top-level: walk into the structure's declared index-signature value.
+  // The structure is `{ [key: string]: ProtocolRuleSet }`; navigating
+  // beneath the first segment uses `ProtocolRuleSet`'s own index
+  // signature, which contains both rule-set children and `$`-prefixed
+  // metadata — we filter out the metadata at the leaf below.
   const segments = path.split('/');
-  let node: Record<string, unknown> = definition.structure as unknown as Record<string, unknown>;
+  let node: Record<string, unknown> = definition.structure;
 
   for (const seg of segments) {
     if (!node || typeof node !== 'object') { return []; }

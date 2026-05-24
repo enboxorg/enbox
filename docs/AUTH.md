@@ -18,8 +18,9 @@ direction is:
 @enbox/api   -->  @enbox/auth  (optional, via session)
 ```
 
-Apps use `@enbox/auth` to authenticate, then pass the resulting session to
-`@enbox/api` to interact with DWN protocols:
+Most apps use `@enbox/api` directly. Advanced apps use `@enbox/auth` to
+authenticate, then pass the resulting session to `@enbox/api` to interact with
+DWN protocols:
 
 ```ts
 import { AuthManager } from '@enbox/auth';
@@ -28,7 +29,7 @@ import { Enbox } from '@enbox/api';
 const auth = await AuthManager.create({ sync: '15s' });
 const session = await auth.restoreSession() ?? await auth.connect();
 
-const enbox = Enbox.connect({ session });
+const enbox = Enbox.fromSession(session);
 // enbox.using(MyProtocol).records.create(...)
 ```
 
@@ -605,10 +606,10 @@ sessions) or a `recoveryPhrase` (on first local connect only).
 Pass the session to `@enbox/api`:
 
 ```ts
-const enbox = Enbox.connect({ session });
+const enbox = Enbox.fromSession(session);
 
 // Or manually:
-const enbox = Enbox.connect({
+const enbox = new Enbox({
   agent:        session.agent,
   connectedDid: session.did,
   delegateDid:  session.delegateDid,
@@ -645,7 +646,7 @@ const EnboxProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   }, []);
 
   const applySession = (session: AuthSession) => {
-    const api = Enbox.connect({ session });
+    const api = Enbox.fromSession(session);
     setEnbox(api);
     setDid(session.did);
   };
@@ -712,7 +713,7 @@ if (session.recoveryPhrase) {
 }
 
 // 4. Use the Enbox API
-const enbox = Enbox.connect({ session });
+const enbox = Enbox.fromSession(session);
 const typed = enbox.using(MyProtocol);
 ```
 

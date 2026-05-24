@@ -12,7 +12,8 @@ import type { RestoreSessionOptions } from '../types.js';
 
 import type { StorageAdapter } from '../types.js';
 
-import type { EnboxUserAgent } from '@enbox/agent';
+import type { RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { DwnDataEncodedRecordsWriteMessage, EnboxUserAgent } from '@enbox/agent';
 
 import { Convert } from '@enbox/common';
 import { DataStream } from '@enbox/dwn-sdk-js';
@@ -392,7 +393,16 @@ async function ensureRevocationGrantOnRemote(
     });
     if (reply.status.code !== 200 || !reply.entry?.recordsWrite) { return; }
 
-    const { encodedData, ...rawMessage } = reply.entry.recordsWrite as any;
+    // `RecordsWriteMessage` doesn't declare `encodedData`, but the
+    // wire-format reply may include it; widen the local type to
+    // acknowledge that without `any`.
+    // NOSONAR S4325 false positive: the cast is required to typecheck
+    // the destructuring of the undeclared optional `encodedData`
+    // property; removing it fails TS2339. Sonar reads the intersection-
+    // with-optional-field as a no-op widening, which it isn't here.
+    type RecordsWriteWireMessage = RecordsWriteMessage & { encodedData?: string };
+    const { encodedData: _encoded, ...rawMessage } =
+      reply.entry.recordsWrite as RecordsWriteWireMessage; // NOSONAR
     const data = reply.entry.data
       ? new Blob([await DataStream.toBytes(reply.entry.data) as BlobPart])
       : undefined;
@@ -439,18 +449,18 @@ async function revokeAndSendSingle(
     messageType   : DwnInterface.RecordsRead,
     messageParams : { filter: { recordId: entry.grantId } },
   });
-  if (readReply.status.code !== 200 || !readReply.entry) { return false; }
+  if (readReply.status.code !== 200 || !readReply.entry?.recordsWrite) { return false; }
 
   // Reconstruct DwnDataEncodedRecordsWriteMessage: RecordsRead returns
   // the data as a stream, but PermissionGrant.parse needs encodedData.
   const grantDataBytes = readReply.entry.data
     ? await DataStream.toBytes(readReply.entry.data)
     : new Uint8Array(0);
-  const grantMessageWithData = {
+  const grantMessageWithData: DwnDataEncodedRecordsWriteMessage = {
     ...readReply.entry.recordsWrite,
     encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
   };
-  const grant = DwnPermissionGrant.parse(grantMessageWithData as any);
+  const grant = DwnPermissionGrant.parse(grantMessageWithData);
 
   const { message } = await userAgent.permissions.createRevocation({
     author            : connectedDid,

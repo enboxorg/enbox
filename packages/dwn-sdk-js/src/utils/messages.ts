@@ -4,7 +4,7 @@ import type { MessagesFilter } from '../types/messages-types.js';
 
 import { FilterUtility } from './filter.js';
 import { normalizeProtocolUrl } from './url.js';
-import { isEmptyObject, removeUndefinedProperties } from './object.js';
+import { isEmptyObject, removeUndefinedProperties } from '@enbox/common';
 
 
 /**

@@ -3,6 +3,7 @@ import type { AdminWebhook, AdminWebhookInput } from './types.js';
 
 import { createHmac } from 'crypto';
 import log from 'loglevel';
+import { sleep } from '@enbox/common';
 import { v4 as uuidv4 } from 'uuid';
 import { Kysely, sql } from 'kysely';
 
@@ -213,9 +214,7 @@ export class WebhookManager {
 
       // Wait before retry (skip wait on last attempt).
       if (attempt < WebhookManager.#maxRetries) {
-        await new Promise((resolve): ReturnType<typeof setTimeout> =>
-          setTimeout(resolve, WebhookManager.#retryDelaysMs[attempt]),
-        );
+        await sleep(WebhookManager.#retryDelaysMs[attempt]);
       }
     }
 

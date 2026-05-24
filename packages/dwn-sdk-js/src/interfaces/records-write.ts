@@ -21,7 +21,7 @@ import { Message } from '../core/message.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
-import { removeUndefinedProperties } from '../utils/object.js';
+import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
 import {
   createAttestation,
@@ -225,7 +225,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     this._message = message;
 
     if (message.authorization !== undefined) {
-      this._author = Message.getAuthor(message as RecordsWriteMessage);
+      this._author = Message.getAuthor(message);
 
       this._signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature);
 

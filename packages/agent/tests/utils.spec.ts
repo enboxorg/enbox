@@ -1,6 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import {
-  concatenateUrl,
   getDwnServiceEndpointUrls,
   getPaginationCursor,
   getRecordAuthor,
@@ -194,23 +193,9 @@ describe('Utils', () => {
     });
   });
 
-  describe('concatenateUrl', () => {
-    it('should concatenate base URL and path with single slash', () => {
-      expect(concatenateUrl('https://example.com', 'api/v1')).toBe('https://example.com/api/v1');
-    });
-
-    it('should handle trailing slash on base URL', () => {
-      expect(concatenateUrl('https://example.com/', 'api/v1')).toBe('https://example.com/api/v1');
-    });
-
-    it('should handle leading slash on path', () => {
-      expect(concatenateUrl('https://example.com', '/api/v1')).toBe('https://example.com/api/v1');
-    });
-
-    it('should handle both trailing and leading slashes', () => {
-      expect(concatenateUrl('https://example.com/', '/api/v1')).toBe('https://example.com/api/v1');
-    });
-  });
+  // `concatenateUrl` moved to `@enbox/common`; its tests now live in
+  // `packages/common/tests/url.test.ts` (a superset of the cases that
+  // were here).
 
   describe('pollWithTtl', () => {
     it('should resolve with response when fetch returns ok', async () => {

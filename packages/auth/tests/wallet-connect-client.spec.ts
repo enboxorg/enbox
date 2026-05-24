@@ -72,11 +72,18 @@ describe('WalletConnect', () => {
       sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
       sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
       sinon.stub(EnboxConnectProtocol, 'decryptResponse').resolves('decrypted.jwt.value');
+      // Verified-JWT payload must satisfy `assertConnectResponse` in
+      // @enbox/agent. The required fields are providerDid / delegateDid /
+      // aud / iat / exp / delegateGrants / delegatePortableDid.
       sinon.stub(EnboxConnectProtocol, 'verifyJwt').resolves({
         providerDid         : 'did:dht:provider789',
+        delegateDid         : 'did:dht:delegate123',
+        aud                 : 'did:jwk:test',
+        iat                 : Math.floor(Date.now() / 1000),
+        exp                 : Math.floor(Date.now() / 1000) + 3600,
         delegateGrants      : [{ recordId: 'grant1' }],
         delegatePortableDid : { uri: 'did:dht:delegate123', document: {}, metadata: {} },
-      } as any);
+      });
 
       // Stub fetch: first call = PAR response, second call = poll token response.
       const fetchStub = sinon.stub(globalThis, 'fetch');

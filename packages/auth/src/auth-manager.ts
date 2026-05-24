@@ -3,10 +3,19 @@
  *
  * Replaces `Enbox.connect()` (formerly `Web5.connect()`) with a composable,
  * multi-identity-aware auth system that works in both browser and CLI environments.
+ *
+ * NOTE: this file is also exposed as the `@enbox/auth/auth-manager` subpath
+ * export so `@enbox/api` can import the AuthManager class without pulling in
+ * the full barrel. The subpath is **internal to the monorepo** — external
+ * consumers should import from `@enbox/auth` (or `@enbox/browser`) instead;
+ * the subpath's file layout is not part of any stability guarantee.
+ *
+ * @internal
  * @module
  */
 
-import type { BearerIdentity, HdIdentityVault, PortableIdentity } from '@enbox/agent';
+import type { RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMessage, HdIdentityVault, PortableIdentity } from '@enbox/agent';
 
 import type { FlowContext } from './connect/lifecycle.js';
 import type { PasswordProvider } from './password-provider.js';
@@ -20,7 +29,6 @@ import type {
   DisconnectOptions,
   HandlerConnectOptions,
   HeadlessConnectOptions,
-  IdentityInfo,
   ImportFromPhraseOptions,
   ImportFromPortableOptions,
   LocalConnectOptions,
@@ -241,12 +249,14 @@ export class AuthManager {
       const restored = await restoreSession(this._flowContext());
       if (restored) { return restored; }
 
-      // 2. Route to the appropriate flow.
+      // 2. Route to the appropriate flow. `_isLocalConnect` is a type guard
+      // so the two branches receive correctly narrowed `options` types
+      // without casts.
       if (this._isLocalConnect(options)) {
-        return localConnect(this._flowContext(), options as LocalConnectOptions);
+        return localConnect(this._flowContext(), options);
       }
 
-      return this._handlerConnect(options as HandlerConnectOptions | undefined);
+      return this._handlerConnect(options);
     });
   }
 
@@ -305,6 +315,7 @@ export class AuthManager {
    * This replaces the manual `previouslyConnected` localStorage pattern.
    */
   async restoreSession(options?: RestoreSessionOptions): Promise<AuthSession | undefined> {
+    this._guardShutdown();
     this._guardConcurrency();
     this._isConnecting = true;
 
@@ -345,6 +356,7 @@ export class AuthManager {
    * ```
    */
   async connectHeadless(options?: HeadlessConnectOptions): Promise<AuthSession> {
+    this._guardShutdown();
     let password = options?.password ?? this._defaultPassword;
     const isFirstLaunch = await this._userAgent.firstLaunch();
 
@@ -385,7 +397,7 @@ export class AuthManager {
 
     const { connectedDid, delegateDid } = resolveIdentityDids(identity);
 
-    const identityInfo: IdentityInfo = {
+    const identityInfo: AgentSessionIdentity = {
       didUri       : connectedDid,
       name         : identity.metadata.name,
       connectedDid : identity.metadata.connectedDid,
@@ -496,17 +508,17 @@ export class AuthManager {
                 messageType   : DwnInterface.RecordsRead,
                 messageParams : { filter: { recordId: grantId } },
               });
-              if (readReply.status.code !== 200 || !readReply.entry) { continue; }
+              if (readReply.status.code !== 200 || !readReply.entry?.recordsWrite) { continue; }
               // Reconstruct DwnDataEncodedRecordsWriteMessage: RecordsRead returns
               // data as a stream, but PermissionGrant.parse needs encodedData.
               const grantDataBytes = readReply.entry.data
                 ? await DataStream.toBytes(readReply.entry.data)
                 : new Uint8Array(0);
-              const grantMsgWithData = {
+              const grantMsgWithData: DwnDataEncodedRecordsWriteMessage = {
                 ...readReply.entry.recordsWrite,
                 encodedData: Convert.uint8Array(grantDataBytes).toBase64Url(),
               };
-              const grant = DwnPermissionGrant.parse(grantMsgWithData as any);
+              const grant = DwnPermissionGrant.parse(grantMsgWithData);
 
               // Self-healing: ensure the revocation grant is on the remote
               // DWN. The best-effort fanout at connect time may have failed.
@@ -519,7 +531,19 @@ export class AuthManager {
                     messageParams : { filter: { recordId: revocationGrantId } },
                   });
                   if (revGrantReply.status.code === 200 && revGrantReply.entry?.recordsWrite) {
-                    const { encodedData: revGrantEncoded, ...revGrantRaw } = revGrantReply.entry.recordsWrite as any;
+                    // Strip `encodedData` from the wire payload — the
+                    // bytes are sent via `data` (Blob) on the next line.
+                    // `RecordsWriteMessage` doesn't declare `encodedData`,
+                    // but the wire-format reply may include it; widen the
+                    // local type to acknowledge that without `any`.
+                    // NOSONAR S4325 false positive: the cast is required to
+                    // typecheck the destructuring of the undeclared
+                    // optional `encodedData` property; removing it fails
+                    // TS2339. Sonar reads the intersection-with-optional-
+                    // field as a no-op widening, which it isn't here.
+                    type RecordsWriteWireMessage = RecordsWriteMessage & { encodedData?: string };
+                    const { encodedData: _encoded, ...revGrantRaw } =
+                      revGrantReply.entry.recordsWrite as RecordsWriteWireMessage; // NOSONAR
                     const revGrantData = revGrantReply.entry.data
                       ? new Blob([await DataStream.toBytes(revGrantReply.entry.data) as BlobPart])
                       : undefined;
@@ -552,7 +576,7 @@ export class AuthManager {
               // delivery, the owner-side authority source won't see it.
               let remoteDelivered = false;
               if (revocationMessage && remoteDwnUrls.length > 0) {
-                const { encodedData, ...rawMessage } = revocationMessage as any;
+                const { encodedData, ...rawMessage } = revocationMessage;
                 const data = encodedData
                   ? new Blob([Convert.base64Url(encodedData).toUint8Array() as BlobPart])
                   : undefined;
@@ -783,7 +807,7 @@ export class AuthManager {
    * Each identity has a DID URI, name, and optional connected DID
    * (for wallet-connected/delegated identities).
    */
-  async listIdentities(): Promise<IdentityInfo[]> {
+  async listIdentities(): Promise<AgentSessionIdentity[]> {
     const identities = await this._userAgent.identity.list();
     return identities.map((identity: BearerIdentity) => ({
       didUri       : identity.did.uri,
@@ -815,7 +839,7 @@ export class AuthManager {
     await this._storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
     await this._storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
 
-    const identityInfo: IdentityInfo = {
+    const identityInfo: AgentSessionIdentity = {
       didUri       : connectedDid,
       name         : identity.metadata.name,
       connectedDid : identity.metadata.connectedDid,
@@ -954,45 +978,37 @@ export class AuthManager {
   /**
    * Determine whether the given options indicate a local connect flow.
    *
-   * Local connect is indicated by the presence of `password`,
-   * `createIdentity`, or `recoveryPhrase` — signals that the caller
-   * is managing its own vault/identity lifecycle. In non-browser
-   * environments, local connect is the fallback.
+   * Handler intent is asserted by the presence of a non-empty `protocols`
+   * array OR a non-null `connectHandler`; everything else (including the
+   * no-options case, an empty `protocols: []`, and `null` values from JS
+   * callers) routes to local. An empty `protocols` array is intentionally
+   * NOT a handler signal — it carries no permission scopes for the handler
+   * to authorize, so treating it as handler-flow would produce a zero-grant
+   * "connected" session indistinguishable from a denied connect.
+   *
+   * Acts as a TypeScript type guard: a `true` return narrows `options` to
+   * `LocalConnectOptions | undefined` at call sites, so the routing in
+   * {@link AuthManager.connect} can dispatch without unsafe casts.
    */
-  private _isLocalConnect(options?: ConnectOptions): boolean {
-    const o = (options ?? {}) as Record<string, unknown>;
-
-    // If any local-connect-specific keys are present, it's definitely local.
-    const hasLocalSignals = (
-      o.password !== undefined ||
-      o.createIdentity !== undefined ||
-      o.recoveryPhrase !== undefined ||
-      o.dwnEndpoints !== undefined ||
-      o.metadata !== undefined
-    );
-    if (hasLocalSignals) { return true; }
-
-    // If any handler-connect signals are present, use the handler flow.
-    const hasHandlerSignals = (
-      o.protocols !== undefined ||
-      o.connectHandler !== undefined
-    );
-    if (hasHandlerSignals) { return false; }
-
-    // No explicit signals → default to local connect.
-    // Callers that want handler-based connect must provide protocols
-    // or a connectHandler.
+  private _isLocalConnect(options?: ConnectOptions): options is LocalConnectOptions | undefined {
+    if (options === undefined || options === null) { return true; }
+    if ('protocols' in options && Array.isArray(options.protocols) && options.protocols.length > 0) { return false; }
+    if ('connectHandler' in options && options.connectHandler !== undefined && options.connectHandler !== null) { return false; }
     return true;
   }
 
   /**
    * Run a handler-based (delegated) connect flow.
    *
-   * 1. Initialize the vault (agent-only, no identity).
-   * 2. Normalize protocol permission requests.
-   * 3. Delegate to the connect handler for credential acquisition.
-   * 4. Import the delegate DID, process grants, set up sync.
-   * 5. Finalize and return the AuthSession.
+   * Handler resolution happens BEFORE any vault I/O so a misconfigured call
+   * (no handler reachable) fails fast without mutating on-disk state.
+   *
+   * 1. Resolve the connect handler (fast-fail when none is reachable).
+   * 2. Initialize the vault (agent-only, no identity).
+   * 3. Normalize protocol permission requests.
+   * 4. Delegate to the connect handler for credential acquisition.
+   * 5. Import the delegate DID, process grants, set up sync.
+   * 6. Finalize and return the AuthSession.
    */
   private async _handlerConnect(
     options?: HandlerConnectOptions,
@@ -1001,15 +1017,8 @@ export class AuthManager {
     const { userAgent, emitter, storage } = ctx;
     const sync = options?.sync ?? ctx.defaultSync;
 
-    // 1. Initialize vault (agent-only, no identity).
-    const isFirstLaunch = await userAgent.firstLaunch();
-    const password = await resolvePassword(ctx, undefined, isFirstLaunch);
-    await ensureVaultReady({ userAgent, emitter, password, isFirstLaunch });
-
-    // 2. Normalize protocol requests.
-    const permissionRequests = normalizeProtocolRequests(options?.protocols);
-
-    // 3. Resolve the handler.
+    // 1. Resolve the handler FIRST. Anything past this point may mutate the
+    //    vault on disk, so misconfiguration must fail before that happens.
     const handler = options?.connectHandler ?? this._connectHandler;
     if (!handler) {
       throw new Error(
@@ -1018,6 +1027,16 @@ export class AuthManager {
         'or provide a custom ConnectHandler.'
       );
     }
+
+    // 2. Initialize vault (agent-only, no identity). The per-call password
+    //    (when supplied via `HandlerConnectOptions.password`) wins over the
+    //    manager default, matching the behavior of the local-connect flow.
+    const isFirstLaunch = await userAgent.firstLaunch();
+    const password = await resolvePassword(ctx, options?.password, isFirstLaunch);
+    await ensureVaultReady({ userAgent, emitter, password, isFirstLaunch });
+
+    // 3. Normalize protocol requests.
+    const permissionRequests = normalizeProtocolRequests(options?.protocols);
 
     // 4. Delegate to the handler.
     const result = await handler.requestAccess({ permissionRequests });
@@ -1033,14 +1052,22 @@ export class AuthManager {
     const identity = await importDelegateAndSetupSync({
       userAgent, delegatePortableDid, connectedDid, delegateGrants,
       delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols,
-      sessionRevocations,
       flowName: 'Connect',
     });
 
-    // 6. Finalize session.
+    // 6. Finalize session. Pass the transient delegate state explicitly
+    // so `persistOrClearDelegateSecrets` doesn't need to read it back
+    // off the identity (which was the old `(identity as any)._foo`
+    // smuggling pattern).
     return finalizeDelegateSession({
       userAgent, emitter, storage, identity,
-      connectedDid, delegateDid: delegatePortableDid.uri, sync,
+      connectedDid, delegateDid   : delegatePortableDid.uri, sync,
+      delegateState : {
+        delegateDecryptionKeys,
+        delegateContextKeys,
+        delegateMultiPartyProtocols,
+        sessionRevocations,
+      },
     });
   }
 
@@ -1070,8 +1097,13 @@ export class AuthManager {
    * Consolidates the duplicated concurrency guard, `_isConnecting` flag management,
    * session assignment, and state transition across `connect()`, `walletConnect()`,
    * `importFromPhrase()`, and `importFromPortable()`.
+   *
+   * Also short-circuits if the manager has already been shut down — using
+   * a closed manager would otherwise fail deep inside sync/storage with an
+   * unhelpful error.
    */
   private async _withConnect(fn: () => Promise<AuthSession>): Promise<AuthSession> {
+    this._guardShutdown();
     this._guardConcurrency();
     this._isConnecting = true;
 
@@ -1183,6 +1215,15 @@ export class AuthManager {
       throw new Error(
         '[@enbox/auth] A connection attempt is already in progress. ' +
         'Wait for it to complete before starting another.'
+      );
+    }
+  }
+
+  private _guardShutdown(): void {
+    if (this._isShutDown) {
+      throw new Error(
+        '[@enbox/auth] AuthManager has been shut down and cannot be reused. ' +
+        'Create a new instance via AuthManager.create().'
       );
     }
   }

@@ -289,15 +289,17 @@ export class Convert {
     }
   }
 
-  async toObjectAsync(): Promise<any> {
+  async toObjectAsync<T = unknown>(): Promise<T> {
     switch (this.format) {
       case 'AsyncIterable': {
         // Convert the AsyncIterable to a String.
         const text = await this.toStringAsync();
 
         // Parse the string as JSON. This step assumes that the string represents a valid JSON structure.
-        // JSON.parse() will convert the string into a corresponding JavaScript object.
-        const json = JSON.parse(text);
+        // JSON.parse() will convert the string into a corresponding JavaScript object. The caller
+        // chooses the return type via the `T` type parameter (defaults to `unknown` so callers
+        // must narrow before using the result, instead of `any` silently propagating).
+        const json = JSON.parse(text) as T;
 
         // Return the parsed JavaScript object. The type of this object will depend on the structure
         // of the JSON in the stream. It could be an object, array, string, number, etc.

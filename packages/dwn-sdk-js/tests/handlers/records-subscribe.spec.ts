@@ -5,6 +5,7 @@ import type { RecordEvent, RecordsFilter } from '../../src/types/records-types.j
 
 import sinon from 'sinon';
 
+import { sleep } from '@enbox/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
@@ -1209,7 +1210,7 @@ export function testRecordsSubscribeHandler(): void {
 
             // Dave should receive zero events
             // Give a small window for any stray events to arrive, then assert empty
-            await Time.sleep(200);
+            await sleep(200);
             expect(daveRecordIds.size).toBe(0);
           });
 

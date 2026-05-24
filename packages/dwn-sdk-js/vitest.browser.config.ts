@@ -120,7 +120,10 @@ export default defineConfig({
       'tests/utils/jws.spec.ts',
       'tests/utils/memory-cache.spec.ts',
       'tests/utils/messages.spec.ts',
-      'tests/utils/object.spec.ts',
+      // object.spec.ts removed: `@enbox/common` now owns these helpers
+      // and tests them in `packages/common/tests/object.test.ts` (a
+      // superset of the cases that lived here). Fuzz coverage stays in
+      // `tests/fuzz/object.fuzz.spec.ts`.
       'tests/utils/private-key-signer.spec.ts',
       'tests/utils/records.spec.ts',
       'tests/utils/secp256k1.spec.ts',

@@ -6,12 +6,13 @@ import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSync
 import ms from 'ms';
 
 import { Level } from 'level';
+import { sleep } from '@enbox/common';
 import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
 
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { DeadLetterCategory, DeadLetterEntry, PushResult, ReplicationLinkState, StartSyncParams, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
-import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
 
 import { evaluateClosure } from './sync-closure-resolver.js';
 import { MAX_PENDING_TOKENS } from './types/sync.js';
@@ -313,7 +314,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   constructor({ agent, dataPath, db }: SyncEngineLevelParams) {
     this._agent = agent;
-    this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
+    this._permissionsApi = new AgentPermissionsApi({ agent });
     this._db = (db) ? db : new Level<string, string>(dataPath ?? 'DATA/AGENT/SYNC_STORE');
   }
 
@@ -346,7 +347,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   set agent(agent: EnboxPlatformAgent) {
     this._agent = agent;
-    this._permissionsApi = new AgentPermissionsApi({ agent: agent as EnboxAgent });
+    this._permissionsApi = new AgentPermissionsApi({ agent });
     // Cached sync targets were resolved through the previous agent's
     // DID resolver / endpoint lookup — invalidate so the next sync
     // tick re-resolves through the new agent.
@@ -597,18 +598,30 @@ export class SyncEngineLevel implements SyncEngine {
   /**
    * stopSync awaits the completion of the current sync operation before stopping the sync interval
    * and tearing down any live subscriptions.
+   *
+   * @param timeout - Maximum milliseconds to wait for an in-progress
+   *   sync cycle to finish. Non-finite values (`NaN`, `Infinity`) are
+   *   coerced to the default to avoid a tight poll loop or never-exit
+   *   condition.
    */
   public async stopSync(timeout: number = 2000): Promise<void> {
+    // Coerce non-finite timeouts (NaN, Infinity) to the default. NaN
+    // comparisons are always false, so `elapsedTimeout >= NaN` would
+    // never trip the timeout exit; `Math.min(NaN, 100)` is NaN and
+    // `setTimeout(_, NaN)` clamps to 0, spinning the poll loop. Both
+    // are footguns for callers passing a computed timeout that
+    // accidentally evaluates to NaN.
+    const safeTimeout = Number.isFinite(timeout) ? timeout : 2000;
     this._engineGeneration++;
     let elapsedTimeout = 0;
 
     while (this._syncLock) {
-      if (elapsedTimeout >= timeout) {
-        throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${timeout} milliseconds.`);
+      if (elapsedTimeout >= safeTimeout) {
+        throw new Error(`SyncEngineLevel: Existing sync operation did not complete within ${safeTimeout} milliseconds.`);
       }
 
       elapsedTimeout += 100;
-      await new Promise((resolve): void => { setTimeout(resolve, timeout < 100 ? timeout : 100); });
+      await sleep(Math.min(safeTimeout, 100));
     }
 
     if (this._syncIntervalId) {

@@ -337,7 +337,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     }
 
     // If the record was found, convert back to store object format.
-    const storeObject = await Stream.consumeToJson({ readableStream: readReply.entry.data }) as TStoreObject;
+    const storeObject = await Stream.consumeToJson<TStoreObject>({ readableStream: readReply.entry.data });
 
     // If caching is enabled, add the store object to the cache.
     if (useCache) {

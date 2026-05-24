@@ -1,3 +1,4 @@
+import { sleep } from '@enbox/common';
 import { Temporal } from '@js-temporal/polyfill';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -6,20 +7,14 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
  */
 export class Time {
   /**
-   * sleeps for the desired duration
-   * @param durationInMillisecond the desired amount of sleep time
-   * @returns when the provided duration has passed
-   */
-  public static async sleep(durationInMillisecond: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, durationInMillisecond));
-  }
-
-  /**
    * We must sleep for at least 2ms to avoid timestamp collisions during testing.
    * https://github.com/enboxorg/enbox/issues/481
+   *
+   * For arbitrary-duration sleeps, use `sleep` from `@enbox/common`
+   * directly — this class only retains the DWN-specific minimum.
    */
   public static async minimalSleep(): Promise<void> {
-    await Time.sleep(2);
+    await sleep(2);
   }
 
   /**

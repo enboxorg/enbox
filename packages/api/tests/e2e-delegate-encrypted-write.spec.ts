@@ -659,7 +659,7 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
     expect(session.delegateDid).not.toBe(walletDid.uri);
 
     // Use the session exactly as a dapp would.
-    const enbox = Enbox.connect({ session });
+    const enbox = Enbox.fromSession(session);
     const typed = enbox.using(EncTestProtocol);
 
     // Write a non-encrypted record.

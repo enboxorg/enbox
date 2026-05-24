@@ -6,6 +6,7 @@ import type { MessageProcessedContext, MessageProcessedHook } from './message-pr
 import log from 'loglevel';
 
 import { createJsonRpcRequest } from '@enbox/dwn-clients';
+import { sleep } from '@enbox/common';
 import { DwnInterfaceName, DwnMethodName, getRuleSetAtPath, Message } from '@enbox/dwn-sdk-js';
 
 /** Strips trailing `/` characters without regex (avoids ReDoS scanners). */
@@ -707,9 +708,7 @@ export class DeliveryService implements MessageProcessedHook {
 
       // Wait before retry (skip wait on last attempt).
       if (attempt < DeliveryService.#maxRetries) {
-        await new Promise((resolve): ReturnType<typeof setTimeout> =>
-          setTimeout(resolve, DeliveryService.#retryDelaysMs[attempt]),
-        );
+        await sleep(DeliveryService.#retryDelaysMs[attempt]);
       }
     }
 

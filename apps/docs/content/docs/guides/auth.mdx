@@ -9,7 +9,7 @@ description: How authentication works in Enbox — connect, lock, disconnect, an
 
 - **Identity creation** and agent bootstrapping
 - **Wallet-based connection** for cross-device identity sharing
-- **Session locking** and unlocking with a passphrase
+- **Vault locking** and session restoration with a passphrase
 - **Multi-identity** support (switching between DIDs)
 - **DWN registration** with remote nodes
 
@@ -17,30 +17,29 @@ description: How authentication works in Enbox — connect, lock, disconnect, an
 
 ```bash
 npm install @enbox/auth @enbox/agent
+npm install @enbox/browser # for browser wallet-connect handlers
 ```
 
 ## Basic usage
 
 ```ts
 import { AuthManager } from '@enbox/auth';
-import { EnboxAgent } from '@enbox/agent';
 
-const agent = await EnboxAgent.create();
-const auth = new AuthManager({ agent });
+const auth = await AuthManager.create({ password: userPassword });
 
 // Create a new identity
-await auth.connect();
+const session = await auth.connectLocal({ createIdentity: true });
 
 // Check connection state
 console.log(auth.state); // 'connected'
-console.log(auth.did);   // 'did:dht:...'
+console.log(session.did); // 'did:dht:...'
 ```
 
 ## Connection flows
 
 ### 1. First-time setup
 
-When no identity exists, `connect()` creates a new DID, generates encryption keys, and bootstraps the agent with a local DWN.
+When no identity exists, `connectLocal({ createIdentity: true })` creates a new DID, generates encryption keys, and bootstraps the agent with a local DWN.
 
 ### 2. Returning user
 
@@ -48,29 +47,27 @@ If an identity already exists in the vault, `connect()` unlocks the vault and re
 
 ### 3. Wallet connect
 
-For cross-device identity sharing, use the wallet connect flow with permission scopes:
+For cross-device identity sharing, configure an `AuthManager` with a
+`connectHandler` and request the protocols you need. The handler drives the
+permission-scope UX (e.g. via a browser overlay) and returns a delegate
+session bound to the connecting wallet.
 
 ```ts
-import { AuthManager, ConnectPermissionRequest } from '@enbox/auth';
+import { AuthManager } from '@enbox/auth';
+import { BrowserConnectHandler } from '@enbox/browser';
 
-const permissions: ConnectPermissionRequest = {
-  permissionScopes: [
-    {
-      interface: 'Records',
-      method: 'Write',
-      protocol: 'https://example.com/protocol',
-    },
-  ],
-};
+const walletAuth = await AuthManager.create({
+  connectHandler: BrowserConnectHandler({ appName: 'Notes App' }),
+});
 
-await auth.connect({ connectOptions: permissions });
+const session = await walletAuth.connect({ protocols: [NotesProtocol] });
 ```
 
 ### 4. Disconnect
 
 ```ts
 await auth.disconnect();
-console.log(auth.state); // 'disconnected'
+console.log(auth.state); // 'unlocked'
 ```
 
 ### 5. Lock / Unlock
@@ -79,17 +76,17 @@ console.log(auth.state); // 'disconnected'
 await auth.lock();
 console.log(auth.state); // 'locked'
 
-await auth.unlock('my-passphrase');
+await auth.restoreSession({ password: 'my-passphrase' });
 console.log(auth.state); // 'connected'
 ```
 
 ## Events
 
-The auth manager emits state change events:
+The auth manager emits state change events. The handler receives a payload with the `previous` and `current` states:
 
 ```ts
-auth.on('state-change', (newState) => {
-  console.log('Auth state changed to:', newState);
+auth.on('state-change', ({ previous, current }) => {
+  console.log(`Auth state changed: ${previous} → ${current}`);
 });
 ```
 

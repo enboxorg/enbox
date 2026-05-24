@@ -20,14 +20,16 @@ The `Enbox` class is the entry point. You create an instance with `Enbox.connect
 ```ts
 import { Enbox } from '@enbox/api';
 
-const enbox = Enbox.connect({ agent, connectedDid: did });
+const { enbox, session } = await Enbox.connect({ createIdentity: true });
 ```
 
-The `agent` manages signing keys, DWN sync, and identity storage. The `connectedDid` is the user's DID. If you use `@enbox/auth` for authentication, you can pass the session directly:
+`Enbox.connect()` creates the default auth/session lifecycle and returns the `Enbox` API, active session, and underlying auth manager. If you manage sessions yourself with `@enbox/auth` or `@enbox/agent`, pass the session directly:
 
 ```ts
-const enbox = Enbox.connect({ session });
+const enbox = Enbox.fromSession(session);
 ```
+
+For raw agent integration, use the public constructor: `new Enbox({ agent, connectedDid })`.
 
 The `Enbox` instance exposes:
 
@@ -407,10 +409,30 @@ const { records: pages } = await notebooks.records.query('notebook/page', {
 
 ## Disconnecting
 
-When your application shuts down or the user signs out, call `disconnect()` to stop background sync and release resources:
+When the user signs out, call `disconnect()` for the full sign-out flow:
 
 ```ts
 await enbox.disconnect();
+```
+
+When `Enbox.connect()` built the agent itself (i.e. you did not pass an `agent` option), `disconnect()` does three things:
+
+1. **Stop sync** — halt the background DWN sync engine.
+2. **Sign out** — send delegate-grant revocations to the connected DWN, clear session restore markers (so the next `Enbox.connect()` does not silently restore the signed-out session), and clear the in-memory delegate decryption key cache.
+3. **Release resources** — lock the vault, close the sync engine, and close the storage adapter.
+
+If you passed a pre-built `agent` to `Enbox.connect({ agent })`, only step 1 runs — your agent and its `AuthManager` keep their lifecycle, and you are responsible for calling `auth.disconnect()` and `auth.shutdown()` on your own handle when you are done:
+
+```ts
+const auth = await AuthManager.create({ /* ... */ });
+const session = await auth.connect();
+const enbox = Enbox.fromSession(session);
+
+// ... user uses the app ...
+
+await enbox.disconnect();   // stops sync + clears typed-enbox cache only
+await auth.disconnect();    // sign out: revoke grants, clear markers
+await auth.shutdown();      // release: lock vault, close storage
 ```
 
 After calling `disconnect()`, the `Enbox` instance should not be reused. Create a new one with `Enbox.connect()` for the next session.

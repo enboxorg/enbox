@@ -3,6 +3,8 @@ import type {
   ConnectionSnapshot,
 } from '../state/app-store.js';
 
+import { sleep } from '@enbox/common';
+
 const candidatePorts = [3000, 55500, 55501, 55502, 55503, 55504, 55505, 55506, 55507, 55508, 55509];
 const candidateHosts = ['127.0.0.1'];
 const maxRetries = 5;
@@ -41,7 +43,7 @@ async function refreshServerStatus(store: AppStore): Promise<void> {
       return;
     }
 
-    await delay(retryDelayMs);
+    await sleep(retryDelayMs);
   }
 
   store.connection.markOffline({
@@ -132,8 +134,3 @@ async function fetchServerInfo(baseUrl: string): Promise<ServerInfo | null> {
   }
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
-}

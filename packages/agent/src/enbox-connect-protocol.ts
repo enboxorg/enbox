@@ -18,7 +18,7 @@ import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { RequireOnly } from '@enbox/common';
 import type { DidDocument, PortableDid } from '@enbox/dids';
-import type { DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition } from './types/dwn.js';
+import type { DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition, DwnRecordsPermissionScope } from './types/dwn.js';
 
 /**
  * The protocols of permissions requested, along with the definition and permission scopes for each protocol.
@@ -103,7 +103,7 @@ import type {
   Jwk } from '@enbox/crypto';
 
 import { type BearerDid, DidJwk } from '@enbox/dids';
-import { Convert, logger } from '@enbox/common';
+import { concatenateUrl, Convert, logger } from '@enbox/common';
 import {
   CryptoUtils,
   Ed25519,
@@ -120,7 +120,7 @@ import { getEncryptionKeyInfo } from './dwn-encryption.js';
 import { isMultiPartyContext } from './protocol-utils.js';
 import { isRecordPermissionScope } from './dwn-api.js';
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
-import { concatenateUrl, mapConcurrent, mapConcurrentSettled } from './utils.js';
+import { mapConcurrent, mapConcurrentSettled } from './utils.js';
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -333,13 +333,20 @@ function buildConnectUrl({
 // JWT signing and verification
 // ---------------------------------------------------------------------------
 
-/** Signs an object as a JWT using an Ed25519 DID key. */
+/**
+ * Signs an object as a JWT using an Ed25519 DID key.
+ *
+ * `data` is constrained to `object` so callers don't have to widen
+ * typed payload shapes (e.g. `EnboxConnectResponse`) to
+ * `Record<string, unknown>` at the call site. `Convert.object(data)`
+ * stringifies whatever JSON-serializable shape is passed.
+ */
 async function signJwt({
   did,
   data,
 }: {
   did: BearerDid;
-  data: Record<string, unknown>;
+  data: object;
 }): Promise<string> {
   const header = Convert.object({
     alg : 'EdDSA',
@@ -358,7 +365,17 @@ async function signJwt({
   return `${header}.${payload}.${signatureBase64Url}`;
 }
 
-/** Verifies a JWT signature using the DID in the `kid` header. Returns the parsed payload. */
+/**
+ * Verifies a JWT signature using the DID in the `kid` header. Returns the
+ * parsed payload as an untyped object.
+ *
+ * The return type is intentionally `Record<string, unknown>` rather than a
+ * caller-supplied generic — a JWT payload is bytes from a remote party, and
+ * we can't soundly assert its shape without runtime validation. Callers must
+ * apply one of the {@link assertConnectRequest} / {@link assertConnectResponse}
+ * assertion helpers (or their own type guard) to narrow the payload before
+ * accessing fields.
+ */
 async function verifyJwt({ jwt }: { jwt: string }): Promise<Record<string, unknown>> {
   const [headerB64U, payloadB64U, signatureB64U] = jwt.split('.');
 
@@ -394,7 +411,129 @@ async function verifyJwt({ jwt }: { jwt: string }): Promise<Record<string, unkno
     throw new Error('Connect: JWT verification failed — invalid signature.');
   }
 
-  return Convert.base64Url(payloadB64U).toObject() as Record<string, unknown>;
+  const decoded: unknown = Convert.base64Url(payloadB64U).toObject();
+  if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
+    throw new Error('Connect: JWT verification failed — payload must be a JSON object.');
+  }
+  return decoded as Record<string, unknown>;
+}
+
+// ─── Field-level validation helpers ─────────────────────────────────────
+//
+// The connect-request / connect-response assertions below describe their
+// expected shape declaratively in terms of these primitive checks. Each
+// helper throws a consistent `Connect: <context> — \`<field>\` <reason>`
+// message on mismatch, so per-field error formatting is centralized here
+// rather than duplicated at every call site.
+
+/**
+ * Throws a shape-validation error during connect JWT assertion.
+ *
+ * Deliberately throws plain `Error` rather than `TypeError` even though
+ * the failures are runtime type-shape mismatches. The reason is layered
+ * error handling: boundary-validation failures need to propagate through
+ * the same `try/catch` paths as every other connect-flow error — vault
+ * lock failure, JWT signature failure, DWN request failure, etc. —
+ * without `catch` blocks having to special-case a `TypeError` subclass.
+ *
+ * SonarCloud's `typescript:S7786` flags this as "too unspecific for a
+ * type check" and prefers `TypeError`. We suppress it at the file level
+ * (see `sonar-project.properties`) because every `require*` helper goes
+ * through this single throw site.
+ */
+function fail(context: string, field: string, reason: string): never {
+  throw new Error(`Connect: ${context} — \`${field}\` ${reason}.`);
+}
+
+function requireString(payload: Record<string, unknown>, field: string, context: string): void {
+  if (typeof payload[field] !== 'string') { fail(context, field, 'must be a string'); }
+}
+
+function requireNumber(payload: Record<string, unknown>, field: string, context: string): void {
+  if (typeof payload[field] !== 'number') { fail(context, field, 'must be a number'); }
+}
+
+function requireArray(payload: Record<string, unknown>, field: string, context: string): void {
+  if (!Array.isArray(payload[field])) { fail(context, field, 'must be an array'); }
+}
+
+function requireObject(payload: Record<string, unknown>, field: string, context: string): void {
+  const value = payload[field];
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    fail(context, field, 'must be an object');
+  }
+}
+
+function requireLiteral<L extends string | number | boolean>(
+  payload: Record<string, unknown>, field: string, expected: L, context: string,
+): void {
+  if (payload[field] !== expected) { fail(context, field, `must be ${JSON.stringify(expected)}`); }
+}
+
+function requireStringArray(payload: Record<string, unknown>, field: string, context: string): void {
+  const value = payload[field];
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
+    fail(context, field, 'must be a string[]');
+  }
+}
+
+function requireOptionalString(payload: Record<string, unknown>, field: string, context: string): void {
+  if (payload[field] !== undefined && typeof payload[field] !== 'string') {
+    fail(context, field, 'must be a string when present');
+  }
+}
+
+function requireOptionalArray(payload: Record<string, unknown>, field: string, context: string): void {
+  if (payload[field] !== undefined && !Array.isArray(payload[field])) {
+    fail(context, field, 'must be an array when present');
+  }
+}
+
+// ─── Boundary assertions ────────────────────────────────────────────────
+//
+// Each `assertConnect*` describes the shape of its target type as a list
+// of per-field requirements. The structural existence/primitive checks
+// are the only validation done at the JWT-payload boundary; deeper
+// validation of nested arrays/objects (permission scopes, grants,
+// portable DID structure) happens downstream in DWN-aware validators
+// where the richer logic already lives.
+
+/**
+ * Runtime assertion that a verified JWT payload has the shape of an
+ * {@link EnboxConnectRequest}. Use immediately after `verifyJwt()` to narrow
+ * a `Record<string, unknown>` payload before accessing fields.
+ */
+function assertConnectRequest(payload: Record<string, unknown>): asserts payload is EnboxConnectRequest {
+  const ctx = 'invalid connect request';
+  requireString(payload, 'clientDid', ctx);
+  requireString(payload, 'appName', ctx);
+  requireArray(payload, 'permissionRequests', ctx);
+  requireString(payload, 'nonce', ctx);
+  requireString(payload, 'state', ctx);
+  requireString(payload, 'callbackUrl', ctx);
+  requireLiteral(payload, 'responseMode', 'direct_post', ctx);
+  requireStringArray(payload, 'supportedDidMethods', ctx);
+}
+
+/**
+ * Runtime assertion that a verified JWT payload has the shape of an
+ * {@link EnboxConnectResponse}. Use immediately after `verifyJwt()` to narrow
+ * a `Record<string, unknown>` payload before accessing fields.
+ */
+function assertConnectResponse(payload: Record<string, unknown>): asserts payload is EnboxConnectResponse {
+  const ctx = 'invalid connect response';
+  requireString(payload, 'providerDid', ctx);
+  requireString(payload, 'delegateDid', ctx);
+  requireString(payload, 'aud', ctx);
+  requireNumber(payload, 'iat', ctx);
+  requireNumber(payload, 'exp', ctx);
+  requireOptionalString(payload, 'nonce', ctx);
+  requireArray(payload, 'delegateGrants', ctx);
+  requireObject(payload, 'delegatePortableDid', ctx);
+  requireOptionalArray(payload, 'delegateDecryptionKeys', ctx);
+  requireOptionalArray(payload, 'delegateContextKeys', ctx);
+  requireOptionalArray(payload, 'delegateMultiPartyProtocols', ctx);
+  requireOptionalArray(payload, 'sessionRevocations', ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -637,7 +776,9 @@ async function getConnectRequest(requestUri: string, encryptionKey: string): Pro
   const response = await fetch(requestUri, { signal: AbortSignal.timeout(30_000) });
   const jwe = await response.text();
   const jwt = await decryptRequest({ jwe, encryptionKey });
-  return (await verifyJwt({ jwt })) as unknown as EnboxConnectRequest;
+  const payload = await verifyJwt({ jwt });
+  assertConnectRequest(payload);
+  return payload;
 }
 
 // ---------------------------------------------------------------------------
@@ -903,10 +1044,12 @@ async function deriveScopedDecryptionKeys(
     DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
   ]);
 
-  // Collect read-like scopes only.
+  // Collect read-like scopes only. `isRecordPermissionScope` narrows to
+  // `DwnRecordsPermissionScope`, which declares `protocolPath?: string`
+  // and `contextId?: string` — no `as any` needed for those reads below.
   const readScopes = scopes.filter(
-    (s): s is DwnPermissionScope & { method: string } =>
-      isRecordPermissionScope(s) && readMethods.has(s.method as DwnMethodName),
+    (s): s is DwnRecordsPermissionScope =>
+      isRecordPermissionScope(s) && readMethods.has(s.method),
   );
 
   if (readScopes.length === 0) {
@@ -915,7 +1058,7 @@ async function deriveScopedDecryptionKeys(
 
   // Fail closed: reject contextId-scoped encrypted reads.
   for (const scope of readScopes) {
-    if ('contextId' in scope && (scope as any).contextId) {
+    if (scope.contextId) {
       throw new Error(
         `Encrypted delegate access scoped by contextId is not supported ` +
         `yet; use protocol-wide permissions for protocol '${protocolUri}'.`,
@@ -936,9 +1079,7 @@ async function deriveScopedDecryptionKeys(
   }
 
   // Check if any scope is protocol-wide (no protocolPath).
-  const hasProtocolWideRead = readScopes.some(
-    (s) => !('protocolPath' in s) || !(s as any).protocolPath,
-  );
+  const hasProtocolWideRead = readScopes.some((s) => !s.protocolPath);
 
   const { keyId, keyUri } = await getEncryptionKeyInfo(agent, ownerDid);
 
@@ -967,8 +1108,7 @@ async function deriveScopedDecryptionKeys(
   // Emit one exact-path key per unique protocolPath.
   const uniquePaths = new Set<string>();
   for (const scope of readScopes) {
-    const pp = (scope as any).protocolPath as string | undefined;
-    if (pp) { uniquePaths.add(pp); }
+    if (scope.protocolPath) { uniquePaths.add(scope.protocolPath); }
   }
 
   const keys: DelegateDecryptionKey[] = [];
@@ -1058,9 +1198,12 @@ async function deriveContextKeysForDelegate(
     DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
   ]);
 
+  // `isRecordPermissionScope` narrows to `DwnRecordsPermissionScope`,
+  // which declares `protocolPath?: string` and `contextId?: string` —
+  // no `as any` needed for the field reads below.
   const readScopes = scopes.filter(
-    (s): s is DwnPermissionScope & { method: string } =>
-      isRecordPermissionScope(s) && readMethods.has(s.method as DwnMethodName),
+    (s): s is DwnRecordsPermissionScope =>
+      isRecordPermissionScope(s) && readMethods.has(s.method),
   );
 
   if (readScopes.length === 0) {
@@ -1069,7 +1212,7 @@ async function deriveContextKeysForDelegate(
 
   // Fail closed: reject contextId-scoped reads.
   for (const scope of readScopes) {
-    if ('contextId' in scope && (scope as any).contextId) {
+    if (scope.contextId) {
       throw new Error(
         `Encrypted delegate access scoped by contextId is not supported ` +
         `yet; use protocol-wide permissions for protocol ` +
@@ -1080,7 +1223,7 @@ async function deriveContextKeysForDelegate(
 
   // Fail closed: reject protocolPath-scoped reads on multi-party protocols.
   for (const scope of readScopes) {
-    if ('protocolPath' in scope && (scope as any).protocolPath) {
+    if (scope.protocolPath) {
       throw new Error(
         `Encrypted delegate access scoped by protocolPath on multi-party ` +
         `protocols is not supported yet; use protocol-wide permissions for ` +
@@ -1113,8 +1256,7 @@ async function deriveContextKeysForDelegate(
     });
 
     for (const entry of reply.entries ?? []) {
-      const rootContextId = (entry as any).contextId?.split('/')[0]
-        || (entry as any).recordId;
+      const rootContextId = entry.contextId?.split('/')[0] ?? entry.recordId;
 
       if (!rootContextId || seenContextIds.has(rootContextId)) { continue; }
       seenContextIds.add(rootContextId);
@@ -1389,7 +1531,7 @@ async function submitConnectResponse(
   logger.log('Signing connect response...');
   const responseObjectJwt = await EnboxConnectProtocol.signJwt({
     did  : delegateBearerDid,
-    data : responseObject as unknown as Record<string, unknown>,
+    data : responseObject,
   });
 
   const clientDid = await DidJwk.resolve(connectRequest.clientDid);
@@ -1431,6 +1573,8 @@ export const EnboxConnectProtocol = {
   buildConnectUrl,
   signJwt,
   verifyJwt,
+  assertConnectRequest,
+  assertConnectResponse,
   encryptRequest,
   decryptRequest,
   encryptResponse,

@@ -41,7 +41,7 @@ import { RecordsDelete } from '../../src/interfaces/records-delete.js';
 import { RecordsQuery } from '../../src/interfaces/records-query.js';
 import { RecordsSubscribe } from '../../src/interfaces/records-subscribe.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
-import { removeUndefinedProperties } from '../../src/utils/object.js';
+import { removeUndefinedProperties } from '@enbox/common';
 import { Secp256k1 } from '../../src/utils/secp256k1.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { Time } from '../../src/utils/time.js';

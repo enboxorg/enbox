@@ -17,7 +17,7 @@ export class Stream {
    * @returns A `ReadableStream<Uint8Array>` containing the blob's data.
    */
   public static fromBlob(blob: Blob): ReadableStream<Uint8Array> {
-    return blob.stream() as ReadableStream<Uint8Array>;
+    return blob.stream();
   }
 
   /**
@@ -166,9 +166,9 @@ export class Stream {
    * @param readableStream - The Web `ReadableStream` whose JSON content will be consumed.
    * @returns A Promise that resolves to the parsed JSON object from the stream's data.
    */
-  public static async consumeToJson({ readableStream }: { readableStream: ReadableStream}): Promise<any> {
+  public static async consumeToJson<T = unknown>({ readableStream }: { readableStream: ReadableStream}): Promise<T> {
     const iterableStream = Stream.asAsyncIterator(readableStream);
-    const object = await Convert.asyncIterable(iterableStream).toObjectAsync();
+    const object = await Convert.asyncIterable(iterableStream).toObjectAsync<T>();
 
     return object;
   }

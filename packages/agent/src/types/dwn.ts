@@ -202,24 +202,33 @@ export type DwnResponse<T extends DwnInterface> = {
   reply: DwnMessageReply[T];
 };
 
+/**
+ * Per-DWN-interface message factory. Only the static `create` and `parse`
+ * methods are part of the contract — the underlying classes have private
+ * or protected constructors (factory pattern), so the interface
+ * intentionally does not declare `new ()`. Omitting `new ()` lets the
+ * mapped-type table below assign class values directly without casts:
+ * a class with a private constructor still satisfies a structural type
+ * that doesn't require constructability, as long as the static side
+ * (`create` / `parse`) lines up.
+ */
 export interface DwnMessageConstructor<T extends DwnInterface> {
-  new (): DwnMessageInstance[T];
   create(params: DwnMessageParams[T]): Promise<DwnMessageInstance[T]>;
   parse(rawMessage: DwnMessage[T]): Promise<DwnMessageInstance[T]>;
 }
 
 export const dwnMessageConstructors: { [T in DwnInterface]: DwnMessageConstructor<T> } = {
-  [DwnInterface.MessagesRead]       : MessagesRead as any,
-  [DwnInterface.MessagesSubscribe]  : MessagesSubscribe as any,
-  [DwnInterface.MessagesSync]       : MessagesSync as any,
-  [DwnInterface.ProtocolsConfigure] : ProtocolsConfigure as any,
-  [DwnInterface.ProtocolsQuery]     : ProtocolsQuery as any,
-  [DwnInterface.RecordsDelete]      : RecordsDelete as any,
-  [DwnInterface.RecordsQuery]       : RecordsQuery as any,
-  [DwnInterface.RecordsRead]        : RecordsRead as any,
-  [DwnInterface.RecordsSubscribe]   : RecordsSubscribe as any,
-  [DwnInterface.RecordsWrite]       : RecordsWrite as any,
-} as const;
+  [DwnInterface.MessagesRead]       : MessagesRead,
+  [DwnInterface.MessagesSubscribe]  : MessagesSubscribe,
+  [DwnInterface.MessagesSync]       : MessagesSync,
+  [DwnInterface.ProtocolsConfigure] : ProtocolsConfigure,
+  [DwnInterface.ProtocolsQuery]     : ProtocolsQuery,
+  [DwnInterface.RecordsDelete]      : RecordsDelete,
+  [DwnInterface.RecordsQuery]       : RecordsQuery,
+  [DwnInterface.RecordsRead]        : RecordsRead,
+  [DwnInterface.RecordsSubscribe]   : RecordsSubscribe,
+  [DwnInterface.RecordsWrite]       : RecordsWrite,
+};
 
 export interface DwnMessageInstance {
   [DwnInterface.MessagesRead] : MessagesRead;

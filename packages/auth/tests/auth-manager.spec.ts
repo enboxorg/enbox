@@ -1,4 +1,5 @@
-import type { EnboxUserAgent } from '@enbox/agent';
+import type { DwnProtocolDefinition, EnboxUserAgent } from '@enbox/agent';
+
 import { describe, expect, test } from 'bun:test';
 
 import { AuthManager } from '../src/auth-manager.js';
@@ -6,6 +7,20 @@ import { MemoryStorage } from '../src/storage/storage.js';
 import { PasswordProvider } from '../src/password-provider.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
+
+/**
+ * A minimal non-empty protocols array suitable for routing to the
+ * handler flow. Use this instead of `[]` — empty arrays no longer count
+ * as a handler signal (see {@link AuthManager._isLocalConnect}).
+ */
+const HANDLER_PROTOCOLS: DwnProtocolDefinition[] = [
+  {
+    protocol  : 'https://example.com/handler-routing',
+    published : true,
+    types     : {},
+    structure : {},
+  },
+];
 
 /**
  * Construct an AuthManager instance with a pre-built mock agent.
@@ -198,7 +213,7 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent);
       (manager as any)._connectHandler = mockHandler;
 
-      const session = await manager.connect({ protocols: [] });
+      const session = await manager.connect({ protocols: HANDLER_PROTOCOLS });
 
       expect(session.did).toBe('did:dht:owner456');
       expect(manager.isConnected).toBe(true);
@@ -228,7 +243,7 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent);
 
       const session = await manager.connect({
-        protocols      : [],
+        protocols      : HANDLER_PROTOCOLS,
         connectHandler : perCallHandler,
       });
 
@@ -244,8 +259,30 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent);
 
       await expect(
-        manager.connect({ protocols: [] })
+        manager.connect({ protocols: HANDLER_PROTOCOLS })
       ).rejects.toThrow('No connect handler provided');
+    });
+
+    test('handler-missing fails fast BEFORE initializing the vault on disk', async () => {
+      // Regression for the #2 block-on bug: `_handlerConnect` used to call
+      // `ensureVaultReady()` before checking for a handler, leaving the
+      // vault on-disk locked with the insecure default password when the
+      // handler-missing error fired. The check now runs first so misuse
+      // can't mutate disk state.
+      let initializeCalled = false;
+      const agent = createMockAgent({
+        firstLaunch  : async () => true,
+        initialize   : async () => { initializeCalled = true; return 'phrase'; },
+        identityList : async () => [],
+      });
+
+      const manager = createTestManager(agent);
+
+      await expect(
+        manager.connect({ protocols: HANDLER_PROTOCOLS })
+      ).rejects.toThrow('No connect handler provided');
+
+      expect(initializeCalled).toBe(false);
     });
 
     test('throws when handler returns undefined (user denied)', async () => {
@@ -262,7 +299,7 @@ describe('AuthManager', () => {
       (manager as any)._connectHandler = mockHandler;
 
       await expect(
-        manager.connect({ protocols: [] })
+        manager.connect({ protocols: HANDLER_PROTOCOLS })
       ).rejects.toThrow('denied or cancelled');
     });
 
@@ -297,7 +334,7 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent);
       (manager as any)._connectHandler = mockHandler;
 
-      const session = await manager.connect({ protocols: [] });
+      const session = await manager.connect({ protocols: HANDLER_PROTOCOLS });
 
       expect(session.did).toBe('did:dht:owner-mp');
       expect(importedKeys).toEqual([]);
@@ -337,7 +374,7 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent);
       (manager as any)._connectHandler = mockHandler;
 
-      await manager.connect({ protocols: [] });
+      await manager.connect({ protocols: HANDLER_PROTOCOLS });
 
       expect(importedKeys).toEqual(ctxKeys);
       expect(importedProtocols).toEqual(['https://proto.example']);
@@ -368,7 +405,7 @@ describe('AuthManager', () => {
       (manager as any)._connectHandler = mockHandler;
       (manager as any)._defaultSync = 'off';
 
-      const session = await manager.connect({ protocols: [] });
+      const session = await manager.connect({ protocols: HANDLER_PROTOCOLS });
       expect(session.did).toBe('did:dht:owner456');
     });
   });

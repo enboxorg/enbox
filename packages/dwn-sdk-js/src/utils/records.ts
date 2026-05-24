@@ -12,7 +12,7 @@ import { FilterUtility } from './filter.js';
 import { Jws } from './jws.js';
 import { Message } from '../core/message.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
-import { removeUndefinedProperties } from './object.js';
+import { removeUndefinedProperties } from '@enbox/common';
 import { SortDirection } from '../types/query-types.js';
 import { X25519 } from '@enbox/crypto';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';

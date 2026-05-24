@@ -60,7 +60,6 @@ export async function walletConnect(
   const identity = await importDelegateAndSetupSync({
     userAgent, delegatePortableDid, connectedDid, delegateGrants,
     delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols,
-    sessionRevocations,
     flowName: 'Wallet connect',
   });
 
@@ -80,9 +79,18 @@ export async function walletConnect(
     );
   }
 
-  // Finalize session.
+  // Finalize session. Pass the transient delegate state explicitly so
+  // `persistOrClearDelegateSecrets` doesn't have to read it back off
+  // the identity object (which was the old `(identity as any)._foo`
+  // smuggling pattern).
   return finalizeDelegateSession({
     userAgent, emitter, storage, identity,
-    connectedDid, delegateDid: delegatePortableDid.uri, sync,
+    connectedDid, delegateDid   : delegatePortableDid.uri, sync,
+    delegateState : {
+      delegateDecryptionKeys,
+      delegateContextKeys,
+      delegateMultiPartyProtocols,
+      sessionRevocations,
+    },
   });
 }

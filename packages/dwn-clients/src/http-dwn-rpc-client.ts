@@ -6,6 +6,7 @@ import { CryptoUtils } from '@enbox/crypto';
 import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
 import { RateLimitError } from './rate-limit-error.js';
+import { sleep } from '@enbox/common';
 import { createJsonRpcRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
 
 // ---------------------------------------------------------------------------
@@ -317,7 +318,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       const backoffMs = computeBackoffDelay(attempt, baseDelayMs, maxDelayMs);
       const delayMs = retryAfterMs === undefined ? backoffMs : Math.max(retryAfterMs, backoffMs);
 
-      await new Promise<void>((resolve): void => { setTimeout(resolve, delayMs); });
+      await sleep(delayMs);
     }
 
     // Should not reach here, but satisfy the compiler.

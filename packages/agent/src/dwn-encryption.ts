@@ -569,16 +569,24 @@ export async function maybeDecryptReply<T extends DwnInterface>(
     return;
   }
 
+  // `request` here is the encrypted-write variant — `'encryption' in` has
+  // eliminated the `{ messageCid }`-only arm of `SendDwnRequest`, leaving
+  // the `ProcessDwnRequest<T>` shape which declares the optional
+  // `granteeDid` field. Narrow once at the top so neither branch below
+  // needs to repeat the cast.
+  const encryptedRequest = request as ProcessDwnRequest<T>;
+  const granteeDid = encryptedRequest.granteeDid;
+
   // Auto-decrypt RecordsRead replies
-  if (isDwnRequest(request as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsRead)) {
+  if (isDwnRequest(encryptedRequest as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsRead)) {
     const readReply = reply as RecordsReadReply;
     if (readReply.status.code === 200
         && readReply.entry?.recordsWrite?.encryption
         && readReply.entry?.data) {
       const keyDecrypter = await resolveKeyDecrypter(
-        agent, request.author, readReply.entry.recordsWrite, request.target,
+        agent, encryptedRequest.author, readReply.entry.recordsWrite, encryptedRequest.target,
         contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
-        (request as any).granteeDid, delegateContextKeyCache,
+        granteeDid, delegateContextKeyCache,
       );
 
       try {
@@ -598,15 +606,15 @@ export async function maybeDecryptReply<T extends DwnInterface>(
   }
 
   // Auto-decrypt RecordsQuery replies (small records inline as encodedData)
-  if (isDwnRequest(request as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsQuery)) {
+  if (isDwnRequest(encryptedRequest as ProcessDwnRequest<DwnInterface>, DwnInterface.RecordsQuery)) {
     const queryReply = reply as RecordsQueryReply;
     if (queryReply.status.code === 200 && queryReply.entries) {
       for (const entry of queryReply.entries) {
         if (entry.encryption && entry.encodedData) {
           const keyDecrypter = await resolveKeyDecrypter(
-            agent, request.author, entry as RecordsWriteMessage, request.target,
+            agent, encryptedRequest.author, entry as RecordsWriteMessage, encryptedRequest.target,
             contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
-            (request as any).granteeDid, delegateContextKeyCache,
+            granteeDid, delegateContextKeyCache,
           );
 
           try {

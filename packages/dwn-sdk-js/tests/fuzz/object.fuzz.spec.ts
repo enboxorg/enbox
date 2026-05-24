@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import fc from 'fast-check';
 
-import { isEmptyObject, removeEmptyObjects, removeUndefinedProperties } from '../../src/utils/object.js';
+import { isEmptyObject, removeEmptyObjects, removeUndefinedProperties } from '@enbox/common';
 
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 100;
 

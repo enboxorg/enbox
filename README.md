@@ -57,23 +57,20 @@ DWN is an [open standard](https://identity.foundation/decentralized-web-node/spe
 ## Quick Start
 
 ```bash
-bun add @enbox/api @enbox/auth
+bun add @enbox/api
 ```
 
 ### 1. Connect
 
-Create an auth session and an Enbox instance. Data syncs to whatever DWN endpoint(s) you configure -- a [community node](#dwn-servers), [your own](#run-your-own-node), or both.
+Create an Enbox instance. Data syncs to whatever DWN endpoint(s) you configure -- a [community node](#dwn-servers), [your own](#run-your-own-node), or both.
 
 ```ts
-import { AuthManager } from '@enbox/auth';
 import { Enbox, defineProtocol } from '@enbox/api';
 
-const auth = await AuthManager.create({
-  dwnEndpoints : ['https://enbox-dwn.fly.dev'],   // ← any DWN server
+const { enbox } = await Enbox.connect({
+  dwnEndpoints   : ['https://enbox-dwn.fly.dev'],   // ← any DWN server
+  createIdentity : true,
 });
-
-const session = await auth.connectLocal({ createIdentity: true });
-const enbox   = Enbox.connect({ session });
 ```
 
 ### 2. Define a protocol
