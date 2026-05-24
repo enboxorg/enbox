@@ -4,8 +4,8 @@ import type { Signer } from '@enbox/crypto';
 import type { Bep44Message } from './did-dht-types.js';
 
 import bencode from 'bencode';
-import { Convert } from '@enbox/common';
 import { Ed25519 } from '@enbox/crypto';
+import { Convert, fetchPublicUrl, PublicUrlValidationError } from '@enbox/common';
 import { DidError, DidErrorCode } from '../did-error.js';
 import { decode as dnsPacketDecode, encode as dnsPacketEncode } from '@dnsquery/dns-packet';
 
@@ -22,6 +22,31 @@ function pkarrUrl(publicKeyBytes: Uint8Array, gatewayUri: string): string {
 }
 
 /**
+ * Wraps {@link fetchPublicUrl} so URL / redirect-validation failures surface as the typed
+ * {@link DidErrorCode.InvalidGatewayUri} regardless of whether the offending host appeared in
+ * the original URL or in a redirect `Location` header. Other failures (network errors, fetch
+ * timeouts, etc.) propagate unchanged so callers can map them to `internalError` as before.
+ *
+ * `allowPrivateGatewayUri` widens the validator to accept loopback / private targets — useful
+ * for development and CI relays — but native `fetch()` will still refuse non-network schemes
+ * for redirect targets, so `file:`, `javascript:`, etc. cannot be smuggled through.
+ */
+async function pkarrFetch(url: string, init: RequestInit, allowPrivateGatewayUri: boolean): Promise<Response> {
+  if (allowPrivateGatewayUri) {
+    return fetch(url, init);
+  }
+
+  try {
+    return await fetchPublicUrl(url, init, { description: 'Pkarr gateway URL' });
+  } catch (error: any) {
+    if (error instanceof PublicUrlValidationError) {
+      throw new DidError(DidErrorCode.InvalidGatewayUri, error.message);
+    }
+    throw error;
+  }
+}
+
+/**
  * Retrieves a signed BEP44 message from a DID DHT Gateway or Pkarr Relay server.
  *
  * @see {@link https://github.com/Nuhvi/pkarr/blob/main/design/relays.md | Pkarr Relay design}
@@ -31,9 +56,10 @@ function pkarrUrl(publicKeyBytes: Uint8Array, gatewayUri: string): string {
  * @param params.publicKeyBytes - The public key bytes of the Identity Key, z-base-32 encoded.
  * @returns A promise resolving to a BEP44 message containing the signed DNS packet.
  */
-export async function pkarrGet({ gatewayUri, publicKeyBytes }: {
+export async function pkarrGet({ gatewayUri, publicKeyBytes, allowPrivateGatewayUri = false }: {
   publicKeyBytes: Uint8Array;
   gatewayUri: string;
+  allowPrivateGatewayUri?: boolean;
 }): Promise<Bep44Message> {
   // The identifier (key in the DHT) is the z-base-32 encoding of the Identity Key.
   const identifier = Convert.uint8Array(publicKeyBytes).toBase32Z();
@@ -42,9 +68,11 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes }: {
   const url = pkarrUrl(publicKeyBytes, gatewayUri);
 
   // Transmit the Get request to the DID DHT Gateway or Pkarr Relay and get the response.
+  // Redirects are followed manually so each `Location` is re-validated and cannot smuggle a
+  // private host past the initial gateway check.
   let response: Response;
   try {
-    response = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(30_000) });
+    response = await pkarrFetch(url, { method: 'GET', signal: AbortSignal.timeout(30_000) }, allowPrivateGatewayUri);
 
     if (!response.ok) {
       throw new DidError(DidErrorCode.NotFound, `Pkarr record not found for: ${identifier}`);
@@ -91,9 +119,10 @@ export async function pkarrGet({ gatewayUri, publicKeyBytes }: {
  * @param params.bep44Message - The BEP44 message to be published, containing the signed DNS packet.
  * @returns A promise resolving to `true` if the message was successfully published, otherwise `false`.
  */
-export async function pkarrPut({ gatewayUri, bep44Message }: {
+export async function pkarrPut({ gatewayUri, bep44Message, allowPrivateGatewayUri = false }: {
   bep44Message: Bep44Message;
   gatewayUri: string;
+  allowPrivateGatewayUri?: boolean;
 }): Promise<boolean> {
   // The identifier (key in the DHT) is the z-base-32 encoding of the Identity Key.
   const identifier = Convert.uint8Array(bep44Message.k).toBase32Z();
@@ -107,17 +136,19 @@ export async function pkarrPut({ gatewayUri, bep44Message }: {
   new DataView(body.buffer).setBigUint64(bep44Message.sig.length, BigInt(bep44Message.seq));
   body.set(bep44Message.v, bep44Message.sig.length + 8);
 
-  // Transmit the Put request to the Pkarr relay and get the response.
+  // Transmit the Put request to the Pkarr relay and get the response. Redirects are followed
+  // manually so each `Location` is re-validated.
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await pkarrFetch(url, {
       method  : 'PUT',
       headers : { 'Content-Type': 'application/octet-stream' },
       body,
       signal  : AbortSignal.timeout(30_000),
-    });
+    }, allowPrivateGatewayUri);
 
   } catch (error: any) {
+    if (error instanceof DidError) {throw error;}
     throw new DidError(DidErrorCode.InternalError, `Failed to put Pkarr record for identifier ${identifier}: ${error.message}`);
   }
 

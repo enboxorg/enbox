@@ -91,6 +91,14 @@ export interface DidDhtCreateOptions<TKms> extends DidCreateOptions<TKms> {
   gatewayUri?: string;
 
   /**
+   * Allows a private, loopback, or link-local `gatewayUri`.
+   *
+   * This defaults to `false` and is intended for local development and tests only.
+   * Leave unset when the gateway URI is derived from untrusted input.
+   */
+  allowPrivateGatewayUri?: boolean;
+
+  /**
    * Optional. Determines whether the created DID should be published to the DHT network.
    *
    * If set to `true` or omitted, the DID is publicly discoverable. If `false`, the DID is not

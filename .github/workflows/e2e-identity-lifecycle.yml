@@ -85,6 +85,9 @@ jobs:
           export DWN_STORAGE_STATE_INDEX=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DID_DHT_GATEWAY_URI=http://localhost:7527
+          # The DWN server itself talks to the local Pkarr relay; opt in to private gateways for
+          # this dev/CI process. Production deployments leave this unset.
+          export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
           export DWN_RATE_LIMIT_REQUESTS_PER_SECOND=0
           export DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND=0
 
@@ -118,11 +121,12 @@ jobs:
         run: |
           export TEST_DWN_URL="${{ steps.dwn.outputs.url }}"
 
-          # For local server: use the local Pkarr relay for DID resolution.
-          # For remote server: use the production DHT gateway (default) so the
-          # remote DWN can resolve the DIDs we publish.
+          # For local server: use the local Pkarr relay for DID resolution and explicitly opt in
+          # to private gateways. For remote server: use the production DHT gateway (default) so
+          # the remote DWN can resolve the DIDs we publish.
           if [ "${{ inputs.use_local_server }}" = "true" ]; then
             export DID_DHT_GATEWAY_URI=http://localhost:7527
+            export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
           fi
 
           # Admin token is needed when the remote DWN has tenant registration
