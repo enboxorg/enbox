@@ -426,6 +426,21 @@ async function verifyJwt({ jwt }: { jwt: string }): Promise<Record<string, unkno
 // message on mismatch, so per-field error formatting is centralized here
 // rather than duplicated at every call site.
 
+/**
+ * Throws a shape-validation error during connect JWT assertion.
+ *
+ * Deliberately throws plain `Error` rather than `TypeError` even though
+ * the failures are runtime type-shape mismatches. The reason is layered
+ * error handling: boundary-validation failures need to propagate through
+ * the same `try/catch` paths as every other connect-flow error — vault
+ * lock failure, JWT signature failure, DWN request failure, etc. —
+ * without `catch` blocks having to special-case a `TypeError` subclass.
+ *
+ * SonarCloud's `typescript:S7786` flags this as "too unspecific for a
+ * type check" and prefers `TypeError`. We suppress it at the file level
+ * (see `sonar-project.properties`) because every `require*` helper goes
+ * through this single throw site.
+ */
 function fail(context: string, field: string, reason: string): never {
   throw new Error(`Connect: ${context} — \`${field}\` ${reason}.`);
 }

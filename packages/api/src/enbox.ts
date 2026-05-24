@@ -164,40 +164,51 @@ export class Enbox {
   }
 
   /**
-   * Stops DWN sync, clears the cached {@link TypedEnbox} instances, and (if
-   * this instance was created via the async {@link Enbox.connect} factory)
-   * shuts down the underlying `AuthManager` so vault and storage handles are
-   * released. After calling `disconnect()`, the `Enbox` instance should not
-   * be reused.
+   * Signs the user out and releases resources held by this Enbox instance.
    *
-   * **`agent.sync.stopSync()` is always called**, even when the instance
-   * was created from a caller-owned session ({@link Enbox.fromSession}),
-   * a raw agent (the public constructor), or a pre-built agent passed to
-   * `Enbox.connect({ agent })`. Stopping sync is the work Enbox does
-   * with the agent; the caller-supplied case still needs that work
-   * undone. The `auth.shutdown()` step (vault + storage handles) is
-   * **only** invoked when Enbox built the agent itself — caller-supplied
-   * agents and storage adapters keep their lifecycle.
+   * When this instance owns the underlying `AuthManager` (i.e. it was
+   * created via `Enbox.connect()` with no caller-supplied `agent`), the
+   * disconnect proceeds in three phases:
    *
-   * Idempotent: parallel calls share the same teardown promise.
+   *   1. **Stop sync** — `agent.sync.stopSync(timeout)` halts the DWN
+   *      sync engine. Always runs, regardless of ownership.
+   *   2. **Sign out** — `AuthManager.disconnect()` sends delegate-grant
+   *      revocations to the connected DWN endpoints, clears session
+   *      restore markers (PREVIOUSLY_CONNECTED, ACTIVE_IDENTITY,
+   *      delegate keys, etc.) from the StorageAdapter, and clears the
+   *      in-memory delegate decryption key cache. **Without this step
+   *      a later `Enbox.connect()` would silently restore the
+   *      supposedly signed-out session from the persisted markers.**
+   *   3. **Release resources** — `AuthManager.shutdown()` locks the
+   *      vault, closes the sync engine, and closes the StorageAdapter.
+   *
+   * When the instance was created from a caller-owned session
+   * ({@link Enbox.fromSession}), a raw agent (the public constructor),
+   * or `Enbox.connect({ agent })`, only step 1 (stop sync) runs — the
+   * caller's AuthManager / agent keep their lifecycle. The caller is
+   * responsible for calling `auth.disconnect()` and `auth.shutdown()`
+   * on their own handle when they're done.
+   *
+   * Idempotent: parallel calls share the same teardown promise. After
+   * calling `disconnect()`, the `Enbox` instance should not be reused.
    *
    * @param timeout - Maximum milliseconds to wait for an in-progress sync
    *   cycle to finish before force-stopping. Defaults to `2000`.
    *
    * @example
    * ```ts
-   * // High-level flow: a single disconnect() does the full teardown.
+   * // High-level flow: a single disconnect() does sign-out + teardown.
    * const { enbox } = await Enbox.connect({ createIdentity: true });
-   * await enbox.disconnect();
+   * // ... user uses the app ...
+   * await enbox.disconnect();   // revoke grants, clear markers, close vault
    *
-   * // Caller-owned auth: enbox.disconnect() stops sync + clears cache.
-   * // The caller-built AuthManager is NOT shut down by enbox.disconnect()
-   * // — call auth.shutdown() yourself when you're done.
+   * // Caller-owned auth: enbox.disconnect() only stops Enbox-side state.
    * const auth = await AuthManager.create({...});
    * const session = await auth.connect();
    * const enbox = Enbox.fromSession(session);
-   * await enbox.disconnect();   // Enbox-side only (incl. agent.sync.stopSync)
-   * await auth.shutdown();      // caller's responsibility
+   * await enbox.disconnect();   // stops sync + clears typed-enbox cache
+   * await auth.disconnect();    // sign-out: caller's responsibility
+   * await auth.shutdown();      // close resources: caller's responsibility
    * ```
    *
    * @beta
@@ -220,13 +231,32 @@ export class Enbox {
     // Clear cached TypedEnbox instances so they are not accidentally reused.
     this._typedInstances.clear();
 
-    // If this Enbox owns the AuthManager (created via Enbox.connect), tear
-    // it down too — the caller has no other handle to release vault /
-    // storage / sync handles. shutdown() is idempotent and best-effort, so
-    // a failure here doesn't propagate; we surface it for diagnosis.
+    // If this Enbox owns the AuthManager (created via Enbox.connect), the
+    // sign-out + resource-teardown both fall on us:
+    //
+    //   1. `auth.disconnect()` — sign-out semantics: revoke delegate
+    //      grants on the remote DWN, clear session restore markers
+    //      (PREVIOUSLY_CONNECTED, ACTIVE_IDENTITY, delegate keys, etc.)
+    //      from the StorageAdapter, and clear the in-memory delegate
+    //      decryption key cache. MUST run while the agent's resources
+    //      are still open (revocations need DWN access). Without this,
+    //      a later `Enbox.connect()` would restore the supposedly
+    //      signed-out session from the persisted markers.
+    //   2. `auth.shutdown()` — resource teardown: lock the vault,
+    //      close the sync engine, close the storage adapter. Runs
+    //      after disconnect so revocation traffic completes first.
+    //
+    // Both are idempotent and best-effort; failures are logged but do
+    // not propagate. We always attempt shutdown() even if disconnect()
+    // throws, so resources still close.
     if (this._ownedAuth !== undefined) {
       const owned = this._ownedAuth;
       this._ownedAuth = undefined;
+      try {
+        await owned.disconnect({ timeout });
+      } catch (error: unknown) {
+        console.warn('[@enbox/api] Enbox.disconnect: AuthManager.disconnect() failed', error);
+      }
       try {
         await owned.shutdown({ timeout });
       } catch (error: unknown) {
@@ -328,10 +358,15 @@ export class Enbox {
     // agent's LevelDB at `options.dataPath` (or the platform default), and
     // LevelDB enforces an exclusive `LOCK` file per directory — two
     // parallel calls on the same path would otherwise race and surface
-    // `LEVEL_LOCKED` as a low-level error. Skip the guard when a custom
-    // `storage` adapter is provided (it may use a different on-disk
-    // surface than the agent vault) or a pre-built `agent` is supplied
-    // (no new handles are opened).
+    // `LEVEL_LOCKED` as a low-level error. The guard / ownership flag
+    // tracks one question only: did we build the underlying agent? If
+    // `options.agent` is supplied the caller owns the agent's lifecycle
+    // and on-disk handles, so we skip both the guard (no new dataPath
+    // race) and ownership cleanup (`disconnect()` must not tear down
+    // the caller's agent). A custom `storage` adapter alone is NOT a
+    // basis for skipping — Enbox still builds an agent that opens
+    // LevelDB handles at `dataPath`, and the storage adapter governs
+    // session-persistence keys, not the agent vault.
     //
     // Limitation: the key is the raw `options.dataPath` string, not its
     // resolved on-disk location. Two callers — one with `dataPath`
@@ -343,7 +378,7 @@ export class Enbox {
     // avoid to keep the helper layered above the agent. Pick one
     // convention per app: always omit `dataPath`, or always set it
     // explicitly.
-    const shouldGuard = options.agent === undefined && options.storage === undefined;
+    const shouldGuard = options.agent === undefined;
     const key = options.dataPath ?? DEFAULT_DATA_PATH_KEY;
 
     if (shouldGuard && inflightConnects.has(key)) {
@@ -360,14 +395,16 @@ export class Enbox {
       try {
         const session = await auth.connect(Enbox.toAuthConnectOptions(options));
         const enbox = Enbox.fromSession(session);
-        // Take AuthManager ownership ONLY when we built the agent and
-        // storage ourselves — those are the lifecycle resources
-        // `auth.shutdown()` will tear down. If the caller supplied
-        // either `options.agent` or `options.storage`, they retain
-        // ownership; `enbox.disconnect()` must not lock their vault or
-        // close their storage handles behind their back. Callers using
-        // a pre-built agent can still call `result.auth.shutdown()`
-        // explicitly when they're done.
+        // Take AuthManager ownership ONLY when we built the agent
+        // ourselves — `auth.shutdown()` will lock that agent's vault
+        // and close its sync engine. If the caller supplied
+        // `options.agent`, they retain agent ownership and must not
+        // have its lifecycle resources torn down by
+        // `enbox.disconnect()`. Callers that want explicit control
+        // (e.g. their own storage adapter without their own agent)
+        // can still grab the `auth` handle from the result and call
+        // `auth.shutdown()` themselves; we always include it in the
+        // returned `EnboxConnectResult`.
         if (shouldGuard) {
           enbox._ownedAuth = auth;
         }

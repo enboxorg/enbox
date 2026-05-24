@@ -395,13 +395,14 @@ async function ensureRevocationGrantOnRemote(
 
     // `RecordsWriteMessage` doesn't declare `encodedData`, but the
     // wire-format reply may include it; widen the local type to
-    // acknowledge that without `any`. (Sonar flags this as
-    // "unnecessary" assertion, but removing it makes the
-    // `encodedData: _encoded` destructuring fail TS2339 because the
-    // property isn't on the declared `RecordsWriteMessage` shape.)
+    // acknowledge that without `any`.
+    // NOSONAR S4325 false positive: the cast is required to typecheck
+    // the destructuring of the undeclared optional `encodedData`
+    // property; removing it fails TS2339. Sonar reads the intersection-
+    // with-optional-field as a no-op widening, which it isn't here.
     type RecordsWriteWireMessage = RecordsWriteMessage & { encodedData?: string };
     const { encodedData: _encoded, ...rawMessage } =
-      reply.entry.recordsWrite as RecordsWriteWireMessage;
+      reply.entry.recordsWrite as RecordsWriteWireMessage; // NOSONAR
     const data = reply.entry.data
       ? new Blob([await DataStream.toBytes(reply.entry.data) as BlobPart])
       : undefined;

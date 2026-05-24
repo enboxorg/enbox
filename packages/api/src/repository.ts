@@ -24,6 +24,25 @@
  * const members = await social.group.member.query(groupContextId);
  * ```
  *
+ * ## Deliberate `as never` pattern
+ *
+ * The CRUD methods below pass their `options: Record<string, unknown>`
+ * parameter to `typed.records.{create, query, subscribe, update}` with
+ * `as never`. This is the type-system bridge between the type-erased
+ * Proxy (which doesn't carry the per-protocol generic) and the strictly-
+ * typed record methods (which take `TypedRecordCreateParams<...>` etc.).
+ *
+ * `never` is the universal bottom subtype, so any strict generic is
+ * satisfied. The structural runtime shape of `options` is validated by
+ * the DWN SDK's grant-processing layer downstream — the cast is a
+ * narrow, intentional escape hatch at the proxy boundary.
+ *
+ * SonarCloud's `typescript:S4325` flags these casts as redundant
+ * because its rule doesn't model generic-parameter constraints. We
+ * suppress S4325 at the file level (see `sonar-project.properties`)
+ * because every CRUD method uses the same pattern and per-line
+ * `// NOSONAR` would dwarf the actual code.
+ *
  * @module
  */
 

@@ -685,9 +685,10 @@ describe('Enbox API', () => {
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'Caller-owned agent' },
       };
+      const disconnect = sinon.stub().resolves();
       const shutdown = sinon.stub().resolves();
       const connect = sinon.stub().resolves(session);
-      const auth = { connect, shutdown };
+      const auth = { connect, disconnect, shutdown };
       sinon.stub(AuthManager, 'create').resolves(auth as any);
 
       // Pre-built agent supplied by the caller — Enbox.connect must not
@@ -696,8 +697,10 @@ describe('Enbox API', () => {
 
       await enbox.disconnect();
 
-      // The caller's AuthManager.shutdown() must NOT have been called by
-      // enbox.disconnect(). The caller is responsible for tearing it down.
+      // The caller's AuthManager.disconnect() / .shutdown() must NOT have
+      // been called by enbox.disconnect(). The caller is responsible for
+      // tearing it down.
+      expect(disconnect.called).toBe(false);
       expect(shutdown.called).toBe(false);
     });
 
@@ -758,18 +761,68 @@ describe('Enbox API', () => {
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'Enbox-owned' },
       };
+      const disconnect = sinon.stub().resolves();
       const shutdown = sinon.stub().resolves();
       const connect = sinon.stub().resolves(session);
-      const auth = { connect, shutdown };
+      const auth = { connect, disconnect, shutdown };
       sinon.stub(AuthManager, 'create').resolves(auth as any);
 
       const { enbox } = await Enbox.connect({ password: 'pw' });
 
       await enbox.disconnect();
 
-      // No caller-supplied agent or storage → Enbox owns the AuthManager
-      // → enbox.disconnect() tears it down.
+      // No caller-supplied agent → Enbox owns the AuthManager. The
+      // owned-disconnect path runs both auth.disconnect() (sign-out:
+      // revocations + marker cleanup) AND auth.shutdown() (release:
+      // vault + sync + storage). disconnect() must run first so the
+      // revocations have access to live agent resources.
+      expect(disconnect.calledOnce).toBe(true);
       expect(shutdown.calledOnce).toBe(true);
+      expect(disconnect.calledBefore(shutdown)).toBe(true);
+    });
+
+    it('Enbox.connect({ storage }) still takes ownership (agent built internally)', async () => {
+      // Regression for the reviewer-flagged H ("`storage` bypasses guard
+      // and ownership"). Earlier behavior keyed ownership off
+      // `options.storage === undefined`. That left two holes:
+      //   1. Two parallel Enbox.connect({ storage }) calls on the same
+      //      `dataPath` race for the underlying LevelDB lock — Enbox
+      //      still builds an agent, the agent still opens vault handles.
+      //   2. enbox.disconnect() would not tear the agent down, even
+      //      though Enbox created it.
+      // Both follow from the wrong premise: a custom `storage` adapter
+      // governs session-persistence keys, not the agent vault.
+      // Ownership is now keyed off `agent === undefined`.
+      const identity = await testHarness.agent.identity.create({
+        metadata  : { name: 'Storage-only ownership' },
+        didMethod : 'jwk',
+      });
+      const session = {
+        agent       : testHarness.agent,
+        did         : identity.did.uri,
+        delegateDid : undefined,
+        identity    : { didUri: identity.did.uri, name: 'Storage-only ownership' },
+      };
+      const disconnect = sinon.stub().resolves();
+      const shutdown = sinon.stub().resolves();
+      const connect = sinon.stub().resolves(session);
+      sinon.stub(AuthManager, 'create').resolves({ connect, disconnect, shutdown } as any);
+
+      const customStorage = {
+        get    : async (): Promise<string | null> => null,
+        set    : async (): Promise<void> => {},
+        remove : async (): Promise<void> => {},
+        clear  : async (): Promise<void> => {},
+      };
+
+      const { enbox } = await Enbox.connect({ storage: customStorage, password: 'pw' });
+      await enbox.disconnect();
+
+      // Caller passed only `storage` — no `agent`. Enbox still owns the
+      // AuthManager because it built the agent internally.
+      expect(disconnect.calledOnce).toBe(true);
+      expect(shutdown.calledOnce).toBe(true);
+      expect(disconnect.calledBefore(shutdown)).toBe(true);
     });
 
     it('parallel enbox.disconnect() calls share one teardown promise (stopSync runs once)', async () => {
@@ -787,9 +840,10 @@ describe('Enbox API', () => {
         delegateDid : undefined,
         identity    : { didUri: identity.did.uri, name: 'Parallel disconnect' },
       };
+      const disconnect = sinon.stub().resolves();
       const shutdown = sinon.stub().resolves();
       const connect = sinon.stub().resolves(session);
-      sinon.stub(AuthManager, 'create').resolves({ connect, shutdown } as any);
+      sinon.stub(AuthManager, 'create').resolves({ connect, disconnect, shutdown } as any);
       const stopSpy = sinon.spy(testHarness.agent.sync, 'stopSync');
 
       const { enbox } = await Enbox.connect({ password: 'pw' });

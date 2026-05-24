@@ -409,10 +409,30 @@ const { records: pages } = await notebooks.records.query('notebook/page', {
 
 ## Disconnecting
 
-When your application shuts down or the user signs out, call `disconnect()` to stop background sync and release resources:
+When the user signs out, call `disconnect()` for the full sign-out flow:
 
 ```ts
 await enbox.disconnect();
+```
+
+When `Enbox.connect()` built the agent itself (i.e. you did not pass an `agent` option), `disconnect()` does three things:
+
+1. **Stop sync** — halt the background DWN sync engine.
+2. **Sign out** — send delegate-grant revocations to the connected DWN, clear session restore markers (so the next `Enbox.connect()` does not silently restore the signed-out session), and clear the in-memory delegate decryption key cache.
+3. **Release resources** — lock the vault, close the sync engine, and close the storage adapter.
+
+If you passed a pre-built `agent` to `Enbox.connect({ agent })`, only step 1 runs — your agent and its `AuthManager` keep their lifecycle, and you are responsible for calling `auth.disconnect()` and `auth.shutdown()` on your own handle when you are done:
+
+```ts
+const auth = await AuthManager.create({ /* ... */ });
+const session = await auth.connect();
+const enbox = Enbox.fromSession(session);
+
+// ... user uses the app ...
+
+await enbox.disconnect();   // stops sync + clears typed-enbox cache only
+await auth.disconnect();    // sign out: revoke grants, clear markers
+await auth.shutdown();      // release: lock vault, close storage
 ```
 
 After calling `disconnect()`, the `Enbox` instance should not be reused. Create a new one with `Enbox.connect()` for the next session.
