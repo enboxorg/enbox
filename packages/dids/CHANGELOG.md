@@ -1,5 +1,41 @@
 # @enbox/dids
 
+## 0.1.1
+
+### Patch Changes
+
+- [#913](https://github.com/enboxorg/enbox/pull/913) [`400c70a`](https://github.com/enboxorg/enbox/commit/400c70ac2e7ed82a0adad86f3688e682f488bd62) Thanks [@LiranCohen](https://github.com/LiranCohen)! - perf(connect): single-flight DID resolver + connect.perf timing instrumentation
+
+  - `@enbox/dids`: `UniversalResolver.resolve` now coalesces concurrent
+    no-options resolutions of the same DID via an in-flight map. Without this, parallel
+    callers (e.g. the wallet's `Promise.all`-fanned `prepareProtocol` calls)
+    each issued an independent BEP44 lookup against the `did:dht` relay,
+    multiplying wall-time by N and saturating per-host browser connection
+    limits. A second concurrent resolution for the same DID now awaits the
+    first instead of starting its own. Calls that pass per-resolution options
+    still resolve independently so method-specific options cannot be mixed.
+
+  - `@enbox/agent`: `submitConnectResponse` now emits `[connect.perf]`
+    timing logs around the wallet-side critical path (delegate DID creation,
+    permission grant fan-out, revocation grant creation/fan-out, response
+    signing/encryption, callback POST, total) so operators can bisect remaining
+    wall-time directly from wallet debug logs.
+
+  - `@enbox/common`: add reusable `nowMs()` and `timed()` helpers for
+    monotonic elapsed-duration measurement and success/failure timing logs.
+    `sleep()` now explicitly clamps negative durations to `0`, matching its
+    documented behavior without relying on runtime timeout coercion.
+
+- [#926](https://github.com/enboxorg/enbox/pull/926) [`3dcfbcb`](https://github.com/enboxorg/enbox/commit/3dcfbcbf836d4cf85d5c7c23801ee13d1b7ba978) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(security): block SSRF via redirects in did:web/did:dht, reject path traversal in concatenateUrl, fix biased randomPin distribution
+
+  - `@enbox/common`: new `isPrivateHostname` / `assertPublicUrl` / `fetchPublicUrl` / `PublicUrlValidationError` helpers; `concatenateUrl` now rejects `..`, `%2F`/`%5C`, malformed percent-encoding, and raw `?`/`#` in the path.
+  - `@enbox/dids`: new `allowPrivateGatewayUri` option (default `false`) and `DidErrorCode.InvalidGatewayUri`; redirects from Pkarr / did:web are re-validated on every hop.
+  - `@enbox/crypto`: `randomPin` now uses proper unbiased rejection sampling and enough random bytes for the full digit range.
+
+- Updated dependencies [[`400c70a`](https://github.com/enboxorg/enbox/commit/400c70ac2e7ed82a0adad86f3688e682f488bd62), [`03899ca`](https://github.com/enboxorg/enbox/commit/03899ca7d20ad48b874f7e6253381f19cd7c3480), [`3dcfbcb`](https://github.com/enboxorg/enbox/commit/3dcfbcbf836d4cf85d5c7c23801ee13d1b7ba978)]:
+  - @enbox/common@0.1.1
+  - @enbox/crypto@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes
