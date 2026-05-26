@@ -1,7 +1,7 @@
 /**
  * Shared helpers for connect flows.
  *
- * Consolidates duplicated logic across `local-connect`, `session-restore`,
+ * Consolidates duplicated logic across `vault-connect`, `session-restore`,
  * `wallet-connect`, and `import-identity` flows:
  *
  * - Password resolution chain
@@ -35,7 +35,7 @@ import { DEFAULT_DWN_ENDPOINTS, INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '
 /**
  * Unified context passed from `AuthManager` to every connect flow.
  *
- * Replaces the per-flow `LocalConnectContext`, `SessionRestoreContext`,
+ * Replaces the per-flow `VaultConnectContext`, `SessionRestoreContext`,
  * `WalletConnectContext`, and `ImportContext` interfaces. All fields are
  * optional beyond the core triple (`userAgent`, `emitter`, `storage`) so
  * flows only consume what they need.
@@ -184,7 +184,7 @@ export async function startSyncIfEnabled(
  * encryption keys, and a DWN service endpoint.
  *
  * This consolidates the identical identity creation block that was
- * duplicated in `localConnect` and `importFromPhrase`.
+ * duplicated in `vaultConnect` and `importFromPhrase`.
  *
  * @internal
  */

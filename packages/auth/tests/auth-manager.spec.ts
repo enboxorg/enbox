@@ -11,7 +11,7 @@ import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 /**
  * A minimal non-empty protocols array suitable for routing to the
  * handler flow. Use this instead of `[]` — empty arrays no longer count
- * as a handler signal (see {@link AuthManager._isLocalConnect}).
+ * as a handler signal (see {@link AuthManager._isVaultConnect}).
  */
 const HANDLER_PROTOCOLS: DwnProtocolDefinition[] = [
   {
@@ -118,7 +118,7 @@ describe('AuthManager', () => {
   });
 
   describe('connect()', () => {
-    test('calls localConnect and sets state to connected', async () => {
+    test('calls vaultConnect and sets state to connected', async () => {
       const agent = createMockAgent({
         firstLaunch  : async () => false,
         identityList : async () => [createMockIdentity()],
@@ -159,15 +159,15 @@ describe('AuthManager', () => {
     });
   });
 
-  describe('connectLocal()', () => {
-    test('calls localConnect directly and sets state to connected', async () => {
+  describe('connectVault()', () => {
+    test('calls vaultConnect directly and sets state to connected', async () => {
       const agent = createMockAgent({
         firstLaunch  : async () => false,
         identityList : async () => [createMockIdentity()],
       });
       const manager = createTestManager(agent);
 
-      const session = await manager.connectLocal({ password: 'test' });
+      const session = await manager.connectVault({ password: 'test' });
 
       expect(session.did).toBe('did:dht:testuser123');
       expect(manager.state).toBe('connected');
@@ -181,7 +181,7 @@ describe('AuthManager', () => {
       });
       const manager = createTestManager(agent);
 
-      const session = await manager.connectLocal();
+      const session = await manager.connectVault();
 
       expect(session.did).toBe('did:dht:testuser123');
       expect(manager.isConnected).toBe(true);

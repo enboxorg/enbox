@@ -10,7 +10,7 @@
  * import { AuthManager } from '@enbox/auth';
  *
  * const auth = await AuthManager.create({ sync: '15s' });
- * const session = await auth.connectLocal({ password: userPin });
+ * const session = await auth.connectVault({ password: userPin });
  * ```
  *
  * @example Dapp with browser connect handler
@@ -90,6 +90,7 @@ export type {
   ImportFromPortableOptions,
   LocalConnectOptions,
   LocalDwnStrategy,
+  VaultConnectOptions,
   Permission,
   PortableIdentity,
   ProtocolRequest,

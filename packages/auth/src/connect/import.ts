@@ -10,9 +10,16 @@ import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
 import type { ImportFromPhraseOptions, ImportFromPortableOptions } from '../types.js';
 
+import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
+
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
 import { createDefaultIdentity, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, startSyncIfEnabled } from './lifecycle.js';
+
+const AGENT_DID_SYNC_PROTOCOLS: [string, ...string[]] = [
+  IdentityProtocolDefinition.protocol,
+  JwkProtocolDefinition.protocol,
+];
 
 /**
  * Import (or recover) an identity from a BIP-39 recovery phrase.
@@ -78,6 +85,18 @@ export async function importFromPhrase(
     await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
   } else if (isNewIdentity && sync !== 'off') {
     await registerSyncScopeForIdentity({ userAgent, connectedDid });
+  }
+
+  // Register the agent DID for sync (same rationale as vaultConnect).
+  if (sync !== 'off') {
+    try {
+      await userAgent.sync.registerIdentity({
+        did     : userAgent.agentDid.uri,
+        options : { protocols: AGENT_DID_SYNC_PROTOCOLS },
+      });
+    } catch {
+      // Already registered from a previous session.
+    }
   }
 
   // Start sync.

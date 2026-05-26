@@ -381,7 +381,7 @@ export interface AuthManagerOptions {
    * Default connect handler for delegated connect flows.
    *
    * Used by `connect()` when the caller provides `protocols` (or other
-   * non-local-connect options) but does not pass a per-call handler.
+   * non-vault-connect options) but does not pass a per-call handler.
    *
    * @example
    * ```ts
@@ -398,8 +398,8 @@ export interface AuthManagerOptions {
   connectHandler?: ConnectHandler;
 }
 
-/** Options for {@link AuthManager.connect}. */
-export interface LocalConnectOptions {
+/** Options for {@link AuthManager.connectVault}. */
+export interface VaultConnectOptions {
   /** Vault password (overrides manager default). */
   password?: string;
 
@@ -433,6 +433,9 @@ export interface LocalConnectOptions {
    */
   createIdentity?: boolean;
 }
+
+/** @deprecated Use {@link VaultConnectOptions} instead. */
+export type LocalConnectOptions = VaultConnectOptions;
 
 // ─── DWeb Connect ────────────────────────────────────────────────
 
@@ -509,14 +512,14 @@ export interface HandlerConnectOptions {
  *   `connectHandler` is provided. Delegates to the connect handler
  *   for credential acquisition.
  *
- * - **Local connect** (wallets / CLI): triggered when `password`,
+ * - **Vault connect** (wallets / CLI): triggered when `password`,
  *   `createIdentity`, or `recoveryPhrase` is provided.
  *
  * In both cases, `connect()` first attempts to restore a previous session
  * from storage. If a valid session exists, it is returned immediately
  * without any user interaction.
  */
-export type ConnectOptions = HandlerConnectOptions | LocalConnectOptions;
+export type ConnectOptions = HandlerConnectOptions | VaultConnectOptions;
 
 /** Options for {@link AuthManager.walletConnect}. */
 export interface WalletConnectOptions {
