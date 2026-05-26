@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
 import { AuthEventEmitter } from '../src/events.js';
-import { vaultConnect } from '../src/connect/vault.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { vaultConnect } from '../src/connect/vault.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../src/types.js';
 

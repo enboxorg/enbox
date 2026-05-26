@@ -31,12 +31,12 @@ import type {
   HeadlessConnectOptions,
   ImportFromPhraseOptions,
   ImportFromPortableOptions,
-  VaultConnectOptions,
   RegistrationOptions,
   RestoreSessionOptions,
   ShutdownOptions,
   StorageAdapter,
   SyncOption,
+  VaultConnectOptions,
   WalletConnectOptions,
 } from './types.js';
 
@@ -48,10 +48,10 @@ import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
 import { createDefaultStorage } from './storage/storage.js';
 import { discoverLocalDwn } from './discovery.js';
-import { vaultConnect } from './connect/vault.js';
 import { normalizeProtocolRequests } from './permissions.js';
 import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
+import { vaultConnect } from './connect/vault.js';
 import { walletConnect } from './connect/wallet.js';
 import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
 import { importFromPhrase, importFromPortable } from './connect/import.js';
