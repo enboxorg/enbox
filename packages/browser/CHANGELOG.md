@@ -1,5 +1,13 @@
 # @enbox/browser
 
+## 0.3.13
+
+### Patch Changes
+
+- Updated dependencies [[`749c657`](https://github.com/enboxorg/enbox/commit/749c657136988b07084d79ae3506e7c4c72c65aa)]:
+  - @enbox/auth@0.6.35
+  - @enbox/api@0.6.27
+
 ## 0.3.12
 
 ### Patch Changes
