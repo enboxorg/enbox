@@ -1,5 +1,11 @@
 # @enbox/auth
 
+## 0.6.35
+
+### Patch Changes
+
+- [#939](https://github.com/enboxorg/enbox/pull/939) [`749c657`](https://github.com/enboxorg/enbox/commit/749c657136988b07084d79ae3506e7c4c72c65aa) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Seed phrase recovery now happens automatically inside `vaultConnect()` and `importFromPhrase()`. When a recovery phrase is provided and no identities exist locally, the SDK pulls identity metadata, keys, and profile data from the remote DWN in a two-phase sequence. Wallets no longer need to manually orchestrate stop/pull/register/pull/push/restart after connecting with a recovery phrase.
+
 ## 0.6.34
 
 ### Patch Changes
