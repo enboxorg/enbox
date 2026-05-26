@@ -141,15 +141,15 @@ describe('vaultConnect', () => {
       { createIdentity: true },
     );
 
-    // Two registrations: the new identity DID + the agent DID
+    // Two registrations: agent DID (early, for recovery support) + new identity DID
     expect(syncCalls).toHaveLength(2);
-    expect(syncCalls[0].did).toBe('did:dht:testuser123');
-    expect(syncCalls[0].options.protocols).toBe('all');
-    expect(syncCalls[1].did).toBe('did:dht:testagent');
-    expect(syncCalls[1].options.protocols).toEqual([
+    expect(syncCalls[0].did).toBe('did:dht:testagent');
+    expect(syncCalls[0].options.protocols).toEqual([
       'https://identity.foundation/protocols/web5/identity-store',
       'https://identity.foundation/protocols/web5/jwk-store',
     ]);
+    expect(syncCalls[1].did).toBe('did:dht:testuser123');
+    expect(syncCalls[1].options.protocols).toBe('all');
   });
 
   test('registers agent DID for sync even without identity creation', async () => {

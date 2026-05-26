@@ -106,14 +106,14 @@ describe('importFromPhrase', () => {
       { recoveryPhrase: 'phrase', password: 'pass' },
     );
 
-    // Two registrations: identity DID + agent DID
+    // Two registrations: agent DID (early) + new identity DID
     expect(syncCalls).toHaveLength(2);
-    expect(syncCalls[0].options.protocols).toBe('all');
-    expect(syncCalls[1].did).toBe('did:dht:testagent');
-    expect(syncCalls[1].options.protocols).toEqual([
+    expect(syncCalls[0].did).toBe('did:dht:testagent');
+    expect(syncCalls[0].options.protocols).toEqual([
       'https://identity.foundation/protocols/web5/identity-store',
       'https://identity.foundation/protocols/web5/jwk-store',
     ]);
+    expect(syncCalls[1].options.protocols).toBe('all');
   });
 
   test('skips sync when disabled', async () => {
@@ -239,11 +239,11 @@ describe('importFromPhrase', () => {
       { recoveryPhrase: 'phrase', password: 'pass' },
     );
 
-    // Two registrations: delegate identity DID + agent DID
+    // Two registrations: agent DID (early) + delegate identity DID (scope repair)
     expect(syncCalls).toHaveLength(2);
-    expect(syncCalls[0].options.protocols).toEqual(['https://proto.example/chat']);
-    expect(syncCalls[0].options.delegateDid).toBe('did:dht:testuser123');
-    expect(syncCalls[1].did).toBe('did:dht:testagent');
+    expect(syncCalls[0].did).toBe('did:dht:testagent');
+    expect(syncCalls[1].options.protocols).toEqual(['https://proto.example/chat']);
+    expect(syncCalls[1].options.delegateDid).toBe('did:dht:testuser123');
     expect(createCallCount).toBe(0);
   });
 
@@ -336,11 +336,11 @@ describe('importFromPhrase', () => {
       { recoveryPhrase: 'phrase', password: 'pass' },
     );
 
-    // Two registrations: delegate DID (all) + agent DID
+    // Two registrations: agent DID (early) + delegate DID (scope repair, all)
     expect(syncCalls).toHaveLength(2);
-    expect(syncCalls[0].options.protocols).toBe('all');
-    expect(syncCalls[0].options.delegateDid).toBe('did:dht:testuser123');
-    expect(syncCalls[1].did).toBe('did:dht:testagent');
+    expect(syncCalls[0].did).toBe('did:dht:testagent');
+    expect(syncCalls[1].options.protocols).toBe('all');
+    expect(syncCalls[1].options.delegateDid).toBe('did:dht:testuser123');
     expect(createCallCount).toBe(0);
   });
 
