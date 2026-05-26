@@ -15,7 +15,7 @@ import type {
   AuthManagerOptions,
   AuthSession,
   HandlerConnectOptions,
-  LocalConnectOptions,
+  VaultConnectOptions,
 } from '@enbox/auth';
 
 import type { DwnReaderApi } from './dwn-reader-api.js';
@@ -76,7 +76,7 @@ export type EnboxSessionParams = AgentSessionPrimitives;
  *    `sync`, `dwnEndpoints`, `connectHandler`, etc. Forwarded to
  *    `AuthManager.create()` and reused across reconnects.
  * 2. **Per-call signals** ({@link HandlerConnectOptions} ∪
- *    {@link LocalConnectOptions}) — `protocols`, `createIdentity`,
+ *    {@link VaultConnectOptions}) — `protocols`, `createIdentity`,
  *    `recoveryPhrase`, `metadata`, etc. Forwarded to
  *    `AuthManager.connect()` and used to route handler vs local flow.
  *
@@ -96,7 +96,7 @@ export type EnboxSessionParams = AgentSessionPrimitives;
 export type EnboxConnectOptions =
   & AuthManagerOptions
   & HandlerConnectOptions
-  & LocalConnectOptions;
+  & VaultConnectOptions;
 
 /** The result of a high-level asynchronous {@link Enbox.connect} call. */
 export type EnboxConnectResult = {

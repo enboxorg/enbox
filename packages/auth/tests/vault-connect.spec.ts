@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
 import { AuthEventEmitter } from '../src/events.js';
-import { localConnect } from '../src/connect/local.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { vaultConnect } from '../src/connect/vault.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../src/types.js';
 
-describe('localConnect', () => {
+describe('vaultConnect', () => {
   test('first launch: initializes vault, creates identity when createIdentity is true', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
@@ -21,7 +21,7 @@ describe('localConnect', () => {
       identityCreate : async (params) => { createCalls.push(params); return identity; },
     });
 
-    const session = await localConnect(
+    const session = await vaultConnect(
       { userAgent: agent, emitter, storage },
       { password: 'test-pass', createIdentity: true },
     );
@@ -54,7 +54,7 @@ describe('localConnect', () => {
       identityList : async () => [identity],
     });
 
-    const session = await localConnect(
+    const session = await vaultConnect(
       { userAgent: agent, emitter, storage },
       { password: 'test-pass' },
     );
@@ -77,7 +77,7 @@ describe('localConnect', () => {
     });
 
     // No password passed — should use insecure default
-    await localConnect(
+    await vaultConnect(
       { userAgent: agent, emitter, storage },
       {},
     );
@@ -97,7 +97,7 @@ describe('localConnect', () => {
       start        : async (params) => { startCalls.push(params); },
     });
 
-    await localConnect(
+    await vaultConnect(
       { userAgent: agent, emitter, storage, defaultPassword: 'manager-pass' },
       {},
     );
@@ -119,12 +119,12 @@ describe('localConnect', () => {
       identityList : async () => [createMockIdentity()],
     });
 
-    await localConnect({ userAgent: agent, emitter, storage }, {});
+    await vaultConnect({ userAgent: agent, emitter, storage }, {});
 
     expect(events).toEqual(['vault-unlocked', 'identity-added', 'session-start']);
   });
 
-  test('registers sync for new identities when sync is not off', async () => {
+  test('registers sync for new identities and agent DID when sync is not off', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const syncCalls: any[] = [];
@@ -136,14 +136,46 @@ describe('localConnect', () => {
       syncRegisterIdentity : async (params) => { syncCalls.push(params); },
     });
 
-    await localConnect(
+    await vaultConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       { createIdentity: true },
     );
 
-    expect(syncCalls).toHaveLength(1);
+    // Two registrations: the new identity DID + the agent DID
+    expect(syncCalls).toHaveLength(2);
     expect(syncCalls[0].did).toBe('did:dht:testuser123');
     expect(syncCalls[0].options.protocols).toBe('all');
+    expect(syncCalls[1].did).toBe('did:dht:testagent');
+    expect(syncCalls[1].options.protocols).toEqual([
+      'https://identity.foundation/protocols/web5/identity-store',
+      'https://identity.foundation/protocols/web5/jwk-store',
+    ]);
+  });
+
+  test('registers agent DID for sync even without identity creation', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const syncCalls: any[] = [];
+
+    const agent = createMockAgent({
+      firstLaunch          : async () => true,
+      initialize           : async () => 'phrase',
+      identityList         : async () => [],
+      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+    });
+
+    await vaultConnect(
+      { userAgent: agent, emitter, storage },
+      { password: 'test-pass' },
+    );
+
+    // Only agent DID registration (no identity created)
+    expect(syncCalls).toHaveLength(1);
+    expect(syncCalls[0].did).toBe('did:dht:testagent');
+    expect(syncCalls[0].options.protocols).toEqual([
+      'https://identity.foundation/protocols/web5/identity-store',
+      'https://identity.foundation/protocols/web5/jwk-store',
+    ]);
   });
 
   test('skips sync registration when sync is off', async () => {
@@ -159,7 +191,7 @@ describe('localConnect', () => {
       syncStartSync        : async () => {},
     });
 
-    await localConnect(
+    await vaultConnect(
       { userAgent: agent, emitter, storage, defaultSync: 'off' },
       { createIdentity: true },
     );
@@ -179,7 +211,7 @@ describe('localConnect', () => {
       identityCreate : async () => createMockIdentity(),
     });
 
-    await localConnect(
+    await vaultConnect(
       { userAgent: agent, emitter, storage },
       { createIdentity: true, dwnEndpoints: ['https://custom-dwn.example.com'] },
     );
@@ -201,7 +233,7 @@ describe('localConnect', () => {
       identityList : async () => [identity],
     });
 
-    const session = await localConnect({ userAgent: agent, emitter, storage }, {});
+    const session = await vaultConnect({ userAgent: agent, emitter, storage }, {});
 
     expect(session.did).toBe('did:dht:external');
     expect(session.delegateDid).toBe('did:dht:delegate123');
@@ -218,7 +250,7 @@ describe('localConnect', () => {
       identityList : async () => [createMockIdentity()],
     });
 
-    await localConnect(
+    await vaultConnect(
       { userAgent: agent, emitter, storage },
       { recoveryPhrase: 'existing recovery phrase', password: 'pass' },
     );
@@ -237,7 +269,7 @@ describe('localConnect', () => {
       identityCreate : async (params) => { createCalls.push(params); return createMockIdentity({ metadata: { name: 'My Custom Name', tenant: 'did:dht:testagent' } }); },
     });
 
-    await localConnect(
+    await vaultConnect(
       { userAgent: agent, emitter, storage },
       { createIdentity: true, metadata: { name: 'My Custom Name' } },
     );
@@ -260,7 +292,7 @@ describe('localConnect', () => {
       dwnSetCachedLocalDwnEndpoint : async (endpoint) => { setCalls.push(endpoint); return true; },
     });
 
-    await localConnect({ userAgent: agent, emitter, storage }, {});
+    await vaultConnect({ userAgent: agent, emitter, storage }, {});
 
     // The stored endpoint should have been injected into the agent.
     expect(setCalls).toEqual(['http://127.0.0.1:55557']);
@@ -281,7 +313,7 @@ describe('localConnect', () => {
       }),
     });
 
-    await localConnect(
+    await vaultConnect(
       {
         userAgent    : agent,
         emitter,
@@ -309,7 +341,7 @@ describe('localConnect', () => {
       identityCreate : async (params) => { createCalls.push(params); return createMockIdentity(); },
     });
 
-    const session = await localConnect(
+    const session = await vaultConnect(
       { userAgent: agent, emitter, storage },
       { password: 'test-pass', createIdentity: false },
     );
@@ -340,7 +372,7 @@ describe('localConnect', () => {
       identityList : async () => [identity],
     });
 
-    const session = await localConnect(
+    const session = await vaultConnect(
       { userAgent: agent, emitter, storage },
       { password: 'test-pass', createIdentity: false },
     );
@@ -365,7 +397,7 @@ describe('localConnect', () => {
       identityList : async () => [],
     });
 
-    await localConnect(
+    await vaultConnect(
       { userAgent: agent, emitter, storage },
       { createIdentity: false },
     );
@@ -386,7 +418,7 @@ describe('localConnect', () => {
       identityCreate : async (params) => { createCalls.push(params); return createMockIdentity(); },
     });
 
-    const session = await localConnect(
+    const session = await vaultConnect(
       { userAgent: agent, emitter, storage },
       { password: 'test-pass' },
     );
@@ -408,7 +440,7 @@ describe('localConnect', () => {
       syncHasActiveSubscriptions : true,
     });
 
-    await localConnect(
+    await vaultConnect(
       { userAgent: agent, emitter, storage },
       { password: 'test-pass' },
     );
@@ -430,7 +462,7 @@ describe('localConnect', () => {
       syncHasActiveSubscriptions : false,
     });
 
-    await localConnect(
+    await vaultConnect(
       { userAgent: agent, emitter, storage },
       { password: 'test-pass' },
     );
@@ -458,7 +490,7 @@ describe('localConnect', () => {
         identityList : async () => [],
       });
 
-      await localConnect(
+      await vaultConnect(
         { userAgent: agent, emitter, storage },
         { password: '' },
       );
@@ -485,7 +517,7 @@ describe('localConnect', () => {
         identityList : async () => [],
       });
 
-      await localConnect(
+      await vaultConnect(
         { userAgent: agent, emitter, storage },
         {},
       );

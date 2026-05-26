@@ -106,8 +106,14 @@ describe('importFromPhrase', () => {
       { recoveryPhrase: 'phrase', password: 'pass' },
     );
 
-    expect(syncCalls).toHaveLength(1);
+    // Two registrations: identity DID + agent DID
+    expect(syncCalls).toHaveLength(2);
     expect(syncCalls[0].options.protocols).toBe('all');
+    expect(syncCalls[1].did).toBe('did:dht:testagent');
+    expect(syncCalls[1].options.protocols).toEqual([
+      'https://identity.foundation/protocols/web5/identity-store',
+      'https://identity.foundation/protocols/web5/jwk-store',
+    ]);
   });
 
   test('skips sync when disabled', async () => {
@@ -233,9 +239,11 @@ describe('importFromPhrase', () => {
       { recoveryPhrase: 'phrase', password: 'pass' },
     );
 
-    expect(syncCalls).toHaveLength(1);
+    // Two registrations: delegate identity DID + agent DID
+    expect(syncCalls).toHaveLength(2);
     expect(syncCalls[0].options.protocols).toEqual(['https://proto.example/chat']);
     expect(syncCalls[0].options.delegateDid).toBe('did:dht:testuser123');
+    expect(syncCalls[1].did).toBe('did:dht:testagent');
     expect(createCallCount).toBe(0);
   });
 
@@ -268,7 +276,9 @@ describe('importFromPhrase', () => {
       { recoveryPhrase: 'phrase', password: 'pass' },
     );
 
-    expect(registerCalls).toHaveLength(0);
+    // Agent DID registration still fires; delegate is unregistered
+    expect(registerCalls).toHaveLength(1);
+    expect(registerCalls[0].did).toBe('did:dht:testagent');
     expect(unregisterCalls).toEqual(['did:dht:external']);
     expect(createCallCount).toBe(0);
   });
@@ -326,9 +336,11 @@ describe('importFromPhrase', () => {
       { recoveryPhrase: 'phrase', password: 'pass' },
     );
 
-    expect(syncCalls).toHaveLength(1);
+    // Two registrations: delegate DID (all) + agent DID
+    expect(syncCalls).toHaveLength(2);
     expect(syncCalls[0].options.protocols).toBe('all');
     expect(syncCalls[0].options.delegateDid).toBe('did:dht:testuser123');
+    expect(syncCalls[1].did).toBe('did:dht:testagent');
     expect(createCallCount).toBe(0);
   });
 
@@ -445,7 +457,9 @@ describe('importFromPhrase', () => {
       { recoveryPhrase: 'phrase', password: 'pass' },
     );
 
-    expect(registerCalls).toHaveLength(0);
+    // Only the agent DID registration fires; the pre-existing identity is not re-registered
+    expect(registerCalls).toHaveLength(1);
+    expect(registerCalls[0].did).toBe('did:dht:testagent');
     expect(unregisterCalls).toHaveLength(0);
     expect(createCallCount).toBe(0);
   });

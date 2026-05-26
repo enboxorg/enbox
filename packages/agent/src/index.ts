@@ -43,4 +43,4 @@ export * from './test-harness.js';
 export * from './utils.js';
 export * from './enbox-connect-protocol.js';
 export * from './enbox-user-agent.js';
-export { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
+export { IdentityProtocolDefinition, JwkProtocolDefinition, KeyDeliveryProtocolDefinition } from './store-data-protocols.js';

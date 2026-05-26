@@ -6,7 +6,7 @@
 
 import type { EnboxPlatformAgent } from '@enbox/agent';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { AuthManagerOptions, ConnectOptions, HandlerConnectOptions, LocalConnectOptions } from '@enbox/auth';
+import type { AuthManagerOptions, ConnectOptions, HandlerConnectOptions, VaultConnectOptions } from '@enbox/auth';
 
 import type {
   EnboxAnonymousApi,
@@ -333,7 +333,7 @@ export class Enbox {
    * - `new Enbox({ agent, connectedDid })` for raw parameters
    * - {@link Enbox.fromSession} for session-shaped objects
    *
-   * Routing happens at runtime inside `AuthManager._isLocalConnect`:
+   * Routing happens at runtime inside `AuthManager._isVaultConnect`:
    * presence of a non-empty `protocols` array or a `connectHandler` selects
    * the handler flow; everything else routes to local. Local-style fields
    * (`password`, `dwnEndpoints`, etc.) are forwarded to both the manager
@@ -444,7 +444,7 @@ export class Enbox {
    *
    * Implemented as an **explicit allowlist** for the same reason as
    * `toAuthConnectOptions`: a denylist would silently leak future
-   * `HandlerConnectOptions` / `LocalConnectOptions` fields into the
+   * `HandlerConnectOptions` / `VaultConnectOptions` fields into the
    * manager-default record. The `satisfies Partial<AuthManagerOptions>`
    * annotation makes the compiler verify every key in the allowlist
    * exists on `AuthManagerOptions`, so a misspelled or stale field name
@@ -474,7 +474,7 @@ export class Enbox {
    * `AuthManager.connect()` consumes.
    *
    * Implemented as an **explicit allowlist** of the fields declared on
-   * {@link HandlerConnectOptions} ∪ {@link LocalConnectOptions}. A
+   * {@link HandlerConnectOptions} ∪ {@link VaultConnectOptions}. A
    * denylist (strip manager-only fields, forward the rest) would
    * silently leak any future `AuthManagerOptions` field into
    * `AuthManager.connect()`; the allowlist makes the type boundary
@@ -487,7 +487,7 @@ export class Enbox {
    * compiler verify every key in the allowlist exists on `ConnectOptions`,
    * so misspelling a field name is a type error rather than a silent
    * drop. Routing between local and handler flow happens inside
-   * `AuthManager._isLocalConnect` based on the presence of `protocols`
+   * `AuthManager._isVaultConnect` based on the presence of `protocols`
    * / `connectHandler`.
    *
    * `protocols: []` is normalized away — an empty array carries no
@@ -509,7 +509,7 @@ export class Enbox {
       recoveryPhrase : options.recoveryPhrase,
       createIdentity : options.createIdentity,
       metadata       : options.metadata,
-    } satisfies Partial<HandlerConnectOptions & LocalConnectOptions>;
+    } satisfies Partial<HandlerConnectOptions & VaultConnectOptions>;
 
     // Normalize `protocols: []` to undefined so omitUndefined strips it.
     const normalized = (Array.isArray(allowlisted.protocols) && allowlisted.protocols.length === 0)

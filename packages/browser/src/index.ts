@@ -66,6 +66,7 @@ export type {
   ImportFromPhraseOptions,
   ImportFromPortableOptions,
   LocalConnectOptions,
+  VaultConnectOptions,
   Permission,
   PortableIdentity,
   ProtocolRequest,

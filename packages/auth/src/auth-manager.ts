@@ -31,12 +31,12 @@ import type {
   HeadlessConnectOptions,
   ImportFromPhraseOptions,
   ImportFromPortableOptions,
-  LocalConnectOptions,
   RegistrationOptions,
   RestoreSessionOptions,
   ShutdownOptions,
   StorageAdapter,
   SyncOption,
+  VaultConnectOptions,
   WalletConnectOptions,
 } from './types.js';
 
@@ -48,10 +48,10 @@ import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
 import { createDefaultStorage } from './storage/storage.js';
 import { discoverLocalDwn } from './discovery.js';
-import { localConnect } from './connect/local.js';
 import { normalizeProtocolRequests } from './permissions.js';
 import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
+import { vaultConnect } from './connect/vault.js';
 import { walletConnect } from './connect/wallet.js';
 import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
 import { importFromPhrase, importFromPortable } from './connect/import.js';
@@ -249,11 +249,11 @@ export class AuthManager {
       const restored = await restoreSession(this._flowContext());
       if (restored) { return restored; }
 
-      // 2. Route to the appropriate flow. `_isLocalConnect` is a type guard
+      // 2. Route to the appropriate flow. `_isVaultConnect` is a type guard
       // so the two branches receive correctly narrowed `options` types
       // without casts.
-      if (this._isLocalConnect(options)) {
-        return localConnect(this._flowContext(), options);
+      if (this._isVaultConnect(options)) {
+        return vaultConnect(this._flowContext(), options);
       }
 
       return this._handlerConnect(options);
@@ -261,17 +261,33 @@ export class AuthManager {
   }
 
   /**
-   * Create or reconnect a local identity (explicit local connect).
+   * Create or reconnect a local identity (explicit vault connect).
    *
-   * Use this when you explicitly want the local vault flow, bypassing
+   * Use this when you explicitly want the vault flow, bypassing
    * auto-detection. This is the preferred method for wallet apps.
    *
-   * @param options - Local connect options.
+   * @param options - Vault connect options.
+   * @returns An active AuthSession.
+   * @throws If a connection attempt is already in progress.
+   * @deprecated Use {@link connectVault} instead. Will be removed in 1.0.
+   */
+  async connectLocal(options?: VaultConnectOptions): Promise<AuthSession> {
+    return this.connectVault(options);
+  }
+
+  /**
+   * Create or reconnect an identity via the local HD vault.
+   *
+   * Use this when you explicitly want the vault flow, bypassing
+   * auto-detection. This is the preferred method for wallet apps
+   * and CLI tools that own the identity vault directly.
+   *
+   * @param options - Vault connect options.
    * @returns An active AuthSession.
    * @throws If a connection attempt is already in progress.
    */
-  async connectLocal(options?: LocalConnectOptions): Promise<AuthSession> {
-    return this._withConnect(() => localConnect(this._flowContext(), options));
+  async connectVault(options?: VaultConnectOptions): Promise<AuthSession> {
+    return this._withConnect(() => vaultConnect(this._flowContext(), options));
   }
 
   /**
@@ -976,21 +992,22 @@ export class AuthManager {
   // ─── Private helpers ───────────────────────────────────────────
 
   /**
-   * Determine whether the given options indicate a local connect flow.
+   * Determine whether the given options indicate a vault connect flow.
    *
    * Handler intent is asserted by the presence of a non-empty `protocols`
    * array OR a non-null `connectHandler`; everything else (including the
    * no-options case, an empty `protocols: []`, and `null` values from JS
-   * callers) routes to local. An empty `protocols` array is intentionally
-   * NOT a handler signal — it carries no permission scopes for the handler
-   * to authorize, so treating it as handler-flow would produce a zero-grant
-   * "connected" session indistinguishable from a denied connect.
+   * callers) routes to vault connect. An empty `protocols` array is
+   * intentionally NOT a handler signal — it carries no permission scopes
+   * for the handler to authorize, so treating it as handler-flow would
+   * produce a zero-grant "connected" session indistinguishable from a
+   * denied connect.
    *
    * Acts as a TypeScript type guard: a `true` return narrows `options` to
-   * `LocalConnectOptions | undefined` at call sites, so the routing in
+   * `VaultConnectOptions | undefined` at call sites, so the routing in
    * {@link AuthManager.connect} can dispatch without unsafe casts.
    */
-  private _isLocalConnect(options?: ConnectOptions): options is LocalConnectOptions | undefined {
+  private _isVaultConnect(options?: ConnectOptions): options is VaultConnectOptions | undefined {
     if (options === undefined || options === null) { return true; }
     if ('protocols' in options && Array.isArray(options.protocols) && options.protocols.length > 0) { return false; }
     if ('connectHandler' in options && options.connectHandler !== undefined && options.connectHandler !== null) { return false; }
@@ -1030,7 +1047,7 @@ export class AuthManager {
 
     // 2. Initialize vault (agent-only, no identity). The per-call password
     //    (when supplied via `HandlerConnectOptions.password`) wins over the
-    //    manager default, matching the behavior of the local-connect flow.
+    //    manager default, matching the behavior of the vault-connect flow.
     const isFirstLaunch = await userAgent.firstLaunch();
     const password = await resolvePassword(ctx, options?.password, isFirstLaunch);
     await ensureVaultReady({ userAgent, emitter, password, isFirstLaunch });

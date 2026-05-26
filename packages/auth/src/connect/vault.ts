@@ -1,14 +1,19 @@
 /**
- * Local DID connect flow.
+ * Vault connect flow.
  *
  * Creates or reconnects a local identity with vault-protected keys.
- * This replaces the "Mode D/E" paths in Enbox.connect().
+ * Used by wallets and CLI tools that own the HD identity vault directly
+ * (as opposed to handler-based connect, which delegates credential
+ * acquisition to an external wallet).
+ *
  * @module
  */
 
 import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
-import type { LocalConnectOptions } from '../types.js';
+import type { VaultConnectOptions } from '../types.js';
+
+import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
 
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
@@ -16,7 +21,17 @@ import { registerWithDwnEndpoints } from '../registration.js';
 import { createDefaultIdentity, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 
 /**
- * Execute the local connect flow.
+ * Internal protocols that store recovery-critical data in the agent DID's DWN.
+ * These must be synced so that seed phrase recovery can pull identity metadata,
+ * portable DIDs, and encrypted private keys from the remote DWN.
+ */
+const AGENT_DID_SYNC_PROTOCOLS: [string, ...string[]] = [
+  IdentityProtocolDefinition.protocol,
+  JwkProtocolDefinition.protocol,
+];
+
+/**
+ * Execute the vault connect flow.
  *
  * - On first launch: initializes the vault. Identity creation is opt-in via
  *   `options.createIdentity: true`.
@@ -26,9 +41,9 @@ import { createDefaultIdentity, ensureVaultReady, finalizeSession, resolveIdenti
  * is returned with the **agent DID** as the connected DID. This allows apps to
  * manage identity creation separately from vault setup.
  */
-export async function localConnect(
+export async function vaultConnect(
   ctx: FlowContext,
-  options: LocalConnectOptions = {},
+  options: VaultConnectOptions = {},
 ): Promise<AuthSession> {
   const { userAgent, emitter, storage } = ctx;
 
@@ -98,6 +113,20 @@ export async function localConnect(
       did     : connectedDid,
       options : { delegateDid, protocols: 'all' },
     });
+  }
+
+  // Register the agent DID for sync so that identity metadata, portable
+  // DIDs, and encrypted private keys are pushed to the remote DWN. Without
+  // this, seed phrase recovery on a new device has nothing to pull.
+  if (sync !== 'off') {
+    try {
+      await userAgent.sync.registerIdentity({
+        did     : userAgent.agentDid.uri,
+        options : { protocols: AGENT_DID_SYNC_PROTOCOLS },
+      });
+    } catch {
+      // Already registered from a previous session — no action needed.
+    }
   }
 
   // Start sync.
