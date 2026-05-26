@@ -13,22 +13,11 @@ import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
 import type { VaultConnectOptions } from '../types.js';
 
-import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
-
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
 import { createDefaultIdentity, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
-
-/**
- * Internal protocols that store recovery-critical data in the agent DID's DWN.
- * These must be synced so that seed phrase recovery can pull identity metadata,
- * portable DIDs, and encrypted private keys from the remote DWN.
- */
-const AGENT_DID_SYNC_PROTOCOLS: [string, ...string[]] = [
-  IdentityProtocolDefinition.protocol,
-  JwkProtocolDefinition.protocol,
-];
+import { recoverIdentitiesFromRemote, registerAgentDidForSync } from './recovery.js';
 
 /**
  * Execute the vault connect flow.
@@ -36,6 +25,9 @@ const AGENT_DID_SYNC_PROTOCOLS: [string, ...string[]] = [
  * - On first launch: initializes the vault. Identity creation is opt-in via
  *   `options.createIdentity: true`.
  * - On subsequent launches: unlocks the vault and reconnects to the existing identity.
+ * - On recovery: when `recoveryPhrase` is provided on a fresh vault, pulls
+ *   identities and their data from the remote DWN before falling back to
+ *   identity creation.
  *
  * When no identities exist and `createIdentity` is not `true`, the session
  * is returned with the **agent DID** as the connected DID. This allows apps to
@@ -71,11 +63,43 @@ export async function vaultConnect(
     await applyLocalDwnDiscovery(userAgent, storage, emitter);
   }
 
-  // Find or create the user identity.
-  const identities = await userAgent.identity.list();
+  // Register the agent DID as a DWN tenant and for sync early — both are
+  // prerequisites for seed phrase recovery and for normal push/pull of
+  // identity metadata after identity creation.
+  if (ctx.registration) {
+    await registerWithDwnEndpoints(
+      {
+        userAgent,
+        dwnEndpoints,
+        agentDid     : userAgent.agentDid.uri,
+        connectedDid : userAgent.agentDid.uri,
+        secretStore  : userAgent.secrets,
+        storage,
+      },
+      ctx.registration,
+    );
+  }
+  if (sync !== 'off') {
+    await registerAgentDidForSync(userAgent);
+  }
+
+  // Find existing identities.
+  let identities = await userAgent.identity.list();
   let identity = identities[0];
   let isNewIdentity = false;
 
+  // Seed phrase recovery: when a recovery phrase was provided on a fresh
+  // vault and no identities exist locally, pull them from the remote DWN.
+  if (!identity && isFirstLaunch && options.recoveryPhrase && sync !== 'off') {
+    try {
+      identities = await recoverIdentitiesFromRemote({ userAgent, dwnEndpoints, registration: ctx.registration, storage });
+      identity = identities[0];
+    } catch (err) {
+      console.warn('[@enbox/auth] Seed phrase recovery failed:', err);
+    }
+  }
+
+  // Create a default identity if none were found or recovered.
   if (!identity && shouldCreateIdentity) {
     isNewIdentity = true;
     identity = await createDefaultIdentity(userAgent, dwnEndpoints, options.metadata?.name ?? 'Default');
@@ -92,41 +116,28 @@ export async function vaultConnect(
     ? resolveIdentityDids(identity).delegateDid
     : undefined;
 
-  // Register with DWN endpoints (if registration options are provided).
-  if (ctx.registration) {
+  // Register the new identity DID as a tenant and for sync.
+  // Tenant registration must come before sync registration — with live
+  // sync active, registerIdentity hot-adds a subscription that needs
+  // the DID to be a recognised tenant on the remote DWN.
+  if (isNewIdentity && ctx.registration) {
     await registerWithDwnEndpoints(
       {
-        userAgent   : userAgent,
+        userAgent,
         dwnEndpoints,
         agentDid    : userAgent.agentDid.uri,
         connectedDid,
         secretStore : userAgent.secrets,
-        storage     : storage,
+        storage,
       },
       ctx.registration,
     );
   }
-
-  // Register sync for new identities.
   if (isNewIdentity && sync !== 'off') {
     await userAgent.sync.registerIdentity({
       did     : connectedDid,
       options : { delegateDid, protocols: 'all' },
     });
-  }
-
-  // Register the agent DID for sync so that identity metadata, portable
-  // DIDs, and encrypted private keys are pushed to the remote DWN. Without
-  // this, seed phrase recovery on a new device has nothing to pull.
-  if (sync !== 'off') {
-    try {
-      await userAgent.sync.registerIdentity({
-        did     : userAgent.agentDid.uri,
-        options : { protocols: AGENT_DID_SYNC_PROTOCOLS },
-      });
-    } catch {
-      // Already registered from a previous session — no action needed.
-    }
   }
 
   // Start sync.
