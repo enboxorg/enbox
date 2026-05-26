@@ -1,9 +1,10 @@
 /**
- * Seed phrase recovery flow.
+ * Seed phrase recovery helpers.
  *
  * When a vault is re-derived from a recovery phrase on a new device,
- * the local DWN is empty. This module pulls identity metadata, keys,
- * and user data from the remote DWN in a controlled two-phase sequence.
+ * the local DWN is empty. This module provides the building blocks
+ * for pulling identity metadata, keys, and user data from the remote
+ * DWN in a controlled two-phase sequence.
  *
  * @module
  * @internal
@@ -11,15 +12,45 @@
 
 import type { BearerIdentity, EnboxUserAgent } from '@enbox/agent';
 
+import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
+
 import type { RegistrationOptions, StorageAdapter } from '../types.js';
 
 import { registerWithDwnEndpoints } from '../registration.js';
 
 /**
+ * Internal protocols that store recovery-critical data in the agent DID's DWN.
+ * Syncing these ensures that seed phrase recovery can pull identity metadata,
+ * portable DIDs, and encrypted private keys from the remote.
+ */
+export const AGENT_DID_SYNC_PROTOCOLS: [string, ...string[]] = [
+  IdentityProtocolDefinition.protocol,
+  JwkProtocolDefinition.protocol,
+];
+
+/**
+ * Register the agent DID for sync with the recovery-critical protocols.
+ *
+ * This is a prerequisite for both normal operation (pushing identity
+ * metadata to the remote) and seed phrase recovery (pulling it back).
+ * Silently succeeds if the agent DID is already registered.
+ */
+export async function registerAgentDidForSync(userAgent: EnboxUserAgent): Promise<void> {
+  try {
+    await userAgent.sync.registerIdentity({
+      did     : userAgent.agentDid.uri,
+      options : { protocols: AGENT_DID_SYNC_PROTOCOLS },
+    });
+  } catch {
+    // Already registered from a previous session.
+  }
+}
+
+/**
  * Recover identities and their data from remote DWN endpoints.
  *
- * Assumes the agent DID is already registered for sync (with the
- * IdentityProtocol + JwkProtocol) and as a DWN tenant.
+ * Assumes the agent DID is already registered for sync (via
+ * {@link registerAgentDidForSync}) and as a DWN tenant.
  *
  * Phase 1 — pull identity metadata and DID private keys stored in the
  *   agent DID's DWN.

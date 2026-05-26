@@ -13,23 +13,11 @@ import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
 import type { VaultConnectOptions } from '../types.js';
 
-import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
-
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
-import { recoverIdentitiesFromRemote } from './recovery.js';
 import { registerWithDwnEndpoints } from '../registration.js';
 import { createDefaultIdentity, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
-
-/**
- * Internal protocols that store recovery-critical data in the agent DID's DWN.
- * These must be synced so that seed phrase recovery can pull identity metadata,
- * portable DIDs, and encrypted private keys from the remote DWN.
- */
-const AGENT_DID_SYNC_PROTOCOLS: [string, ...string[]] = [
-  IdentityProtocolDefinition.protocol,
-  JwkProtocolDefinition.protocol,
-];
+import { recoverIdentitiesFromRemote, registerAgentDidForSync } from './recovery.js';
 
 /**
  * Execute the vault connect flow.
@@ -92,14 +80,7 @@ export async function vaultConnect(
     );
   }
   if (sync !== 'off') {
-    try {
-      await userAgent.sync.registerIdentity({
-        did     : userAgent.agentDid.uri,
-        options : { protocols: AGENT_DID_SYNC_PROTOCOLS },
-      });
-    } catch {
-      // Already registered from a previous session.
-    }
+    await registerAgentDidForSync(userAgent);
   }
 
   // Find existing identities.
