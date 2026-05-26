@@ -379,6 +379,16 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
       throw new Error(`Failed to install protocol: ${status.code} - ${status.detail}`);
     }
 
+    // When the protocol has encrypted types, install the KeyDeliveryProtocol
+    // proactively. The sync engine's closure resolver requires it to be
+    // present before encrypted records can be committed (pull) or pushed.
+    // Without this, there's a race: postWriteKeyDelivery installs it lazily
+    // after the first encrypted write, but the DWN event fires before that
+    // completes and the sync engine sees a missing dependency.
+    if (encryptionActive) {
+      await agent.dwn.ensureKeyDeliveryProtocol(tenant);
+    }
+
     return { encryptionActive };
   }
 
