@@ -52,8 +52,10 @@ export async function registerAgentDidForSync(userAgent: EnboxUserAgent): Promis
  * Assumes the agent DID is already registered for sync (via
  * {@link registerAgentDidForSync}) and as a DWN tenant.
  *
- * Phase 1 — pull identity metadata and DID private keys stored in the
- *   agent DID's DWN.
+ * Phase 1 — pull identity metadata, portable DIDs, and encrypted
+ *   private keys from the agent DID's remote DWN. The
+ *   KeyDeliveryProtocol is installed first so that the sync engine's
+ *   closure resolver can accept encrypted JwkProtocol records.
  *
  * Phase 2 — register each recovered identity DID as a tenant and for
  *   sync, then pull their profile data, protocol configurations, and
@@ -71,7 +73,14 @@ export async function recoverIdentitiesFromRemote(params: {
   const { userAgent, dwnEndpoints, registration, storage } = params;
   const agentDid = userAgent.agentDid.uri;
 
-  // Phase 1: pull identity metadata + encrypted DID keys.
+  // Install the KeyDeliveryProtocol for the agent DID before pulling.
+  // Encrypted JwkProtocol records (private keys) require this protocol
+  // to be present locally for the sync engine's closure resolver to
+  // accept them. Without it, the encrypted records are skipped during
+  // pull and private keys are never recovered.
+  await userAgent.dwn.ensureKeyDeliveryProtocol(agentDid);
+
+  // Phase 1: pull identity metadata, portable DIDs, and encrypted keys.
   await userAgent.sync.sync('pull');
 
   const identities = await userAgent.identity.list();
