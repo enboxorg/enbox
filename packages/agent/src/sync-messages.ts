@@ -393,9 +393,10 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
   for (const entry of sorted) {
     const cid = await getMessageCid(entry.message);
 
-    // Create a fresh stream from the buffer for each send attempt.
+    // Use a Blob for buffered data — unlike ReadableStream, Blob is
+    // replayable so fetchWithRetry can retry the HTTP request on failure.
     const data = entry.bufferedData
-      ? new ReadableStream<Uint8Array>({ start(c): void { c.enqueue(entry.bufferedData!); c.close(); } })
+      ? new Blob([entry.bufferedData] as BlobPart[], { type: 'application/octet-stream' })
       : entry.dataStream;
 
     try {

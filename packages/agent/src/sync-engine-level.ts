@@ -1396,6 +1396,39 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  /**
+   * Wrapper around {@link initializeLinkTarget} that retries on DID
+   * resolution failures. Newly published `did:dht` DIDs take a few
+   * seconds to propagate through the DHT network. During this window,
+   * the remote DWN can't resolve the DID to verify request signatures,
+   * causing a 401. Retrying with exponential backoff lets the
+   * propagation settle before giving up.
+   */
+  private async initializeLinkTargetWithRetry(target: {
+    did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
+  }): Promise<void> {
+    try {
+      await this.initializeLinkTarget(target);
+    } catch (error: any) {
+      const msg = error.message ?? '';
+      const isDidResolutionFailure = msg.includes('GetPublicKeyNotFound') || msg.includes('notFound');
+      if (!isDidResolutionFailure) { throw error; }
+
+      const delays = [2000, 4000, 8000];
+      for (const delay of delays) {
+        await sleep(delay);
+        try {
+          await this.initializeLinkTarget(target);
+          return;
+        } catch {
+          // Continue to next attempt.
+        }
+      }
+      // All retries exhausted — the original error was already logged
+      // by initializeLinkTarget's catch block.
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Hot-add / hot-remove: per-identity live sync management
   // ---------------------------------------------------------------------------
@@ -1430,7 +1463,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    await Promise.allSettled(targets.map(t => this.initializeLinkTarget(t)));
+    await Promise.allSettled(targets.map(t => this.initializeLinkTargetWithRetry(t)));
   }
 
   /** Hot-remove a single identity from the active live sync session. */
