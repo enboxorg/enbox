@@ -246,6 +246,7 @@ class IdentityRuntimeController implements IdentityRuntime {
       recoveryPhrase : options.recoveryPhrase,
       dwnEndpoints,
       metadata       : { name: options.name?.trim() || 'Default' },
+      createIdentity : true,
     });
 
     this._lastError = undefined;
@@ -318,10 +319,11 @@ class IdentityRuntimeController implements IdentityRuntime {
   }): Promise<IdentityWalletSnapshot> {
     const auth = await this._getAuth();
     const dwnEndpoints = await this._resolvePreferredDwnEndpoints(options.dwnEndpoints);
-    await auth.importFromPhrase({
+    await auth.restoreFromPhrase({
       recoveryPhrase : options.recoveryPhrase.trim(),
       password       : options.password,
       dwnEndpoints,
+      createIdentity : true,
     });
 
     this._lastError = undefined;
@@ -1327,4 +1329,3 @@ export function ensureIdentityRuntime(runtimeWindow: IdentityRuntimeHostWindow):
 
   return runtimeWindow[identityRuntimeWindowKey];
 }
-

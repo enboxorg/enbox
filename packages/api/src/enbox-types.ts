@@ -78,16 +78,15 @@ export type EnboxSessionParams = AgentSessionPrimitives;
  * 2. **Per-call signals** ({@link HandlerConnectOptions} ∪
  *    {@link VaultConnectOptions}) — `protocols`, `createIdentity`,
  *    `recoveryPhrase`, `metadata`, etc. Forwarded to
- *    `AuthManager.connect()` and used to route handler vs local flow.
+ *    `AuthManager.connect()` and used to route restore, handler, or local flow.
  *
  * Several fields (`password`, `sync`, `dwnEndpoints`, `connectHandler`)
  * appear on multiple parents. The intersection keeps a single `?:`-typed
  * field; the value flows to both the manager (as a default) and the
  * per-call payload — matching the behavior of restored sessions.
  *
- * Routing between local and handler flow happens at runtime inside
- * `AuthManager._isLocalConnect` based on whether `protocols` or
- * `connectHandler` is provided. See `Enbox.connect()` for examples.
+ * Routing between restore, local, and handler flow happens at runtime inside
+ * `AuthManager.connect`. See `Enbox.connect()` for examples.
  *
  * If you need full control of the exact options forwarded to
  * `AuthManager.connect()`, drop down one layer: create the

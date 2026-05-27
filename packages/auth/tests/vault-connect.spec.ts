@@ -239,6 +239,142 @@ describe('vaultConnect', () => {
     expect(session.delegateDid).toBe('did:dht:delegate123');
   });
 
+  test('repairs persisted delegate sync scope from current grants', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const syncCalls: any[] = [];
+
+    const grantData = JSON.stringify({
+      dateExpires : '2040-06-25T16:09:16.693356Z',
+      scope       : { interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' },
+      delegated   : true,
+    });
+    const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const grantEntry = {
+      recordId    : 'grant-1',
+      contextId   : 'grant-1',
+      encodedData : encoded,
+      descriptor  : {
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : 'https://identity.foundation/dwn/permissions',
+        protocolPath : 'grant',
+        recipient    : 'did:dht:external',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+        dataFormat   : 'application/json',
+        dataCid      : 'bafytest',
+        dataSize     : 100,
+      },
+      authorization: { signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner1#sig' })) }] } },
+    };
+
+    const delegateIdentity = createMockIdentity({
+      metadata: { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+    });
+
+    const agent = createMockAgent({
+      firstLaunch          : async () => false,
+      identityList         : async () => [delegateIdentity],
+      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+      processDwnRequest    : async () => ({
+        reply: { status: { code: 200 }, entries: [grantEntry] },
+      }),
+    });
+
+    await vaultConnect(
+      { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      { recoveryPhrase: 'phrase', password: 'pass' },
+    );
+
+    expect(syncCalls).toHaveLength(2);
+    expect(syncCalls[0].did).toBe('did:dht:testagent');
+    expect(syncCalls[1].did).toBe('did:dht:external');
+    expect(syncCalls[1].options.protocols).toEqual(['https://proto.example/chat']);
+    expect(syncCalls[1].options.delegateDid).toBe('did:dht:testuser123');
+  });
+
+  test('clears stale persisted delegate sync registration when grants are gone', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const registerCalls: any[] = [];
+    const unregisterCalls: string[] = [];
+
+    const delegateIdentity = createMockIdentity({
+      metadata: { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+    });
+
+    const agent = createMockAgent({
+      firstLaunch            : async () => false,
+      identityList           : async () => [delegateIdentity],
+      syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
+      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+      processDwnRequest      : async () => ({
+        reply: { status: { code: 200 }, entries: [] },
+      }),
+    });
+
+    await vaultConnect(
+      { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      { recoveryPhrase: 'phrase', password: 'pass' },
+    );
+
+    expect(registerCalls).toHaveLength(1);
+    expect(registerCalls[0].did).toBe('did:dht:testagent');
+    expect(unregisterCalls).toEqual(['did:dht:external']);
+  });
+
+  test('repairs persisted delegate sync registration even when sync is off', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const registerCalls: any[] = [];
+    const unregisterCalls: string[] = [];
+
+    const delegateIdentity = createMockIdentity({
+      metadata: { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+    });
+
+    const agent = createMockAgent({
+      firstLaunch            : async () => false,
+      identityList           : async () => [delegateIdentity],
+      syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
+      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+      processDwnRequest      : async () => ({
+        reply: { status: { code: 200 }, entries: [] },
+      }),
+    });
+
+    await vaultConnect(
+      { userAgent: agent, emitter, storage, defaultSync: 'off' },
+      { recoveryPhrase: 'phrase', password: 'pass' },
+    );
+
+    expect(registerCalls).toHaveLength(0);
+    expect(unregisterCalls).toEqual(['did:dht:external']);
+  });
+
+  test('does not re-register a persisted local identity during restore', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const registerCalls: any[] = [];
+    const unregisterCalls: string[] = [];
+
+    const agent = createMockAgent({
+      firstLaunch            : async () => false,
+      identityList           : async () => [createMockIdentity()],
+      syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
+      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+    });
+
+    await vaultConnect(
+      { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      { recoveryPhrase: 'phrase', password: 'pass' },
+    );
+
+    expect(registerCalls).toHaveLength(1);
+    expect(registerCalls[0].did).toBe('did:dht:testagent');
+    expect(unregisterCalls).toHaveLength(0);
+  });
+
   test('uses recovery phrase option for re-derivation', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();

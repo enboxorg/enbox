@@ -89,6 +89,13 @@ export interface IdentityVault<T extends Record<string, any> = { InitializeResul
   initialize(params: { password: string }): Promise<T['InitializeResult']>;
 
   /**
+   * Resets the vault password by proving knowledge of the original recovery phrase.
+   *
+   * Implementations must leave existing vault contents unchanged when the phrase does not match.
+   */
+  resetPasswordWithRecoveryPhrase(params: { recoveryPhrase: string, password: string }): Promise<void>;
+
+  /**
    * Returns a boolean indicating whether the IdentityVault has been initialized.
    */
   isInitialized(): Promise<boolean>;

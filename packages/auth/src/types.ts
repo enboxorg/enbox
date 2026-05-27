@@ -403,7 +403,7 @@ export interface VaultConnectOptions {
   /** Vault password (overrides manager default). */
   password?: string;
 
-  /** Re-derive identity from an existing BIP-39 recovery phrase. */
+  /** Initialize or recover the vault from an existing BIP-39 recovery phrase. */
   recoveryPhrase?: string;
 
   /** Override manager default sync interval. */
@@ -434,8 +434,18 @@ export interface VaultConnectOptions {
   createIdentity?: boolean;
 }
 
-/** @deprecated Use {@link VaultConnectOptions} instead. */
-export type LocalConnectOptions = VaultConnectOptions;
+/** Options for {@link AuthManager.restoreFromPhrase}. */
+export interface RestoreFromPhraseOptions extends Omit<VaultConnectOptions, 'password' | 'recoveryPhrase'> {
+  /** The BIP-39 recovery phrase for the existing or remote wallet vault. */
+  recoveryPhrase: string;
+
+  /**
+   * Password to protect the restored vault locally.
+   *
+   * If the local vault already belongs to this phrase, this becomes the new local unlock password.
+   */
+  password: string;
+}
 
 // ─── DWeb Connect ────────────────────────────────────────────────
 
@@ -508,16 +518,19 @@ export interface HandlerConnectOptions {
  *
  * `connect()` routes to the appropriate flow based on the options:
  *
+ * - **Recovery phrase restore** (wallets / CLI): triggered first when
+ *   `recoveryPhrase` is provided.
+ *
  * - **Handler-based connect** (dapps): triggered when `protocols` or
- *   `connectHandler` is provided. Delegates to the connect handler
- *   for credential acquisition.
+ *   `connectHandler` is provided and no `recoveryPhrase` is present.
+ *   Delegates to the connect handler for credential acquisition.
  *
  * - **Vault connect** (wallets / CLI): triggered when `password`,
  *   `createIdentity`, or `recoveryPhrase` is provided.
  *
- * In both cases, `connect()` first attempts to restore a previous session
- * from storage. If a valid session exists, it is returned immediately
- * without any user interaction.
+ * `connect()` first attempts to restore a previous session from storage
+ * unless `recoveryPhrase` is provided. Recovery is treated as an explicit
+ * user action and routes directly to the phrase restore flow.
  */
 export type ConnectOptions = HandlerConnectOptions | VaultConnectOptions;
 
@@ -550,21 +563,6 @@ export interface WalletConnectOptions {
 
   /** Override manager default sync interval. */
   sync?: SyncOption;
-}
-
-/** Options for {@link AuthManager.importFromPhrase}. */
-export interface ImportFromPhraseOptions {
-  /** The BIP-39 recovery phrase. */
-  recoveryPhrase: string;
-
-  /** Password to protect the vault. */
-  password: string;
-
-  /** Override manager default sync interval. */
-  sync?: SyncOption;
-
-  /** Override manager default DWN endpoints. */
-  dwnEndpoints?: string[];
 }
 
 /** Options for {@link AuthManager.importFromPortable}. */

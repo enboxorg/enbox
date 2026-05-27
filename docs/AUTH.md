@@ -27,7 +27,7 @@ import { AuthManager } from '@enbox/auth';
 import { Enbox } from '@enbox/api';
 
 const auth = await AuthManager.create({ sync: '15s' });
-const session = await auth.restoreSession() ?? await auth.connect();
+const session = await auth.restoreSession() ?? await auth.connectVault({ createIdentity: true });
 
 const enbox = Enbox.fromSession(session);
 // enbox.using(MyProtocol).records.create(...)
@@ -44,10 +44,10 @@ AuthManager (orchestrator)
   |-- AuthSession             immutable session object (agent + did + delegateDid)
   |
   |-- Connection Flows:       stateless functions, each returns AuthSession
-        |-- localConnect()
+        |-- vaultConnect()
         |-- walletConnect()
         |-- restoreSession()
-        |-- importFromPhrase()
+        |-- restoreFromPhrase()
         |-- importFromPortable()
         |
         |-- Supporting:
@@ -80,7 +80,7 @@ AuthManager (orchestrator)
              | uninitialized |  no vault exists
              +-------+-------+
                      |
-                connect() / importFromPhrase()
+                connect() / restoreFromPhrase()
                      |
                      v
              +-------+-------+
@@ -120,8 +120,8 @@ Every state transition emits a `state-change` event with `{ previous, current }`
 
 | From | To | Trigger |
 |---|---|---|
-| `uninitialized` | `connected` | `connect()`, `importFromPhrase()` |
-| `locked` | `connected` | `connect()`, `restoreSession()`, `importFromPhrase()` |
+| `uninitialized` | `connected` | `connect()`, `restoreFromPhrase()` |
+| `locked` | `connected` | `connect()`, `restoreSession()`, `restoreFromPhrase()` |
 | `unlocked` | `connected` | `switchIdentity()` |
 | `connected` | `unlocked` | `disconnect()` |
 | `connected` | `locked` | `lock()` |
@@ -131,26 +131,26 @@ Every state transition emits a `state-change` event with `{ previous, current }`
 
 ## Connection Flows
 
-### 1. Local Connect
+### 1. Vault Connect
 
-**Method:** `auth.connect(options?)`
+**Method:** `auth.connectVault(options?)`
 
-Creates or reconnects a local identity. This is the primary flow for apps that
-manage their own DID (no external wallet).
+Initializes or unlocks the local HD vault. This is the primary flow for wallet
+apps and CLI tools that manage their own vault (no external wallet).
 
 ```ts
-const session = await auth.connect();
+const session = await auth.connectVault({ createIdentity: true });
 ```
 
 **First launch (vault does not exist):**
 
 1. Initialize vault with password + generate recovery phrase.
 2. Start the agent (unlock vault).
-3. Create a new DID:DHT identity with Ed25519 (signing) and X25519 (encryption) keys.
-4. Register the DID with DWN endpoints.
-5. Register identity for sync and start sync.
+3. If `createIdentity: true`, create a new DID:DHT identity with Ed25519 (signing) and X25519 (encryption) keys.
+4. Register the agent DID, and the identity DID when one is created, with DWN endpoints.
+5. Register sync and start sync.
 6. Persist session markers in storage.
-7. Return `AuthSession` with `recoveryPhrase` populated.
+7. Return `AuthSession` with `recoveryPhrase` populated. Without an identity, the session uses the agent DID.
 
 **Subsequent launches (vault exists):**
 
@@ -162,12 +162,13 @@ const session = await auth.connect();
 **Options:**
 
 ```ts
-interface LocalConnectOptions {
+interface VaultConnectOptions {
   password?: string;           // overrides the manager default
   recoveryPhrase?: string;     // re-derive identity from BIP-39 phrase
   sync?: SyncOption;           // override sync interval
   dwnEndpoints?: string[];     // override DWN endpoints
   metadata?: { name?: string }; // identity display name
+  createIdentity?: boolean;    // create a default identity if none exist
 }
 ```
 
@@ -175,7 +176,7 @@ interface LocalConnectOptions {
 the user for backup, then discard it:
 
 ```ts
-const session = await auth.connect();
+const session = await auth.connectVault({ createIdentity: true });
 
 if (session.recoveryPhrase) {
   showRecoveryPhraseDialog(session.recoveryPhrase);
@@ -289,23 +290,25 @@ interface RestoreSessionOptions {
 
 ---
 
-### 4. Import from Recovery Phrase
+### 4. Restore from Recovery Phrase
 
-**Method:** `auth.importFromPhrase(options)`
+**Method:** `auth.restoreFromPhrase(options)`
 
-Re-derives an identity from a BIP-39 recovery phrase. Used for account recovery
-on a new device.
+Restores or re-unlocks the local vault from a BIP-39 recovery phrase. Used for
+account recovery on a new device or password reset for the same vault.
 
 ```ts
-const session = await auth.importFromPhrase({
+const session = await auth.restoreFromPhrase({
   recoveryPhrase: 'word1 word2 ... word12',
   password: 'user-chosen-password',
 });
 ```
 
-The flow is similar to `connect()` but uses the provided phrase instead of
-generating a new one. The vault is re-initialized deterministically from the
-mnemonic.
+On a fresh device, the SDK initializes the vault from the phrase and recovers
+remote identities before optionally creating a default identity when
+`createIdentity: true` is passed. On an existing local vault, the phrase must
+match the vault; a different phrase throws a typed mismatch error without
+replacing local data.
 
 ---
 
@@ -601,7 +604,7 @@ const auth = await AuthManager.create({
 
 The session object returned by all connection flows contains the authenticated
 `agent`, the connected `did`, and optionally a `delegateDid` (for wallet-connected
-sessions) or a `recoveryPhrase` (on first local connect only).
+sessions) or a `recoveryPhrase` (when the vault was initialized in that flow).
 
 Pass the session to `@enbox/api`:
 
@@ -651,10 +654,10 @@ const EnboxProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     setDid(session.did);
   };
 
-  // 3. Local connect (new identity)
+  // 3. Vault connect (new identity)
   const connect = async () => {
     const auth = authRef.current!;
-    const session = await auth.connect();
+    const session = await auth.connectVault({ createIdentity: true });
     applySession(session);
   };
 
@@ -706,7 +709,7 @@ const auth = await AuthManager.create({
 });
 
 // 3. Connect (creates identity on first run, reconnects on subsequent runs)
-const session = await auth.connect({ password: userPassword });
+const session = await auth.connectVault({ password: userPassword, createIdentity: true });
 
 if (session.recoveryPhrase) {
   console.log('Save your recovery phrase:', session.recoveryPhrase);

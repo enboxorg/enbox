@@ -25,9 +25,10 @@ import { Convert } from '@enbox/common';
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 
 import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
-import { DwnInterface, DwnPermissionGrant, KeyDeliveryProtocolDefinition } from '@enbox/agent';
+import { DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError, KeyDeliveryProtocolDefinition } from '@enbox/agent';
 
 import { AuthSession } from '../identity-session.js';
+import { RecoveryPhraseMismatchError } from '../errors.js';
 import { DEFAULT_DWN_ENDPOINTS, INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
 
 // ─── FlowContext ─────────────────────────────────────────────────
@@ -109,7 +110,7 @@ export async function resolvePassword(
 // ─── ensureVaultReady ────────────────────────────────────────────
 
 /**
- * Initialize (on first launch) and start the agent, then emit `vault-unlocked`.
+ * Initialize or recover the vault, start the agent, then emit `vault-unlocked`.
  *
  * This consolidates the 5 copies of:
  * ```ts
@@ -117,6 +118,9 @@ export async function resolvePassword(
  * await userAgent.start({ password });
  * emitter.emit('vault-unlocked', {});
  * ```
+ *
+ * When `recoveryPhrase` is supplied for an already-initialized vault, the phrase is verified
+ * against the stored agent DID and the vault password is reset without replacing local data.
  *
  * @returns The recovery phrase if the vault was just initialized, otherwise `undefined`.
  *
@@ -139,6 +143,18 @@ export async function ensureVaultReady(params: {
       recoveryPhrase : params.recoveryPhrase,
       dwnEndpoints   : params.dwnEndpoints,
     });
+  } else if (params.recoveryPhrase) {
+    try {
+      await userAgent.vault.resetPasswordWithRecoveryPhrase({
+        recoveryPhrase: params.recoveryPhrase,
+        password,
+      });
+    } catch (error) {
+      if (error instanceof HdIdentityVaultRecoveryPhraseMismatchError) {
+        throw new RecoveryPhraseMismatchError();
+      }
+      throw error;
+    }
   }
 
   await userAgent.start({ password });
@@ -184,7 +200,7 @@ export async function startSyncIfEnabled(
  * encryption keys, and a DWN service endpoint.
  *
  * This consolidates the identical identity creation block that was
- * duplicated in `vaultConnect` and `importFromPhrase`.
+ * duplicated across vault recovery and identity import flows.
  *
  * @internal
  */

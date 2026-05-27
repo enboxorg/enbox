@@ -196,7 +196,7 @@ const auth = await AuthManager.create({
 });
 
 // Or override for a specific identity
-const session = await auth.connectLocal({
+const session = await auth.connectVault({
   dwnEndpoints  : ['https://eu.dwn.example.com'],
   createIdentity: true,
 });
