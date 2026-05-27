@@ -24,8 +24,18 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
   context,
 ) => {
   const { dwn, dataStream, subscriptionRequest, socketConnection, transport } = context;
-  const { target, message } = dwnRequest.params as { target: string, message: GenericMessage };
+  const { target, message } = (dwnRequest.params ?? {}) as { target: string, message: GenericMessage };
   const requestId = dwnRequest.id ?? uuidv4();
+
+  if (!message?.descriptor) {
+    return {
+      jsonRpcResponse: createJsonRpcErrorResponse(
+        requestId,
+        JsonRpcErrorCodes.InvalidParams,
+        'missing or malformed `message` in request params',
+      ),
+    } as HandlerResponse;
+  }
 
   try {
     // RecordsWrite is only supported on 'http' to support data stream for large data
@@ -177,14 +187,21 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
 
     return responsePayload;
   } catch (error) {
-    // Log the full error internally but return a generic message to the client
-    // to avoid leaking implementation details (SQL errors, file paths, etc.).
-    log.error('handleDwnProcessMessage error', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
+
+    // Log the full error with stack trace. loglevel's log.error doesn't
+    // always serialize Error objects to stdout, so we use console.error
+    // as a fallback to ensure the details reach the log stream.
+    log.error(`handleDwnProcessMessage error: ${errorMessage}`);
+    if (errorStack) {
+      log.error(errorStack);
+    }
 
     const jsonRpcResponse = createJsonRpcErrorResponse(
       requestId,
       JsonRpcErrorCodes.InternalError,
-      'an unexpected error occurred while processing the message',
+      `an unexpected error occurred while processing the message`,
     );
 
     return { jsonRpcResponse } as HandlerResponse;
