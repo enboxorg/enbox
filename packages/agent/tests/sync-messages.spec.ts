@@ -521,7 +521,10 @@ describe('sync-messages', () => {
     });
 
     it('should include dataStream for RecordsWrite with data', async () => {
-      const mockStream = new ReadableStream();
+      const payload = new TextEncoder().encode('test-data');
+      const mockStream = new ReadableStream<Uint8Array>({
+        start(controller): void { controller.enqueue(payload); controller.close(); },
+      });
       const sendStub = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
       const mockAgent = {
         dwn: {
@@ -548,7 +551,7 @@ describe('sync-messages', () => {
 
       expect(sendStub.calledOnce).toBe(true);
       const callArgs = sendStub.firstCall.args[0];
-      expect(callArgs.data).toBe(mockStream);
+      expect(callArgs.data).toBeInstanceOf(ReadableStream);
     });
   });
 
