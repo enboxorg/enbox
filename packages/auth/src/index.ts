@@ -10,7 +10,7 @@
  * import { AuthManager } from '@enbox/auth';
  *
  * const auth = await AuthManager.create({ sync: '15s' });
- * const session = await auth.connectVault({ password: userPin });
+ * const session = await auth.connectVault({ password: userPin, createIdentity: true });
  * ```
  *
  * @example Dapp with browser connect handler
@@ -31,6 +31,7 @@
 export { AuthManager } from './auth-manager.js';
 export { AuthSession } from './identity-session.js';
 export { AuthEventEmitter } from './events.js';
+export { RecoveryPhraseMismatchError, isRecoveryPhraseMismatchError } from './errors.js';
 
 // Password providers
 export { PasswordProvider } from './password-provider.js';
@@ -86,9 +87,7 @@ export type {
   HeadlessConnectOptions,
   IdentityInfo,
   IdentityVaultBackup,
-  ImportFromPhraseOptions,
   ImportFromPortableOptions,
-  LocalConnectOptions,
   LocalDwnStrategy,
   VaultConnectOptions,
   Permission,
@@ -98,6 +97,7 @@ export type {
   ProviderAuthResult,
   RegistrationOptions,
   RegistrationTokenData,
+  RestoreFromPhraseOptions,
   RestoreSessionOptions,
   ShutdownOptions,
   StorageAdapter,

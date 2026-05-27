@@ -29,9 +29,9 @@ import type {
   DisconnectOptions,
   HandlerConnectOptions,
   HeadlessConnectOptions,
-  ImportFromPhraseOptions,
   ImportFromPortableOptions,
   RegistrationOptions,
+  RestoreFromPhraseOptions,
   RestoreSessionOptions,
   ShutdownOptions,
   StorageAdapter,
@@ -48,13 +48,13 @@ import { AuthEventEmitter } from './events.js';
 import { AuthSession } from './identity-session.js';
 import { createDefaultStorage } from './storage/storage.js';
 import { discoverLocalDwn } from './discovery.js';
+import { importFromPortable } from './connect/import.js';
 import { normalizeProtocolRequests } from './permissions.js';
 import { restoreSession } from './connect/restore.js';
 import { STORAGE_KEYS } from './types.js';
 import { vaultConnect } from './connect/vault.js';
 import { walletConnect } from './connect/wallet.js';
 import { deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolveIdentityDids, resolvePassword, startSyncIfEnabled, toSyncIdentityProtocols } from './connect/lifecycle.js';
-import { importFromPhrase, importFromPortable } from './connect/import.js';
 
 /**
  * The primary entry point for authentication and identity management.
@@ -71,7 +71,7 @@ import { importFromPhrase, importFromPortable } from './connect/import.js';
  *
  * // First time: creates a new identity
  * // Subsequent times: restores the previous session
- * const session = await auth.restoreSession() ?? await auth.connect();
+ * const session = await auth.restoreSession() ?? await auth.connectVault({ createIdentity: true });
  *
  * // session.agent  — the authenticated Enbox agent
  * // session.did    — the connected DID URI
@@ -206,17 +206,20 @@ export class AuthManager {
    * This is the primary entry point for dapps. It routes to the
    * appropriate flow based on the options:
    *
+   * **Recovery phrase restore** (wallets / CLI): Explicitly restores or
+   * re-unlocks a vault. Triggered first when `recoveryPhrase` is provided.
+   *
    * **Handler-based connect** (dapps): Delegates credential acquisition
    * to a {@link ConnectHandler}. Triggered when `protocols` or
-   * `connectHandler` is provided.
+   * `connectHandler` is provided and no `recoveryPhrase` is present.
    *
    * **Local connect** (wallets / CLI): Creates or unlocks a local vault.
    * Triggered when `password`, `createIdentity`, or `recoveryPhrase`
    * is provided.
    *
-   * In both cases, `connect()` first attempts to restore a previous
-   * session. If a valid session exists, it is returned immediately
-   * without any user interaction.
+   * `connect()` first attempts to restore a previous session unless a
+   * recovery phrase is provided. Recovery is an explicit user action and
+   * bypasses stored-session restore.
    *
    * @example Dapp (browser)
    * ```ts
@@ -245,6 +248,11 @@ export class AuthManager {
    */
   async connect(options?: ConnectOptions): Promise<AuthSession> {
     return this._withConnect(async () => {
+      // Recovery is an explicit user action. Do not let a stale stored session intercept it.
+      if (this._isPhraseRestore(options)) {
+        return vaultConnect(this._flowContext(), options);
+      }
+
       // 1. Try to restore a previous session first.
       const restored = await restoreSession(this._flowContext());
       if (restored) { return restored; }
@@ -258,21 +266,6 @@ export class AuthManager {
 
       return this._handlerConnect(options);
     });
-  }
-
-  /**
-   * Create or reconnect a local identity (explicit vault connect).
-   *
-   * Use this when you explicitly want the vault flow, bypassing
-   * auto-detection. This is the preferred method for wallet apps.
-   *
-   * @param options - Vault connect options.
-   * @returns An active AuthSession.
-   * @throws If a connection attempt is already in progress.
-   * @deprecated Use {@link connectVault} instead. Will be removed in 1.0.
-   */
-  async connectLocal(options?: VaultConnectOptions): Promise<AuthSession> {
-    return this.connectVault(options);
   }
 
   /**
@@ -291,6 +284,17 @@ export class AuthManager {
   }
 
   /**
+   * Restore or re-unlock the local vault from a BIP-39 recovery phrase.
+   *
+   * - Fresh device: initializes the vault from the phrase and recovers remote identities.
+   * - Same local vault: verifies the phrase matches, resets the local password, and preserves data.
+   * - Different local vault: throws without clearing or replacing the existing vault.
+   */
+  async restoreFromPhrase(options: RestoreFromPhraseOptions): Promise<AuthSession> {
+    return this._withConnect(() => vaultConnect(this._flowContext(), options));
+  }
+
+  /**
    * Connect to an external wallet via the Enbox Connect relay protocol.
    *
    * This runs the full WalletConnect flow: generates a URI for QR display,
@@ -303,16 +307,6 @@ export class AuthManager {
    */
   async walletConnect(options: WalletConnectOptions): Promise<AuthSession> {
     return this._withConnect(() => walletConnect(this._flowContext(), options));
-  }
-
-  /**
-   * Import an identity from a BIP-39 recovery phrase.
-   *
-   * This re-derives the vault and agent DID from the mnemonic,
-   * recovering the identity on this device.
-   */
-  async importFromPhrase(options: ImportFromPhraseOptions): Promise<AuthSession> {
-    return this._withConnect(() => importFromPhrase(this._flowContext(), options));
   }
 
   /**
@@ -1014,6 +1008,12 @@ export class AuthManager {
     return true;
   }
 
+  private _isPhraseRestore(options?: ConnectOptions): options is RestoreFromPhraseOptions {
+    return options !== undefined
+      && options !== null
+      && typeof (options as { recoveryPhrase?: unknown }).recoveryPhrase === 'string';
+  }
+
   /**
    * Run a handler-based (delegated) connect flow.
    *
@@ -1093,7 +1093,7 @@ export class AuthManager {
    *
    * Replaces the 5 manual inline context constructions that were
    * previously duplicated across `connect()`, `walletConnect()`,
-   * `importFromPhrase()`, `importFromPortable()`, and `restoreSession()`.
+   * `restoreFromPhrase()`, `importFromPortable()`, and `restoreSession()`.
    */
   private _flowContext(): FlowContext {
     return {
@@ -1113,7 +1113,7 @@ export class AuthManager {
    *
    * Consolidates the duplicated concurrency guard, `_isConnecting` flag management,
    * session assignment, and state transition across `connect()`, `walletConnect()`,
-   * `importFromPhrase()`, and `importFromPortable()`.
+   * `restoreFromPhrase()`, and `importFromPortable()`.
    *
    * Also short-circuits if the manager has already been shut down — using
    * a closed manager would otherwise fail deep inside sync/storage with an

@@ -3,10 +3,9 @@ import { describe, expect, test } from 'bun:test';
 import { AuthManager } from '../src/auth-manager.js';
 
 describe('connect() routing logic', () => {
-  test('AuthManager exposes connect(), connectVault(), and connectLocal() (deprecated)', () => {
+  test('AuthManager exposes connect() and connectVault()', () => {
     expect(typeof AuthManager.prototype.connect).toBe('function');
     expect(typeof AuthManager.prototype.connectVault).toBe('function');
-    expect(typeof AuthManager.prototype.connectLocal).toBe('function');
   });
 
   test('connect() is a separate method from connectVault()', () => {

@@ -16,7 +16,7 @@ import type { VaultConnectOptions } from '../types.js';
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerWithDwnEndpoints } from '../registration.js';
-import { createDefaultIdentity, ensureVaultReady, finalizeSession, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
+import { createDefaultIdentity, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, startSyncIfEnabled } from './lifecycle.js';
 import { recoverIdentitiesFromRemote, registerAgentDidForSync } from './recovery.js';
 
 /**
@@ -26,8 +26,8 @@ import { recoverIdentitiesFromRemote, registerAgentDidForSync } from './recovery
  *   `options.createIdentity: true`.
  * - On subsequent launches: unlocks the vault and reconnects to the existing identity.
  * - On recovery: when `recoveryPhrase` is provided on a fresh vault, pulls
- *   identities and their data from the remote DWN before falling back to
- *   identity creation.
+ *   identities and their data from the remote DWN before optionally creating
+ *   a default identity.
  *
  * When no identities exist and `createIdentity` is not `true`, the session
  * is returned with the **agent DID** as the connected DID. This allows apps to
@@ -88,9 +88,9 @@ export async function vaultConnect(
   let identity = identities[0];
   let isNewIdentity = false;
 
-  // Seed phrase recovery: when a recovery phrase was provided on a fresh
-  // vault and no identities exist locally, pull them from the remote DWN.
-  if (!identity && isFirstLaunch && options.recoveryPhrase && sync !== 'off') {
+  // Seed phrase recovery: when a recovery phrase was provided and no identities exist locally,
+  // pull them from the remote DWN before deciding whether to create a new identity.
+  if (!identity && options.recoveryPhrase && sync !== 'off') {
     try {
       identities = await recoverIdentitiesFromRemote({ userAgent, dwnEndpoints, registration: ctx.registration, storage });
       identity = identities[0];
@@ -99,7 +99,7 @@ export async function vaultConnect(
     }
   }
 
-  // Create a default identity if none were found or recovered.
+  // Create a default identity if none were found or recovered and the caller asked for one.
   if (!identity && shouldCreateIdentity) {
     isNewIdentity = true;
     identity = await createDefaultIdentity(userAgent, dwnEndpoints, options.metadata?.name ?? 'Default');
@@ -108,13 +108,9 @@ export async function vaultConnect(
   // When no identity exists (createIdentity: false on first launch), use the
   // agent DID as the session's connected DID. The session is still valid but
   // operates in the agent's context rather than a user identity's context.
-  const connectedDid = identity
-    ? resolveIdentityDids(identity).connectedDid
-    : userAgent.agentDid.uri;
-
-  const delegateDid = identity
-    ? resolveIdentityDids(identity).delegateDid
-    : undefined;
+  const identityDids = identity ? resolveIdentityDids(identity) : undefined;
+  const connectedDid = identityDids?.connectedDid ?? userAgent.agentDid.uri;
+  const delegateDid = identityDids?.delegateDid;
 
   // Register the new identity DID as a tenant and for sync.
   // Tenant registration must come before sync registration — with live
@@ -134,10 +130,11 @@ export async function vaultConnect(
     );
   }
   if (isNewIdentity && sync !== 'off') {
-    await userAgent.sync.registerIdentity({
-      did     : connectedDid,
-      options : { delegateDid, protocols: 'all' },
-    });
+    await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
+  } else if (!isNewIdentity && delegateDid) {
+    // Persisted delegate identities need their sync scope refreshed from
+    // current grants so revoked protocols do not keep syncing after restore.
+    await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
   }
 
   // Start sync.

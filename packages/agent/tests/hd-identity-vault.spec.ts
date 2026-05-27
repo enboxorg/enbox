@@ -115,6 +115,63 @@ describe('HdIdentityVault', () => {
         });
       });
 
+      describe('resetPasswordWithRecoveryPhrase()', () => {
+        const recoveryPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+        const otherRecoveryPhrase = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
+
+        it('resets the password when the recovery phrase matches the initialized vault', async () => {
+          await identityVault.initialize({
+            password: 'old-password',
+            recoveryPhrase,
+          });
+          const didBefore = (await identityVault.getDid()).uri;
+
+          await identityVault.lock();
+          await identityVault.resetPasswordWithRecoveryPhrase({
+            recoveryPhrase,
+            password: 'new-password',
+          });
+
+          expect(identityVault.isLocked()).toBe(false);
+          expect((await identityVault.getDid()).uri).toBe(didBefore);
+
+          await identityVault.lock();
+          await expect(identityVault.unlock({ password: 'old-password' })).rejects.toThrow('incorrect password');
+
+          await identityVault.unlock({ password: 'new-password' });
+          expect((await identityVault.getDid()).uri).toBe(didBefore);
+        });
+
+        it('leaves the existing vault unchanged when the recovery phrase does not match', async () => {
+          await identityVault.initialize({
+            password: 'old-password',
+            recoveryPhrase,
+          });
+          const didBefore = (await identityVault.getDid()).uri;
+
+          await identityVault.lock();
+          await expect(
+            identityVault.resetPasswordWithRecoveryPhrase({
+              recoveryPhrase : otherRecoveryPhrase,
+              password       : 'new-password',
+            })
+          ).rejects.toThrow('Recovery phrase does not match');
+
+          expect(identityVault.isLocked()).toBe(true);
+          await identityVault.unlock({ password: 'old-password' });
+          expect((await identityVault.getDid()).uri).toBe(didBefore);
+        });
+
+        it('throws an error if the vault is not initialized', async () => {
+          await expect(
+            identityVault.resetPasswordWithRecoveryPhrase({
+              recoveryPhrase,
+              password: 'new-password',
+            })
+          ).rejects.toThrow('has not been initialized');
+        });
+      });
+
       describe('getStatus()', () => {
         it('returns initialized=false when first instantiated', async () => {
           const vaultStatus = await identityVault.getStatus();

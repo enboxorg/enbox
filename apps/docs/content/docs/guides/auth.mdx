@@ -28,7 +28,7 @@ import { AuthManager } from '@enbox/auth';
 const auth = await AuthManager.create({ password: userPassword });
 
 // Create a new identity
-const session = await auth.connectLocal({ createIdentity: true });
+const session = await auth.connectVault({ createIdentity: true });
 
 // Check connection state
 console.log(auth.state); // 'connected'
@@ -39,11 +39,11 @@ console.log(session.did); // 'did:dht:...'
 
 ### 1. First-time setup
 
-When no identity exists, `connectLocal({ createIdentity: true })` creates a new DID, generates encryption keys, and bootstraps the agent with a local DWN.
+When no identity exists, `connectVault({ createIdentity: true })` creates a new DID, generates encryption keys, and bootstraps the agent with a local DWN.
 
 ### 2. Returning user
 
-If an identity already exists in the vault, `connect()` unlocks the vault and resumes the session.
+If an identity already exists in the vault, `connectVault()` unlocks the vault and resumes the session.
 
 ### 3. Wallet connect
 

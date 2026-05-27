@@ -92,6 +92,7 @@ export interface MockAgentOverrides {
   vaultUnlock?: (params: any) => Promise<void>;
   vaultLock?: () => Promise<void>;
   vaultChangePassword?: (params: any) => Promise<void>;
+  vaultResetPasswordWithRecoveryPhrase?: (params: any) => Promise<void>;
   vaultBackup?: () => Promise<any>;
   vaultRestore?: (params: any) => Promise<void>;
   vaultEncryptData?: (params: { plaintext: Uint8Array }) => Promise<string>;
@@ -181,10 +182,12 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       unlock         : overrides.vaultUnlock ?? (async (): Promise<void> => {}),
       lock           : overrides.vaultLock ?? (async (): Promise<void> => {}),
       changePassword : overrides.vaultChangePassword ?? (async (): Promise<void> => {}),
-      backup         : overrides.vaultBackup ?? (async (): Promise<any> => ({ data: 'backup' })),
-      restore        : overrides.vaultRestore ?? (async (): Promise<void> => {}),
-      encryptData    : overrides.vaultEncryptData ?? mockEncryptData,
-      decryptData    : overrides.vaultDecryptData ?? mockDecryptData,
+      resetPasswordWithRecoveryPhrase:
+        overrides.vaultResetPasswordWithRecoveryPhrase ?? (async (): Promise<void> => {}),
+      backup      : overrides.vaultBackup ?? (async (): Promise<any> => ({ data: 'backup' })),
+      restore     : overrides.vaultRestore ?? (async (): Promise<void> => {}),
+      encryptData : overrides.vaultEncryptData ?? mockEncryptData,
+      decryptData : overrides.vaultDecryptData ?? mockDecryptData,
     },
   } as unknown as EnboxUserAgent;
 }

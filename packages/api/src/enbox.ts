@@ -204,7 +204,7 @@ export class Enbox {
    *
    * // Caller-owned auth: enbox.disconnect() only stops Enbox-side state.
    * const auth = await AuthManager.create({...});
-   * const session = await auth.connect();
+   * const session = await auth.connectVault({ createIdentity: true });
    * const enbox = Enbox.fromSession(session);
    * await enbox.disconnect();   // stops sync + clears typed-enbox cache
    * await auth.disconnect();    // sign-out: caller's responsibility
@@ -333,12 +333,12 @@ export class Enbox {
    * - `new Enbox({ agent, connectedDid })` for raw parameters
    * - {@link Enbox.fromSession} for session-shaped objects
    *
-   * Routing happens at runtime inside `AuthManager._isVaultConnect`:
-   * presence of a non-empty `protocols` array or a `connectHandler` selects
-   * the handler flow; everything else routes to local. Local-style fields
-   * (`password`, `dwnEndpoints`, etc.) are forwarded to both the manager
-   * (as defaults) and the per-call payload, so behavior is consistent with
-   * restored sessions.
+   * Routing happens at runtime inside `AuthManager.connect`: a recovery phrase
+   * is treated as an explicit vault-restore action; otherwise, a non-empty
+   * `protocols` array or a `connectHandler` selects the handler flow and
+   * everything else routes to local. Local-style fields (`password`,
+   * `dwnEndpoints`, etc.) are forwarded to both the manager (as defaults) and
+   * the per-call payload, so behavior is consistent with restored sessions.
    *
    * If you need exact control of the `AuthManager.connect()` payload,
    * drop down one layer: create the `AuthManager` yourself with
@@ -486,9 +486,8 @@ export class Enbox {
    * The `satisfies Partial<ConnectOptions>` annotation makes the
    * compiler verify every key in the allowlist exists on `ConnectOptions`,
    * so misspelling a field name is a type error rather than a silent
-   * drop. Routing between local and handler flow happens inside
-   * `AuthManager._isVaultConnect` based on the presence of `protocols`
-   * / `connectHandler`.
+   * drop. Routing between restore, local, and handler flow happens inside
+   * `AuthManager.connect`.
    *
    * `protocols: []` is normalized away — an empty array carries no
    * permission intent and would otherwise produce a zero-grant

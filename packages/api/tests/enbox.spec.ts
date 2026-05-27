@@ -496,9 +496,9 @@ describe('Enbox API', () => {
         connectHandler,
       });
       // After the API-layer refactor we forward every per-call signal
-      // verbatim and let `AuthManager._isLocalConnect` pick the flow.
+      // verbatim and let `AuthManager.connect` pick the flow.
       // Handler flow ignores local-only keys (`createIdentity`,
-      // `metadata`, `recoveryPhrase`) but they're still passed so adding
+      // `metadata`) but they're still passed so adding
       // a new per-call option doesn't require coordinated edits here.
       expect(connect.firstCall.args[0]).toEqual({
         protocols,

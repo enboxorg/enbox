@@ -48,6 +48,30 @@ export type HdIdentityVaultInitializeParams = {
     dwnEndpoints?: string[];
  };
 
+export type HdIdentityVaultResetPasswordWithRecoveryPhraseParams = {
+  /** The BIP-39 recovery phrase originally used to initialize the vault. */
+  recoveryPhrase: string;
+
+  /** The new password used to unlock the existing vault from this point forward. */
+  password: string;
+};
+
+type HdIdentityVaultDerivedMaterial = {
+  recoveryPhrase: string;
+  contentEncryptionKey: Jwk;
+  contentEncryptionKeyJwe: string;
+  portableDid: PortableDid;
+};
+
+export class HdIdentityVaultRecoveryPhraseMismatchError extends Error {
+  public readonly code = 'HD_IDENTITY_VAULT_RECOVERY_PHRASE_MISMATCH';
+
+  constructor(message = 'HdIdentityVault: Recovery phrase does not match the initialized vault.') {
+    super(message);
+    this.name = 'HdIdentityVaultRecoveryPhraseMismatchError';
+  }
+}
+
 /**
  * Type guard function to check if a given object is an empty string or a string containing only
  * whitespace.
@@ -311,22 +335,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     // vault store.  This avoids the expensive LevelDB read + JWE decrypt on
     // every call while the vault is unlocked.
     if (!this._cachedPortableDid) {
-      const didJwe = await this.getStoredDid();
-
-      const { plaintext: portableDidBytes } = await CompactJwe.decrypt({
-        jwe        : didJwe,
-        key        : this._contentEncryptionKey!,
-        crypto     : this.crypto,
-        keyManager : new LocalKeyManager(),
-        options    : { minP2cCount: 1 }, // Vault decrypts its own JWEs; no external-input floor needed.
-      });
-
-      const portableDid = Convert.uint8Array(portableDidBytes).toObject();
-      if (!isPortableDid(portableDid)) {
-        throw new Error('HdIdentityVault: Unable to decode malformed DID in identity vault');
-      }
-
-      this._cachedPortableDid = portableDid;
+      this._cachedPortableDid = await this.decryptStoredPortableDid(this._contentEncryptionKey!);
     }
 
     // Always return a fresh BearerDid from a deep copy of the cached
@@ -398,217 +407,61 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
   public async initialize({ password, recoveryPhrase, dwnEndpoints }:
     HdIdentityVaultInitializeParams
   ): Promise<string> {
-    /**
-     * STEP 0: Validate the input parameters and verify the identity vault is not already
-     * initialized.
-     */
-
     // Verify that the identity vault was not previously initialized.
     if (await this.isInitialized()) {
       throw new Error(`HdIdentityVault: Vault has already been initialized.`);
     }
 
-    // Verify that the password is not empty.
-    if (isEmptyString(password)) {
-      throw new Error(
-        `HdIdentityVault: The password is required and cannot be blank. Please provide a ' +
-        'valid, non-empty password.`
-      );
-    }
+    const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase, dwnEndpoints });
 
-    // If provided, verify that the recovery phrase is not empty.
-    if (recoveryPhrase && isEmptyString(recoveryPhrase)) {
-      throw new Error(
-        `HdIdentityVault: The password is required and cannot be blank. Please provide a ' +
-        'valid, non-empty password.`
-      );
-    }
+    await this._store.set('contentEncryptionKey', derivedMaterial.contentEncryptionKeyJwe);
+    await this._store.set(
+      'did',
+      await this.encryptPortableDid(derivedMaterial.portableDid, derivedMaterial.contentEncryptionKey)
+    );
 
-    /**
-     * STEP 1: Derive a Hierarchical Deterministic (HD) key pair from the given (or generated)
-     * recoveryPhrase.
-     */
-
-    // Generate a 12-word (128-bit) mnemonic, if one was not provided.
-    recoveryPhrase ??= generateMnemonic(wordlist, 128);
-
-    // Validate the mnemonic for being 12-24 words contained in `wordlist`.
-    if (!validateMnemonic(recoveryPhrase, wordlist)) {
-      throw new Error(
-        'HdIdentityVault: The provided recovery phrase is invalid. Please ensure that the ' +
-        'recovery phrase is a correctly formatted series of 12 words.'
-      );
-    }
-
-    // Derive a root seed from the mnemonic.
-    const rootSeed = await mnemonicToSeed(recoveryPhrase);
-
-    // Derive a root key for the DID from the root seed.
-    const rootHdKey = HDKey.fromMasterSeed(rootSeed);
-
-    /**
-     * STEP 2: Derive the vault HD key pair from the root key.
-     */
-
-    // The vault HD key is derived using account 0 and index 0 so that it can be
-    // deterministically re-derived. The vault key pair serves as input keying material for:
-    // - deriving the vault content encryption key (CEK)
-    // - deriving the salt that serves as input to derive the key that encrypts the vault CEK
-    const vaultHdKey = rootHdKey.derive(`m/44'/0'/0'/0'/0'`);
-
-    /**
-     * STEP 3: Derive the vault Content Encryption Key (CEK) from the vault private
-     * key and a non-secret static info value.
-     */
-
-    // A non-secret static info value is combined with the vault private key as input to HKDF
-    // (Hash-based Key Derivation Function) to derive a 32-byte content encryption key (CEK).
-    const contentEncryptionKey = await this.crypto.deriveKey({
-      algorithm           : 'HKDF-512', // key derivation function
-      baseKeyBytes        : vaultHdKey.privateKey, // input keying material
-      salt                : '', // empty salt because private key is sufficiently random
-      info                : 'vault_cek', // non-secret application specific information
-      derivedKeyAlgorithm : 'A256GCM' // derived key algorithm
-    });
-
-    /**
-     * STEP 4: Using the given `password` and a `salt` derived from the vault public key, encrypt
-     * the vault CEK and store it in the data store as a compact JWE.
-     */
-
-    // A non-secret static info value is combined with the vault public key as input to HKDF
-    // (Hash-based Key Derivation Function) to derive a new 32-byte salt.
-    const saltInput = await this.crypto.deriveKeyBytes({
-      algorithm    : 'HKDF-512', // key derivation function
-      baseKeyBytes : vaultHdKey.publicKey, // input keying material
-      salt         : '', // empty salt because public key is sufficiently random
-      info         : 'vault_unlock_salt', // non-secret application specific information
-      length       : 256, // derived key length, in bits
-    });
-
-    // Construct the JWE header.
-    const cekJweProtectedHeader: JweHeaderParams = {
-      alg : 'PBES2-HS512+A256KW',
-      enc : 'A256GCM',
-      cty : 'text/plain',
-      p2c : this._keyDerivationWorkFactor,
-      p2s : Convert.uint8Array(saltInput).toBase64Url()
-    };
-
-    // Encrypt the vault content encryption key (CEK) to compact JWE format.
-    const cekJwe = await CompactJwe.encrypt({
-      key             : Convert.string(password).toUint8Array(),
-      protectedHeader : cekJweProtectedHeader,
-      plaintext       : Convert.object(contentEncryptionKey).toUint8Array(),
-      crypto          : this.crypto,
-      keyManager      : new LocalKeyManager()
-    });
-
-    // Store the compact JWE in the data store.
-    await this._store.set('contentEncryptionKey', cekJwe);
-
-    /**
-     * STEP 5: Create a DID using identity, signing, and encryption keys derived from the root key.
-     */
-
-    // Derive the identity key pair using index 0 and convert to JWK format.
-    // Note: The account is set to Unix epoch time so that in the future, the keys for a DID DHT
-    //       document can be deterministically derived based on the versionId returned in a DID
-    //       resolution result.
-    const identityHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/0'`);
-    const identityPrivateKey = await this.crypto.bytesToPrivateKey({
-      algorithm       : 'Ed25519',
-      privateKeyBytes : identityHdKey.privateKey
-    });
-
-    // Derive the signing key using index 1 and convert to JWK format.
-    const signingHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/1'`);
-    const signingPrivateKey = await this.crypto.bytesToPrivateKey({
-      algorithm       : 'Ed25519',
-      privateKeyBytes : signingHdKey.privateKey
-    });
-
-    // Derive the encryption key using index 2 (X25519 for ECDH-ES JWE encryption).
-    const encryptionHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/2'`);
-    const encryptionPrivateKey = await this.crypto.bytesToPrivateKey({
-      algorithm       : 'X25519',
-      privateKeyBytes : encryptionHdKey.privateKey
-    });
-
-    // Add the identity, signing, and encryption keys to the deterministic key generator so that
-    // when the DID is created it will use the derived keys.
-    const deterministicKeyGenerator = new DeterministicKeyGenerator();
-    await deterministicKeyGenerator.addPredefinedKeys({
-      privateKeys: [identityPrivateKey, signingPrivateKey, encryptionPrivateKey]
-    });
-
-    // Create the DID using the derived identity, signing, and encryption keys.
-    const options = {
-      verificationMethods: [
-        {
-          algorithm : 'Ed25519',
-          id        : 'sig',
-          purposes  : ['assertionMethod', 'authentication']
-        },
-        {
-          algorithm : 'X25519',
-          id        : 'enc',
-          purposes  : ['keyAgreement']
-        }
-      ]
-    } as DidDhtCreateOptions<DeterministicKeyGenerator>;
-
-    if (dwnEndpoints && !!dwnEndpoints.length) {
-      options.services = [
-        {
-          id              : 'dwn',
-          type            : 'DecentralizedWebNode',
-          serviceEndpoint : dwnEndpoints,
-        }
-      ];
-    }
-
-    const did = await DidDht.create({ keyManager: deterministicKeyGenerator, options });
-
-    /**
-     * STEP 6: Convert the DID to portable format and store it in the data store as a
-     * compact JWE.
-     */
-
-    // Convert the DID to a portable format.
-    const portableDid = await did.export();
-
-    // Construct the JWE header.
-    const didJweProtectedHeader: JweHeaderParams = {
-      alg : 'dir',
-      enc : 'A256GCM',
-      cty : 'json'
-    };
-
-    // Encrypt the DID to compact JWE format.
-    const didJwe = await CompactJwe.encrypt({
-      key             : contentEncryptionKey,
-      plaintext       : Convert.object(portableDid).toUint8Array(),
-      protectedHeader : didJweProtectedHeader,
-      crypto          : this.crypto,
-      keyManager      : new LocalKeyManager()
-    });
-
-    // Store the compact JWE in the data store.
-    await this._store.set('did', didJwe);
-
-    /**
-     * STEP 7: Set the vault CEK (effectively unlocking the vault), set the status to initialized,
-     * and return the mnemonic used to generate the vault key.
-     */
-
-    this._contentEncryptionKey = contentEncryptionKey;
-
+    this._contentEncryptionKey = derivedMaterial.contentEncryptionKey;
+    this._cachedPortableDid = derivedMaterial.portableDid;
     await this.setStatus({ initialized: true });
 
     // Return the recovery phrase in case it was generated so that it can be displayed to the user
     // for safekeeping.
-    return recoveryPhrase;
+    return derivedMaterial.recoveryPhrase;
+  }
+
+  /**
+   * Resets the vault password using the original recovery phrase.
+   *
+   * The recovery phrase must derive the same vault CEK and agent DID that are already stored in
+   * this vault. If it does not, no stored state is changed. On success, only the password-wrapped
+   * CEK is replaced; the encrypted DID and all local vault data are preserved.
+   */
+  public async resetPasswordWithRecoveryPhrase({
+    recoveryPhrase,
+    password,
+  }: HdIdentityVaultResetPasswordWithRecoveryPhraseParams): Promise<void> {
+    if (await this.isInitialized() === false) {
+      throw new Error(
+        'HdIdentityVault: Unable to reset the vault password because the identity vault has not ' +
+        'been initialized.'
+      );
+    }
+
+    const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase });
+    let storedPortableDid: PortableDid;
+    try {
+      storedPortableDid = await this.decryptStoredPortableDid(derivedMaterial.contentEncryptionKey);
+    } catch {
+      throw new HdIdentityVaultRecoveryPhraseMismatchError();
+    }
+
+    if (storedPortableDid.uri !== derivedMaterial.portableDid.uri) {
+      throw new HdIdentityVaultRecoveryPhraseMismatchError();
+    }
+
+    await this._store.set('contentEncryptionKey', derivedMaterial.contentEncryptionKeyJwe);
+    this._contentEncryptionKey = derivedMaterial.contentEncryptionKey;
+    this._cachedPortableDid = storedPortableDid;
   }
 
   /**
@@ -866,6 +719,185 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     });
 
     return plaintext;
+  }
+
+  private async deriveVaultMaterial({
+    password,
+    recoveryPhrase,
+    dwnEndpoints,
+  }: HdIdentityVaultInitializeParams): Promise<HdIdentityVaultDerivedMaterial> {
+    this.validatePassword(password);
+    const resolvedRecoveryPhrase = this.resolveRecoveryPhrase(recoveryPhrase);
+
+    const rootSeed = await mnemonicToSeed(resolvedRecoveryPhrase);
+    const rootHdKey = HDKey.fromMasterSeed(rootSeed);
+
+    // The vault key is deterministic so the same phrase can re-derive both the CEK and unlock salt.
+    const vaultHdKey = rootHdKey.derive(`m/44'/0'/0'/0'/0'`);
+    const contentEncryptionKey = await this.crypto.deriveKey({
+      algorithm           : 'HKDF-512',
+      baseKeyBytes        : vaultHdKey.privateKey,
+      salt                : '',
+      info                : 'vault_cek',
+      derivedKeyAlgorithm : 'A256GCM',
+    });
+    const saltInput = await this.crypto.deriveKeyBytes({
+      algorithm    : 'HKDF-512',
+      baseKeyBytes : vaultHdKey.publicKey,
+      salt         : '',
+      info         : 'vault_unlock_salt',
+      length       : 256,
+    });
+
+    return {
+      recoveryPhrase          : resolvedRecoveryPhrase,
+      contentEncryptionKey,
+      contentEncryptionKeyJwe : await this.encryptContentEncryptionKey({
+        password,
+        contentEncryptionKey,
+        saltInput,
+      }),
+      portableDid: await this.derivePortableDid({ rootHdKey, dwnEndpoints }),
+    };
+  }
+
+  private validatePassword(password: string): void {
+    if (isEmptyString(password)) {
+      throw new Error(
+        'HdIdentityVault: The password is required and cannot be blank. Please provide a ' +
+        'valid, non-empty password.'
+      );
+    }
+  }
+
+  private resolveRecoveryPhrase(recoveryPhrase?: string): string {
+    if (recoveryPhrase !== undefined && isEmptyString(recoveryPhrase)) {
+      throw new Error(
+        'HdIdentityVault: The recovery phrase is required and cannot be blank. Please provide a ' +
+        'valid BIP-39 recovery phrase.'
+      );
+    }
+
+    const resolvedRecoveryPhrase = recoveryPhrase ?? generateMnemonic(wordlist, 128);
+    if (!validateMnemonic(resolvedRecoveryPhrase, wordlist)) {
+      throw new Error(
+        'HdIdentityVault: The provided recovery phrase is invalid. Please ensure that the ' +
+        'recovery phrase is a correctly formatted series of 12 words.'
+      );
+    }
+
+    return resolvedRecoveryPhrase;
+  }
+
+  private async encryptContentEncryptionKey({
+    password,
+    contentEncryptionKey,
+    saltInput,
+  }: {
+    password: string;
+    contentEncryptionKey: Jwk;
+    saltInput: Uint8Array;
+  }): Promise<string> {
+    const protectedHeader: JweHeaderParams = {
+      alg : 'PBES2-HS512+A256KW',
+      enc : 'A256GCM',
+      cty : 'text/plain',
+      p2c : this._keyDerivationWorkFactor,
+      p2s : Convert.uint8Array(saltInput).toBase64Url(),
+    };
+
+    return CompactJwe.encrypt({
+      key        : Convert.string(password).toUint8Array(),
+      protectedHeader,
+      plaintext  : Convert.object(contentEncryptionKey).toUint8Array(),
+      crypto     : this.crypto,
+      keyManager : new LocalKeyManager(),
+    });
+  }
+
+  private async derivePortableDid({
+    rootHdKey,
+    dwnEndpoints,
+  }: {
+    rootHdKey: HDKey;
+    dwnEndpoints?: string[];
+  }): Promise<PortableDid> {
+    const identityHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/0'`);
+    const identityPrivateKey = await this.crypto.bytesToPrivateKey({
+      algorithm       : 'Ed25519',
+      privateKeyBytes : identityHdKey.privateKey,
+    });
+
+    const signingHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/1'`);
+    const signingPrivateKey = await this.crypto.bytesToPrivateKey({
+      algorithm       : 'Ed25519',
+      privateKeyBytes : signingHdKey.privateKey,
+    });
+
+    const encryptionHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/2'`);
+    const encryptionPrivateKey = await this.crypto.bytesToPrivateKey({
+      algorithm       : 'X25519',
+      privateKeyBytes : encryptionHdKey.privateKey,
+    });
+
+    const deterministicKeyGenerator = new DeterministicKeyGenerator();
+    await deterministicKeyGenerator.addPredefinedKeys({
+      privateKeys: [identityPrivateKey, signingPrivateKey, encryptionPrivateKey],
+    });
+
+    const options = {
+      verificationMethods: [
+        {
+          algorithm : 'Ed25519',
+          id        : 'sig',
+          purposes  : ['assertionMethod', 'authentication'],
+        },
+        {
+          algorithm : 'X25519',
+          id        : 'enc',
+          purposes  : ['keyAgreement'],
+        },
+      ],
+    } as DidDhtCreateOptions<DeterministicKeyGenerator>;
+
+    if (dwnEndpoints && dwnEndpoints.length > 0) {
+      options.services = [
+        {
+          id              : 'dwn',
+          type            : 'DecentralizedWebNode',
+          serviceEndpoint : dwnEndpoints,
+        },
+      ];
+    }
+
+    return (await DidDht.create({ keyManager: deterministicKeyGenerator, options })).export();
+  }
+
+  private async encryptPortableDid(portableDid: PortableDid, contentEncryptionKey: Jwk): Promise<string> {
+    return CompactJwe.encrypt({
+      key             : contentEncryptionKey,
+      plaintext       : Convert.object(portableDid).toUint8Array(),
+      protectedHeader : { alg: 'dir', enc: 'A256GCM', cty: 'json' },
+      crypto          : this.crypto,
+      keyManager      : new LocalKeyManager(),
+    });
+  }
+
+  private async decryptStoredPortableDid(contentEncryptionKey: Jwk): Promise<PortableDid> {
+    const { plaintext: portableDidBytes } = await CompactJwe.decrypt({
+      jwe        : await this.getStoredDid(),
+      key        : contentEncryptionKey,
+      crypto     : this.crypto,
+      keyManager : new LocalKeyManager(),
+      options    : { minP2cCount: 1 },
+    });
+
+    const portableDid = Convert.uint8Array(portableDidBytes).toObject();
+    if (!isPortableDid(portableDid)) {
+      throw new Error('HdIdentityVault: Unable to decode malformed DID in identity vault');
+    }
+
+    return portableDid;
   }
 
   /**

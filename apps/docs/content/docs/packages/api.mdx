@@ -425,7 +425,7 @@ If you passed a pre-built `agent` to `Enbox.connect({ agent })`, only step 1 run
 
 ```ts
 const auth = await AuthManager.create({ /* ... */ });
-const session = await auth.connect();
+const session = await auth.connectVault({ createIdentity: true });
 const enbox = Enbox.fromSession(session);
 
 // ... user uses the app ...

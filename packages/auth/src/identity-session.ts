@@ -11,7 +11,7 @@
  * ```ts
  * import { Enbox } from '@enbox/api';
  *
- * const session = await auth.connect();
+ * const session = await auth.connectVault({ createIdentity: true });
  * const enbox = Enbox.fromSession(session);
  * ```
  *
