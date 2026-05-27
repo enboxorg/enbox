@@ -54,27 +54,32 @@ export function syncMessageReplyIsSuccessful(reply: UnionMessageReply, pushedMes
 }
 
 /**
- * Determines whether a failed push reply represents a permanent failure that
- * should NOT be retried.
+ * 400 detail substrings that indicate a protocol dependency hasn't
+ * arrived on the remote yet. These resolve on retry once the
+ * dependency is pushed, so they must NOT be treated as permanent.
+ */
+const TRANSIENT_DEPENDENCY_PATTERNS = [
+  'ComposedProtocolNotInstalled',
+  'ProtocolNotFound',
+];
+
+/**
+ * Classifies a failed push reply as permanent (dead-letter) or
+ * transient (retry with backoff).
  *
- * 400 errors are generally permanent (schema violations, record limit exceeded),
- * but protocol dependency errors are transient — the dependency may arrive
- * shortly (e.g. SocialGraph ProtocolsConfigure arrives before Profile's push
- * is retried). These are retried so that out-of-order pushes self-heal.
- *
- * 401/403 are permanent (auth errors that won't resolve on retry).
+ * Permanent: 401/403 auth errors, most 400 validation errors.
+ * Transient: 5xx, network errors, and 400 protocol-dependency errors
+ * that self-heal once the dependency arrives on the remote.
  */
 export function isPermanentPushFailure(reply: UnionMessageReply): boolean {
-  if (reply.status.code === 401 || reply.status.code === 403) {
-    return true;
+  const { code, detail } = reply.status;
+
+  if (code === 401 || code === 403) { return true; }
+
+  if (code === 400) {
+    return !TRANSIENT_DEPENDENCY_PATTERNS.some(pattern => detail?.includes(pattern));
   }
-  if (reply.status.code === 400) {
-    const detail = reply.status.detail ?? '';
-    if (detail.includes('ComposedProtocolNotInstalled') || detail.includes('ProtocolNotFound')) {
-      return false;
-    }
-    return true;
-  }
+
   return false;
 }
 
