@@ -54,17 +54,33 @@ export function syncMessageReplyIsSuccessful(reply: UnionMessageReply, pushedMes
 }
 
 /**
- * Determines whether a failed push reply represents a permanent failure that
- * should NOT be retried. Permanent failures include protocol violations (400),
- * authorization errors (401/403), and schema validation errors that will never
- * succeed regardless of retry.
+ * 400 detail substrings that indicate a protocol dependency hasn't
+ * arrived on the remote yet. These resolve on retry once the
+ * dependency is pushed, so they must NOT be treated as permanent.
+ */
+const TRANSIENT_DEPENDENCY_PATTERNS = [
+  'ComposedProtocolNotInstalled',
+  'ProtocolNotFound',
+];
+
+/**
+ * Classifies a failed push reply as permanent (dead-letter) or
+ * transient (retry with backoff).
  *
- * Transient failures (5xx, network errors) are worth retrying.
+ * Permanent: 401/403 auth errors, most 400 validation errors.
+ * Transient: 5xx, network errors, and 400 protocol-dependency errors
+ * that self-heal once the dependency arrives on the remote.
  */
 export function isPermanentPushFailure(reply: UnionMessageReply): boolean {
-  return reply.status.code === 400 ||
-    reply.status.code === 401 ||
-    reply.status.code === 403;
+  const { code, detail } = reply.status;
+
+  if (code === 401 || code === 403) { return true; }
+
+  if (code === 400) {
+    return !TRANSIENT_DEPENDENCY_PATTERNS.some(pattern => detail?.includes(pattern));
+  }
+
+  return false;
 }
 
 /**
@@ -368,14 +384,25 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
   // Step 2: Sort in dependency order using topological sort.
   const sorted = topologicalSort(fetched);
 
-  // Step 3: Push messages in dependency order, consuming each stream as we go.
+  // Step 3: Buffer data streams so they survive fetch retries.
+  // ReadableStream is single-use — if sendDwnRequest's underlying fetch
+  // retries the HTTP request, the original stream is already consumed.
+  await bufferSmallStreams(sorted);
+
+  // Step 4: Push messages in dependency order.
   for (const entry of sorted) {
     const cid = await getMessageCid(entry.message);
+
+    // Create a fresh stream from the buffer for each send attempt.
+    const data = entry.bufferedData
+      ? new ReadableStream<Uint8Array>({ start(c): void { c.enqueue(entry.bufferedData!); c.close(); } })
+      : entry.dataStream;
+
     try {
       const reply = await agent.rpc.sendDwnRequest({
         dwnUrl,
         targetDid : did,
-        data      : entry.dataStream,
+        data,
         message   : entry.message
       });
 
