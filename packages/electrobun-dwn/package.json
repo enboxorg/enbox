@@ -1,6 +1,6 @@
 {
   "name": "@enbox/electrobun-dwn",
-  "version": "0.0.49",
+  "version": "0.0.50",
   "private": true,
   "type": "module",
   "description": "Electrobun app that runs a local Enbox DWN server",

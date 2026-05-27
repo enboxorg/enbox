@@ -1,5 +1,16 @@
 # @enbox/browser
 
+## 0.3.18
+
+### Patch Changes
+
+- [#952](https://github.com/enboxorg/enbox/pull/952) [`540babf`](https://github.com/enboxorg/enbox/commit/540babff775a2943ec9688027b95c1825c29c72b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add a dedicated recovery-phrase restore path that preserves existing vault data when the phrase matches, rejects mismatched local vaults without replacing them, and exposes a wallet-friendly `restoreFromPhrase()` API. Remove the deprecated phrase import and local-connect aliases so vault recovery has one public API, while preserving delegate sync-scope repair inside the restore flow.
+
+- Updated dependencies [[`540babf`](https://github.com/enboxorg/enbox/commit/540babff775a2943ec9688027b95c1825c29c72b)]:
+  - @enbox/agent@0.7.7
+  - @enbox/auth@0.6.40
+  - @enbox/api@0.6.32
+
 ## 0.3.17
 
 ### Patch Changes
