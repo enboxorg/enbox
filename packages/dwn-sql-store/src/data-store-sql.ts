@@ -8,6 +8,7 @@ import { CID } from 'multiformats';
 import { DataStream } from '@enbox/dwn-sdk-js';
 import { exporter } from 'ipfs-unixfs-exporter';
 import { importer } from 'ipfs-unixfs-importer';
+import { isDuplicateKeyError } from './utils/duplicate-key-error.js';
 import { Kysely, sql } from 'kysely';
 
 /**
@@ -155,11 +156,32 @@ export class DataStoreSql implements DataStore {
       dataSize = Number(dataDagRoot.unixfs?.fileSize() ?? dataDagRoot.size);
     }
 
-    // Insert the reference.
-    await db
-      .insertInto('dataRefs')
-      .values({ tenant, recordId, dataCid, dataSize })
-      .execute();
+    // Insert the reference. If an overlapping identical write inserted the
+    // ref first, treat it as an idempotent put and return the stored size.
+    try {
+      await db
+        .insertInto('dataRefs')
+        .values({ tenant, recordId, dataCid, dataSize })
+        .execute();
+    } catch (error: unknown) {
+      if (!isDuplicateKeyError(error)) {
+        throw error;
+      }
+
+      const racedRef = await db
+        .selectFrom('dataRefs')
+        .select('dataSize')
+        .where('tenant', '=', tenant)
+        .where('recordId', '=', recordId)
+        .where('dataCid', '=', dataCid)
+        .executeTakeFirst();
+
+      if (!racedRef) {
+        throw error;
+      }
+
+      dataSize = Number(racedRef.dataSize);
+    }
 
     return { dataSize };
   }

@@ -3,6 +3,7 @@ import type { DwnDatabaseType } from './types.js';
 import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 
 import { DataStream } from '@enbox/dwn-sdk-js';
+import { isDuplicateKeyError } from './utils/duplicate-key-error.js';
 import { Readable } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import {
@@ -142,11 +143,32 @@ export class DataStoreS3 implements DataStore {
       dataSize = await this.#uploadToS3(dataCid, dataStream);
     }
 
-    // Insert the reference.
-    await db
-      .insertInto('dataRefs')
-      .values({ tenant, recordId, dataCid, dataSize })
-      .execute();
+    // Insert the reference. If an overlapping identical write inserted the
+    // ref first, treat it as an idempotent put and return the stored size.
+    try {
+      await db
+        .insertInto('dataRefs')
+        .values({ tenant, recordId, dataCid, dataSize })
+        .execute();
+    } catch (error: unknown) {
+      if (!isDuplicateKeyError(error)) {
+        throw error;
+      }
+
+      const racedRef = await db
+        .selectFrom('dataRefs')
+        .select('dataSize')
+        .where('tenant', '=', tenant)
+        .where('recordId', '=', recordId)
+        .where('dataCid', '=', dataCid)
+        .executeTakeFirst();
+
+      if (!racedRef) {
+        throw error;
+      }
+
+      dataSize = Number(racedRef.dataSize);
+    }
 
     return { dataSize };
   }

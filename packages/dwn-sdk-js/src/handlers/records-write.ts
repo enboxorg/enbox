@@ -58,6 +58,31 @@ export class RecordsWriteHandler implements MethodHandler {
     };
     const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [ query ]);
 
+    // If the exact same message already exists, return 409 immediately.
+    // This prevents duplicate delivery races from re-processing large data
+    // streams and hitting unique constraints in SQL-backed data stores.
+    //
+    // Exception: an initial write may have been stored earlier without data
+    // (204). A later delivery of the same message with data must be allowed
+    // to complete the record.
+    const incomingCid = await Message.getCid(message);
+    for (const existingMessage of existingMessages) {
+      if (await Message.getCid(existingMessage) !== incomingCid) {
+        continue;
+      }
+
+      const canCompleteMissingData = await this.existingInitialWriteLacksData(
+        tenant,
+        existingMessage as RecordsWriteMessage,
+        message,
+        dataStream !== undefined,
+      );
+
+      if (!canCompleteMissingData) {
+        return { status: { code: 409, detail: 'Conflict' } };
+      }
+    }
+
     // if the incoming write is not the initial write, then it must not modify any immutable properties defined by the initial write
     const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
     let initialWrite: RecordsWriteMessage | undefined;
@@ -100,17 +125,14 @@ export class RecordsWriteHandler implements MethodHandler {
       // We detect the incomplete state by checking whether the existing
       // message is an initial write that lacks both inline encodedData and
       // DataStore data — indicating it was stored without data.
-      let existingLacksData = false;
-      if (newestExistingMessage !== undefined && dataStream !== undefined) {
-        const isInitial = await RecordsWrite.isInitialWrite(newestExistingMessage);
-        if (isInitial) {
-          const hasInlineData = !!(newestExistingMessage as any).encodedData;
-          const hasStoredData = this.deps.dataStore
-            ? !!(await this.deps.dataStore.get(tenant, recordsWrite.message.recordId, message.descriptor.dataCid))
-            : false;
-          existingLacksData = !hasInlineData && !hasStoredData;
-        }
-      }
+      const existingLacksData = newestExistingMessage !== undefined
+        ? await this.existingInitialWriteLacksData(
+          tenant,
+          newestExistingMessage as RecordsWriteMessage,
+          message,
+          dataStream !== undefined,
+        )
+        : false;
 
       if (!existingLacksData) {
         return {
@@ -286,6 +308,33 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     return messageWithOptionalEncodedData;
+  }
+
+  private async existingInitialWriteLacksData(
+    tenant: string,
+    existingMessage: RecordsWriteMessage,
+    incomingMessage: RecordsWriteMessage,
+    incomingHasData: boolean,
+  ): Promise<boolean> {
+    if (!incomingHasData) {
+      return false;
+    }
+
+    const isInitial = await RecordsWrite.isInitialWrite(existingMessage);
+    if (!isInitial) {
+      return false;
+    }
+
+    const hasInlineData = !!(existingMessage as RecordsQueryReplyEntry).encodedData;
+    const hasStoredData = this.deps.dataStore
+      ? !!(await this.deps.dataStore.get(
+        tenant,
+        existingMessage.recordId,
+        incomingMessage.descriptor.dataCid,
+      ))
+      : false;
+
+    return !hasInlineData && !hasStoredData;
   }
 
   private async processMessageWithoutDataStream(

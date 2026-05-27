@@ -15,6 +15,7 @@ import * as cbor from '@ipld/dag-cbor';
 import { executeWithTransaction } from './utils/transaction.js';
 import { extractTagsAndSanitizeIndexes } from './utils/sanitize.js';
 import { filterSelectQuery } from './utils/filter.js';
+import { isDuplicateKeyError } from './utils/duplicate-key-error.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { TagTables } from './utils/tags.js';
 import {
@@ -398,57 +399,4 @@ export class MessageStoreSql implements MessageStore {
   }
 }
 
-/**
- * Detect whether an error is a unique constraint violation from any
- * supported database dialect.
- *
- * Each dialect surfaces the error differently:
- *
- * | Dialect    | Error code / errno             | Message pattern                                    |
- * |------------|-------------------------------|----------------------------------------------------|
- * | PostgreSQL | `code === '23505'`            | "duplicate key value violates unique constraint"   |
- * | MySQL      | `errno === 1062`              | "Duplicate entry '...' for key '...'"              |
- * | SQLite     | `code === 'SQLITE_CONSTRAINT'`| "UNIQUE constraint failed: ..."                    |
- * | bun:sqlite | `code === 'SQLITE_CONSTRAINT_PRIMARYKEY'` or includes "UNIQUE" | same as above |
- *
- * @internal Exported for testing.
- */
-export function isDuplicateKeyError(error: unknown): boolean {
-  if (error == null || typeof error !== 'object') {
-    return false;
-  }
-
-  const err = error as Record<string, unknown>;
-  const code = err.code;
-  const errno = err.errno;
-  const message = typeof err.message === 'string' ? err.message : '';
-
-  // PostgreSQL: error code 23505 = unique_violation
-  if (code === '23505') {
-    return true;
-  }
-
-  // MySQL: errno 1062 = ER_DUP_ENTRY
-  if (errno === 1062) {
-    return true;
-  }
-
-  // SQLite (better-sqlite3 / bun:sqlite): SQLITE_CONSTRAINT with UNIQUE
-  if (
-    typeof code === 'string' &&
-    code.startsWith('SQLITE_CONSTRAINT') &&
-    message.includes('UNIQUE')
-  ) {
-    return true;
-  }
-
-  // Fallback: message-based detection for unknown drivers
-  if (
-    (message.includes('duplicate key') || message.includes('Duplicate entry')) &&
-    (message.includes('messageCid') || message.includes('unique constraint'))
-  ) {
-    return true;
-  }
-
-  return false;
-}
+export { isDuplicateKeyError } from './utils/duplicate-key-error.js';

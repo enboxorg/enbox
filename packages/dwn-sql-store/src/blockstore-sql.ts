@@ -4,6 +4,7 @@ import type { AbortOptions, AwaitIterable } from 'interface-store';
 import type { Blockstore, Pair } from 'interface-blockstore';
 
 import { CID } from 'multiformats';
+import { isDuplicateKeyError } from './utils/duplicate-key-error.js';
 
 /**
  * SQL-backed implementation of the `Blockstore` v5 interface, scoped to a
@@ -36,14 +37,22 @@ export class BlockstoreSql implements Blockstore {
   public async put(key: CID, val: Uint8Array, _options?: AbortOptions): Promise<CID> {
     const blockCid = key.toString();
 
-    await this.#db
-      .insertInto('dataBlocks')
-      .values({
-        rootDataCid : this.#rootDataCid,
-        blockCid,
-        data        : Buffer.from(val),
-      })
-      .execute();
+    try {
+      await this.#db
+        .insertInto('dataBlocks')
+        .values({
+          rootDataCid : this.#rootDataCid,
+          blockCid,
+          data        : Buffer.from(val),
+        })
+        .execute();
+    } catch (error: unknown) {
+      if (!isDuplicateKeyError(error)) {
+        throw error;
+      }
+      // Idempotent block put: overlapping writes of the same dataCid can
+      // import the same content-addressed block concurrently.
+    }
 
     return key;
   }
