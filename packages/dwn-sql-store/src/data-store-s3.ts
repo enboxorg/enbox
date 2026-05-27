@@ -115,13 +115,13 @@ export class DataStoreS3 implements DataStore {
 
     let dataSize: number;
 
-    if (otherDataSize !== undefined) {
+    if (otherDataSize === undefined) {
+      // New data — upload to S3 with a counting passthrough.
+      dataSize = await this.#uploadToS3(dataCid, dataStream);
+    } else {
       // S3 object already exists — skip upload.
       await DataStream.toBytes(dataStream);
       dataSize = otherDataSize;
-    } else {
-      // New data — upload to S3 with a counting passthrough.
-      dataSize = await this.#uploadToS3(dataCid, dataStream);
     }
 
     dataSize = await DataRefs.insertDataRef(db, { tenant, recordId, dataCid }, dataSize);

@@ -108,14 +108,14 @@ export class DataStoreSql implements DataStore {
       // Blocks already stored by a previous ref with the same dataCid.
       // Get the data size from that existing ref.
       const otherDataSize = await DataRefs.getAnyDataRefSize(db, dataCid);
-      if (otherDataSize !== undefined) {
-        dataSize = otherDataSize;
-        // Drain the stream — caller expects it to be consumed.
-        await DataStream.toBytes(dataStream);
-      } else {
+      if (otherDataSize === undefined) {
         // Edge case: blocks exist but no ref (interrupted previous put).
         // Count bytes without full buffering.
         dataSize = await DataStoreSql.#countStreamBytes(dataStream);
+      } else {
+        dataSize = otherDataSize;
+        // Drain the stream — caller expects it to be consumed.
+        await DataStream.toBytes(dataStream);
       }
     } else {
       // New data — clean up any partial blocks from interrupted imports,
