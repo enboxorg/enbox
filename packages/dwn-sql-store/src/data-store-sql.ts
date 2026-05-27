@@ -3,12 +3,12 @@ import type { DwnDatabaseType } from './types.js';
 import type { ImportResult } from 'ipfs-unixfs-importer';
 import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 
+import * as DataRefs from './utils/data-refs.js';
 import { BlockstoreSql } from './blockstore-sql.js';
 import { CID } from 'multiformats';
 import { DataStream } from '@enbox/dwn-sdk-js';
 import { exporter } from 'ipfs-unixfs-exporter';
 import { importer } from 'ipfs-unixfs-importer';
-import { isDuplicateKeyError } from './utils/duplicate-key-error.js';
 import { Kysely, sql } from 'kysely';
 
 /**
@@ -54,16 +54,8 @@ export class DataStoreSql implements DataStore {
   ): Promise<DataStoreGetResult | undefined> {
     const db = this.#getDb('get');
 
-    // Look up the reference to confirm this tenant+record has this data.
-    const ref = await db
-      .selectFrom('dataRefs')
-      .select('dataSize')
-      .where('tenant', '=', tenant)
-      .where('recordId', '=', recordId)
-      .where('dataCid', '=', dataCid)
-      .executeTakeFirst();
-
-    if (!ref) {
+    const dataSize = await DataRefs.getDataRefSize(db, { tenant, recordId, dataCid });
+    if (dataSize === undefined) {
       return undefined;
     }
 
@@ -85,7 +77,7 @@ export class DataStoreSql implements DataStore {
     });
 
     return {
-      dataSize: Number(ref.dataSize),
+      dataSize,
       dataStream,
     };
   }
@@ -98,19 +90,11 @@ export class DataStoreSql implements DataStore {
   ): Promise<DataStorePutResult> {
     const db = this.#getDb('put');
 
-    // Check if this exact ref already exists (idempotent put).
-    const existingRef = await db
-      .selectFrom('dataRefs')
-      .select('dataSize')
-      .where('tenant', '=', tenant)
-      .where('recordId', '=', recordId)
-      .where('dataCid', '=', dataCid)
-      .executeTakeFirst();
-
-    if (existingRef) {
+    const existingDataSize = await DataRefs.getDataRefSize(db, { tenant, recordId, dataCid });
+    if (existingDataSize !== undefined) {
       // Drain the stream — caller expects it to be consumed.
       await DataStream.toBytes(dataStream);
-      return { dataSize: Number(existingRef.dataSize) };
+      return { dataSize: existingDataSize };
     }
 
     // Check if blocks for this dataCid already exist (dedup path).
@@ -123,14 +107,9 @@ export class DataStoreSql implements DataStore {
     if (blocksExist) {
       // Blocks already stored by a previous ref with the same dataCid.
       // Get the data size from that existing ref.
-      const otherRef = await db
-        .selectFrom('dataRefs')
-        .select('dataSize')
-        .where('dataCid', '=', dataCid)
-        .executeTakeFirst();
-
-      if (otherRef) {
-        dataSize = Number(otherRef.dataSize);
+      const otherDataSize = await DataRefs.getAnyDataRefSize(db, dataCid);
+      if (otherDataSize !== undefined) {
+        dataSize = otherDataSize;
         // Drain the stream — caller expects it to be consumed.
         await DataStream.toBytes(dataStream);
       } else {
@@ -156,33 +135,7 @@ export class DataStoreSql implements DataStore {
       dataSize = Number(dataDagRoot.unixfs?.fileSize() ?? dataDagRoot.size);
     }
 
-    // Insert the reference. If an overlapping identical write inserted the
-    // ref first, treat it as an idempotent put and return the stored size.
-    try {
-      await db
-        .insertInto('dataRefs')
-        .values({ tenant, recordId, dataCid, dataSize })
-        .execute();
-    } catch (error: unknown) {
-      if (!isDuplicateKeyError(error)) {
-        throw error;
-      }
-
-      const racedRef = await db
-        .selectFrom('dataRefs')
-        .select('dataSize')
-        .where('tenant', '=', tenant)
-        .where('recordId', '=', recordId)
-        .where('dataCid', '=', dataCid)
-        .executeTakeFirst();
-
-      if (!racedRef) {
-        throw error;
-      }
-
-      dataSize = Number(racedRef.dataSize);
-    }
-
+    dataSize = await DataRefs.insertDataRef(db, { tenant, recordId, dataCid }, dataSize);
     return { dataSize };
   }
 
@@ -193,22 +146,10 @@ export class DataStoreSql implements DataStore {
   ): Promise<void> {
     const db = this.#getDb('delete');
 
-    // Remove the reference.
-    await db
-      .deleteFrom('dataRefs')
-      .where('tenant', '=', tenant)
-      .where('recordId', '=', recordId)
-      .where('dataCid', '=', dataCid)
-      .execute();
+    await DataRefs.deleteDataRef(db, { tenant, recordId, dataCid });
 
     // Garbage-collect blocks if no more refs point to this dataCid.
-    const remaining = await db
-      .selectFrom('dataRefs')
-      .select('dataCid')
-      .where('dataCid', '=', dataCid)
-      .executeTakeFirst();
-
-    if (!remaining) {
+    if (!await DataRefs.hasAnyDataRef(db, dataCid)) {
       await db
         .deleteFrom('dataBlocks')
         .where('rootDataCid', '=', dataCid)

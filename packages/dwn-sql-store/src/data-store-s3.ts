@@ -2,8 +2,8 @@ import type { Dialect } from './dialect/dialect.js';
 import type { DwnDatabaseType } from './types.js';
 import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 
+import * as DataRefs from './utils/data-refs.js';
 import { DataStream } from '@enbox/dwn-sdk-js';
-import { isDuplicateKeyError } from './utils/duplicate-key-error.js';
 import { Readable } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import {
@@ -74,15 +74,8 @@ export class DataStoreS3 implements DataStore {
   ): Promise<DataStoreGetResult | undefined> {
     const db = this.#getDb('get');
 
-    const ref = await db
-      .selectFrom('dataRefs')
-      .select('dataSize')
-      .where('tenant', '=', tenant)
-      .where('recordId', '=', recordId)
-      .where('dataCid', '=', dataCid)
-      .executeTakeFirst();
-
-    if (!ref) {
+    const dataSize = await DataRefs.getDataRefSize(db, { tenant, recordId, dataCid });
+    if (dataSize === undefined) {
       return undefined;
     }
 
@@ -98,7 +91,7 @@ export class DataStoreS3 implements DataStore {
     const dataStream = response.Body.transformToWebStream() as ReadableStream<Uint8Array>;
 
     return {
-      dataSize: Number(ref.dataSize),
+      dataSize,
       dataStream,
     };
   }
@@ -111,65 +104,27 @@ export class DataStoreS3 implements DataStore {
   ): Promise<DataStorePutResult> {
     const db = this.#getDb('put');
 
-    // Check if this exact ref already exists (idempotent put).
-    const existingRef = await db
-      .selectFrom('dataRefs')
-      .select('dataSize')
-      .where('tenant', '=', tenant)
-      .where('recordId', '=', recordId)
-      .where('dataCid', '=', dataCid)
-      .executeTakeFirst();
-
-    if (existingRef) {
+    const existingDataSize = await DataRefs.getDataRefSize(db, { tenant, recordId, dataCid });
+    if (existingDataSize !== undefined) {
       await DataStream.toBytes(dataStream);
-      return { dataSize: Number(existingRef.dataSize) };
+      return { dataSize: existingDataSize };
     }
 
     // Check if another ref for this dataCid already exists (dedup path).
-    const otherRef = await db
-      .selectFrom('dataRefs')
-      .select('dataSize')
-      .where('dataCid', '=', dataCid)
-      .executeTakeFirst();
+    const otherDataSize = await DataRefs.getAnyDataRefSize(db, dataCid);
 
     let dataSize: number;
 
-    if (otherRef) {
+    if (otherDataSize !== undefined) {
       // S3 object already exists — skip upload.
       await DataStream.toBytes(dataStream);
-      dataSize = Number(otherRef.dataSize);
+      dataSize = otherDataSize;
     } else {
       // New data — upload to S3 with a counting passthrough.
       dataSize = await this.#uploadToS3(dataCid, dataStream);
     }
 
-    // Insert the reference. If an overlapping identical write inserted the
-    // ref first, treat it as an idempotent put and return the stored size.
-    try {
-      await db
-        .insertInto('dataRefs')
-        .values({ tenant, recordId, dataCid, dataSize })
-        .execute();
-    } catch (error: unknown) {
-      if (!isDuplicateKeyError(error)) {
-        throw error;
-      }
-
-      const racedRef = await db
-        .selectFrom('dataRefs')
-        .select('dataSize')
-        .where('tenant', '=', tenant)
-        .where('recordId', '=', recordId)
-        .where('dataCid', '=', dataCid)
-        .executeTakeFirst();
-
-      if (!racedRef) {
-        throw error;
-      }
-
-      dataSize = Number(racedRef.dataSize);
-    }
-
+    dataSize = await DataRefs.insertDataRef(db, { tenant, recordId, dataCid }, dataSize);
     return { dataSize };
   }
 
@@ -180,22 +135,10 @@ export class DataStoreS3 implements DataStore {
   ): Promise<void> {
     const db = this.#getDb('delete');
 
-    // Remove the reference.
-    await db
-      .deleteFrom('dataRefs')
-      .where('tenant', '=', tenant)
-      .where('recordId', '=', recordId)
-      .where('dataCid', '=', dataCid)
-      .execute();
+    await DataRefs.deleteDataRef(db, { tenant, recordId, dataCid });
 
     // Garbage-collect the S3 object if no more refs point to this dataCid.
-    const remaining = await db
-      .selectFrom('dataRefs')
-      .select('dataCid')
-      .where('dataCid', '=', dataCid)
-      .executeTakeFirst();
-
-    if (!remaining) {
+    if (!await DataRefs.hasAnyDataRef(db, dataCid)) {
       await this.#s3.send(new DeleteObjectCommand({
         Bucket : this.#bucket,
         Key    : dataCid,

@@ -125,14 +125,15 @@ export class RecordsWriteHandler implements MethodHandler {
       // We detect the incomplete state by checking whether the existing
       // message is an initial write that lacks both inline encodedData and
       // DataStore data — indicating it was stored without data.
-      const existingLacksData = newestExistingMessage !== undefined
-        ? await this.existingInitialWriteLacksData(
+      let existingLacksData = false;
+      if (newestExistingMessage) {
+        existingLacksData = await this.existingInitialWriteLacksData(
           tenant,
           newestExistingMessage as RecordsWriteMessage,
           message,
           dataStream !== undefined,
-        )
-        : false;
+        );
+      }
 
       if (!existingLacksData) {
         return {
