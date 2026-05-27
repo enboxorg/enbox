@@ -188,6 +188,24 @@ export function testRecordsWriteHandler(): void {
         expect(thirdRecordsQueryReply.entries![0].encodedData).toBe(newDataEncoded);
       });
 
+      it('should return 409 for an exact duplicate initial RecordsWrite with large data', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
+        const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
+          author : alice,
+          data   : dataBytes,
+        });
+
+        const firstReply = await dwn.processMessage(alice.did, message, { dataStream });
+        expect(firstReply.status.code).toBe(202);
+
+        const duplicateReply = await dwn.processMessage(alice.did, message, {
+          dataStream: DataStream.fromBytes(dataBytes),
+        });
+        expect(duplicateReply.status.code).toBe(409);
+      });
+
       it('should only be able to overwrite existing record if new message CID is larger when `messageTimestamp` value is the same', async () => {
       // start by writing an originating message
         const author = await TestDataGenerator.generatePersona();

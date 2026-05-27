@@ -44,6 +44,13 @@ describe('BlockstoreSql', () => {
       .addColumn('blockCid', 'varchar(60)', (col) => col.notNull())
       .addColumn('data', 'blob', (col) => col.notNull())
       .execute();
+
+    await db.schema
+      .createIndex('index_dataBlocks_rootDataCid_blockCid')
+      .on('dataBlocks')
+      .columns(['rootDataCid', 'blockCid'])
+      .unique()
+      .execute();
   });
 
   beforeEach(async () => {
@@ -72,6 +79,16 @@ describe('BlockstoreSql', () => {
       const cid = fakeCid(1);
       const data = new Uint8Array([10, 20, 30]);
 
+      const result = await blockstore.put(cid, data);
+
+      expect(result.toString()).toBe(cid.toString());
+    });
+
+    it('should be idempotent when the same block is put twice', async () => {
+      const cid = fakeCid(6);
+      const data = new Uint8Array([1, 2, 3]);
+
+      await blockstore.put(cid, data);
       const result = await blockstore.put(cid, data);
 
       expect(result.toString()).toBe(cid.toString());

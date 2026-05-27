@@ -120,6 +120,21 @@ describe('DataStoreSql — content-addressed dedup', () => {
         expect(refs.length).toBe(1);
       });
 
+      it('should be idempotent when duplicate puts overlap', async () => {
+        const { dataCid, bytes } = await prepareData('overlapping idempotent data');
+
+        const [result1, result2] = await Promise.all([
+          store.put('did:example:alice', 'rec-1', dataCid, streamFrom(bytes)),
+          store.put('did:example:alice', 'rec-1', dataCid, streamFrom(bytes)),
+        ]);
+
+        expect(result1.dataSize).toBe(bytes.length);
+        expect(result2.dataSize).toBe(bytes.length);
+
+        const refs = await db.selectFrom('dataRefs').selectAll().execute();
+        expect(refs.length).toBe(1);
+      });
+
       // ─── GC on delete ──────────────────────────────────────────────
 
       it('should keep blocks when deleting one ref but another ref still exists', async () => {

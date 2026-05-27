@@ -3,6 +3,7 @@ import type { DwnDatabaseType } from './types.js';
 import type { ImportResult } from 'ipfs-unixfs-importer';
 import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 
+import * as DataRefs from './utils/data-refs.js';
 import { BlockstoreSql } from './blockstore-sql.js';
 import { CID } from 'multiformats';
 import { DataStream } from '@enbox/dwn-sdk-js';
@@ -53,16 +54,8 @@ export class DataStoreSql implements DataStore {
   ): Promise<DataStoreGetResult | undefined> {
     const db = this.#getDb('get');
 
-    // Look up the reference to confirm this tenant+record has this data.
-    const ref = await db
-      .selectFrom('dataRefs')
-      .select('dataSize')
-      .where('tenant', '=', tenant)
-      .where('recordId', '=', recordId)
-      .where('dataCid', '=', dataCid)
-      .executeTakeFirst();
-
-    if (!ref) {
+    const dataSize = await DataRefs.getDataRefSize(db, { tenant, recordId, dataCid });
+    if (dataSize === undefined) {
       return undefined;
     }
 
@@ -84,7 +77,7 @@ export class DataStoreSql implements DataStore {
     });
 
     return {
-      dataSize: Number(ref.dataSize),
+      dataSize,
       dataStream,
     };
   }
@@ -97,19 +90,11 @@ export class DataStoreSql implements DataStore {
   ): Promise<DataStorePutResult> {
     const db = this.#getDb('put');
 
-    // Check if this exact ref already exists (idempotent put).
-    const existingRef = await db
-      .selectFrom('dataRefs')
-      .select('dataSize')
-      .where('tenant', '=', tenant)
-      .where('recordId', '=', recordId)
-      .where('dataCid', '=', dataCid)
-      .executeTakeFirst();
-
-    if (existingRef) {
+    const existingDataSize = await DataRefs.getDataRefSize(db, { tenant, recordId, dataCid });
+    if (existingDataSize !== undefined) {
       // Drain the stream — caller expects it to be consumed.
       await DataStream.toBytes(dataStream);
-      return { dataSize: Number(existingRef.dataSize) };
+      return { dataSize: existingDataSize };
     }
 
     // Check if blocks for this dataCid already exist (dedup path).
@@ -122,20 +107,15 @@ export class DataStoreSql implements DataStore {
     if (blocksExist) {
       // Blocks already stored by a previous ref with the same dataCid.
       // Get the data size from that existing ref.
-      const otherRef = await db
-        .selectFrom('dataRefs')
-        .select('dataSize')
-        .where('dataCid', '=', dataCid)
-        .executeTakeFirst();
-
-      if (otherRef) {
-        dataSize = Number(otherRef.dataSize);
-        // Drain the stream — caller expects it to be consumed.
-        await DataStream.toBytes(dataStream);
-      } else {
+      const otherDataSize = await DataRefs.getAnyDataRefSize(db, dataCid);
+      if (otherDataSize === undefined) {
         // Edge case: blocks exist but no ref (interrupted previous put).
         // Count bytes without full buffering.
         dataSize = await DataStoreSql.#countStreamBytes(dataStream);
+      } else {
+        dataSize = otherDataSize;
+        // Drain the stream — caller expects it to be consumed.
+        await DataStream.toBytes(dataStream);
       }
     } else {
       // New data — clean up any partial blocks from interrupted imports,
@@ -155,12 +135,7 @@ export class DataStoreSql implements DataStore {
       dataSize = Number(dataDagRoot.unixfs?.fileSize() ?? dataDagRoot.size);
     }
 
-    // Insert the reference.
-    await db
-      .insertInto('dataRefs')
-      .values({ tenant, recordId, dataCid, dataSize })
-      .execute();
-
+    dataSize = await DataRefs.insertDataRef(db, { tenant, recordId, dataCid }, dataSize);
     return { dataSize };
   }
 
@@ -171,22 +146,10 @@ export class DataStoreSql implements DataStore {
   ): Promise<void> {
     const db = this.#getDb('delete');
 
-    // Remove the reference.
-    await db
-      .deleteFrom('dataRefs')
-      .where('tenant', '=', tenant)
-      .where('recordId', '=', recordId)
-      .where('dataCid', '=', dataCid)
-      .execute();
+    await DataRefs.deleteDataRef(db, { tenant, recordId, dataCid });
 
     // Garbage-collect blocks if no more refs point to this dataCid.
-    const remaining = await db
-      .selectFrom('dataRefs')
-      .select('dataCid')
-      .where('dataCid', '=', dataCid)
-      .executeTakeFirst();
-
-    if (!remaining) {
+    if (!await DataRefs.hasAnyDataRef(db, dataCid)) {
       await db
         .deleteFrom('dataBlocks')
         .where('rootDataCid', '=', dataCid)
