@@ -551,7 +551,7 @@ describe('sync-messages', () => {
 
       expect(sendStub.calledOnce).toBe(true);
       const callArgs = sendStub.firstCall.args[0];
-      expect(callArgs.data).toBeInstanceOf(ReadableStream);
+      expect(callArgs.data).toBeInstanceOf(Blob);
     });
   });
 
