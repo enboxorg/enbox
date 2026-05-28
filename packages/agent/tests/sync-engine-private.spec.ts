@@ -3024,6 +3024,58 @@ describe('SyncEngineLevel — private methods', () => {
       expect(events.some(e => e.type === 'reconcile:completed')).toBe(true);
     });
 
+    it('should preserve closure failures when roots converge after reconciliation', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const protocol = 'https://example.com/protocol';
+      const link = makeLiveLink({
+        protocol,
+        scope: { kind: 'protocol', protocol },
+      });
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-closure',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol,
+        category       : 'closure',
+        errorCode      : 'ClosureProtocolMetadataMissing',
+        errorDetail    : 'dependency missing despite matching roots',
+      });
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-pull',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol,
+        category       : 'pull-processing',
+        errorDetail    : 'pull failed before roots converged',
+      });
+
+      sinon.stub(engine as any, 'getLocalRoot').resolves('same-root');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('same-root');
+      sinon.stub(engine as any, 'diffWithRemote');
+
+      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
+      (engine as any)._ledger = {
+        clearNeedsReconcile : clearStub,
+        saveLink            : sinon.stub().resolves(),
+        getAllLinks         : sinon.stub().resolves([]),
+      };
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      const remaining = await engine.getFailedMessages();
+      expect(remaining.length).toBe(1);
+      expect(remaining[0].messageCid).toBe('dl-closure');
+      expect(remaining[0].category).toBe('closure');
+
+      const health = await engine.getSyncHealth();
+      expect(health.failedMessageCount).toBe(1);
+      expect(health.closureFailureCount).toBe(1);
+      expect(health.syncHealthy).toBe(false);
+    });
+
     it('should NOT clear needsReconcile when roots still differ after reconciliation', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';

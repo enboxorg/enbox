@@ -1016,9 +1016,7 @@ export class SyncEngineLevel implements SyncEngine {
       // Root convergence proves primary CID membership matches, but it does
       // not prove dependencies are usable. Keep closure failures until a later
       // successful apply/closure pass clears the specific CID.
-      void this.clearDeadLettersForLink(did, dwnUrl, protocol, {
-        categories: SyncEngineLevel.ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES,
-      });
+      await this.clearRootConvergenceDeadLetters(did, dwnUrl, protocol);
       this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
       if (prevRepairConnectivity !== 'online') {
         this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevRepairConnectivity, to: 'online' });
@@ -2293,9 +2291,7 @@ export class SyncEngineLevel implements SyncEngine {
         await this.ledger.clearNeedsReconcile(link);
         // SMT roots match, so transport/apply failures for this link may no
         // longer be current. Closure failures are not cleared by root equality.
-        void this.clearDeadLettersForLink(did, dwnUrl, protocol, {
-          categories: SyncEngineLevel.ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES,
-        });
+        await this.clearRootConvergenceDeadLetters(did, dwnUrl, protocol);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
       } else {
         // Roots still differ — retry after a delay. This can happen when
@@ -2898,6 +2894,20 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  private async clearRootConvergenceDeadLetters(
+    tenantDid: string,
+    remoteEndpoint: string,
+    protocol?: string,
+  ): Promise<void> {
+    try {
+      await this.clearDeadLettersForLink(tenantDid, remoteEndpoint, protocol, {
+        categories: SyncEngineLevel.ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES,
+      });
+    } catch (error) {
+      console.warn(`SyncEngineLevel: Failed to clear root-convergence dead letters for ${tenantDid} -> ${remoteEndpoint}`, error);
+    }
+  }
+
   /**
    * Build a compound dead letter key. Different remotes can fail the same CID
    * for different reasons, so the key includes the remote endpoint.
@@ -3016,11 +3026,11 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return {
-      connectivity: this.connectivityState,
-      failedMessageCount,
-      closureFailureCount,
-      degradedLinkCount,
-      syncHealthy: failedMessageCount === 0 && degradedLinkCount === 0,
+      connectivity        : this.connectivityState,
+      failedMessageCount  : failedMessageCount,
+      closureFailureCount : closureFailureCount,
+      degradedLinkCount   : degradedLinkCount,
+      syncHealthy         : failedMessageCount === 0 && degradedLinkCount === 0,
     };
   }
 
