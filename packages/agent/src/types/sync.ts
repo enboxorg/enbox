@@ -312,8 +312,16 @@ export type SyncHealthSummary = {
    * the engine self-heals — entries are auto-cleared on later success.
    */
   failedMessageCount: number;
+  /**
+   * Number of current closure failures. A link can have matching sync roots
+   * while still being unusable because required dependencies are missing; this
+   * count keeps that state visible to callers.
+   */
+  closureFailureCount: number;
   /** Number of links currently in 'repairing' or 'degraded_poll' status. */
   degradedLinkCount: number;
+  /** True only when there are no failed messages and no degraded links. */
+  syncHealthy: boolean;
 };
 
 export interface SyncEngine {

@@ -3024,6 +3024,58 @@ describe('SyncEngineLevel — private methods', () => {
       expect(events.some(e => e.type === 'reconcile:completed')).toBe(true);
     });
 
+    it('should preserve closure failures when roots converge after reconciliation', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const protocol = 'https://example.com/protocol';
+      const link = makeLiveLink({
+        protocol,
+        scope: { kind: 'protocol', protocol },
+      });
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-closure',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol,
+        category       : 'closure',
+        errorCode      : 'ClosureProtocolMetadataMissing',
+        errorDetail    : 'dependency missing despite matching roots',
+      });
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-pull',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol,
+        category       : 'pull-processing',
+        errorDetail    : 'pull failed before roots converged',
+      });
+
+      sinon.stub(engine as any, 'getLocalRoot').resolves('same-root');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('same-root');
+      sinon.stub(engine as any, 'diffWithRemote');
+
+      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
+      (engine as any)._ledger = {
+        clearNeedsReconcile : clearStub,
+        saveLink            : sinon.stub().resolves(),
+        getAllLinks         : sinon.stub().resolves([]),
+      };
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      const remaining = await engine.getFailedMessages();
+      expect(remaining.length).toBe(1);
+      expect(remaining[0].messageCid).toBe('dl-closure');
+      expect(remaining[0].category).toBe('closure');
+
+      const health = await engine.getSyncHealth();
+      expect(health.failedMessageCount).toBe(1);
+      expect(health.closureFailureCount).toBe(1);
+      expect(health.syncHealthy).toBe(false);
+    });
+
     it('should NOT clear needsReconcile when roots still differ after reconciliation', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
@@ -3894,8 +3946,10 @@ describe('SyncEngineLevel — private methods', () => {
 
       const health = await engine.getSyncHealth();
       expect(health.failedMessageCount).toBe(2);
+      expect(health.closureFailureCount).toBe(1);
       expect(health.connectivity).toBeDefined();
       expect(health.degradedLinkCount).toBe(0);
+      expect(health.syncHealthy).toBe(false);
     });
 
     it('should clear dead letters scoped to protocol — sibling protocol failures survive', async () => {
@@ -3934,6 +3988,45 @@ describe('SyncEngineLevel — private methods', () => {
       expect(remaining.length).toBe(1);
       expect(remaining[0].messageCid).toBe('dl-proto-b');
       expect(remaining[0].protocol).toBe('https://example.com/proto-b');
+    });
+
+    it('should not clear closure dead letters when only root-convergence-clearable categories are requested', async () => {
+      const engine = createEngine({ db });
+
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-closure',
+        tenantDid      : 'did:example:closure-health',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol       : 'https://example.com/proto',
+        category       : 'closure',
+        errorCode      : 'ClosureProtocolMetadataMissing',
+        errorDetail    : 'missing dependency after root convergence',
+      });
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-pull',
+        tenantDid      : 'did:example:closure-health',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol       : 'https://example.com/proto',
+        category       : 'pull-processing',
+        errorDetail    : 'transient pull failure before root convergence',
+      });
+
+      await (engine as any).clearDeadLettersForLink(
+        'did:example:closure-health',
+        'https://dwn.example.com',
+        'https://example.com/proto',
+        { categories: new Set(['push-permanent', 'push-exhausted', 'pull-processing']) },
+      );
+
+      const remaining = await engine.getFailedMessages();
+      expect(remaining.length).toBe(1);
+      expect(remaining[0].messageCid).toBe('dl-closure');
+      expect(remaining[0].category).toBe('closure');
+
+      const health = await engine.getSyncHealth();
+      expect(health.failedMessageCount).toBe(1);
+      expect(health.closureFailureCount).toBe(1);
+      expect(health.syncHealthy).toBe(false);
     });
 
     it('should clear dead letters for full-tenant link without affecting protocol-scoped entries', async () => {

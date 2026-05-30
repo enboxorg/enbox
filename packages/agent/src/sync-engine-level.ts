@@ -1013,11 +1013,10 @@ export class SyncEngineLevel implements SyncEngine {
       link.connectivity = 'online';
       await this.ledger.setStatus(link, 'live');
 
-      // Auto-clear dead letters for this link — repair has verified
-      // convergence via SMT reconciliation so any previously recorded
-      // failures (closure, push-exhausted, pull-processing) for this
-      // specific link are no longer current.
-      void this.clearDeadLettersForLink(did, dwnUrl, protocol);
+      // Root convergence proves primary CID membership matches, but it does
+      // not prove dependencies are usable. Keep closure failures until a later
+      // successful apply/closure pass clears the specific CID.
+      await this.clearRootConvergenceDeadLetters(did, dwnUrl, protocol);
       this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
       if (prevRepairConnectivity !== 'online') {
         this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevRepairConnectivity, to: 'online' });
@@ -2137,6 +2136,8 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Push retry backoff schedule: immediate, 250ms, 1s, 2s, then give up. */
   private static readonly PUSH_RETRY_BACKOFF_MS = [0, 250, 1000, 2000];
+  private static readonly ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES: ReadonlySet<DeadLetterCategory> =
+    new Set(['push-permanent', 'push-exhausted', 'pull-processing']);
 
   /**
    * Re-queues a failed push batch for retry, or marks the link
@@ -2288,9 +2289,9 @@ export class SyncEngineLevel implements SyncEngine {
 
       if (reconcileOutcome.converged) {
         await this.ledger.clearNeedsReconcile(link);
-        // SMT roots match — this link is converged. Clear dead letters
-        // scoped to this specific link (tenantDid, remoteEndpoint, protocol).
-        void this.clearDeadLettersForLink(did, dwnUrl, protocol);
+        // SMT roots match, so transport/apply failures for this link may no
+        // longer be current. Closure failures are not cleared by root equality.
+        await this.clearRootConvergenceDeadLetters(did, dwnUrl, protocol);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
       } else {
         // Roots still differ — retry after a delay. This can happen when
@@ -2867,14 +2868,20 @@ export class SyncEngineLevel implements SyncEngine {
    * When `protocol` is undefined (full-tenant link), clears entries that
    * also have no protocol.
    */
-  private async clearDeadLettersForLink(tenantDid: string, remoteEndpoint: string, protocol?: string): Promise<void> {
+  private async clearDeadLettersForLink(
+    tenantDid: string,
+    remoteEndpoint: string,
+    protocol?: string,
+    options: { categories?: ReadonlySet<DeadLetterCategory> } = {},
+  ): Promise<void> {
     const batch: { type: 'del'; key: string }[] = [];
     try {
       for await (const [key, value] of this._deadLetters.iterator()) {
         const entry = JSON.parse(value) as DeadLetterEntry;
         if (entry.tenantDid === tenantDid &&
             entry.remoteEndpoint === remoteEndpoint &&
-            entry.protocol === protocol) {
+            entry.protocol === protocol &&
+            (options.categories === undefined || options.categories.has(entry.category))) {
           batch.push({ type: 'del', key });
         }
       }
@@ -2884,6 +2891,20 @@ export class SyncEngineLevel implements SyncEngine {
     } catch (error) {
       const e = error as { code?: string };
       if (e.code !== 'LEVEL_DATABASE_NOT_OPEN') { throw error; }
+    }
+  }
+
+  private async clearRootConvergenceDeadLetters(
+    tenantDid: string,
+    remoteEndpoint: string,
+    protocol?: string,
+  ): Promise<void> {
+    try {
+      await this.clearDeadLettersForLink(tenantDid, remoteEndpoint, protocol, {
+        categories: SyncEngineLevel.ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES,
+      });
+    } catch (error) {
+      console.warn(`SyncEngineLevel: Failed to clear root-convergence dead letters for ${tenantDid} -> ${remoteEndpoint}`, error);
     }
   }
 
@@ -2984,8 +3005,13 @@ export class SyncEngineLevel implements SyncEngine {
 
   public async getSyncHealth(): Promise<SyncHealthSummary> {
     let failedMessageCount = 0;
-    for await (const _ of this._deadLetters.iterator()) {
+    let closureFailureCount = 0;
+    for await (const [, value] of this._deadLetters.iterator()) {
       failedMessageCount++;
+      const entry = JSON.parse(value) as DeadLetterEntry;
+      if (entry.category === 'closure') {
+        closureFailureCount++;
+      }
     }
 
     // Count degraded links from the durable ledger, not just in-memory
@@ -3000,9 +3026,11 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return {
-      connectivity: this.connectivityState,
-      failedMessageCount,
-      degradedLinkCount,
+      connectivity        : this.connectivityState,
+      failedMessageCount  : failedMessageCount,
+      closureFailureCount : closureFailureCount,
+      degradedLinkCount   : degradedLinkCount,
+      syncHealthy         : failedMessageCount === 0 && degradedLinkCount === 0,
     };
   }
 
