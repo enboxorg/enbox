@@ -1605,6 +1605,14 @@ describe('AgentPermissionsApi', () => {
 
       expect(invalidGrant).toBeUndefined();
 
+      const childContextGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType : DwnInterface.RecordsWrite,
+        protocol    : protocol,
+        contextId   : 'abc/child'
+      }, contextGrants);
+
+      expect(childContextGrant?.message.recordId).toBe(abcGrants.write.message.recordId);
+
       const withoutContextGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsWrite,
         protocol    : protocol

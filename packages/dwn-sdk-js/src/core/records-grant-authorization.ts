@@ -1,10 +1,12 @@
 import type { MessageStore } from '../types/message-store.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
+import type { ProtocolScope } from '../utils/permission-scope.js';
 import type { PermissionConditions, RecordsPermissionScope } from '../types/permission-types.js';
 import type { RecordsCountMessage, RecordsDeleteMessage, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { GrantAuthorization } from './grant-authorization.js';
 import { PermissionConditionPublication } from '../types/permission-types.js';
+import { PermissionScopeMatcher } from '../utils/permission-scope.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 
 export class RecordsGrantAuthorization {
@@ -90,11 +92,15 @@ export class RecordsGrantAuthorization {
     // The grant's protocol must match the query/subscribe filter's protocol.
     // NOTE: validated the invoked permission is for Records in GrantAuthorization.performBaseValidation()
     const permissionScope = permissionGrant.scope as RecordsPermissionScope;
-    const protocolInMessage = incomingMessage.descriptor.filter.protocol;
-    if (protocolInMessage !== permissionScope.protocol) {
+    const messageFilter = incomingMessage.descriptor.filter;
+    if (!PermissionScopeMatcher.matches(permissionScope, {
+      protocol     : messageFilter.protocol,
+      protocolPath : messageFilter.protocolPath,
+      contextId    : messageFilter.contextId,
+    })) {
       throw new DwnError(
         DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch,
-        `Grant protocol scope ${permissionScope.protocol} does not match protocol in message ${protocolInMessage}`
+        `Grant scope does not match Records ${incomingMessage.descriptor.method} filter`
       );
     }
   }
@@ -123,16 +129,8 @@ export class RecordsGrantAuthorization {
       messageStore
     });
 
-    // The grant's protocol must match the protocol of the record being deleted.
     // NOTE: validated the invoked permission is for Records in GrantAuthorization.performBaseValidation()
-    const permissionScope = permissionGrant.scope as RecordsPermissionScope;
-    const protocolOfRecordToDelete = recordsWriteToDelete.descriptor.protocol;
-    if (protocolOfRecordToDelete !== permissionScope.protocol) {
-      throw new DwnError(
-        DwnErrorCode.RecordsGrantAuthorizationDeleteProtocolScopeMismatch,
-        `Grant protocol scope ${permissionScope.protocol} does not match protocol in record to delete ${protocolOfRecordToDelete}`
-      );
-    }
+    RecordsGrantAuthorization.verifyDeleteScope(recordsWriteToDelete, permissionGrant.scope as RecordsPermissionScope);
   }
 
   /**
@@ -142,32 +140,77 @@ export class RecordsGrantAuthorization {
     recordsWriteMessage: RecordsWriteMessage,
     grantScope: RecordsPermissionScope
   ): void {
+    const target = RecordsGrantAuthorization.getProtocolScopeTarget(recordsWriteMessage);
 
-    // The record's protocol must match the protocol specified in the record
-    if (grantScope.protocol !== recordsWriteMessage.descriptor.protocol) {
+    if (PermissionScopeMatcher.matches(grantScope, target)) {
+      return;
+    }
+
+    if (grantScope.protocol !== target.protocol) {
       throw new DwnError(
         DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch,
         `Grant scope specifies different protocol than what appears in the record`
       );
     }
 
+    RecordsGrantAuthorization.throwScopeMismatchAfterProtocolMatch(grantScope, target);
+  }
+
+  /**
+   * Verifies RecordsDelete scope while preserving the delete-specific protocol mismatch code.
+   */
+  private static verifyDeleteScope(
+    recordsWriteMessage: RecordsWriteMessage,
+    grantScope: RecordsPermissionScope
+  ): void {
+    const target = RecordsGrantAuthorization.getProtocolScopeTarget(recordsWriteMessage);
+
+    if (PermissionScopeMatcher.matches(grantScope, target)) {
+      return;
+    }
+
+    if (grantScope.protocol !== target.protocol) {
+      throw new DwnError(
+        DwnErrorCode.RecordsGrantAuthorizationDeleteProtocolScopeMismatch,
+        `Grant protocol scope ${grantScope.protocol} does not match protocol in record to delete ${target.protocol}`
+      );
+    }
+
+    RecordsGrantAuthorization.throwScopeMismatchAfterProtocolMatch(grantScope, target);
+  }
+
+  private static getProtocolScopeTarget(recordsWriteMessage: RecordsWriteMessage): ProtocolScope {
+    return {
+      protocol     : recordsWriteMessage.descriptor.protocol,
+      protocolPath : recordsWriteMessage.descriptor.protocolPath,
+      contextId    : recordsWriteMessage.contextId,
+    };
+  }
+
+  private static throwScopeMismatchAfterProtocolMatch(
+    grantScope: RecordsPermissionScope,
+    target: ProtocolScope
+  ): never {
     // If grant specifies a contextId, check that record falls under that contextId
     if (grantScope.contextId !== undefined) {
-      if (!recordsWriteMessage.contextId?.startsWith(grantScope.contextId)) {
-        throw new DwnError(
-          DwnErrorCode.RecordsGrantAuthorizationScopeContextIdMismatch,
-          `Grant scope specifies different contextId than what appears in the record`
-        );
-      }
+      throw new DwnError(
+        DwnErrorCode.RecordsGrantAuthorizationScopeContextIdMismatch,
+        `Grant scope specifies different contextId than what appears in the record`
+      );
     }
 
     // If grant specifies protocolPath, check that record is at that protocolPath
-    if (grantScope.protocolPath !== undefined && grantScope.protocolPath !== recordsWriteMessage.descriptor.protocolPath) {
+    if (grantScope.protocolPath !== undefined && grantScope.protocolPath !== target.protocolPath) {
       throw new DwnError(
         DwnErrorCode.RecordsGrantAuthorizationScopeProtocolPathMismatch,
         `Grant scope specifies different protocolPath than what appears in the record`
       );
     }
+
+    throw new DwnError(
+      DwnErrorCode.RecordsGrantAuthorizationScopeMismatch,
+      `Grant scope does not match the record`
+    );
   }
 
   /**

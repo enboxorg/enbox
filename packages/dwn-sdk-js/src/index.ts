@@ -51,6 +51,8 @@ export { PermissionGrant } from './protocols/permission-grant.js';
 export { PermissionRequest } from './protocols/permission-request.js';
 export { PermissionsProtocol } from './protocols/permissions.js';
 export type { PermissionGrantCreateOptions, PermissionRequestCreateOptions, PermissionRevocationCreateOptions } from './protocols/permissions.js';
+export { PermissionScopeMatcher } from './utils/permission-scope.js';
+export type { ProtocolScope } from './utils/permission-scope.js';
 export { PrivateKeySigner } from './utils/private-key-signer.js';
 export type { PrivateKeySignerOptions } from './utils/private-key-signer.js';
 export { Protocols, parseCrossProtocolRef, isCrossProtocolRef, getRuleSetAtPath } from './utils/protocols.js';
