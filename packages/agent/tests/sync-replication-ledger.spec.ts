@@ -11,6 +11,11 @@ function token(pos: number, cid?: string): ProgressToken {
   return { streamId: 'stream-1', epoch: 'epoch-1', position: String(pos), messageCid: cid ?? `cid-${pos}` };
 }
 
+const ownerAuthorization = {
+  authorization      : { kind: 'owner' as const },
+  authorizationEpoch : 'owner-epoch',
+};
+
 describe('ReplicationLedger', () => {
   let db: Level<string, string>;
   let ledger: ReplicationLedger;
@@ -38,11 +43,14 @@ describe('ReplicationLedger', () => {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       expect(link.tenantDid).toBe('did:example:alice');
       expect(link.remoteEndpoint).toBe('https://dwn.example.com');
-      expect(link.scopeId.length).toBeGreaterThan(0);
+      expect(link.projectionId.length).toBeGreaterThan(0);
+      expect(link.authorizationEpoch).toBe('owner-epoch');
+      expect(link.authorization).toEqual({ kind: 'owner' });
       expect(link.status).toBe('initializing');
       expect(link.pull.contiguousAppliedToken).toBeUndefined();
       expect(link.needsReconcile).toBe(false);
@@ -53,6 +61,7 @@ describe('ReplicationLedger', () => {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       link1.status = 'live';
@@ -62,6 +71,7 @@ describe('ReplicationLedger', () => {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       expect(link2.status).toBe('live');
@@ -69,27 +79,61 @@ describe('ReplicationLedger', () => {
 
     it('should create separate links for different endpoints', async () => {
       const linkA = await ledger.getOrCreateLink({
-        tenantDid: 'did:example:alice', remoteEndpoint: 'https://a.example.com', scope: { kind: 'full' },
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://a.example.com', scope: { kind: 'full' }, ...ownerAuthorization,
       });
       const linkB = await ledger.getOrCreateLink({
-        tenantDid: 'did:example:alice', remoteEndpoint: 'https://b.example.com', scope: { kind: 'full' },
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://b.example.com', scope: { kind: 'full' }, ...ownerAuthorization,
       });
 
-      expect(linkA.scopeId).toBe(linkB.scopeId);
+      expect(linkA.projectionId).toBe(linkB.projectionId);
       expect(linkA.remoteEndpoint).not.toBe(linkB.remoteEndpoint);
     });
 
-    it('should store delegateDid and protocol on creation', async () => {
-      const link = await ledger.getOrCreateLink({
+    it('should create separate links for the same projection with different authorization epochs', async () => {
+      const ownerLink = await ledger.getOrCreateLink({
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
-        scope          : { kind: 'full' },
-        delegateDid    : 'did:example:delegate',
-        protocol       : 'https://protocol.xyz',
+        scope          : { kind: 'protocolSet', protocols: ['https://protocol.xyz'] },
+        ...ownerAuthorization,
+      });
+      const delegateLink = await ledger.getOrCreateLink({
+        tenantDid          : 'did:example:alice',
+        remoteEndpoint     : 'https://dwn.example.com',
+        scope              : { kind: 'protocolSet', protocols: ['https://protocol.xyz'] },
+        authorizationEpoch : 'delegate-epoch',
+        authorization      : {
+          kind               : 'delegate',
+          delegateDid        : 'did:example:delegate',
+          permissionGrantIds : ['grant-1'],
+        },
+        delegateDid: 'did:example:delegate',
+      });
+
+      expect(ownerLink.projectionId).toBe(delegateLink.projectionId);
+      expect(ownerLink.authorizationEpoch).not.toBe(delegateLink.authorizationEpoch);
+      expect((await ledger.getLinksForTenant('did:example:alice'))).toHaveLength(2);
+    });
+
+    it('should store delegate authorization metadata on creation', async () => {
+      const link = await ledger.getOrCreateLink({
+        tenantDid          : 'did:example:alice',
+        remoteEndpoint     : 'https://dwn.example.com',
+        scope              : { kind: 'protocolSet', protocols: ['https://protocol.xyz'] },
+        authorizationEpoch : 'delegate-epoch',
+        authorization      : {
+          kind               : 'delegate',
+          delegateDid        : 'did:example:delegate',
+          permissionGrantIds : ['grant-1'],
+        },
+        delegateDid: 'did:example:delegate',
       });
 
       expect(link.delegateDid).toBe('did:example:delegate');
-      expect(link.protocol).toBe('https://protocol.xyz');
+      expect(link.authorization).toEqual({
+        kind               : 'delegate',
+        delegateDid        : 'did:example:delegate',
+        permissionGrantIds : ['grant-1'],
+      });
     });
 
   });
@@ -100,6 +144,7 @@ describe('ReplicationLedger', () => {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       link.pull.contiguousAppliedToken = token(42);
@@ -109,6 +154,7 @@ describe('ReplicationLedger', () => {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       expect(reloaded.pull.contiguousAppliedToken).toEqual(token(42));
@@ -122,14 +168,16 @@ describe('ReplicationLedger', () => {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
-      await ledger.deleteLink(link.tenantDid, link.remoteEndpoint, link.scopeId);
+      await ledger.deleteLink(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
 
       const fresh = await ledger.getOrCreateLink({
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       expect(fresh.status).toBe('initializing');
@@ -139,13 +187,13 @@ describe('ReplicationLedger', () => {
   describe('getLinksForTenant', () => {
     it('should return only links for the specified tenant', async () => {
       await ledger.getOrCreateLink({
-        tenantDid: 'did:example:alice', remoteEndpoint: 'https://a.example.com', scope: { kind: 'full' },
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://a.example.com', scope: { kind: 'full' }, ...ownerAuthorization,
       });
       await ledger.getOrCreateLink({
-        tenantDid: 'did:example:alice', remoteEndpoint: 'https://b.example.com', scope: { kind: 'full' },
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://b.example.com', scope: { kind: 'full' }, ...ownerAuthorization,
       });
       await ledger.getOrCreateLink({
-        tenantDid: 'did:example:bob', remoteEndpoint: 'https://a.example.com', scope: { kind: 'full' },
+        tenantDid: 'did:example:bob', remoteEndpoint: 'https://a.example.com', scope: { kind: 'full' }, ...ownerAuthorization,
       });
 
       const aliceLinks = await ledger.getLinksForTenant('did:example:alice');
@@ -157,10 +205,10 @@ describe('ReplicationLedger', () => {
   describe('getAllLinks', () => {
     it('should return all links', async () => {
       await ledger.getOrCreateLink({
-        tenantDid: 'did:example:alice', remoteEndpoint: 'https://a.example.com', scope: { kind: 'full' },
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://a.example.com', scope: { kind: 'full' }, ...ownerAuthorization,
       });
       await ledger.getOrCreateLink({
-        tenantDid: 'did:example:bob', remoteEndpoint: 'https://b.example.com', scope: { kind: 'full' },
+        tenantDid: 'did:example:bob', remoteEndpoint: 'https://b.example.com', scope: { kind: 'full' }, ...ownerAuthorization,
       });
 
       const all = await ledger.getAllLinks();
@@ -168,81 +216,10 @@ describe('ReplicationLedger', () => {
     });
   });
 
-  describe('updateDelegateDid', () => {
-    it('should update delegateDid on all links for a tenant and persist', async () => {
-      await ledger.getOrCreateLink({
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://a.example.com',
-        scope          : { kind: 'full' },
-        delegateDid    : 'did:example:old-delegate',
-      });
-      await ledger.getOrCreateLink({
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://b.example.com',
-        scope          : { kind: 'full' },
-        delegateDid    : 'did:example:old-delegate',
-      });
-
-      // Unrelated tenant — should NOT be updated.
-      await ledger.getOrCreateLink({
-        tenantDid      : 'did:example:bob',
-        remoteEndpoint : 'https://a.example.com',
-        scope          : { kind: 'full' },
-        delegateDid    : 'did:example:bob-delegate',
-      });
-
-      const updated = await ledger.updateDelegateDid('did:example:alice', 'did:example:new-delegate');
-      expect(updated).toHaveLength(2);
-      expect(updated.every(l => l.delegateDid === 'did:example:new-delegate')).toBe(true);
-
-      // Verify persistence by reloading from LevelDB.
-      const reloaded = await ledger.getLinksForTenant('did:example:alice');
-      expect(reloaded.every(l => l.delegateDid === 'did:example:new-delegate')).toBe(true);
-
-      // Verify unrelated tenant was not affected.
-      const bobLinks = await ledger.getLinksForTenant('did:example:bob');
-      expect(bobLinks[0].delegateDid).toBe('did:example:bob-delegate');
-    });
-
-    it('should skip links that already have the target delegateDid', async () => {
-      await ledger.getOrCreateLink({
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://a.example.com',
-        scope          : { kind: 'full' },
-        delegateDid    : 'did:example:current',
-      });
-
-      const updated = await ledger.updateDelegateDid('did:example:alice', 'did:example:current');
-      expect(updated).toHaveLength(0);
-    });
-
-    it('should handle clearing delegateDid to undefined', async () => {
-      await ledger.getOrCreateLink({
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://a.example.com',
-        scope          : { kind: 'full' },
-        delegateDid    : 'did:example:some-delegate',
-      });
-
-      const updated = await ledger.updateDelegateDid('did:example:alice', undefined);
-      expect(updated).toHaveLength(1);
-      expect(updated[0].delegateDid).toBeUndefined();
-
-      // Verify persistence.
-      const reloaded = await ledger.getLinksForTenant('did:example:alice');
-      expect(reloaded[0].delegateDid).toBeUndefined();
-    });
-
-    it('should return empty array when no links exist for tenant', async () => {
-      const updated = await ledger.updateDelegateDid('did:example:nonexistent', 'did:example:delegate');
-      expect(updated).toHaveLength(0);
-    });
-  });
-
   describe('setStatus', () => {
     it('should update status and persist', async () => {
       const link = await ledger.getOrCreateLink({
-        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' },
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' }, ...ownerAuthorization,
       });
 
       expect(link.status).toBe('initializing');
@@ -251,7 +228,7 @@ describe('ReplicationLedger', () => {
       expect(link.status).toBe('live');
 
       const reloaded = await ledger.getOrCreateLink({
-        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' },
+        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' }, ...ownerAuthorization,
       });
       expect(reloaded.status).toBe('live');
     });

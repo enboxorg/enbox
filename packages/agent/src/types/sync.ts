@@ -34,62 +34,164 @@ export type SyncMode = 'poll' | 'live';
 // ---------------------------------------------------------------------------
 
 /**
- * Describes what a replication link syncs. Currently whole-tenant only
- * (`kind: 'full'`). Scoped subset sync (`kind: 'protocol'` with
- * `protocolPathPrefixes` / `contextIdPrefixes`) is deferred to Phase 3.
+ * Projection-root algorithm used for B1 sync links.
+ *
+ * B1 compares either the existing full-tenant StateIndex root or existing
+ * per-protocol StateIndex roots. ProtocolPath/contextId projection roots are
+ * intentionally not represented here; they belong to the later B2 root builder.
+ */
+export const SYNC_PROJECTION_ROOT_VERSION = 'b1-state-index-root-v1';
+
+/**
+ * Authorization-epoch algorithm used for B1 sync links.
+ *
+ * The authorization epoch is separate from the projection ID: re-granting the
+ * same scope or changing delegate grants must invalidate in-flight work without
+ * changing the primary CID set being compared.
+ */
+export const SYNC_AUTHORIZATION_EPOCH_VERSION = 'b1-messages-read-grants-v1';
+
+/** A non-empty, sorted, duplicate-free string list. */
+export type NonEmptyStringArray = [string, ...string[]];
+
+/** A non-empty, sorted, duplicate-free protocol URI list. */
+export type SyncProtocolSet = NonEmptyStringArray;
+
+/**
+ * Describes the primary CID set a replication link syncs.
+ *
+ * B1 supports full-tenant sync and protocol-set sync. A protocol-set link owns
+ * one durable subscription/cursor for the whole set; reconciliation still walks
+ * the existing per-protocol roots until B2 adds arbitrary projection roots.
  */
 export type SyncScope = {
-  /** Scope kind. Only `'full'` is implemented in Phase 1. */
+  /** Full-tenant projection. Valid only for owner sync or unscoped delegated grants. */
   kind: 'full';
 } | {
-  /**
-   * Protocol-scoped sync. Deferred to Phase 3 — included here for type
-   * forward-compatibility only.
-   */
-  kind: 'protocol';
-  protocol: string;
-  protocolPathPrefixes?: string[];
-  contextIdPrefixes?: string[];
+  /** Protocol-set projection over one or more protocol roots. */
+  kind: 'protocolSet';
+  protocols: SyncProtocolSet;
 };
 
 /**
- * Computes a deterministic, collision-resistant identifier for a {@link SyncScope}.
- *
- * The ID is `base64url(SHA-256(canonicalJSON))` where `canonicalJSON` is the
- * scope object with keys sorted alphabetically and array values sorted
- * lexicographically.
- *
- * Used as part of the LevelDB key for the replication ledger:
- * `{tenantDid}^{remoteEndpoint}^{scopeId}`.
+ * Authorization context for a link. Owner links do not invoke grants. Delegate
+ * links carry the active Messages.Read grants that authorize the scope union.
  */
-export async function computeScopeId(scope: SyncScope): Promise<string> {
-  const canonical: Record<string, unknown> = { kind: scope.kind };
-  if (scope.kind === 'protocol') {
-    canonical.protocol = scope.protocol;
-    if (scope.protocolPathPrefixes !== undefined) {
-      canonical.protocolPathPrefixes = [...new Set(scope.protocolPathPrefixes)].sort((a, b) => a.localeCompare(b));
-    }
-    if (scope.contextIdPrefixes !== undefined) {
-      canonical.contextIdPrefixes = [...new Set(scope.contextIdPrefixes)].sort((a, b) => a.localeCompare(b));
-    }
-  }
+export type SyncAuthorization =
+  | { kind: 'owner' }
+  | {
+    kind: 'delegate';
+    delegateDid: string;
+    permissionGrantIds: NonEmptyStringArray;
+  };
 
-  // Stable JSON: keys sorted by construction order (kind < protocol < protocolPathPrefixes).
-  const json = JSON.stringify(canonical);
+/** Grant metadata that participates in delegated authorization-epoch hashing. */
+export type SyncAuthorizationGrant = {
+  id: string;
+  dateExpires: string;
+  dateGranted?: string;
+};
+
+/**
+ * Normalizes a protocol list into canonical scope-union order.
+ */
+export function normalizeSyncProtocols(protocols: [string, ...string[]] | string[]): SyncProtocolSet {
+  const unique = [...new Set(protocols)].sort((a, b) => a.localeCompare(b));
+  if (unique.length === 0) {
+    throw new Error('SyncScope: protocol-set scope requires at least one protocol URI.');
+  }
+  return unique as SyncProtocolSet;
+}
+
+/** Converts persisted identity options into the canonical B1 sync scope. */
+export function syncScopeFromProtocols(protocols: SyncIdentityOptions['protocols']): SyncScope {
+  return protocols === 'all'
+    ? { kind: 'full' }
+    : { kind: 'protocolSet', protocols: normalizeSyncProtocols(protocols) };
+}
+
+/** Returns the protocol list covered by a scope, or `undefined` for full scope. */
+export function protocolsForSyncScope(scope: SyncScope): SyncProtocolSet | undefined {
+  return scope.kind === 'protocolSet' ? scope.protocols : undefined;
+}
+
+/** Returns the single covered protocol, or `undefined` for full/multi-protocol scopes. */
+export function singleProtocolForSyncScope(scope: SyncScope): string | undefined {
+  return scope.kind === 'protocolSet' && scope.protocols.length === 1 ? scope.protocols[0] : undefined;
+}
+
+/** Stable base64url SHA-256 hash for canonical JSON objects. */
+async function hashCanonicalObject(value: Record<string, unknown>): Promise<string> {
+  const json = JSON.stringify(value);
   const bytes = new TextEncoder().encode(json);
   const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
   const hashArray = new Uint8Array(hashBuffer);
 
-  // base64url encode (no padding).
   let base64 = '';
   for (const b of hashArray) {
     base64 += String.fromCharCode(b);
   }
   const result = btoa(base64).replaceAll('+', '-').replaceAll('/', '_');
-  // Strip trailing '=' padding without regex quantifiers (avoids ReDoS scanners).
   let end = result.length;
-  while (end > 0 && result.codePointAt(end - 1) === 61) { end--; } // 61 === '='
+  while (end > 0 && result.codePointAt(end - 1) === 61) { end--; }
   return end === result.length ? result : result.slice(0, end);
+}
+
+/** Returns a canonical JSON-ready representation of a sync scope. */
+export function canonicalizeSyncScope(scope: SyncScope): SyncScope {
+  return scope.kind === 'full'
+    ? { kind: 'full' }
+    : { kind: 'protocolSet', protocols: normalizeSyncProtocols(scope.protocols) };
+}
+
+/**
+ * Computes a deterministic, collision-resistant projection ID.
+ *
+ * The projection ID is derived from tenant DID, normalized scope, and the B1
+ * projection-root algorithm version. It intentionally excludes endpoint,
+ * grant IDs, authorization epoch, and remote diff contents.
+ */
+export async function computeProjectionId(tenantDid: string, scope: SyncScope): Promise<string> {
+  const canonicalScope = canonicalizeSyncScope(scope);
+  return hashCanonicalObject({
+    scope   : canonicalScope,
+    tenantDid,
+    version : SYNC_PROJECTION_ROOT_VERSION,
+  });
+}
+
+/**
+ * Computes the authorization epoch for a link.
+ *
+ * Owner epochs are stable for the owner projection. Delegate epochs are derived
+ * from the delegate DID plus the active grant IDs and expiry metadata. A changed
+ * grant set creates a new link key even when the projection ID is unchanged.
+ */
+export async function computeAuthorizationEpoch(input:
+  | { kind: 'owner' }
+  | { kind: 'delegate'; delegateDid: string; grants: [SyncAuthorizationGrant, ...SyncAuthorizationGrant[]] }
+): Promise<string> {
+  if (input.kind === 'owner') {
+    return hashCanonicalObject({
+      kind    : 'owner',
+      version : SYNC_AUTHORIZATION_EPOCH_VERSION,
+    });
+  }
+
+  const grants = [...input.grants]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(grant => ({
+      dateExpires : grant.dateExpires,
+      dateGranted : grant.dateGranted,
+      id          : grant.id,
+    }));
+
+  return hashCanonicalObject({
+    delegateDid : input.delegateDid,
+    grants,
+    kind        : 'delegate',
+    version     : SYNC_AUTHORIZATION_EPOCH_VERSION,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +248,7 @@ export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'degraded_poll'
 /**
  * Durable state of a single replication link. Persisted to LevelDB and
  * loaded on startup. Each link is identified by the tuple
- * `(tenantDid, remoteEndpoint, scopeId)`.
+ * `(tenantDid, remoteEndpoint, projectionId, authorizationEpoch)`.
  */
 export type ReplicationLinkState = {
   /** The tenant DID this link syncs for. */
@@ -155,11 +257,17 @@ export type ReplicationLinkState = {
   /** The remote DWN endpoint URL. */
   remoteEndpoint: string;
 
-  /** Deterministic hash of the {@link SyncScope}. See {@link computeScopeId}. */
-  scopeId: string;
+  /** Deterministic hash of tenant DID, normalized scope, and root algorithm version. */
+  projectionId: string;
+
+  /** Deterministic hash of owner/delegate grant context for this link. */
+  authorizationEpoch: string;
 
   /** The scope definition this link covers. */
   scope: SyncScope;
+
+  /** Owner/delegate authorization context used to sign sync messages. */
+  authorization: SyncAuthorization;
 
   /** Current link status. */
   status: LinkStatus;
@@ -180,15 +288,6 @@ export type ReplicationLinkState = {
 
   /** Delegate DID used to sign sync messages, if any. */
   delegateDid?: string;
-
-  /**
-   * Protocol filter for this link, if any. Duplicates the protocol in `scope`
-   * for operational convenience — used by permission lookups and cursor key
-   * building. The scope is the source of truth for what to sync; this field
-   * is the source of truth for how to authenticate. To be consolidated in
-   * Phase 3 when scope resolution is more complex.
-   */
-  protocol?: string;
 
   /** ISO-8601 timestamp of last successful sync activity. */
   lastActivityAt?: string;

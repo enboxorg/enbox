@@ -7,6 +7,17 @@ import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 describe('SyncEngineLevel — identity management', () => {
   let db: Level<string, string>;
+  const messagesGrantEntry = (id: string, grantor: string, grantee: string, scope: Record<string, unknown>): any => ({
+    grant: {
+      id,
+      grantor,
+      grantee,
+      dateGranted : '2026-01-01T00:00:00.000000Z',
+      dateExpires : '2999-01-01T00:00:00.000000Z',
+      scope,
+    },
+    message: {},
+  });
   let syncEngine: SyncEngineLevel;
 
   beforeAll(async () => {
@@ -215,7 +226,7 @@ describe('SyncEngineLevel — identity management', () => {
       expect(targets[1].dwnUrl).toBe('https://dwn2.example.com');
     });
 
-    it('should produce one target per protocol per URL when protocols is a list', async () => {
+    it('should produce one protocol-set target per URL when protocols is a list', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
@@ -230,9 +241,12 @@ describe('SyncEngineLevel — identity management', () => {
       });
       const targets = await (engine as any).getSyncTargets();
 
-      expect(targets).toHaveLength(2);
-      expect(targets[0].protocol).toBe('https://proto1.example.com');
-      expect(targets[1].protocol).toBe('https://proto2.example.com');
+      expect(targets).toHaveLength(1);
+      expect(targets[0].scope).toEqual({
+        kind      : 'protocolSet',
+        protocols : ['https://proto1.example.com', 'https://proto2.example.com'],
+      });
+      expect(targets[0].authorization).toEqual({ kind: 'owner' });
     });
 
     it('should skip identity when stored JSON is corrupt', async () => {
@@ -265,6 +279,11 @@ describe('SyncEngineLevel — identity management', () => {
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
+      (engine as any)._permissionsApi = {
+        fetchGrants: sinon.stub().resolves([
+          messagesGrantEntry('grant-1', 'did:example:delegated', 'did:example:delegate', { interface: 'Messages', method: 'Read' }),
+        ]),
+      };
 
       await engine.registerIdentity({
         did     : 'did:example:delegated',
@@ -274,6 +293,11 @@ describe('SyncEngineLevel — identity management', () => {
 
       expect(targets).toHaveLength(1);
       expect(targets[0].delegateDid).toBe('did:example:delegate');
+      expect(targets[0].authorization).toEqual({
+        kind               : 'delegate',
+        delegateDid        : 'did:example:delegate',
+        permissionGrantIds : ['grant-1'],
+      });
     });
 
     it('should handle mixed all and scoped registrations', async () => {
@@ -296,12 +320,15 @@ describe('SyncEngineLevel — identity management', () => {
 
       const targets = await (engine as any).getSyncTargets();
 
-      // Alice produces 1 unscoped target, Bob produces 1 scoped target.
+      // Alice produces 1 full target, Bob produces 1 protocol-set target.
       expect(targets).toHaveLength(2);
       const aliceTarget = targets.find((t: any) => t.did === 'did:example:alice');
       const bobTarget = targets.find((t: any) => t.did === 'did:example:bob');
-      expect(aliceTarget!.protocol).toBeUndefined();
-      expect(bobTarget!.protocol).toBe('https://proto.example.com/chat/1.0');
+      expect(aliceTarget!.scope).toEqual({ kind: 'full' });
+      expect(bobTarget!.scope).toEqual({
+        kind      : 'protocolSet',
+        protocols : ['https://proto.example.com/chat/1.0'],
+      });
     });
   });
 
@@ -722,22 +749,25 @@ describe('SyncEngineLevel — identity management', () => {
       expect(openPushStub.called).toBe(false);
     });
 
-    it('addIdentityToLiveSync should create per-protocol targets when protocols are specified', async () => {
+    it('addIdentityToLiveSync should create one protocol-set target when protocols are specified', async () => {
       const engine = new SyncEngineLevel({ db });
       const mockAgent = {
         dwn: { getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']) },
       };
       (engine as any)._agent = mockAgent;
 
-      const ledgerStub = sinon.stub().resolves({
-        tenantDid      : 'did:example:proto',
-        remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'scope1',
-        scope          : { kind: 'protocol', protocol: '' },
-        status         : 'initializing',
-        pull           : {},
-        connectivity   : 'unknown',
-      });
+      const ledgerStub = sinon.stub().callsFake(async (params: any) => ({
+        tenantDid          : 'did:example:proto',
+        remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-1',
+        authorizationEpoch : params.authorizationEpoch,
+        authorization      : params.authorization,
+        scope              : params.scope,
+        status             : 'initializing',
+        pull               : {},
+        connectivity       : 'unknown',
+        needsReconcile     : false,
+      }));
       sinon.stub(engine as any, 'ledger').get(() => ({
         getOrCreateLink : ledgerStub,
         saveLink        : sinon.stub().resolves(),
@@ -751,9 +781,12 @@ describe('SyncEngineLevel — identity management', () => {
         protocols: ['https://proto1.example', 'https://proto2.example'],
       });
 
-      expect(ledgerStub.callCount).toBe(2);
-      expect(ledgerStub.firstCall.args[0].scope).toEqual({ kind: 'protocol', protocol: 'https://proto1.example' });
-      expect(ledgerStub.secondCall.args[0].scope).toEqual({ kind: 'protocol', protocol: 'https://proto2.example' });
+      expect(ledgerStub.calledOnce).toBe(true);
+      expect(ledgerStub.firstCall.args[0].scope).toEqual({
+        kind      : 'protocolSet',
+        protocols : ['https://proto1.example', 'https://proto2.example'],
+      });
+      expect(ledgerStub.firstCall.args[0].authorization).toEqual({ kind: 'owner' });
     });
 
     it('addIdentityToLiveSync should create a full-tenant link when protocols is all', async () => {
@@ -763,15 +796,18 @@ describe('SyncEngineLevel — identity management', () => {
       };
       (engine as any)._agent = mockAgent;
 
-      const ledgerStub = sinon.stub().resolves({
-        tenantDid      : 'did:example:full',
-        remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'scope-full',
-        scope          : { kind: 'full' },
-        status         : 'initializing',
-        pull           : {},
-        connectivity   : 'unknown',
-      });
+      const ledgerStub = sinon.stub().callsFake(async (params: any) => ({
+        tenantDid          : 'did:example:full',
+        remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-full',
+        authorizationEpoch : params.authorizationEpoch,
+        authorization      : params.authorization,
+        scope              : params.scope,
+        status             : 'initializing',
+        pull               : {},
+        connectivity       : 'unknown',
+        needsReconcile     : false,
+      }));
       sinon.stub(engine as any, 'ledger').get(() => ({
         getOrCreateLink : ledgerStub,
         saveLink        : sinon.stub().resolves(),
@@ -795,15 +831,18 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._agent = mockAgent;
 
       sinon.stub(engine as any, 'ledger').get(() => ({
-        getOrCreateLink: sinon.stub().resolves({
-          tenantDid      : 'did:example:pushfail',
-          remoteEndpoint : 'https://dwn.example.com',
-          scopeId        : 'scope1',
-          scope          : { kind: 'full' },
-          status         : 'initializing',
-          pull           : {},
-          connectivity   : 'unknown',
-        }),
+        getOrCreateLink: sinon.stub().callsFake(async (params: any) => ({
+          tenantDid          : 'did:example:pushfail',
+          remoteEndpoint     : 'https://dwn.example.com',
+          projectionId       : 'projection-1',
+          authorizationEpoch : params.authorizationEpoch,
+          authorization      : params.authorization,
+          scope              : { kind: 'full' },
+          status             : 'initializing',
+          pull               : {},
+          connectivity       : 'unknown',
+          needsReconcile     : false,
+        })),
         saveLink  : sinon.stub().resolves(),
         setStatus : sinon.stub().resolves(),
       }));
@@ -821,7 +860,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       expect(pullCloseSpy.calledOnce).toBe(true);
       expect((engine as any)._liveSubscriptions).toHaveLength(0);
-      expect((engine as any)._activeLinks.has('did:example:pushfail^https://dwn.example.com^scope1')).toBe(false);
+      expect([...((engine as any)._activeLinks.keys())].some((key: string) => key.startsWith('did:example:pushfail^https://dwn.example.com^projection-1^'))).toBe(false);
     });
   });
 

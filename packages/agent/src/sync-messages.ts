@@ -1,15 +1,14 @@
 import type { GenericMessage, MessagesReadReply, MessagesSyncDiffEntry, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
-import type { PermissionsApi } from './types/permissions.js';
 import type { PermanentPushFailure, PushResult } from './types/sync.js';
 
 import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
+import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import { topologicalSort } from './sync-topological-sort.js';
-import { getMessagesPermissionGrantId, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 
 /** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
 const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
@@ -104,16 +103,15 @@ export async function getMessageCid(message: GenericMessage): Promise<string> {
  * Large payloads are re-fetched on retry since buffering them would consume
  * too much memory.
  */
-export async function pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids, prefetched, agent, permissionsApi }: {
+export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, prefetched, agent }: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
-  protocol?: string;
+  permissionGrantIds?: string[];
   messageCids: string[];
   /** Pre-fetched message entries from the batched diff response (already have message + data). */
   prefetched?: MessagesSyncDiffEntry[];
   agent: EnboxPlatformAgent;
-  permissionsApi: PermissionsApi;
 }): Promise<string[]> {
   // Convert prefetched diff entries into SyncMessageEntry format.
   const prefetchedEntries: SyncMessageEntry[] = [];
@@ -138,7 +136,7 @@ export async function pullMessages({ did, dwnUrl, delegateDid, protocol, message
 
   // Step 1: Fetch remaining messages (not prefetched) from the remote.
   const fetched = messageCids.length > 0
-    ? await fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids, agent, permissionsApi })
+    ? await fetchRemoteMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent })
     : [];
 
   // Merge prefetched entries with remotely fetched ones.
@@ -189,7 +187,7 @@ export async function pullMessages({ did, dwnUrl, delegateDid, protocol, message
 
       // Re-fetch only the large-payload messages that we couldn't buffer.
       if (needsRefetch.length > 0) {
-        const reFetched = await fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids: needsRefetch, agent, permissionsApi });
+        const reFetched = await fetchRemoteMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids: needsRefetch, agent });
         canRetry.push(...reFetched);
       }
 
@@ -269,24 +267,15 @@ async function bufferSmallStreams(entries: SyncMessageEntry[]): Promise<void> {
 /**
  * Fetches messages from a remote DWN by their CIDs using MessagesRead.
  */
-export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids, agent, permissionsApi }: {
+export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent }: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
-  protocol?: string;
+  permissionGrantIds?: string[];
   messageCids: string[];
   agent: EnboxPlatformAgent;
-  permissionsApi: PermissionsApi;
 }): Promise<SyncMessageEntry[]> {
   const results: SyncMessageEntry[] = [];
-
-  const permissionGrantId = await getMessagesPermissionGrantId({
-    did,
-    delegateDid,
-    protocol,
-    messageType: DwnInterface.MessagesRead,
-    permissionsApi,
-  });
 
   // Fetch messages in parallel with bounded concurrency.  Keep this low
   // to avoid bursting through the remote server's rate limits during sync.
@@ -305,7 +294,7 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
         target        : did,
         messageType   : DwnInterface.MessagesRead,
         granteeDid    : delegateDid,
-        messageParams : { messageCid, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantId) }
+        messageParams : { messageCid, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantIds) }
       });
 
       let reply: MessagesReadReply;
@@ -353,14 +342,13 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
  * on the first failure. Callers use this to advance the push checkpoint
  * incrementally — only up to the highest contiguous success.
  */
-export async function pushMessages({ did, dwnUrl, delegateDid, protocol, messageCids, agent, permissionsApi }: {
+export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent }: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
-  protocol?: string;
+  permissionGrantIds?: string[];
   messageCids: string[];
   agent: EnboxPlatformAgent;
-  permissionsApi: PermissionsApi;
 }): Promise<PushResult> {
   const succeeded: string[] = [];
   const failed: string[] = [];
@@ -369,7 +357,7 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
   // Step 1: Fetch all local messages (streams are pull-based, not yet consumed).
   const fetched: SyncMessageEntry[] = [];
   for (const messageCid of messageCids) {
-    const dwnMessage = await getLocalMessage({ author: did, messageCid, delegateDid, protocol, agent, permissionsApi });
+    const dwnMessage = await getLocalMessage({ author: did, messageCid, delegateDid, permissionGrantIds, agent });
     if (dwnMessage) {
       fetched.push(dwnMessage);
     } else {
@@ -437,28 +425,19 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
 /**
  * Reads a message from the local DWN by its CID using MessagesRead.
  */
-export async function getLocalMessage({ author, delegateDid, protocol, messageCid, agent, permissionsApi }: {
+export async function getLocalMessage({ author, delegateDid, permissionGrantIds, messageCid, agent }: {
   author: string;
   delegateDid?: string;
-  protocol?: string;
+  permissionGrantIds?: string[];
   messageCid: string;
   agent: EnboxPlatformAgent;
-  permissionsApi: PermissionsApi;
 }): Promise<SyncMessageEntry | undefined> {
-  const permissionGrantId = await getMessagesPermissionGrantId({
-    did         : author,
-    delegateDid,
-    protocol,
-    messageType : DwnInterface.MessagesRead,
-    permissionsApi,
-  });
-
   const { reply } = await agent.dwn.processRequest({
     author,
     target        : author,
     messageType   : DwnInterface.MessagesRead,
     granteeDid    : delegateDid,
-    messageParams : { messageCid, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantId) }
+    messageParams : { messageCid, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantIds) }
   });
 
   if (reply.status.code !== 200 || !reply.entry) {

@@ -9,6 +9,7 @@ export type ReconcileTarget = {
   dwnUrl: string;
   delegateDid?: string;
   protocol?: string;
+  permissionGrantIds?: string[];
 };
 
 export type ReconcileOutcome = {
@@ -25,14 +26,26 @@ export type ReconcileOutcome = {
 };
 
 type ReconcileDeps = {
-  getLocalRoot: (did: string, delegateDid?: string, protocol?: string) => Promise<string>;
-  getRemoteRoot: (did: string, dwnUrl: string, delegateDid?: string, protocol?: string) => Promise<string>;
+  getLocalRoot: (
+    did: string,
+    delegateDid?: string,
+    protocol?: string,
+    permissionGrantIds?: string[],
+  ) => Promise<string>;
+  getRemoteRoot: (
+    did: string,
+    dwnUrl: string,
+    delegateDid?: string,
+    protocol?: string,
+    permissionGrantIds?: string[],
+  ) => Promise<string>;
   diffWithRemote: (target: ReconcileTarget) => Promise<{ onlyRemote: MessagesSyncDiffEntry[]; onlyLocal: string[] }>;
   pullMessages: (params: {
     did: string;
     dwnUrl: string;
     delegateDid?: string;
     protocol?: string;
+    permissionGrantIds?: string[];
     messageCids: string[];
     prefetched: (MessagesSyncDiffEntry & { message: GenericMessage })[];
   }) => Promise<void>;
@@ -41,6 +54,7 @@ type ReconcileDeps = {
     dwnUrl: string;
     delegateDid?: string;
     protocol?: string;
+    permissionGrantIds?: string[];
     messageCids: string[];
   }) => Promise<PushResult>;
   shouldContinue?: () => boolean;
@@ -82,15 +96,15 @@ export class SyncLinkReconciler {
     direction?: ReconcileDirection;
     verifyConvergence?: boolean;
   }): Promise<ReconcileOutcome> {
-    const { did, dwnUrl, delegateDid, protocol } = target;
+    const { did, dwnUrl, delegateDid, protocol, permissionGrantIds } = target;
     const direction = options?.direction;
     const verifyConvergence = options?.verifyConvergence ?? false;
     const shouldContinue = this._deps.shouldContinue;
 
-    const localRoot = await this._deps.getLocalRoot(did, delegateDid, protocol);
+    const localRoot = await this._deps.getLocalRoot(did, delegateDid, protocol, permissionGrantIds);
     if (shouldContinue && !shouldContinue()) { return { aborted: true, changed: false, didPull: false, didPush: false }; }
 
-    const remoteRoot = await this._deps.getRemoteRoot(did, dwnUrl, delegateDid, protocol);
+    const remoteRoot = await this._deps.getRemoteRoot(did, dwnUrl, delegateDid, protocol, permissionGrantIds);
     if (shouldContinue && !shouldContinue()) { return { aborted: true, changed: false, didPull: false, didPush: false }; }
 
     let didPull = false;
@@ -103,14 +117,14 @@ export class SyncLinkReconciler {
 
       if ((!direction || direction === 'pull') && diff.onlyRemote.length > 0) {
         const { prefetched, needsFetchCids } = partitionRemoteEntries(diff.onlyRemote);
-        await this._deps.pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids: needsFetchCids, prefetched });
+        await this._deps.pullMessages({ did, dwnUrl, delegateDid, protocol, permissionGrantIds, messageCids: needsFetchCids, prefetched });
         if (shouldContinue && !shouldContinue()) { return { aborted: true, changed: true, didPull: true, didPush: false, localRoot, remoteRoot }; }
         didPull = true;
       }
 
       if ((!direction || direction === 'push') && diff.onlyLocal.length > 0) {
         pushResult = await this._deps.pushMessages({
-          did, dwnUrl, delegateDid, protocol, messageCids: diff.onlyLocal,
+          did, dwnUrl, delegateDid, protocol, permissionGrantIds, messageCids: diff.onlyLocal,
         });
         if (shouldContinue && !shouldContinue()) {
           return { aborted: true, changed: true, didPull, didPush: true, localRoot, remoteRoot, pushResult };
@@ -130,12 +144,12 @@ export class SyncLinkReconciler {
       };
     }
 
-    const postLocalRoot = await this._deps.getLocalRoot(did, delegateDid, protocol);
+    const postLocalRoot = await this._deps.getLocalRoot(did, delegateDid, protocol, permissionGrantIds);
     if (shouldContinue && !shouldContinue()) {
       return { aborted: true, changed: localRoot !== remoteRoot, didPull, didPush, localRoot, remoteRoot, pushResult };
     }
 
-    const postRemoteRoot = await this._deps.getRemoteRoot(did, dwnUrl, delegateDid, protocol);
+    const postRemoteRoot = await this._deps.getRemoteRoot(did, dwnUrl, delegateDid, protocol, permissionGrantIds);
     if (shouldContinue && !shouldContinue()) {
       return { aborted: true, changed: localRoot !== remoteRoot, didPull, didPush, localRoot, remoteRoot, pushResult };
     }

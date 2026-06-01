@@ -1,77 +1,108 @@
 import { describe, expect, it } from 'bun:test';
 
-import { computeScopeId } from '../src/types/sync.js';
+import {
+  computeAuthorizationEpoch,
+  computeProjectionId,
+  normalizeSyncProtocols,
+  protocolsForSyncScope,
+  singleProtocolForSyncScope,
+  syncScopeFromProtocols,
+} from '../src/types/sync.js';
 
-describe('computeScopeId', () => {
-  it('should produce a deterministic string for a full scope', async () => {
-    const id1 = await computeScopeId({ kind: 'full' });
-    const id2 = await computeScopeId({ kind: 'full' });
+describe('sync scope identity', () => {
+  it('normalizes protocol sets by sorting and deduping', () => {
+    expect(normalizeSyncProtocols([
+      'https://example.com/b',
+      'https://example.com/a',
+      'https://example.com/b',
+    ])).toEqual([
+      'https://example.com/a',
+      'https://example.com/b',
+    ]);
+  });
+
+  it('rejects empty protocol sets', () => {
+    expect(() => normalizeSyncProtocols([])).toThrow('protocol-set scope requires at least one protocol');
+  });
+
+  it('derives full and protocol-set scopes from identity options', () => {
+    expect(syncScopeFromProtocols('all')).toEqual({ kind: 'full' });
+
+    const scope = syncScopeFromProtocols([
+      'https://example.com/b',
+      'https://example.com/a',
+    ]);
+    expect(scope).toEqual({
+      kind      : 'protocolSet',
+      protocols : ['https://example.com/a', 'https://example.com/b'],
+    });
+    expect(protocolsForSyncScope(scope)).toEqual(['https://example.com/a', 'https://example.com/b']);
+    expect(singleProtocolForSyncScope(scope)).toBeUndefined();
+  });
+
+  it('returns a single protocol label only for one-protocol scopes', () => {
+    const scope = syncScopeFromProtocols(['https://example.com/profile']);
+    expect(singleProtocolForSyncScope(scope)).toBe('https://example.com/profile');
+  });
+
+  it('computes projection IDs from tenant and normalized scope', async () => {
+    const tenantDid = 'did:example:alice';
+    const id1 = await computeProjectionId(tenantDid, syncScopeFromProtocols([
+      'https://example.com/b',
+      'https://example.com/a',
+    ]));
+    const id2 = await computeProjectionId(tenantDid, syncScopeFromProtocols([
+      'https://example.com/a',
+      'https://example.com/b',
+    ]));
+    const id3 = await computeProjectionId('did:example:bob', syncScopeFromProtocols([
+      'https://example.com/a',
+      'https://example.com/b',
+    ]));
+
     expect(id1).toBe(id2);
-    expect(typeof id1).toBe('string');
-    expect(id1.length).toBeGreaterThan(0);
+    expect(id1).not.toBe(id3);
+    expect(id1).not.toContain('+');
+    expect(id1).not.toContain('/');
+    expect(id1).not.toContain('=');
   });
 
-  it('should produce different ids for different scope kinds', async () => {
-    const fullId = await computeScopeId({ kind: 'full' });
-    const protoId = await computeScopeId({ kind: 'protocol', protocol: 'https://example.com/proto' });
-    expect(fullId).not.toBe(protoId);
+  it('keeps projection ID independent of authorization epoch', async () => {
+    const scope = syncScopeFromProtocols(['https://example.com/profile']);
+    const projectionId = await computeProjectionId('did:example:alice', scope);
+    const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
+    const delegateEpoch = await computeAuthorizationEpoch({
+      kind        : 'delegate',
+      delegateDid : 'did:example:delegate',
+      grants      : [{
+        id          : 'grant-1',
+        dateGranted : '2026-01-01T00:00:00.000000Z',
+        dateExpires : '2027-01-01T00:00:00.000000Z',
+      }],
+    });
+
+    expect(projectionId).not.toBe(ownerEpoch);
+    expect(ownerEpoch).not.toBe(delegateEpoch);
   });
 
-  it('should produce different ids for different protocols', async () => {
-    const id1 = await computeScopeId({ kind: 'protocol', protocol: 'https://example.com/a' });
-    const id2 = await computeScopeId({ kind: 'protocol', protocol: 'https://example.com/b' });
-    expect(id1).not.toBe(id2);
-  });
+  it('normalizes grant order when computing authorization epochs', async () => {
+    const epoch1 = await computeAuthorizationEpoch({
+      kind        : 'delegate',
+      delegateDid : 'did:example:delegate',
+      grants      : [
+        { id: 'grant-b', dateExpires: '2027-01-01T00:00:00.000000Z' },
+        { id: 'grant-a', dateExpires: '2027-01-01T00:00:00.000000Z' },
+      ],
+    });
+    const epoch2 = await computeAuthorizationEpoch({
+      kind        : 'delegate',
+      delegateDid : 'did:example:delegate',
+      grants      : [
+        { id: 'grant-a', dateExpires: '2027-01-01T00:00:00.000000Z' },
+        { id: 'grant-b', dateExpires: '2027-01-01T00:00:00.000000Z' },
+      ],
+    });
 
-  it('should produce the same id regardless of array order', async () => {
-    const id1 = await computeScopeId({
-      kind                 : 'protocol',
-      protocol             : 'https://example.com/proto',
-      protocolPathPrefixes : ['b', 'a', 'c'],
-    });
-    const id2 = await computeScopeId({
-      kind                 : 'protocol',
-      protocol             : 'https://example.com/proto',
-      protocolPathPrefixes : ['c', 'a', 'b'],
-    });
-    expect(id1).toBe(id2);
-  });
-
-  it('should produce url-safe base64 output (no +, /, or = characters)', async () => {
-    // Run several inputs to increase confidence in the character set.
-    for (let i = 0; i < 10; i++) {
-      const id = await computeScopeId({ kind: 'protocol', protocol: `https://example.com/test-${i}` });
-      expect(id).not.toContain('+');
-      expect(id).not.toContain('/');
-      expect(id).not.toContain('=');
-    }
-  });
-
-  it('should dedupe and sort contextIdPrefixes', async () => {
-    const id1 = await computeScopeId({
-      kind              : 'protocol',
-      protocol          : 'https://example.com/proto',
-      contextIdPrefixes : ['b', 'a', 'b', 'c'],
-    });
-    const id2 = await computeScopeId({
-      kind              : 'protocol',
-      protocol          : 'https://example.com/proto',
-      contextIdPrefixes : ['c', 'a', 'b'],
-    });
-    // Same after dedup + sort.
-    expect(id1).toBe(id2);
-  });
-
-  it('should produce different ids with vs without contextIdPrefixes', async () => {
-    const id1 = await computeScopeId({
-      kind     : 'protocol',
-      protocol : 'https://example.com/proto',
-    });
-    const id2 = await computeScopeId({
-      kind              : 'protocol',
-      protocol          : 'https://example.com/proto',
-      contextIdPrefixes : ['ctx-1'],
-    });
-    expect(id1).not.toBe(id2);
+    expect(epoch1).toBe(epoch2);
   });
 });

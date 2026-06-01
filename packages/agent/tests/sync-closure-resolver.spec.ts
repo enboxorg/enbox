@@ -105,9 +105,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'protocolsConfigure')).toBe(true);
@@ -117,9 +115,7 @@ describe('evaluateClosure', () => {
       const msg = mockMessage({ protocol: 'https://example.com/proto', dateCreated: '2025-01-01T00:00:00.000000Z' });
       const store = mockMessageStore(); // no protocols in store
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.ProtocolMetadataMissing);
@@ -146,9 +142,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'initialWrite')).toBe(true);
@@ -171,9 +165,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.InitialWriteMissing);
@@ -198,9 +190,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'parentRecord')).toBe(true);
@@ -222,9 +212,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.ParentChainMissing);
@@ -247,9 +235,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.InitialWriteMissing);
@@ -276,9 +262,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'permissionGrant')).toBe(true);
@@ -303,9 +287,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'permissionGrant')).toBe(true);
@@ -327,9 +309,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.GrantMissing);
@@ -376,9 +356,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.GrantNotYetActive);
@@ -407,9 +385,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.GrantExpired);
@@ -448,9 +424,7 @@ describe('evaluateClosure', () => {
       ctx.grantCache.set(grantId, grantRecord);
       ctx.grantCache.set(`revocation:${grantId}`, revocationRecord);
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, ctx);
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, ctx);
 
       expect(result.complete).toBe(false);
       expect(result.failure!.detail).toContain('revoked');
@@ -478,9 +452,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
     });
@@ -516,9 +488,7 @@ describe('evaluateClosure', () => {
       ctx.grantCache.set(grantId, grantRecord);
       ctx.grantCache.set(`revocation:${grantId}`, revocationRecord);
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, ctx);
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, ctx);
 
       // Grant was valid at the message's timestamp — revocation came later.
       expect(result.complete).toBe(true);
@@ -545,9 +515,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'contextRoot')).toBe(true);
@@ -569,9 +537,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.ContextChainMissing);
@@ -593,9 +559,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       expect(result.edges.every(e => e.label !== 'contextRoot')).toBe(true);
@@ -647,9 +611,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       // No class 4 squash edges — squash scope comes from the message itself.
@@ -699,9 +661,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'encryptionKeyMaterial')).toBe(true);
@@ -746,9 +706,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       // keyDeliveryProtocol edge IS present (protocol definition level).
@@ -806,9 +764,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/chat',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/chat',] }, createClosureContext('did:example:alice'));
 
       // Closure should FAIL: multi-party context but no contextKey.
       expect(result.complete).toBe(false);
@@ -884,9 +840,7 @@ describe('evaluateClosure', () => {
         return { messages: [] };
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/chat',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/chat',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'contextKeyRecord')).toBe(true);
@@ -931,9 +885,7 @@ describe('evaluateClosure', () => {
 
       // Non-delegate: closure FAILS because keyDeliveryProtocol is missing.
       const ownerCtx = createClosureContext('did:example:alice');
-      const ownerResult = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/wallet',
-      }, ownerCtx);
+      const ownerResult = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/wallet',] }, ownerCtx);
 
       expect(ownerResult.complete).toBe(false);
       expect(ownerResult.failure!.code).toBe(ClosureFailureCode.EncryptionDependencyMissing);
@@ -943,9 +895,7 @@ describe('evaluateClosure', () => {
       const delegateCtx = createClosureContext('did:example:alice', undefined, {
         isDelegateSession: true,
       });
-      const delegateResult = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/wallet',
-      }, delegateCtx);
+      const delegateResult = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/wallet',] }, delegateCtx);
 
       expect(delegateResult.complete).toBe(true);
       // The edge is suppressed at extraction time — it does not appear in the graph.
@@ -1007,9 +957,7 @@ describe('evaluateClosure', () => {
       const ctx = createClosureContext('did:example:alice', undefined, {
         isDelegateSession: true,
       });
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/chat',
-      }, ctx);
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/chat',] }, ctx);
 
       // Both keyDeliveryProtocol and contextKeyRecord are real dependencies
       // for multi-party delegates.  keyDeliveryProtocol is resolved first
@@ -1072,9 +1020,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://comments.example.com',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://comments.example.com',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'crossProtocolConfig')).toBe(true);
@@ -1124,9 +1070,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://comments.example.com',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://comments.example.com',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.CrossProtocolReferenceMissing);
@@ -1232,9 +1176,7 @@ describe('evaluateClosure', () => {
         }
       );
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://comments.example.com',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://comments.example.com',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'crossProtocolRoleRecord')).toBe(true);
@@ -1300,9 +1242,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://comments.example.com',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://comments.example.com',] }, createClosureContext('did:example:alice'));
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.CrossProtocolReferenceMissing);
@@ -1345,9 +1285,7 @@ describe('evaluateClosure', () => {
         ]),
       });
 
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://comments.example.com',
-      }, createClosureContext('did:example:alice'));
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://comments.example.com',] }, createClosureContext('did:example:alice'));
 
       // Class 2 parentRecord check fires first (before class 6 crossProtocolParent).
       expect(result.complete).toBe(false);
@@ -1385,9 +1323,7 @@ describe('evaluateClosure', () => {
       const store = mockMessageStore({ queryResults: messages });
 
       // Set maxDepth to 3 — the chain of 5+ parents should exceed it.
-      const result = await evaluateClosure(root, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, createClosureContext('did:example:alice', 3));
+      const result = await evaluateClosure(root, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, createClosureContext('did:example:alice', 3));
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.DepthExceeded);
@@ -1409,7 +1345,7 @@ describe('evaluateClosure', () => {
       const results = await evaluateClosureBatch(
         [msg1, msg2],
         store,
-        { kind: 'protocol', protocol: 'https://example.com/proto' },
+        { kind: 'protocolSet', protocols: ['https://example.com/proto'] },
         'did:example:alice',
       );
 
@@ -1438,9 +1374,7 @@ describe('evaluateClosure', () => {
       ctx.satisfiedDeps.add('protocolsConfigure:protocol:https://example.com/proto');
 
       const msg = mockMessage({ protocol: 'https://example.com/proto', dateCreated: '2025-01-01T00:00:00.000000Z' });
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, ctx);
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, ctx);
 
       expect(result.complete).toBe(true);
       // No queries should have been made — dependency was pre-satisfied.
@@ -1455,9 +1389,7 @@ describe('evaluateClosure', () => {
       ctx.missingDeps.add('protocolsConfigure:protocol:https://example.com/proto');
 
       const msg = mockMessage({ protocol: 'https://example.com/proto', dateCreated: '2025-01-01T00:00:00.000000Z' });
-      const result = await evaluateClosure(msg, store, {
-        kind: 'protocol', protocol: 'https://example.com/proto',
-      }, ctx);
+      const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, ctx);
 
       expect(result.complete).toBe(false);
       expect(result.failure!.code).toBe(ClosureFailureCode.ProtocolMetadataMissing);

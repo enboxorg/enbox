@@ -4,13 +4,35 @@ import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { DwnInterface } from '../src/types/dwn.js';
-import { getMessagesPermissionGrantId } from '../src/sync-permission-grants.js';
+import { getMessagesPermissionGrantsForScope } from '../src/sync-permission-grants.js';
 import { ReplicationLedger } from '../src/sync-replication-ledger.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 describe('SyncEngineLevel — private methods', () => {
   let db: Level<string, string>;
   let syncEngine: SyncEngineLevel;
+
+  const syncTarget = (did: string, dwnUrl: string, overrides: Record<string, unknown> = {}): any => ({
+    did,
+    dwnUrl,
+    scope              : { kind: 'full' },
+    authorization      : { kind: 'owner' },
+    authorizationEpoch : 'owner-epoch',
+    ...overrides,
+  });
+
+  const messagesGrantEntry = (id: string, scope: Record<string, unknown>, overrides: Record<string, unknown> = {}): any => ({
+    grant: {
+      id,
+      grantor     : 'did:example:carol',
+      grantee     : 'did:example:delegate',
+      dateGranted : '2026-01-01T00:00:00.000000Z',
+      dateExpires : '2999-01-01T00:00:00.000000Z',
+      scope,
+      ...overrides,
+    },
+    message: {},
+  });
 
   // Track every SyncEngineLevel created in this suite so `afterEach` can
   // clear any pending timers before the next test (and before `afterAll`
@@ -86,16 +108,14 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('buildLinkKey', () => {
-    it('should build key without scopeId/protocol', () => {
-      const key = (syncEngine as any).buildLinkKey('did:example:alice', 'https://dwn.example.com');
-      expect(key).toBe('did:example:alice^https://dwn.example.com');
-    });
-
-    it('should build key with scopeId or protocol', () => {
+    it('should build key from tenant, endpoint, projection ID, and authorization epoch', () => {
       const key = (syncEngine as any).buildLinkKey(
-        'did:example:alice', 'https://dwn.example.com', 'scope-hash-123',
+        'did:example:alice',
+        'https://dwn.example.com',
+        'projection-hash-123',
+        'authorization-epoch-456',
       );
-      expect(key).toBe('did:example:alice^https://dwn.example.com^scope-hash-123');
+      expect(key).toBe('did:example:alice^https://dwn.example.com^projection-hash-123^authorization-epoch-456');
     });
   });
 
@@ -243,54 +263,111 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // getMessagesPermissionGrantId
+  // getMessagesPermissionGrantsForScope
   // ---------------------------------------------------------------------------
 
-  describe('getMessagesPermissionGrantId', () => {
-    it('should return undefined when no delegateDid', async () => {
+  describe('getMessagesPermissionGrantsForScope', () => {
+    const grantEntry = (id: string, scope: Record<string, unknown>, overrides: Record<string, unknown> = {}): any => ({
+      grant: {
+        id,
+        grantor     : 'did:example:alice',
+        grantee     : 'did:example:delegate',
+        dateGranted : '2026-01-01T00:00:00.000000Z',
+        dateExpires : '2999-01-01T00:00:00.000000Z',
+        scope,
+        ...overrides,
+      },
+      message: {},
+    });
+
+    it('should return no grants for owner-authored sync', async () => {
       const permissionsApi = {
-        clear                   : sinon.stub(),
-        getPermissionForRequest : sinon.stub(),
+        fetchGrants: sinon.stub(),
       };
 
-      const result = await getMessagesPermissionGrantId({
+      const result = await getMessagesPermissionGrantsForScope({
         did            : 'did:example:alice',
         messageType    : DwnInterface.MessagesSync,
         permissionsApi : permissionsApi as any,
       });
-      expect(result).toBeUndefined();
-      expect(permissionsApi.getPermissionForRequest.called).toBe(false);
+      expect(result).toEqual([]);
+      expect(permissionsApi.fetchGrants.called).toBe(false);
     });
 
-    it('should throw when permission fetch fails for a delegate DID', async () => {
+    it('should return active unscoped grants for delegated full sync', async () => {
+      const unscoped = grantEntry('grant-b', { interface: 'Messages', method: 'Read' });
+      const expired = grantEntry('grant-expired', { interface: 'Messages', method: 'Read' }, {
+        dateExpires: '2026-01-01T00:00:00.000000Z',
+      });
+      const protocolScoped = grantEntry('grant-a', {
+        interface : 'Messages',
+        method    : 'Read',
+        protocol  : 'https://example.com/profile',
+      });
       const permissionsApi = {
-        getPermissionForRequest : sinon.stub().rejects(new Error('not found')),
-        clear                   : sinon.stub(),
+        fetchGrants: sinon.stub().resolves([protocolScoped, expired, unscoped]),
       };
 
-      await expect(
-        getMessagesPermissionGrantId({
-          did            : 'did:example:alice',
-          delegateDid    : 'did:example:delegate',
-          messageType    : DwnInterface.MessagesSync,
-          permissionsApi : permissionsApi as any,
-        })
-      ).rejects.toThrow('not found');
-    });
-
-    it('should return grant ID when delegate permission is found', async () => {
-      const permissionsApi = {
-        getPermissionForRequest : sinon.stub().resolves({ grant: { id: 'grant-123' } }),
-        clear                   : sinon.stub(),
-      };
-
-      const result = await getMessagesPermissionGrantId({
+      const result = await getMessagesPermissionGrantsForScope({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
         messageType    : DwnInterface.MessagesSync,
         permissionsApi : permissionsApi as any,
       });
-      expect(result).toBe('grant-123');
+
+      expect(result.map(entry => entry.grant.id)).toEqual(['grant-b']);
+    });
+
+    it('should return all active grants that participate in a protocol-set projection', async () => {
+      const unscoped = grantEntry('grant-c', { interface: 'Messages', method: 'Read' });
+      const profile = grantEntry('grant-b', {
+        interface : 'Messages',
+        method    : 'Read',
+        protocol  : 'https://example.com/profile',
+      });
+      const social = grantEntry('grant-a', {
+        interface : 'Messages',
+        method    : 'Read',
+        protocol  : 'https://example.com/social',
+      });
+      const unrelated = grantEntry('grant-unrelated', {
+        interface : 'Messages',
+        method    : 'Read',
+        protocol  : 'https://example.com/other',
+      });
+      const permissionsApi = {
+        fetchGrants: sinon.stub().resolves([unrelated, unscoped, profile, social]),
+      };
+
+      const result = await getMessagesPermissionGrantsForScope({
+        did            : 'did:example:alice',
+        delegateDid    : 'did:example:delegate',
+        messageType    : DwnInterface.MessagesSync,
+        protocols      : ['https://example.com/social', 'https://example.com/profile'],
+        permissionsApi : permissionsApi as any,
+      });
+
+      expect(result.map(entry => entry.grant.id)).toEqual(['grant-a', 'grant-b', 'grant-c']);
+    });
+
+    it('should reject protocol-set sync when any requested protocol lacks coverage', async () => {
+      const permissionsApi = {
+        fetchGrants: sinon.stub().resolves([
+          grantEntry('grant-profile', {
+            interface : 'Messages',
+            method    : 'Read',
+            protocol  : 'https://example.com/profile',
+          }),
+        ]),
+      };
+
+      await expect(getMessagesPermissionGrantsForScope({
+        did            : 'did:example:alice',
+        delegateDid    : 'did:example:delegate',
+        messageType    : DwnInterface.MessagesSync,
+        protocols      : ['https://example.com/profile', 'https://example.com/social'],
+        permissionsApi : permissionsApi as any,
+      })).rejects.toThrow('No active Messages.Read permission found');
     });
   });
 
@@ -341,7 +418,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(targets[0].protocol).toBeUndefined();
     });
 
-    it('should produce one target per protocol per DWN URL', async () => {
+    it('should produce one protocol-set target per DWN URL', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
@@ -355,9 +432,12 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       const targets = await (engine as any).getSyncTargets();
-      expect(targets).toHaveLength(2);
-      expect(targets[0].protocol).toBe('https://proto1.example.com');
-      expect(targets[1].protocol).toBe('https://proto2.example.com');
+      expect(targets).toHaveLength(1);
+      expect(targets[0].scope).toEqual({
+        kind      : 'protocolSet',
+        protocols : ['https://proto1.example.com', 'https://proto2.example.com'],
+      });
+      expect(targets[0].authorization).toEqual({ kind: 'owner' });
     });
 
     it('should include delegateDid from identity options', async () => {
@@ -368,6 +448,11 @@ describe('SyncEngineLevel — private methods', () => {
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
+      (engine as any)._permissionsApi = {
+        fetchGrants: sinon.stub().resolves([
+          messagesGrantEntry('grant-1', { interface: 'Messages', method: 'Read' }),
+        ]),
+      };
       await engine.registerIdentity({
         did     : 'did:example:carol',
         options : { protocols: 'all', delegateDid: 'did:example:delegate' },
@@ -376,6 +461,11 @@ describe('SyncEngineLevel — private methods', () => {
       const targets = await (engine as any).getSyncTargets();
       expect(targets).toHaveLength(1);
       expect(targets[0].delegateDid).toBe('did:example:delegate');
+      expect(targets[0].authorization).toEqual({
+        kind               : 'delegate',
+        delegateDid        : 'did:example:delegate',
+        permissionGrantIds : ['grant-1'],
+      });
     });
 
     it('should handle invalid JSON in identity options gracefully', async () => {
@@ -407,7 +497,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
+        syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('aabbcc');
@@ -423,7 +513,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
+        syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
@@ -445,7 +535,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
+        syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
@@ -467,7 +557,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
+        syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
@@ -489,7 +579,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
+        syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
@@ -511,8 +601,8 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
-        { did: 'did:example:2', dwnUrl: 'https://dwn.example.com' },
+        syncTarget('did:example:1', 'https://dwn.example.com'),
+        syncTarget('did:example:2', 'https://dwn.example.com'),
       ]);
       const getLocalRootStub = sinon.stub(engine as any, 'getLocalRoot').rejects(new Error('network error'));
       const consoleStub = sinon.stub(console, 'error');
@@ -529,7 +619,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
+        syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('same');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('same');
@@ -547,7 +637,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._connectivityState = 'online';
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
+        syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
       sinon.stub(engine as any, 'getLocalRoot').rejects(new Error('timeout'));
       sinon.stub(console, 'error');
@@ -564,8 +654,8 @@ describe('SyncEngineLevel — private methods', () => {
 
       // Two targets on different dwnUrls.
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:1', dwnUrl: 'https://slow.example.com' },
-        { did: 'did:example:2', dwnUrl: 'https://fast.example.com' },
+        syncTarget('did:example:1', 'https://slow.example.com'),
+        syncTarget('did:example:2', 'https://fast.example.com'),
       ]);
 
       // Track call order to prove overlap.
@@ -601,8 +691,8 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._connectivityState = 'online';
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:1', dwnUrl: 'https://healthy.example.com' },
-        { did: 'did:example:2', dwnUrl: 'https://down.example.com' },
+        syncTarget('did:example:1', 'https://healthy.example.com'),
+        syncTarget('did:example:2', 'https://down.example.com'),
       ]);
 
       sinon.stub(engine as any, 'createLinkReconciler').returns({
@@ -654,7 +744,14 @@ describe('SyncEngineLevel — private methods', () => {
 
     it('should set link connectivity to offline on transitionToRepairing', async () => {
       const engine = createEngine({ db });
-      const link = { status: 'live', connectivity: 'online', pull: {} } as any;
+      const link = {
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'full' },
+        status         : 'live',
+        connectivity   : 'online',
+        pull           : {},
+      } as any;
       const linkKey = 'test-link';
       (engine as any)._activeLinks.set(linkKey, link);
 
@@ -674,7 +771,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._consecutiveFailures = 3;
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:1', dwnUrl: 'https://dwn.example.com' },
+        syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
       sinon.stub(engine as any, 'getLocalRoot').resolves('same');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('same');
@@ -835,6 +932,16 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('openLivePullSubscription', () => {
+    const fullPullTarget = (overrides: Record<string, unknown> = {}): any => ({
+      did                : 'did:example:alice',
+      dwnUrl             : 'https://dwn.example.com',
+      linkKey            : 'did:example:alice^https://dwn.example.com^projection-test^authorization-test',
+      scope              : { kind: 'full' },
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'authorization-test',
+      ...overrides,
+    });
+
     /**
      * Helper: creates a mock agent with processRequest (construct message)
      * and rpc.sendDwnRequest (send to specific dwnUrl via WS).
@@ -861,9 +968,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
-      await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-      });
+      await (engine as any).openLivePullSubscription(fullPullTarget());
 
       expect((engine as any)._liveSubscriptions.length).toBe(1);
       // The rpc stub was called with a wss:// URL
@@ -880,62 +985,50 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await expect(
-        (engine as any).openLivePullSubscription({
-          did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-        })
+        (engine as any).openLivePullSubscription(fullPullTarget())
       ).rejects.toThrow('MessagesSubscribe failed');
 
       expect((engine as any)._liveSubscriptions.length).toBe(0);
     });
 
-    it('should include protocol in subscription filters when provided', async () => {
+    it('should include one subscription filter per protocol in a protocol-set scope', async () => {
       const { agent, processRequestStub } = createPullMockAgent();
       const engine = createEngine({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
-      await (engine as any).openLivePullSubscription({
-        did      : 'did:example:alice',
-        dwnUrl   : 'https://dwn.example.com',
-        protocol : 'https://proto.example.com',
-      });
+      await (engine as any).openLivePullSubscription(fullPullTarget({
+        scope: {
+          kind      : 'protocolSet',
+          protocols : ['https://proto.example.com', 'https://social.example.com'],
+        },
+      }));
 
       const callArgs = processRequestStub.firstCall.args[0];
-      expect(callArgs.messageParams.filters).toEqual([{ protocol: 'https://proto.example.com' }]);
+      expect(callArgs.messageParams.filters).toEqual([
+        { protocol: 'https://proto.example.com' },
+        { protocol: 'https://social.example.com' },
+      ]);
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should include protocolPathPrefix in subscription filters when link scope has it', async () => {
+    it('should include delegate grant IDs when provided by the sync target', async () => {
       const { agent, processRequestStub } = createPullMockAgent();
       const engine = createEngine({ db, agent });
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
-      // Set up a link with protocolPathPrefixes in the scope.
-      const linkKey = (engine as any).buildLinkKey('did:example:alice', 'https://dwn.example.com', 'https://proto.example.com');
-      (engine as any)._activeLinks.set(linkKey, {
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example.com',
-        scope          : {
-          kind                 : 'protocol',
-          protocol             : 'https://proto.example.com',
-          protocolPathPrefixes : ['thread/message'],
+      await (engine as any).openLivePullSubscription(fullPullTarget({
+        delegateDid   : 'did:example:delegate',
+        authorization : {
+          kind               : 'delegate',
+          delegateDid        : 'did:example:delegate',
+          permissionGrantIds : ['grant-b', 'grant-a'],
         },
-        status   : 'live',
-        pull     : {},
-        protocol : 'https://proto.example.com',
-      });
-
-      await (engine as any).openLivePullSubscription({
-        did      : 'did:example:alice',
-        dwnUrl   : 'https://dwn.example.com',
-        protocol : 'https://proto.example.com',
-        linkKey,
-      });
+        permissionGrantIds: ['grant-b', 'grant-a'],
+      }));
 
       const callArgs = processRequestStub.firstCall.args[0];
-      expect(callArgs.messageParams.filters).toEqual([{
-        protocol           : 'https://proto.example.com',
-        protocolPathPrefix : 'thread/message',
-      }]);
+      expect(callArgs.granteeDid).toBe('did:example:delegate');
+      expect(callArgs.messageParams.permissionGrantIds).toEqual(['grant-a', 'grant-b']);
       (engine as any)._liveSubscriptions = [];
     });
 
@@ -945,63 +1038,22 @@ describe('SyncEngineLevel — private methods', () => {
       const savedCursor = { streamId: 's1', epoch: 'e1', position: '42', messageCid: 'cid-42' };
 
       // Set cursor on the link's pull checkpoint (not legacy getCursor).
-      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : { contiguousAppliedToken: savedCursor },
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test',
+        authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : { contiguousAppliedToken: savedCursor },
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 
-      await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
-      });
+      await (engine as any).openLivePullSubscription(fullPullTarget({ linkKey }));
 
       const callArgs = processRequestStub.firstCall.args[0];
       expect(callArgs.messageParams.cursor).toEqual(savedCursor);
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should look up delegate permission when delegateDid is provided', async () => {
-      const permStub = sinon.stub().resolves({ grant: { id: 'sub-grant-1' } });
-      const { agent } = createPullMockAgent();
-      const engine = createEngine({ db, agent });
-      (engine as any)._permissionsApi = {
-        getPermissionForRequest : permStub,
-        clear                   : sinon.stub(),
-      };
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
-
-      await (engine as any).openLivePullSubscription({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        delegateDid : 'did:example:delegate',
-      });
-
-      expect(permStub.called).toBe(true);
-      (engine as any)._liveSubscriptions = [];
-    });
-
-    it('should throw when permission grant lookup fails', async () => {
-      const permStub = sinon.stub().rejects(new Error('no grant'));
-      const { agent, rpcStub } = createPullMockAgent();
-      const engine = createEngine({ db, agent });
-      (engine as any)._permissionsApi = {
-        getPermissionForRequest : permStub,
-        clear                   : sinon.stub(),
-      };
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
-
-      await expect(
-        (engine as any).openLivePullSubscription({
-          did         : 'did:example:alice',
-          dwnUrl      : 'https://dwn.example.com',
-          delegateDid : 'did:example:delegate',
-        })
-      ).rejects.toThrow('no grant');
-
-      expect(rpcStub.called).toBe(false);
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1009,6 +1061,16 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('openLocalPushSubscription', () => {
+    const fullPushTarget = (overrides: Record<string, unknown> = {}): any => ({
+      did                : 'did:example:alice',
+      dwnUrl             : 'https://dwn.example.com',
+      linkKey            : 'did:example:alice^https://dwn.example.com^projection-test^authorization-test',
+      scope              : { kind: 'full' },
+      authorization      : { kind: 'owner' },
+      authorizationEpoch : 'authorization-test',
+      ...overrides,
+    });
+
     it('should open a local subscription and add it to _localSubscriptions', async () => {
       const closeStub = sinon.stub().resolves();
       const mockAgent = {
@@ -1024,9 +1086,7 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
 
-      await (engine as any).openLocalPushSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-      });
+      await (engine as any).openLocalPushSubscription(fullPushTarget());
 
       expect((engine as any)._localSubscriptions.length).toBe(1);
 
@@ -1049,39 +1109,13 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
 
       await expect(
-        (engine as any).openLocalPushSubscription({
-          did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-        })
+        (engine as any).openLocalPushSubscription(fullPushTarget())
       ).rejects.toThrow('Local MessagesSubscribe failed');
 
       expect((engine as any)._localSubscriptions.length).toBe(0);
     });
 
-    it('should throw when delegate permission lookup fails', async () => {
-      const permStub = sinon.stub().rejects(new Error('no grant'));
-      const processRequestStub = sinon.stub();
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { processRequest: processRequestStub },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      (engine as any)._permissionsApi = {
-        getPermissionForRequest : permStub,
-        clear                   : sinon.stub(),
-      };
-
-      await expect(
-        (engine as any).openLocalPushSubscription({
-          did         : 'did:example:alice',
-          dwnUrl      : 'https://dwn.example.com',
-          delegateDid : 'did:example:delegate',
-        })
-      ).rejects.toThrow('no grant');
-
-      expect(processRequestStub.called).toBe(false);
-    });
-
-    it('should include protocol in subscription filters when provided', async () => {
+    it('should include one subscription filter per protocol in a protocol-set scope', async () => {
       const processRequestStub = sinon.stub().resolves({
         reply: {
           status       : { code: 200, detail: 'OK' },
@@ -1094,14 +1128,18 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
 
-      await (engine as any).openLocalPushSubscription({
-        did      : 'did:example:alice',
-        dwnUrl   : 'https://dwn.example.com',
-        protocol : 'https://proto.example.com',
-      });
+      await (engine as any).openLocalPushSubscription(fullPushTarget({
+        scope: {
+          kind      : 'protocolSet',
+          protocols : ['https://proto.example.com', 'https://social.example.com'],
+        },
+      }));
 
       const callArgs = processRequestStub.firstCall.args[0];
-      expect(callArgs.messageParams.filters).toEqual([{ protocol: 'https://proto.example.com' }]);
+      expect(callArgs.messageParams.filters).toEqual([
+        { protocol: 'https://proto.example.com' },
+        { protocol: 'https://social.example.com' },
+      ]);
 
       (engine as any)._localSubscriptions = [];
     });
@@ -1602,7 +1640,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       // Return one sync target.
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' },
+        syncTarget('did:example:alice', 'https://dwn.example.com'),
       ]);
 
       // Pull subscription succeeds (sets connectivity to online).
@@ -1622,9 +1660,8 @@ describe('SyncEngineLevel — private methods', () => {
       await engine.startSync({ mode: 'live', interval: '10s' });
 
       // _activeLinks should not contain the failed link.
-      const linkKey = (engine as any).buildLinkKey('did:example:alice', 'https://dwn.example.com', undefined);
-      expect((engine as any)._activeLinks.has(linkKey)).toBe(false);
-      expect((engine as any)._linkRuntimes.has(linkKey)).toBe(false);
+      expect([...((engine as any)._activeLinks.values())].some((link: any) => link.tenantDid === 'did:example:alice')).toBe(false);
+      expect((engine as any)._linkRuntimes.size).toBe(0);
 
       // Pull subscription should have been closed (the openLivePullSubscription
       // stub added it, and the catch path in startLiveSync should have closed it
@@ -1649,7 +1686,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       sinon.stub(engine, 'sync').resolves();
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' },
+        syncTarget('did:example:alice', 'https://dwn.example.com'),
       ]);
 
       // Pull subscription fails immediately (no subscriptions added).
@@ -1663,8 +1700,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect((engine as any)._connectivityState).toBe('unknown');
       expect((engine as any)._liveSubscriptions.length).toBe(0);
 
-      const linkKey = (engine as any).buildLinkKey('did:example:alice', 'https://dwn.example.com', undefined);
-      expect((engine as any)._activeLinks.has(linkKey)).toBe(false);
+      expect([...((engine as any)._activeLinks.values())].some((link: any) => link.tenantDid === 'did:example:alice')).toBe(false);
 
       await engine.stopSync();
     });
@@ -1711,9 +1747,9 @@ describe('SyncEngineLevel — private methods', () => {
       // Set up a link so the EOSE handler uses the link path.
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {}, connectivity   : 'unknown', needsReconcile : false,
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : {}, connectivity       : 'unknown', needsReconcile     : false,
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -1721,9 +1757,7 @@ describe('SyncEngineLevel — private methods', () => {
       const saveStub = sinon.stub().resolves();
       (engine as any)._ledger = { saveLink: saveStub };
 
-      await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
-      });
+      await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
 
       const handler = getHandler();
       expect(handler).toBeDefined();
@@ -1747,9 +1781,9 @@ describe('SyncEngineLevel — private methods', () => {
       // Set up a link so the event handler uses the link path.
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {}, connectivity   : 'online', needsReconcile : false,
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : {}, connectivity       : 'online', needsReconcile     : false,
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -1757,9 +1791,7 @@ describe('SyncEngineLevel — private methods', () => {
       const saveStub = sinon.stub().resolves();
       (engine as any)._ledger = { saveLink: saveStub };
 
-      await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
-      });
+      await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
 
       const handler = getHandler();
 
@@ -1786,17 +1818,15 @@ describe('SyncEngineLevel — private methods', () => {
       // Set up a link so the event handler passes the _activeLinks guard.
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {}, connectivity   : 'online', needsReconcile : false,
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : {}, connectivity       : 'online', needsReconcile     : false,
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
       (engine as any)._ledger = { saveLink: sinon.stub().resolves(), setStatus: sinon.stub().resolves() };
 
-      await (engine as any).openLivePullSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey,
-      });
+      await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
 
       const handler = getHandler();
 
@@ -1836,9 +1866,7 @@ describe('SyncEngineLevel — private methods', () => {
       const pushLinkKey = 'did:example:alice^https://dwn.example.com';
       (engine as any)._activeLinks.set(pushLinkKey, { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
-      await (engine as any).openLocalPushSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey: pushLinkKey,
-      });
+      await (engine as any).openLocalPushSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey: pushLinkKey }));
 
       expect(capturedHandler).toBeDefined();
 
@@ -1885,9 +1913,7 @@ describe('SyncEngineLevel — private methods', () => {
       const pushLinkKey = 'did:example:alice^https://dwn.example.com';
       (engine as any)._activeLinks.set(pushLinkKey, { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
-      await (engine as any).openLocalPushSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey: pushLinkKey,
-      });
+      await (engine as any).openLocalPushSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey: pushLinkKey }));
 
       capturedHandler({ type: 'eose', cursor: 'some-cursor' });
 
@@ -1916,9 +1942,7 @@ describe('SyncEngineLevel — private methods', () => {
       const pushLinkKey = 'did:example:alice^https://dwn.example.com';
       (engine as any)._activeLinks.set(pushLinkKey, { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
-      await (engine as any).openLocalPushSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey: pushLinkKey,
-      });
+      await (engine as any).openLocalPushSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey: pushLinkKey }));
 
       // Event with no messageCid and descriptor that won't sync-resolve
       capturedHandler({
@@ -1958,9 +1982,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
       (engine as any)._activeLinks.set('test-link', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scope: { kind: 'full' } });
 
-      await (engine as any).openLocalPushSubscription({
-        did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', linkKey: 'test-link',
-      });
+      await (engine as any).openLocalPushSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey: 'test-link' }));
 
       // First event triggers immediate flush (no timer).
       await capturedHandler({
@@ -2127,9 +2149,9 @@ describe('SyncEngineLevel — private methods', () => {
 
       // Set up link and runtime state.
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       const rt = (engine as any).getOrCreateRuntime(linkKey);
@@ -2162,9 +2184,9 @@ describe('SyncEngineLevel — private methods', () => {
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       const rt = (engine as any).getOrCreateRuntime(linkKey);
@@ -2188,9 +2210,9 @@ describe('SyncEngineLevel — private methods', () => {
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       const rt = (engine as any).getOrCreateRuntime(linkKey);
@@ -2239,9 +2261,9 @@ describe('SyncEngineLevel — private methods', () => {
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2267,9 +2289,9 @@ describe('SyncEngineLevel — private methods', () => {
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 
@@ -2300,9 +2322,9 @@ describe('SyncEngineLevel — private methods', () => {
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2339,9 +2361,9 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       try {
-        await (engine as any).openLivePullSubscription({
-          did: 'did:example:alice', dwnUrl: 'https://dwn.example.com',
-        });
+        await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', {
+          linkKey: 'did:example:alice^https://dwn.example.com^projection-test^authorization-test',
+        }));
         throw new Error('expected error');
       } catch (error: any) {
         expect(error.isProgressGap).toBe(true);
@@ -2360,9 +2382,9 @@ describe('SyncEngineLevel — private methods', () => {
       }
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : { contiguousAppliedToken: token(1) },
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
+        pull               : { contiguousAppliedToken: token(1) },
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       const rt = (engine as any).getOrCreateRuntime(linkKey);
@@ -2386,9 +2408,9 @@ describe('SyncEngineLevel — private methods', () => {
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 
@@ -2414,9 +2436,9 @@ describe('SyncEngineLevel — private methods', () => {
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2460,9 +2482,9 @@ describe('SyncEngineLevel — private methods', () => {
 
       const resumeToken = { streamId: 's1', epoch: 'e1', position: '99', messageCid: 'cid-99' };
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'live',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 
@@ -2487,9 +2509,9 @@ describe('SyncEngineLevel — private methods', () => {
 
       const resumeToken = { streamId: 's1', epoch: 'e1', position: '99', messageCid: 'cid-99' };
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2521,9 +2543,9 @@ describe('SyncEngineLevel — private methods', () => {
 
       const existingToken = { streamId: 's1', epoch: 'e1', position: '50', messageCid: 'cid-50' };
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : { contiguousAppliedToken: existingToken },
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
+        pull               : { contiguousAppliedToken: existingToken },
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2551,9 +2573,9 @@ describe('SyncEngineLevel — private methods', () => {
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2583,9 +2605,9 @@ describe('SyncEngineLevel — private methods', () => {
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {},
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
+        pull               : {},
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2622,10 +2644,10 @@ describe('SyncEngineLevel — private methods', () => {
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test', scope          : { kind: 'full' }, status         : 'repairing',
-        pull           : {},
-        needsReconcile : false,
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
+        pull               : {},
+        needsReconcile     : false,
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -2671,17 +2693,19 @@ describe('SyncEngineLevel — private methods', () => {
       const pushClose = sinon.stub().resolves();
 
       (engine as any)._liveSubscriptions = [
-        { linkKey: 'did:example:alice^https://dwn.example.com^scope-a', did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: undefined, close: pullClose },
-        { linkKey: 'did:example:bob^https://other.com^scope-b', did: 'did:example:bob', dwnUrl: 'https://other.com', close: sinon.stub().resolves() },
+        { linkKey: 'did:example:alice^https://dwn.example.com^projection-a^authorization-a', did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: undefined, close: pullClose },
+        { linkKey: 'did:example:bob^https://other.com^projection-b^authorization-b', did: 'did:example:bob', dwnUrl: 'https://other.com', close: sinon.stub().resolves() },
       ];
       (engine as any)._localSubscriptions = [
-        { linkKey: 'did:example:alice^https://dwn.example.com^scope-a', did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: undefined, close: pushClose },
+        { linkKey: 'did:example:alice^https://dwn.example.com^projection-a^authorization-a', did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: undefined, close: pushClose },
       ];
 
       const link = {
-        tenantDid      : 'did:example:alice', remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'scope-a',
-        protocol       : undefined,
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-a',
+        authorizationEpoch : 'authorization-a',
+        authorization      : { kind: 'owner' },
+        protocol           : undefined,
       } as any;
 
       await (engine as any).closeLinkSubscriptions(link);
@@ -2699,7 +2723,9 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._localSubscriptions = [];
 
       const link = {
-        tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', scopeId: 'scope-a',
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com', projectionId       : 'projection-a',
+        authorizationEpoch : 'authorization-a',
+        authorization      : { kind: 'owner' },
       } as any;
 
       // Should not throw.
@@ -2752,125 +2778,40 @@ describe('SyncEngineLevel — private methods', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Subset scope filtering
-  // ---------------------------------------------------------------------------
-
-  describe('isEventInScope (tested via exported helper)', () => {
-    // isEventInScope is a module-level function. We test it by importing
-    // the module and accessing it, or by testing behavior through the engine.
-    // Since it's not exported, we replicate its logic here for direct testing.
-
-    function isEventInScope(message: any, scope: any): boolean {
-      if (scope.kind === 'full') { return true; }
-      if (!scope.protocolPathPrefixes && !scope.contextIdPrefixes) { return true; }
-      const desc = message.descriptor || {};
-      if (scope.protocolPathPrefixes && scope.protocolPathPrefixes.length > 0) {
-        const protocolPath = desc.protocolPath;
-        if (!protocolPath) { return false; }
-        const matches = scope.protocolPathPrefixes.some(
-          (prefix: string) => protocolPath === prefix || protocolPath.startsWith(prefix + '/')
-        );
-        if (!matches) { return false; }
-      }
-      if (scope.contextIdPrefixes && scope.contextIdPrefixes.length > 0) {
-        const contextId = message.contextId;
-        if (!contextId) { return false; }
-        const matches = scope.contextIdPrefixes.some(
-          (prefix: string) => contextId === prefix || contextId.startsWith(prefix + '/')
-        );
-        if (!matches) { return false; }
-      }
-      return true;
-    }
-
-    it('should accept all events for full-tenant scope', () => {
-      const msg = { descriptor: { protocolPath: 'thread/message' } };
-      expect(isEventInScope(msg, { kind: 'full' })).toBe(true);
-    });
-
-    it('should accept all events when no prefixes are specified', () => {
-      const msg = { descriptor: { protocolPath: 'thread/message' } };
-      expect(isEventInScope(msg, { kind: 'protocol', protocol: 'https://example.com' })).toBe(true);
-    });
-
-    it('should accept events matching protocolPath prefix exactly', () => {
-      const msg = { descriptor: { protocolPath: 'thread/message' } };
-      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
-      expect(isEventInScope(msg, scope)).toBe(true);
-    });
-
-    it('should accept events matching protocolPath prefix with child path', () => {
-      const msg = { descriptor: { protocolPath: 'thread/message/attachment' } };
-      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
-      expect(isEventInScope(msg, scope)).toBe(true);
-    });
-
-    it('should reject events not matching protocolPath prefix', () => {
-      const msg = { descriptor: { protocolPath: 'thread/participant' } };
-      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
-      expect(isEventInScope(msg, scope)).toBe(false);
-    });
-
-    it('should not false-match prefix substrings (thread/message vs thread/messageDraft)', () => {
-      const msg = { descriptor: { protocolPath: 'thread/messageDraft' } };
-      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread/message'] };
-      expect(isEventInScope(msg, scope)).toBe(false);
-    });
-
-    it('should accept events matching contextId prefix', () => {
-      const msg = { descriptor: {}, contextId: 'ctx-root/child' };
-      const scope = { kind: 'protocol', protocol: 'x', contextIdPrefixes: ['ctx-root'] };
-      expect(isEventInScope(msg, scope)).toBe(true);
-    });
-
-    it('should reject events not matching contextId prefix', () => {
-      const msg = { descriptor: {}, contextId: 'other-root/child' };
-      const scope = { kind: 'protocol', protocol: 'x', contextIdPrefixes: ['ctx-root'] };
-      expect(isEventInScope(msg, scope)).toBe(false);
-    });
-
-    it('should reject events with no protocolPath when prefixes are required', () => {
-      const msg = { descriptor: {} };
-      const scope = { kind: 'protocol', protocol: 'x', protocolPathPrefixes: ['thread'] };
-      expect(isEventInScope(msg, scope)).toBe(false);
-    });
-
-    it('should require both protocolPath AND contextId match when both are specified', () => {
-      const msg = { descriptor: { protocolPath: 'thread/message' }, contextId: 'wrong-ctx' };
-      const scope = {
-        kind                 : 'protocol',
-        protocol             : 'x',
-        protocolPathPrefixes : ['thread/message'],
-        contextIdPrefixes    : ['ctx-root'],
-      };
-      // protocolPath matches but contextId doesn't → reject.
-      expect(isEventInScope(msg, scope)).toBe(false);
-    });
-  });
-
   describe('subset scope link creation', () => {
-    it('should create protocol-scoped links when target has a protocol', async () => {
+    it('should create one protocol-set link when target has a protocol set', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });
 
       sinon.stub(engine, 'sync').resolves();
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: 'https://example.com/chat' },
+        {
+          did                : 'did:example:alice',
+          dwnUrl             : 'https://dwn.example.com',
+          scope              : { kind: 'protocolSet', protocols: ['https://example.com/chat', 'https://example.com/profile'] },
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+        },
       ]);
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
       sinon.stub(console, 'error');
 
-      // Stub the ledger to capture the scope.
-      let capturedScope: any;
+      let capturedParams: any;
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
       const getOrCreateStub = sinon.stub().callsFake(async (params: any) => {
-        capturedScope = params.scope;
+        capturedParams = params;
         return {
-          tenantDid      : params.tenantDid, remoteEndpoint : params.remoteEndpoint,
-          scopeId        : 'test', scope          : params.scope, status         : 'initializing',
-          pull           : {}, protocol       : params.protocol,
+          tenantDid          : params.tenantDid,
+          remoteEndpoint     : params.remoteEndpoint,
+          projectionId       : 'projection-test',
+          authorizationEpoch : params.authorizationEpoch,
+          authorization      : params.authorization,
+          scope              : params.scope,
+          status             : 'initializing',
+          pull               : {},
+          connectivity       : 'unknown',
+          needsReconcile     : false,
         };
       });
       (engine as any)._ledger = {
@@ -2880,10 +2821,12 @@ describe('SyncEngineLevel — private methods', () => {
 
       await engine.startSync({ mode: 'live', interval: '10s' });
 
-      // Scope should be protocol-scoped, not full.
-      expect(capturedScope).toBeDefined();
-      expect(capturedScope.kind).toBe('protocol');
-      expect(capturedScope.protocol).toBe('https://example.com/chat');
+      expect(capturedParams.scope).toEqual({
+        kind      : 'protocolSet',
+        protocols : ['https://example.com/chat', 'https://example.com/profile'],
+      });
+      expect(capturedParams.authorization).toEqual({ kind: 'owner' });
+      expect(capturedParams.authorizationEpoch).toBe('owner-epoch');
 
       await engine.stopSync();
     });
@@ -2894,7 +2837,13 @@ describe('SyncEngineLevel — private methods', () => {
 
       sinon.stub(engine, 'sync').resolves();
       sinon.stub(engine as any, 'getSyncTargets').resolves([
-        { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com' },
+        {
+          did                : 'did:example:alice',
+          dwnUrl             : 'https://dwn.example.com',
+          scope              : { kind: 'full' },
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+        },
       ]);
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
@@ -2906,9 +2855,16 @@ describe('SyncEngineLevel — private methods', () => {
         getOrCreateLink: sinon.stub().callsFake(async (params: any) => {
           capturedScope = params.scope;
           return {
-            tenantDid      : params.tenantDid, remoteEndpoint : params.remoteEndpoint,
-            scopeId        : 'test', scope          : params.scope, status         : 'initializing',
-            pull           : {},
+            tenantDid          : params.tenantDid,
+            remoteEndpoint     : params.remoteEndpoint,
+            projectionId       : 'projection-test',
+            authorizationEpoch : params.authorizationEpoch,
+            authorization      : params.authorization,
+            scope              : params.scope,
+            status             : 'initializing',
+            pull               : {},
+            connectivity       : 'unknown',
+            needsReconcile     : false,
           };
         }),
         setStatus: setStatusStub,
@@ -2997,13 +2953,15 @@ describe('SyncEngineLevel — private methods', () => {
   describe('per-link reconciliation', () => {
     function makeLiveLink(overrides: any = {}): any {
       return {
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example.com',
-        scopeId        : 'test',
-        scope          : { kind: 'full' },
-        status         : 'live',
-        pull           : {},
-        needsReconcile : true,
+        tenantDid          : 'did:example:alice',
+        remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test',
+        authorizationEpoch : 'authorization-test',
+        authorization      : { kind: 'owner' },
+        scope              : { kind: 'full' },
+        status             : 'live',
+        pull               : {},
+        needsReconcile     : true,
         ...overrides,
       };
     }
@@ -3046,7 +3004,7 @@ describe('SyncEngineLevel — private methods', () => {
       const protocol = 'https://example.com/protocol';
       const link = makeLiveLink({
         protocol,
-        scope: { kind: 'protocol', protocol },
+        scope: { kind: 'protocolSet', protocols: [protocol] },
       });
       (engine as any)._activeLinks.set(linkKey, link);
 
@@ -3313,12 +3271,16 @@ describe('SyncEngineLevel — private methods', () => {
       engine.on((event) => { events.push(event); });
 
       const link = {
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example.com',
-        status         : 'live',
-        connectivity   : 'online',
-        pull           : {},
-        protocol       : 'https://example.com/chat',
+        tenantDid          : 'did:example:alice',
+        remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test',
+        authorizationEpoch : 'authorization-test',
+        authorization      : { kind: 'owner' },
+        scope              : { kind: 'protocolSet', protocols: ['https://example.com/chat'] },
+        status             : 'live',
+        connectivity       : 'online',
+        pull               : {},
+        protocol           : 'https://example.com/chat',
       } as any;
       const linkKey = 'test-link';
       (engine as any)._activeLinks.set(linkKey, link);
@@ -3487,7 +3449,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       // Simulate two active links that are online.
       const linkA: Record<string, unknown> = { tenantDid: 'did:a', remoteEndpoint: 'https://a.com', protocol: undefined, connectivity: 'online', scope: { kind: 'full' } };
-      const linkB: Record<string, unknown> = { tenantDid: 'did:b', remoteEndpoint: 'https://b.com', protocol: 'proto', connectivity: 'online', scope: { kind: 'protocol', protocol: 'proto' } };
+      const linkB: Record<string, unknown> = { tenantDid: 'did:b', remoteEndpoint: 'https://b.com', protocol: 'proto', connectivity: 'online', scope: { kind: 'protocolSet', protocols: ['proto'] } };
       (engine as any)._activeLinks.set('a', linkA);
       (engine as any)._activeLinks.set('b', linkB);
 
@@ -3615,6 +3577,10 @@ describe('SyncEngineLevel — private methods', () => {
 
   describe('ReplicationLedger', () => {
     let ledger: ReplicationLedger;
+    const ownerAuthorization = {
+      authorization      : { kind: 'owner' as const },
+      authorizationEpoch : 'owner-epoch',
+    };
 
     beforeAll(() => {
       ledger = new ReplicationLedger(db);
@@ -3625,6 +3591,7 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:ledger-test',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       expect(link.tenantDid).toBe('did:example:ledger-test');
@@ -3637,6 +3604,7 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:ledger-test',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
       expect(same.tenantDid).toBe(link.tenantDid);
     });
@@ -3646,6 +3614,7 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:save-test',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       expect(link.lastActivityAt).toBeUndefined();
@@ -3659,6 +3628,7 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:save-test',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
       expect(retrieved.status).toBe('live');
       expect(retrieved.lastActivityAt).toBeDefined();
@@ -3670,15 +3640,17 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:delete-test',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
-      await ledger.deleteLink(link.tenantDid, link.remoteEndpoint, link.scopeId);
+      await ledger.deleteLink(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
 
       // After deletion, getOrCreateLink should create a fresh link.
       const fresh = await ledger.getOrCreateLink({
         tenantDid      : 'did:example:delete-test',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
       expect(fresh.status).toBe('initializing');
     });
@@ -3688,11 +3660,13 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:list-test',
         remoteEndpoint : 'https://a.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
       await ledger.getOrCreateLink({
         tenantDid      : 'did:example:list-test',
         remoteEndpoint : 'https://b.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       const links = await ledger.getLinksForTenant('did:example:list-test');
@@ -3704,6 +3678,7 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:all-test',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       const all = await ledger.getAllLinks();
@@ -3715,6 +3690,7 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:status-test',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       expect(link.status).toBe('initializing');
@@ -3728,6 +3704,7 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:reconcile-test',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'full' },
+        ...ownerAuthorization,
       });
 
       expect(link.needsReconcile).toBe(false);
