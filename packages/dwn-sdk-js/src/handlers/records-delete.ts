@@ -110,8 +110,9 @@ export class RecordsDeleteHandler implements MethodHandler {
 
     if (recordsDelete.author === tenant) {
       return;
-    } else if (recordsDelete.author !== undefined && recordsDelete.signaturePayload!.permissionGrantId !== undefined) {
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, recordsDelete.signaturePayload!.permissionGrantId);
+    } else if (recordsDelete.author !== undefined && Message.getPermissionGrantId(recordsDelete.signaturePayload!) !== undefined) {
+      const permissionGrantId = Message.getPermissionGrantId(recordsDelete.signaturePayload!)!;
+      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
       await RecordsGrantAuthorization.authorizeDelete({
         recordsDeleteMessage : recordsDelete.message,
         recordsWriteToDelete : recordsWrite.message,

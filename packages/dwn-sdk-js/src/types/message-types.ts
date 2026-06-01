@@ -92,6 +92,7 @@ export type DelegatedGrantRecordsWriteMessage = {
 export type GenericSignaturePayload = {
   descriptorCid: string;
   permissionGrantId?: string;
+  permissionGrantIds?: string[];
 
   /**
    * Record ID of a permission grant DWN `RecordsWrite` with `delegated` set to `true`.

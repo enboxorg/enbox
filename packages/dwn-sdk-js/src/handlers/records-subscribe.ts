@@ -10,8 +10,10 @@ import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
+import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
+import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsSubscribe } from '../interfaces/records-subscribe.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
@@ -218,6 +220,15 @@ export class RecordsSubscribeHandler implements MethodHandler {
         });
       }
 
+      if (Message.getPermissionGrantId(recordsSubscribe.signaturePayload!) !== undefined) {
+        filters.push({
+          ...Records.convertFilter(filter),
+          interface : DwnInterfaceName.Records,
+          method    : [DwnMethodName.Write, DwnMethodName.Delete],
+          published : false,
+        });
+      }
+
       if (Records.shouldBuildUnpublishedRecipientFilter(filter, recordsSubscribe.author!)) {
         filters.push({
           ...Records.convertFilter(filter),
@@ -293,6 +304,16 @@ export class RecordsSubscribeHandler implements MethodHandler {
         });
       }
 
+      if (Message.getPermissionGrantId(recordsSubscribe.signaturePayload!) !== undefined) {
+        filters.push({
+          ...Records.convertFilter(filter, dateSort),
+          interface         : DwnInterfaceName.Records,
+          method            : DwnMethodName.Write,
+          isLatestBaseState : true,
+          published         : false,
+        });
+      }
+
       if (Records.shouldBuildUnpublishedRecipientFilter(filter, recordsSubscribe.author!)) {
         filters.push({
           ...Records.convertFilter(filter, dateSort),
@@ -333,6 +354,19 @@ export class RecordsSubscribeHandler implements MethodHandler {
 
     if (Message.isSignedByAuthorDelegate(recordsSubscribe.message)) {
       await recordsSubscribe.authorizeDelegate(messageStore);
+    }
+
+    const permissionGrantId = Message.getPermissionGrantId(recordsSubscribe.signaturePayload!);
+    if (permissionGrantId !== undefined) {
+      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+      await RecordsGrantAuthorization.authorizeQueryOrSubscribe({
+        incomingMessage : recordsSubscribe.message,
+        expectedGrantor : tenant,
+        expectedGrantee : recordsSubscribe.author!,
+        permissionGrant,
+        messageStore,
+      });
+      return;
     }
 
     // NOTE: not all RecordsSubscribe messages require protocol authorization even if the filter includes protocol-related fields,

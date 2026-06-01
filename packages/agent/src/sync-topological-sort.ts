@@ -1,5 +1,6 @@
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 
+import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 /**
@@ -23,7 +24,7 @@ function isInitialWrite(message: GenericMessage): boolean {
  * - ProtocolsConfigure must come before any RecordsWrite using that protocol
  * - Parent record must come before child record (via parentId)
  * - Initial write must come before update writes (same recordId, not initial)
- * - Permission grant must come before records using that permissionGrantId
+ * - Permission grants must come before messages that invoke them
  */
 export function topologicalSort<T extends { message: GenericMessage }>(
   messages: T[]
@@ -121,10 +122,11 @@ export function topologicalSort<T extends { message: GenericMessage }>(
       }
     }
 
-    // Permission grant dependency: message depends on the grant it references.
-    const permissionGrantId = (desc as any).permissionGrantId;
-    if (permissionGrantId && grantIndex.has(permissionGrantId)) {
-      addEdge(grantIndex.get(permissionGrantId)!, i);
+    // Permission grant dependency: message depends on each grant it references.
+    for (const permissionGrantId of getInvokedPermissionGrantIds(messages[i].message)) {
+      if (grantIndex.has(permissionGrantId)) {
+        addEdge(grantIndex.get(permissionGrantId)!, i);
+      }
     }
   }
 

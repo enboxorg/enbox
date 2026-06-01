@@ -40,19 +40,23 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
   }
 
   public static async create(options: ProtocolsConfigureOptions): Promise<ProtocolsConfigure> {
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantId: options.permissionGrantId,
+    });
+
     const descriptor: ProtocolsConfigureDescriptor = {
       interface        : DwnInterfaceName.Protocols,
       method           : DwnMethodName.Configure,
       messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
       definition       : ProtocolsConfigure.normalizeDefinition(options.definition),
-      ...(options.permissionGrantId !== undefined && { permissionGrantId: options.permissionGrantId }),
+      ...permissionGrantInvocation,
     };
 
     const authorization = await Message.createAuthorization({
       descriptor,
-      signer            : options.signer,
-      delegatedGrant    : options.delegatedGrant,
-      permissionGrantId : options.permissionGrantId
+      signer         : options.signer,
+      delegatedGrant : options.delegatedGrant,
+      ...permissionGrantInvocation
     });
     const message = { descriptor, authorization };
 

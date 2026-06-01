@@ -9,6 +9,7 @@ import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sd
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { topologicalSort } from './sync-topological-sort.js';
+import { getMessagesPermissionGrantId, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 
 /** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
 const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
@@ -279,17 +280,13 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
 }): Promise<SyncMessageEntry[]> {
   const results: SyncMessageEntry[] = [];
 
-  let permissionGrantId: string | undefined;
-  if (delegateDid) {
-    const messagesReadGrant = await permissionsApi.getPermissionForRequest({
-      connectedDid : did,
-      messageType  : DwnInterface.MessagesRead,
-      delegateDid,
-      protocol,
-      cached       : true
-    });
-    permissionGrantId = messagesReadGrant.grant.id;
-  }
+  const permissionGrantId = await getMessagesPermissionGrantId({
+    did,
+    delegateDid,
+    protocol,
+    messageType: DwnInterface.MessagesRead,
+    permissionsApi,
+  });
 
   // Fetch messages in parallel with bounded concurrency.  Keep this low
   // to avoid bursting through the remote server's rate limits during sync.
@@ -308,7 +305,7 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
         target        : did,
         messageType   : DwnInterface.MessagesRead,
         granteeDid    : delegateDid,
-        messageParams : { messageCid, permissionGrantId }
+        messageParams : { messageCid, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantId) }
       });
 
       let reply: MessagesReadReply;
@@ -448,24 +445,20 @@ export async function getLocalMessage({ author, delegateDid, protocol, messageCi
   agent: EnboxPlatformAgent;
   permissionsApi: PermissionsApi;
 }): Promise<SyncMessageEntry | undefined> {
-  let permissionGrantId: string | undefined;
-  if (delegateDid) {
-    const messagesReadGrant = await permissionsApi.getPermissionForRequest({
-      connectedDid : author,
-      messageType  : DwnInterface.MessagesRead,
-      delegateDid,
-      protocol,
-      cached       : true
-    });
-    permissionGrantId = messagesReadGrant.grant.id;
-  }
+  const permissionGrantId = await getMessagesPermissionGrantId({
+    did         : author,
+    delegateDid,
+    protocol,
+    messageType : DwnInterface.MessagesRead,
+    permissionsApi,
+  });
 
   const { reply } = await agent.dwn.processRequest({
     author,
     target        : author,
     messageType   : DwnInterface.MessagesRead,
     granteeDid    : delegateDid,
-    messageParams : { messageCid, permissionGrantId }
+    messageParams : { messageCid, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantId) }
   });
 
   if (reply.status.code !== 200 || !reply.entry) {

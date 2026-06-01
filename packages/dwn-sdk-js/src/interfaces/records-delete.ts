@@ -58,21 +58,25 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
   public static async create(options: RecordsDeleteOptions): Promise<RecordsDelete> {
     const recordId = options.recordId;
     const currentTime = Time.getCurrentTimestamp();
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantId: options.permissionGrantId,
+    });
 
     const descriptor: RecordsDeleteDescriptor = {
       interface        : DwnInterfaceName.Records,
       method           : DwnMethodName.Delete,
       messageTimestamp : options.messageTimestamp ?? currentTime,
       recordId,
-      prune            : options.prune ?? false
+      prune            : options.prune ?? false,
+      ...permissionGrantInvocation,
     };
 
     const authorization = await Message.createAuthorization({
       descriptor,
-      signer            : options.signer,
-      protocolRole      : options.protocolRole,
-      permissionGrantId : options.permissionGrantId,
-      delegatedGrant    : options.delegatedGrant
+      signer         : options.signer,
+      protocolRole   : options.protocolRole,
+      ...permissionGrantInvocation,
+      delegatedGrant : options.delegatedGrant
     });
     const message: RecordsDeleteMessage = { descriptor, authorization };
 

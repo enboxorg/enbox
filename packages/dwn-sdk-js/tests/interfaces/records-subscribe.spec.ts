@@ -35,6 +35,19 @@ describe('RecordsSubscribe', () => {
       expect(recordsQuery.message.descriptor.messageTimestamp).toBe(currentTime);
     });
 
+    it('should include permissionGrantId in the descriptor when provided', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const grantId = await TestDataGenerator.randomCborSha256Cid();
+
+      const recordsSubscribe = await RecordsSubscribe.create({
+        filter            : { schema: 'anything' },
+        signer            : Jws.createSigner(alice),
+        permissionGrantId : grantId,
+      });
+
+      expect(recordsSubscribe.message.descriptor.permissionGrantId).toEqual(grantId);
+    });
+
     it('should auto-normalize protocol URL', async () => {
       const alice = await TestDataGenerator.generatePersona();
 

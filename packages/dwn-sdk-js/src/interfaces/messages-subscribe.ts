@@ -15,7 +15,7 @@ export type MessagesSubscribeOptions = {
   signer: MessageSigner;
   messageTimestamp?: string;
   filters?: MessagesFilter[];
-  permissionGrantId?: string;
+  permissionGrantIds?: string[];
   /**
    * Progress token to resume from. When provided, catch-up events are replayed
    * from the EventLog and an EOSE marker is delivered before live events.
@@ -47,22 +47,25 @@ export class MessagesSubscribe extends AbstractMessage<MessagesSubscribeMessage>
     options: MessagesSubscribeOptions
   ): Promise<MessagesSubscribe> {
     const currentTime = Time.getCurrentTimestamp();
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantIds: options.permissionGrantIds
+    });
 
     const descriptor: MessagesSubscribeDescriptor = {
-      interface         : DwnInterfaceName.Messages,
-      method            : DwnMethodName.Subscribe,
-      filters           : options.filters ?? [],
-      messageTimestamp  : options.messageTimestamp ?? currentTime,
-      permissionGrantId : options.permissionGrantId,
-      cursor            : options.cursor,
+      interface        : DwnInterfaceName.Messages,
+      method           : DwnMethodName.Subscribe,
+      filters          : options.filters ?? [],
+      messageTimestamp : options.messageTimestamp ?? currentTime,
+      cursor           : options.cursor,
+      ...permissionGrantInvocation,
     };
 
     removeUndefinedProperties(descriptor);
-    const { permissionGrantId, signer } = options;
+    const { signer } = options;
     const authorization = await Message.createAuthorization({
       descriptor,
       signer,
-      permissionGrantId
+      ...permissionGrantInvocation
     });
 
     const message: MessagesSubscribeMessage = { descriptor, authorization };

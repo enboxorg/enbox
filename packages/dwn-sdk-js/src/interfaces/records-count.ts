@@ -17,6 +17,7 @@ export type RecordsCountOptions = {
   messageTimestamp?: string;
   filter: RecordsFilter;
   signer?: MessageSigner;
+  permissionGrantId?: string;
   protocolRole?: string;
 
   /**
@@ -60,11 +61,16 @@ export class RecordsCount extends AbstractMessage<RecordsCountMessage> {
   }
 
   public static async create(options: RecordsCountOptions): Promise<RecordsCount> {
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantId: options.permissionGrantId,
+    });
+
     const descriptor: RecordsCountDescriptor = {
       interface        : DwnInterfaceName.Records,
       method           : DwnMethodName.Count,
       messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
       filter           : Records.normalizeFilter(options.filter),
+      ...permissionGrantInvocation,
     };
 
     // delete all descriptor properties that are `undefined` else the code will encounter the following IPLD issue when attempting to generate CID:
@@ -78,6 +84,7 @@ export class RecordsCount extends AbstractMessage<RecordsCountMessage> {
       authorization = await Message.createAuthorization({
         descriptor,
         signer,
+        ...permissionGrantInvocation,
         protocolRole   : options.protocolRole,
         delegatedGrant : options.delegatedGrant
       });

@@ -128,8 +128,7 @@ export class GrantAuthorization {
    * Verify that the `interface` and `method` grant scopes match the incoming message.
    *
    * For the Messages interface, a `Read` scope is treated as a unified scope that also authorizes
-   * `Subscribe` and `Sync` operations. This mirrors how protocol `$actions` treats `read` as a
-   * unified action covering read, query, subscribe, and count.
+   * `Subscribe` and `Sync` operations.
    *
    * @throws {DwnError} if the `interface` and `method` of the incoming message do not match the scope of the permission grant.
    */
@@ -162,7 +161,10 @@ export class GrantAuthorization {
           `DWN Method of incoming message is outside the scope of permission grant with ID ${permissionGrant.id}`
         );
       }
-    } else if (dwnMethod !== permissionGrant.scope.method) {
+      return;
+    }
+
+    if (dwnMethod !== permissionGrant.scope.method) {
       throw new DwnError(
         DwnErrorCode.GrantAuthorizationMethodMismatch,
         `DWN Method of incoming message is outside the scope of permission grant with ID ${permissionGrant.id}`

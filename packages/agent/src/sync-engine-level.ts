@@ -26,6 +26,7 @@ import { SyncLinkReconciler } from './sync-link-reconciler.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { buildLegacyCursorKey, buildLinkId } from './sync-link-id.js';
 import { fetchRemoteMessages, pullMessages, pushMessages } from './sync-messages.js';
+import { getMessagesPermissionGrantId, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 
 export type SyncEngineLevelParams = {
   agent?: EnboxPlatformAgent;
@@ -1557,21 +1558,13 @@ export class SyncEngineLevel implements SyncEngine {
       ? [{ protocol, ...(protocolPathPrefix ? { protocolPathPrefix } : {}) }]
       : [];
 
-    // Look up permission grant for MessagesSubscribe if using a delegate.
-    // The unified scope matching in AgentPermissionsApi accepts a
-    // Messages.Read grant for MessagesSubscribe requests, so a single
-    // lookup is sufficient.
-    let permissionGrantId: string | undefined;
-    if (delegateDid) {
-      const grant = await this._permissionsApi.getPermissionForRequest({
-        connectedDid : did,
-        messageType  : DwnInterface.MessagesSubscribe,
-        delegateDid,
-        protocol,
-        cached       : true
-      });
-      permissionGrantId = grant.grant.id;
-    }
+    const permissionGrantId = await getMessagesPermissionGrantId({
+      did,
+      delegateDid,
+      protocol,
+      messageType    : DwnInterface.MessagesSubscribe,
+      permissionsApi : this._permissionsApi,
+    });
 
     const handlerGeneration = this._engineGeneration;
 
@@ -1836,7 +1829,7 @@ export class SyncEngineLevel implements SyncEngine {
       target        : did,
       messageType   : DwnInterface.MessagesSubscribe as const,
       granteeDid    : delegateDid,
-      messageParams : { filters, cursor, permissionGrantId },
+      messageParams : { filters, cursor, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantId) },
     };
 
     const { message } = await this.agent.dwn.processRequest(subscribeRequest);
@@ -1926,18 +1919,13 @@ export class SyncEngineLevel implements SyncEngine {
     // Build filters scoped to the protocol (if any).
     const filters = protocol ? [{ protocol }] : [];
 
-    // Look up permission grant for local subscription.
-    let permissionGrantId: string | undefined;
-    if (delegateDid) {
-      const grant = await this._permissionsApi.getPermissionForRequest({
-        connectedDid : did,
-        messageType  : DwnInterface.MessagesSubscribe,
-        delegateDid,
-        protocol,
-        cached       : true,
-      });
-      permissionGrantId = grant.grant.id;
-    }
+    const permissionGrantId = await getMessagesPermissionGrantId({
+      did,
+      delegateDid,
+      protocol,
+      messageType    : DwnInterface.MessagesSubscribe,
+      permissionsApi : this._permissionsApi,
+    });
 
     const handlerGeneration = this._engineGeneration;
 
@@ -2001,7 +1989,7 @@ export class SyncEngineLevel implements SyncEngine {
       target              : did,
       messageType         : DwnInterface.MessagesSubscribe,
       granteeDid          : delegateDid,
-      messageParams       : { filters, permissionGrantId },
+      messageParams       : { filters, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantId) },
       subscriptionHandler : subscriptionHandler as any,
     });
 
@@ -2503,16 +2491,22 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Remote mode fallback: go through processRequest → RPC.
-    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
+    const permissionGrantId = await getMessagesPermissionGrantId({
+      did,
+      delegateDid,
+      protocol,
+      messageType    : DwnInterface.MessagesSync,
+      permissionsApi : this._permissionsApi,
+    });
     const response = await this.agent.dwn.processRequest({
       author        : did,
       target        : did,
       messageType   : DwnInterface.MessagesSync,
       granteeDid    : delegateDid,
       messageParams : {
-        action: 'root',
+        action             : 'root',
         protocol,
-        permissionGrantId
+        permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantId)
       }
     });
     const reply = response.reply as MessagesSyncReply;
@@ -2524,7 +2518,13 @@ export class SyncEngineLevel implements SyncEngine {
    * Returns a hex-encoded root hash string.
    */
   private async getRemoteRoot(did: string, dwnUrl: string, delegateDid?: string, protocol?: string): Promise<string> {
-    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
+    const permissionGrantId = await getMessagesPermissionGrantId({
+      did,
+      delegateDid,
+      protocol,
+      messageType    : DwnInterface.MessagesSync,
+      permissionsApi : this._permissionsApi,
+    });
 
     const syncMessage = await this.agent.dwn.processRequest({
       store         : false,
@@ -2533,9 +2533,9 @@ export class SyncEngineLevel implements SyncEngine {
       messageType   : DwnInterface.MessagesSync,
       granteeDid    : delegateDid,
       messageParams : {
-        action: 'root',
+        action             : 'root',
         protocol,
-        permissionGrantId
+        permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantId)
       }
     });
 
@@ -2576,7 +2576,13 @@ export class SyncEngineLevel implements SyncEngine {
     const localHashes = await this.collectLocalSubtreeHashes(did, protocol, BATCHED_DIFF_DEPTH);
 
     // Step 2: Send a single 'diff' request to the remote with our hashes.
-    const permissionGrantId = await this.getSyncPermissionGrantId(did, delegateDid, protocol);
+    const permissionGrantId = await getMessagesPermissionGrantId({
+      did,
+      delegateDid,
+      protocol,
+      messageType    : DwnInterface.MessagesSync,
+      permissionsApi : this._permissionsApi,
+    });
 
     const syncMessage = await this.agent.dwn.processRequest({
       store         : false,
@@ -2585,11 +2591,11 @@ export class SyncEngineLevel implements SyncEngine {
       messageType   : DwnInterface.MessagesSync,
       granteeDid    : delegateDid,
       messageParams : {
-        action : 'diff',
+        action             : 'diff',
         protocol,
-        hashes : localHashes,
-        depth  : BATCHED_DIFF_DEPTH,
-        permissionGrantId,
+        hashes             : localHashes,
+        depth              : BATCHED_DIFF_DEPTH,
+        permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantId),
       }
     });
 
@@ -2604,11 +2610,10 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Step 3: Enumerate local leaves for prefixes the remote reported as onlyLocal.
-    // Reuse the same grant ID from step 2 (avoids redundant lookup).
-    const permissionGrantIdForLeaves = permissionGrantId;
+    // Reuse the same grant from step 2 (avoids redundant lookup).
     const onlyLocalCids: string[] = [];
     for (const prefix of reply.onlyLocal ?? []) {
-      const leaves = await this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantIdForLeaves);
+      const leaves = await this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantId);
       onlyLocalCids.push(...leaves);
     }
 
@@ -2696,10 +2701,10 @@ export class SyncEngineLevel implements SyncEngine {
       messageType   : DwnInterface.MessagesSync,
       granteeDid    : delegateDid,
       messageParams : {
-        action: 'subtree',
+        action             : 'subtree',
         prefix,
         protocol,
-        permissionGrantId
+        permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantId)
       }
     });
     const reply = response.reply as MessagesSyncReply;
@@ -2730,10 +2735,10 @@ export class SyncEngineLevel implements SyncEngine {
       messageType   : DwnInterface.MessagesSync,
       granteeDid    : delegateDid,
       messageParams : {
-        action: 'leaves',
+        action             : 'leaves',
         prefix,
         protocol,
-        permissionGrantId
+        permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantId)
       }
     });
     const reply = response.reply as MessagesSyncReply;
@@ -3109,22 +3114,4 @@ export class SyncEngineLevel implements SyncEngine {
     return targets;
   }
 
-  /**
-   * Gets the permission grant ID for MessagesSync if a delegateDid is provided.
-   * Returns undefined if no delegate is in use (owner access).
-   */
-  private async getSyncPermissionGrantId(did: string, delegateDid?: string, protocol?: string): Promise<string | undefined> {
-    if (!delegateDid) {
-      return undefined;
-    }
-
-    const messagesSyncGrant = await this._permissionsApi.getPermissionForRequest({
-      connectedDid : did,
-      messageType  : DwnInterface.MessagesSync,
-      delegateDid,
-      protocol,
-      cached       : true
-    });
-    return messagesSyncGrant.grant.id;
-  }
 }

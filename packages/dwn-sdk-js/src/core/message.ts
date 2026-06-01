@@ -12,6 +12,20 @@ import { removeUndefinedProperties } from '@enbox/common';
 import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 
+type PermissionGrantInvocation = {
+  permissionGrantId?: string;
+  permissionGrantIds?: string[];
+};
+
+type ValidateSignatureStructureOptions = {
+  /**
+   * Permission grant invocations are bound to the author signature payload.
+   * Owner signatures only prove owner retention/consent and do not repeat
+   * the author's grant invocation fields.
+   */
+  validatePermissionGrantInvocation?: boolean;
+};
+
 /**
  * A class containing utility methods for working with DWN messages.
  */
@@ -100,16 +114,17 @@ export class Message {
     signer: MessageSigner,
     delegatedGrant?: DataEncodedRecordsWriteMessage,
     permissionGrantId?: string,
+    permissionGrantIds?: string[],
     protocolRole?: string
   }): Promise<AuthorizationModel> {
-    const { descriptor, signer, delegatedGrant, permissionGrantId, protocolRole } = input;
+    const { descriptor, signer, delegatedGrant, permissionGrantId, permissionGrantIds, protocolRole } = input;
 
     let delegatedGrantId;
     if (delegatedGrant !== undefined) {
       delegatedGrantId = await Message.getCid(delegatedGrant);
     }
 
-    const signature = await Message.createSignature(descriptor, signer, { delegatedGrantId, permissionGrantId, protocolRole });
+    const signature = await Message.createSignature(descriptor, signer, { delegatedGrantId, permissionGrantId, permissionGrantIds, protocolRole });
 
     const authorization: AuthorizationModel = {
       signature
@@ -129,11 +144,23 @@ export class Message {
   public static async createSignature(
     descriptor: Descriptor,
     signer: MessageSigner,
-    additionalPayloadProperties?: { delegatedGrantId?: string, permissionGrantId?: string, protocolRole?: string }
+    additionalPayloadProperties?: { delegatedGrantId?: string, permissionGrantId?: string, permissionGrantIds?: string[], protocolRole?: string }
   ): Promise<GeneralJws> {
     const descriptorCid = await Cid.computeCid(descriptor);
+    const {
+      delegatedGrantId,
+      permissionGrantId,
+      permissionGrantIds,
+      protocolRole
+    } = additionalPayloadProperties ?? {};
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({ permissionGrantId, permissionGrantIds });
 
-    const signaturePayload: GenericSignaturePayload = { descriptorCid, ...additionalPayloadProperties };
+    const signaturePayload: GenericSignaturePayload = {
+      descriptorCid,
+      delegatedGrantId,
+      protocolRole,
+      ...permissionGrantInvocation
+    };
     removeUndefinedProperties(signaturePayload);
 
     const signaturePayloadBytes = Encoder.objectToBytes(signaturePayload);
@@ -142,6 +169,55 @@ export class Message {
     const signature = builder.getJws();
 
     return signature;
+  }
+
+  /**
+   * Normalizes permission grant invocation before it is written into a descriptor
+   * and signed payload.
+   *
+   * Direct operation messages use `permissionGrantId`; Messages operations use
+   * canonicalized `permissionGrantIds` so a request can invoke a grant set.
+   */
+  public static normalizePermissionGrantInvocation(input: PermissionGrantInvocation): PermissionGrantInvocation {
+    if (input.permissionGrantId !== undefined && input.permissionGrantIds !== undefined) {
+      throw new DwnError(
+        DwnErrorCode.MessagePermissionGrantCreateInvocationAmbiguous,
+        'permission grant invocation must use either `permissionGrantId` or `permissionGrantIds`, not both'
+      );
+    }
+
+    if (input.permissionGrantId !== undefined) {
+      return { permissionGrantId: input.permissionGrantId };
+    }
+
+    if (input.permissionGrantIds === undefined) {
+      return {};
+    }
+
+    const permissionGrantIds = Message.normalizePermissionGrantIds(input);
+    return { permissionGrantIds };
+  }
+
+  /**
+   * Returns the permission grant ID carried by a direct operation signature payload.
+   */
+  public static getPermissionGrantId(signaturePayload: GenericSignaturePayload): string | undefined {
+    return signaturePayload.permissionGrantId;
+  }
+
+  /**
+   * Returns all permission grant IDs invoked by a signature payload.
+   *
+   * Direct Records/Protocols operations carry a single `permissionGrantId`.
+   * Messages operations carry `permissionGrantIds`. Generic cleanup and
+   * revocation code uses this helper across both wire shapes.
+   */
+  public static getPermissionGrantIds(signaturePayload: GenericSignaturePayload): string[] {
+    if (signaturePayload.permissionGrantId !== undefined) {
+      return [signaturePayload.permissionGrantId];
+    }
+
+    return signaturePayload.permissionGrantIds ?? [];
   }
 
   /**
@@ -227,12 +303,14 @@ export class Message {
    * 3. The `descriptorCid` property matches the CID of the message descriptor
    * NOTE: signature is NOT verified.
    * @param payloadJsonSchemaKey The key to look up the JSON schema referenced in `compile-validators.js` and perform payload schema validation on.
+   * @param options Additional structural validation controls.
    * @returns the parsed JSON payload object if validation succeeds.
    */
   public static async validateSignatureStructure(
     messageSignature: GeneralJws,
     messageDescriptor: Descriptor,
     payloadJsonSchemaKey: string = 'GenericSignaturePayload',
+    options: ValidateSignatureStructureOptions = {},
   ): Promise<GenericSignaturePayload> {
 
     if (messageSignature.signatures.length !== 1) {
@@ -254,6 +332,75 @@ export class Message {
       );
     }
 
+    if (options.validatePermissionGrantInvocation !== false) {
+      Message.validatePermissionGrantInvocationMatchesPayload(messageDescriptor, payloadJson);
+    }
+
     return payloadJson;
+  }
+
+  private static normalizePermissionGrantIds(input: PermissionGrantInvocation): string[] {
+    if (input.permissionGrantIds === undefined) {
+      return [];
+    }
+
+    if (input.permissionGrantIds.length === 0) {
+      throw new DwnError(
+        DwnErrorCode.MessagePermissionGrantIdsEmpty,
+        '`permissionGrantIds` must contain at least one grant ID'
+      );
+    }
+
+    return [...new Set(input.permissionGrantIds)].sort(lexicographicalCompare);
+  }
+
+  private static validatePermissionGrantInvocationCanonical(input: PermissionGrantInvocation): string[] {
+    if (input.permissionGrantId !== undefined && input.permissionGrantIds !== undefined) {
+      throw new DwnError(
+        DwnErrorCode.MessagePermissionGrantValidateInvocationAmbiguous,
+        'permission grant invocation must use either `permissionGrantId` or `permissionGrantIds`, not both'
+      );
+    }
+
+    if (input.permissionGrantId !== undefined) {
+      return [input.permissionGrantId];
+    }
+
+    const normalizedPermissionGrantIds = Message.normalizePermissionGrantIds(input);
+
+    if (input.permissionGrantIds !== undefined && !Message.areStringArraysEqual(input.permissionGrantIds, normalizedPermissionGrantIds)) {
+      throw new DwnError(
+        DwnErrorCode.MessagePermissionGrantIdsNotCanonical,
+        '`permissionGrantIds` must be sorted and deduplicated'
+      );
+    }
+
+    return normalizedPermissionGrantIds;
+  }
+
+  private static validatePermissionGrantInvocationMatchesPayload(
+    descriptor: Descriptor & PermissionGrantInvocation,
+    signaturePayload: GenericSignaturePayload
+  ): void {
+    if (descriptor.permissionGrantId !== signaturePayload.permissionGrantId) {
+      throw new DwnError(
+        DwnErrorCode.MessagePermissionGrantDescriptorPayloadMismatch,
+        'permission grant invocation in descriptor does not match signature payload'
+      );
+    }
+
+    const descriptorPermissionGrantIds = Message.validatePermissionGrantInvocationCanonical(descriptor);
+    const payloadPermissionGrantIds = Message.validatePermissionGrantInvocationCanonical(signaturePayload);
+
+    if (!Message.areStringArraysEqual(descriptorPermissionGrantIds, payloadPermissionGrantIds)) {
+      throw new DwnError(
+        DwnErrorCode.MessagePermissionGrantIdsDescriptorPayloadMismatch,
+        'permission grant invocation in descriptor does not match signature payload'
+      );
+    }
+  }
+
+  private static areStringArraysEqual(a: string[], b: string[]): boolean {
+    return a.length === b.length && a.every((value, index) => value === b[index]);
   }
 }

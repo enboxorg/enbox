@@ -6,10 +6,10 @@ import type {
 } from './sync-closure-types.js';
 import type { GenericMessage, MessageStore } from '@enbox/dwn-sdk-js';
 
-import { Message, PermissionsProtocol } from '@enbox/dwn-sdk-js';
-
+import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
 import { isMultiPartyContext } from './protocol-utils.js';
 import { ClosureFailureCode, createClosureContext } from './sync-closure-types.js';
+import { Message, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
 // Dependency extraction helpers (one per dependency class)
@@ -112,43 +112,27 @@ function extractAncestryDeps(message: GenericMessage): ClosureDependencyEdge[] {
 
 /**
  * Class 3: Authorization closure.
- * If the message uses a permissionGrantId, the grant record must be present.
+ * If the message invokes permission grant IDs, each grant record must be present.
  */
 function extractAuthorizationDeps(message: GenericMessage): ClosureDependencyEdge[] {
   const edges: ClosureDependencyEdge[] = [];
-  const auth = (message as any).authorization;
-  if (!auth) { return []; }
-
-  // The signature payload is at authorization.signature.payload (GeneralJws).
-  // This is the base64url-encoded JSON containing permissionGrantId, protocolRole, etc.
-  const payload = auth.signature?.payload;
-  if (payload) {
-    try {
-      // Payload is base64url-encoded JSON.
-      const decoded = JSON.parse(
-        Buffer.from(payload, 'base64url').toString('utf-8')
-      );
-      if (decoded.permissionGrantId) {
-        edges.push({
-          dependencyClass : 3,
-          label           : 'permissionGrant',
-          identifier      : decoded.permissionGrantId,
-          identifierType  : 'grantId',
-        });
-        // Also require the grant's revocation state to be resolvable.
-        // The revocation is a child record at protocolPath 'grant/revocation'
-        // with parentId === grantId. We add it as a separate edge so the
-        // resolver can check for its presence (or confirmed absence).
-        edges.push({
-          dependencyClass : 3,
-          label           : 'grantRevocation',
-          identifier      : decoded.permissionGrantId,
-          identifierType  : 'grantId',
-        });
-      }
-    } catch {
-      // If we can't decode, skip — authorization will fail at apply time.
-    }
+  for (const permissionGrantId of getInvokedPermissionGrantIds(message)) {
+    edges.push({
+      dependencyClass : 3,
+      label           : 'permissionGrant',
+      identifier      : permissionGrantId,
+      identifierType  : 'grantId',
+    });
+    // Also require the grant's revocation state to be resolvable.
+    // The revocation is a child record at protocolPath 'grant/revocation'
+    // with parentId === grantId. We add it as a separate edge so the
+    // resolver can check for its presence (or confirmed absence).
+    edges.push({
+      dependencyClass : 3,
+      label           : 'grantRevocation',
+      identifier      : permissionGrantId,
+      identifierType  : 'grantId',
+    });
   }
 
   return edges;

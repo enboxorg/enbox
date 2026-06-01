@@ -182,8 +182,9 @@ export class RecordsReadHandler implements MethodHandler {
     ) {
       // The recipient or author of a message may always read it
       return;
-    } else if (recordsRead.author !== undefined && recordsRead.signaturePayload!.permissionGrantId !== undefined) {
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, recordsRead.signaturePayload!.permissionGrantId);
+    } else if (recordsRead.author !== undefined && Message.getPermissionGrantId(recordsRead.signaturePayload!) !== undefined) {
+      const permissionGrantId = Message.getPermissionGrantId(recordsRead.signaturePayload!)!;
+      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
       await RecordsGrantAuthorization.authorizeRead({
         recordsReadMessage          : recordsRead.message,
         recordsWriteMessageToBeRead : matchedRecordsWrite.message,

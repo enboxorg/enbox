@@ -3,6 +3,8 @@ import sinon from 'sinon';
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
+import { DwnInterface } from '../src/types/dwn.js';
+import { getMessagesPermissionGrantId } from '../src/sync-permission-grants.js';
 import { ReplicationLedger } from '../src/sync-replication-ledger.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
@@ -241,39 +243,53 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // getSyncPermissionGrantId
+  // getMessagesPermissionGrantId
   // ---------------------------------------------------------------------------
 
-  describe('getSyncPermissionGrantId', () => {
+  describe('getMessagesPermissionGrantId', () => {
     it('should return undefined when no delegateDid', async () => {
-      const result = await (syncEngine as any).getSyncPermissionGrantId('did:example:alice');
+      const permissionsApi = {
+        clear                   : sinon.stub(),
+        getPermissionForRequest : sinon.stub(),
+      };
+
+      const result = await getMessagesPermissionGrantId({
+        did            : 'did:example:alice',
+        messageType    : DwnInterface.MessagesSync,
+        permissionsApi : permissionsApi as any,
+      });
       expect(result).toBeUndefined();
+      expect(permissionsApi.getPermissionForRequest.called).toBe(false);
     });
 
     it('should throw when permission fetch fails for a delegate DID', async () => {
-      const mockAgent = { agentDid: 'did:example:agent' } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      (engine as any)._permissionsApi = {
+      const permissionsApi = {
         getPermissionForRequest : sinon.stub().rejects(new Error('not found')),
         clear                   : sinon.stub(),
       };
 
       await expect(
-        (engine as any).getSyncPermissionGrantId('did:example:alice', 'did:example:delegate')
+        getMessagesPermissionGrantId({
+          did            : 'did:example:alice',
+          delegateDid    : 'did:example:delegate',
+          messageType    : DwnInterface.MessagesSync,
+          permissionsApi : permissionsApi as any,
+        })
       ).rejects.toThrow('not found');
     });
 
     it('should return grant ID when delegate permission is found', async () => {
-      const mockAgent = { agentDid: 'did:example:agent' } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      (engine as any)._permissionsApi = {
+      const permissionsApi = {
         getPermissionForRequest : sinon.stub().resolves({ grant: { id: 'grant-123' } }),
         clear                   : sinon.stub(),
       };
 
-      const result = await (engine as any).getSyncPermissionGrantId('did:example:alice', 'did:example:delegate');
+      const result = await getMessagesPermissionGrantId({
+        did            : 'did:example:alice',
+        delegateDid    : 'did:example:delegate',
+        messageType    : DwnInterface.MessagesSync,
+        permissionsApi : permissionsApi as any,
+      });
       expect(result).toBe('grant-123');
     });
   });

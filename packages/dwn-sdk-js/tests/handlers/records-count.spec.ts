@@ -6,15 +6,17 @@ import sinon from 'sinon';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
+import { DataStream } from '../../src/utils/data-stream.js';
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
-
+import { Jws } from '../../src/utils/jws.js';
+import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
+import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { Dwn, Time } from '../../src/index.js';
+import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Time } from '../../src/index.js';
 
 export function testRecordsCountHandler(): void {
   describe('RecordsCountHandler.handle()', () => {
@@ -193,6 +195,84 @@ export function testRecordsCountHandler(): void {
 
         expect(reply.status.code).toBe(200);
         expect(reply.count).toBe(1);
+      });
+
+      it('should count unpublished records authorized by permissionGrantId', async () => {
+        const alice = await TestDataGenerator.generatePersona();
+        const bob = await TestDataGenerator.generatePersona();
+        TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const { message: unpublished, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const writeReply = await dwn.processMessage(alice.did, unpublished, { dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        const permissionGrant = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+          scope       : {
+            interface    : DwnInterfaceName.Records,
+            method       : DwnMethodName.Count,
+            protocol     : 'http://test-protocol.xyz',
+            protocolPath : 'testRecord',
+          }
+        });
+        const grantReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes)
+        });
+        expect(grantReply.status.code).toBe(202);
+
+        const { message } = await TestDataGenerator.generateRecordsCount({
+          author : bob,
+          filter : {
+            protocol     : 'http://test-protocol.xyz',
+            protocolPath : 'testRecord',
+            published    : false,
+          },
+          permissionGrantId: permissionGrant.recordsWrite.message.recordId,
+        });
+        const reply = await dwn.processMessage(alice.did, message);
+
+        expect(reply.status.code).toBe(200);
+        expect(reply.count).toBe(1);
+      });
+
+      it('should reject permissionGrantId counts with filters outside the grant scope', async () => {
+        const alice = await TestDataGenerator.generatePersona();
+        const bob = await TestDataGenerator.generatePersona();
+        TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const permissionGrant = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+          scope       : {
+            interface    : DwnInterfaceName.Records,
+            method       : DwnMethodName.Count,
+            protocol     : 'http://test-protocol.xyz',
+            protocolPath : 'testRecord',
+          }
+        });
+        const grantReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes)
+        });
+        expect(grantReply.status.code).toBe(202);
+
+        for (const filter of [
+          { published: false },
+          { protocol: 'http://other-protocol.xyz', protocolPath: 'testRecord', published: false },
+        ]) {
+          const { message } = await TestDataGenerator.generateRecordsCount({
+            author            : bob,
+            filter,
+            permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+          });
+          const reply = await dwn.processMessage(alice.did, message);
+          expect(reply.status.code).toBe(401);
+          expect(reply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+        }
       });
 
       it('should only count published records for non-owner with published filter', async () => {

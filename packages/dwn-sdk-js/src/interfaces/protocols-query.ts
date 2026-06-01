@@ -36,13 +36,16 @@ export class ProtocolsQuery extends AbstractMessage<ProtocolsQueryMessage> {
   }
 
   public static async create(options: ProtocolsQueryOptions): Promise<ProtocolsQuery> {
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantId: options.permissionGrantId,
+    });
 
     const descriptor: ProtocolsQueryDescriptor = {
-      interface         : DwnInterfaceName.Protocols,
-      method            : DwnMethodName.Query,
-      messageTimestamp  : options.messageTimestamp ?? Time.getCurrentTimestamp(),
-      filter            : options.filter ? ProtocolsQuery.normalizeFilter(options.filter) : undefined,
-      permissionGrantId : options.permissionGrantId,
+      interface        : DwnInterfaceName.Protocols,
+      method           : DwnMethodName.Query,
+      messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
+      filter           : options.filter ? ProtocolsQuery.normalizeFilter(options.filter) : undefined,
+      ...permissionGrantInvocation,
     };
 
     // delete all descriptor properties that are `undefined` else the code will encounter the following IPLD issue when attempting to generate CID:
@@ -54,8 +57,8 @@ export class ProtocolsQuery extends AbstractMessage<ProtocolsQueryMessage> {
     if (options.signer !== undefined) {
       authorization = await Message.createAuthorization({
         descriptor,
-        signer            : options.signer,
-        permissionGrantId : options.permissionGrantId
+        signer: options.signer,
+        ...permissionGrantInvocation
       });
     }
 
@@ -78,8 +81,9 @@ export class ProtocolsQuery extends AbstractMessage<ProtocolsQueryMessage> {
     // if author is the same as the target tenant, we can directly grant access
     if (this.author === tenant) {
       return;
-    } else if (this.author !== undefined && this.signaturePayload!.permissionGrantId) {
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, this.signaturePayload!.permissionGrantId);
+    } else if (this.author !== undefined && Message.getPermissionGrantId(this.signaturePayload!) !== undefined) {
+      const permissionGrantId = Message.getPermissionGrantId(this.signaturePayload!)!;
+      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
       await ProtocolsGrantAuthorization.authorizeQuery({
         expectedGrantor : tenant,
         expectedGrantee : this.author,

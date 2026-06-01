@@ -325,8 +325,8 @@ export function testMessagesSubscribeHandler(): void {
 
           // subscribe to messages
           const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
-            author            : bob,
-            permissionGrantId : grantMessage.recordId,
+            author             : bob,
+            permissionGrantIds : [grantMessage.recordId],
           });
 
           const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
@@ -409,8 +409,8 @@ export function testMessagesSubscribeHandler(): void {
 
           // bob subscribes to messages using the Messages.Read grant
           const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
-            author            : bob,
-            permissionGrantId : grantMessage.recordId,
+            author             : bob,
+            permissionGrantIds : [grantMessage.recordId],
           });
 
           const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
@@ -458,8 +458,8 @@ export function testMessagesSubscribeHandler(): void {
 
           // bob attempts to use the `RecordsWrite` grant on an `MessagesSubscribe` message
           const { message: bobSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
-            author            : bob,
-            permissionGrantId : grantMessage.recordId
+            author             : bob,
+            permissionGrantIds : [grantMessage.recordId]
           });
           const bobReply = await dwn.processMessage(alice.did, bobSubscribe);
           expect(bobReply.status.code).toBe(401);
@@ -514,9 +514,9 @@ export function testMessagesSubscribeHandler(): void {
             };
 
             const { message: bobSubscribe1 } = await TestDataGenerator.generateMessagesSubscribe({
-              author            : bob,
-              filters           : [{ protocol: protocol1.protocol }],
-              permissionGrantId : grant1Message.recordId
+              author             : bob,
+              filters            : [{ protocol: protocol1.protocol }],
+              permissionGrantIds : [grant1Message.recordId]
             });
             const bobReply1 = await dwn.processMessage(alice.did, bobSubscribe1, { subscriptionHandler: proto1Handler });
             expect(bobReply1.status.code).toBe(200);
@@ -570,6 +570,119 @@ export function testMessagesSubscribeHandler(): void {
               expect(proto1MessageCids.sort()).toEqual(expectedProto1Cids.sort());
             });
 
+          });
+
+          it('allows subscribe filters covered by a plural protocol grant set', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const bob = await TestDataGenerator.generateDidKeyPersona();
+
+            const protocol1: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://plural-grant-subscribe-1' };
+            const protocol2: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://plural-grant-subscribe-2' };
+
+            for (const protocolDefinition of [protocol1, protocol2]) {
+              const { message: protocolConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+                author: alice,
+                protocolDefinition,
+              });
+              const protocolReply = await dwn.processMessage(alice.did, protocolConfigure);
+              expect(protocolReply.status.code).toBe(202);
+            }
+
+            const permissionGrantIds: string[] = [];
+            for (const protocolDefinition of [protocol1, protocol2]) {
+              const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+                author    : alice,
+                grantedTo : bob,
+                scope     : {
+                  interface : DwnInterfaceName.Messages,
+                  method    : DwnMethodName.Read,
+                  protocol  : protocolDefinition.protocol,
+                }
+              });
+              const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream });
+              expect(grantReply.status.code).toBe(202);
+              permissionGrantIds.push(grantMessage.recordId);
+            }
+
+            const receivedMessageCids: string[] = [];
+            const handler = async (msg: SubscriptionMessage):Promise<void> => {
+              if (msg.type !== 'event') { return; }
+              receivedMessageCids.push(await Message.getCid(msg.event.message));
+            };
+
+            const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
+              author             : bob,
+              filters            : [{ protocol: protocol1.protocol }, { protocol: protocol2.protocol }],
+              permissionGrantIds : permissionGrantIds.reverse(),
+            });
+            const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
+            expect(subscribeReply.status.code).toBe(200);
+
+            const { message: protocol1Record, dataStream: protocol1DataStream } = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocol1.protocol,
+              protocolPath : 'post',
+              schema       : protocol1.types.post.schema,
+            });
+            await dwn.processMessage(alice.did, protocol1Record, { dataStream: protocol1DataStream });
+
+            const { message: protocol2Record, dataStream: protocol2DataStream } = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocol2.protocol,
+              protocolPath : 'post',
+              schema       : protocol2.types.post.schema,
+            });
+            await dwn.processMessage(alice.did, protocol2Record, { dataStream: protocol2DataStream });
+
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              expect(receivedMessageCids.sort()).toEqual([
+                await Message.getCid(protocol1Record),
+                await Message.getCid(protocol2Record),
+              ].sort());
+            });
+
+            expect(subscribeMessage.descriptor.permissionGrantIds).toEqual([...permissionGrantIds].sort());
+          });
+
+          it('rejects subscribe when any grant in a plural grant set is not granted to the author', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const bob = await TestDataGenerator.generateDidKeyPersona();
+            const carol = await TestDataGenerator.generateDidKeyPersona();
+
+            const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://plural-grant-subscribe-wrong-grantee' };
+            const { message: protocolConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition,
+            });
+            const protocolReply = await dwn.processMessage(alice.did, protocolConfigure);
+            expect(protocolReply.status.code).toBe(202);
+
+            const grantIds: string[] = [];
+            for (const grantedTo of [bob, carol]) {
+              const { message: grantMessage, dataStream } = await TestDataGenerator.generateGrantCreate({
+                author : alice,
+                grantedTo,
+                scope  : {
+                  interface : DwnInterfaceName.Messages,
+                  method    : DwnMethodName.Read,
+                  protocol  : protocolDefinition.protocol,
+                }
+              });
+              const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
+              expect(grantReply.status.code).toBe(202);
+              grantIds.push(grantMessage.recordId);
+            }
+
+            const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
+              author             : bob,
+              filters            : [{ protocol: protocolDefinition.protocol }],
+              permissionGrantIds : grantIds,
+            });
+
+            const reply = await dwn.processMessage(alice.did, subscribeMessage);
+            expect(reply.status.code).toBe(401);
+            expect(reply.status.detail).toContain(DwnErrorCode.GrantAuthorizationNotGrantedToAuthor);
+            expect(reply.subscription).toBeUndefined();
           });
 
           it('allows subscribe of protocolPathPrefix filtered messages including protocol metadata', async () => {
@@ -930,9 +1043,9 @@ export function testMessagesSubscribeHandler(): void {
 
             // bob cannot use a protocol-scoped grant for an unfiltered all-message subscription
             const { message: unfilteredSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
-              author            : bob,
-              filters           : [],
-              permissionGrantId : grant1Message.recordId
+              author             : bob,
+              filters            : [],
+              permissionGrantIds : [grant1Message.recordId]
             });
             const unfilteredReply = await dwn.processMessage(alice.did, unfilteredSubscribe);
             expect(unfilteredReply.status.code).toBe(401);
@@ -941,9 +1054,9 @@ export function testMessagesSubscribeHandler(): void {
 
             // bob uses the grant for protocol 1 to subscribe for protocol 2 messages
             const { message: bobSubscribe1 } = await TestDataGenerator.generateMessagesSubscribe({
-              author            : bob,
-              filters           : [{ protocol: protocol2.protocol }],
-              permissionGrantId : grant1Message.recordId
+              author             : bob,
+              filters            : [{ protocol: protocol2.protocol }],
+              permissionGrantIds : [grant1Message.recordId]
             });
             const bobReply1 = await dwn.processMessage(alice.did, bobSubscribe1);
             expect(bobReply1.status.code).toBe(401);
@@ -953,9 +1066,9 @@ export function testMessagesSubscribeHandler(): void {
             // bob attempts to use the grant for protocol 1 to subscribe to messages in protocol 1 OR protocol 2 given two filters
             // this should fail because the grant is scoped to protocol 1 only
             const { message: bobSubscribe2 } = await TestDataGenerator.generateMessagesSubscribe({
-              author            : bob,
-              filters           : [{ protocol: protocol1.protocol }, { protocol: protocol2.protocol }],
-              permissionGrantId : grant1Message.recordId
+              author             : bob,
+              filters            : [{ protocol: protocol1.protocol }, { protocol: protocol2.protocol }],
+              permissionGrantIds : [grant1Message.recordId]
             });
             const bobReply2 = await dwn.processMessage(alice.did, bobSubscribe2);
             expect(bobReply2.status.code).toBe(401);

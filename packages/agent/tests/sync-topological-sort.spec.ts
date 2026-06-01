@@ -128,7 +128,7 @@ describe('topologicalSort', () => {
     expect(result[1]).toBe(deleteMsg);
   });
 
-  it('should place permission grant before records referencing permissionGrantId', () => {
+  it('should place permission grant before a direct message referencing permissionGrantId', () => {
     const grantMsg: SortEntry = {
       message: {
         ...makeMessage({
@@ -143,6 +143,31 @@ describe('topologicalSort', () => {
     const dependentMsg: SortEntry = {
       message: makeMessage({
         permissionGrantId: 'grant-rec-id',
+      }),
+    };
+
+    const result = topologicalSort([dependentMsg, grantMsg]);
+    expect(result[0]).toBe(grantMsg);
+    expect(result[1]).toBe(dependentMsg);
+  });
+
+  it('should place permission grant before a Messages operation referencing permissionGrantIds', () => {
+    const grantMsg: SortEntry = {
+      message: {
+        ...makeMessage({
+          dateCreated      : '2024-01-01T00:00:00.000000Z',
+          messageTimestamp : '2024-01-01T00:00:00.000000Z',
+          protocol         : PermissionsProtocol.uri,
+          protocolPath     : PermissionsProtocol.grantPath,
+        }),
+        recordId: 'grant-rec-id',
+      } as unknown as GenericMessage,
+    };
+    const dependentMsg: SortEntry = {
+      message: makeMessage({
+        interface          : DwnInterfaceName.Messages,
+        method             : DwnMethodName.Sync,
+        permissionGrantIds : ['grant-rec-id'],
       }),
     };
 

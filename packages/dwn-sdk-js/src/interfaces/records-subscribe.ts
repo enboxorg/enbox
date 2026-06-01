@@ -21,6 +21,7 @@ export type RecordsSubscribeOptions = {
   dateSort?: DateSort;
   pagination?: Pagination;
   signer?: MessageSigner;
+  permissionGrantId?: string;
   protocolRole?: string;
 
   /**
@@ -68,11 +69,16 @@ export class RecordsSubscribe extends AbstractMessage<RecordsSubscribeMessage> {
   }
 
   public static async create(options: RecordsSubscribeOptions): Promise<RecordsSubscribe> {
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantId: options.permissionGrantId,
+    });
+
     const descriptor: RecordsSubscribeDescriptor = {
       interface        : DwnInterfaceName.Records,
       method           : DwnMethodName.Subscribe,
       messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
       filter           : Records.normalizeFilter(options.filter),
+      ...permissionGrantInvocation,
       dateSort         : options.dateSort,
       pagination       : options.pagination,
       cursor           : options.cursor,
@@ -89,6 +95,7 @@ export class RecordsSubscribe extends AbstractMessage<RecordsSubscribeMessage> {
       authorization = await Message.createAuthorization({
         descriptor,
         signer,
+        ...permissionGrantInvocation,
         protocolRole   : options.protocolRole,
         delegatedGrant : options.delegatedGrant
       });

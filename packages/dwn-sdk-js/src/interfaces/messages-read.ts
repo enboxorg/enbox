@@ -12,7 +12,7 @@ export type MessagesReadOptions = {
   messageCid: string;
   signer: MessageSigner;
   messageTimestamp?: string;
-  permissionGrantId?: string;
+  permissionGrantIds?: string[];
 };
 
 export class MessagesRead extends AbstractMessage<MessagesReadMessage> {
@@ -27,19 +27,22 @@ export class MessagesRead extends AbstractMessage<MessagesReadMessage> {
   }
 
   public static async create(options: MessagesReadOptions): Promise<MessagesRead> {
-    const { signer, permissionGrantId } = options;
+    const { signer } = options;
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantIds: options.permissionGrantIds
+    });
 
     const descriptor: MessagesReadDescriptor = {
       interface        : DwnInterfaceName.Messages,
       method           : DwnMethodName.Read,
       messageCid       : options.messageCid,
       messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
-      ...(permissionGrantId !== undefined && { permissionGrantId }),
+      ...permissionGrantInvocation,
     };
     const authorization = await Message.createAuthorization({
       descriptor,
       signer,
-      permissionGrantId,
+      ...permissionGrantInvocation,
     });
     const message = { descriptor, authorization };
 

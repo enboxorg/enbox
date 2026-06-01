@@ -40,6 +40,9 @@
         "recordId": {
           "type": "string"
         },
+        "permissionGrantId": {
+          "type": "string"
+        },
         "prune": {
           "type": "boolean"
         }

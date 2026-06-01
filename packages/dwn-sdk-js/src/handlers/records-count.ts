@@ -7,9 +7,11 @@ import type { RecordsCountMessage, RecordsCountReply } from '../types/records-ty
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
+import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsCount } from '../interfaces/records-count.js';
+import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export class RecordsCountHandler implements MethodHandler {
@@ -90,6 +92,10 @@ export class RecordsCountHandler implements MethodHandler {
         filters.push(RecordsCountHandler.buildUnpublishedProtocolAuthorizedRecordsFilter(recordsCount));
       }
 
+      if (Message.getPermissionGrantId(recordsCount.signaturePayload!) !== undefined) {
+        filters.push(RecordsCountHandler.buildUnpublishedPermissionGrantAuthorizedRecordsFilter(recordsCount));
+      }
+
       if (Records.shouldBuildUnpublishedRecipientFilter(filter, recordsCount.author!)) {
         filters.push(RecordsCountHandler.buildUnpublishedRecordsForCountAuthorFilter(recordsCount));
       }
@@ -147,6 +153,20 @@ export class RecordsCountHandler implements MethodHandler {
   }
 
   /**
+   * Creates a filter for unpublished records authorized by a permission grant.
+   */
+  private static buildUnpublishedPermissionGrantAuthorizedRecordsFilter(recordsCount: RecordsCount): Filter {
+    const { filter } = recordsCount.message.descriptor;
+    return {
+      ...Records.convertFilter(filter),
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+      published         : false
+    };
+  }
+
+  /**
    * Creates a filter for only unpublished records where the author is the same as the count author.
    */
   private static buildUnpublishedRecordsByCountAuthorFilter(recordsCount: RecordsCount): Filter {
@@ -173,6 +193,19 @@ export class RecordsCountHandler implements MethodHandler {
 
     if (Message.isSignedByAuthorDelegate(recordsCount.message)) {
       await recordsCount.authorizeDelegate(messageStore);
+    }
+
+    const permissionGrantId = Message.getPermissionGrantId(recordsCount.signaturePayload!);
+    if (permissionGrantId !== undefined) {
+      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+      await RecordsGrantAuthorization.authorizeQueryOrSubscribe({
+        incomingMessage : recordsCount.message,
+        expectedGrantor : tenant,
+        expectedGrantee : recordsCount.author!,
+        permissionGrant,
+        messageStore,
+      });
+      return;
     }
 
     // NOTE: not all RecordsCount messages require protocol authorization even if the filter includes protocol-related fields,

@@ -38,6 +38,9 @@
         "filter": {
           "$ref": "https://identity.foundation/dwn/json-schemas/records-filter.json"
         },
+        "permissionGrantId": {
+          "type": "string"
+        },
         "pagination": {
           "type": "object",
           "additionalProperties": false,

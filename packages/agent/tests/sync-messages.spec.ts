@@ -691,7 +691,7 @@ describe('sync-messages', () => {
       })).rejects.toThrow('no grant');
     });
 
-    it('should pass permissionGrantId in messageParams when delegate has grant', async () => {
+    it('should pass permissionGrantIds in messageParams when delegate has grant', async () => {
       const permStub = sinon.stub().resolves({ grant: { id: 'grant-abc' } });
       const processRequestStub = sinon.stub().resolves({
         reply: {
@@ -712,7 +712,7 @@ describe('sync-messages', () => {
       });
 
       const callArgs = processRequestStub.firstCall.args[0];
-      expect(callArgs.messageParams.permissionGrantId).toBe('grant-abc');
+      expect(callArgs.messageParams.permissionGrantIds).toEqual(['grant-abc']);
     });
   });
 });
