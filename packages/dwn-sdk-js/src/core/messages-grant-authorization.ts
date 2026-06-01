@@ -8,6 +8,7 @@ import type { MessagesReadMessage, MessagesSubscribeMessage, MessagesSyncMessage
 
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
 import { GrantAuthorization } from './grant-authorization.js';
+import { PermissionScopeMatcher } from '../utils/permission-scope.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { Records } from '../utils/records.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
@@ -66,30 +67,35 @@ export class MessagesGrantAuthorization {
       messageStore
     });
 
-    // if the grant is scoped to a specific protocol, ensure that the message targets that protocol
-    if (PermissionsProtocol.hasProtocolScope(permissionGrant.scope)) {
-      const scopedProtocol = permissionGrant.scope.protocol;
+    const scope = permissionGrant.scope as MessagesPermissionScope;
 
-      // MessagesSync uses a direct `protocol` field on the descriptor
-      if ('action' in incomingMessage.descriptor) {
-        const syncMessage = incomingMessage as MessagesSyncMessage;
-        if (syncMessage.descriptor.protocol !== scopedProtocol) {
-          throw new DwnError(
-            DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol,
-            `The protocol ${syncMessage.descriptor.protocol} does not match the scoped protocol ${scopedProtocol}`
-          );
-        }
-      } else {
-        // MessagesSubscribe uses filters
-        const filteredMessage = incomingMessage as MessagesSubscribeMessage;
-        for (const filter of filteredMessage.descriptor.filters) {
-          if (filter.protocol !== scopedProtocol) {
-            throw new DwnError(
-              DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol,
-              `The protocol ${filter.protocol} does not match the scoped protocol ${scopedProtocol}`
-            );
-          }
-        }
+    // MessagesSync uses a direct `protocol` field on the descriptor.
+    if ('action' in incomingMessage.descriptor) {
+      const syncMessage = incomingMessage as MessagesSyncMessage;
+      if (!PermissionScopeMatcher.matches(scope, { protocol: syncMessage.descriptor.protocol })) {
+        throw new DwnError(
+          DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol,
+          `The protocol ${syncMessage.descriptor.protocol} does not match the scoped protocol ${scope.protocol}`
+        );
+      }
+      return;
+    }
+
+    // MessagesSubscribe uses filters.
+    const filteredMessage = incomingMessage as MessagesSubscribeMessage;
+    if (scope.protocol !== undefined && filteredMessage.descriptor.filters.length === 0) {
+      throw new DwnError(
+        DwnErrorCode.MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope,
+        `A protocol-scoped grant cannot authorize an unfiltered subscription`
+      );
+    }
+
+    for (const filter of filteredMessage.descriptor.filters) {
+      if (!PermissionScopeMatcher.matches(scope, { protocol: filter.protocol })) {
+        throw new DwnError(
+          DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch,
+          `The protocol ${filter.protocol} does not match the scoped protocol ${scope.protocol}`
+        );
       }
     }
   }

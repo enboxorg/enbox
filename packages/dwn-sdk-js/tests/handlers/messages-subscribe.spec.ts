@@ -928,6 +928,17 @@ export function testMessagesSubscribeHandler(): void {
             const grant1Reply = await dwn.processMessage(alice.did, grant1Message, { dataStream: grant1DataStream });
             expect(grant1Reply.status.code).toBe(202);
 
+            // bob cannot use a protocol-scoped grant for an unfiltered all-message subscription
+            const { message: unfilteredSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
+              author            : bob,
+              filters           : [],
+              permissionGrantId : grant1Message.recordId
+            });
+            const unfilteredReply = await dwn.processMessage(alice.did, unfilteredSubscribe);
+            expect(unfilteredReply.status.code).toBe(401);
+            expect(unfilteredReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope);
+            expect(unfilteredReply.subscription).toBeUndefined();
+
             // bob uses the grant for protocol 1 to subscribe for protocol 2 messages
             const { message: bobSubscribe1 } = await TestDataGenerator.generateMessagesSubscribe({
               author            : bob,
@@ -936,7 +947,7 @@ export function testMessagesSubscribeHandler(): void {
             });
             const bobReply1 = await dwn.processMessage(alice.did, bobSubscribe1);
             expect(bobReply1.status.code).toBe(401);
-            expect(bobReply1.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol);
+            expect(bobReply1.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
             expect(bobReply1.subscription).toBeUndefined();
 
             // bob attempts to use the grant for protocol 1 to subscribe to messages in protocol 1 OR protocol 2 given two filters
@@ -948,7 +959,7 @@ export function testMessagesSubscribeHandler(): void {
             });
             const bobReply2 = await dwn.processMessage(alice.did, bobSubscribe2);
             expect(bobReply2.status.code).toBe(401);
-            expect(bobReply2.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol);
+            expect(bobReply2.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
             expect(bobReply2.subscription).toBeUndefined();
           });
         });

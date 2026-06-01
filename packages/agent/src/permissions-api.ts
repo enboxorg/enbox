@@ -1,12 +1,12 @@
 import type { EnboxAgent } from './types/agent.js';
 import type { CreateGrantParams, CreateRequestParams, CreateRevocationParams, FetchPermissionRequestParams, FetchPermissionsParams, GetPermissionParams, IsGrantRevokedParams, PermissionGrantEntry, PermissionRequestEntry, PermissionRevocationEntry, PermissionsApi } from './types/permissions.js';
-import type { DwnDataEncodedRecordsWriteMessage, DwnMessageParams, DwnPermissionScope, DwnRecordsPermissionScope, ProcessDwnRequest } from './types/dwn.js';
+import type { DwnDataEncodedRecordsWriteMessage, DwnMessageParams, DwnRecordsPermissionScope, ProcessDwnRequest } from './types/dwn.js';
 import type { PermissionGrant, PermissionGrantData, PermissionRequestData, PermissionRevocationData } from '@enbox/dwn-sdk-js';
 
 import { isRecordsType } from './dwn-api.js';
-import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import { Convert, TtlCache } from '@enbox/common';
 import { DwnInterface, DwnPermissionGrant, DwnPermissionRequest } from './types/dwn.js';
+import { PermissionScopeMatcher, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 export class AgentPermissionsApi implements PermissionsApi {
 
@@ -458,44 +458,13 @@ export class AgentPermissionsApi implements PermissionsApi {
     if (isMessagesScopeMatch) {
       if (isRecordsType(messageType)) {
         const recordScope = scope as DwnRecordsPermissionScope;
-        if (recordScope.protocol !== protocol) {
-          return false;
-        }
-
-        // If the grant scope is not restricted to a specific context or protocol path, it is unrestricted and can be used
-        if (this.isUnrestrictedProtocolScope(recordScope)) {
-          return true;
-        }
-
-        // protocolPath and contextId are mutually exclusive
-        // If the permission is scoped to a protocolPath and the permissionParams matches that path, this grant can be used
-        if (recordScope.protocolPath !== undefined && recordScope.protocolPath === protocolPath) {
-          return true;
-        }
-
-        // If the permission is scoped to a contextId and the permissionParams starts with that contextId, this grant can be used
-        if (recordScope.contextId !== undefined && contextId?.startsWith(recordScope.contextId)) {
-          return true;
-        }
+        return PermissionScopeMatcher.matches(recordScope, { protocol, protocolPath, contextId });
       } else {
         const messagesScope = scope;
-        // Checks for unrestricted protocol scope, if no protocol is defined in the scope it is unrestricted
-        if (messagesScope.protocol === undefined) {
-          return true;
-        }
-
-        if (messagesScope.protocol !== protocol) {
-          return false;
-        }
-
-        return this.isUnrestrictedProtocolScope(messagesScope);
+        return PermissionScopeMatcher.matches(messagesScope, { protocol });
       }
     }
 
     return false;
-  }
-
-  private static isUnrestrictedProtocolScope(scope: DwnPermissionScope & { contextId?: string, protocolPath?: string }): boolean {
-    return scope.contextId === undefined && scope.protocolPath === undefined;
   }
 }
