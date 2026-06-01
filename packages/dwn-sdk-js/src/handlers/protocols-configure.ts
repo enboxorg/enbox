@@ -142,8 +142,9 @@ export class ProtocolsConfigureHandler implements MethodHandler {
 
     if (protocolConfigure.author === tenant) {
       return;
-    } else if (protocolConfigure.author !== undefined && protocolConfigure.signaturePayload!.permissionGrantId !== undefined) {
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, protocolConfigure.signaturePayload!.permissionGrantId);
+    } else if (protocolConfigure.author !== undefined && Message.getPermissionGrantId(protocolConfigure.signaturePayload!) !== undefined) {
+      const permissionGrantId = Message.getPermissionGrantId(protocolConfigure.signaturePayload!)!;
+      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
       await ProtocolsGrantAuthorization.authorizeConfigure({
         protocolsConfigureMessage : protocolConfigure.message,
         expectedGrantor           : tenant,

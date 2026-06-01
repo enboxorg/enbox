@@ -43,8 +43,13 @@
           "type": "string",
           "pattern": "^[01]*$"
         },
-        "permissionGrantId": {
-          "type": "string"
+        "permissionGrantIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
         },
         "hashes": {
           "type": "object",

@@ -9,7 +9,6 @@ import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesSubscribe } from '../interfaces/messages-subscribe.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export class MessagesSubscribeHandler implements MethodHandler {
@@ -76,13 +75,16 @@ export class MessagesSubscribeHandler implements MethodHandler {
     // if `MessagesSubscribe` author is the same as the target tenant, we can directly grant access
     if (messagesSubscribe.author === tenant) {
       return;
-    } else if (messagesSubscribe.author !== undefined && messagesSubscribe.signaturePayload!.permissionGrantId !== undefined) {
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, messagesSubscribe.signaturePayload!.permissionGrantId);
+    }
+
+    const permissionGrantIds = Message.getPermissionGrantIds(messagesSubscribe.signaturePayload!);
+    if (messagesSubscribe.author !== undefined && permissionGrantIds.length > 0) {
+      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, messageStore, permissionGrantIds);
       await MessagesGrantAuthorization.authorizeSubscribeOrSync({
         incomingMessage : messagesSubscribe.message,
         expectedGrantor : tenant,
         expectedGrantee : messagesSubscribe.author,
-        permissionGrant,
+        permissionGrants,
         messageStore
       });
     } else {

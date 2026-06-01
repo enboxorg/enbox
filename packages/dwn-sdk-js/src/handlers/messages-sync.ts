@@ -7,10 +7,10 @@ import { authenticate } from '../core/auth.js';
 import { DwnConstant } from '../core/dwn-constant.js';
 import { Encoder } from '../utils/encoder.js';
 import { hashToHex } from '../smt/smt-utils.js';
+import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesSync } from '../interfaces/messages-sync.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 /**
@@ -389,13 +389,16 @@ export class MessagesSyncHandler implements MethodHandler {
   ): Promise<void> {
     if (messagesSync.author === tenant) {
       return;
-    } else if (messagesSync.author !== undefined && messagesSync.signaturePayload!.permissionGrantId !== undefined) {
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, messagesSync.signaturePayload!.permissionGrantId);
+    }
+
+    const permissionGrantIds = Message.getPermissionGrantIds(messagesSync.signaturePayload!);
+    if (messagesSync.author !== undefined && permissionGrantIds.length > 0) {
+      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, messageStore, permissionGrantIds);
       await MessagesGrantAuthorization.authorizeSubscribeOrSync({
         incomingMessage : messagesSync.message,
         expectedGrantor : tenant,
         expectedGrantee : messagesSync.author,
-        permissionGrant,
+        permissionGrants,
         messageStore
       });
     } else {

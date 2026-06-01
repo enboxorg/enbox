@@ -11,8 +11,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
 import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
+import { DataStream } from '../../src/utils/data-stream.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
+import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { Poller } from '../utils/poller.js';
 import { RecordsSubscribe } from '../../src/interfaces/records-subscribe.js';
 import { RecordsSubscribeHandler } from '../../src/handlers/records-subscribe.js';
@@ -21,7 +23,7 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { Dwn, DwnErrorCode, DwnMethodName, EventEmitterEventLog, MessageStoreLevel, Time } from '../../src/index.js';
+import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, EventEmitterEventLog, MessageStoreLevel, Time } from '../../src/index.js';
 
 export function testRecordsSubscribeHandler(): void {
   describe('RecordsSubscribeHandler.handle()', () => {
@@ -467,6 +469,87 @@ export function testRecordsSubscribeHandler(): void {
         expect(anonymousPostReply.status.code).toBe(401);
         expect(anonymousPostReply.status.detail).toContain('Missing JWS');
         expect(anonymousPostReply.subscription).toBeUndefined();
+      });
+
+      it('should subscribe to unpublished records authorized by permissionGrantId', async () => {
+        const alice = await TestDataGenerator.generatePersona();
+        const bob = await TestDataGenerator.generatePersona();
+        TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const { message: unpublished, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const writeReply = await dwn.processMessage(alice.did, unpublished, { dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        const permissionGrant = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+          scope       : {
+            interface    : DwnInterfaceName.Records,
+            method       : DwnMethodName.Subscribe,
+            protocol     : 'http://test-protocol.xyz',
+            protocolPath : 'testRecord',
+          }
+        });
+        const grantReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes)
+        });
+        expect(grantReply.status.code).toBe(202);
+
+        const subscribe = await TestDataGenerator.generateRecordsSubscribe({
+          author : bob,
+          filter : {
+            protocol     : 'http://test-protocol.xyz',
+            protocolPath : 'testRecord',
+            published    : false,
+          },
+          permissionGrantId: permissionGrant.recordsWrite.message.recordId,
+        });
+
+        const reply = await dwn.processMessage(alice.did, subscribe.message, { subscriptionHandler: () => {} });
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries?.map(entry => entry.recordId)).toEqual([unpublished.recordId]);
+        await reply.subscription!.close();
+      });
+
+      it('should reject permissionGrantId subscribes with filters outside the grant scope', async () => {
+        const alice = await TestDataGenerator.generatePersona();
+        const bob = await TestDataGenerator.generatePersona();
+        TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const permissionGrant = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+          scope       : {
+            interface    : DwnInterfaceName.Records,
+            method       : DwnMethodName.Subscribe,
+            protocol     : 'http://test-protocol.xyz',
+            protocolPath : 'testRecord',
+          }
+        });
+        const grantReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes)
+        });
+        expect(grantReply.status.code).toBe(202);
+
+        for (const filter of [
+          { published: false },
+          { protocol: 'http://other-protocol.xyz', protocolPath: 'testRecord', published: false },
+        ]) {
+          const subscribe = await TestDataGenerator.generateRecordsSubscribe({
+            author            : bob,
+            filter,
+            permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+          });
+
+          const reply = await dwn.processMessage(alice.did, subscribe.message, { subscriptionHandler: () => {} });
+          expect(reply.status.code).toBe(401);
+          expect(reply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+          expect(reply.subscription).toBeUndefined();
+        }
       });
 
       it('should return 401 if signature check fails', async () => {

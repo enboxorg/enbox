@@ -4,6 +4,7 @@ import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' wit
 import { Jws } from '../../src/utils/jws.js';
 import { ProtocolAction } from '../../src/types/protocols-types.js';
 import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
+import { ProtocolsConfigureHandler } from '../../src/handlers/protocols-configure.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -76,6 +77,21 @@ describe('ProtocolsConfigure', () => {
       });
 
       expect(protocolsConfigure.message.descriptor.permissionGrantId).toBe(grantId);
+    });
+
+    it('should include permissionGrantId in indexes when provided', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const permissionGrantId = await TestDataGenerator.randomCborSha256Cid();
+
+      const definition = { ...dexProtocolDefinition };
+      const protocolsConfigure = await ProtocolsConfigure.create({
+        definition,
+        signer: Jws.createSigner(alice),
+        permissionGrantId,
+      });
+
+      const indexes = ProtocolsConfigureHandler.constructIndexes(protocolsConfigure, true);
+      expect(indexes.permissionGrantId).toBe(permissionGrantId);
     });
 
     it('should not include permissionGrantId in the descriptor when not provided', async () => {

@@ -1242,8 +1242,8 @@ export class AgentDwnApi {
         throw new Error('AgentDwnApi: messageParams must be provided when rawMessage is not given.');
       }
 
-      // If we need to sign as an author delegate or with permissions we need to get the grantee's signer
-      // The messageParams should include either a permissionGrantId, or a delegatedGrant message
+      // If we need to sign as an author delegate or with permissions we need to get the grantee's signer.
+      // The messageParams should include either a permission grant invocation or a delegatedGrant message.
       const signer = request.granteeDid ?
         await this.getSigner(request.granteeDid) :
         await this.getSigner(request.author);
@@ -1311,6 +1311,7 @@ export class AgentDwnApi {
   private hasGrantParams<T extends DwnInterface>(params?: DwnMessageParams[T]): boolean {
     return params !== undefined &&
       (('permissionGrantId' in params && params.permissionGrantId !== undefined) ||
+      ('permissionGrantIds' in params && params.permissionGrantIds !== undefined) ||
       ('delegatedGrant' in params && params.delegatedGrant !== undefined));
   }
 

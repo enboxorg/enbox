@@ -21,6 +21,7 @@ export type RecordsQueryOptions = {
   dateSort?: DateSort;
   pagination?: Pagination;
   signer?: MessageSigner;
+  permissionGrantId?: string;
   protocolRole?: string;
 
   /**
@@ -74,11 +75,16 @@ export class RecordsQuery extends AbstractMessage<RecordsQueryMessage> {
   }
 
   public static async create(options: RecordsQueryOptions): Promise<RecordsQuery> {
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantId: options.permissionGrantId,
+    });
+
     const descriptor: RecordsQueryDescriptor = {
       interface        : DwnInterfaceName.Records,
       method           : DwnMethodName.Query,
       messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
       filter           : Records.normalizeFilter(options.filter),
+      ...permissionGrantInvocation,
       dateSort         : options.dateSort,
       pagination       : options.pagination,
     };
@@ -103,6 +109,7 @@ export class RecordsQuery extends AbstractMessage<RecordsQueryMessage> {
       authorization = await Message.createAuthorization({
         descriptor,
         signer,
+        ...permissionGrantInvocation,
         protocolRole   : options.protocolRole,
         delegatedGrant : options.delegatedGrant
       });

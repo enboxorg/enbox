@@ -338,9 +338,9 @@ export function testMessagesSyncHandler(): void {
 
           // bob syncs using the grant — root action
           const { message: syncMsg } = await MessagesSync.create({
-            signer            : Jws.createSigner(bob),
-            action            : 'root',
-            permissionGrantId : grantMessage.recordId,
+            signer             : Jws.createSigner(bob),
+            action             : 'root',
+            permissionGrantIds : [grantMessage.recordId],
           });
 
           const reply = await dwn.processMessage(alice.did, syncMsg);
@@ -374,9 +374,9 @@ export function testMessagesSyncHandler(): void {
 
           // bob syncs using the Messages.Read grant — root action
           const { message: syncMsg } = await MessagesSync.create({
-            signer            : Jws.createSigner(bob),
-            action            : 'root',
-            permissionGrantId : grantMessage.recordId,
+            signer             : Jws.createSigner(bob),
+            action             : 'root',
+            permissionGrantIds : [grantMessage.recordId],
           });
 
           const reply2 = await dwn.processMessage(alice.did, syncMsg);
@@ -422,11 +422,11 @@ export function testMessagesSyncHandler(): void {
 
           // bob syncs leaves with the protocol-scoped Messages.Read grant
           const { message: syncMsg } = await MessagesSync.create({
-            signer            : Jws.createSigner(bob),
-            action            : 'leaves',
-            prefix            : '',
-            protocol          : protocolDefinition.protocol,
-            permissionGrantId : grantMessage.recordId,
+            signer             : Jws.createSigner(bob),
+            action             : 'leaves',
+            prefix             : '',
+            protocol           : protocolDefinition.protocol,
+            permissionGrantIds : [grantMessage.recordId],
           });
 
           const reply2 = await dwn.processMessage(alice.did, syncMsg);
@@ -471,11 +471,11 @@ export function testMessagesSyncHandler(): void {
 
           // bob syncs leaves with the protocol-scoped grant
           const { message: syncMsg } = await MessagesSync.create({
-            signer            : Jws.createSigner(bob),
-            action            : 'leaves',
-            prefix            : '',
-            protocol          : protocolDefinition.protocol,
-            permissionGrantId : grantMessage.recordId,
+            signer             : Jws.createSigner(bob),
+            action             : 'leaves',
+            prefix             : '',
+            protocol           : protocolDefinition.protocol,
+            permissionGrantIds : [grantMessage.recordId],
           });
 
           const reply = await dwn.processMessage(alice.did, syncMsg);
@@ -487,6 +487,59 @@ export function testMessagesSyncHandler(): void {
           const recordCid = await Message.getCid(recordMessage);
           expect(reply.entries).toContain(protocolCid);
           expect(reply.entries).toContain(recordCid);
+        });
+
+        it('allows protocol sync when one grant in a plural grant set covers the protocol', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocol1: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://plural-grant-sync-1' };
+          const protocol2: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://plural-grant-sync-2' };
+
+          for (const protocolDefinition of [protocol1, protocol2]) {
+            const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition,
+            });
+            await dwn.processMessage(alice.did, protocolMessage);
+          }
+
+          const { message: recordMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocol2.protocol,
+            protocolPath : 'post',
+            schema       : protocol2.types.post.schema,
+          });
+          await dwn.processMessage(alice.did, recordMessage, { dataStream });
+
+          const grantIds: string[] = [];
+          for (const protocolDefinition of [protocol1, protocol2]) {
+            const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+              author    : alice,
+              grantedTo : bob,
+              scope     : {
+                interface : DwnInterfaceName.Messages,
+                method    : DwnMethodName.Read,
+                protocol  : protocolDefinition.protocol,
+              },
+            });
+            const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream });
+            expect(grantReply.status.code).toBe(202);
+            grantIds.push(grantMessage.recordId);
+          }
+
+          const { message: syncMsg } = await MessagesSync.create({
+            signer             : Jws.createSigner(bob),
+            action             : 'leaves',
+            prefix             : '',
+            protocol           : protocol2.protocol,
+            permissionGrantIds : grantIds.reverse(),
+          });
+
+          const reply = await dwn.processMessage(alice.did, syncMsg);
+          expect(reply.status.code).toBe(200);
+          expect(reply.entries).toContain(await Message.getCid(recordMessage));
+          expect(syncMsg.descriptor.permissionGrantIds).toEqual([...grantIds].sort());
         });
 
         it('rejects sync with mismatching interface grant scope', async () => {
@@ -507,9 +560,9 @@ export function testMessagesSyncHandler(): void {
           expect(grantReply.status.code).toBe(202);
 
           const { message: syncMsg } = await MessagesSync.create({
-            signer            : Jws.createSigner(bob),
-            action            : 'root',
-            permissionGrantId : grantMessage.recordId,
+            signer             : Jws.createSigner(bob),
+            action             : 'root',
+            permissionGrantIds : [grantMessage.recordId],
           });
 
           const reply = await dwn.processMessage(alice.did, syncMsg);
@@ -536,15 +589,51 @@ export function testMessagesSyncHandler(): void {
 
           // bob attempts to sync protocol2 using the protocol1 grant
           const { message: syncMsg } = await MessagesSync.create({
-            signer            : Jws.createSigner(bob),
-            action            : 'root',
-            protocol          : 'http://protocol2',
-            permissionGrantId : grantMessage.recordId,
+            signer             : Jws.createSigner(bob),
+            action             : 'root',
+            protocol           : 'http://protocol2',
+            permissionGrantIds : [grantMessage.recordId],
           });
 
           const reply = await dwn.processMessage(alice.did, syncMsg);
           expect(reply.status.code).toBe(401);
           expect(reply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol);
+        });
+
+        it('rejects full-tenant sync actions with a protocol-scoped grant', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const { message: grantMessage, dataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol  : 'http://protocol-scoped-sync',
+            },
+          });
+          const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
+          expect(grantReply.status.code).toBe(202);
+
+          const syncActions = [
+            { action: 'root' as const },
+            { action: 'subtree' as const, prefix: '' },
+            { action: 'leaves' as const, prefix: '' },
+            { action: 'diff' as const, hashes: {}, depth: 2 },
+          ];
+
+          for (const syncAction of syncActions) {
+            const { message: syncMsg } = await MessagesSync.create({
+              signer             : Jws.createSigner(bob),
+              ...syncAction,
+              permissionGrantIds : [grantMessage.recordId],
+            });
+
+            const reply = await dwn.processMessage(alice.did, syncMsg);
+            expect(reply.status.code).toBe(401);
+            expect(reply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol);
+          }
         });
       });
     });

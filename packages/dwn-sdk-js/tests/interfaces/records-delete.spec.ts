@@ -29,5 +29,20 @@ describe('RecordsDelete', () => {
 
       expect(recordsDelete.message.descriptor.messageTimestamp).toBeDefined();
     });
+
+    it('should include permissionGrantId in indexes when provided', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const permissionGrantId = await TestDataGenerator.randomCborSha256Cid();
+      const { recordsWrite } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+      const recordsDelete = await RecordsDelete.create({
+        recordId          : recordsWrite.message.recordId,
+        signer            : Jws.createSigner(alice),
+        permissionGrantId : permissionGrantId,
+      });
+
+      const indexes = recordsDelete.constructIndexes(recordsWrite.message);
+      expect(indexes.permissionGrantId).toBe(permissionGrantId);
+    });
   });
 });

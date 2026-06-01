@@ -70,6 +70,24 @@ describe('RecordsWrite', () => {
       expect(recordsWrite.message.descriptor.permissionGrantId).toBe(grantId);
     });
 
+    it('should include permissionGrantId in indexes when provided', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const grantId = await TestDataGenerator.randomCborSha256Cid();
+
+      const recordsWrite = await RecordsWrite.create({
+        data              : TestDataGenerator.randomBytes(10),
+        dataFormat        : 'application/json',
+        recordId          : await TestDataGenerator.randomCborSha256Cid(),
+        protocol          : 'http://test-protocol.xyz',
+        protocolPath      : 'testRecord',
+        signer            : Jws.createSigner(alice),
+        permissionGrantId : grantId,
+      });
+
+      const indexes = await recordsWrite.constructIndexes(true);
+      expect(indexes.permissionGrantId).toBe(grantId);
+    });
+
     it('should not include permissionGrantId in the descriptor when not provided', async () => {
       const alice = await TestDataGenerator.generatePersona();
 
@@ -83,6 +101,28 @@ describe('RecordsWrite', () => {
       });
 
       expect(recordsWrite.message.descriptor.permissionGrantId).toBeUndefined();
+    });
+
+    it('should parse owner-signed writes that invoke a direct permission grant', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const grantId = await TestDataGenerator.randomCborSha256Cid();
+
+      const recordsWrite = await RecordsWrite.create({
+        data              : TestDataGenerator.randomBytes(10),
+        dataFormat        : 'application/json',
+        recordId          : await TestDataGenerator.randomCborSha256Cid(),
+        protocol          : 'http://test-protocol.xyz',
+        protocolPath      : 'testRecord',
+        signer            : Jws.createSigner(alice),
+        permissionGrantId : grantId,
+      });
+
+      await recordsWrite.signAsOwner(Jws.createSigner(bob));
+
+      const parsed = await RecordsWrite.parse(recordsWrite.message);
+      expect(parsed.message.descriptor.permissionGrantId).toBe(grantId);
+      expect(parsed.message.authorization.ownerSignature).toBeDefined();
     });
 
     it('should be able to auto-fill `datePublished` when `published` set to `true` but `datePublished` not given', async () => {

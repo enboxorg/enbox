@@ -183,6 +183,7 @@ export type GenerateRecordsQueryInput = {
   filter?: RecordsFilter;
   dateSort?: DateSort;
   pagination?: Pagination;
+  permissionGrantId?: string;
   protocolRole?: string;
 };
 
@@ -201,6 +202,7 @@ export type GenerateRecordsSubscribeInput = {
     filter?: RecordsFilter;
     dateSort?: DateSort;
     pagination?: Pagination;
+    permissionGrantId?: string;
     protocolRole?: string;
     /** Progress token for catch-up + EOSE subscribe. */
     cursor?: ProgressToken;
@@ -219,6 +221,7 @@ export type GenerateRecordsCountInput = {
   author?: Persona;
   messageTimestamp?: string;
   filter?: RecordsFilter;
+  permissionGrantId?: string;
   protocolRole?: string;
 };
 
@@ -243,7 +246,7 @@ export type GenerateMessagesSubscribeInput = {
   author: Persona;
   filters?: MessagesFilter[];
   messageTimestamp?: string;
-  permissionGrantId?: string;
+  permissionGrantIds?: string[];
   /** Progress token for catch-up + EOSE subscribe. */
   cursor?: ProgressToken;
 };
@@ -257,7 +260,7 @@ export type GenerateMessagesSubscribeOutput = {
 export type GenerateMessagesReadInput = {
   author?: Persona;
   messageCid: string;
-  permissionGrantId?: string;
+  permissionGrantIds?: string[];
 };
 
 export type GenerateMessagesReadOutput = {
@@ -708,12 +711,13 @@ export class TestDataGenerator {
     }
 
     const options: RecordsQueryOptions = {
-      messageTimestamp : input?.messageTimestamp,
+      messageTimestamp  : input?.messageTimestamp,
       signer,
-      filter           : input?.filter ?? { schema: TestDataGenerator.randomString(10) }, // must have one filter property if no filter is given
-      dateSort         : input?.dateSort,
-      pagination       : input?.pagination,
-      protocolRole     : input?.protocolRole,
+      filter            : input?.filter ?? { schema: TestDataGenerator.randomString(10) }, // must have one filter property if no filter is given
+      dateSort          : input?.dateSort,
+      pagination        : input?.pagination,
+      permissionGrantId : input?.permissionGrantId,
+      protocolRole      : input?.protocolRole,
     };
     removeUndefinedProperties(options);
 
@@ -748,13 +752,14 @@ export class TestDataGenerator {
     }
 
     const options: RecordsSubscribeOptions = {
-      messageTimestamp : input?.messageTimestamp,
+      messageTimestamp  : input?.messageTimestamp,
       signer,
-      filter           : input?.filter ?? { schema: TestDataGenerator.randomString(10) }, // must have one filter property if no filter is given
-      dateSort         : input?.dateSort,
-      pagination       : input?.pagination,
-      protocolRole     : input?.protocolRole,
-      cursor           : input?.cursor,
+      filter            : input?.filter ?? { schema: TestDataGenerator.randomString(10) }, // must have one filter property if no filter is given
+      dateSort          : input?.dateSort,
+      pagination        : input?.pagination,
+      permissionGrantId : input?.permissionGrantId,
+      protocolRole      : input?.protocolRole,
+      cursor            : input?.cursor,
     };
     removeUndefinedProperties(options);
 
@@ -789,10 +794,11 @@ export class TestDataGenerator {
     }
 
     const options: RecordsCountOptions = {
-      messageTimestamp : input?.messageTimestamp,
+      messageTimestamp  : input?.messageTimestamp,
       signer,
-      filter           : input?.filter ?? { schema: TestDataGenerator.randomString(10) },
-      protocolRole     : input?.protocolRole,
+      filter            : input?.filter ?? { schema: TestDataGenerator.randomString(10) },
+      permissionGrantId : input?.permissionGrantId,
+      protocolRole      : input?.protocolRole,
     };
     removeUndefinedProperties(options);
 
@@ -832,10 +838,10 @@ export class TestDataGenerator {
     const signer = Jws.createSigner(author);
 
     const options: MessagesSubscribeOptions = {
-      filters           : input?.filters,
-      messageTimestamp  : input?.messageTimestamp,
-      permissionGrantId : input?.permissionGrantId,
-      cursor            : input?.cursor,
+      filters            : input?.filters,
+      messageTimestamp   : input?.messageTimestamp,
+      permissionGrantIds : input?.permissionGrantIds,
+      cursor             : input?.cursor,
       signer,
     };
     removeUndefinedProperties(options);
@@ -856,8 +862,8 @@ export class TestDataGenerator {
 
     const options: MessagesReadOptions = {
       signer,
-      messageCid        : input.messageCid,
-      permissionGrantId : input.permissionGrantId
+      messageCid         : input.messageCid,
+      permissionGrantIds : input.permissionGrantIds
     };
 
     const messagesRead = await MessagesRead.create(options);

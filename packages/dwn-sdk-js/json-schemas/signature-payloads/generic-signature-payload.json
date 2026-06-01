@@ -14,7 +14,17 @@
       "type": "string"
     },
     "permissionGrantId": {
+      "$comment": "Direct Records and Protocols operations invoke a single grant with permissionGrantId. Message.createSignature rejects payloads that also include permissionGrantIds.",
       "type": "string"
+    },
+    "permissionGrantIds": {
+      "$comment": "Messages operations invoke grants with permissionGrantIds, including the single-grant case. Message.createSignature rejects payloads that also include permissionGrantId.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "uniqueItems": true
     },
     "protocolRole": {
       "$comment": "Used in the Records interface to authorize role-authorized actions for protocol records",

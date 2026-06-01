@@ -12,12 +12,14 @@ import nestedProtocol from '../vectors/protocol-definitions/nested.json' with { 
 import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { ArrayUtility } from '../../src/utils/array.js';
+import { DataStream } from '../../src/utils/data-stream.js';
 import { DateSort } from '../../src/types/records-types.js';
 import { DwnConstant } from '../../src/core/dwn-constant.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
+import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { RecordsQuery } from '../../src/interfaces/records-query.js';
 import { RecordsQueryHandler } from '../../src/handlers/records-query.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
@@ -27,6 +29,7 @@ import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { CoreProtocolRegistry, DataStoreLevel, Dwn, MessageStoreLevel, ProtocolsConfigure, RecordsWrite, Time } from '../../src/index.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
+import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 
 export function testRecordsQueryHandler(): void {
   describe('RecordsQueryHandler.handle()', () => {
@@ -619,6 +622,85 @@ export function testRecordsQueryHandler(): void {
         notOwnerPostReply = await dwn.processMessage(alice.did, unpublishedNotOwner.message);
         expect(notOwnerPostReply.status.code).toBe(200);
         expect(notOwnerPostReply.entries?.length).toBe(0);
+      });
+
+      it('should query unpublished records authorized by permissionGrantId', async () => {
+        const alice = await TestDataGenerator.generatePersona();
+        const bob = await TestDataGenerator.generatePersona();
+        TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const { message: unpublished, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const writeReply = await dwn.processMessage(alice.did, unpublished, { dataStream });
+        expect(writeReply.status.code).toBe(202);
+
+        const permissionGrant = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+          scope       : {
+            interface    : DwnInterfaceName.Records,
+            method       : DwnMethodName.Query,
+            protocol     : defaultTestProtocolDefinition.protocol,
+            protocolPath : 'testRecord',
+          }
+        });
+        const grantReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes)
+        });
+        expect(grantReply.status.code).toBe(202);
+
+        const query = await TestDataGenerator.generateRecordsQuery({
+          author : bob,
+          filter : {
+            protocol     : defaultTestProtocolDefinition.protocol,
+            protocolPath : 'testRecord',
+            published    : false,
+          },
+          permissionGrantId: permissionGrant.recordsWrite.message.recordId,
+        });
+
+        const reply = await dwn.processMessage(alice.did, query.message);
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries?.map(entry => entry.recordId)).toEqual([unpublished.recordId]);
+      });
+
+      it('should reject permissionGrantId queries with filters outside the grant scope', async () => {
+        const alice = await TestDataGenerator.generatePersona();
+        const bob = await TestDataGenerator.generatePersona();
+        TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const permissionGrant = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+          scope       : {
+            interface    : DwnInterfaceName.Records,
+            method       : DwnMethodName.Query,
+            protocol     : defaultTestProtocolDefinition.protocol,
+            protocolPath : 'testRecord',
+          }
+        });
+        const grantReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes)
+        });
+        expect(grantReply.status.code).toBe(202);
+
+        for (const filter of [
+          { published: false },
+          { protocol: 'http://other-protocol.xyz', protocolPath: 'testRecord', published: false },
+        ]) {
+          const query = await TestDataGenerator.generateRecordsQuery({
+            author            : bob,
+            filter,
+            permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+          });
+
+          const reply = await dwn.processMessage(alice.did, query.message);
+          expect(reply.status.code).toBe(401);
+          expect(reply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+        }
       });
 
       it('should be able to query for a record by a dataCid', async () => {

@@ -105,6 +105,7 @@ export type RecordsCountDescriptor = {
   method: DwnMethodName.Count;
   messageTimestamp: string;
   filter: RecordsFilter;
+  permissionGrantId?: string;
 };
 
 export type RecordsCountMessage = GenericMessage & {
@@ -120,6 +121,7 @@ export type RecordsQueryDescriptor = {
   method: DwnMethodName.Query;
   messageTimestamp: string;
   filter: RecordsFilter;
+  permissionGrantId?: string;
   dateSort?: DateSort;
   pagination?: Pagination;
 };
@@ -129,6 +131,7 @@ export type RecordsSubscribeDescriptor = {
   method: DwnMethodName.Subscribe;
   messageTimestamp: string;
   filter: RecordsFilter;
+  permissionGrantId?: string;
   dateSort?: DateSort;
   pagination?: Pagination;
   /**
@@ -267,6 +270,7 @@ export type RecordsDeleteDescriptor = {
   method: DwnMethodName.Delete;
   messageTimestamp: string;
   recordId: string;
+  permissionGrantId?: string;
 
   /**
    * Denotes if all the descendent records should be purged.

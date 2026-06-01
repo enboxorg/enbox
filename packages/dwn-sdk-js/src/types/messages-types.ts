@@ -24,7 +24,7 @@ export type MessagesReadDescriptor = {
   method: DwnMethodName.Read;
   messageCid: string;
   messageTimestamp: string;
-  permissionGrantId?: string;
+  permissionGrantIds?: string[];
 };
 
 export type MessagesReadMessage = GenericMessage & {
@@ -51,7 +51,7 @@ export type MessagesSyncDescriptor = {
   action : MessagesSyncAction;
   protocol? : string; // optional protocol scope
   prefix? : string; // bit path for subtree/leaves (e.g. "0110101...")
-  permissionGrantId? : string;
+  permissionGrantIds? : string[];
   /**
    * For `action: 'diff'`: a map of `{ bitPrefix: hexHash }` representing the client's
    * subtree hashes at `depth`. The server compares each hash against its own tree
@@ -115,7 +115,7 @@ export type MessagesSubscribeDescriptor = {
   method: DwnMethodName.Subscribe;
   messageTimestamp: string;
   filters: MessagesFilter[];
-  permissionGrantId?: string;
+  permissionGrantIds?: string[];
   /**
    * Progress token to resume from. When provided, the handler replays events
    * from the EventLog starting after this position instead of returning no

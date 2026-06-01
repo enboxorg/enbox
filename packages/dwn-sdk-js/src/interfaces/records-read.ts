@@ -64,8 +64,11 @@ export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
    * @throws {DwnError} when a combination of required RecordsReadOptions are missing
    */
   public static async create(options: RecordsReadOptions): Promise<RecordsRead> {
-    const { filter, signer, permissionGrantId, protocolRole, dateSort } = options;
+    const { filter, signer, protocolRole, dateSort } = options;
     const currentTime = Time.getCurrentTimestamp();
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantId: options.permissionGrantId
+    });
 
     if (options.filter.published === false) {
       if (dateSort === DateSort.PublishedAscending || dateSort === DateSort.PublishedDescending) {
@@ -81,8 +84,8 @@ export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
       method           : DwnMethodName.Read,
       filter           : Records.normalizeFilter(filter),
       messageTimestamp : options.messageTimestamp ?? currentTime,
-      permissionGrantId,
       dateSort,
+      ...permissionGrantInvocation,
     };
 
     removeUndefinedProperties(descriptor);
@@ -93,7 +96,7 @@ export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
       authorization = await Message.createAuthorization({
         descriptor,
         signer,
-        permissionGrantId,
+        ...permissionGrantInvocation,
         protocolRole,
         delegatedGrant: options.delegatedGrant
       });

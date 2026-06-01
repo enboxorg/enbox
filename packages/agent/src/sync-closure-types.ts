@@ -17,7 +17,7 @@ export enum ClosureFailureCode {
   ParentChainMissing = 'ClosureParentChainMissing',
   /** Class 2: A context ancestor record is missing. */
   ContextChainMissing = 'ClosureContextChainMissing',
-  /** Class 3: A permission grant referenced by permissionGrantId is missing. */
+  /** Class 3: A permission grant referenced by a grant invocation is missing. */
   GrantMissing = 'ClosureGrantMissing',
   /** Class 3: The grant exists but is not yet active at the message's timestamp. */
   GrantNotYetActive = 'ClosureGrantNotYetActive',

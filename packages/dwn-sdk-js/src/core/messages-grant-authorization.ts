@@ -16,6 +16,16 @@ import { DwnError, DwnErrorCode } from './dwn-error.js';
 
 export class MessagesGrantAuthorization {
 
+  public static async fetchPermissionGrants(
+    tenant: string,
+    messageStore: MessageStore,
+    permissionGrantIds: string[]
+  ): Promise<PermissionGrant[]> {
+    return Promise.all(
+      permissionGrantIds.map(permissionGrantId => PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId))
+    );
+  }
+
   /**
    * Authorizes a MessagesReadMessage using the given permission grant.
    * @param messageStore Used to check if the given grant has been revoked; and to fetch related RecordsWrites if needed.
@@ -25,23 +35,29 @@ export class MessagesGrantAuthorization {
     messageToRead: GenericMessage,
     expectedGrantor: string,
     expectedGrantee: string,
-    permissionGrant: PermissionGrant,
+    permissionGrants: PermissionGrant[],
     messageStore: MessageStore,
   }): Promise<void> {
     const {
-      messagesReadMessage, messageToRead, expectedGrantor, expectedGrantee, permissionGrant, messageStore
+      messagesReadMessage, messageToRead, expectedGrantor, expectedGrantee, permissionGrants, messageStore
     } = input;
 
-    await GrantAuthorization.performBaseValidation({
+    await MessagesGrantAuthorization.performBaseValidationForGrantSet({
       incomingMessage: messagesReadMessage,
       expectedGrantor,
       expectedGrantee,
-      permissionGrant,
+      permissionGrants,
       messageStore
     });
 
-    const scope = permissionGrant.scope as MessagesPermissionScope;
-    await MessagesGrantAuthorization.verifyScope(expectedGrantor, messageToRead, scope, messageStore);
+    for (const permissionGrant of permissionGrants) {
+      const scope = permissionGrant.scope as MessagesPermissionScope;
+      if (await MessagesGrantAuthorization.isScopeAuthorized(expectedGrantor, messageToRead, scope, messageStore)) {
+        return;
+      }
+    }
+
+    throw new DwnError(DwnErrorCode.MessagesReadVerifyScopeFailed, 'record message failed scope authorization');
   }
 
   /**
@@ -52,30 +68,30 @@ export class MessagesGrantAuthorization {
     incomingMessage: MessagesSubscribeMessage | MessagesSyncMessage,
     expectedGrantor: string,
     expectedGrantee: string,
-    permissionGrant: PermissionGrant,
+    permissionGrants: PermissionGrant[],
     messageStore: MessageStore,
   }): Promise<void> {
     const {
-      incomingMessage, expectedGrantor, expectedGrantee, permissionGrant, messageStore
+      incomingMessage, expectedGrantor, expectedGrantee, permissionGrants, messageStore
     } = input;
 
-    await GrantAuthorization.performBaseValidation({
+    await MessagesGrantAuthorization.performBaseValidationForGrantSet({
       incomingMessage,
       expectedGrantor,
       expectedGrantee,
-      permissionGrant,
+      permissionGrants,
       messageStore
     });
 
-    const scope = permissionGrant.scope as MessagesPermissionScope;
+    const scopes = permissionGrants.map(permissionGrant => permissionGrant.scope as MessagesPermissionScope);
 
     // MessagesSync uses a direct `protocol` field on the descriptor.
     if ('action' in incomingMessage.descriptor) {
       const syncMessage = incomingMessage as MessagesSyncMessage;
-      if (!PermissionScopeMatcher.matches(scope, { protocol: syncMessage.descriptor.protocol })) {
+      if (!scopes.some(scope => PermissionScopeMatcher.matches(scope, { protocol: syncMessage.descriptor.protocol }))) {
         throw new DwnError(
           DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol,
-          `The protocol ${syncMessage.descriptor.protocol} does not match the scoped protocol ${scope.protocol}`
+          `No permission grant scope matches protocol ${syncMessage.descriptor.protocol}`
         );
       }
       return;
@@ -83,7 +99,7 @@ export class MessagesGrantAuthorization {
 
     // MessagesSubscribe uses filters.
     const filteredMessage = incomingMessage as MessagesSubscribeMessage;
-    if (scope.protocol !== undefined && filteredMessage.descriptor.filters.length === 0) {
+    if (filteredMessage.descriptor.filters.length === 0 && !scopes.some(scope => scope.protocol === undefined)) {
       throw new DwnError(
         DwnErrorCode.MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope,
         `A protocol-scoped grant cannot authorize an unfiltered subscription`
@@ -91,27 +107,53 @@ export class MessagesGrantAuthorization {
     }
 
     for (const filter of filteredMessage.descriptor.filters) {
-      if (!PermissionScopeMatcher.matches(scope, { protocol: filter.protocol })) {
+      if (!scopes.some(scope => PermissionScopeMatcher.matches(scope, { protocol: filter.protocol }))) {
         throw new DwnError(
           DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch,
-          `The protocol ${filter.protocol} does not match the scoped protocol ${scope.protocol}`
+          `No permission grant scope matches protocol ${filter.protocol}`
         );
       }
     }
   }
 
   /**
-   * Verifies the given record against the scope of the given grant.
+   * Performs base validation on every invoked grant. The grant set is all-or-nothing:
+   * unresolved, revoked, expired, or interface/method-mismatched grants fail the request.
    */
-  private static async verifyScope(
+  private static async performBaseValidationForGrantSet(input: {
+    incomingMessage: MessagesReadMessage | MessagesSubscribeMessage | MessagesSyncMessage,
+    expectedGrantor: string,
+    expectedGrantee: string,
+    permissionGrants: PermissionGrant[],
+    messageStore: MessageStore,
+  }): Promise<void> {
+    const {
+      incomingMessage, expectedGrantor, expectedGrantee, permissionGrants, messageStore
+    } = input;
+
+    for (const permissionGrant of permissionGrants) {
+      await GrantAuthorization.performBaseValidation({
+        incomingMessage,
+        expectedGrantor,
+        expectedGrantee,
+        permissionGrant,
+        messageStore
+      });
+    }
+  }
+
+  /**
+   * Determines whether the given record is inside a grant scope.
+   */
+  private static async isScopeAuthorized(
     tenant: string,
     messageToGet: GenericMessage,
     incomingScope: MessagesPermissionScope,
     messageStore: MessageStore,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (incomingScope.protocol === undefined) {
       // if no protocol is specified in the scope, then the grant is for all records
-      return;
+      return true;
     }
 
     if (messageToGet.descriptor.interface === DwnInterfaceName.Records) {
@@ -122,7 +164,7 @@ export class MessagesGrantAuthorization {
 
       if (recordsWriteMessage.descriptor.protocol === incomingScope.protocol) {
         // the record protocol matches the incoming scope protocol
-        return;
+        return true;
       }
 
       // we check if the protocol is the internal PermissionsProtocol for further validation
@@ -136,7 +178,7 @@ export class MessagesGrantAuthorization {
 
         if (PermissionsProtocol.hasProtocolScope(permissionScope) && permissionScope.protocol === incomingScope.protocol) {
           // the permissions record scoped protocol matches the incoming scope protocol
-          return;
+          return true;
         }
       }
     } else if (messageToGet.descriptor.interface === DwnInterfaceName.Protocols) {
@@ -145,10 +187,10 @@ export class MessagesGrantAuthorization {
       const configureProtocol = protocolsConfigureMessage.descriptor.definition.protocol;
       if (configureProtocol === incomingScope.protocol) {
         // the configured protocol matches the incoming scope protocol
-        return;
+        return true;
       }
     }
 
-    throw new DwnError(DwnErrorCode.MessagesReadVerifyScopeFailed, 'record message failed scope authorization');
+    return false;
   }
 }

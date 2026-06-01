@@ -7,10 +7,10 @@ import type { MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry } f
 import { authenticate } from '../core/auth.js';
 import { DataStream } from '../utils/data-stream.js';
 import { Encoder } from '../utils/encoder.js';
+import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesRead } from '../interfaces/messages-read.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { Records } from '../utils/records.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -84,15 +84,17 @@ export class MessagesReadHandler implements MethodHandler {
     if (messagesRead.author === tenant) {
       // If the author is the tenant, no further authorization is needed
       return;
-    } else if (messagesRead.author !== undefined && messagesRead.signaturePayload!.permissionGrantId !== undefined) {
-      // if the author is not the tenant and the message has a permissionGrantId, we need to authorize the grant
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, messagesRead.signaturePayload!.permissionGrantId);
+    }
+
+    const permissionGrantIds = Message.getPermissionGrantIds(messagesRead.signaturePayload!);
+    if (messagesRead.author !== undefined && permissionGrantIds.length > 0) {
+      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, messageStore, permissionGrantIds);
       await MessagesGrantAuthorization.authorizeMessagesRead({
         messagesReadMessage : messagesRead.message,
         messageToRead       : matchedMessage,
         expectedGrantor     : tenant,
         expectedGrantee     : messagesRead.author,
-        permissionGrant,
+        permissionGrants,
         messageStore
       });
     } else {

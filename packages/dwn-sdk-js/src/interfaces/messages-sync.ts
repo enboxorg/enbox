@@ -14,7 +14,7 @@ export type MessagesSyncOptions = {
   protocol? : string;
   prefix? : string;
   messageTimestamp? : string;
-  permissionGrantId? : string;
+  permissionGrantIds? : string[];
   /** For `action: 'diff'`: client's subtree hashes at `depth`. */
   hashes? : Record<string, string>;
   /** For `action: 'diff'`: bit depth at which hashes were computed. */
@@ -35,25 +35,29 @@ export class MessagesSync extends AbstractMessage<MessagesSyncMessage> {
   }
 
   public static async create(options: MessagesSyncOptions): Promise<MessagesSync> {
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantIds: options.permissionGrantIds
+    });
+
     const descriptor: MessagesSyncDescriptor = {
-      interface         : DwnInterfaceName.Messages,
-      method            : DwnMethodName.Sync,
-      messageTimestamp  : options.messageTimestamp ?? Time.getCurrentTimestamp(),
-      action            : options.action,
-      protocol          : options.protocol,
-      prefix            : options.prefix,
-      permissionGrantId : options.permissionGrantId,
-      hashes            : options.hashes,
-      depth             : options.depth,
+      interface        : DwnInterfaceName.Messages,
+      method           : DwnMethodName.Sync,
+      messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
+      action           : options.action,
+      protocol         : options.protocol,
+      prefix           : options.prefix,
+      hashes           : options.hashes,
+      depth            : options.depth,
+      ...permissionGrantInvocation,
     };
 
     removeUndefinedProperties(descriptor);
 
-    const { permissionGrantId, signer } = options;
+    const { signer } = options;
     const authorization = await Message.createAuthorization({
       descriptor,
       signer,
-      permissionGrantId
+      ...permissionGrantInvocation
     });
 
     const message = { descriptor, authorization };

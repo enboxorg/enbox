@@ -5,6 +5,10 @@ import { GrantAuthorization } from '../../src/core/grant-authorization.js';
 
 describe('GrantAuthorization', () => {
   describe('verifyGrantScopeInterfaceAndMethod', () => {
+    const mockMessageStore = {
+      query: async (): Promise<any> => ({ messages: [] }),
+    };
+
     it('should reject Messages grant with method !== Read', async () => {
       // Build a minimal mock that passes grantor/grantee/active checks
       // but has a malformed Messages scope.
@@ -25,9 +29,33 @@ describe('GrantAuthorization', () => {
         },
       };
 
-      // Mock message store that returns no revocations.
-      const mockMessageStore = {
-        query: async (): Promise<any> => ({ messages: [] }),
+      await expect(
+        GrantAuthorization.performBaseValidation({
+          incomingMessage : mockMessage as any,
+          expectedGrantor : 'did:example:grantor',
+          expectedGrantee : 'did:example:grantee',
+          permissionGrant : mockGrant as any,
+          messageStore    : mockMessageStore as any,
+        })
+      ).rejects.toThrow(DwnErrorCode.GrantAuthorizationMethodMismatch);
+    });
+
+    it('should not treat Records Read grants as unified query grants', async () => {
+      const mockGrant = {
+        id          : 'grant-records-read',
+        grantor     : 'did:example:grantor',
+        grantee     : 'did:example:grantee',
+        dateGranted : '2020-01-01T00:00:00.000Z',
+        dateExpires : '2040-01-01T00:00:00.000Z',
+        scope       : { interface: 'Records', method: 'Read', protocol: 'https://proto.example' },
+      };
+
+      const mockMessage = {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Query',
+          messageTimestamp : '2025-01-01T00:00:00.000Z',
+        },
       };
 
       await expect(

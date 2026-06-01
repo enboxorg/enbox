@@ -42,8 +42,13 @@
             "$ref": "https://identity.foundation/dwn/json-schemas/messages-filter.json"
           }
         },
-        "permissionGrantId": {
-          "type": "string"
+        "permissionGrantIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
         },
         "cursor": {
           "$ref": "https://identity.foundation/dwn/json-schemas/progress-token.json"

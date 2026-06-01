@@ -267,7 +267,12 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     await Message.validateSignatureStructure(message.authorization.signature, message.descriptor, 'RecordsWriteSignaturePayload');
 
     if (message.authorization.ownerSignature !== undefined) {
-      await Message.validateSignatureStructure(message.authorization.ownerSignature, message.descriptor);
+      await Message.validateSignatureStructure(
+        message.authorization.ownerSignature,
+        message.descriptor,
+        'GenericSignaturePayload',
+        { validatePermissionGrantInvocation: false }
+      );
     }
 
     await validateAttestationIntegrity(message);
@@ -314,25 +319,28 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     const dataSize = options.dataSize ?? options.data!.length;
 
     const currentTime = Time.getCurrentTimestamp();
+    const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
+      permissionGrantId: options.permissionGrantId,
+    });
 
     const descriptor: RecordsWriteDescriptor = {
-      interface         : DwnInterfaceName.Records,
-      method            : DwnMethodName.Write,
-      protocol          : normalizeProtocolUrl(options.protocol),
-      protocolPath      : options.protocolPath,
-      recipient         : options.recipient,
-      schema            : options.schema === undefined ? undefined : normalizeSchemaUrl(options.schema),
-      tags              : options.tags,
-      parentId          : RecordsWrite.getRecordIdFromContextId(options.parentContextId),
+      interface        : DwnInterfaceName.Records,
+      method           : DwnMethodName.Write,
+      protocol         : normalizeProtocolUrl(options.protocol),
+      protocolPath     : options.protocolPath,
+      recipient        : options.recipient,
+      schema           : options.schema === undefined ? undefined : normalizeSchemaUrl(options.schema),
+      tags             : options.tags,
+      parentId         : RecordsWrite.getRecordIdFromContextId(options.parentContextId),
       dataCid,
       dataSize,
-      dateCreated       : options.dateCreated ?? currentTime,
-      messageTimestamp  : options.messageTimestamp ?? currentTime,
-      published         : options.published,
-      datePublished     : options.datePublished,
-      dataFormat        : options.dataFormat,
-      permissionGrantId : options.permissionGrantId,
-      squash            : options.squash,
+      dateCreated      : options.dateCreated ?? currentTime,
+      messageTimestamp : options.messageTimestamp ?? currentTime,
+      published        : options.published,
+      datePublished    : options.datePublished,
+      dataFormat       : options.dataFormat,
+      squash           : options.squash,
+      ...permissionGrantInvocation,
     };
 
     // generate `datePublished` if the message is to be published but `datePublished` is not given
@@ -370,7 +378,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       await recordsWrite.sign({
         signer                     : options.signer,
         delegatedGrant             : options.delegatedGrant,
-        permissionGrantId          : options.permissionGrantId,
+        ...permissionGrantInvocation,
         protocolRole               : options.protocolRole,
         authorKeyDeliveryPublicKey : options.authorKeyDeliveryPublicKey,
       });

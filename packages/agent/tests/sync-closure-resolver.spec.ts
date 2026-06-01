@@ -22,6 +22,14 @@ function mockMessage(overrides: Record<string, unknown> = {}): GenericMessage {
   } as any;
 }
 
+function encodePermissionGrantIds(...permissionGrantIds: string[]): string {
+  return Buffer.from(JSON.stringify({ permissionGrantIds })).toString('base64url');
+}
+
+function encodePermissionGrantId(permissionGrantId: string): string {
+  return Buffer.from(JSON.stringify({ permissionGrantId })).toString('base64url');
+}
+
 /** Minimal mock MessageStore with query and get stubs. */
 function mockMessageStore(options: {
   queryResults?: Map<string, GenericMessage[]>;
@@ -249,9 +257,36 @@ describe('evaluateClosure', () => {
   });
 
   describe('Class 3: Authorization closure', () => {
+    it('should require permission grant when permissionGrantIds is in authorization', async () => {
+      const grantId = 'grant-123';
+      const payload = encodePermissionGrantIds(grantId);
+      const msg = mockMessage({
+        protocol    : 'https://example.com/proto',
+        dateCreated : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).authorization = { signature: { payload, signatures: [{ protected: payload, signature: 'fake' }] } };
+
+      const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+      const grantRecord = mockMessage({ interface: 'Records', method: 'Write' });
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+          [`recordId:${grantId}`, [grantRecord]],
+        ]),
+      });
+
+      const result = await evaluateClosure(msg, store, {
+        kind: 'protocol', protocol: 'https://example.com/proto',
+      }, createClosureContext('did:example:alice'));
+
+      expect(result.complete).toBe(true);
+      expect(result.edges.some(e => e.label === 'permissionGrant')).toBe(true);
+    });
+
     it('should require permission grant when permissionGrantId is in authorization', async () => {
       const grantId = 'grant-123';
-      const payload = Buffer.from(JSON.stringify({ permissionGrantId: grantId })).toString('base64url');
+      const payload = encodePermissionGrantId(grantId);
       const msg = mockMessage({
         protocol    : 'https://example.com/proto',
         dateCreated : '2025-01-01T00:00:00.000000Z',
@@ -277,7 +312,7 @@ describe('evaluateClosure', () => {
     });
 
     it('should fail when permission grant is missing', async () => {
-      const payload = Buffer.from(JSON.stringify({ permissionGrantId: 'grant-missing' })).toString('base64url');
+      const payload = encodePermissionGrantIds('grant-missing');
       const msg = mockMessage({
         protocol    : 'https://example.com/proto',
         dateCreated : '2025-01-01T00:00:00.000000Z',
@@ -321,7 +356,7 @@ describe('evaluateClosure', () => {
 
     it('should fail when message timestamp is before grant dateGranted', async () => {
       const grantId = 'grant-temporal-1';
-      const grantPayload = Buffer.from(JSON.stringify({ permissionGrantId: grantId })).toString('base64url');
+      const grantPayload = encodePermissionGrantIds(grantId);
 
       // Message at 2024-01-01, grant active from 2025-01-01.
       const msg = mockMessage({
@@ -352,7 +387,7 @@ describe('evaluateClosure', () => {
 
     it('should fail when message timestamp is at or after grant dateExpires', async () => {
       const grantId = 'grant-temporal-2';
-      const grantPayload = Buffer.from(JSON.stringify({ permissionGrantId: grantId })).toString('base64url');
+      const grantPayload = encodePermissionGrantIds(grantId);
 
       // Message at 2026-06-01, grant expires at 2026-01-01.
       const msg = mockMessage({
@@ -383,7 +418,7 @@ describe('evaluateClosure', () => {
 
     it('should fail when grant is revoked before message timestamp', async () => {
       const grantId = 'grant-temporal-3';
-      const grantPayload = Buffer.from(JSON.stringify({ permissionGrantId: grantId })).toString('base64url');
+      const grantPayload = encodePermissionGrantIds(grantId);
 
       // Message at 2025-06-01, revocation at 2025-03-01 (before message).
       const msg = mockMessage({
@@ -423,7 +458,7 @@ describe('evaluateClosure', () => {
 
     it('should succeed when grant is temporally valid and not revoked', async () => {
       const grantId = 'grant-temporal-4';
-      const grantPayload = Buffer.from(JSON.stringify({ permissionGrantId: grantId })).toString('base64url');
+      const grantPayload = encodePermissionGrantIds(grantId);
 
       // Message at 2025-06-01, grant active 2025-01-01 to 2026-01-01, no revocation.
       const msg = mockMessage({
@@ -452,7 +487,7 @@ describe('evaluateClosure', () => {
 
     it('should succeed when revocation exists but is after message timestamp', async () => {
       const grantId = 'grant-temporal-5';
-      const grantPayload = Buffer.from(JSON.stringify({ permissionGrantId: grantId })).toString('base64url');
+      const grantPayload = encodePermissionGrantIds(grantId);
 
       // Message at 2025-06-01, revocation at 2025-09-01 (after message → grant was valid at message time).
       const msg = mockMessage({
