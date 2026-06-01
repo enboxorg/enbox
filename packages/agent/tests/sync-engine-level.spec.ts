@@ -528,13 +528,9 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        // The missing grant causes an error that propagates to the sync()
-        // catch block which logs it via console.error.
-        const consoleErrorSpy = sinon.stub(console, 'error').resolves();
-
-        await syncEngine.sync('pull');
-        expect(consoleErrorSpy.called).toBe(true);
-        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error syncing');
+        await expect(
+          syncEngine.sync('pull')
+        ).rejects.toThrow('SyncPermissions: No active Messages.Read permission found for MessagesSync: https://protocol.xyz/foo');
       });
 
       it('succeeds with only a MessagesSync grant when messages are inlined in the diff response', async () => {
@@ -1010,13 +1006,9 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        // The missing grant causes an error that propagates to the sync()
-        // catch block which logs it via console.error.
-        const consoleErrorSpy = sinon.stub(console, 'error').resolves();
-
-        await syncEngine.sync('push');
-        expect(consoleErrorSpy.called).toBe(true);
-        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error syncing');
+        await expect(
+          syncEngine.sync('push')
+        ).rejects.toThrow('SyncPermissions: No active Messages.Read permission found for MessagesSync: https://protocol.xyz/foo');
       });
 
       it('logs an error when push fails due to missing permissions on the remote DWN', async () => {
@@ -1712,7 +1704,13 @@ describe('SyncEngineLevel', () => {
         }));
 
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
-        getSyncTargetsStub.resolves([{ did: alice.did.uri, dwnUrl: 'http://localhost:3000', delegateDid: undefined, protocol: undefined }]);
+        getSyncTargetsStub.resolves([{
+          did                : alice.did.uri,
+          dwnUrl             : 'http://localhost:3000',
+          scope              : { kind: 'full' },
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'test-owner-epoch',
+        }]);
 
         const getLocalRootStub = sinon.stub(SyncEngineLevel.prototype as any, 'getLocalRoot');
         getLocalRootStub.resolves('aaa');
