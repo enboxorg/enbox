@@ -62,9 +62,6 @@ export const SYNC_AUTHORIZATION_EPOCH_VERSION = 'messages-read-grants-v1';
 /** A non-empty, sorted, duplicate-free string list. */
 export type NonEmptyStringArray = [string, ...string[]];
 
-/** A non-empty, sorted, duplicate-free protocol URI list. */
-export type SyncProtocolSet = NonEmptyStringArray;
-
 /**
  * Describes the primary CID set a replication link syncs.
  *
@@ -79,7 +76,7 @@ export type SyncScope = {
 } | {
   /** Protocol-set projection over one or more protocol roots. */
   kind: 'protocolSet';
-  protocols: SyncProtocolSet;
+  protocols: NonEmptyStringArray;
 };
 
 /**
@@ -104,12 +101,12 @@ export type SyncAuthorizationGrant = {
 /**
  * Normalizes a protocol list into canonical scope-union order.
  */
-export function normalizeSyncProtocols(protocols: [string, ...string[]] | string[]): SyncProtocolSet {
+export function normalizeSyncProtocols(protocols: [string, ...string[]] | string[]): NonEmptyStringArray {
   const unique = [...new Set(protocols)].sort(lexicographicalCompare);
   if (unique.length === 0) {
     throw new Error('SyncScope: protocol-set scope requires at least one protocol URI.');
   }
-  return unique as SyncProtocolSet;
+  return unique as NonEmptyStringArray;
 }
 
 /** Converts persisted identity options into the canonical sync scope. */
@@ -120,7 +117,7 @@ export function syncScopeFromProtocols(protocols: SyncIdentityOptions['protocols
 }
 
 /** Returns the protocol list covered by a scope, or `undefined` for full scope. */
-export function protocolsForSyncScope(scope: SyncScope): SyncProtocolSet | undefined {
+export function protocolsForSyncScope(scope: SyncScope): NonEmptyStringArray | undefined {
   return scope.kind === 'protocolSet' ? scope.protocols : undefined;
 }
 
@@ -364,7 +361,7 @@ export type SyncEventScope = {
   /** Present only when the event belongs to a single-protocol link. */
   protocol?: string;
   /** Present when the event belongs to a protocol-set link. */
-  protocols?: SyncProtocolSet;
+  protocols?: NonEmptyStringArray;
 };
 
 type SyncEventBase = {

@@ -12,7 +12,7 @@ import { Encoder, hashToHex, initDefaultHashes, Message, PermissionsProtocol } f
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
-import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncProtocolSet, SyncScope } from './types/sync.js';
+import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
@@ -218,7 +218,7 @@ function syncEventScope(scope: SyncScope | undefined): SyncEventScope {
     return {};
   }
 
-  const protocols = [...scope.protocols] as SyncProtocolSet;
+  const protocols = [...scope.protocols] as NonEmptyStringArray;
   return protocols.length === 1
     ? { protocol: protocols[0], protocols }
     : { protocols };

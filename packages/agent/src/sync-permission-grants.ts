@@ -1,6 +1,6 @@
 import type { DwnInterface } from './types/dwn.js';
 import type { GenericMessage, GenericSignaturePayload } from '@enbox/dwn-sdk-js';
-import type { NonEmptyStringArray, SyncAuthorizationGrant, SyncProtocolSet } from './types/sync.js';
+import type { NonEmptyStringArray, SyncAuthorizationGrant } from './types/sync.js';
 import type { PermissionGrantEntry, PermissionsApi } from './types/permissions.js';
 
 import { Jws, Message, PermissionScopeMatcher } from '@enbox/dwn-sdk-js';
@@ -33,7 +33,7 @@ export async function getMessagesPermissionGrantsForScope({
 }: {
   did: string;
   delegateDid?: string;
-  protocols?: SyncProtocolSet;
+  protocols?: NonEmptyStringArray;
   messageType: DwnInterface.MessagesRead | DwnInterface.MessagesSubscribe | DwnInterface.MessagesSync;
   permissionsApi: PermissionsApi;
 }): Promise<PermissionGrantEntry[]> {
@@ -104,7 +104,7 @@ function grantMatchesProtocol(
 
 function grantParticipatesInProjection(
   entry: PermissionGrantEntry,
-  protocols: SyncProtocolSet | undefined,
+  protocols: NonEmptyStringArray | undefined,
 ): boolean {
   const { scope } = entry.grant;
 
