@@ -91,7 +91,7 @@ describe('evaluateClosure — integration with real DWN', () => {
       const result = await evaluateClosure(
         message as GenericMessage,
         messageStore,
-        { kind: 'protocol', protocol: protocolDef.protocol },
+        { kind: 'protocolSet', protocols: [protocolDef.protocol] },
         createClosureContext(tenant),
       );
 
@@ -117,7 +117,7 @@ describe('evaluateClosure — integration with real DWN', () => {
       const result = await evaluateClosure(
         fakeMessage,
         messageStore,
-        { kind: 'protocol', protocol: 'https://example.com/unknown-protocol' },
+        { kind: 'protocolSet', protocols: ['https://example.com/unknown-protocol'] },
         createClosureContext(tenant),
       );
 
@@ -186,7 +186,7 @@ describe('evaluateClosure — integration with real DWN', () => {
       const result = await evaluateClosure(
         msgMsg as GenericMessage,
         messageStore,
-        { kind: 'protocol', protocol: threadProtocol.protocol },
+        { kind: 'protocolSet', protocols: [threadProtocol.protocol] },
         createClosureContext(tenant),
       );
 
@@ -254,7 +254,7 @@ describe('evaluateClosure — integration with real DWN', () => {
       const result = await evaluateClosure(
         message as GenericMessage,
         messageStore,
-        { kind: 'protocol', protocol: grantProtocol.protocol },
+        { kind: 'protocolSet', protocols: [grantProtocol.protocol] },
         createClosureContext(tenant),
       );
 

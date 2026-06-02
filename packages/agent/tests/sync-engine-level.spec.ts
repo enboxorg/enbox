@@ -528,13 +528,9 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        // The missing grant causes an error that propagates to the sync()
-        // catch block which logs it via console.error.
-        const consoleErrorSpy = sinon.stub(console, 'error').resolves();
-
-        await syncEngine.sync('pull');
-        expect(consoleErrorSpy.called).toBe(true);
-        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error syncing');
+        await expect(
+          syncEngine.sync('pull')
+        ).rejects.toThrow('SyncPermissions: No active Messages.Read permission found for MessagesSync: https://protocol.xyz/foo');
       });
 
       it('succeeds with only a MessagesSync grant when messages are inlined in the diff response', async () => {
@@ -1010,13 +1006,9 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        // The missing grant causes an error that propagates to the sync()
-        // catch block which logs it via console.error.
-        const consoleErrorSpy = sinon.stub(console, 'error').resolves();
-
-        await syncEngine.sync('push');
-        expect(consoleErrorSpy.called).toBe(true);
-        expect(consoleErrorSpy.args[0][0]).toContain('SyncEngineLevel: Error syncing');
+        await expect(
+          syncEngine.sync('push')
+        ).rejects.toThrow('SyncPermissions: No active Messages.Read permission found for MessagesSync: https://protocol.xyz/foo');
       });
 
       it('logs an error when push fails due to missing permissions on the remote DWN', async () => {
@@ -1712,7 +1704,13 @@ describe('SyncEngineLevel', () => {
         }));
 
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
-        getSyncTargetsStub.resolves([{ did: alice.did.uri, dwnUrl: 'http://localhost:3000', delegateDid: undefined, protocol: undefined }]);
+        getSyncTargetsStub.resolves([{
+          did                : alice.did.uri,
+          dwnUrl             : 'http://localhost:3000',
+          scope              : { kind: 'full' },
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'test-owner-epoch',
+        }]);
 
         const getLocalRootStub = sinon.stub(SyncEngineLevel.prototype as any, 'getLocalRoot');
         getLocalRootStub.resolves('aaa');
@@ -2934,48 +2932,48 @@ describe('SyncEngineLevel', () => {
     // -----------------------------------------------------------------------
 
     describe('multi-identity live sync hardening (#898)', () => {
+      const ownerAuthorization = {
+        authorization      : { kind: 'owner' as const },
+        authorizationEpoch : 'owner-epoch',
+      };
+
+      const linkKeyFor = (did: string, dwnUrl: string, link: { projectionId: string; authorizationEpoch: string }): string =>
+        `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
 
       // -----------------------------------------------------------------------
-      // Item 1: delegateDid updates persist to durable ReplicationLinkState
+      // Item 1: authorization changes hot-swap links without mutating old epochs
       // -----------------------------------------------------------------------
 
-      describe('delegateDid persistence on existing links', () => {
+      describe('authorization epoch isolation on option updates', () => {
 
-        it('should persist new delegateDid to the ledger before hot-swap during updateIdentityOptions', async () => {
+        it('should hot-swap live links without rewriting existing durable link authorization', async () => {
           const did = alice.did.uri;
 
-          // Register the identity.
           await syncEngine.registerIdentity({
             did,
             options: { protocols: 'all', delegateDid: 'did:example:old-delegate' },
           });
 
-          // Put the engine in live mode but stub out the subscription methods to
-          // avoid real WebSocket connections.
           syncEngine['_syncMode'] = 'live';
 
-          // Manually create a link in the ledger to simulate an already-live link.
           const ledger = syncEngine['ledger'];
           const link = await ledger.getOrCreateLink({
-            tenantDid      : did,
-            remoteEndpoint : testDwnUrls[0],
-            scope          : { kind: 'full' },
-            delegateDid    : 'did:example:old-delegate',
+            tenantDid          : did,
+            remoteEndpoint     : testDwnUrls[0],
+            scope              : { kind: 'full' },
+            authorizationEpoch : 'old-delegate-epoch',
+            authorization      : {
+              kind               : 'delegate',
+              delegateDid        : 'did:example:old-delegate',
+              permissionGrantIds : ['old-grant'],
+            },
+            delegateDid: 'did:example:old-delegate',
           });
           expect(link.delegateDid).toBe('did:example:old-delegate');
 
-          // Set the link as active so hasActiveLinksForDid returns true.
-          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
-          syncEngine['_activeLinks'].set(linkKey, link);
+          syncEngine['_activeLinks'].set(linkKeyFor(did, testDwnUrls[0], link), link);
 
-          // Stub removeIdentityFromLiveSync and addIdentityToLiveSync to capture
-          // the ledger state at the time of the hot-swap.
-          let delegateAtRemoveTime: string | undefined;
-          const removeStub = sinon.stub(syncEngine as any, 'removeIdentityFromLiveSync').callsFake(async (): Promise<void> => {
-            // Read the link from the ledger at remove time.
-            const links = await ledger.getLinksForTenant(did);
-            delegateAtRemoveTime = links[0]?.delegateDid;
-          });
+          const removeStub = sinon.stub(syncEngine as any, 'removeIdentityFromLiveSync').resolves();
           const addStub = sinon.stub(syncEngine as any, 'addIdentityToLiveSync').resolves();
 
           await syncEngine.updateIdentityOptions({
@@ -2983,80 +2981,12 @@ describe('SyncEngineLevel', () => {
             options: { protocols: 'all', delegateDid: 'did:example:new-delegate' },
           });
 
-          // The new delegate should have been persisted BEFORE removeIdentityFromLiveSync.
-          expect(delegateAtRemoveTime).toBe('did:example:new-delegate');
-
-          // Verify the ledger was durably updated.
           const reloadedLinks = await ledger.getLinksForTenant(did);
-          expect(reloadedLinks[0].delegateDid).toBe('did:example:new-delegate');
+          expect(reloadedLinks[0].delegateDid).toBe('did:example:old-delegate');
+          expect(reloadedLinks[0].authorizationEpoch).toBe('old-delegate-epoch');
 
           expect(removeStub.calledOnce).toBe(true);
           expect(addStub.calledOnce).toBe(true);
-        });
-
-        it('should persist delegateDid to durable links even when sync is not in live mode', async () => {
-          const did = alice.did.uri;
-
-          await syncEngine.registerIdentity({
-            did,
-            options: { protocols: 'all', delegateDid: 'did:example:old-delegate' },
-          });
-
-          // Engine is NOT in live mode — _syncMode is undefined.
-          expect(syncEngine['_syncMode']).toBeUndefined();
-
-          // Create a durable link in the ledger to simulate a prior session.
-          const ledger = syncEngine['ledger'];
-          await ledger.getOrCreateLink({
-            tenantDid      : did,
-            remoteEndpoint : testDwnUrls[0],
-            scope          : { kind: 'full' },
-            delegateDid    : 'did:example:old-delegate',
-          });
-
-          // Update options with a new delegate while sync is stopped.
-          await syncEngine.updateIdentityOptions({
-            did,
-            options: { protocols: 'all', delegateDid: 'did:example:new-delegate' },
-          });
-
-          // The durable link should have the new delegate even though
-          // we never entered live mode.
-          const reloadedLinks = await ledger.getLinksForTenant(did);
-          expect(reloadedLinks[0].delegateDid).toBe('did:example:new-delegate');
-        });
-
-        it('should persist cleared delegateDid (undefined) when delegate is removed', async () => {
-          const did = alice.did.uri;
-
-          await syncEngine.registerIdentity({
-            did,
-            options: { protocols: 'all', delegateDid: 'did:example:some-delegate' },
-          });
-
-          syncEngine['_syncMode'] = 'live';
-
-          const ledger = syncEngine['ledger'];
-          const link = await ledger.getOrCreateLink({
-            tenantDid      : did,
-            remoteEndpoint : testDwnUrls[0],
-            scope          : { kind: 'full' },
-            delegateDid    : 'did:example:some-delegate',
-          });
-          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
-          syncEngine['_activeLinks'].set(linkKey, link);
-
-          sinon.stub(syncEngine as any, 'removeIdentityFromLiveSync').resolves();
-          sinon.stub(syncEngine as any, 'addIdentityToLiveSync').resolves();
-
-          // Update with no delegate.
-          await syncEngine.updateIdentityOptions({
-            did,
-            options: { protocols: 'all' },
-          });
-
-          const reloadedLinks = await ledger.getLinksForTenant(did);
-          expect(reloadedLinks[0].delegateDid).toBeUndefined();
         });
       });
 
@@ -3077,8 +3007,9 @@ describe('SyncEngineLevel', () => {
             tenantDid      : did,
             remoteEndpoint : testDwnUrls[0],
             scope          : { kind: 'full' },
+            ...ownerAuthorization,
           });
-          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
+          const linkKey = linkKeyFor(did, testDwnUrls[0], link);
           link.status = 'live';
           syncEngine['_activeLinks'].set(linkKey, link);
 
@@ -3113,8 +3044,9 @@ describe('SyncEngineLevel', () => {
             tenantDid      : did,
             remoteEndpoint : testDwnUrls[0],
             scope          : { kind: 'full' },
+            ...ownerAuthorization,
           });
-          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
+          const linkKey = linkKeyFor(did, testDwnUrls[0], link);
           link.status = 'live';
           syncEngine['_activeLinks'].set(linkKey, link);
 
@@ -3166,8 +3098,9 @@ describe('SyncEngineLevel', () => {
             tenantDid      : did,
             remoteEndpoint : testDwnUrls[0],
             scope          : { kind: 'full' },
+            ...ownerAuthorization,
           });
-          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
+          const linkKey = linkKeyFor(did, testDwnUrls[0], link);
           link.status = 'live';
           syncEngine['_activeLinks'].set(linkKey, link);
 
@@ -3215,8 +3148,9 @@ describe('SyncEngineLevel', () => {
             tenantDid      : did,
             remoteEndpoint : testDwnUrls[0],
             scope          : { kind: 'full' },
+            ...ownerAuthorization,
           });
-          const linkKey = `${did}^${testDwnUrls[0]}^${originalLink.scopeId}`;
+          const linkKey = linkKeyFor(did, testDwnUrls[0], originalLink);
           originalLink.status = 'repairing';
           syncEngine['_activeLinks'].set(linkKey, originalLink);
 
@@ -3225,6 +3159,7 @@ describe('SyncEngineLevel', () => {
             tenantDid      : did,
             remoteEndpoint : testDwnUrls[0],
             scope          : { kind: 'full' },
+            ...ownerAuthorization,
           });
           expect(replacementLink).not.toBe(originalLink);
 
@@ -3247,8 +3182,9 @@ describe('SyncEngineLevel', () => {
             tenantDid      : did,
             remoteEndpoint : testDwnUrls[0],
             scope          : { kind: 'full' },
+            ...ownerAuthorization,
           });
-          const linkKey = `${did}^${testDwnUrls[0]}^${originalLink.scopeId}`;
+          const linkKey = linkKeyFor(did, testDwnUrls[0], originalLink);
           originalLink.status = 'live';
           originalLink.needsReconcile = true;
           syncEngine['_activeLinks'].set(linkKey, originalLink);
@@ -3291,8 +3227,9 @@ describe('SyncEngineLevel', () => {
             tenantDid      : did,
             remoteEndpoint : testDwnUrls[0],
             scope          : { kind: 'full' },
+            ...ownerAuthorization,
           });
-          const linkKey = `${did}^${testDwnUrls[0]}^${link.scopeId}`;
+          const linkKey = linkKeyFor(did, testDwnUrls[0], link);
           link.status = 'repairing';
           syncEngine['_activeLinks'].set(linkKey, link);
 
@@ -3341,6 +3278,25 @@ describe('SyncEngineLevel', () => {
       };
       return {
         message: { descriptor, ...topLevel } as unknown as GenericMessage,
+      };
+    }
+
+    function withAuthorizationPayload(
+      entry: { message: GenericMessage },
+      payloadProperties: Record<string, unknown>
+    ): { message: GenericMessage } {
+      const payload = Buffer.from(JSON.stringify(payloadProperties)).toString('base64url');
+      return {
+        ...entry,
+        message: {
+          ...entry.message,
+          authorization: {
+            signature: {
+              payload,
+              signatures: [{ protected: payload, signature: 'fake' }],
+            },
+          },
+        } as unknown as GenericMessage,
       };
     }
 
@@ -3396,10 +3352,13 @@ describe('SyncEngineLevel', () => {
         },
         { recordId: grantRecordId }
       );
-      const dependent = mockMessage({
-        permissionGrantId : grantRecordId,
-        messageTimestamp  : '2024-01-02T00:00:00.000000Z',
-      });
+      const dependent = withAuthorizationPayload(
+        mockMessage({
+          permissionGrantId : grantRecordId,
+          messageTimestamp  : '2024-01-02T00:00:00.000000Z',
+        }),
+        { permissionGrantId: grantRecordId }
+      );
       // Pass dependent first, grant second.
       const result = SyncEngineLevel.topologicalSort([dependent, grant]);
       expect(result[0]).toBe(grant);
@@ -3408,10 +3367,13 @@ describe('SyncEngineLevel', () => {
 
     it('does not crash when permissionGrantId references a grant not in the batch', () => {
       const msg1 = mockMessage({ messageTimestamp: '2024-01-01T00:00:00.000000Z' });
-      const msg2 = mockMessage({
-        permissionGrantId : 'grant-not-in-batch',
-        messageTimestamp  : '2024-01-02T00:00:00.000000Z',
-      });
+      const msg2 = withAuthorizationPayload(
+        mockMessage({
+          permissionGrantId : 'grant-not-in-batch',
+          messageTimestamp  : '2024-01-02T00:00:00.000000Z',
+        }),
+        { permissionGrantId: 'grant-not-in-batch' }
+      );
       // Should not throw; no edge is added because the grant is not in the batch.
       const result = SyncEngineLevel.topologicalSort([msg1, msg2]);
       expect(result).toHaveLength(2);
@@ -3445,15 +3407,18 @@ describe('SyncEngineLevel', () => {
         },
         { recordId: parentRecordId }
       );
-      const child = mockMessage(
-        {
-          protocol          : protocolUrl,
-          parentId          : parentRecordId,
-          permissionGrantId : grantRecordId,
-          dateCreated       : '2024-01-03T00:00:00.000000Z',
-          messageTimestamp  : '2024-01-03T00:00:00.000000Z',
-        },
-        { recordId: 'child-1' }
+      const child = withAuthorizationPayload(
+        mockMessage(
+          {
+            protocol          : protocolUrl,
+            parentId          : parentRecordId,
+            permissionGrantId : grantRecordId,
+            dateCreated       : '2024-01-03T00:00:00.000000Z',
+            messageTimestamp  : '2024-01-03T00:00:00.000000Z',
+          },
+          { recordId: 'child-1' }
+        ),
+        { permissionGrantId: grantRecordId }
       );
 
       // Pass in reverse dependency order.

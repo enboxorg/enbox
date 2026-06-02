@@ -2,6 +2,13 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './agent.js';
 
+/** Deterministic bytewise string comparator for hash inputs and canonical IDs. */
+export function lexicographicalCompare(a: string, b: string): number {
+  if (a > b) { return 1; }
+  if (a < b) { return -1; }
+  return 0;
+}
+
 /**
  * The SyncEngine is responsible for syncing messages between the agent and the platform.
  */
@@ -34,62 +41,163 @@ export type SyncMode = 'poll' | 'live';
 // ---------------------------------------------------------------------------
 
 /**
- * Describes what a replication link syncs. Currently whole-tenant only
- * (`kind: 'full'`). Scoped subset sync (`kind: 'protocol'` with
- * `protocolPathPrefixes` / `contextIdPrefixes`) is deferred to Phase 3.
+ * Projection-root algorithm used by the current full/protocol sync scopes.
+ *
+ * Sync compares either the existing full-tenant StateIndex root or existing
+ * per-protocol StateIndex roots. ProtocolPath/contextId projection roots are
+ * intentionally not represented here; add a projection-root builder before
+ * enabling those scopes.
+ */
+export const SYNC_PROJECTION_ROOT_VERSION = 'state-index-full-protocol-root-v1';
+
+/**
+ * Authorization-epoch algorithm used by delegated Messages.Read sync links.
+ *
+ * The authorization epoch is separate from the projection ID: re-granting the
+ * same scope or changing delegate grants must invalidate in-flight work without
+ * changing the primary CID set being compared.
+ */
+export const SYNC_AUTHORIZATION_EPOCH_VERSION = 'messages-read-grants-v1';
+
+/** A non-empty, sorted, duplicate-free string list. */
+export type NonEmptyStringArray = [string, ...string[]];
+
+/**
+ * Describes the primary CID set a replication link syncs.
+ *
+ * Sync currently supports full-tenant sync and protocol-set sync. A protocol-set link owns
+ * one durable subscription/cursor for the whole set; reconciliation still walks
+ * the existing per-protocol roots until dedicated path/context projection roots
+ * are implemented.
  */
 export type SyncScope = {
-  /** Scope kind. Only `'full'` is implemented in Phase 1. */
+  /** Full-tenant projection. Valid only for owner sync or unscoped delegated grants. */
   kind: 'full';
 } | {
-  /**
-   * Protocol-scoped sync. Deferred to Phase 3 — included here for type
-   * forward-compatibility only.
-   */
-  kind: 'protocol';
-  protocol: string;
-  protocolPathPrefixes?: string[];
-  contextIdPrefixes?: string[];
+  /** Protocol-set projection over one or more protocol roots. */
+  kind: 'protocolSet';
+  protocols: NonEmptyStringArray;
 };
 
 /**
- * Computes a deterministic, collision-resistant identifier for a {@link SyncScope}.
- *
- * The ID is `base64url(SHA-256(canonicalJSON))` where `canonicalJSON` is the
- * scope object with keys sorted alphabetically and array values sorted
- * lexicographically.
- *
- * Used as part of the LevelDB key for the replication ledger:
- * `{tenantDid}^{remoteEndpoint}^{scopeId}`.
+ * Authorization context for a link. Owner links do not invoke grants. Delegate
+ * links carry the active Messages.Read grants that authorize the scope union.
  */
-export async function computeScopeId(scope: SyncScope): Promise<string> {
-  const canonical: Record<string, unknown> = { kind: scope.kind };
-  if (scope.kind === 'protocol') {
-    canonical.protocol = scope.protocol;
-    if (scope.protocolPathPrefixes !== undefined) {
-      canonical.protocolPathPrefixes = [...new Set(scope.protocolPathPrefixes)].sort((a, b) => a.localeCompare(b));
-    }
-    if (scope.contextIdPrefixes !== undefined) {
-      canonical.contextIdPrefixes = [...new Set(scope.contextIdPrefixes)].sort((a, b) => a.localeCompare(b));
-    }
-  }
+export type SyncAuthorization =
+  | { kind: 'owner' }
+  | {
+    kind: 'delegate';
+    delegateDid: string;
+    permissionGrantIds: NonEmptyStringArray;
+  };
 
-  // Stable JSON: keys sorted by construction order (kind < protocol < protocolPathPrefixes).
-  const json = JSON.stringify(canonical);
+/** Grant metadata that participates in delegated authorization-epoch hashing. */
+export type SyncAuthorizationGrant = {
+  id: string;
+  dateExpires: string;
+  dateGranted?: string;
+};
+
+/**
+ * Normalizes a protocol list into canonical scope-union order.
+ */
+export function normalizeSyncProtocols(protocols: [string, ...string[]] | string[]): NonEmptyStringArray {
+  const unique = [...new Set(protocols)].sort(lexicographicalCompare);
+  if (unique.length === 0) {
+    throw new Error('SyncScope: protocol-set scope requires at least one protocol URI.');
+  }
+  return unique as NonEmptyStringArray;
+}
+
+/** Converts persisted identity options into the canonical sync scope. */
+export function syncScopeFromProtocols(protocols: SyncIdentityOptions['protocols']): SyncScope {
+  return protocols === 'all'
+    ? { kind: 'full' }
+    : { kind: 'protocolSet', protocols: normalizeSyncProtocols(protocols) };
+}
+
+/** Returns the protocol list covered by a scope, or `undefined` for full scope. */
+export function protocolsForSyncScope(scope: SyncScope): NonEmptyStringArray | undefined {
+  return scope.kind === 'protocolSet' ? scope.protocols : undefined;
+}
+
+/** Returns the single covered protocol, or `undefined` for full/multi-protocol scopes. */
+export function singleProtocolForSyncScope(scope: SyncScope): string | undefined {
+  return scope.kind === 'protocolSet' && scope.protocols.length === 1 ? scope.protocols[0] : undefined;
+}
+
+/** Stable base64url SHA-256 hash for canonical JSON objects. */
+async function hashCanonicalObject(value: Record<string, unknown>): Promise<string> {
+  const json = JSON.stringify(value);
   const bytes = new TextEncoder().encode(json);
   const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
   const hashArray = new Uint8Array(hashBuffer);
 
-  // base64url encode (no padding).
   let base64 = '';
   for (const b of hashArray) {
     base64 += String.fromCharCode(b);
   }
   const result = btoa(base64).replaceAll('+', '-').replaceAll('/', '_');
-  // Strip trailing '=' padding without regex quantifiers (avoids ReDoS scanners).
   let end = result.length;
-  while (end > 0 && result.codePointAt(end - 1) === 61) { end--; } // 61 === '='
+  while (end > 0 && result.codePointAt(end - 1) === 61) { end--; }
   return end === result.length ? result : result.slice(0, end);
+}
+
+/** Returns a canonical JSON-ready representation of a sync scope. */
+export function canonicalizeSyncScope(scope: SyncScope): SyncScope {
+  return scope.kind === 'full'
+    ? { kind: 'full' }
+    : { kind: 'protocolSet', protocols: normalizeSyncProtocols(scope.protocols) };
+}
+
+/**
+ * Computes a deterministic, collision-resistant projection ID.
+ *
+ * The projection ID is derived from tenant DID, normalized scope, and the
+ * projection-root algorithm version. It intentionally excludes endpoint,
+ * grant IDs, authorization epoch, and remote diff contents.
+ */
+export async function computeProjectionId(tenantDid: string, scope: SyncScope): Promise<string> {
+  const canonicalScope = canonicalizeSyncScope(scope);
+  return hashCanonicalObject({
+    scope   : canonicalScope,
+    tenantDid,
+    version : SYNC_PROJECTION_ROOT_VERSION,
+  });
+}
+
+/**
+ * Computes the authorization epoch for a link.
+ *
+ * Owner epochs are stable for the owner projection. Delegate epochs are derived
+ * from the delegate DID plus the active grant IDs and expiry metadata. A changed
+ * grant set creates a new link key even when the projection ID is unchanged.
+ */
+export async function computeAuthorizationEpoch(input:
+  | { kind: 'owner' }
+  | { kind: 'delegate'; delegateDid: string; grants: [SyncAuthorizationGrant, ...SyncAuthorizationGrant[]] }
+): Promise<string> {
+  if (input.kind === 'owner') {
+    return hashCanonicalObject({
+      kind    : 'owner',
+      version : SYNC_AUTHORIZATION_EPOCH_VERSION,
+    });
+  }
+
+  const grants = [...input.grants]
+    .sort((a, b) => lexicographicalCompare(a.id, b.id))
+    .map(grant => ({
+      dateExpires : grant.dateExpires,
+      dateGranted : grant.dateGranted,
+      id          : grant.id,
+    }));
+
+  return hashCanonicalObject({
+    delegateDid : input.delegateDid,
+    grants,
+    kind        : 'delegate',
+    version     : SYNC_AUTHORIZATION_EPOCH_VERSION,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +254,7 @@ export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'degraded_poll'
 /**
  * Durable state of a single replication link. Persisted to LevelDB and
  * loaded on startup. Each link is identified by the tuple
- * `(tenantDid, remoteEndpoint, scopeId)`.
+ * `(tenantDid, remoteEndpoint, projectionId, authorizationEpoch)`.
  */
 export type ReplicationLinkState = {
   /** The tenant DID this link syncs for. */
@@ -155,11 +263,17 @@ export type ReplicationLinkState = {
   /** The remote DWN endpoint URL. */
   remoteEndpoint: string;
 
-  /** Deterministic hash of the {@link SyncScope}. See {@link computeScopeId}. */
-  scopeId: string;
+  /** Deterministic hash of tenant DID, normalized scope, and root algorithm version. */
+  projectionId: string;
+
+  /** Deterministic hash of owner/delegate grant context for this link. */
+  authorizationEpoch: string;
 
   /** The scope definition this link covers. */
   scope: SyncScope;
+
+  /** Owner/delegate authorization context used to sign sync messages. */
+  authorization: SyncAuthorization;
 
   /** Current link status. */
   status: LinkStatus;
@@ -180,15 +294,6 @@ export type ReplicationLinkState = {
 
   /** Delegate DID used to sign sync messages, if any. */
   delegateDid?: string;
-
-  /**
-   * Protocol filter for this link, if any. Duplicates the protocol in `scope`
-   * for operational convenience — used by permission lookups and cursor key
-   * building. The scope is the source of truth for what to sync; this field
-   * is the source of truth for how to authenticate. To be consolidated in
-   * Phase 3 when scope resolution is more complex.
-   */
-  protocol?: string;
 
   /** ISO-8601 timestamp of last successful sync activity. */
   lastActivityAt?: string;
@@ -251,22 +356,35 @@ export type StartSyncParams = {
 // Sync observability events
 // ---------------------------------------------------------------------------
 
+/** Sync scope metadata attached to observability events. */
+export type SyncEventScope = {
+  /** Present only when the event belongs to a single-protocol link. */
+  protocol?: string;
+  /** Present when the event belongs to a protocol-set link. */
+  protocols?: NonEmptyStringArray;
+};
+
+type SyncEventBase = {
+  tenantDid: string;
+  remoteEndpoint: string;
+} & SyncEventScope;
+
 /**
  * Events emitted by the sync engine at key state transitions.
  * Consumers subscribe via `SyncEngine.on('event', handler)` and can
  * hook these into metrics, logging, or UI state.
  */
 export type SyncEvent =
-  | { type: 'link:status-change'; tenantDid: string; remoteEndpoint: string; protocol?: string; from: LinkStatus; to: LinkStatus }
-  | { type: 'link:connectivity-change'; tenantDid: string; remoteEndpoint: string; protocol?: string; from: SyncConnectivityState; to: SyncConnectivityState }
-  | { type: 'checkpoint:pull-advance'; tenantDid: string; remoteEndpoint: string; protocol?: string; position: string; messageCid: string }
-  | { type: 'reconcile:needed'; tenantDid: string; remoteEndpoint: string; protocol?: string; reason: string }
-  | { type: 'reconcile:completed'; tenantDid: string; remoteEndpoint: string; protocol?: string }
-  | { type: 'repair:started'; tenantDid: string; remoteEndpoint: string; protocol?: string; attempt: number }
-  | { type: 'repair:completed'; tenantDid: string; remoteEndpoint: string; protocol?: string }
-  | { type: 'repair:failed'; tenantDid: string; remoteEndpoint: string; protocol?: string; attempt: number; error: string }
-  | { type: 'degraded-poll:entered'; tenantDid: string; remoteEndpoint: string; protocol?: string }
-  | { type: 'gap:detected'; tenantDid: string; remoteEndpoint: string; protocol?: string; reason: string };
+  | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
+  | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
+  | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid: string }
+  | SyncEventBase & { type: 'reconcile:needed'; reason: string }
+  | SyncEventBase & { type: 'reconcile:completed' }
+  | SyncEventBase & { type: 'repair:started'; attempt: number }
+  | SyncEventBase & { type: 'repair:completed' }
+  | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
+  | SyncEventBase & { type: 'degraded-poll:entered' }
+  | SyncEventBase & { type: 'gap:detected'; reason: string };
 
 export type SyncEventListener = (event: SyncEvent) => void;
 

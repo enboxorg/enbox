@@ -1,15 +1,14 @@
 import type { GenericMessage, MessagesReadReply, MessagesSyncDiffEntry, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
-import type { PermissionsApi } from './types/permissions.js';
 import type { PermanentPushFailure, PushResult } from './types/sync.js';
 
 import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
+import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import { topologicalSort } from './sync-topological-sort.js';
-import { getMessagesPermissionGrantId, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 
 /** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
 const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
@@ -104,45 +103,23 @@ export async function getMessageCid(message: GenericMessage): Promise<string> {
  * Large payloads are re-fetched on retry since buffering them would consume
  * too much memory.
  */
-export async function pullMessages({ did, dwnUrl, delegateDid, protocol, messageCids, prefetched, agent, permissionsApi }: {
+export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, prefetched, agent }: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
-  protocol?: string;
+  permissionGrantIds?: string[];
   messageCids: string[];
   /** Pre-fetched message entries from the batched diff response (already have message + data). */
   prefetched?: MessagesSyncDiffEntry[];
   agent: EnboxPlatformAgent;
-  permissionsApi: PermissionsApi;
 }): Promise<string[]> {
-  // Convert prefetched diff entries into SyncMessageEntry format.
-  const prefetchedEntries: SyncMessageEntry[] = [];
-  if (prefetched) {
-    for (const entry of prefetched) {
-      if (!entry.message) { continue; }
-      const syncEntry: SyncMessageEntry = { message: entry.message };
-      if (entry.encodedData) {
-        // Convert base64url-encoded data to a ReadableStream.
-        const bytes = Encoder.base64UrlToBytes(entry.encodedData);
-        syncEntry.bufferedData = bytes;
-        syncEntry.dataStream = new ReadableStream<Uint8Array>({
-          start(controller): void {
-            controller.enqueue(bytes);
-            controller.close();
-          }
-        });
-      }
-      prefetchedEntries.push(syncEntry);
-    }
-  }
-
   // Step 1: Fetch remaining messages (not prefetched) from the remote.
   const fetched = messageCids.length > 0
-    ? await fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids, agent, permissionsApi })
+    ? await fetchRemoteMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent })
     : [];
 
   // Merge prefetched entries with remotely fetched ones.
-  const allFetched = [...prefetchedEntries, ...fetched];
+  const allFetched = [...syncEntriesFromPrefetchedDiff(prefetched), ...fetched];
 
   // Step 2: Build dependency graph and topological sort.
   const sorted = topologicalSort(allFetched);
@@ -155,57 +132,106 @@ export async function pullMessages({ did, dwnUrl, delegateDid, protocol, message
   let pending = sorted;
 
   for (let pass = 0; pass <= MAX_RETRY_PASSES && pending.length > 0; pass++) {
-    const failed: SyncMessageEntry[] = [];
-
-    for (const entry of pending) {
-      // Create a fresh ReadableStream from the buffer if available (stream is single-use).
-      const dataStream = entry.bufferedData
-        ? new ReadableStream<Uint8Array>({ start(c): void { c.enqueue(entry.bufferedData!); c.close(); } })
-        : entry.dataStream;
-
-      const pullReply = await agent.dwn.processRawMessage(did, entry.message, { dataStream });
-
-      if (!syncMessageReplyIsSuccessful(pullReply)) {
-        failed.push(entry);
-      }
-    }
-
-    if (failed.length > 0) {
-      // Separate entries that have a buffer (can retry locally) from those
-      // that need a fresh fetch (large payloads whose stream was consumed).
-      const needsRefetch: string[] = [];
-      const canRetry: SyncMessageEntry[] = [];
-
-      for (const entry of failed) {
-        if (entry.bufferedData || !entry.dataStream) {
-          // Has a buffer or has no data — can retry without re-fetching.
-          canRetry.push(entry);
-        } else {
-          // Large payload whose stream was consumed — must re-fetch.
-          const cid = await getMessageCid(entry.message);
-          needsRefetch.push(cid);
-        }
-      }
-
-      // Re-fetch only the large-payload messages that we couldn't buffer.
-      if (needsRefetch.length > 0) {
-        const reFetched = await fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids: needsRefetch, agent, permissionsApi });
-        canRetry.push(...reFetched);
-      }
-
-      pending = topologicalSort(canRetry);
-    } else {
-      pending = [];
-    }
+    const failed = await processPullPass({ did, entries: pending, agent });
+    pending = failed.length === 0
+      ? []
+      : await preparePullRetry({ did, dwnUrl, delegateDid, permissionGrantIds, failed, agent });
   }
 
   // Return CIDs that permanently failed after all retry passes.
-  const permanentlyFailed: string[] = [];
-  for (const entry of pending) {
-    const cid = await getMessageCid(entry.message);
-    permanentlyFailed.push(cid);
+  return getMessageCids(pending);
+}
+
+function syncEntriesFromPrefetchedDiff(prefetched?: MessagesSyncDiffEntry[]): SyncMessageEntry[] {
+  if (!prefetched) { return []; }
+
+  const entries: SyncMessageEntry[] = [];
+  for (const entry of prefetched) {
+    if (!entry.message) { continue; }
+
+    const syncEntry: SyncMessageEntry = { message: entry.message };
+    if (entry.encodedData) {
+      const bytes = Encoder.base64UrlToBytes(entry.encodedData);
+      syncEntry.bufferedData = bytes;
+      syncEntry.dataStream = dataStreamFromBytes(bytes);
+    }
+    entries.push(syncEntry);
   }
-  return permanentlyFailed;
+  return entries;
+}
+
+function dataStreamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller): void {
+      controller.enqueue(bytes);
+      controller.close();
+    }
+  });
+}
+
+function replayableDataStream(entry: SyncMessageEntry): ReadableStream<Uint8Array> | undefined {
+  return entry.bufferedData ? dataStreamFromBytes(entry.bufferedData) : entry.dataStream;
+}
+
+async function processPullPass({ did, entries, agent }: {
+  did: string;
+  entries: SyncMessageEntry[];
+  agent: EnboxPlatformAgent;
+}): Promise<SyncMessageEntry[]> {
+  const failed: SyncMessageEntry[] = [];
+
+  for (const entry of entries) {
+    const pullReply = await agent.dwn.processRawMessage(did, entry.message, {
+      dataStream: replayableDataStream(entry),
+    });
+
+    if (!syncMessageReplyIsSuccessful(pullReply)) {
+      failed.push(entry);
+    }
+  }
+
+  return failed;
+}
+
+async function preparePullRetry({ did, dwnUrl, delegateDid, permissionGrantIds, failed, agent }: {
+  did: string;
+  dwnUrl: string;
+  delegateDid?: string;
+  permissionGrantIds?: string[];
+  failed: SyncMessageEntry[];
+  agent: EnboxPlatformAgent;
+}): Promise<SyncMessageEntry[]> {
+  const canRetry: SyncMessageEntry[] = [];
+  const needsRefetch: string[] = [];
+
+  for (const entry of failed) {
+    if (entry.bufferedData || !entry.dataStream) {
+      canRetry.push(entry);
+    } else {
+      needsRefetch.push(await getMessageCid(entry.message));
+    }
+  }
+
+  if (needsRefetch.length > 0) {
+    canRetry.push(...await fetchRemoteMessages({
+      did,
+      dwnUrl,
+      delegateDid,
+      permissionGrantIds,
+      messageCids: needsRefetch,
+      agent,
+    }));
+  }
+
+  return topologicalSort(canRetry);
+}
+
+async function getMessageCids(entries: SyncMessageEntry[]): Promise<string[]> {
+  const cids: string[] = [];
+  for (const entry of entries) {
+    cids.push(await getMessageCid(entry.message));
+  }
+  return cids;
 }
 
 /**
@@ -257,36 +283,22 @@ async function bufferSmallStreams(entries: SyncMessageEntry[]): Promise<void> {
 
     entry.bufferedData = buffer;
     // Create a fresh ReadableStream from the buffer for the first processing attempt.
-    entry.dataStream = new ReadableStream<Uint8Array>({
-      start(controller): void {
-        controller.enqueue(buffer);
-        controller.close();
-      }
-    });
+    entry.dataStream = dataStreamFromBytes(buffer);
   }
 }
 
 /**
  * Fetches messages from a remote DWN by their CIDs using MessagesRead.
  */
-export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, messageCids, agent, permissionsApi }: {
+export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent }: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
-  protocol?: string;
+  permissionGrantIds?: string[];
   messageCids: string[];
   agent: EnboxPlatformAgent;
-  permissionsApi: PermissionsApi;
 }): Promise<SyncMessageEntry[]> {
   const results: SyncMessageEntry[] = [];
-
-  const permissionGrantId = await getMessagesPermissionGrantId({
-    did,
-    delegateDid,
-    protocol,
-    messageType: DwnInterface.MessagesRead,
-    permissionsApi,
-  });
 
   // Fetch messages in parallel with bounded concurrency.  Keep this low
   // to avoid bursting through the remote server's rate limits during sync.
@@ -305,7 +317,7 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
         target        : did,
         messageType   : DwnInterface.MessagesRead,
         granteeDid    : delegateDid,
-        messageParams : { messageCid, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantId) }
+        messageParams : { messageCid, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantIds) }
       });
 
       let reply: MessagesReadReply;
@@ -353,30 +365,23 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, protocol, 
  * on the first failure. Callers use this to advance the push checkpoint
  * incrementally — only up to the highest contiguous success.
  */
-export async function pushMessages({ did, dwnUrl, delegateDid, protocol, messageCids, agent, permissionsApi }: {
+export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent }: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
-  protocol?: string;
+  permissionGrantIds?: string[];
   messageCids: string[];
   agent: EnboxPlatformAgent;
-  permissionsApi: PermissionsApi;
 }): Promise<PushResult> {
   const succeeded: string[] = [];
-  const failed: string[] = [];
   const permanentlyFailed: PermanentPushFailure[] = [];
-
-  // Step 1: Fetch all local messages (streams are pull-based, not yet consumed).
-  const fetched: SyncMessageEntry[] = [];
-  for (const messageCid of messageCids) {
-    const dwnMessage = await getLocalMessage({ author: did, messageCid, delegateDid, protocol, agent, permissionsApi });
-    if (dwnMessage) {
-      fetched.push(dwnMessage);
-    } else {
-      // Message could not be fetched locally — mark as failed.
-      failed.push(messageCid);
-    }
-  }
+  const { fetched, failed } = await fetchLocalMessagesForPush({
+    did,
+    delegateDid,
+    permissionGrantIds,
+    messageCids,
+    agent,
+  });
 
   // Step 2: Sort in dependency order using topological sort.
   const sorted = topologicalSort(fetched);
@@ -388,77 +393,119 @@ export async function pushMessages({ did, dwnUrl, delegateDid, protocol, message
 
   // Step 4: Push messages in dependency order.
   for (const entry of sorted) {
-    const cid = await getMessageCid(entry.message);
-
-    // Use a Blob for buffered data — unlike ReadableStream, Blob is
-    // replayable so fetchWithRetry can retry the HTTP request on failure.
-    const data = entry.bufferedData
-      ? new Blob([entry.bufferedData] as BlobPart[], { type: 'application/octet-stream' })
-      : entry.dataStream;
-
-    try {
-      const reply = await agent.rpc.sendDwnRequest({
-        dwnUrl,
-        targetDid : did,
-        data,
-        message   : entry.message
-      });
-
-      if (syncMessageReplyIsSuccessful(reply, entry.message)) {
-        succeeded.push(cid);
-      } else if (isPermanentPushFailure(reply)) {
-        // Permanent failures (400/401/403) will never succeed — do NOT retry.
-        // These include protocol violations (RecordLimitExceeded), auth errors,
-        // and schema validation failures.
-        if (reply.status.code === 400 && reply.status.detail?.includes('record limit')) {
-          // Expected for singleton convergence in multi-device scenarios:
-          // one device created a singleton record, this device has a
-          // different one, and the remote rejects the duplicate.
-          console.debug(`SyncEngineLevel: singleton already exists on remote, skipping push for ${cid}`);
-        } else {
-          console.warn(`SyncEngineLevel: push permanently failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
-        }
-        permanentlyFailed.push({ cid, statusCode: reply.status.code, detail: reply.status.detail ?? '' });
-      } else {
-        // Transient failures (5xx, etc.) — worth retrying.
-        console.error(`SyncEngineLevel: push failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
-        failed.push(cid);
-      }
-    } catch (error: any) {
-      // Network errors — transient, worth retrying.
-      console.error(`SyncEngineLevel: push error for ${cid}: ${error.message ?? error}`);
-      failed.push(cid);
+    const outcome = await pushSingleMessage({ did, dwnUrl, entry, agent });
+    if (outcome.status === 'succeeded') {
+      succeeded.push(outcome.cid);
+    } else if (outcome.status === 'permanent') {
+      permanentlyFailed.push(outcome.failure);
+    } else {
+      failed.push(outcome.cid);
     }
   }
 
   return { succeeded, failed, permanentlyFailed };
 }
 
+async function fetchLocalMessagesForPush({ did, delegateDid, permissionGrantIds, messageCids, agent }: {
+  did: string;
+  delegateDid?: string;
+  permissionGrantIds?: string[];
+  messageCids: string[];
+  agent: EnboxPlatformAgent;
+}): Promise<{ fetched: SyncMessageEntry[]; failed: string[] }> {
+  const fetched: SyncMessageEntry[] = [];
+  const failed: string[] = [];
+
+  for (const messageCid of messageCids) {
+    const dwnMessage = await getLocalMessage({ author: did, messageCid, delegateDid, permissionGrantIds, agent });
+    if (dwnMessage) {
+      fetched.push(dwnMessage);
+    } else {
+      failed.push(messageCid);
+    }
+  }
+
+  return { fetched, failed };
+}
+
+type PushSingleMessageOutcome =
+  | { status: 'succeeded'; cid: string }
+  | { status: 'failed'; cid: string }
+  | { status: 'permanent'; cid: string; failure: PermanentPushFailure };
+
+async function pushSingleMessage({ did, dwnUrl, entry, agent }: {
+  did: string;
+  dwnUrl: string;
+  entry: SyncMessageEntry;
+  agent: EnboxPlatformAgent;
+}): Promise<PushSingleMessageOutcome> {
+  const cid = await getMessageCid(entry.message);
+
+  try {
+    const reply = await agent.rpc.sendDwnRequest({
+      dwnUrl,
+      targetDid : did,
+      data      : pushData(entry),
+      message   : entry.message
+    });
+
+    if (syncMessageReplyIsSuccessful(reply, entry.message)) {
+      return { status: 'succeeded', cid };
+    }
+
+    if (isPermanentPushFailure(reply)) {
+      logPermanentPushFailure(cid, reply);
+      return {
+        status  : 'permanent',
+        cid,
+        failure : { cid, statusCode: reply.status.code, detail: reply.status.detail ?? '' },
+      };
+    }
+
+    console.error(`SyncEngineLevel: push failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
+    return { status: 'failed', cid };
+  } catch (error: any) {
+    console.error(`SyncEngineLevel: push error for ${cid}: ${error.message ?? error}`);
+    return { status: 'failed', cid };
+  }
+}
+
+function pushData(entry: SyncMessageEntry): Blob | ReadableStream<Uint8Array> | undefined {
+  // Use a Blob for buffered data: unlike ReadableStream, Blob is replayable,
+  // so fetchWithRetry can retry the HTTP request after a transport failure.
+  return entry.bufferedData
+    ? new Blob([entry.bufferedData] as BlobPart[], { type: 'application/octet-stream' })
+    : entry.dataStream;
+}
+
+function logPermanentPushFailure(cid: string, reply: UnionMessageReply): void {
+  if (reply.status.code === 400 && reply.status.detail?.includes('record limit')) {
+    // Expected for singleton convergence in multi-device scenarios: one device
+    // created a singleton record, this device has another, and the remote
+    // rejects the duplicate.
+    console.debug(`SyncEngineLevel: singleton already exists on remote, skipping push for ${cid}`);
+    return;
+  }
+
+  console.warn(`SyncEngineLevel: push permanently failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
+}
+
 /**
  * Reads a message from the local DWN by its CID using MessagesRead.
  */
-export async function getLocalMessage({ author, delegateDid, protocol, messageCid, agent, permissionsApi }: {
+export async function getLocalMessage({ author, delegateDid, permissionGrantIds, messageCid, agent }: {
   author: string;
   delegateDid?: string;
-  protocol?: string;
+  permissionGrantIds?: string[];
   messageCid: string;
   agent: EnboxPlatformAgent;
-  permissionsApi: PermissionsApi;
 }): Promise<SyncMessageEntry | undefined> {
-  const permissionGrantId = await getMessagesPermissionGrantId({
-    did         : author,
-    delegateDid,
-    protocol,
-    messageType : DwnInterface.MessagesRead,
-    permissionsApi,
-  });
-
   const { reply } = await agent.dwn.processRequest({
     author,
     target        : author,
     messageType   : DwnInterface.MessagesRead,
     granteeDid    : delegateDid,
-    messageParams : { messageCid, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantId) }
+    messageParams : { messageCid, permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantIds) }
   });
 
   if (reply.status.code !== 200 || !reply.entry) {

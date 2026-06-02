@@ -482,9 +482,9 @@ export async function evaluateClosure(
     for (let i = 0; i < batchSize; i++) {
       const current = queue.shift()!;
 
-      // Phase 1: Extract and resolve static dependency edges (classes 1-3).
-      // This populates the protocolCache when class 1 (ProtocolsConfigure)
-      // is resolved, which is needed by classes 4-6.
+      // Resolve static dependency edges first. This populates the protocol
+      // cache when a ProtocolsConfigure dependency is resolved, which is
+      // needed by protocol-definition-aware dependencies below.
       const staticEdges = [
         ...extractProtocolDeps(current),
         ...extractAncestryDeps(current),
@@ -496,8 +496,8 @@ export async function evaluateClosure(
       );
       if (resolveResult) { return resolveResult; } // Early failure.
 
-      // Phase 2: Extract protocol-definition-aware edges (classes 4-6).
-      // Runs AFTER static resolution so the ProtocolDefinition is in the cache.
+      // Resolve protocol-definition-aware edges after static dependencies so
+      // the ProtocolDefinition is in the cache.
       const currentDesc = current.descriptor as Record<string, unknown>;
       const currentProtocol = currentDesc.protocol as string | undefined;
       if (currentProtocol) {
@@ -512,8 +512,8 @@ export async function evaluateClosure(
         }
       }
 
-      // Phase 3: Validate grant temporal ordering (causal grant check).
-      // After all edges are resolved, if this message uses a grant, verify
+      // Validate grant temporal ordering after all dependency edges resolve.
+      // If this message uses a grant, verify
       // that the grant is temporally valid at the message's commit point:
       //   - grant.dateGranted <= message.messageTimestamp < grant.dateExpires
       //   - no revocation exists with revocation.messageTimestamp <= message.messageTimestamp

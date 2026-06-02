@@ -1,9 +1,9 @@
 import type { AbstractLevel } from 'abstract-level';
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
-import type { DirectionCheckpoint, LinkStatus, ReplicationLinkState, SyncScope } from './types/sync.js';
+import type { DirectionCheckpoint, LinkStatus, ReplicationLinkState, SyncAuthorization, SyncScope } from './types/sync.js';
 
-import { computeScopeId } from './types/sync.js';
+import { canonicalizeSyncScope, computeProjectionId } from './types/sync.js';
 
 /** Separator used in compound LevelDB keys. */
 const KEY_SEP = '^';
@@ -13,7 +13,7 @@ const KEY_SEP = '^';
  * sync link in a LevelDB sublevel. Provides CRUD operations and replication
  * checkpoint helpers.
  *
- * Key format: `{tenantDid}^{remoteEndpoint}^{scopeId}`
+ * Key format: `{tenantDid}^{remoteEndpoint}^{projectionId}^{authorizationEpoch}`
  *
  * Each link tracks independent pull and push {@link DirectionCheckpoint}s.
  * The ledger does not own subscriptions or timers — it is a passive state
@@ -33,13 +33,19 @@ export class ReplicationLedger {
   // ---------------------------------------------------------------------------
 
   /** Build the compound key for a link. */
-  private static buildKey(tenantDid: string, remoteEndpoint: string, scopeId: string): string {
-    return `${tenantDid}${KEY_SEP}${remoteEndpoint}${KEY_SEP}${scopeId}`;
+  private static buildKey(
+    tenantDid: string,
+    remoteEndpoint: string,
+    projectionId: string,
+    authorizationEpoch: string,
+  ): string {
+    return `${tenantDid}${KEY_SEP}${remoteEndpoint}${KEY_SEP}${projectionId}${KEY_SEP}${authorizationEpoch}`;
   }
 
   // Note: compound keys use raw '^' separator. This is safe because tenantDid
-  // (DID URI), remoteEndpoint (URL), and scopeId (base64url hash) cannot
-  // contain '^'. If future fields can contain '^', keys must be escaped.
+  // (DID URI), remoteEndpoint (URL), projectionId (base64url hash), and
+  // authorizationEpoch (base64url hash) cannot contain '^'. If future fields
+  // can contain '^', keys must be escaped.
 
   // ---------------------------------------------------------------------------
   // CRUD
@@ -53,11 +59,18 @@ export class ReplicationLedger {
     tenantDid : string;
     remoteEndpoint : string;
     scope : SyncScope;
+    authorizationEpoch : string;
+    authorization : SyncAuthorization;
     delegateDid? : string;
-    protocol? : string;
   }): Promise<ReplicationLinkState> {
-    const scopeId = await computeScopeId(params.scope);
-    const key = ReplicationLedger.buildKey(params.tenantDid, params.remoteEndpoint, scopeId);
+    const scope = canonicalizeSyncScope(params.scope);
+    const projectionId = await computeProjectionId(params.tenantDid, scope);
+    const key = ReplicationLedger.buildKey(
+      params.tenantDid,
+      params.remoteEndpoint,
+      projectionId,
+      params.authorizationEpoch,
+    );
 
     try {
       const raw = await this.sublevel.get(key);
@@ -76,16 +89,17 @@ export class ReplicationLedger {
 
     // Create a new link with empty checkpoints.
     const link: ReplicationLinkState = {
-      tenantDid      : params.tenantDid,
-      remoteEndpoint : params.remoteEndpoint,
-      scopeId,
-      scope          : params.scope,
-      status         : 'initializing',
-      connectivity   : 'unknown',
-      pull           : {},
-      needsReconcile : false,
-      delegateDid    : params.delegateDid,
-      protocol       : params.protocol,
+      tenantDid          : params.tenantDid,
+      remoteEndpoint     : params.remoteEndpoint,
+      projectionId,
+      authorizationEpoch : params.authorizationEpoch,
+      scope,
+      authorization      : params.authorization,
+      status             : 'initializing',
+      connectivity       : 'unknown',
+      pull               : {},
+      needsReconcile     : false,
+      delegateDid        : params.delegateDid,
     };
 
     await this.sublevel.put(key, JSON.stringify(link));
@@ -94,14 +108,24 @@ export class ReplicationLedger {
 
   /** Persist the current state of a link. */
   public async saveLink(link: ReplicationLinkState): Promise<void> {
-    const key = ReplicationLedger.buildKey(link.tenantDid, link.remoteEndpoint, link.scopeId);
+    const key = ReplicationLedger.buildKey(
+      link.tenantDid,
+      link.remoteEndpoint,
+      link.projectionId,
+      link.authorizationEpoch,
+    );
     link.lastActivityAt = new Date().toISOString();
     await this.sublevel.put(key, JSON.stringify(link));
   }
 
   /** Delete a link. */
-  public async deleteLink(tenantDid: string, remoteEndpoint: string, scopeId: string): Promise<void> {
-    const key = ReplicationLedger.buildKey(tenantDid, remoteEndpoint, scopeId);
+  public async deleteLink(
+    tenantDid: string,
+    remoteEndpoint: string,
+    projectionId: string,
+    authorizationEpoch: string,
+  ): Promise<void> {
+    const key = ReplicationLedger.buildKey(tenantDid, remoteEndpoint, projectionId, authorizationEpoch);
     await this.sublevel.del(key);
   }
 
@@ -124,31 +148,6 @@ export class ReplicationLedger {
       links.push(JSON.parse(value) as ReplicationLinkState);
     }
     return links;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Delegate updates
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Update the `delegateDid` on all persisted links for a tenant and persist.
-   * This ensures that repair and reconcile paths — which read `delegateDid`
-   * from the durable {@link ReplicationLinkState} — use the current delegate
-   * after a hot-swap via `updateIdentityOptions()`.
-   *
-   * @returns the links that were updated.
-   */
-  public async updateDelegateDid(tenantDid: string, delegateDid: string | undefined): Promise<ReplicationLinkState[]> {
-    const links = await this.getLinksForTenant(tenantDid);
-    const updated: ReplicationLinkState[] = [];
-    for (const link of links) {
-      if (link.delegateDid !== delegateDid) {
-        link.delegateDid = delegateDid;
-        await this.saveLink(link);
-        updated.push(link);
-      }
-    }
-    return updated;
   }
 
   // ---------------------------------------------------------------------------
@@ -245,4 +244,3 @@ export class ReplicationLedger {
     }
   }
 }
-

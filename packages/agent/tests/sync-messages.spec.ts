@@ -144,11 +144,10 @@ describe('sync-messages', () => {
       } as any;
 
       const result = await fetchRemoteMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       expect(result).toHaveLength(1);
@@ -164,11 +163,10 @@ describe('sync-messages', () => {
       } as any;
 
       const result = await fetchRemoteMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       expect(result).toHaveLength(0);
@@ -184,11 +182,10 @@ describe('sync-messages', () => {
       } as any;
 
       const result = await fetchRemoteMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       expect(result).toHaveLength(0);
@@ -210,11 +207,10 @@ describe('sync-messages', () => {
       } as any;
 
       const result = await fetchRemoteMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       expect(result).toHaveLength(1);
@@ -235,21 +231,20 @@ describe('sync-messages', () => {
       } as any;
 
       const result = await fetchRemoteMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       expect(result).toHaveLength(1);
       expect(result[0].dataStream).toBeUndefined();
     });
 
-    it('should look up delegate permission when delegateDid is provided', async () => {
-      const permStub = sinon.stub().resolves({ grant: { id: 'grant-1' } });
+    it('should pass resolved delegate grant IDs when delegateDid is provided', async () => {
+      const processDwnRequestStub = sinon.stub().resolves({ message: {} });
       const mockAgent = {
-        processDwnRequest : sinon.stub().resolves({ message: {} }),
+        processDwnRequest : processDwnRequestStub,
         rpc               : {
           sendDwnRequest: sinon.stub().resolves({
             status : { code: 200 },
@@ -259,35 +254,19 @@ describe('sync-messages', () => {
       } as any;
 
       await fetchRemoteMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        delegateDid    : 'did:example:delegate',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: permStub } as any,
+        did                : 'did:example:alice',
+        dwnUrl             : 'https://dwn.example.com',
+        delegateDid        : 'did:example:delegate',
+        permissionGrantIds : ['grant-1'],
+        messageCids        : ['cid-1'],
+        agent              : mockAgent,
       });
 
-      expect(permStub.calledOnce).toBe(true);
+      const callArgs = processDwnRequestStub.firstCall.args[0];
+      expect(callArgs.messageParams.permissionGrantIds).toEqual(['grant-1']);
     });
 
-    it('should throw when delegate permission lookup fails', async () => {
-      const permStub = sinon.stub().rejects(new Error('no grant'));
-      const mockAgent = {
-        processDwnRequest : sinon.stub(),
-        rpc               : { sendDwnRequest: sinon.stub() },
-      } as any;
-
-      await expect(fetchRemoteMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        delegateDid    : 'did:example:delegate',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: permStub } as any,
-      })).rejects.toThrow('no grant');
-    });
-
-    it('should process messages in batches of 10', async () => {
+    it('should process all requested messages with bounded concurrency', async () => {
       const mockAgent = {
         processDwnRequest : sinon.stub().resolves({ message: {} }),
         rpc               : {
@@ -301,11 +280,10 @@ describe('sync-messages', () => {
       const cids = Array.from({ length: 15 }, (_, i): string => `cid-${i}`);
 
       const result = await fetchRemoteMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : cids,
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : cids,
+        agent       : mockAgent,
       });
 
       expect(result).toHaveLength(15);
@@ -324,11 +302,10 @@ describe('sync-messages', () => {
       } as any;
 
       const result = await fetchRemoteMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       expect(result).toHaveLength(0);
@@ -355,11 +332,10 @@ describe('sync-messages', () => {
       } as any;
 
       await pullMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       expect(mockAgent.dwn.processRawMessage.calledOnce).toBe(true);
@@ -382,11 +358,10 @@ describe('sync-messages', () => {
       } as any;
 
       await pullMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       // Called at least twice (initial + retry)
@@ -401,11 +376,10 @@ describe('sync-messages', () => {
       } as any;
 
       await pullMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : [],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [],
+        agent       : mockAgent,
       });
 
       // No messages to process
@@ -433,11 +407,10 @@ describe('sync-messages', () => {
       } as any;
 
       await pushMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       expect(sendStub.calledOnce).toBe(true);
@@ -458,11 +431,10 @@ describe('sync-messages', () => {
       } as any;
 
       const result = await pushMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       expect(result.failed).toHaveLength(1);
@@ -487,11 +459,10 @@ describe('sync-messages', () => {
       } as any;
 
       await pushMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       expect(consoleStub.called).toBe(true);
@@ -509,11 +480,10 @@ describe('sync-messages', () => {
       } as any;
 
       await pushMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-missing'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-missing'],
+        agent       : mockAgent,
       });
 
       // Message not found locally, nothing to push
@@ -542,11 +512,10 @@ describe('sync-messages', () => {
       } as any;
 
       await pushMessages({
-        did            : 'did:example:alice',
-        dwnUrl         : 'https://dwn.example.com',
-        messageCids    : ['cid-1'],
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
       });
 
       expect(sendStub.calledOnce).toBe(true);
@@ -573,10 +542,9 @@ describe('sync-messages', () => {
       } as any;
 
       const result = await getLocalMessage({
-        author         : 'did:example:alice',
-        messageCid     : 'cid-1',
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        author     : 'did:example:alice',
+        messageCid : 'cid-1',
+        agent      : mockAgent,
       });
 
       expect(result).toBeDefined();
@@ -593,10 +561,9 @@ describe('sync-messages', () => {
       } as any;
 
       const result = await getLocalMessage({
-        author         : 'did:example:alice',
-        messageCid     : 'cid-1',
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        author     : 'did:example:alice',
+        messageCid : 'cid-1',
+        agent      : mockAgent,
       });
 
       expect(result).toBeUndefined();
@@ -619,10 +586,9 @@ describe('sync-messages', () => {
       } as any;
 
       const result = await getLocalMessage({
-        author         : 'did:example:alice',
-        messageCid     : 'cid-1',
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        author     : 'did:example:alice',
+        messageCid : 'cid-1',
+        agent      : mockAgent,
       });
 
       expect(result).toBeDefined();
@@ -642,57 +608,16 @@ describe('sync-messages', () => {
       } as any;
 
       const result = await getLocalMessage({
-        author         : 'did:example:alice',
-        messageCid     : 'cid-1',
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+        author     : 'did:example:alice',
+        messageCid : 'cid-1',
+        agent      : mockAgent,
       });
 
       expect(result).toBeDefined();
       expect(result!.dataStream).toBeUndefined();
     });
 
-    it('should look up delegate permission when delegateDid is provided', async () => {
-      const permStub = sinon.stub().resolves({ grant: { id: 'grant-1' } });
-      const mockAgent = {
-        dwn: {
-          processRequest: sinon.stub().resolves({
-            reply: {
-              status : { code: 200 },
-              entry  : { message: { descriptor: {} } },
-            },
-          }),
-        },
-      } as any;
-
-      await getLocalMessage({
-        author         : 'did:example:alice',
-        delegateDid    : 'did:example:delegate',
-        messageCid     : 'cid-1',
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: permStub } as any,
-      });
-
-      expect(permStub.calledOnce).toBe(true);
-    });
-
-    it('should throw when delegate permission lookup fails', async () => {
-      const permStub = sinon.stub().rejects(new Error('no grant'));
-      const mockAgent = {
-        dwn: { processRequest: sinon.stub() },
-      } as any;
-
-      await expect(getLocalMessage({
-        author         : 'did:example:alice',
-        delegateDid    : 'did:example:delegate',
-        messageCid     : 'cid-1',
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: permStub } as any,
-      })).rejects.toThrow('no grant');
-    });
-
-    it('should pass permissionGrantIds in messageParams when delegate has grant', async () => {
-      const permStub = sinon.stub().resolves({ grant: { id: 'grant-abc' } });
+    it('should pass resolved delegate grant IDs when delegateDid is provided', async () => {
       const processRequestStub = sinon.stub().resolves({
         reply: {
           status : { code: 200 },
@@ -704,15 +629,38 @@ describe('sync-messages', () => {
       } as any;
 
       await getLocalMessage({
-        author         : 'did:example:alice',
-        delegateDid    : 'did:example:delegate',
-        messageCid     : 'cid-1',
-        agent          : mockAgent,
-        permissionsApi : { getPermissionForRequest: permStub } as any,
+        author             : 'did:example:alice',
+        delegateDid        : 'did:example:delegate',
+        permissionGrantIds : ['grant-1'],
+        messageCid         : 'cid-1',
+        agent              : mockAgent,
       });
 
       const callArgs = processRequestStub.firstCall.args[0];
-      expect(callArgs.messageParams.permissionGrantIds).toEqual(['grant-abc']);
+      expect(callArgs.messageParams.permissionGrantIds).toEqual(['grant-1']);
+    });
+
+    it('should sort and dedupe permissionGrantIds in messageParams', async () => {
+      const processRequestStub = sinon.stub().resolves({
+        reply: {
+          status : { code: 200 },
+          entry  : { message: { descriptor: {} } },
+        },
+      });
+      const mockAgent = {
+        dwn: { processRequest: processRequestStub },
+      } as any;
+
+      await getLocalMessage({
+        author             : 'did:example:alice',
+        delegateDid        : 'did:example:delegate',
+        permissionGrantIds : ['grant-b', 'grant-a', 'grant-a'],
+        messageCid         : 'cid-1',
+        agent              : mockAgent,
+      });
+
+      const callArgs = processRequestStub.firstCall.args[0];
+      expect(callArgs.messageParams.permissionGrantIds).toEqual(['grant-a', 'grant-b']);
     });
   });
 });

@@ -56,6 +56,29 @@ function createLiveMockAgent(): LiveMockAgent {
 
 describe('SyncEngineLevel — characterization tests', () => {
   let db: Level<string, string>;
+  const linkKey = 'did:example:alice^https://dwn.example.com^projection-1^authorization-1';
+  const scope = { kind: 'protocolSet', protocols: ['https://proto.example.com'] };
+  const target = {
+    did                : 'did:example:alice',
+    dwnUrl             : 'https://dwn.example.com',
+    scope,
+    authorization      : { kind: 'owner' },
+    authorizationEpoch : 'authorization-1',
+  };
+
+  const makeLink = (overrides: Record<string, unknown> = {}): any => ({
+    tenantDid          : 'did:example:alice',
+    remoteEndpoint     : 'https://dwn.example.com',
+    projectionId       : 'projection-1',
+    authorizationEpoch : 'authorization-1',
+    authorization      : { kind: 'owner' },
+    scope,
+    status             : 'initializing',
+    pull               : {},
+    connectivity       : 'unknown',
+    needsReconcile     : false,
+    ...overrides,
+  });
 
   beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-characterization-spec');
@@ -74,17 +97,7 @@ describe('SyncEngineLevel — characterization tests', () => {
     const { agent, getRemoteHandler } = createLiveMockAgent();
     const engine = new SyncEngineLevel({ db, agent });
 
-    const link = {
-      tenantDid      : 'did:example:alice',
-      remoteEndpoint : 'https://dwn.example.com',
-      scopeId        : 'scope-1',
-      scope          : { kind: 'protocol', protocol: 'https://proto.example.com' },
-      status         : 'initializing',
-      pull           : {},
-      connectivity   : 'unknown',
-      needsReconcile : false,
-      protocol       : 'https://proto.example.com',
-    } as any;
+    const link = makeLink();
 
     const saveLinkStub = sinon.stub().resolves();
     const setStatusStub = sinon.stub().callsFake(async (l: any, status: string): Promise<void> => {
@@ -92,9 +105,7 @@ describe('SyncEngineLevel — characterization tests', () => {
     });
 
     sinon.stub(engine, 'sync').resolves();
-    sinon.stub(engine as any, 'getSyncTargets').resolves([
-      { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: 'https://proto.example.com' },
-    ]);
+    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
     sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
     (engine as any)._ledger = {
       getOrCreateLink : sinon.stub().resolves(link),
@@ -125,22 +136,10 @@ describe('SyncEngineLevel — characterization tests', () => {
     const { agent, getLocalHandler } = createLiveMockAgent();
     const engine = new SyncEngineLevel({ db, agent });
 
-    const link = {
-      tenantDid      : 'did:example:alice',
-      remoteEndpoint : 'https://dwn.example.com',
-      scopeId        : 'scope-1',
-      scope          : { kind: 'protocol', protocol: 'https://proto.example.com' },
-      status         : 'initializing',
-      pull           : {},
-      connectivity   : 'unknown',
-      needsReconcile : false,
-      protocol       : 'https://proto.example.com',
-    } as any;
+    const link = makeLink();
 
     sinon.stub(engine, 'sync').resolves();
-    sinon.stub(engine as any, 'getSyncTargets').resolves([
-      { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: 'https://proto.example.com' },
-    ]);
+    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
     sinon.stub(engine as any, 'openLivePullSubscription').resolves();
     (engine as any)._ledger = {
       getOrCreateLink : sinon.stub().resolves(link),
@@ -171,22 +170,10 @@ describe('SyncEngineLevel — characterization tests', () => {
     const { agent } = createLiveMockAgent();
     const engine = new SyncEngineLevel({ db, agent });
 
-    const link = {
-      tenantDid      : 'did:example:alice',
-      remoteEndpoint : 'https://dwn.example.com',
-      scopeId        : 'scope-1',
-      scope          : { kind: 'protocol', protocol: 'https://proto.example.com' },
-      status         : 'initializing',
-      pull           : {},
-      connectivity   : 'unknown',
-      needsReconcile : true,
-      protocol       : 'https://proto.example.com',
-    } as any;
+    const link = makeLink({ needsReconcile: true });
 
     sinon.stub(engine, 'sync').resolves();
-    sinon.stub(engine as any, 'getSyncTargets').resolves([
-      { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: 'https://proto.example.com' },
-    ]);
+    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
     sinon.stub(engine as any, 'openLivePullSubscription').resolves();
     sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
     const reconcileStub = sinon.stub(engine as any, 'reconcileLink').resolves();
@@ -202,32 +189,20 @@ describe('SyncEngineLevel — characterization tests', () => {
     await clock.tickAsync(1_000);
 
     expect(reconcileStub.calledOnce).toBe(true);
-    expect(reconcileStub.firstCall.args[0]).toBe('did:example:alice^https://dwn.example.com^scope-1');
+    expect(reconcileStub.firstCall.args[0]).toBe(linkKey);
 
     await engine.stopSync();
     clock.restore();
   });
 
-  it('routes ProgressGap startup failures into repair using scopeId-based link identity', async () => {
+  it('routes ProgressGap startup failures into repair using projection authorization link identity', async () => {
     const { agent } = createLiveMockAgent();
     const engine = new SyncEngineLevel({ db, agent });
 
-    const link = {
-      tenantDid      : 'did:example:alice',
-      remoteEndpoint : 'https://dwn.example.com',
-      scopeId        : 'scope-1',
-      scope          : { kind: 'protocol', protocol: 'https://proto.example.com' },
-      status         : 'initializing',
-      pull           : {},
-      connectivity   : 'unknown',
-      needsReconcile : false,
-      protocol       : 'https://proto.example.com',
-    } as any;
+    const link = makeLink();
 
     sinon.stub(engine, 'sync').resolves();
-    sinon.stub(engine as any, 'getSyncTargets').resolves([
-      { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: 'https://proto.example.com' },
-    ]);
+    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
     sinon.stub(engine as any, 'openLivePullSubscription').rejects({
       isProgressGap : true,
       gapInfo       : { latestAvailable: { streamId: 's1', epoch: 'e1', position: '7', messageCid: 'cid-7' } },
@@ -242,7 +217,7 @@ describe('SyncEngineLevel — characterization tests', () => {
     await engine.startSync({ mode: 'live', interval: '30s' });
 
     expect(transitionStub.calledOnce).toBe(true);
-    expect(transitionStub.firstCall.args[0]).toBe('did:example:alice^https://dwn.example.com^scope-1');
+    expect(transitionStub.firstCall.args[0]).toBe(linkKey);
     expect(transitionStub.firstCall.args[1]).toBe(link);
   });
 
@@ -250,24 +225,12 @@ describe('SyncEngineLevel — characterization tests', () => {
     const { agent, getRemoteHandler } = createLiveMockAgent();
     const engine = new SyncEngineLevel({ db, agent });
 
-    const link = {
-      tenantDid      : 'did:example:alice',
-      remoteEndpoint : 'https://dwn.example.com',
-      scopeId        : 'scope-1',
-      scope          : { kind: 'protocol', protocol: 'https://proto.example.com' },
-      status         : 'live',
-      pull           : {},
-      connectivity   : 'unknown',
-      needsReconcile : true,
-      protocol       : 'https://proto.example.com',
-    } as any;
+    const link = makeLink({ status: 'live', needsReconcile: true });
 
     const saveLinkStub = sinon.stub().resolves();
     sinon.stub(engine as any, 'scheduleReconcile').callsFake((): void => {});
     sinon.stub(engine, 'sync').resolves();
-    sinon.stub(engine as any, 'getSyncTargets').resolves([
-      { did: 'did:example:alice', dwnUrl: 'https://dwn.example.com', protocol: 'https://proto.example.com' },
-    ]);
+    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
     sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
     (engine as any)._ledger = {
       getOrCreateLink : sinon.stub().resolves(link),
@@ -288,7 +251,7 @@ describe('SyncEngineLevel — characterization tests', () => {
     });
 
     expect((engine as any).scheduleReconcile.called).toBe(true);
-    expect((engine as any).scheduleReconcile.lastCall.args[0]).toBe('did:example:alice^https://dwn.example.com^scope-1');
+    expect((engine as any).scheduleReconcile.lastCall.args[0]).toBe(linkKey);
     expect((engine as any).scheduleReconcile.lastCall.args[1]).toBe(500);
 
     await engine.stopSync();

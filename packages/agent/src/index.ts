@@ -5,7 +5,15 @@ export type * from './types/identity-vault.js';
 export type * from './types/key-manager.js';
 export type * from './types/permissions.js';
 export type * from './types/sync.js';
-export { computeScopeId, MAX_PENDING_TOKENS } from './types/sync.js';
+export {
+  computeAuthorizationEpoch,
+  computeProjectionId,
+  MAX_PENDING_TOKENS,
+  normalizeSyncProtocols,
+  protocolsForSyncScope,
+  singleProtocolForSyncScope,
+  syncScopeFromProtocols,
+} from './types/sync.js';
 export { ReplicationLedger } from './sync-replication-ledger.js';
 export { ClosureFailureCode, createClosureContext } from './sync-closure-types.js';
 export type { ClosureDependencyEdge, ClosureEvaluationContext, ClosureResult } from './sync-closure-types.js';

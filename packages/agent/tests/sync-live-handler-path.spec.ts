@@ -120,7 +120,11 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     // Poll until the pull checkpoint has advanced — proves the handler
     // actually processed the live event via processRawMessage.
     const links = (): any[] => [...(syncEngine as any)._activeLinks.values()];
-    const getLink = (): any => links().find((l: any) => l.tenantDid === tenant && l.protocol === testProtocol.protocol);
+    const getLink = (): any => links().find((link: any) =>
+      link.tenantDid === tenant &&
+      link.scope?.kind === 'protocolSet' &&
+      link.scope.protocols.includes(testProtocol.protocol)
+    );
 
     await waitFor(() => {
       const link = getLink();
