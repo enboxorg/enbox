@@ -143,6 +143,8 @@ export class MessagesSubscribeHandler implements MethodHandler {
 
     let subscription: EventSubscription | undefined;
     let closeRequested = false;
+    let terminalErrorEmitted = false;
+    let deliveryQueue: Promise<void> = Promise.resolve();
 
     const closeSubscription = (): void => {
       if (closeRequested) {
@@ -150,6 +152,21 @@ export class MessagesSubscribeHandler implements MethodHandler {
       }
       closeRequested = true;
       Promise.resolve(subscription?.close()).catch(() => {});
+    };
+
+    const emitTerminalAuthorizationError = (cursor: SubscriptionEvent['cursor']): void => {
+      if (terminalErrorEmitted) {
+        return;
+      }
+      terminalErrorEmitted = true;
+      subscriptionHandler({
+        type  : 'error',
+        cursor,
+        error : {
+          code   : DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
+          detail : 'subscription authorization failed during delivery',
+        },
+      });
     };
 
     const authorizeAndDeliverEvent = async (subMessage: SubscriptionEvent): Promise<void> => {
@@ -163,14 +180,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
           deliveryTimestamp        : Time.getCurrentTimestamp(),
         });
       } catch {
-        subscriptionHandler({
-          type   : 'error',
-          cursor : subMessage.cursor,
-          error  : {
-            code   : DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
-            detail : 'subscription authorization failed during delivery',
-          },
-        });
+        emitTerminalAuthorizationError(subMessage.cursor);
         closeSubscription();
         return;
       }
@@ -180,7 +190,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
       }
     };
 
-    const listener: SubscriptionListener = (subMessage: SubscriptionMessage): void => {
+    const deliverQueuedMessage = async (subMessage: SubscriptionMessage): Promise<void> => {
       if (closeRequested) {
         return;
       }
@@ -190,7 +200,17 @@ export class MessagesSubscribeHandler implements MethodHandler {
         return;
       }
 
-      authorizeAndDeliverEvent(subMessage).catch(() => {});
+      await authorizeAndDeliverEvent(subMessage);
+    };
+
+    const enqueueDelivery = (subMessage: SubscriptionMessage): void => {
+      deliveryQueue = deliveryQueue
+        .then(() => deliverQueuedMessage(subMessage))
+        .catch(() => {});
+    };
+
+    const listener: SubscriptionListener = (subMessage: SubscriptionMessage): void => {
+      enqueueDelivery(subMessage);
     };
 
     return {

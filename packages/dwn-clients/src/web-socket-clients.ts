@@ -39,6 +39,18 @@ interface SocketConnection {
   url: string;
 }
 
+function shouldReplaceLastCursor(current: ProgressToken | undefined, candidate: ProgressToken): boolean {
+  if (current === undefined) {
+    return true;
+  }
+
+  if (candidate.streamId !== current.streamId || candidate.epoch !== current.epoch) {
+    return true;
+  }
+
+  return BigInt(candidate.position) > BigInt(current.position);
+}
+
 export class WebSocketDwnRpcClient implements DwnRpc {
   public get transportProtocols(): string[] { return ['ws:', 'wss:']; }
   // a map of dwn host to WebSocket connection
@@ -175,7 +187,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       // Track the latest cursor for reconnection.
       if ('cursor' in subscriptionMessage && subscriptionMessage.cursor) {
         const tracked = subscriptions.get(subscriptionId);
-        if (tracked) {
+        if (tracked && shouldReplaceLastCursor(tracked.lastCursor, subscriptionMessage.cursor)) {
           tracked.lastCursor = subscriptionMessage.cursor;
         }
 

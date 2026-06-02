@@ -1,6 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, StateIndex } from '../../src/index.js';
 import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
+import type { GenerateGrantCreateOutput, GenerateRecordsWriteOutput, Persona } from '../utils/test-data-generator.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
@@ -11,6 +12,7 @@ import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
+import { MessagesGrantAuthorization } from '../../src/core/messages-grant-authorization.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
 import { MessagesSubscribeHandler } from '../../src/handlers/messages-subscribe.js';
 import { Poller } from '../utils/poller.js';
@@ -685,10 +687,18 @@ export function testMessagesSubscribeHandler(): void {
             expect(reply.subscription).toBeUndefined();
           });
 
-          it('stops delegated delivery when an invoked grant is revoked after subscribe opens', async () => {
+          const createDelegatedProtocolSubscribe = async (
+            protocol: string,
+            options?: { dateExpires?: string },
+          ): Promise<{
+            alice: Persona;
+            protocolDefinition: ProtocolDefinition;
+            grant: GenerateGrantCreateOutput;
+            received: SubscriptionMessage[];
+          }> => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
-            const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://delegated-subscribe-revoked-delivery' };
+            const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true, protocol };
 
             const { message: protocolConfigure } = await TestDataGenerator.generateProtocolsConfigure({
               author: alice,
@@ -697,9 +707,10 @@ export function testMessagesSubscribeHandler(): void {
             expect((await dwn.processMessage(alice.did, protocolConfigure)).status.code).toBe(202);
 
             const grant = await TestDataGenerator.generateGrantCreate({
-              author    : alice,
-              grantedTo : bob,
-              scope     : {
+              author      : alice,
+              grantedTo   : bob,
+              dateExpires : options?.dateExpires,
+              scope       : {
                 interface : DwnInterfaceName.Messages,
                 method    : DwnMethodName.Read,
                 protocol  : protocolDefinition.protocol,
@@ -708,25 +719,36 @@ export function testMessagesSubscribeHandler(): void {
             expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
 
             const received: SubscriptionMessage[] = [];
-            const handler = (msg: SubscriptionMessage): void => {
-              received.push(msg);
-            };
-
             const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
               filters            : [{ protocol: protocolDefinition.protocol }],
               permissionGrantIds : [grant.message.recordId],
             });
-            const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
+            const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, {
+              subscriptionHandler: (msg): void => { received.push(msg); },
+            });
             expect(subscribeReply.status.code).toBe(200);
 
-            const firstRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
+            return { alice, protocolDefinition, grant, received };
+          };
+
+          const writeProtocolPost = async (
+            author: Persona,
+            protocolDefinition: ProtocolDefinition,
+          ): Promise<GenerateRecordsWriteOutput> => {
+            const record = await TestDataGenerator.generateRecordsWrite({
+              author,
               protocol     : protocolDefinition.protocol,
               protocolPath : 'post',
               schema       : protocolDefinition.types.post.schema,
             });
-            expect((await dwn.processMessage(alice.did, firstRecord.message, { dataStream: firstRecord.dataStream })).status.code).toBe(202);
+            expect((await dwn.processMessage(author.did, record.message, { dataStream: record.dataStream })).status.code).toBe(202);
+            return record;
+          };
+
+          it('stops delegated delivery when an invoked grant is revoked after subscribe opens', async () => {
+            const { alice, protocolDefinition, grant, received } = await createDelegatedProtocolSubscribe('http://delegated-subscribe-revoked-delivery');
+            await writeProtocolPost(alice, protocolDefinition);
 
             await Poller.pollUntilSuccessOrTimeout(async () => {
               expect(received.filter(msg => msg.type === 'event').length).toBe(1);
@@ -748,6 +770,131 @@ export function testMessagesSubscribeHandler(): void {
               expect(errorMessage?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed);
               expect(received.filter(msg => msg.type === 'event').length).toBe(1);
             });
+          });
+
+          it('stops delegated delivery when an invoked grant expires after subscribe opens', async () => {
+            const dateExpires = Time.createOffsetTimestamp({ seconds: 60 });
+            const { alice, protocolDefinition, received } = await createDelegatedProtocolSubscribe(
+              'http://delegated-subscribe-expired-delivery',
+              { dateExpires }
+            );
+
+            await writeProtocolPost(alice, protocolDefinition);
+
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              expect(received.filter(msg => msg.type === 'event').length).toBe(1);
+            });
+
+            const secondRecord = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'post',
+              schema       : protocolDefinition.types.post.schema,
+            });
+            sinon.stub(Time, 'getCurrentTimestamp').returns(Time.createOffsetTimestamp({ seconds: 1 }, dateExpires));
+            expect((await dwn.processMessage(alice.did, secondRecord.message, { dataStream: secondRecord.dataStream })).status.code).toBe(202);
+
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              const errorMessage = received.find(msg => msg.type === 'error');
+              expect(errorMessage?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed);
+              expect(received.filter(msg => msg.type === 'event').length).toBe(1);
+            });
+          });
+
+          it('delivers delegated events in cursor order when delivery authorization resolves out of order', async () => {
+            const { alice, protocolDefinition, received } = await createDelegatedProtocolSubscribe('http://delegated-subscribe-ordered-delivery');
+
+            let firstAuthorizationStarted!: () => void;
+            let releaseFirstAuthorization!: () => void;
+            const firstAuthorizationStartedPromise = new Promise<void>((resolve) => {
+              firstAuthorizationStarted = resolve;
+            });
+            const releaseFirstAuthorizationPromise = new Promise<void>((resolve) => {
+              releaseFirstAuthorization = resolve;
+            });
+            const deliveryAuthorizationStub = sinon.stub(MessagesGrantAuthorization, 'authorizeSubscribeDelivery');
+            deliveryAuthorizationStub.onFirstCall().callsFake(async () => {
+              firstAuthorizationStarted();
+              await releaseFirstAuthorizationPromise;
+            });
+            deliveryAuthorizationStub.onSecondCall().resolves();
+
+            await writeProtocolPost(alice, protocolDefinition);
+            await firstAuthorizationStartedPromise;
+
+            await writeProtocolPost(alice, protocolDefinition);
+
+            await Time.minimalSleep();
+            expect(received.filter(msg => msg.type === 'event').length).toBe(0);
+
+            releaseFirstAuthorization();
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              expect(received.filter(msg => msg.type === 'event').length).toBe(2);
+            });
+
+            const eventPositions = received
+              .filter((msg): msg is Extract<SubscriptionMessage, { type: 'event' }> => msg.type === 'event')
+              .map(msg => BigInt(msg.cursor.position));
+            expect(eventPositions[0] < eventPositions[1]).toBe(true);
+          });
+
+          it('emits one terminal error when multiple delegated deliveries fail concurrently', async () => {
+            const { alice, protocolDefinition, received } = await createDelegatedProtocolSubscribe('http://delegated-subscribe-single-terminal-error');
+
+            let releaseAuthorizationFailures!: () => void;
+            const releaseAuthorizationFailuresPromise = new Promise<void>((resolve) => {
+              releaseAuthorizationFailures = resolve;
+            });
+            sinon.stub(MessagesGrantAuthorization, 'authorizeSubscribeDelivery').callsFake(async () => {
+              await releaseAuthorizationFailuresPromise;
+              throw new Error('delivery authorization failed');
+            });
+
+            await writeProtocolPost(alice, protocolDefinition);
+            await writeProtocolPost(alice, protocolDefinition);
+
+            releaseAuthorizationFailures();
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              expect(received.filter(msg => msg.type === 'error').length).toBe(1);
+            });
+            await Time.minimalSleep();
+            expect(received.filter(msg => msg.type === 'error').length).toBe(1);
+            expect(received.filter(msg => msg.type === 'event').length).toBe(0);
+          });
+
+          it('does not run delivery grant checks for owner subscriptions', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://owner-subscribe-pass-through-delivery' };
+
+            const { message: protocolConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition,
+            });
+            expect((await dwn.processMessage(alice.did, protocolConfigure)).status.code).toBe(202);
+
+            const received: SubscriptionMessage[] = [];
+            const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
+              author  : alice,
+              filters : [{ protocol: protocolDefinition.protocol }],
+            });
+            const deliveryAuthorizationStub = sinon.stub(MessagesGrantAuthorization, 'authorizeSubscribeDelivery').rejects(new Error('owner path should not check grants'));
+            const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, {
+              subscriptionHandler: (msg): void => { received.push(msg); },
+            });
+            expect(subscribeReply.status.code).toBe(200);
+
+            const record = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'post',
+              schema       : protocolDefinition.types.post.schema,
+            });
+            expect((await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream })).status.code).toBe(202);
+
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              expect(received.filter(msg => msg.type === 'event').length).toBe(1);
+            });
+            expect(deliveryAuthorizationStub.callCount).toBe(0);
           });
 
           it('allows subscribe of protocolPathPrefix filtered messages including protocol metadata', async () => {

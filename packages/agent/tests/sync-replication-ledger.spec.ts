@@ -302,6 +302,14 @@ describe('ReplicationLedger', () => {
       ReplicationLedger.commitContiguousToken(checkpoint, token(42));
       expect(checkpoint.contiguousAppliedToken).toEqual(token(42));
     });
+
+    it('should not move contiguousAppliedToken backward in the same token domain', () => {
+      const checkpoint: DirectionCheckpoint = { contiguousAppliedToken: token(42) };
+
+      ReplicationLedger.commitContiguousToken(checkpoint, token(10));
+
+      expect(checkpoint.contiguousAppliedToken).toEqual(token(42));
+    });
   });
 
   describe('resetCheckpoint', () => {
