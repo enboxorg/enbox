@@ -266,7 +266,7 @@ describe('sync-messages', () => {
       expect(callArgs.messageParams.permissionGrantIds).toEqual(['grant-1']);
     });
 
-    it('should process messages in batches of 10', async () => {
+    it('should process all requested messages with bounded concurrency', async () => {
       const mockAgent = {
         processDwnRequest : sinon.stub().resolves({ message: {} }),
         rpc               : {

@@ -88,6 +88,8 @@ type SyncTarget = {
   permissionGrantIds?: NonEmptyStringArray;
 };
 
+type LinkSyncTarget = SyncTarget & { linkKey: string };
+
 // ---------------------------------------------------------------------------
 // Per-link in-memory delivery-order tracking (not persisted to ledger)
 // ---------------------------------------------------------------------------
@@ -155,6 +157,8 @@ type LinkRuntimeState = {
   inflight: Map<number, InFlightCommit>;
 };
 
+type PushRuntimeEntry = { cid: string };
+
 type PushRuntimeState = {
   did: string;
   dwnUrl: string;
@@ -162,11 +166,33 @@ type PushRuntimeState = {
   protocol?: string;
   protocols?: SyncProtocolSet;
   permissionGrantIds?: NonEmptyStringArray;
-  entries: { cid: string }[];
+  entries: PushRuntimeEntry[];
   retryCount: number;
   timer?: ReturnType<typeof setTimeout>;
   /** True while a push HTTP request is in flight for this link. */
   flushing?: boolean;
+};
+
+type PushFlushBatch = {
+  pushRuntime: PushRuntimeState;
+  pushEntries: PushRuntimeEntry[];
+  isStale: () => boolean;
+};
+
+type LivePullContext = {
+  did: string;
+  dwnUrl: string;
+  delegateDid?: string;
+  protocol?: string;
+  linkKey: string;
+  link?: ReplicationLinkState;
+  permissionGrantIds?: NonEmptyStringArray;
+  isStale: () => boolean;
+};
+
+type PullDelivery = {
+  runtime?: LinkRuntimeState;
+  ordinal: number;
 };
 
 export class SyncEngineLevel implements SyncEngine {
@@ -1107,19 +1133,24 @@ export class SyncEngineLevel implements SyncEngine {
     const { tenantDid: did, remoteEndpoint: dwnUrl } = link;
     const linkKey = this.buildLinkKey(did, dwnUrl, link.projectionId, link.authorizationEpoch);
 
-    // Close pull subscription.
-    const pullSub = this._liveSubscriptions.find((s) => s.linkKey === linkKey);
-    if (pullSub) {
-      try { await pullSub.close(); } catch { /* best effort */ }
-      this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
-    }
+    await this.closeLiveSubscription(linkKey);
+    await this.closeLocalSubscription(linkKey);
+  }
 
-    // Close local push subscription.
+  private async closeLiveSubscription(linkKey: string): Promise<void> {
+    const pullSub = this._liveSubscriptions.find((s) => s.linkKey === linkKey);
+    if (!pullSub) { return; }
+
+    try { await pullSub.close(); } catch { /* best effort */ }
+    this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
+  }
+
+  private async closeLocalSubscription(linkKey: string): Promise<void> {
     const pushSub = this._localSubscriptions.find((s) => s.linkKey === linkKey);
-    if (pushSub) {
-      try { await pushSub.close(); } catch { /* best effort */ }
-      this._localSubscriptions = this._localSubscriptions.filter(s => s !== pushSub);
-    }
+    if (!pushSub) { return; }
+
+    try { await pushSub.close(); } catch { /* best effort */ }
+    this._localSubscriptions = this._localSubscriptions.filter(s => s !== pushSub);
   }
 
   /**
@@ -1383,70 +1414,112 @@ export class SyncEngineLevel implements SyncEngine {
   private async initializeLinkTarget(target: SyncTarget): Promise<void> {
     let link: ReplicationLinkState | undefined;
     try {
-      link = await this.ledger.getOrCreateLink({
-        tenantDid          : target.did,
-        remoteEndpoint     : target.dwnUrl,
-        scope              : target.scope,
-        authorization      : target.authorization,
-        authorizationEpoch : target.authorizationEpoch,
-        delegateDid        : target.delegateDid,
-      });
-
-      const linkKey = this.buildLinkKey(target.did, target.dwnUrl, link.projectionId, link.authorizationEpoch);
-
-      if (!link.pull.contiguousAppliedToken) {
-        const legacyKey = buildLegacyCursorKey(target.did, target.dwnUrl, singleProtocolForSyncScope(target.scope));
-        const legacyCursor = await this.getCursor(legacyKey);
-        if (legacyCursor) {
-          ReplicationLedger.resetCheckpoint(link.pull, legacyCursor);
-          await this.ledger.saveLink(link);
-          await this.deleteLegacyCursor(legacyKey);
-        }
-      }
-
+      link = await this.getOrCreateReplicationLink(target);
+      const linkKey = this.getReplicationLinkKey(target, link);
+      await this.migrateLegacyCursorIfNeeded(target, link);
       this._activeLinks.set(linkKey, link);
 
-      const targetWithKey = { ...target, linkKey };
-      await this.openLivePullSubscription(targetWithKey);
-      try {
-        await this.openLocalPushSubscription(targetWithKey);
-      } catch (pushError) {
-        const pullSub = this._liveSubscriptions.find((s) => s.linkKey === linkKey);
-        if (pullSub) {
-          try { await pullSub.close(); } catch { /* best effort */ }
-          this._liveSubscriptions = this._liveSubscriptions.filter(s => s !== pullSub);
-        }
-        throw pushError;
-      }
-
-      this.emitEvent({ type: 'link:status-change', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: singleProtocolForSyncScope(target.scope), from: 'initializing', to: 'live' });
-      await this.ledger.setStatus(link, 'live');
-
-      if (link.needsReconcile) {
-        this.scheduleReconcile(linkKey, 1000);
-      }
+      await this.openLinkSubscriptions({ ...target, linkKey });
+      await this.markLinkLive(target, link, linkKey);
     } catch (error: any) {
-      const linkKey = link
-        ? this.buildLinkKey(target.did, target.dwnUrl, link.projectionId, link.authorizationEpoch)
-        : buildLegacyCursorKey(target.did, target.dwnUrl, singleProtocolForSyncScope(target.scope));
+      await this.handleInitializeLinkTargetError(target, link, error);
+    }
+  }
 
-      if (error.isProgressGap && link) {
-        console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
-        this.emitEvent({ type: 'gap:detected', tenantDid: target.did, remoteEndpoint: target.dwnUrl, protocol: singleProtocolForSyncScope(target.scope), reason: 'ProgressGap' });
-        await this.transitionToRepairing(linkKey, link, {
-          resumeToken: error.gapInfo?.latestAvailable,
-        });
-        return;
-      }
+  private async getOrCreateReplicationLink(target: SyncTarget): Promise<ReplicationLinkState> {
+    return this.ledger.getOrCreateLink({
+      tenantDid          : target.did,
+      remoteEndpoint     : target.dwnUrl,
+      scope              : target.scope,
+      authorization      : target.authorization,
+      authorizationEpoch : target.authorizationEpoch,
+      delegateDid        : target.delegateDid,
+    });
+  }
 
-      console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
+  private getReplicationLinkKey(target: SyncTarget, link: ReplicationLinkState): string {
+    return this.buildLinkKey(target.did, target.dwnUrl, link.projectionId, link.authorizationEpoch);
+  }
 
-      this._activeLinks.delete(linkKey);
-      this._linkRuntimes.delete(linkKey);
+  private async migrateLegacyCursorIfNeeded(target: SyncTarget, link: ReplicationLinkState): Promise<void> {
+    if (link.pull.contiguousAppliedToken) {
+      return;
+    }
 
-      if (this._liveSubscriptions.length === 0) {
-        this._connectivityState = 'unknown';
-      }
+    const legacyKey = buildLegacyCursorKey(target.did, target.dwnUrl, singleProtocolForSyncScope(target.scope));
+    const legacyCursor = await this.getCursor(legacyKey);
+    if (!legacyCursor) {
+      return;
+    }
+
+    ReplicationLedger.resetCheckpoint(link.pull, legacyCursor);
+    await this.ledger.saveLink(link);
+    await this.deleteLegacyCursor(legacyKey);
+  }
+
+  private async openLinkSubscriptions(target: LinkSyncTarget): Promise<void> {
+    await this.openLivePullSubscription(target);
+    try {
+      await this.openLocalPushSubscription(target);
+    } catch (error) {
+      await this.closeLiveSubscription(target.linkKey);
+      throw error;
+    }
+  }
+
+  private async markLinkLive(target: SyncTarget, link: ReplicationLinkState, linkKey: string): Promise<void> {
+    this.emitEvent({
+      type           : 'link:status-change',
+      tenantDid      : target.did,
+      remoteEndpoint : target.dwnUrl,
+      protocol       : singleProtocolForSyncScope(target.scope),
+      from           : 'initializing',
+      to             : 'live'
+    });
+    await this.ledger.setStatus(link, 'live');
+
+    if (link.needsReconcile) {
+      this.scheduleReconcile(linkKey, 1000);
+    }
+  }
+
+  private async handleInitializeLinkTargetError(
+    target: SyncTarget,
+    link: ReplicationLinkState | undefined,
+    error: any,
+  ): Promise<void> {
+    const linkKey = link
+      ? this.getReplicationLinkKey(target, link)
+      : buildLegacyCursorKey(target.did, target.dwnUrl, singleProtocolForSyncScope(target.scope));
+
+    if (error.isProgressGap && link) {
+      console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
+      this.emitEvent({
+        type           : 'gap:detected',
+        tenantDid      : target.did,
+        remoteEndpoint : target.dwnUrl,
+        protocol       : singleProtocolForSyncScope(target.scope),
+        reason         : 'ProgressGap'
+      });
+      await this.transitionToRepairing(linkKey, link, {
+        resumeToken: error.gapInfo?.latestAvailable,
+      });
+      return;
+    }
+
+    console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
+    this.cleanupFailedLinkInitialization(linkKey);
+    if (this.isDidResolutionFailure(error)) {
+      throw error;
+    }
+  }
+
+  private cleanupFailedLinkInitialization(linkKey: string): void {
+    this._activeLinks.delete(linkKey);
+    this._linkRuntimes.delete(linkKey);
+
+    if (this._liveSubscriptions.length === 0) {
+      this._connectivityState = 'unknown';
     }
   }
 
@@ -1462,9 +1535,7 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       await this.initializeLinkTarget(target);
     } catch (error: any) {
-      const msg = error.message ?? '';
-      const isDidResolutionFailure = msg.includes('GetPublicKeyNotFound') || msg.includes('notFound');
-      if (!isDidResolutionFailure) { throw error; }
+      if (!this.isDidResolutionFailure(error)) { throw error; }
 
       const delays = [2000, 4000, 8000];
       for (const delay of delays) {
@@ -1479,6 +1550,11 @@ export class SyncEngineLevel implements SyncEngine {
       // All retries exhausted — the original error was already logged
       // by initializeLinkTarget's catch block.
     }
+  }
+
+  private isDidResolutionFailure(error: any): boolean {
+    const message = error.message ?? '';
+    return message.includes('GetPublicKeyNotFound') || message.includes('notFound');
   }
 
   // ---------------------------------------------------------------------------
@@ -1565,27 +1641,13 @@ export class SyncEngineLevel implements SyncEngine {
    * Opens a MessagesSubscribe WebSocket subscription to a remote DWN.
    * Incoming events are processed locally as they arrive.
    */
-  private async openLivePullSubscription(target: SyncTarget & { linkKey: string }): Promise<void> {
+  private async openLivePullSubscription(target: LinkSyncTarget): Promise<void> {
     const { did, delegateDid, dwnUrl } = target;
     const protocol = singleProtocolForSyncScope(target.scope);
 
-    // Resolve the cursor from the link's durable pull checkpoint.
-    // Legacy syncCursors migration happens at link load time in startLiveSync().
     const cursorKey = target.linkKey;
     const link = this._activeLinks.get(cursorKey);
-    let cursor = link?.pull.contiguousAppliedToken;
-
-    // Guard against corrupted tokens with empty fields — these would fail
-    // MessagesSubscribe JSON schema validation (minLength: 1). Discard and
-    // start from the beginning rather than crash the subscription.
-    if (cursor && (!cursor.streamId || !cursor.messageCid || !cursor.epoch || !cursor.position)) {
-      console.warn(`SyncEngineLevel: Discarding stored cursor with empty field(s) for ${did} -> ${dwnUrl}`);
-      cursor = undefined;
-      if (link) {
-        ReplicationLedger.resetCheckpoint(link.pull);
-        await this.ledger.saveLink(link);
-      }
-    }
+    const cursor = await this.getInitialPullCursor({ did, dwnUrl, link });
 
     const filters = target.scope.kind === 'protocolSet'
       ? target.scope.protocols.map(protocol => ({ protocol }))
@@ -1599,249 +1661,20 @@ export class SyncEngineLevel implements SyncEngine {
     // ensures the checkpoint advances only when all earlier deliveries are committed.
     // Capture the link reference at subscription-open time so we can
     // detect remove+re-add via object identity, not just key existence.
-    const capturedLink = link;
-    const isStale = (): boolean =>
-      this._engineGeneration !== handlerGeneration ||
-      !this._activeLinks.has(cursorKey) ||
-      (capturedLink !== undefined && this._activeLinks.get(cursorKey) !== capturedLink);
+    const isStale = this.createLinkStalePredicate(cursorKey, link, handlerGeneration);
+    const pullContext: LivePullContext = {
+      did,
+      dwnUrl,
+      delegateDid,
+      protocol,
+      linkKey            : cursorKey,
+      link,
+      permissionGrantIds : target.permissionGrantIds,
+      isStale,
+    };
 
     const subscriptionHandler = async (subMessage: SubscriptionMessage): Promise<void> => {
-      if (isStale()) {
-        return;
-      }
-
-      if (subMessage.type === 'eose') {
-        // End-of-stored-events — catch-up complete.
-        if (link) {
-          // Guard: if the link transitioned to repairing while catch-up events
-          // were being processed, skip all mutations — repair owns the state now.
-          if (link.status !== 'live' && link.status !== 'initializing') {
-            return;
-          }
-
-          if (!ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
-            console.warn(`SyncEngineLevel: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`);
-            if (!isStale()) { await this.transitionToRepairing(cursorKey, link); }
-            return;
-          }
-          ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
-          this.drainCommittedPull(cursorKey);
-          if (isStale()) { return; }
-          await this.ledger.saveLink(link);
-        }
-        // Transport is reachable — set connectivity to online.
-        if (link) {
-          const prevEoseConnectivity = link.connectivity;
-          link.connectivity = 'online';
-          if (prevEoseConnectivity !== 'online') {
-            this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevEoseConnectivity, to: 'online' });
-          }
-          // If the link was marked dirty, schedule reconciliation now that it's healthy.
-          if (link.needsReconcile) {
-            this.scheduleReconcile(cursorKey, 500);
-          }
-        } else {
-          this._connectivityState = 'online';
-        }
-        return;
-      }
-
-      if (subMessage.type === 'event') {
-        const event: MessageEvent = subMessage.event;
-
-        // Guard: if the link is not live (e.g., repairing, degraded_poll, paused),
-        // skip all processing. Old subscription handlers may still fire after the
-        // link transitions — these events should be ignored entirely, not just
-        // skipped at the checkpoint level.
-        if (link && link.status !== 'live' && link.status !== 'initializing') {
-          return;
-        }
-
-        // Domain validation: reject tokens from a different stream/epoch.
-        if (link && !ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
-          console.warn(`SyncEngineLevel: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
-          if (!isStale()) { await this.transitionToRepairing(cursorKey, link); }
-          return;
-        }
-
-        // Subset scope filtering: if the link has protocolPath/contextId prefixes,
-        // skip events that don't match. This is agent-side filtering because
-        // MessagesSubscribe only supports protocol-level filtering today.
-        //
-        // Skipped events MUST advance contiguousAppliedToken — otherwise the
-        // link would replay the same filtered-out events indefinitely after
-        // reconnect/repair. This is safe because the event is intentionally
-        // excluded from this scope and doesn't need processing.
-        if (link && !isEventInScope(event.message, link.scope)) {
-          if (!isStale()) {
-            ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
-            ReplicationLedger.commitContiguousToken(link.pull, subMessage.cursor);
-            await this.ledger.saveLink(link);
-          }
-          return;
-        }
-
-        // Assign a delivery ordinal BEFORE async processing begins.
-        // This captures the delivery order even if processing completes out of order.
-        const rt = link ? this.getOrCreateRuntime(cursorKey) : undefined;
-        const ordinal = rt ? rt.nextDeliveryOrdinal++ : -1;
-        if (rt) {
-          rt.inflight.set(ordinal, { ordinal, token: subMessage.cursor, committed: false });
-        }
-
-        try {
-          const eventProtocol = (event.message.descriptor as Record<string, unknown>).protocol as string | undefined;
-
-          // Extract inline data from the event (available for records <= 30 KB).
-          let dataStream = this.extractDataStream(event);
-
-          // For large RecordsWrite messages (no inline data), fetch the data
-          // from the remote DWN via MessagesRead before storing locally.
-          if (!dataStream && isRecordsWrite(event) && (event.message.descriptor as any).dataCid) {
-            const messageCid = await Message.getCid(event.message);
-            const fetched = await fetchRemoteMessages({
-              did, dwnUrl, delegateDid,
-              permissionGrantIds : target.permissionGrantIds,
-              messageCids        : [messageCid],
-              agent              : this.agent,
-            });
-            if (fetched.length > 0 && fetched[0].dataStream) {
-              dataStream = fetched[0].dataStream;
-            }
-          }
-
-          await this.agent.dwn.processRawMessage(did, event.message, { dataStream });
-          if (isStale()) { return; }
-
-          // Invalidate closure cache entries that may be affected by this message.
-          // Must run before closure validation so subsequent evaluations in the
-          // same session see the updated local state.
-          const closureCtxForInvalidation = this._closureContexts.get(did);
-          if (closureCtxForInvalidation) {
-            invalidateClosureCache(closureCtxForInvalidation, event.message);
-          }
-
-          // Closure validation for B1 protocol-set sync. Full-tenant scope
-          // bypasses this entirely because all message dependencies are in scope.
-          if (link?.scope.kind === 'protocolSet') {
-            const messageStore = this.agent.dwn.node.storage.messageStore;
-            let closureCtx = this._closureContexts.get(did);
-            if (!closureCtx) {
-              closureCtx = createClosureContext(did, undefined, {
-                isDelegateSession: !!delegateDid,
-              });
-              this._closureContexts.set(did, closureCtx);
-            }
-
-            const closureResult = await evaluateClosure(
-              event.message, messageStore, link.scope, closureCtx
-            );
-
-            if (isStale()) { return; }
-
-            if (!closureResult.complete) {
-              const failureCode = closureResult.failure!.code;
-              const failureDetail = closureResult.failure!.detail;
-              console.warn(
-                `SyncEngineLevel: Closure incomplete for ${did} -> ${dwnUrl}: ` +
-                `${failureCode} — ${failureDetail}`
-              );
-
-              // Record the message that triggered the closure failure.
-              const closureCid = await Message.getCid(event.message);
-              void this.recordDeadLetter({
-                messageCid     : closureCid,
-                tenantDid      : did,
-                remoteEndpoint : dwnUrl,
-                protocol       : eventProtocol,
-                category       : 'closure',
-                errorCode      : failureCode,
-                errorDetail    : failureDetail,
-              });
-
-              if (!isStale()) { await this.transitionToRepairing(cursorKey, link); }
-              return;
-            }
-          }
-
-          // Squash convergence: processRawMessage triggers the DWN's built-in
-          // squash resumable task (performRecordsSquash) which runs inline and
-          // handles subset consumers correctly:
-          // - If older siblings are locally present → purges them
-          // - If squash arrives before older siblings → backstop rejects them (409)
-          // - If no older siblings are local → no-op (correct)
-          // Both sync orderings (squash-first or siblings-first) converge to
-          // the same final state. No additional sync-engine side-effect is needed.
-
-          // Track this CID for echo-loop suppression, scoped to the source endpoint.
-          const pulledCid = await Message.getCid(event.message);
-          this._recentlyPulledCids.set(`${pulledCid}|${dwnUrl}`, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
-          this.evictExpiredEchoEntries();
-
-          // Auto-clear any dead letter for this CID — it was processed
-          // successfully, so a previous failure has been self-healed.
-          this.clearFailedMessage(pulledCid, dwnUrl).catch(() => { /* teardown race */ });
-
-          // Mark this ordinal as committed and drain the checkpoint.
-          // Guard: if the link transitioned to repairing while this handler was
-          // in-flight (e.g., an earlier ordinal's handler failed concurrently),
-          // skip all state mutations — the repair process owns progression now.
-          if (link && rt && link.status === 'live' && !isStale()) {
-            const entry = rt.inflight.get(ordinal);
-            if (entry) { entry.committed = true; }
-
-            ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
-            const drained = this.drainCommittedPull(cursorKey);
-            if (drained > 0) {
-              await this.ledger.saveLink(link);
-              // Emit after durable save — "advanced" means persisted.
-              if (link.pull.contiguousAppliedToken) {
-                this.emitEvent({
-                  type           : 'checkpoint:pull-advance',
-                  tenantDid      : link.tenantDid,
-                  remoteEndpoint : link.remoteEndpoint,
-                  protocol       : singleProtocolForSyncScope(link.scope),
-                  position       : link.pull.contiguousAppliedToken.position,
-                  messageCid     : link.pull.contiguousAppliedToken.messageCid,
-                });
-              }
-            }
-
-            // Overflow: too many in-flight ordinals without draining.
-            if (rt.inflight.size > MAX_PENDING_TOKENS) {
-              console.warn(`SyncEngineLevel: Pull in-flight overflow for ${did} -> ${dwnUrl}, transitioning to repairing`);
-              await this.transitionToRepairing(cursorKey, link);
-            }
-          }
-        } catch (error: any) {
-          console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
-
-          // Record the failing message in the dead letter store before
-          // transitioning to repair. The CID identifies which specific
-          // message caused the transition.
-          try {
-            const failedCid = await Message.getCid(event.message);
-            void this.recordDeadLetter({
-              messageCid     : failedCid,
-              tenantDid      : did,
-              remoteEndpoint : dwnUrl,
-              protocol       : (event.message.descriptor as Record<string, unknown>).protocol as string | undefined,
-              category       : 'pull-processing',
-              errorDetail    : error.message ?? String(error),
-            });
-          } catch {
-            // Best effort — don't let dead letter recording block repair.
-          }
-
-          // A failed processRawMessage means local state is incomplete.
-          // Transition to repairing immediately — do NOT advance the checkpoint
-          // past this failure or let later ordinals commit past it. SMT
-          // reconciliation will discover and fill the gap.
-          if (link && !isStale()) {
-            await this.transitionToRepairing(cursorKey, link);
-          }
-        }
-      }
+      await this.handleLivePullMessage(pullContext, subMessage);
     };
 
     // Construct the subscribe message and send it directly to the specific
@@ -1928,6 +1761,368 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  private async getInitialPullCursor({ did, dwnUrl, link }: {
+    did: string;
+    dwnUrl: string;
+    link?: ReplicationLinkState;
+  }): Promise<ProgressToken | undefined> {
+    // Resolve the cursor from the link's durable pull checkpoint. Legacy
+    // syncCursors migration happens during link initialization.
+    if (!link) {
+      return undefined;
+    }
+
+    const cursor = link.pull.contiguousAppliedToken;
+    if (!cursor || this.isValidProgressToken(cursor)) {
+      return cursor;
+    }
+
+    // Guard against corrupted tokens with empty fields — these would fail
+    // MessagesSubscribe JSON schema validation (minLength: 1). Discard and
+    // start from the beginning rather than crash the subscription.
+    console.warn(`SyncEngineLevel: Discarding stored cursor with empty field(s) for ${did} -> ${dwnUrl}`);
+    ReplicationLedger.resetCheckpoint(link.pull);
+    await this.ledger.saveLink(link);
+    return undefined;
+  }
+
+  private isValidProgressToken(token: ProgressToken): boolean {
+    return !!(token.streamId && token.messageCid && token.epoch && token.position);
+  }
+
+  private createLinkStalePredicate(
+    linkKey: string,
+    capturedLink: ReplicationLinkState | undefined,
+    generation: number,
+  ): () => boolean {
+    return (): boolean =>
+      this._engineGeneration !== generation ||
+      !this._activeLinks.has(linkKey) ||
+      (capturedLink !== undefined && this._activeLinks.get(linkKey) !== capturedLink);
+  }
+
+  private async handleLivePullMessage(context: LivePullContext, subMessage: SubscriptionMessage): Promise<void> {
+    if (context.isStale()) {
+      return;
+    }
+
+    if (subMessage.type === 'eose') {
+      await this.handleLivePullEose(context, subMessage);
+      return;
+    }
+
+    if (subMessage.type === 'event') {
+      await this.handleLivePullEvent(context, subMessage);
+    }
+  }
+
+  private async handleLivePullEose(
+    { did, dwnUrl, protocol, linkKey, link, isStale }: LivePullContext,
+    subMessage: Extract<SubscriptionMessage, { type: 'eose' }>,
+  ): Promise<void> {
+    if (link) {
+      // Guard: if the link transitioned to repairing while catch-up events
+      // were being processed, skip all mutations — repair owns the state now.
+      if (link.status !== 'live' && link.status !== 'initializing') {
+        return;
+      }
+
+      if (!ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
+        console.warn(`SyncEngineLevel: Token domain mismatch on EOSE for ${did} -> ${dwnUrl}, transitioning to repairing`);
+        if (!isStale()) { await this.transitionToRepairing(linkKey, link); }
+        return;
+      }
+      ReplicationLedger.setReceivedToken(link.pull, subMessage.cursor);
+      this.drainCommittedPull(linkKey);
+      if (isStale()) { return; }
+      await this.ledger.saveLink(link);
+    }
+
+    this.markPullLinkOnline({ did, dwnUrl, protocol, linkKey, link });
+  }
+
+  private markPullLinkOnline({ did, dwnUrl, protocol, linkKey, link }: {
+    did: string;
+    dwnUrl: string;
+    protocol?: string;
+    linkKey: string;
+    link?: ReplicationLinkState;
+  }): void {
+    if (!link) {
+      this._connectivityState = 'online';
+      return;
+    }
+
+    const previous = link.connectivity;
+    link.connectivity = 'online';
+    if (previous !== 'online') {
+      this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: previous, to: 'online' });
+    }
+    if (link.needsReconcile) {
+      this.scheduleReconcile(linkKey, 500);
+    }
+  }
+
+  private async handleLivePullEvent(
+    context: LivePullContext,
+    subMessage: Extract<SubscriptionMessage, { type: 'event' }>,
+  ): Promise<void> {
+    const event = subMessage.event;
+    if (await this.shouldSkipLivePullEvent(context, subMessage)) {
+      return;
+    }
+
+    const delivery = this.startPullDelivery(context, subMessage.cursor);
+    try {
+      const pulledCid = await this.processLivePullEvent(context, event);
+      if (!pulledCid) { return; }
+
+      this.trackRecentlyPulledMessage(pulledCid, context.dwnUrl);
+      this.clearFailedMessage(pulledCid, context.dwnUrl).catch(() => { /* teardown race */ });
+      await this.commitPullDelivery(context, subMessage.cursor, delivery);
+    } catch (error: any) {
+      await this.handleLivePullProcessingError(context, event, error);
+    }
+  }
+
+  private async shouldSkipLivePullEvent(
+    { did, dwnUrl, linkKey, link, isStale }: LivePullContext,
+    subMessage: Extract<SubscriptionMessage, { type: 'event' }>,
+  ): Promise<boolean> {
+    // Guard: if the link is not live (e.g., repairing, degraded_poll, paused),
+    // skip all processing. Old subscription handlers may still fire after the
+    // link transitions — these events should be ignored entirely, not just
+    // skipped at the checkpoint level.
+    if (link && link.status !== 'live' && link.status !== 'initializing') {
+      return true;
+    }
+
+    // Domain validation: reject tokens from a different stream/epoch.
+    if (link && !ReplicationLedger.validateTokenDomain(link.pull, subMessage.cursor)) {
+      console.warn(`SyncEngineLevel: Token domain mismatch for ${did} -> ${dwnUrl}, transitioning to repairing`);
+      if (!isStale()) { await this.transitionToRepairing(linkKey, link); }
+      return true;
+    }
+
+    if (link && !isEventInScope(subMessage.event.message, link.scope)) {
+      await this.skipOutOfScopePullEvent({ link, cursor: subMessage.cursor, isStale });
+      return true;
+    }
+
+    return false;
+  }
+
+  private async skipOutOfScopePullEvent({ link, cursor, isStale }: {
+    link: ReplicationLinkState;
+    cursor: ProgressToken;
+    isStale: () => boolean;
+  }): Promise<void> {
+    // Skipped events MUST advance contiguousAppliedToken — otherwise the link
+    // would replay the same filtered-out events indefinitely after reconnect or
+    // repair. This is safe because the event is intentionally excluded from
+    // this scope and doesn't need processing.
+    if (isStale()) { return; }
+
+    ReplicationLedger.setReceivedToken(link.pull, cursor);
+    ReplicationLedger.commitContiguousToken(link.pull, cursor);
+    await this.ledger.saveLink(link);
+  }
+
+  private startPullDelivery({ linkKey, link }: LivePullContext, cursor: ProgressToken): PullDelivery {
+    // Assign a delivery ordinal BEFORE async processing begins. This captures
+    // delivery order even if processing completes out of order.
+    const runtime = link ? this.getOrCreateRuntime(linkKey) : undefined;
+    const ordinal = runtime ? runtime.nextDeliveryOrdinal++ : -1;
+    if (runtime) {
+      runtime.inflight.set(ordinal, { ordinal, token: cursor, committed: false });
+    }
+    return { runtime, ordinal };
+  }
+
+  private async processLivePullEvent(context: LivePullContext, event: MessageEvent): Promise<string | undefined> {
+    const dataStream = await this.getLivePullDataStream(context, event);
+    await this.agent.dwn.processRawMessage(context.did, event.message, { dataStream });
+    if (context.isStale()) { return undefined; }
+
+    this.invalidateClosureCacheForMessage(context.did, event.message);
+    if (!await this.ensureClosureComplete(context, event)) {
+      return undefined;
+    }
+
+    // Squash convergence: processRawMessage triggers the DWN's built-in
+    // squash resumable task (performRecordsSquash), so no additional
+    // sync-engine side effect is needed here.
+    return Message.getCid(event.message);
+  }
+
+  private async getLivePullDataStream(
+    { did, dwnUrl, delegateDid, permissionGrantIds }: LivePullContext,
+    event: MessageEvent,
+  ): Promise<ReadableStream<Uint8Array> | undefined> {
+    const inlineData = this.extractDataStream(event);
+    if (inlineData || !isRecordsWrite(event) || !(event.message.descriptor as any).dataCid) {
+      return inlineData;
+    }
+
+    // For large RecordsWrite messages (no inline data), fetch the data from
+    // the remote DWN via MessagesRead before storing locally.
+    const messageCid = await Message.getCid(event.message);
+    const fetched = await fetchRemoteMessages({
+      did,
+      dwnUrl,
+      delegateDid,
+      permissionGrantIds,
+      messageCids : [messageCid],
+      agent       : this.agent,
+    });
+    return fetched[0]?.dataStream;
+  }
+
+  private invalidateClosureCacheForMessage(did: string, message: GenericMessage): void {
+    // Must run before closure validation so subsequent evaluations in the same
+    // session see the updated local state.
+    const closureCtx = this._closureContexts.get(did);
+    if (closureCtx) {
+      invalidateClosureCache(closureCtx, message);
+    }
+  }
+
+  private async ensureClosureComplete(context: LivePullContext, event: MessageEvent): Promise<boolean> {
+    const { did, delegateDid, link, isStale } = context;
+    if (link?.scope.kind !== 'protocolSet') {
+      return true;
+    }
+
+    let closureCtx = this._closureContexts.get(did);
+    if (!closureCtx) {
+      closureCtx = createClosureContext(did, undefined, {
+        isDelegateSession: !!delegateDid,
+      });
+      this._closureContexts.set(did, closureCtx);
+    }
+
+    const messageStore = this.agent.dwn.node.storage.messageStore;
+    const closureResult = await evaluateClosure(event.message, messageStore, link.scope, closureCtx);
+    if (isStale()) { return false; }
+    if (closureResult.complete) { return true; }
+
+    await this.recordClosureFailure(context, event, closureResult.failure!.code, closureResult.failure!.detail);
+    return false;
+  }
+
+  private async recordClosureFailure(
+    { did, dwnUrl, linkKey, link, isStale }: LivePullContext,
+    event: MessageEvent,
+    failureCode: string,
+    failureDetail: string,
+  ): Promise<void> {
+    console.warn(
+      `SyncEngineLevel: Closure incomplete for ${did} -> ${dwnUrl}: ` +
+      `${failureCode} — ${failureDetail}`
+    );
+
+    const closureCid = await Message.getCid(event.message);
+    void this.recordDeadLetter({
+      messageCid     : closureCid,
+      tenantDid      : did,
+      remoteEndpoint : dwnUrl,
+      protocol       : (event.message.descriptor as Record<string, unknown>).protocol as string | undefined,
+      category       : 'closure',
+      errorCode      : failureCode,
+      errorDetail    : failureDetail,
+    });
+
+    if (link && !isStale()) {
+      await this.transitionToRepairing(linkKey, link);
+    }
+  }
+
+  private trackRecentlyPulledMessage(messageCid: string, dwnUrl: string): void {
+    this._recentlyPulledCids.set(`${messageCid}|${dwnUrl}`, Date.now() + SyncEngineLevel.ECHO_SUPPRESS_TTL_MS);
+    this.evictExpiredEchoEntries();
+  }
+
+  private async commitPullDelivery(
+    { did, dwnUrl, linkKey, link, isStale }: LivePullContext,
+    cursor: ProgressToken,
+    delivery: PullDelivery,
+  ): Promise<void> {
+    // Guard: if the link transitioned to repairing while this handler was
+    // in-flight, skip all state mutations — the repair process owns progression.
+    if (!link || !delivery.runtime || link.status !== 'live' || isStale()) {
+      return;
+    }
+
+    const entry = delivery.runtime.inflight.get(delivery.ordinal);
+    if (entry) { entry.committed = true; }
+
+    ReplicationLedger.setReceivedToken(link.pull, cursor);
+    const drained = this.drainCommittedPull(linkKey);
+    if (drained > 0) {
+      await this.ledger.saveLink(link);
+      this.emitPullCheckpointAdvance(link);
+    }
+
+    if (delivery.runtime.inflight.size > MAX_PENDING_TOKENS) {
+      console.warn(`SyncEngineLevel: Pull in-flight overflow for ${did} -> ${dwnUrl}, transitioning to repairing`);
+      await this.transitionToRepairing(linkKey, link);
+    }
+  }
+
+  private emitPullCheckpointAdvance(link: ReplicationLinkState): void {
+    if (!link.pull.contiguousAppliedToken) {
+      return;
+    }
+
+    // Emit after durable save — "advanced" means persisted.
+    this.emitEvent({
+      type           : 'checkpoint:pull-advance',
+      tenantDid      : link.tenantDid,
+      remoteEndpoint : link.remoteEndpoint,
+      protocol       : singleProtocolForSyncScope(link.scope),
+      position       : link.pull.contiguousAppliedToken.position,
+      messageCid     : link.pull.contiguousAppliedToken.messageCid,
+    });
+  }
+
+  private async handleLivePullProcessingError(
+    { did, dwnUrl, linkKey, link, isStale }: LivePullContext,
+    event: MessageEvent,
+    error: any,
+  ): Promise<void> {
+    console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
+    await this.recordPullProcessingFailure({ did, dwnUrl, event, error });
+
+    // A failed processRawMessage means local state is incomplete. Transition
+    // to repairing immediately — do NOT advance the checkpoint past this
+    // failure or let later ordinals commit past it. SMT reconciliation will
+    // discover and fill the gap.
+    if (link && !isStale()) {
+      await this.transitionToRepairing(linkKey, link);
+    }
+  }
+
+  private async recordPullProcessingFailure({ did, dwnUrl, event, error }: {
+    did: string;
+    dwnUrl: string;
+    event: MessageEvent;
+    error: any;
+  }): Promise<void> {
+    try {
+      const failedCid = await Message.getCid(event.message);
+      void this.recordDeadLetter({
+        messageCid     : failedCid,
+        tenantDid      : did,
+        remoteEndpoint : dwnUrl,
+        protocol       : (event.message.descriptor as Record<string, unknown>).protocol as string | undefined,
+        category       : 'pull-processing',
+        errorDetail    : error.message ?? String(error),
+      });
+    } catch {
+      // Best effort — don't let dead letter recording block repair.
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Live push: local EventLog subscription for immediate push
   // ---------------------------------------------------------------------------
@@ -1936,7 +2131,7 @@ export class SyncEngineLevel implements SyncEngine {
    * Subscribes to the local DWN's EventLog so that writes by the user are
    * immediately pushed to the remote DWN instead of waiting for the next poll.
    */
-  private async openLocalPushSubscription(target: SyncTarget & { linkKey: string }): Promise<void> {
+  private async openLocalPushSubscription(target: LinkSyncTarget): Promise<void> {
     const { did, delegateDid, dwnUrl } = target;
     const protocol = singleProtocolForSyncScope(target.scope);
 
@@ -2041,106 +2236,153 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async flushPendingPushesForLink(linkKey: string): Promise<void> {
+    const batch = this.takePushFlushBatch(linkKey);
+    if (!batch) { return; }
+
+    const { pushRuntime, pushEntries, isStale } = batch;
+    const { did, dwnUrl, delegateDid, protocol, permissionGrantIds, retryCount } = pushRuntime;
+
+    try {
+      const result = await pushMessages({
+        did,
+        dwnUrl,
+        delegateDid,
+        permissionGrantIds,
+        messageCids : pushEntries.map((entry) => entry.cid),
+        agent       : this.agent,
+      });
+
+      await this.handlePushBatchResult(linkKey, batch, result);
+    } catch (error: any) {
+      if (isStale()) { return; }
+      console.error(`SyncEngineLevel: Push batch failed for ${did} -> ${dwnUrl}`, error);
+      this.requeueOrReconcile(linkKey, {
+        did,
+        dwnUrl,
+        delegateDid,
+        protocol,
+        permissionGrantIds,
+        entries    : pushEntries,
+        retryCount : retryCount + 1,
+      });
+    } finally {
+      this.finishPushFlush(linkKey, pushRuntime);
+    }
+  }
+
+  private takePushFlushBatch(linkKey: string): PushFlushBatch | undefined {
     // Guard: bail if this link was hot-removed. Without this, a stale
     // debounce timer or retry callback could send pushes after the DID
     // was removed.
     if (!this._activeLinks.has(linkKey)) {
-      return;
+      return undefined;
     }
 
     const pushRuntime = this._pushRuntimes.get(linkKey);
     if (!pushRuntime) {
-      return;
+      return undefined;
     }
 
-    // Capture the current active link identity so we can detect
-    // remove+re-add during the await pushMessages() call.
-    const flushLink = this._activeLinks.get(linkKey);
-    const isFlushStale = (): boolean =>
-      !this._activeLinks.has(linkKey) ||
-      (flushLink !== undefined && this._activeLinks.get(linkKey) !== flushLink);
-
-    const { did, dwnUrl, delegateDid, protocol, permissionGrantIds, entries: pushEntries, retryCount } = pushRuntime;
+    const { entries: pushEntries, retryCount } = pushRuntime;
     pushRuntime.entries = [];
 
     if (pushEntries.length === 0) {
       if (!pushRuntime.timer && !pushRuntime.flushing && retryCount === 0) {
         this._pushRuntimes.delete(linkKey);
       }
+      return undefined;
+    }
+
+    // Capture the current active link identity so we can detect
+    // remove+re-add during the await pushMessages() call.
+    const flushLink = this._activeLinks.get(linkKey);
+    const isStale = (): boolean =>
+      !this._activeLinks.has(linkKey) ||
+      (flushLink !== undefined && this._activeLinks.get(linkKey) !== flushLink);
+
+    pushRuntime.flushing = true;
+    return { pushRuntime, pushEntries, isStale };
+  }
+
+  private async handlePushBatchResult(
+    linkKey: string,
+    batch: PushFlushBatch,
+    result: PushResult,
+  ): Promise<void> {
+    if (batch.isStale()) { return; }
+
+    this.clearSucceededPushFailures(result.succeeded, batch.pushRuntime.dwnUrl);
+    await this.recordPermanentPushFailures(batch.pushRuntime, result.permanentlyFailed);
+
+    if (result.failed.length > 0) {
+      this.requeueFailedPushes(linkKey, batch, result.failed);
       return;
     }
 
-    const cids = pushEntries.map((entry) => entry.cid);
-    pushRuntime.flushing = true;
+    this.cleanupSuccessfulPushRuntime(linkKey, batch.pushRuntime);
+  }
 
-    try {
-      const result = await pushMessages({
-        did, dwnUrl, delegateDid, permissionGrantIds,
-        messageCids : cids,
-        agent       : this.agent,
+  private clearSucceededPushFailures(cids: string[], dwnUrl: string): void {
+    for (const cid of cids) {
+      this.clearFailedMessage(cid, dwnUrl).catch(() => { /* teardown race */ });
+    }
+  }
+
+  private async recordPermanentPushFailures(
+    pushRuntime: PushRuntimeState,
+    permanentlyFailed: PushResult['permanentlyFailed'],
+  ): Promise<void> {
+    for (const entry of permanentlyFailed) {
+      await this.recordDeadLetter({
+        messageCid     : entry.cid,
+        tenantDid      : pushRuntime.did,
+        remoteEndpoint : pushRuntime.dwnUrl,
+        protocol       : pushRuntime.protocol,
+        category       : 'push-permanent',
+        errorCode      : String(entry.statusCode ?? ''),
+        errorDetail    : entry.detail ?? 'permanent push failure',
       });
+    }
+  }
 
-      // If the link was replaced during pushMessages, abandon all
-      // post-push state mutations — the replacement session owns this key.
-      if (isFlushStale()) { return; }
+  private requeueFailedPushes(linkKey: string, batch: PushFlushBatch, failedCids: string[]): void {
+    if (batch.isStale()) { return; }
 
-      // Auto-clear dead letters for CIDs that succeeded — a previously
-      // failed message may have been repaired by reconciliation.
-      for (const cid of result.succeeded) {
-        this.clearFailedMessage(cid, dwnUrl).catch(() => { /* teardown race */ });
-      }
+    const { did, dwnUrl, delegateDid, protocol, permissionGrantIds, retryCount } = batch.pushRuntime;
+    const failedSet = new Set(failedCids);
+    const failedEntries = batch.pushEntries.filter((entry) => failedSet.has(entry.cid));
+    this.requeueOrReconcile(linkKey, {
+      did,
+      dwnUrl,
+      delegateDid,
+      protocol,
+      permissionGrantIds,
+      entries    : failedEntries,
+      retryCount : retryCount + 1,
+    });
+  }
 
-      // Record permanently failed messages in the dead letter store.
-      for (const entry of result.permanentlyFailed) {
-        await this.recordDeadLetter({
-          messageCid     : entry.cid,
-          tenantDid      : did,
-          remoteEndpoint : dwnUrl,
-          protocol,
-          category       : 'push-permanent',
-          errorCode      : String(entry.statusCode ?? ''),
-          errorDetail    : entry.detail ?? 'permanent push failure',
-        });
-      }
+  private cleanupSuccessfulPushRuntime(linkKey: string, pushRuntime: PushRuntimeState): void {
+    // Successful push — reset retry count so subsequent unrelated batches on
+    // this link start with a fresh budget.
+    pushRuntime.retryCount = 0;
+    if (!pushRuntime.timer && pushRuntime.entries.length === 0) {
+      this._pushRuntimes.delete(linkKey);
+    }
+  }
 
-      if (result.failed.length > 0) {
-        if (isFlushStale()) { return; }
-        const failedSet = new Set(result.failed);
-        const failedEntries = pushEntries.filter((entry) => failedSet.has(entry.cid));
-        this.requeueOrReconcile(linkKey, {
-          did, dwnUrl, delegateDid, protocol, permissionGrantIds,
-          entries    : failedEntries,
-          retryCount : retryCount + 1,
-        });
-      } else {
-        // Successful push — reset retry count so subsequent unrelated
-        // batches on this link start with a fresh budget.
-        pushRuntime.retryCount = 0;
-        if (!pushRuntime.timer && pushRuntime.entries.length === 0) {
-          this._pushRuntimes.delete(linkKey);
-        }
-      }
-    } catch (error: any) {
-      if (isFlushStale()) { return; }
-      console.error(`SyncEngineLevel: Push batch failed for ${did} -> ${dwnUrl}`, error);
-      this.requeueOrReconcile(linkKey, {
-        did, dwnUrl, delegateDid, protocol, permissionGrantIds,
-        entries    : pushEntries,
-        retryCount : retryCount + 1,
-      });
-    } finally {
-      pushRuntime.flushing = false;
+  private finishPushFlush(linkKey: string, pushRuntime: PushRuntimeState): void {
+    pushRuntime.flushing = false;
 
-      // If new entries accumulated while this push was in flight, schedule
-      // a short drain to flush them. This gives a brief batching window
-      // for burst writes while keeping single-write latency low.
-      const rt = this._pushRuntimes.get(linkKey);
-      if (rt && rt.entries.length > 0 && !rt.timer) {
-        rt.timer = setTimeout((): void => {
-          rt.timer = undefined;
-          void this.flushPendingPushesForLink(linkKey);
-        }, PUSH_DEBOUNCE_MS);
-      }
+    // If new entries accumulated while this push was in flight, schedule a
+    // short drain to flush them. This gives a brief batching window for burst
+    // writes while keeping single-write latency low.
+    const rt = this._pushRuntimes.get(linkKey);
+    if (rt && rt.entries.length > 0 && !rt.timer) {
+      rt.timer = setTimeout((): void => {
+        rt.timer = undefined;
+        void this.flushPendingPushesForLink(linkKey);
+      }, PUSH_DEBOUNCE_MS);
     }
   }
 
@@ -2157,7 +2399,7 @@ export class SyncEngineLevel implements SyncEngine {
   private requeueOrReconcile(targetKey: string, pending: {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
     permissionGrantIds?: NonEmptyStringArray;
-    entries: { cid: string }[];
+    entries: PushRuntimeEntry[];
     retryCount: number;
   }): void {
     const maxRetries = SyncEngineLevel.PUSH_RETRY_BACKOFF_MS.length;
