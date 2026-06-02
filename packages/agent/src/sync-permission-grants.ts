@@ -5,12 +5,13 @@ import type { PermissionGrantEntry, PermissionsApi } from './types/permissions.j
 
 import { Jws, Message, PermissionScopeMatcher } from '@enbox/dwn-sdk-js';
 
+import { lexicographicalCompare } from './types/sync.js';
 /** Returns a sorted, duplicate-free grant ID set, or `undefined` for owner requests. */
 export function toMessagesPermissionGrantIds(permissionGrantIds: string[] | undefined): NonEmptyStringArray | undefined {
   if (permissionGrantIds === undefined || permissionGrantIds.length === 0) {
     return undefined;
   }
-  return [...new Set(permissionGrantIds)].sort((a, b) => a.localeCompare(b)) as NonEmptyStringArray;
+  return [...new Set(permissionGrantIds)].sort(lexicographicalCompare) as NonEmptyStringArray;
 }
 
 /**
@@ -57,7 +58,7 @@ export async function getMessagesPermissionGrantsForScope({
 
   return permissionGrants
     .filter(entry => grantParticipatesInProjection(entry, protocols))
-    .sort((a, b) => a.grant.id.localeCompare(b.grant.id));
+    .sort((a, b) => lexicographicalCompare(a.grant.id, b.grant.id));
 }
 
 /** Converts permission grant entries into authorization epoch inputs. */
@@ -71,7 +72,7 @@ export function toSyncAuthorizationGrants(permissionGrants: PermissionGrantEntry
       dateGranted : grant.dateGranted,
       id          : grant.id,
     }))
-    .sort((a, b) => a.id.localeCompare(b.id)) as [SyncAuthorizationGrant, ...SyncAuthorizationGrant[]];
+    .sort((a, b) => lexicographicalCompare(a.id, b.id)) as [SyncAuthorizationGrant, ...SyncAuthorizationGrant[]];
 }
 
 function isActiveMessagesGrant(

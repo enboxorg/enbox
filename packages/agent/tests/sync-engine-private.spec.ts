@@ -318,6 +318,25 @@ describe('SyncEngineLevel — private methods', () => {
       expect(result.map(entry => entry.grant.id)).toEqual(['grant-b']);
     });
 
+    it('should reject delegated full sync without an unscoped grant', async () => {
+      const permissionsApi = {
+        fetchGrants: sinon.stub().resolves([
+          grantEntry('grant-profile', {
+            interface : 'Messages',
+            method    : 'Read',
+            protocol  : 'https://example.com/profile',
+          }),
+        ]),
+      };
+
+      await expect(getMessagesPermissionGrantsForScope({
+        did            : 'did:example:alice',
+        delegateDid    : 'did:example:delegate',
+        messageType    : DwnInterface.MessagesSync,
+        permissionsApi : permissionsApi as any,
+      })).rejects.toThrow('No active Messages.Read permission found for MessagesSync: all protocols');
+    });
+
     it('should return all active grants that participate in a protocol-set projection', async () => {
       const unscoped = grantEntry('grant-c', { interface: 'Messages', method: 'Read' });
       const profile = grantEntry('grant-b', {
@@ -924,6 +943,34 @@ describe('SyncEngineLevel — private methods', () => {
       await (syncEngine as any).teardownLiveSync();
 
       expect((syncEngine as any)._pushRuntimes.size).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // initializeLinkTargetWithRetry
+  // ---------------------------------------------------------------------------
+
+  describe('initializeLinkTargetWithRetry', () => {
+    it('should retry a DID-resolution verification failure and then succeed', async () => {
+      const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
+      const initializeStub = sinon.stub(engine as any, 'initializeLinkTarget');
+      initializeStub.onFirstCall().rejects(new Error('GeneralJwsVerifierGetPublicKeyNotFound: unable to resolve DID'));
+      initializeStub.onSecondCall().resolves();
+
+      const originalDelays = (SyncEngineLevel as any).DID_RESOLUTION_RETRY_BACKOFF_MS;
+      (SyncEngineLevel as any).DID_RESOLUTION_RETRY_BACKOFF_MS = [0];
+      try {
+        await (engine as any).initializeLinkTargetWithRetry(syncTarget('did:example:alice', 'https://dwn.example.com'));
+      } finally {
+        (SyncEngineLevel as any).DID_RESOLUTION_RETRY_BACKOFF_MS = originalDelays;
+      }
+
+      expect(initializeStub.callCount).toBe(2);
+    });
+
+    it('should not classify unrelated notFound errors as DID-resolution failures', () => {
+      const engine = createEngine({ db });
+      expect((engine as any).isDidResolutionFailure(new Error('record notFound in local cache'))).toBe(false);
     });
   });
 
@@ -1809,6 +1856,110 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._liveSubscriptions = [];
     });
 
+    it('should process an in-scope RecordsDelete using its initial write protocol', async () => {
+      const processMessageStub = sinon.stub().resolves({ status: { code: 202 } });
+      const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
+      const engine = createEngine({ db, agent });
+
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = {
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' },
+        scope              : { kind: 'protocolSet', protocols: ['https://example.com/profile'] }, status             : 'live',
+        pull               : {}, connectivity       : 'online', needsReconcile     : false,
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+      sinon.stub(engine as any, 'ensureClosureComplete').resolves(true);
+      (engine as any)._ledger = { saveLink: sinon.stub().resolves() };
+
+      await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
+
+      const cursor = { streamId: 's1', epoch: 'e1', position: '2', messageCid: 'cid-delete' };
+      await getHandler()({
+        type  : 'event',
+        cursor,
+        event : {
+          message      : { descriptor: { interface: 'Records', method: 'Delete', recordId: 'record-1' } },
+          initialWrite : { descriptor: { interface: 'Records', method: 'Write', protocol: 'https://example.com/profile' } },
+        },
+      });
+
+      expect(processMessageStub.calledOnce).toBe(true);
+      expect(link.pull.contiguousAppliedToken).toEqual(cursor);
+      (engine as any)._liveSubscriptions = [];
+    });
+
+    it('should skip and checkpoint an out-of-scope RecordsDelete', async () => {
+      const processMessageStub = sinon.stub().resolves({ status: { code: 202 } });
+      const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
+      const engine = createEngine({ db, agent });
+
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = {
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' },
+        scope              : { kind: 'protocolSet', protocols: ['https://example.com/profile'] }, status             : 'live',
+        pull               : {}, connectivity       : 'online', needsReconcile     : false,
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+      (engine as any)._ledger = { saveLink: sinon.stub().resolves() };
+
+      await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
+
+      const cursor = { streamId: 's1', epoch: 'e1', position: '3', messageCid: 'cid-delete-out' };
+      await getHandler()({
+        type  : 'event',
+        cursor,
+        event : {
+          message      : { descriptor: { interface: 'Records', method: 'Delete', recordId: 'record-1' } },
+          initialWrite : { descriptor: { interface: 'Records', method: 'Write', protocol: 'https://example.com/other' } },
+        },
+      });
+
+      expect(processMessageStub.called).toBe(false);
+      expect(link.pull.contiguousAppliedToken).toEqual(cursor);
+      (engine as any)._liveSubscriptions = [];
+    });
+
+    it('should repair instead of checkpointing an unclassifiable scoped RecordsDelete', async () => {
+      const processMessageStub = sinon.stub().resolves({ status: { code: 202 } });
+      const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
+      const engine = createEngine({ db, agent });
+      sinon.stub(engine as any, 'repairLink').resolves();
+      const consoleStub = sinon.stub(console, 'warn');
+
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = {
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' },
+        scope              : { kind: 'protocolSet', protocols: ['https://example.com/profile'] }, status             : 'live',
+        pull               : {}, connectivity       : 'online', needsReconcile     : false,
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+      (engine as any)._ledger = {
+        setStatus: sinon.stub().callsFake(async (targetLink: any, status: string) => { targetLink.status = status; }),
+      };
+
+      await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
+
+      await getHandler()({
+        type   : 'event',
+        cursor : { streamId: 's1', epoch: 'e1', position: '4', messageCid: 'cid-delete-unknown' },
+        event  : {
+          message: { descriptor: { interface: 'Records', method: 'Delete', recordId: 'record-1' } },
+        },
+      });
+
+      expect(processMessageStub.called).toBe(false);
+      expect(link.pull.contiguousAppliedToken).toBeUndefined();
+      expect(link.status).toBe('repairing');
+      expect(consoleStub.called).toBe(true);
+      (engine as any)._liveSubscriptions = [];
+    });
+
     it('should handle processMessage errors gracefully in event handler', async () => {
       const processMessageStub = sinon.stub().rejects(new Error('process failed'));
       const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
@@ -1953,6 +2104,92 @@ describe('SyncEngineLevel — private methods', () => {
       // CID is undefined, so nothing should be accumulated
       expect((engine as any)._pushRuntimes.size).toBe(0);
 
+      (engine as any)._localSubscriptions = [];
+    });
+
+    it('should push an in-scope RecordsDelete using its initial write protocol', async () => {
+      let capturedHandler: any;
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          processRequest: sinon.stub().callsFake(async (params: any): Promise<any> => {
+            capturedHandler = params.subscriptionHandler;
+            return {
+              reply: {
+                status       : { code: 200, detail: 'OK' },
+                subscription : { close: sinon.stub().resolves() },
+              },
+            };
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      sinon.stub(engine as any, 'flushPendingPushesForLink').resolves();
+      const pushLinkKey = 'did:example:alice^https://dwn.example.com';
+      (engine as any)._activeLinks.set(pushLinkKey, {
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
+      });
+
+      await (engine as any).openLocalPushSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey: pushLinkKey }));
+
+      await capturedHandler({
+        type  : 'event',
+        event : {
+          message      : { descriptor: { interface: 'Records', method: 'Delete', recordId: 'record-1' } },
+          initialWrite : { descriptor: { interface: 'Records', method: 'Write', protocol: 'https://example.com/profile' } },
+        },
+      });
+
+      const runtime = (engine as any)._pushRuntimes.get(pushLinkKey);
+      expect(runtime?.entries).toHaveLength(1);
+      (engine as any)._pushRuntimes.clear();
+      (engine as any)._localSubscriptions = [];
+    });
+
+    it('should mark the link for reconcile when a scoped local RecordsDelete cannot be classified', async () => {
+      let capturedHandler: any;
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          processRequest: sinon.stub().callsFake(async (params: any): Promise<any> => {
+            capturedHandler = params.subscriptionHandler;
+            return {
+              reply: {
+                status       : { code: 200, detail: 'OK' },
+                subscription : { close: sinon.stub().resolves() },
+              },
+            };
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      sinon.stub(engine as any, 'scheduleReconcile').returns(undefined);
+      const saveLinkStub = sinon.stub().resolves();
+      (engine as any)._ledger = { saveLink: saveLinkStub };
+      const pushLinkKey = 'did:example:alice^https://dwn.example.com';
+      const link = {
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        scope          : { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
+        needsReconcile : false,
+      };
+      (engine as any)._activeLinks.set(pushLinkKey, link);
+
+      await (engine as any).openLocalPushSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey: pushLinkKey }));
+
+      await capturedHandler({
+        type  : 'event',
+        event : {
+          message: { descriptor: { interface: 'Records', method: 'Delete', recordId: 'record-1' } },
+        },
+      });
+      await Promise.resolve();
+
+      expect(link.needsReconcile).toBe(true);
+      expect(saveLinkStub.calledOnce).toBe(true);
+      expect((engine as any)._pushRuntimes.size).toBe(0);
       (engine as any)._localSubscriptions = [];
     });
 
@@ -2252,7 +2489,7 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 2: Repair orchestration and degraded_poll
+  // Repair orchestration and degraded polling
   // ---------------------------------------------------------------------------
 
   describe('repairLink', () => {

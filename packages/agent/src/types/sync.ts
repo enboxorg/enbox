@@ -2,6 +2,13 @@ import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './agent.js';
 
+/** Deterministic bytewise string comparator for hash inputs and canonical IDs. */
+export function lexicographicalCompare(a: string, b: string): number {
+  if (a > b) { return 1; }
+  if (a < b) { return -1; }
+  return 0;
+}
+
 /**
  * The SyncEngine is responsible for syncing messages between the agent and the platform.
  */
@@ -98,7 +105,7 @@ export type SyncAuthorizationGrant = {
  * Normalizes a protocol list into canonical scope-union order.
  */
 export function normalizeSyncProtocols(protocols: [string, ...string[]] | string[]): SyncProtocolSet {
-  const unique = [...new Set(protocols)].sort((a, b) => a.localeCompare(b));
+  const unique = [...new Set(protocols)].sort(lexicographicalCompare);
   if (unique.length === 0) {
     throw new Error('SyncScope: protocol-set scope requires at least one protocol URI.');
   }
@@ -181,7 +188,7 @@ export async function computeAuthorizationEpoch(input:
   }
 
   const grants = [...input.grants]
-    .sort((a, b) => a.id.localeCompare(b.id))
+    .sort((a, b) => lexicographicalCompare(a.id, b.id))
     .map(grant => ({
       dateExpires : grant.dateExpires,
       dateGranted : grant.dateGranted,

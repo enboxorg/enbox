@@ -12,7 +12,7 @@ import { Encoder, hashToHex, initDefaultHashes, Message, PermissionsProtocol } f
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
-import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncProtocolSet, SyncScope } from './types/sync.js';
+import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
@@ -22,7 +22,7 @@ import { ReplicationLedger } from './sync-replication-ledger.js';
 import { SyncLinkReconciler } from './sync-link-reconciler.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { buildLegacyCursorKey, buildLinkId } from './sync-link-id.js';
-import { computeAuthorizationEpoch, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
+import { computeAuthorizationEpoch, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { createClosureContext, invalidateClosureCache } from './sync-closure-types.js';
 import { fetchRemoteMessages, pullMessages, pushMessages } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
@@ -62,8 +62,6 @@ type LiveSubscription = {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
-  protocol?: string;
-  protocols?: SyncProtocolSet;
   close: () => Promise<void>;
 };
 
@@ -73,8 +71,6 @@ type LocalSubscription = {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
-  protocol?: string;
-  protocols?: SyncProtocolSet;
   close: () => Promise<void>;
 };
 
@@ -109,21 +105,39 @@ type InFlightCommit = {
   committed: boolean;
 };
 
-/**
- * Checks whether an event belongs to the link's current sync scope.
- *
- * Full links accept every message. Protocol-set links accept only messages
- * whose descriptor protocol is in the canonical set. ProtocolPath/contextId
- * filtering is deliberately absent here; add a projection-root builder before
- * those scopes become valid sync projections.
- */
-function isEventInScope(message: GenericMessage, scope: SyncScope): boolean {
-  if (scope.kind === 'full') { return true; }
+type EventScopeClassification = 'in-scope' | 'out-of-scope' | 'unknown';
 
-  const descriptor = message.descriptor as Record<string, unknown>;
-  const protocol = descriptor.protocol;
+/**
+ * Classifies whether an event belongs to the link's current sync scope.
+ *
+ * Full links accept every message. Protocol-set links accept protocol
+ * records, protocol configures, and permission records tagged for a covered
+ * protocol. RecordsDelete has no descriptor protocol, so it must be classified
+ * from the event's initial write. If that metadata is missing, the caller must
+ * repair/reconcile instead of advancing past the event.
+ */
+function classifyEventScope(event: MessageEvent, scope: SyncScope): EventScopeClassification {
+  if (scope.kind === 'full') { return 'in-scope'; }
+
+  const descriptor = event.message.descriptor as Record<string, unknown>;
+  const scopedDescriptor = getScopedEventDescriptor(event);
+  if (scopedDescriptor === undefined) {
+    return 'unknown';
+  }
+
+  const protocol = scopedDescriptor.protocol;
+  if (protocol === PermissionsProtocol.uri && typeof scopedDescriptor.tags === 'object' && scopedDescriptor.tags !== null) {
+    const taggedProtocol = (scopedDescriptor.tags as Record<string, unknown>).protocol;
+    return typeof taggedProtocol === 'string' && scope.protocols.includes(taggedProtocol)
+      ? 'in-scope'
+      : 'out-of-scope';
+  }
+
   if (typeof protocol === 'string' && scope.protocols.includes(protocol)) {
-    return true;
+    return 'in-scope';
+  }
+  if (typeof protocol === 'string') {
+    return 'out-of-scope';
   }
 
   if (
@@ -133,15 +147,20 @@ function isEventInScope(message: GenericMessage, scope: SyncScope): boolean {
     descriptor.definition !== null
   ) {
     const definitionProtocol = (descriptor.definition as Record<string, unknown>).protocol;
-    return typeof definitionProtocol === 'string' && scope.protocols.includes(definitionProtocol);
+    return typeof definitionProtocol === 'string' && scope.protocols.includes(definitionProtocol)
+      ? 'in-scope'
+      : 'out-of-scope';
   }
 
-  if (protocol === PermissionsProtocol.uri && typeof descriptor.tags === 'object' && descriptor.tags !== null) {
-    const taggedProtocol = (descriptor.tags as Record<string, unknown>).protocol;
-    return typeof taggedProtocol === 'string' && scope.protocols.includes(taggedProtocol);
-  }
+  return 'out-of-scope';
+}
 
-  return false;
+function getScopedEventDescriptor(event: MessageEvent): Record<string, unknown> | undefined {
+  const descriptor = event.message.descriptor as Record<string, unknown>;
+  if (descriptor.interface === 'Records' && descriptor.method === 'Delete') {
+    return event.initialWrite?.descriptor as Record<string, unknown> | undefined;
+  }
+  return descriptor;
 }
 
 /**
@@ -164,7 +183,6 @@ type PushRuntimeState = {
   dwnUrl: string;
   delegateDid?: string;
   protocol?: string;
-  protocols?: SyncProtocolSet;
   permissionGrantIds?: NonEmptyStringArray;
   entries: PushRuntimeEntry[];
   retryCount: number;
@@ -373,6 +391,9 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** TTL for the sync targets cache (30 seconds). */
   private static readonly SYNC_TARGETS_CACHE_TTL_MS = 30_000;
+
+  /** Backoff schedule for recently published did:dht records. */
+  private static readonly DID_RESOLUTION_RETRY_BACKOFF_MS = [2000, 4000, 8000];
 
   /** Count of consecutive SMT sync failures (for backoff in poll mode). */
   private _consecutiveFailures = 0;
@@ -1537,8 +1558,7 @@ export class SyncEngineLevel implements SyncEngine {
     } catch (error: any) {
       if (!this.isDidResolutionFailure(error)) { throw error; }
 
-      const delays = [2000, 4000, 8000];
-      for (const delay of delays) {
+      for (const delay of SyncEngineLevel.DID_RESOLUTION_RETRY_BACKOFF_MS) {
         await sleep(delay);
         try {
           await this.initializeLinkTarget(target);
@@ -1554,7 +1574,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private isDidResolutionFailure(error: any): boolean {
     const message = error.message ?? '';
-    return message.includes('GetPublicKeyNotFound') || message.includes('notFound');
+    return message.includes('GetPublicKeyNotFound');
   }
 
   // ---------------------------------------------------------------------------
@@ -1740,14 +1760,14 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error(`SyncEngineLevel: MessagesSubscribe failed for ${did} -> ${dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
     }
 
+    const linkKey = cursorKey;
+    const close = async (): Promise<void> => { await reply.subscription!.close(); };
     this._liveSubscriptions.push({
-      linkKey   : cursorKey,
+      linkKey,
       did,
       dwnUrl,
       delegateDid,
-      protocol,
-      protocols : protocolsForSyncScope(target.scope),
-      close     : async (): Promise<void> => { await reply.subscription!.close(); },
+      close,
     });
 
     // Set per-link connectivity to online after successful subscription setup.
@@ -1904,9 +1924,17 @@ export class SyncEngineLevel implements SyncEngine {
       return true;
     }
 
-    if (link && !isEventInScope(subMessage.event.message, link.scope)) {
-      await this.skipOutOfScopePullEvent({ link, cursor: subMessage.cursor, isStale });
-      return true;
+    if (link) {
+      const scopeClassification = classifyEventScope(subMessage.event, link.scope);
+      if (scopeClassification === 'out-of-scope') {
+        await this.skipOutOfScopePullEvent({ link, cursor: subMessage.cursor, isStale });
+        return true;
+      }
+      if (scopeClassification === 'unknown') {
+        console.warn(`SyncEngineLevel: Unable to classify scoped pull event for ${did} -> ${dwnUrl}, transitioning to repair`);
+        if (!isStale()) { await this.transitionToRepairing(linkKey, link); }
+        return true;
+      }
     }
 
     return false;
@@ -2162,8 +2190,15 @@ export class SyncEngineLevel implements SyncEngine {
       // Events outside the scope are not this link's responsibility.
       const pushLinkKey = target.linkKey;
       const pushLink = this._activeLinks.get(pushLinkKey);
-      if (pushLink && !isEventInScope(subMessage.event.message, pushLink.scope)) {
-        return;
+      if (pushLink) {
+        const scopeClassification = classifyEventScope(subMessage.event, pushLink.scope);
+        if (scopeClassification === 'out-of-scope') {
+          return;
+        }
+        if (scopeClassification === 'unknown') {
+          this.markLinkNeedsReconcile(pushLinkKey, pushLink, 'push-scope-unclassified');
+          return;
+        }
       }
 
       // Accumulate the message CID for a debounced push.
@@ -2185,8 +2220,7 @@ export class SyncEngineLevel implements SyncEngine {
         dwnUrl,
         delegateDid,
         protocol,
-        protocols          : protocolsForSyncScope(target.scope),
-        permissionGrantIds : target.permissionGrantIds,
+        permissionGrantIds: target.permissionGrantIds,
       });
       pushRuntime.entries.push({ cid });
 
@@ -2215,14 +2249,14 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
     }
 
+    const linkKey = target.linkKey ?? buildLegacyCursorKey(did, dwnUrl, protocol);
+    const close = async (): Promise<void> => { await reply.subscription!.close(); };
     this._localSubscriptions.push({
-      linkKey   : target.linkKey ?? buildLegacyCursorKey(did, dwnUrl, protocol),
+      linkKey,
       did,
       dwnUrl,
       delegateDid,
-      protocol,
-      protocols : protocolsForSyncScope(target.scope),
-      close     : async (): Promise<void> => { await reply.subscription!.close(); },
+      close,
     });
   }
 
@@ -2423,12 +2457,8 @@ export class SyncEngineLevel implements SyncEngine {
       }
       this._pushRuntimes.delete(targetKey);
       const link = this._activeLinks.get(targetKey);
-      if (link && !link.needsReconcile) {
-        link.needsReconcile = true;
-        void this.ledger.saveLink(link).then(() => {
-          this.emitEvent({ type: 'reconcile:needed', tenantDid: pending.did, remoteEndpoint: pending.dwnUrl, protocol: pending.protocol, reason: 'push-retry-exhausted' });
-          this.scheduleReconcile(targetKey);
-        });
+      if (link) {
+        this.markLinkNeedsReconcile(targetKey, link, 'push-retry-exhausted');
       }
       return;
     }
@@ -2443,6 +2473,28 @@ export class SyncEngineLevel implements SyncEngine {
       pushRuntime.timer = undefined;
       void this.flushPendingPushesForLink(targetKey);
     }, delayMs);
+  }
+
+  private markLinkNeedsReconcile(linkKey: string, link: ReplicationLinkState, reason: string): void {
+    if (link.needsReconcile) {
+      this.scheduleReconcile(linkKey);
+      return;
+    }
+
+    link.needsReconcile = true;
+    void this.ledger.saveLink(link).then(() => {
+      const protocol = link.scope === undefined ? undefined : singleProtocolForSyncScope(link.scope);
+      this.emitEvent({
+        type           : 'reconcile:needed',
+        tenantDid      : link.tenantDid,
+        remoteEndpoint : link.remoteEndpoint,
+        protocol,
+        reason,
+      });
+      this.scheduleReconcile(linkKey);
+    }).catch((error: unknown) => {
+      console.error(`SyncEngineLevel: Failed to mark link for reconciliation ${link.tenantDid} -> ${link.remoteEndpoint}`, error);
+    });
   }
 
   private createLinkReconciler(shouldContinue?: () => boolean): SyncLinkReconciler {
@@ -2623,7 +2675,6 @@ export class SyncEngineLevel implements SyncEngine {
     dwnUrl: string;
     delegateDid?: string;
     protocol?: string;
-    protocols?: SyncProtocolSet;
     permissionGrantIds?: NonEmptyStringArray;
   }): PushRuntimeState {
     let pushRuntime = this._pushRuntimes.get(linkKey);
@@ -3267,7 +3318,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
     // Deterministic ordering: newest first so apps see the most recent failures.
-    entries.sort((a, b) => b.failedAt.localeCompare(a.failedAt));
+    entries.sort((a, b) => lexicographicalCompare(b.failedAt, a.failedAt));
     return entries;
   }
 

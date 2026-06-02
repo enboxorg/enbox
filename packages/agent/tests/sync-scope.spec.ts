@@ -105,4 +105,31 @@ describe('sync scope identity', () => {
 
     expect(epoch1).toBe(epoch2);
   });
+
+  it('keeps projection ID stable while changing authorization epoch for a re-grant of the same scope', async () => {
+    const tenantDid = 'did:example:alice';
+    const scope = syncScopeFromProtocols([
+      'https://example.com/social',
+      'https://example.com/profile',
+    ]);
+    const sameScope = syncScopeFromProtocols([
+      'https://example.com/profile',
+      'https://example.com/social',
+    ]);
+    const projectionId = await computeProjectionId(tenantDid, scope);
+    const sameProjectionId = await computeProjectionId(tenantDid, sameScope);
+    const oldEpoch = await computeAuthorizationEpoch({
+      kind        : 'delegate',
+      delegateDid : 'did:example:delegate',
+      grants      : [{ id: 'grant-old', dateExpires: '2027-01-01T00:00:00.000000Z' }],
+    });
+    const newEpoch = await computeAuthorizationEpoch({
+      kind        : 'delegate',
+      delegateDid : 'did:example:delegate',
+      grants      : [{ id: 'grant-new', dateExpires: '2027-01-01T00:00:00.000000Z' }],
+    });
+
+    expect(projectionId).toBe(sameProjectionId);
+    expect(oldEpoch).not.toBe(newEpoch);
+  });
 });
