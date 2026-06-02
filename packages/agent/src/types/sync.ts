@@ -34,22 +34,23 @@ export type SyncMode = 'poll' | 'live';
 // ---------------------------------------------------------------------------
 
 /**
- * Projection-root algorithm used for B1 sync links.
+ * Projection-root algorithm used by the current full/protocol sync scopes.
  *
- * B1 compares either the existing full-tenant StateIndex root or existing
+ * Sync compares either the existing full-tenant StateIndex root or existing
  * per-protocol StateIndex roots. ProtocolPath/contextId projection roots are
- * intentionally not represented here; they belong to the later B2 root builder.
+ * intentionally not represented here; add a projection-root builder before
+ * enabling those scopes.
  */
-export const SYNC_PROJECTION_ROOT_VERSION = 'b1-state-index-root-v1';
+export const SYNC_PROJECTION_ROOT_VERSION = 'state-index-full-protocol-root-v1';
 
 /**
- * Authorization-epoch algorithm used for B1 sync links.
+ * Authorization-epoch algorithm used by delegated Messages.Read sync links.
  *
  * The authorization epoch is separate from the projection ID: re-granting the
  * same scope or changing delegate grants must invalidate in-flight work without
  * changing the primary CID set being compared.
  */
-export const SYNC_AUTHORIZATION_EPOCH_VERSION = 'b1-messages-read-grants-v1';
+export const SYNC_AUTHORIZATION_EPOCH_VERSION = 'messages-read-grants-v1';
 
 /** A non-empty, sorted, duplicate-free string list. */
 export type NonEmptyStringArray = [string, ...string[]];
@@ -60,9 +61,10 @@ export type SyncProtocolSet = NonEmptyStringArray;
 /**
  * Describes the primary CID set a replication link syncs.
  *
- * B1 supports full-tenant sync and protocol-set sync. A protocol-set link owns
+ * Sync currently supports full-tenant sync and protocol-set sync. A protocol-set link owns
  * one durable subscription/cursor for the whole set; reconciliation still walks
- * the existing per-protocol roots until B2 adds arbitrary projection roots.
+ * the existing per-protocol roots until dedicated path/context projection roots
+ * are implemented.
  */
 export type SyncScope = {
   /** Full-tenant projection. Valid only for owner sync or unscoped delegated grants. */
@@ -103,7 +105,7 @@ export function normalizeSyncProtocols(protocols: [string, ...string[]] | string
   return unique as SyncProtocolSet;
 }
 
-/** Converts persisted identity options into the canonical B1 sync scope. */
+/** Converts persisted identity options into the canonical sync scope. */
 export function syncScopeFromProtocols(protocols: SyncIdentityOptions['protocols']): SyncScope {
   return protocols === 'all'
     ? { kind: 'full' }
@@ -147,7 +149,7 @@ export function canonicalizeSyncScope(scope: SyncScope): SyncScope {
 /**
  * Computes a deterministic, collision-resistant projection ID.
  *
- * The projection ID is derived from tenant DID, normalized scope, and the B1
+ * The projection ID is derived from tenant DID, normalized scope, and the
  * projection-root algorithm version. It intentionally excludes endpoint,
  * grant IDs, authorization epoch, and remote diff contents.
  */

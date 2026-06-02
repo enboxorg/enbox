@@ -110,12 +110,12 @@ type InFlightCommit = {
 };
 
 /**
- * Checks whether an event belongs to a B1 link scope.
+ * Checks whether an event belongs to the link's current sync scope.
  *
  * Full links accept every message. Protocol-set links accept only messages
  * whose descriptor protocol is in the canonical set. ProtocolPath/contextId
- * filtering is deliberately absent here; B2 will add a projection-root builder
- * before those scopes become valid sync projections.
+ * filtering is deliberately absent here; add a projection-root builder before
+ * those scopes become valid sync projections.
  */
 function isEventInScope(message: GenericMessage, scope: SyncScope): boolean {
   if (scope.kind === 'full') { return true; }
@@ -837,7 +837,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Per-link repair and degraded-poll orchestration (Phase 2)
+  // Per-link repair and degraded-poll orchestration
   // ---------------------------------------------------------------------------
 
   /** Maximum consecutive repair attempts before falling back to degraded_poll. */

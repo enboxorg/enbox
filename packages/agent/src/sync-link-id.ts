@@ -21,7 +21,7 @@ export function buildLinkId(
 /**
  * Build the legacy cursor key used by the deprecated `syncCursors` sublevel.
  *
- * This remains only for one-time migration of pre-Phase-1f data.
+ * This remains only for one-time migration from the legacy cursor-key format.
  */
 export function buildLegacyCursorKey(tenantDid: string, remoteEndpoint: string, protocol?: string): string {
   const base = `${tenantDid}${LINK_ID_SEPARATOR}${remoteEndpoint}`;

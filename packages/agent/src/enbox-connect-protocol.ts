@@ -1482,7 +1482,7 @@ async function submitConnectResponse(
     // below, but we must NOT iterate over them (they are meta-grants, not session grants).
     sessionGrantCount = delegateGrants.length;
 
-    // Phase 1: create all revocation grants locally with bounded concurrency.
+    // Create all revocation grants locally with bounded concurrency.
     // createGrant is local-only (storage + signing) so it's cheap, but we still
     // cap parallelism to avoid head-of-line blocking when sessionGrantCount is
     // large (e.g. dapp requesting many scopes at once).
@@ -1508,10 +1508,10 @@ async function submitConnectResponse(
       ),
     );
 
-    // Phase 2: fan out every revocation grant to every owner DWN endpoint with
-    // a single global concurrency cap so that (grants × endpoints) cannot blow
-    // up. This is best-effort (sync delivers eventually) so individual failures
-    // are tolerated by `mapConcurrentSettled`.
+    // Fan out every revocation grant to every owner DWN endpoint with a single
+    // global concurrency cap so that (grants × endpoints) cannot blow up. This
+    // is best-effort (sync delivers eventually) so individual failures are
+    // tolerated by `mapConcurrentSettled`.
     const revSendTasks = revGrantResults.flatMap(({ grantMessage, revGrant }) => {
       sessionRevocations.push({
         grantId           : grantMessage.recordId,
