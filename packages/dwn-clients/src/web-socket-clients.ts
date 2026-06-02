@@ -144,11 +144,15 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     const { socket, subscriptions } = connection;
     let terminalSubscriptionError = false;
+    const closeSubscription = (subscription: MessageSubscription): void => {
+      subscription.close().catch(() => {});
+    };
+
     const closeTrackedSubscription = (): void => {
       terminalSubscriptionError = true;
       const tracked = subscriptions.get(subscriptionId);
       if (tracked) {
-        void tracked.subscription.close();
+        closeSubscription(tracked.subscription);
       }
       subscriptions.delete(subscriptionId);
     };
@@ -207,7 +211,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
       reply.subscription.close = wrappedClose;
       if (terminalSubscriptionError) {
-        void wrappedClose();
+        wrappedClose().catch(() => {});
       } else {
         subscriptions.set(subscriptionId, tracked);
       }

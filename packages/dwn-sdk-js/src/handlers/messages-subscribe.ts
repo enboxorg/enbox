@@ -1,6 +1,6 @@
 import type { MessageStore } from '../types/message-store.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
-import type { EventSubscription, ProgressGapInfo, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
+import type { EventSubscription, ProgressGapInfo, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
 
@@ -149,19 +149,10 @@ export class MessagesSubscribeHandler implements MethodHandler {
         return;
       }
       closeRequested = true;
-      void subscription?.close();
+      subscription?.close().catch(() => {});
     };
 
-    const listener: SubscriptionListener = async (subMessage: SubscriptionMessage): Promise<void> => {
-      if (closeRequested) {
-        return;
-      }
-
-      if (subMessage.type !== 'event') {
-        subscriptionHandler(subMessage);
-        return;
-      }
-
+    const authorizeAndDeliverEvent = async (subMessage: SubscriptionEvent): Promise<void> => {
       try {
         await MessagesGrantAuthorization.authorizeSubscribeDelivery({
           messagesSubscribeMessage : messagesSubscribe.message,
@@ -184,7 +175,22 @@ export class MessagesSubscribeHandler implements MethodHandler {
         return;
       }
 
-      subscriptionHandler(subMessage);
+      if (!closeRequested) {
+        subscriptionHandler(subMessage);
+      }
+    };
+
+    const listener: SubscriptionListener = (subMessage: SubscriptionMessage): void => {
+      if (closeRequested) {
+        return;
+      }
+
+      if (subMessage.type !== 'event') {
+        subscriptionHandler(subMessage);
+        return;
+      }
+
+      authorizeAndDeliverEvent(subMessage).catch(() => {});
     };
 
     return {
