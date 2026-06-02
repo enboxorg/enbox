@@ -1960,7 +1960,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should handle processMessage errors gracefully in event handler', async () => {
+    it('should repair without advancing checkpoint when live pull processing fails', async () => {
       const processMessageStub = sinon.stub().rejects(new Error('process failed'));
       const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
       const engine = createEngine({ db, agent });
@@ -1975,19 +1975,26 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
-      (engine as any)._ledger = { saveLink: sinon.stub().resolves(), setStatus: sinon.stub().resolves() };
+      (engine as any)._ledger = {
+        saveLink  : sinon.stub().resolves(),
+        setStatus : sinon.stub().callsFake(async (targetLink: any, status: string): Promise<void> => { targetLink.status = status; }),
+      };
+      sinon.stub(engine as any, 'repairLink').resolves();
 
       await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
 
       const handler = getHandler();
+      const failedCursor = { streamId: 's1', epoch: 'e1', position: '5', messageCid: 'cid-failed' };
 
       await handler({
         type   : 'event',
-        cursor : 'event-cursor-err',
-        event  : { message: { descriptor: {} } },
+        cursor : failedCursor,
+        event  : { message: { descriptor: { interface: 'Records', method: 'Write' } } },
       });
 
       expect(consoleStub.called).toBe(true);
+      expect(link.pull.contiguousAppliedToken).toBeUndefined();
+      expect(link.status).toBe('repairing');
 
       (engine as any)._liveSubscriptions = [];
     });
@@ -3537,6 +3544,36 @@ describe('SyncEngineLevel — private methods', () => {
       expect(connectivityEvent).toBeDefined();
       expect(connectivityEvent.from).toBe('online');
       expect(connectivityEvent.to).toBe('offline');
+    });
+
+    it('should emit protocols for multi-protocol link events', async () => {
+      const engine = createEngine({ db });
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      const link = {
+        tenantDid          : 'did:example:alice',
+        remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test',
+        authorizationEpoch : 'authorization-test',
+        authorization      : { kind: 'owner' },
+        scope              : { kind: 'protocolSet', protocols: ['https://example.com/chat', 'https://example.com/profile'] },
+        status             : 'live',
+        connectivity       : 'online',
+        pull               : {},
+      } as any;
+      const linkKey = 'test-link';
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = { setStatus: setStatusStub };
+      sinon.stub(engine as any, 'repairLink').resolves();
+
+      await (engine as any).transitionToRepairing(linkKey, link);
+
+      const statusEvent = events.find(e => e.type === 'link:status-change');
+      expect(statusEvent.protocol).toBeUndefined();
+      expect(statusEvent.protocols).toEqual(['https://example.com/chat', 'https://example.com/profile']);
     });
 
     it('should emit checkpoint:pull-advance only after durable save, not on drain alone', () => {

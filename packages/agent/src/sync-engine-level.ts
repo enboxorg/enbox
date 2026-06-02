@@ -12,7 +12,7 @@ import { Encoder, hashToHex, initDefaultHashes, Message, PermissionsProtocol } f
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
-import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
+import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncProtocolSet, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
@@ -201,7 +201,7 @@ type LivePullContext = {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
-  protocol?: string;
+  eventScope: SyncEventScope;
   linkKey: string;
   link?: ReplicationLinkState;
   permissionGrantIds?: NonEmptyStringArray;
@@ -212,6 +212,17 @@ type PullDelivery = {
   runtime?: LinkRuntimeState;
   ordinal: number;
 };
+
+function syncEventScope(scope: SyncScope | undefined): SyncEventScope {
+  if (scope === undefined || scope.kind === 'full') {
+    return {};
+  }
+
+  const protocols = [...scope.protocols] as SyncProtocolSet;
+  return protocols.length === 1
+    ? { protocol: protocols[0], protocols }
+    : { protocols };
+}
 
 export class SyncEngineLevel implements SyncEngine {
   /**
@@ -906,10 +917,10 @@ export class SyncEngineLevel implements SyncEngine {
     link.connectivity = 'offline';
     await this.ledger.setStatus(link, 'repairing');
 
-    const protocol = singleProtocolForSyncScope(link.scope);
-    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, protocol, from: prevStatus, to: 'repairing' });
+    const eventScope = syncEventScope(link.scope);
+    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevStatus, to: 'repairing' });
     if (prevConnectivity !== 'offline') {
-      this.emitEvent({ type: 'link:connectivity-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, protocol, from: prevConnectivity, to: 'offline' });
+      this.emitEvent({ type: 'link:connectivity-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevConnectivity, to: 'offline' });
     }
 
     if (options?.resumeToken) {
@@ -1017,9 +1028,9 @@ export class SyncEngineLevel implements SyncEngine {
     const isStaleLink = (): boolean => this._activeLinks.get(linkKey) !== link;
 
     const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, scope, authorization } = link;
-    const protocol = singleProtocolForSyncScope(scope);
+    const eventScope = syncEventScope(scope);
 
-    this.emitEvent({ type: 'repair:started', tenantDid: did, remoteEndpoint: dwnUrl, protocol, attempt: (this._repairAttempts.get(linkKey) ?? 0) + 1 });
+    this.emitEvent({ type: 'repair:started', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, attempt: (this._repairAttempts.get(linkKey) ?? 0) + 1 });
     const attempts = (this._repairAttempts.get(linkKey) ?? 0) + 1;
     this._repairAttempts.set(linkKey, attempts);
 
@@ -1122,11 +1133,11 @@ export class SyncEngineLevel implements SyncEngine {
       // not prove dependencies are usable. Keep closure failures until a later
       // successful apply/closure pass clears the specific CID.
       await this.clearRootConvergenceDeadLettersForScope(did, dwnUrl, scope);
-      this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
+      this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
       if (prevRepairConnectivity !== 'online') {
-        this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevRepairConnectivity, to: 'online' });
+        this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: prevRepairConnectivity, to: 'online' });
       }
-      this.emitEvent({ type: 'link:status-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: 'repairing', to: 'live' });
+      this.emitEvent({ type: 'link:status-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: 'repairing', to: 'live' });
 
     } catch (error: any) {
       // If teardown occurred during repair or the link was replaced by a
@@ -1134,7 +1145,7 @@ export class SyncEngineLevel implements SyncEngine {
       if (this._engineGeneration !== generation || isStaleLink()) { return; }
 
       console.error(`SyncEngineLevel: Repair failed for ${did} -> ${dwnUrl} (attempt ${attempts})`, error);
-      this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, protocol, attempt: attempts, error: String(error.message ?? error) });
+      this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, attempt: attempts, error: String(error.message ?? error) });
 
       if (attempts >= SyncEngineLevel.MAX_REPAIR_ATTEMPTS) {
         console.warn(`SyncEngineLevel: Max repair attempts reached for ${did} -> ${dwnUrl}, entering degraded_poll`);
@@ -1187,9 +1198,9 @@ export class SyncEngineLevel implements SyncEngine {
     const prevDegradedStatus = link.status;
     await this.ledger.setStatus(link, 'degraded_poll');
     this._repairAttempts.delete(linkKey);
-    const protocol = singleProtocolForSyncScope(link.scope);
-    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, protocol, from: prevDegradedStatus, to: 'degraded_poll' });
-    this.emitEvent({ type: 'degraded-poll:entered', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, protocol });
+    const eventScope = syncEventScope(link.scope);
+    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevDegradedStatus, to: 'degraded_poll' });
+    this.emitEvent({ type: 'degraded-poll:entered', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope });
 
     // Clear any existing timer for this link.
     const existing = this._degradedPollTimers.get(linkKey);
@@ -1304,7 +1315,7 @@ export class SyncEngineLevel implements SyncEngine {
             type           : 'link:connectivity-change',
             tenantDid      : link.tenantDid,
             remoteEndpoint : link.remoteEndpoint,
-            protocol       : singleProtocolForSyncScope(link.scope),
+            ...syncEventScope(link.scope),
             from           : prev,
             to             : 'offline',
           });
@@ -1493,7 +1504,7 @@ export class SyncEngineLevel implements SyncEngine {
       type           : 'link:status-change',
       tenantDid      : target.did,
       remoteEndpoint : target.dwnUrl,
-      protocol       : singleProtocolForSyncScope(target.scope),
+      ...syncEventScope(target.scope),
       from           : 'initializing',
       to             : 'live'
     });
@@ -1519,7 +1530,7 @@ export class SyncEngineLevel implements SyncEngine {
         type           : 'gap:detected',
         tenantDid      : target.did,
         remoteEndpoint : target.dwnUrl,
-        protocol       : singleProtocolForSyncScope(target.scope),
+        ...syncEventScope(target.scope),
         reason         : 'ProgressGap'
       });
       await this.transitionToRepairing(linkKey, link, {
@@ -1663,7 +1674,7 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private async openLivePullSubscription(target: LinkSyncTarget): Promise<void> {
     const { did, delegateDid, dwnUrl } = target;
-    const protocol = singleProtocolForSyncScope(target.scope);
+    const eventScope = syncEventScope(target.scope);
 
     const cursorKey = target.linkKey;
     const link = this._activeLinks.get(cursorKey);
@@ -1686,7 +1697,7 @@ export class SyncEngineLevel implements SyncEngine {
       did,
       dwnUrl,
       delegateDid,
-      protocol,
+      eventScope,
       linkKey            : cursorKey,
       link,
       permissionGrantIds : target.permissionGrantIds,
@@ -1776,7 +1787,7 @@ export class SyncEngineLevel implements SyncEngine {
       const prevPullConnectivity = pullLink.connectivity;
       pullLink.connectivity = 'online';
       if (prevPullConnectivity !== 'online') {
-        this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: prevPullConnectivity, to: 'online' });
+        this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: prevPullConnectivity, to: 'online' });
       }
     }
   }
@@ -1837,7 +1848,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async handleLivePullEose(
-    { did, dwnUrl, protocol, linkKey, link, isStale }: LivePullContext,
+    { did, dwnUrl, eventScope, linkKey, link, isStale }: LivePullContext,
     subMessage: Extract<SubscriptionMessage, { type: 'eose' }>,
   ): Promise<void> {
     if (link) {
@@ -1858,13 +1869,13 @@ export class SyncEngineLevel implements SyncEngine {
       await this.ledger.saveLink(link);
     }
 
-    this.markPullLinkOnline({ did, dwnUrl, protocol, linkKey, link });
+    this.markPullLinkOnline({ did, dwnUrl, eventScope, linkKey, link });
   }
 
-  private markPullLinkOnline({ did, dwnUrl, protocol, linkKey, link }: {
+  private markPullLinkOnline({ did, dwnUrl, eventScope, linkKey, link }: {
     did: string;
     dwnUrl: string;
-    protocol?: string;
+    eventScope: SyncEventScope;
     linkKey: string;
     link?: ReplicationLinkState;
   }): void {
@@ -1876,7 +1887,7 @@ export class SyncEngineLevel implements SyncEngine {
     const previous = link.connectivity;
     link.connectivity = 'online';
     if (previous !== 'online') {
-      this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, protocol, from: previous, to: 'online' });
+      this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: previous, to: 'online' });
     }
     if (link.needsReconcile) {
       this.scheduleReconcile(linkKey, 500);
@@ -2107,7 +2118,7 @@ export class SyncEngineLevel implements SyncEngine {
       type           : 'checkpoint:pull-advance',
       tenantDid      : link.tenantDid,
       remoteEndpoint : link.remoteEndpoint,
-      protocol       : singleProtocolForSyncScope(link.scope),
+      ...syncEventScope(link.scope),
       position       : link.pull.contiguousAppliedToken.position,
       messageCid     : link.pull.contiguousAppliedToken.messageCid,
     });
@@ -2483,12 +2494,11 @@ export class SyncEngineLevel implements SyncEngine {
 
     link.needsReconcile = true;
     void this.ledger.saveLink(link).then(() => {
-      const protocol = link.scope === undefined ? undefined : singleProtocolForSyncScope(link.scope);
       this.emitEvent({
         type           : 'reconcile:needed',
         tenantDid      : link.tenantDid,
         remoteEndpoint : link.remoteEndpoint,
-        protocol,
+        ...syncEventScope(link.scope),
         reason,
       });
       this.scheduleReconcile(linkKey);
@@ -2638,7 +2648,7 @@ export class SyncEngineLevel implements SyncEngine {
     const isStaleLink = (): boolean => this._activeLinks.get(linkKey) !== link;
 
     const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, scope, authorization } = link;
-    const protocol = singleProtocolForSyncScope(scope);
+    const eventScope = syncEventScope(scope);
 
     try {
       const reconcileOutcome = await this.reconcileProjectionTarget({
@@ -2655,7 +2665,7 @@ export class SyncEngineLevel implements SyncEngine {
         // SMT roots match, so transport/apply failures for this link may no
         // longer be current. Closure failures are not cleared by root equality.
         await this.clearRootConvergenceDeadLettersForScope(did, dwnUrl, scope);
-        this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, protocol });
+        this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
       } else {
         // Roots still differ — retry after a delay. This can happen when
         // pushMessages() had permanent failures, pullMessages() partially

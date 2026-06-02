@@ -359,22 +359,35 @@ export type StartSyncParams = {
 // Sync observability events
 // ---------------------------------------------------------------------------
 
+/** Sync scope metadata attached to observability events. */
+export type SyncEventScope = {
+  /** Present only when the event belongs to a single-protocol link. */
+  protocol?: string;
+  /** Present when the event belongs to a protocol-set link. */
+  protocols?: SyncProtocolSet;
+};
+
+type SyncEventBase = {
+  tenantDid: string;
+  remoteEndpoint: string;
+} & SyncEventScope;
+
 /**
  * Events emitted by the sync engine at key state transitions.
  * Consumers subscribe via `SyncEngine.on('event', handler)` and can
  * hook these into metrics, logging, or UI state.
  */
 export type SyncEvent =
-  | { type: 'link:status-change'; tenantDid: string; remoteEndpoint: string; protocol?: string; from: LinkStatus; to: LinkStatus }
-  | { type: 'link:connectivity-change'; tenantDid: string; remoteEndpoint: string; protocol?: string; from: SyncConnectivityState; to: SyncConnectivityState }
-  | { type: 'checkpoint:pull-advance'; tenantDid: string; remoteEndpoint: string; protocol?: string; position: string; messageCid: string }
-  | { type: 'reconcile:needed'; tenantDid: string; remoteEndpoint: string; protocol?: string; reason: string }
-  | { type: 'reconcile:completed'; tenantDid: string; remoteEndpoint: string; protocol?: string }
-  | { type: 'repair:started'; tenantDid: string; remoteEndpoint: string; protocol?: string; attempt: number }
-  | { type: 'repair:completed'; tenantDid: string; remoteEndpoint: string; protocol?: string }
-  | { type: 'repair:failed'; tenantDid: string; remoteEndpoint: string; protocol?: string; attempt: number; error: string }
-  | { type: 'degraded-poll:entered'; tenantDid: string; remoteEndpoint: string; protocol?: string }
-  | { type: 'gap:detected'; tenantDid: string; remoteEndpoint: string; protocol?: string; reason: string };
+  | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
+  | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
+  | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid: string }
+  | SyncEventBase & { type: 'reconcile:needed'; reason: string }
+  | SyncEventBase & { type: 'reconcile:completed' }
+  | SyncEventBase & { type: 'repair:started'; attempt: number }
+  | SyncEventBase & { type: 'repair:completed' }
+  | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
+  | SyncEventBase & { type: 'degraded-poll:entered' }
+  | SyncEventBase & { type: 'gap:detected'; reason: string };
 
 export type SyncEventListener = (event: SyncEvent) => void;
 

@@ -18,6 +18,22 @@ function makeMessage(overrides: Record<string, unknown> = {}): GenericMessage {
   } as unknown as GenericMessage;
 }
 
+function makeAuthorizedMessage(
+  descriptorOverrides: Record<string, unknown>,
+  signaturePayload: Record<string, unknown>,
+): GenericMessage {
+  const payload = Buffer.from(JSON.stringify(signaturePayload)).toString('base64url');
+  return {
+    ...makeMessage(descriptorOverrides),
+    authorization: {
+      signature: {
+        payload,
+        signatures: [{ protected: payload, signature: 'fake' }],
+      },
+    },
+  } as unknown as GenericMessage;
+}
+
 describe('topologicalSort', () => {
   it('should return empty array for empty input', () => {
     const result = topologicalSort([]);
@@ -141,9 +157,10 @@ describe('topologicalSort', () => {
       } as unknown as GenericMessage,
     };
     const dependentMsg: SortEntry = {
-      message: makeMessage({
-        permissionGrantId: 'grant-rec-id',
-      }),
+      message: makeAuthorizedMessage(
+        { permissionGrantId: 'grant-rec-id' },
+        { permissionGrantId: 'grant-rec-id' },
+      ),
     };
 
     const result = topologicalSort([dependentMsg, grantMsg]);
@@ -164,11 +181,14 @@ describe('topologicalSort', () => {
       } as unknown as GenericMessage,
     };
     const dependentMsg: SortEntry = {
-      message: makeMessage({
-        interface          : DwnInterfaceName.Messages,
-        method             : DwnMethodName.Sync,
-        permissionGrantIds : ['grant-rec-id'],
-      }),
+      message: makeAuthorizedMessage(
+        {
+          interface          : DwnInterfaceName.Messages,
+          method             : DwnMethodName.Sync,
+          permissionGrantIds : ['grant-rec-id'],
+        },
+        { permissionGrantIds: ['grant-rec-id'] },
+      ),
     };
 
     const result = topologicalSort([dependentMsg, grantMsg]);

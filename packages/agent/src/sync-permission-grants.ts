@@ -125,12 +125,10 @@ export function permissionGrantIdsFromEntries(permissionGrants: PermissionGrantE
  * Returns the permission grant IDs invoked by a message.
  *
  * Real DWN messages use the author signature payload as the source of truth.
- * Unsigned in-memory fixtures fall back to descriptor fields so dependency
- * helpers can remain small and deterministic in unit tests.
  */
 export function getInvokedPermissionGrantIds(message: GenericMessage): string[] {
   if (message.authorization === undefined) {
-    return Message.getPermissionGrantIds(message.descriptor as unknown as GenericSignaturePayload);
+    return [];
   }
 
   try {

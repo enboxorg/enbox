@@ -18,8 +18,8 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName } from '../../src/index.js';
 
 
 export function testMessagesSyncHandler(): void {
@@ -540,6 +540,100 @@ export function testMessagesSyncHandler(): void {
           expect(reply.status.code).toBe(200);
           expect(reply.entries).toContain(await Message.getCid(recordMessage));
           expect(syncMsg.descriptor.permissionGrantIds).toEqual([...grantIds].sort());
+        });
+
+        it('rejects sync when any grant in a plural grant set is expired', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const protocol = 'http://plural-grant-sync-expired';
+          const now = Time.getCurrentTimestamp();
+
+          const { message: activeGrantMessage, dataStream: activeGrantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author      : alice,
+            grantedTo   : bob,
+            dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 }, now),
+            scope       : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol,
+            },
+          });
+          expect((await dwn.processMessage(alice.did, activeGrantMessage, { dataStream: activeGrantDataStream })).status.code).toBe(202);
+
+          const { message: expiredGrantMessage, dataStream: expiredGrantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author      : alice,
+            grantedTo   : bob,
+            dateGranted : Time.createOffsetTimestamp({ seconds: -120 }, now),
+            dateExpires : Time.createOffsetTimestamp({ seconds: -60 }, now),
+            scope       : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol,
+            },
+          });
+          expect((await dwn.processMessage(alice.did, expiredGrantMessage, { dataStream: expiredGrantDataStream })).status.code).toBe(202);
+
+          const { message: syncMsg } = await MessagesSync.create({
+            signer             : Jws.createSigner(bob),
+            action             : 'root',
+            protocol,
+            permissionGrantIds : [activeGrantMessage.recordId, expiredGrantMessage.recordId],
+          });
+
+          const reply = await dwn.processMessage(alice.did, syncMsg);
+          expect(reply.status.code).toBe(401);
+          expect(reply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantExpired);
+        });
+
+        it('rejects sync when any grant in a plural grant set is revoked', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const protocol = 'http://plural-grant-sync-revoked';
+
+          const { message: activeGrantMessage, dataStream: activeGrantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol,
+            },
+          });
+          expect((await dwn.processMessage(alice.did, activeGrantMessage, { dataStream: activeGrantDataStream })).status.code).toBe(202);
+
+          const revokedGrant = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol,
+            },
+          });
+          expect((await dwn.processMessage(alice.did, revokedGrant.message, { dataStream: revokedGrant.dataStream })).status.code).toBe(202);
+
+          const revocation = await PermissionsProtocol.createRevocation({
+            signer : Jws.createSigner(alice),
+            grant  : PermissionGrant.parse(revokedGrant.dataEncodedMessage),
+          });
+          const revocationReply = await dwn.processMessage(
+            alice.did,
+            revocation.recordsWrite.message,
+            { dataStream: DataStream.fromBytes(revocation.permissionRevocationBytes) }
+          );
+          expect(revocationReply.status.code).toBe(202);
+          await Time.minimalSleep();
+
+          const { message: syncMsg } = await MessagesSync.create({
+            signer             : Jws.createSigner(bob),
+            action             : 'root',
+            protocol,
+            permissionGrantIds : [activeGrantMessage.recordId, revokedGrant.message.recordId],
+          });
+
+          const reply = await dwn.processMessage(alice.did, syncMsg);
+          expect(reply.status.code).toBe(401);
+          expect(reply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantRevoked);
         });
 
         it('rejects sync with mismatching interface grant scope', async () => {
