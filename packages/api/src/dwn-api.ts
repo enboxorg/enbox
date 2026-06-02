@@ -762,6 +762,11 @@ export class DwnApi {
             return;
           }
 
+          if (msg.type === 'error') {
+            void liveQuery?.close();
+            return;
+          }
+
           if (msg.type === 'disconnected') {
             liveQuery?.handleLifecycleEvent('disconnected');
             return;

@@ -1,5 +1,6 @@
 ---
 "@enbox/agent": patch
+"@enbox/api": patch
 "@enbox/dwn-clients": patch
 "@enbox/dwn-sdk-js": patch
 ---
