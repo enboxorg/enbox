@@ -149,7 +149,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
         return;
       }
       closeRequested = true;
-      subscription?.close().catch(() => {});
+      Promise.resolve(subscription?.close()).catch(() => {});
     };
 
     const authorizeAndDeliverEvent = async (subMessage: SubscriptionEvent): Promise<void> => {

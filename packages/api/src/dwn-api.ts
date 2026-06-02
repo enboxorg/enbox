@@ -763,7 +763,7 @@ export class DwnApi {
           }
 
           if (msg.type === 'error') {
-            liveQuery?.close().catch(() => {});
+            Promise.resolve(liveQuery?.close()).catch(() => {});
             return;
           }
 
