@@ -3281,6 +3281,25 @@ describe('SyncEngineLevel', () => {
       };
     }
 
+    function withAuthorizationPayload(
+      entry: { message: GenericMessage },
+      payloadProperties: Record<string, unknown>
+    ): { message: GenericMessage } {
+      const payload = Buffer.from(JSON.stringify(payloadProperties)).toString('base64url');
+      return {
+        ...entry,
+        message: {
+          ...entry.message,
+          authorization: {
+            signature: {
+              payload,
+              signatures: [{ protected: payload, signature: 'fake' }],
+            },
+          },
+        } as unknown as GenericMessage,
+      };
+    }
+
     it('returns messages unchanged when there is only one message', () => {
       const msg = mockMessage({});
       const result = SyncEngineLevel.topologicalSort([msg]);
@@ -3333,10 +3352,13 @@ describe('SyncEngineLevel', () => {
         },
         { recordId: grantRecordId }
       );
-      const dependent = mockMessage({
-        permissionGrantId : grantRecordId,
-        messageTimestamp  : '2024-01-02T00:00:00.000000Z',
-      });
+      const dependent = withAuthorizationPayload(
+        mockMessage({
+          permissionGrantId : grantRecordId,
+          messageTimestamp  : '2024-01-02T00:00:00.000000Z',
+        }),
+        { permissionGrantId: grantRecordId }
+      );
       // Pass dependent first, grant second.
       const result = SyncEngineLevel.topologicalSort([dependent, grant]);
       expect(result[0]).toBe(grant);
@@ -3345,10 +3367,13 @@ describe('SyncEngineLevel', () => {
 
     it('does not crash when permissionGrantId references a grant not in the batch', () => {
       const msg1 = mockMessage({ messageTimestamp: '2024-01-01T00:00:00.000000Z' });
-      const msg2 = mockMessage({
-        permissionGrantId : 'grant-not-in-batch',
-        messageTimestamp  : '2024-01-02T00:00:00.000000Z',
-      });
+      const msg2 = withAuthorizationPayload(
+        mockMessage({
+          permissionGrantId : 'grant-not-in-batch',
+          messageTimestamp  : '2024-01-02T00:00:00.000000Z',
+        }),
+        { permissionGrantId: 'grant-not-in-batch' }
+      );
       // Should not throw; no edge is added because the grant is not in the batch.
       const result = SyncEngineLevel.topologicalSort([msg1, msg2]);
       expect(result).toHaveLength(2);
@@ -3382,15 +3407,18 @@ describe('SyncEngineLevel', () => {
         },
         { recordId: parentRecordId }
       );
-      const child = mockMessage(
-        {
-          protocol          : protocolUrl,
-          parentId          : parentRecordId,
-          permissionGrantId : grantRecordId,
-          dateCreated       : '2024-01-03T00:00:00.000000Z',
-          messageTimestamp  : '2024-01-03T00:00:00.000000Z',
-        },
-        { recordId: 'child-1' }
+      const child = withAuthorizationPayload(
+        mockMessage(
+          {
+            protocol          : protocolUrl,
+            parentId          : parentRecordId,
+            permissionGrantId : grantRecordId,
+            dateCreated       : '2024-01-03T00:00:00.000000Z',
+            messageTimestamp  : '2024-01-03T00:00:00.000000Z',
+          },
+          { recordId: 'child-1' }
+        ),
+        { permissionGrantId: grantRecordId }
       );
 
       // Pass in reverse dependency order.
