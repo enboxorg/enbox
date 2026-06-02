@@ -17,8 +17,8 @@ import { Poller } from '../utils/poller.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
+import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
 
 export function testMessagesSubscribeHandler(): void {
   describe('MessagesSubscribe.handle()', () => {
@@ -683,6 +683,71 @@ export function testMessagesSubscribeHandler(): void {
             expect(reply.status.code).toBe(401);
             expect(reply.status.detail).toContain(DwnErrorCode.GrantAuthorizationNotGrantedToAuthor);
             expect(reply.subscription).toBeUndefined();
+          });
+
+          it('stops delegated delivery when an invoked grant is revoked after subscribe opens', async () => {
+            const alice = await TestDataGenerator.generateDidKeyPersona();
+            const bob = await TestDataGenerator.generateDidKeyPersona();
+            const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://delegated-subscribe-revoked-delivery' };
+
+            const { message: protocolConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition,
+            });
+            expect((await dwn.processMessage(alice.did, protocolConfigure)).status.code).toBe(202);
+
+            const grant = await TestDataGenerator.generateGrantCreate({
+              author    : alice,
+              grantedTo : bob,
+              scope     : {
+                interface : DwnInterfaceName.Messages,
+                method    : DwnMethodName.Read,
+                protocol  : protocolDefinition.protocol,
+              },
+            });
+            expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+            const received: SubscriptionMessage[] = [];
+            const handler = (msg: SubscriptionMessage): void => {
+              received.push(msg);
+            };
+
+            const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
+              author             : bob,
+              filters            : [{ protocol: protocolDefinition.protocol }],
+              permissionGrantIds : [grant.message.recordId],
+            });
+            const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
+            expect(subscribeReply.status.code).toBe(200);
+
+            const firstRecord = await TestDataGenerator.generateRecordsWrite({
+              author       : alice,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'post',
+              schema       : protocolDefinition.types.post.schema,
+            });
+            expect((await dwn.processMessage(alice.did, firstRecord.message, { dataStream: firstRecord.dataStream })).status.code).toBe(202);
+
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              expect(received.filter(msg => msg.type === 'event').length).toBe(1);
+            });
+
+            await Time.minimalSleep();
+            const revocation = await PermissionsProtocol.createRevocation({
+              signer : Jws.createSigner(alice),
+              grant  : PermissionGrant.parse(grant.dataEncodedMessage),
+            });
+            expect((await dwn.processMessage(
+              alice.did,
+              revocation.recordsWrite.message,
+              { dataStream: DataStream.fromBytes(revocation.permissionRevocationBytes) }
+            )).status.code).toBe(202);
+
+            await Poller.pollUntilSuccessOrTimeout(async () => {
+              const errorMessage = received.find(msg => msg.type === 'error');
+              expect(errorMessage?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed);
+              expect(received.filter(msg => msg.type === 'event').length).toBe(1);
+            });
           });
 
           it('allows subscribe of protocolPathPrefix filtered messages including protocol metadata', async () => {

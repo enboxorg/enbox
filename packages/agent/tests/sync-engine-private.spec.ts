@@ -947,6 +947,48 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // initializeLinkTarget
+  // ---------------------------------------------------------------------------
+
+  describe('initializeLinkTarget', () => {
+    it('should not mark a link live if pull subscription setup moves it to repairing', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
+      const closePull = sinon.stub().resolves();
+      const link = {
+        tenantDid          : 'did:example:alice',
+        remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test',
+        authorizationEpoch : 'authorization-test',
+        authorization      : { kind: 'owner' },
+        scope              : { kind: 'full' },
+        status             : 'initializing',
+        pull               : {},
+        connectivity       : 'online',
+        needsReconcile     : false,
+      } as any;
+
+      sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(link);
+      sinon.stub(engine as any, 'getReplicationLinkKey').returns(linkKey);
+      sinon.stub(engine as any, 'migrateLegacyCursorIfNeeded').resolves();
+      sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<void> => {
+        (engine as any)._liveSubscriptions.push({ linkKey, did: link.tenantDid, dwnUrl: link.remoteEndpoint, close: closePull });
+        link.status = 'repairing';
+      });
+      const openLocalPushStub = sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+      const markLinkLiveStub = sinon.stub(engine as any, 'markLinkLive').resolves();
+
+      await (engine as any).initializeLinkTarget(syncTarget('did:example:alice', 'https://dwn.example.com'));
+
+      expect(openLocalPushStub.called).toBe(false);
+      expect(markLinkLiveStub.called).toBe(false);
+      expect(closePull.calledOnce).toBe(true);
+      expect((engine as any)._activeLinks.get(linkKey)).toBe(link);
+      expect(link.status).toBe('repairing');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // initializeLinkTargetWithRetry
   // ---------------------------------------------------------------------------
 
@@ -1994,6 +2036,42 @@ describe('SyncEngineLevel — private methods', () => {
 
       expect(consoleStub.called).toBe(true);
       expect(link.pull.contiguousAppliedToken).toBeUndefined();
+      expect(link.status).toBe('repairing');
+
+      (engine as any)._liveSubscriptions = [];
+    });
+
+    it('should repair without advancing checkpoint on a subscription error', async () => {
+      const processMessageStub = sinon.stub().resolves({ status: { code: 202 } });
+      const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
+      const engine = createEngine({ db, agent });
+      const consoleStub = sinon.stub(console, 'warn');
+
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const previousCursor = { streamId: 's1', epoch: 'e1', position: '5', messageCid: 'cid-previous' };
+      const link = {
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : { contiguousAppliedToken: previousCursor }, connectivity       : 'online', needsReconcile     : false,
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+      (engine as any)._ledger = {
+        setStatus: sinon.stub().callsFake(async (targetLink: any, status: string): Promise<void> => { targetLink.status = status; }),
+      };
+      sinon.stub(engine as any, 'repairLink').resolves();
+
+      await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
+
+      await getHandler()({
+        type   : 'error',
+        cursor : { streamId: 's1', epoch: 'e1', position: '6', messageCid: 'cid-error' },
+        error  : { code: 'MessagesSubscribeDeliveryAuthorizationFailed', detail: 'subscription authorization failed during delivery' },
+      });
+
+      expect(processMessageStub.called).toBe(false);
+      expect(consoleStub.called).toBe(true);
+      expect(link.pull.contiguousAppliedToken).toEqual(previousCursor);
       expect(link.status).toBe('repairing');
 
       (engine as any)._liveSubscriptions = [];

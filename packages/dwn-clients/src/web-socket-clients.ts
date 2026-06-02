@@ -143,22 +143,30 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     );
 
     const { socket, subscriptions } = connection;
+    let terminalSubscriptionError = false;
+    const closeTrackedSubscription = (): void => {
+      terminalSubscriptionError = true;
+      const tracked = subscriptions.get(subscriptionId);
+      if (tracked) {
+        void tracked.subscription.close();
+      }
+      subscriptions.delete(subscriptionId);
+    };
+
     const { response, close } = await socket.subscribe(request, (response) => {
       const { result, error } = response;
       if (error) {
-
-        // if there is an error, close the subscription and delete it from the connection
-        const tracked = subscriptions.get(subscriptionId);
-        if (tracked) {
-          tracked.subscription.close();
-        }
-
-        subscriptions.delete(subscriptionId);
+        closeTrackedSubscription();
         return;
       }
 
       const subscriptionMessage = result.subscription as SubscriptionMessage;
       handler(subscriptionMessage);
+
+      if (subscriptionMessage.type === 'error') {
+        closeTrackedSubscription();
+        return;
+      }
 
       // Track the latest cursor for reconnection.
       if ('cursor' in subscriptionMessage && subscriptionMessage.cursor) {
@@ -179,7 +187,12 @@ export class WebSocketDwnRpcClient implements DwnRpc {
 
     const { reply } = result as { reply: UnionMessageReply };
     if (reply.subscription && close) {
+      let closed = false;
       const wrappedClose = async (): Promise<void> => {
+        if (closed) {
+          return;
+        }
+        closed = true;
         subscriptions.delete(subscriptionId);
         await close();
       };
@@ -192,8 +205,12 @@ export class WebSocketDwnRpcClient implements DwnRpc {
         resubscribeFactory,
       };
 
-      subscriptions.set(subscriptionId, tracked);
       reply.subscription.close = wrappedClose;
+      if (terminalSubscriptionError) {
+        void wrappedClose();
+      } else {
+        subscriptions.set(subscriptionId, tracked);
+      }
     }
 
     return reply;

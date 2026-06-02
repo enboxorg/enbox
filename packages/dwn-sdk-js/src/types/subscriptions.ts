@@ -111,14 +111,30 @@ export type SubscriptionEose = {
 };
 
 /**
+ * Subscription-level error emitted after a subscription is already open.
+ *
+ * This is used for conditions that invalidate future delivery, such as a
+ * delegated subscription grant being revoked after the subscription was
+ * authorized. The cursor identifies the event that caused delivery to stop.
+ */
+export type SubscriptionError = {
+  type : 'error';
+  cursor : ProgressToken;
+  error : {
+    code : string;
+    detail : string;
+  };
+};
+
+/**
  * Discriminated union of subscription event types delivered to
  * {@link SubscriptionListener} callbacks.
  */
-export type SubscriptionMessage = SubscriptionEvent | SubscriptionEose;
+export type SubscriptionMessage = SubscriptionEvent | SubscriptionEose | SubscriptionError;
 
 /**
- * Callback for {@link EventLog.subscribe}. Receives either a regular event
- * (with cursor) or an EOSE marker indicating catch-up replay is complete.
+ * Callback for {@link EventLog.subscribe}. Receives events, catch-up EOSE
+ * markers, or subscription-level errors that stop delivery.
  */
 export type SubscriptionListener = (message: SubscriptionMessage) => void;
 
