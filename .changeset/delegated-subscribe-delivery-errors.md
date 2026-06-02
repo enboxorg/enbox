@@ -5,4 +5,4 @@
 "@enbox/dwn-sdk-js": patch
 ---
 
-Close delegated MessagesSubscribe streams when invoked grants become invalid during delivery, and keep subscription resume checkpoints monotonic.
+Close delegated MessagesSubscribe streams when invoked grants become invalid during delivery, surface terminal live-query errors, and keep subscription resume checkpoints monotonic.

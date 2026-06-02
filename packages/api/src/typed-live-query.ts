@@ -6,7 +6,7 @@
  * - `.records` returns `TypedRecord<T>[]` instead of `Record[]`.
  * - `.on('create', handler)` provides `TypedRecord<T>` in the callback.
  * - `.on('change', handler)` provides `TypedRecordChange<T>` in the callback.
- * - `.on('disconnected' | 'reconnecting' | 'reconnected' | 'eose', handler)`
+ * - `.on('disconnected' | 'reconnecting' | 'reconnected' | 'eose' | 'error', handler)`
  *   forwards transport lifecycle events from the underlying `LiveQuery`.
  *
  * @example
@@ -30,7 +30,7 @@
  */
 
 import type { PaginationCursor } from '@enbox/dwn-sdk-js';
-import type { LiveQuery, RecordChange } from './live-query.js';
+import type { LiveQuery, LiveQueryError, RecordChange } from './live-query.js';
 
 import { TypedRecord } from './typed-record.js';
 
@@ -123,7 +123,7 @@ export class TypedLiveQuery<T> {
    *
    * Supports both record change events (`change`, `create`, `update`, `delete`)
    * and transport lifecycle events (`disconnected`, `reconnecting`,
-   * `reconnected`, `eose`).
+   * `reconnected`, `eose`, `error`).
    *
    * @param event - The event type to listen for.
    * @param handler - The handler function with typed record(s) or lifecycle data.
@@ -148,11 +148,13 @@ export class TypedLiveQuery<T> {
   public on(event: 'reconnecting', handler: (detail: { attempt: number }) => void): () => void;
   public on(event: 'reconnected', handler: () => void): () => void;
   public on(event: 'eose', handler: () => void): () => void;
+  public on(event: 'error', handler: (error: LiveQueryError) => void): () => void;
   public on(
-    event: 'change' | 'create' | 'update' | 'delete' | 'disconnected' | 'reconnecting' | 'reconnected' | 'eose',
+    event: 'change' | 'create' | 'update' | 'delete' | 'disconnected' | 'reconnecting' | 'reconnected' | 'eose' | 'error',
     handler: ((change: TypedRecordChange<T>) => void)
       | ((record: TypedRecord<T>) => void)
       | ((detail: { attempt: number }) => void)
+      | ((error: LiveQueryError) => void)
       | (() => void),
   ): () => void {
     // Lifecycle events: delegate directly to the underlying LiveQuery.
@@ -167,6 +169,9 @@ export class TypedLiveQuery<T> {
     }
     if (event === 'reconnecting') {
       return this._liveQuery.on('reconnecting', handler as (detail: { attempt: number }) => void);
+    }
+    if (event === 'error') {
+      return this._liveQuery.on('error', handler as (error: LiveQueryError) => void);
     }
 
     // Record change events: wrap records in TypedRecord.

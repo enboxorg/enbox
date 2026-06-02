@@ -225,6 +225,28 @@ describe('LiveQuery', () => {
       expect(fired).toBe(true);
     });
 
+    it('should dispatch terminal error event and mark the query disconnected', () => {
+      const live = createLiveQuery();
+      const error = {
+        code   : 'MessagesSubscribeDeliveryAuthorizationFailed',
+        detail : 'subscription grant is no longer valid',
+        cursor : {
+          streamId   : 'events',
+          epoch      : '1',
+          position   : '10',
+          messageCid : 'bafyreihash',
+        },
+      };
+      let received: typeof error | undefined;
+
+      live.on('error', (event) => { received = event as typeof error; });
+
+      live.handleError(error);
+
+      expect(received).toEqual(error);
+      expect(live.isConnected).toBe(false);
+    });
+
     it('should not dispatch events after close()', async () => {
       const live = createLiveQuery();
       let fired = false;

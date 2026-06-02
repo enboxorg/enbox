@@ -96,6 +96,22 @@ describe('TypedLiveQuery', () => {
       expect(eoseCalled).toBe(true);
     });
 
+    it('should forward terminal error event', () => {
+      const mock = createMockLiveQuery();
+      const typed = new TypedLiveQuery(mock);
+      const error = {
+        code   : 'MessagesSubscribeDeliveryAuthorizationFailed',
+        detail : 'subscription grant is no longer valid',
+      };
+      let received: typeof error | undefined;
+
+      typed.on('error', (event) => { received = event as typeof error; });
+
+      mock._emit('error', error);
+
+      expect(received).toEqual(error);
+    });
+
     it('should return unsubscribe function for lifecycle events', () => {
       const mock = createMockLiveQuery();
       const typed = new TypedLiveQuery(mock);
