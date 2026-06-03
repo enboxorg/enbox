@@ -2,6 +2,8 @@ import type { GenericMessage, MessagesSyncDiffEntry } from '@enbox/dwn-sdk-js';
 
 import type { PushResult } from './types/sync.js';
 
+import { SyncPullAbortedError } from './sync-messages.js';
+
 export type ReconcileDirection = 'pull' | 'push';
 
 export type ReconcileTarget = {
@@ -48,6 +50,7 @@ type ReconcileDeps = {
     permissionGrantIds?: string[];
     messageCids: string[];
     prefetched: (MessagesSyncDiffEntry & { message: GenericMessage })[];
+    shouldContinue?: () => boolean;
   }) => Promise<void>;
   pushMessages: (params: {
     did: string;
@@ -117,7 +120,23 @@ export class SyncLinkReconciler {
 
       if ((!direction || direction === 'pull') && diff.onlyRemote.length > 0) {
         const { prefetched, needsFetchCids } = partitionRemoteEntries(diff.onlyRemote);
-        await this._deps.pullMessages({ did, dwnUrl, delegateDid, protocol, permissionGrantIds, messageCids: needsFetchCids, prefetched });
+        try {
+          await this._deps.pullMessages({
+            did,
+            dwnUrl,
+            delegateDid,
+            protocol,
+            permissionGrantIds,
+            messageCids: needsFetchCids,
+            prefetched,
+            shouldContinue,
+          });
+        } catch (error) {
+          if (error instanceof SyncPullAbortedError) {
+            return { aborted: true, changed: true, didPull: false, didPush: false, localRoot, remoteRoot };
+          }
+          throw error;
+        }
         if (shouldContinue && !shouldContinue()) { return { aborted: true, changed: true, didPull: true, didPush: false, localRoot, remoteRoot }; }
         didPull = true;
       }

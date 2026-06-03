@@ -12,6 +12,7 @@ import {
   pullMessages,
   pushMessages,
   syncMessageReplyIsSuccessful,
+  SyncPullAbortedError,
 } from '../src/sync-messages.js';
 
 describe('sync-messages', () => {
@@ -383,6 +384,35 @@ describe('sync-messages', () => {
       });
 
       // No messages to process
+      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+    });
+
+    it('should abort after remote fetch when shouldContinue turns false', async () => {
+      const shouldContinue = sinon.stub()
+        .onFirstCall().returns(true)
+        .onSecondCall().returns(false);
+      const mockAgent = {
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: {} } }),
+        rpc               : {
+          sendDwnRequest: sinon.stub().resolves({
+            status : { code: 200 },
+            entry  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+          }),
+        },
+        dwn: {
+          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+
+      await expect(pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        shouldContinue,
+        agent       : mockAgent,
+      })).rejects.toThrow(SyncPullAbortedError);
+
+      expect(mockAgent.rpc.sendDwnRequest.calledOnce).toBe(true);
       expect(mockAgent.dwn.processRawMessage.called).toBe(false);
     });
 

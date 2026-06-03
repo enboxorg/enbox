@@ -2625,6 +2625,10 @@ export class SyncEngineLevel implements SyncEngine {
     // closure's captured `link` reference may no longer be the active
     // link object. Bail before mutating the replacement's state.
     const isStaleLink = (): boolean => this._activeLinks.get(linkKey) !== link;
+    const shouldContinue = (): boolean =>
+      this._engineGeneration === generation &&
+      !isStaleLink() &&
+      link.status === 'live';
 
     const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, scope, authorization } = link;
     const eventScope = syncEventScope(scope);
@@ -2636,7 +2640,7 @@ export class SyncEngineLevel implements SyncEngine {
         delegateDid,
         scope,
         authorization,
-      }, { verifyConvergence: true }, () => this._engineGeneration === generation && !isStaleLink());
+      }, { verifyConvergence: true }, shouldContinue);
       if (reconcileOutcome.aborted || isStaleLink()) { return; }
 
       if (reconcileOutcome.converged) {
@@ -3110,7 +3114,7 @@ export class SyncEngineLevel implements SyncEngine {
    * they are processed directly without additional HTTP round-trips.
    * Only `messageCids` that were NOT prefetched are fetched individually.
    */
-  private async pullMessages({ did, dwnUrl, delegateDid, protocol, permissionGrantIds, messageCids, prefetched }: {
+  private async pullMessages({ did, dwnUrl, delegateDid, protocol, permissionGrantIds, messageCids, prefetched, shouldContinue }: {
     did: string;
     dwnUrl: string;
     delegateDid?: string;
@@ -3118,6 +3122,7 @@ export class SyncEngineLevel implements SyncEngine {
     permissionGrantIds?: string[];
     messageCids: string[];
     prefetched?: MessagesSyncDiffEntry[];
+    shouldContinue?: () => boolean;
   }): Promise<void> {
     const scope: SyncScope = protocol === undefined
       ? { kind: 'full' }
@@ -3130,6 +3135,7 @@ export class SyncEngineLevel implements SyncEngine {
       permissionGrantIds,
       messageCids,
       prefetched,
+      shouldContinue,
       agent       : this.agent,
       acceptEntry : async (entry, entries) => {
         const result = await this.acceptPulledSyncEntry(did, scope, entry, entries);

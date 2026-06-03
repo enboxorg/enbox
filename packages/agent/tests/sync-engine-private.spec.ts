@@ -3759,6 +3759,41 @@ describe('SyncEngineLevel — private methods', () => {
       const pushArgs = pushStub.firstCall.args[0];
       expect(pushArgs.messageCids).toEqual(['local-cid-1']);
     });
+
+    it('doReconcileLink should abort if the active link epoch changes during pull', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      let rootCallCount = 0;
+      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
+        rootCallCount++;
+        return rootCallCount <= 1 ? 'root-A' : 'root-converged';
+      });
+      sinon.stub(engine as any, 'getRemoteRoot').callsFake(async () => {
+        return rootCallCount <= 1 ? 'root-B' : 'root-converged';
+      });
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
+        onlyRemote : [{ messageCid: 'remote-cid-1' }],
+        onlyLocal  : ['local-cid-1'],
+      });
+      const pullStub = sinon.stub(engine as any, 'pullMessages').callsFake(async (params: any) => {
+        expect(params.shouldContinue()).toBe(true);
+        (engine as any)._activeLinks.delete(linkKey);
+        expect(params.shouldContinue()).toBe(false);
+      });
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
+      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
+      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      expect(pullStub.calledOnce).toBe(true);
+      expect(pushStub.called).toBe(false);
+      expect(clearStub.called).toBe(false);
+      expect(link.needsReconcile).toBe(true);
+    });
   });
 
   // ---------------------------------------------------------------------------
