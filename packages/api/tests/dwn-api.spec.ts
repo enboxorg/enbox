@@ -1,7 +1,8 @@
+import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
 import type { Record } from '../src/record.js';
-import type { RecordChange } from '../src/live-query.js';
 import type { BearerDid, PortableDid } from '@enbox/dids';
-import type { DwnProtocolDefinition, ProcessDwnRequest } from '@enbox/agent';
+import type { DwnProtocolDefinition, EnboxAgent, ProcessDwnRequest } from '@enbox/agent';
+import type { LiveQueryError, RecordChange } from '../src/live-query.js';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -2225,6 +2226,56 @@ describe('DwnApi', () => {
 
         // clean up
         await live.close();
+      });
+
+      it('should surface terminal subscription errors before closing the live query', async () => {
+        let subscriptionHandler: ((msg: DwnSubscriptionMessage) => void) | undefined;
+        const subscription = { close: sinon.stub().resolves() };
+        const agent = {
+          processDwnRequest: sinon.stub().callsFake(async (request: ProcessDwnRequest<DwnInterface.RecordsSubscribe>) => {
+            subscriptionHandler = request.subscriptionHandler;
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [],
+                subscription,
+              }
+            };
+          })
+        };
+        const dwn = new DwnApi({ agent: agent as unknown as EnboxAgent, connectedDid: aliceDid.uri });
+        const { liveQuery } = await dwn.records.subscribe({
+          filter: { protocol: protocolUri }
+        });
+        const cursor = {
+          streamId   : 'events',
+          epoch      : '1',
+          position   : '10',
+          messageCid : 'bafyreihash',
+        };
+        const errors: LiveQueryError[] = [];
+
+        expect(liveQuery).toBeDefined();
+        liveQuery!.on('error', (error) => { errors.push(error); });
+
+        subscriptionHandler!({
+          type  : 'error',
+          cursor,
+          error : {
+            code   : 'MessagesSubscribeDeliveryAuthorizationFailed',
+            detail : 'subscription grant is no longer valid',
+          },
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(errors).toEqual([{
+          code   : 'MessagesSubscribeDeliveryAuthorizationFailed',
+          detail : 'subscription grant is no longer valid',
+          cursor,
+        }]);
+        expect(liveQuery!.isConnected).toBe(false);
+        expect(subscription.close.calledOnce).toBe(true);
       });
 
       it('should emit update events for updated records', async () => {

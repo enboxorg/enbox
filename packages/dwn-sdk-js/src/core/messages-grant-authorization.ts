@@ -117,6 +117,46 @@ export class MessagesGrantAuthorization {
   }
 
   /**
+   * Revalidates an already-open delegated MessagesSubscribe grant set at event
+   * delivery time. Subscription messages are signed at open time, but grant
+   * expiry and revocation must stop future delivery after the grant set becomes
+   * invalid.
+   */
+  public static async authorizeSubscribeDelivery(input: {
+    messagesSubscribeMessage: MessagesSubscribeMessage,
+    expectedGrantor: string,
+    expectedGrantee: string,
+    permissionGrants: PermissionGrant[],
+    messageStore: MessageStore,
+    deliveryTimestamp: string,
+  }): Promise<void> {
+    const {
+      messagesSubscribeMessage,
+      expectedGrantor,
+      expectedGrantee,
+      permissionGrants,
+      messageStore,
+      deliveryTimestamp,
+    } = input;
+
+    const deliveryMessage: MessagesSubscribeMessage = {
+      ...messagesSubscribeMessage,
+      descriptor: {
+        ...messagesSubscribeMessage.descriptor,
+        messageTimestamp: deliveryTimestamp,
+      },
+    };
+
+    await MessagesGrantAuthorization.authorizeSubscribeOrSync({
+      incomingMessage: deliveryMessage,
+      expectedGrantor,
+      expectedGrantee,
+      permissionGrants,
+      messageStore,
+    });
+  }
+
+  /**
    * Performs base validation on every invoked grant. The grant set is all-or-nothing:
    * unresolved, revoked, expired, or interface/method-mismatched grants fail the request.
    */

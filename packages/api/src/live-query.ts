@@ -1,5 +1,5 @@
 import type { DwnMessageSubscription, EnboxAgent, PermissionsApi } from '@enbox/agent';
-import type { PaginationCursor, RecordsQueryReplyEntry } from '@enbox/dwn-sdk-js';
+import type { PaginationCursor, ProgressToken, RecordsQueryReplyEntry } from '@enbox/dwn-sdk-js';
 
 import { getRecordAuthor } from '@enbox/agent';
 
@@ -19,6 +19,20 @@ export type RecordChange = {
 
   /** The record affected by the change. */
   record: Record;
+};
+
+/**
+ * Describes a terminal DWN subscription error surfaced by a {@link LiveQuery}.
+ */
+export type LiveQueryError = {
+  /** The DWN error code associated with the terminal subscription failure. */
+  code: string;
+
+  /** Human-readable error detail from the DWN subscription. */
+  detail: string;
+
+  /** The event cursor that caused delivery to stop, when provided by the DWN. */
+  cursor?: ProgressToken;
 };
 
 /**
@@ -78,9 +92,14 @@ export type RecordCatchAllEvent = 'change';
 export type LiveQueryLifecycleEvent = 'disconnected' | 'reconnecting' | 'reconnected' | 'eose';
 
 /**
+ * Terminal event type emitted when a DWN subscription fails after it is open.
+ */
+export type LiveQueryTerminalEvent = 'error';
+
+/**
  * Union of all event types emitted by {@link LiveQuery}.
  */
-export type LiveQueryEventType = RecordChangeType | RecordCatchAllEvent | LiveQueryLifecycleEvent;
+export type LiveQueryEventType = RecordChangeType | RecordCatchAllEvent | LiveQueryLifecycleEvent | LiveQueryTerminalEvent;
 
 /**
  * A live query that combines an initial snapshot of matching records with a
@@ -103,6 +122,7 @@ export type LiveQueryEventType = RecordChangeType | RecordCatchAllEvent | LiveQu
  * | `reconnecting` | `{ attempt: number }` | Reconnection attempt in progress |
  * | `reconnected` | — | Connection restored, subscription resubscribed |
  * | `eose` | — | End-of-stored-events: catch-up replay complete, events are now live |
+ * | `error` | {@link LiveQueryError} | Terminal subscription error; no further events will be delivered |
  *
  * @example
  * ```ts
@@ -270,6 +290,21 @@ export class LiveQuery extends EventTarget {
   }
 
   /**
+   * Handle a terminal DWN subscription error.
+   *
+   * @internal — Called by `DwnApi.records.subscribe()` before closing the
+   * underlying subscription.
+   */
+  public handleError(error: LiveQueryError): void {
+    if (this._closed) {
+      return;
+    }
+
+    this._connected = false;
+    this.dispatchEvent(new CustomEvent('error', { detail: error }));
+  }
+
+  /**
    * Register a typed event handler. Returns an unsubscribe function.
    *
    * @param event - The event type to listen for.
@@ -290,9 +325,15 @@ export class LiveQuery extends EventTarget {
   on(event: 'reconnecting', handler: (detail: { attempt: number }) => void): () => void;
   on(event: 'reconnected', handler: () => void): () => void;
   on(event: 'eose', handler: () => void): () => void;
+  on(event: 'error', handler: (error: LiveQueryError) => void): () => void;
   on(
     event: LiveQueryEventType,
-    handler: ((change: RecordChange) => void) | ((record: Record) => void) | ((detail: { attempt: number }) => void) | (() => void),
+    handler:
+      | ((change: RecordChange) => void)
+      | ((record: Record) => void)
+      | ((detail: { attempt: number }) => void)
+      | ((error: LiveQueryError) => void)
+      | (() => void),
   ): () => void {
     const wrapper = (e: Event): void => {
       const detail = (e as CustomEvent).detail;
@@ -302,6 +343,8 @@ export class LiveQuery extends EventTarget {
         (handler as (record: Record) => void)(detail.record);
       } else if (event === 'reconnecting') {
         (handler as (detail: { attempt: number }) => void)(detail);
+      } else if (event === 'error') {
+        (handler as (error: LiveQueryError) => void)(detail);
       } else {
         // disconnected, reconnected, eose — no payload
         (handler as () => void)();

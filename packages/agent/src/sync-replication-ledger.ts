@@ -207,6 +207,14 @@ export class ReplicationLedger {
    * are durably committed before calling this.
    */
   public static commitContiguousToken(checkpoint: DirectionCheckpoint, token: ProgressToken): void {
+    if (
+      checkpoint.contiguousAppliedToken !== undefined &&
+      token.streamId === checkpoint.contiguousAppliedToken.streamId &&
+      token.epoch === checkpoint.contiguousAppliedToken.epoch &&
+      ReplicationLedger.comparePosition(token, checkpoint.contiguousAppliedToken) <= 0
+    ) {
+      return;
+    }
     checkpoint.contiguousAppliedToken = token;
   }
 

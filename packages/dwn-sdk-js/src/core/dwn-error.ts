@@ -26,6 +26,7 @@ export enum DwnErrorCode {
   MessagesGrantAuthorizationSubscribeProtocolMismatch = 'MessagesGrantAuthorizationSubscribeProtocolMismatch',
   MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope = 'MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope',
   MessagesSubscribeAuthorizationFailed = 'MessagesSubscribeAuthorizationFailed',
+  MessagesSubscribeDeliveryAuthorizationFailed = 'MessagesSubscribeDeliveryAuthorizationFailed',
   MessagesSubscribeEventLogUnimplemented = 'MessagesSubscribeEventLogUnimplemented',
   GeneralJwsVerifierGetPublicKeyNotFound = 'GeneralJwsVerifierGetPublicKeyNotFound',
   GeneralJwsVerifierInvalidSignature = 'GeneralJwsVerifierInvalidSignature',

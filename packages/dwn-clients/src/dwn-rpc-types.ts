@@ -7,7 +7,7 @@ export interface SerializableDwnMessage {
 // ---------------------------------------------------------------------------
 // Transport-layer subscription message types
 //
-// These extend the DWN SDK's `SubscriptionMessage` union (`event | eose`)
+// These extend the DWN SDK's `SubscriptionMessage` union (`event | eose | error`)
 // with connection lifecycle notifications synthesized by the transport layer
 // (e.g. WebSocket client). The DWN SDK / EventLog never produces these.
 // ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ export type TransportMessage = TransportDisconnected | TransportReconnecting | T
 
 /**
  * The full set of messages a subscription handler can receive — DWN-level
- * events (`event`, `eose`) plus transport lifecycle notifications
+ * events (`event`, `eose`, `error`) plus transport lifecycle notifications
  * (`disconnected`, `reconnecting`, `reconnected`).
  *
  * For local DWN processing the handler only receives `SubscriptionMessage`.

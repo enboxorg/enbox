@@ -762,6 +762,16 @@ export class DwnApi {
             return;
           }
 
+          if (msg.type === 'error') {
+            liveQuery?.handleError({
+              code   : msg.error.code,
+              detail : msg.error.detail,
+              cursor : msg.cursor,
+            });
+            Promise.resolve(liveQuery?.close()).catch(() => {});
+            return;
+          }
+
           if (msg.type === 'disconnected') {
             liveQuery?.handleLifecycleEvent('disconnected');
             return;

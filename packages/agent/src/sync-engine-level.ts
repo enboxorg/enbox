@@ -86,6 +86,11 @@ type SyncTarget = {
 
 type LinkSyncTarget = SyncTarget & { linkKey: string };
 
+enum LinkSubscriptionOpenResult {
+  ReadyForLive = 'readyForLive',
+  Repairing = 'repairing',
+}
+
 // ---------------------------------------------------------------------------
 // Per-link in-memory delivery-order tracking (not persisted to ledger)
 // ---------------------------------------------------------------------------
@@ -1451,8 +1456,10 @@ export class SyncEngineLevel implements SyncEngine {
       await this.migrateLegacyCursorIfNeeded(target, link);
       this._activeLinks.set(linkKey, link);
 
-      await this.openLinkSubscriptions({ ...target, linkKey });
-      await this.markLinkLive(target, link, linkKey);
+      const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey });
+      if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
+        await this.markLinkLive(target, link, linkKey);
+      }
     } catch (error: any) {
       await this.handleInitializeLinkTargetError(target, link, error);
     }
@@ -1489,14 +1496,21 @@ export class SyncEngineLevel implements SyncEngine {
     await this.deleteLegacyCursor(legacyKey);
   }
 
-  private async openLinkSubscriptions(target: LinkSyncTarget): Promise<void> {
+  private async openLinkSubscriptions(target: LinkSyncTarget): Promise<LinkSubscriptionOpenResult> {
     await this.openLivePullSubscription(target);
+    const link = this._activeLinks.get(target.linkKey);
+    if (link?.status === 'repairing') {
+      await this.closeLiveSubscription(target.linkKey);
+      return LinkSubscriptionOpenResult.Repairing;
+    }
+
     try {
       await this.openLocalPushSubscription(target);
     } catch (error) {
       await this.closeLiveSubscription(target.linkKey);
       throw error;
     }
+    return LinkSubscriptionOpenResult.ReadyForLive;
   }
 
   private async markLinkLive(target: SyncTarget, link: ReplicationLinkState, linkKey: string): Promise<void> {
@@ -1842,6 +1856,11 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
+    if (subMessage.type === 'error') {
+      await this.handleLivePullSubscriptionError(context, subMessage);
+      return;
+    }
+
     if (subMessage.type === 'event') {
       await this.handleLivePullEvent(context, subMessage);
     }
@@ -1891,6 +1910,17 @@ export class SyncEngineLevel implements SyncEngine {
     }
     if (link.needsReconcile) {
       this.scheduleReconcile(linkKey, 500);
+    }
+  }
+
+  private async handleLivePullSubscriptionError(
+    { did, dwnUrl, linkKey, link, isStale }: LivePullContext,
+    subMessage: Extract<SubscriptionMessage, { type: 'error' }>,
+  ): Promise<void> {
+    console.warn(`SyncEngineLevel: subscription error for ${did} -> ${dwnUrl}: ${subMessage.error.code}`);
+
+    if (link && !isStale()) {
+      await this.transitionToRepairing(linkKey, link);
     }
   }
 

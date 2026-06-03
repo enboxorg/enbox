@@ -455,6 +455,59 @@ describe('WebSocketDwnRpcClient', () => {
         await subscribeResponse.subscription!.close();
       });
 
+      it('should not move lastCursor backward for out-of-order subscription events', async () => {
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+
+        let subHandler: any;
+        const sentMessages: any[] = [];
+        const socket = {
+          subscribe: async (_request: any, handler: any): Promise<any> => {
+            subHandler = handler;
+            return {
+              response: {
+                jsonrpc : '2.0',
+                id      : 'id',
+                result  : {
+                  reply: {
+                    status       : { code: 200, detail: 'OK' },
+                    subscription : { id: 'sub-id', close: async (): Promise<void> => {} },
+                  },
+                },
+              },
+              close: async (): Promise<void> => {},
+            };
+          },
+          send: (request: any): void => {
+            sentMessages.push(request);
+          },
+        };
+        const subscriptions = new Map();
+        const connection = { socket, subscriptions, url: socketDwnUrl };
+
+        await WebSocketDwnRpcClient['subscriptionRequest'](connection as any, alice.did, message, () => {});
+
+        const highToken = { streamId: 's1', epoch: 'e1', position: '20', messageCid: 'cid-20' };
+        const lowToken = { streamId: 's1', epoch: 'e1', position: '10', messageCid: 'cid-10' };
+
+        subHandler({
+          jsonrpc : '2.0',
+          id      : 'event-20',
+          result  : { subscription: { type: 'event', cursor: highToken, event: { message } } },
+        });
+        subHandler({
+          jsonrpc : '2.0',
+          id      : 'event-10',
+          result  : { subscription: { type: 'event', cursor: lowToken, event: { message } } },
+        });
+
+        const tracked = [...subscriptions.values()][0];
+        expect(tracked.lastCursor).toEqual(highToken);
+        expect(sentMessages.length).toBe(2);
+      });
+
       it('should send rpc.ack when cursor events arrive', async () => {
         // install the default test protocol so the DWN accepts the record
         await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
