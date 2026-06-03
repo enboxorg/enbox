@@ -1,5 +1,6 @@
 import type { GenericMessage, MessageStore } from '@enbox/dwn-sdk-js';
 
+import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
 
@@ -20,6 +21,22 @@ function mockMessage(overrides: Record<string, unknown> = {}): GenericMessage {
       ...overrides,
     },
   } as any;
+}
+
+function protocolSetDependencyKey(protocol: string, dependencyKey: string): string {
+  return `protocolSet:${protocol}:${dependencyKey}`;
+}
+
+function mockPermissionGrantRecord(grantId: string, protocol: string): GenericMessage {
+  const grant = mockMessage({
+    interface    : 'Records',
+    method       : 'Write',
+    protocol     : PermissionsProtocol.uri,
+    protocolPath : PermissionsProtocol.grantPath,
+    tags         : { protocol },
+  });
+  (grant as any).recordId = grantId;
+  return grant;
 }
 
 function encodePermissionGrantIds(...permissionGrantIds: string[]): string {
@@ -132,7 +149,7 @@ describe('evaluateClosure', () => {
       (msg as any).recordId = 'record-1';
 
       const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
-      const initialWrite = mockMessage({ interface: 'Records', method: 'Write' });
+      const initialWrite = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/proto' });
       (initialWrite as any).recordId = 'record-1';
 
       const store = mockMessageStore({
@@ -180,7 +197,7 @@ describe('evaluateClosure', () => {
       (msg as any).recordId = 'child-1';
 
       const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
-      const parentRecord = mockMessage({ interface: 'Records', method: 'Write' });
+      const parentRecord = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/proto' });
       (parentRecord as any).recordId = 'parent-1';
 
       const store = mockMessageStore({
@@ -194,6 +211,142 @@ describe('evaluateClosure', () => {
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'parentRecord')).toBe(true);
+    });
+
+    it('should reject locally present dependencies outside the current sync scope', async () => {
+      const msg = mockMessage({
+        protocol    : 'https://example.com/proto',
+        parentId    : 'parent-1',
+        dateCreated : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'child-1';
+
+      const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+      const parentRecord = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/other' });
+      (parentRecord as any).recordId = 'parent-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [protocolConfig]],
+          ['recordId:parent-1', [parentRecord]],
+        ]),
+      });
+
+      const result = await evaluateClosure(
+        msg,
+        store,
+        { kind: 'protocolSet', protocols: ['https://example.com/proto'] },
+        createClosureContext('did:example:alice'),
+      );
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.DependencyForbidden);
+      expect(result.failure!.edge.label).toBe('parentRecord');
+    });
+
+    it('should reject a locally present context root outside the current sync scope', async () => {
+      const msg = mockMessage({
+        protocol    : 'https://example.com/proto',
+        dateCreated : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'child-1';
+      (msg as any).contextId = 'root-1/child-1';
+
+      const contextRoot = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/other' });
+      (contextRoot as any).recordId = 'root-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [mockMessage({ interface: 'Protocols', method: 'Configure' })]],
+          ['recordId:root-1', [contextRoot]],
+        ]),
+      });
+
+      const result = await evaluateClosure(
+        msg,
+        store,
+        { kind: 'protocolSet', protocols: ['https://example.com/proto'] },
+        createClosureContext('did:example:alice'),
+      );
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.DependencyForbidden);
+      expect(result.failure!.edge.label).toBe('contextRoot');
+    });
+
+    it('should reject a locally present initial write outside the current sync scope', async () => {
+      const msg = mockMessage({
+        protocol         : 'https://example.com/proto',
+        dateCreated      : '2025-01-01T00:00:00.000000Z',
+        messageTimestamp : '2025-01-02T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'record-1';
+
+      const initialWrite = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/other' });
+      (initialWrite as any).recordId = 'record-1';
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [mockMessage({ interface: 'Protocols', method: 'Configure' })]],
+          ['recordId:record-1', [initialWrite]],
+        ]),
+      });
+
+      const result = await evaluateClosure(
+        msg,
+        store,
+        { kind: 'protocolSet', protocols: ['https://example.com/proto'] },
+        createClosureContext('did:example:alice'),
+      );
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.DependencyForbidden);
+      expect(result.failure!.edge.label).toBe('initialWrite');
+    });
+
+    it('should not reuse a dependency cache entry across different sync scopes', async () => {
+      const parentRecord = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/other' });
+      (parentRecord as any).recordId = 'parent-1';
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [mockMessage({ interface: 'Protocols', method: 'Configure' })]],
+          ['protocol:https://example.com/other', [mockMessage({ interface: 'Protocols', method: 'Configure' })]],
+          ['recordId:parent-1', [parentRecord]],
+        ]),
+      });
+      const context = createClosureContext('did:example:alice');
+
+      const otherScopedRoot = mockMessage({
+        protocol    : 'https://example.com/other',
+        parentId    : 'parent-1',
+        dateCreated : '2025-01-01T00:00:00.000000Z',
+      });
+      (otherScopedRoot as any).recordId = 'child-other';
+
+      const otherResult = await evaluateClosure(
+        otherScopedRoot,
+        store,
+        { kind: 'protocolSet', protocols: ['https://example.com/other'] },
+        context,
+      );
+      expect(otherResult.complete).toBe(true);
+
+      const protoScopedRoot = mockMessage({
+        protocol    : 'https://example.com/proto',
+        parentId    : 'parent-1',
+        dateCreated : '2025-01-01T00:00:00.000000Z',
+      });
+      (protoScopedRoot as any).recordId = 'child-proto';
+
+      const protoResult = await evaluateClosure(
+        protoScopedRoot,
+        store,
+        { kind: 'protocolSet', protocols: ['https://example.com/proto'] },
+        context,
+      );
+
+      expect(protoResult.complete).toBe(false);
+      expect(protoResult.failure!.code).toBe(ClosureFailureCode.DependencyForbidden);
     });
 
     it('should fail when parent record is missing', async () => {
@@ -253,7 +406,7 @@ describe('evaluateClosure', () => {
       (msg as any).authorization = { signature: { payload, signatures: [{ protected: payload, signature: 'fake' }] } };
 
       const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
-      const grantRecord = mockMessage({ interface: 'Records', method: 'Write' });
+      const grantRecord = mockPermissionGrantRecord(grantId, 'https://example.com/proto');
 
       const store = mockMessageStore({
         queryResults: new Map([
@@ -278,7 +431,7 @@ describe('evaluateClosure', () => {
       (msg as any).authorization = { signature: { payload, signatures: [{ protected: payload, signature: 'fake' }] } };
 
       const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
-      const grantRecord = mockMessage({ interface: 'Records', method: 'Write' });
+      const grantRecord = mockPermissionGrantRecord(grantId, 'https://example.com/proto');
 
       const store = mockMessageStore({
         queryResults: new Map([
@@ -291,6 +444,42 @@ describe('evaluateClosure', () => {
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'permissionGrant')).toBe(true);
+    });
+
+    it('should reject untagged permission grants in protocol-scoped closure', async () => {
+      const grantId = 'grant-untagged';
+      const payload = encodePermissionGrantIds(grantId);
+      const msg = mockMessage({
+        protocol    : 'https://example.com/proto',
+        dateCreated : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).authorization = { signature: { payload, signatures: [{ protected: payload, signature: 'fake' }] } };
+
+      const grantRecord = mockMessage({
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : PermissionsProtocol.uri,
+        protocolPath : PermissionsProtocol.grantPath,
+      });
+      (grantRecord as any).recordId = grantId;
+
+      const store = mockMessageStore({
+        queryResults: new Map([
+          ['protocol:https://example.com/proto', [mockMessage({ interface: 'Protocols', method: 'Configure' })]],
+          [`recordId:${grantId}`, [grantRecord]],
+        ]),
+      });
+
+      const result = await evaluateClosure(
+        msg,
+        store,
+        { kind: 'protocolSet', protocols: ['https://example.com/proto'] },
+        createClosureContext('did:example:alice'),
+      );
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.DependencyForbidden);
+      expect(result.failure!.edge.label).toBe('permissionGrant');
     });
 
     it('should fail when permission grant is missing', async () => {
@@ -327,8 +516,9 @@ describe('evaluateClosure', () => {
           method           : 'Write',
           dateCreated,
           messageTimestamp : dateCreated,
-          protocol         : 'https://identity.foundation/dwn/permissions',
-          protocolPath     : 'grant',
+          protocol         : PermissionsProtocol.uri,
+          protocolPath     : PermissionsProtocol.grantPath,
+          tags             : { protocol: 'https://example.com/proto' },
         },
         encodedData: Buffer.from(JSON.stringify(grantData)).toString('base64url'),
       } as any;
@@ -409,6 +599,9 @@ describe('evaluateClosure', () => {
       const revocationRecord = mockMessage({
         interface        : 'Records',
         method           : 'Write',
+        protocol         : PermissionsProtocol.uri,
+        protocolPath     : PermissionsProtocol.revocationPath,
+        tags             : { protocol: 'https://example.com/proto' },
         messageTimestamp : '2025-03-01T00:00:00.000000Z',
       });
 
@@ -474,6 +667,9 @@ describe('evaluateClosure', () => {
       const revocationRecord = mockMessage({
         interface        : 'Records',
         method           : 'Write',
+        protocol         : PermissionsProtocol.uri,
+        protocolPath     : PermissionsProtocol.revocationPath,
+        tags             : { protocol: 'https://example.com/proto' },
         messageTimestamp : '2025-09-01T00:00:00.000000Z',
       });
 
@@ -505,7 +701,7 @@ describe('evaluateClosure', () => {
       (msg as any).contextId = 'context-root-1'; // different from recordId = needs context root
 
       const protocolConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
-      const contextRoot = mockMessage({ interface: 'Records', method: 'Write' });
+      const contextRoot = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/proto' });
       (contextRoot as any).recordId = 'context-root-1';
 
       const store = mockMessageStore({
@@ -601,7 +797,7 @@ describe('evaluateClosure', () => {
       (msg as any).recordId = 'patch-1';
       (msg as any).contextId = 'doc-1/patch-1';
 
-      const parentDoc = mockMessage({ interface: 'Records', method: 'Write' });
+      const parentDoc = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/proto' });
       (parentDoc as any).recordId = 'doc-1';
 
       const store = mockMessageStore({
@@ -695,7 +891,7 @@ describe('evaluateClosure', () => {
       (msg as any).contextId = 'root-ctx-1/secret-1';
 
       const keyDeliveryConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
-      const contextRoot = mockMessage({ interface: 'Records', method: 'Write' });
+      const contextRoot = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/proto' });
       (contextRoot as any).recordId = 'root-ctx-1';
 
       const store = mockMessageStore({
@@ -752,7 +948,7 @@ describe('evaluateClosure', () => {
       (msg as any).contextId = 'thread-1/msg-1';
 
       const keyDeliveryConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
-      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/chat' });
       (parentThread as any).recordId = 'thread-1';
 
       const store = mockMessageStore({
@@ -808,13 +1004,22 @@ describe('evaluateClosure', () => {
       (msg as any).contextId = 'thread-1/msg-1';
 
       const keyDeliveryConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
-      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/chat' });
       (parentThread as any).recordId = 'thread-1';
 
       // Mock the context key as present. The resolveDependency for
       // contextKeyRecord uses a tag-based query (tag.protocol + tag.contextId).
       // We override the mock store's query stub below to handle this.
-      const contextKeyRecord = mockMessage({ interface: 'Records', method: 'Write' });
+      const contextKeyRecord = mockMessage({
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : 'https://identity.foundation/protocols/key-delivery',
+        protocolPath : 'contextKey',
+        tags         : {
+          protocol  : 'https://example.com/chat',
+          contextId : 'thread-1',
+        },
+      });
 
       const store = mockMessageStore({
         queryResults: new Map([
@@ -844,6 +1049,85 @@ describe('evaluateClosure', () => {
 
       expect(result.complete).toBe(true);
       expect(result.edges.some(e => e.label === 'contextKeyRecord')).toBe(true);
+    });
+
+    it('should reject a contextKey record with mismatched source tags', async () => {
+      const protocolDef = {
+        protocol  : 'https://example.com/chat',
+        published : true,
+        types     : {
+          thread      : {},
+          participant : {},
+          message     : { encryptionRequired: true },
+        },
+        structure: {
+          thread: {
+            participant: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: ['read'] }],
+            },
+            message: {
+              $encryption : { rootKeyId: 'key-1', publicKeyJwk: {} },
+              $actions    : [{ role: 'thread/participant', can: ['create', 'read'] }],
+            },
+          },
+        },
+      };
+      const protocolConfig = {
+        descriptor: { interface: 'Protocols', method: 'Configure', definition: protocolDef },
+      } as any;
+
+      const msg = mockMessage({
+        protocol     : 'https://example.com/chat',
+        protocolPath : 'thread/message',
+        parentId     : 'thread-1',
+        dateCreated  : '2025-01-01T00:00:00.000000Z',
+      });
+      (msg as any).recordId = 'msg-1';
+      (msg as any).contextId = 'thread-1/msg-1';
+
+      const keyDeliveryConfig = mockMessage({ interface: 'Protocols', method: 'Configure' });
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/chat' });
+      (parentThread as any).recordId = 'thread-1';
+      const wrongContextKeyRecord = mockMessage({
+        interface    : 'Records',
+        method       : 'Write',
+        protocol     : 'https://identity.foundation/protocols/key-delivery',
+        protocolPath : 'contextKey',
+        tags         : {
+          protocol  : 'https://example.com/other',
+          contextId : 'thread-1',
+        },
+      });
+
+      const store = mockMessageStore();
+      (store.query as any).callsFake(async (_tenant: string, filters: any[]): Promise<{ messages: GenericMessage[] }> => {
+        const filter = filters[0] ?? {};
+        if (filter.interface === 'Protocols' && filter.protocol === 'https://example.com/chat') {
+          return { messages: [protocolConfig] };
+        }
+        if (filter.interface === 'Protocols' && filter.protocol === 'https://identity.foundation/protocols/key-delivery') {
+          return { messages: [keyDeliveryConfig] };
+        }
+        if (filter.recordId === 'thread-1') {
+          return { messages: [parentThread] };
+        }
+        if (filter['tag.protocol'] && filter['tag.contextId']) {
+          return { messages: [wrongContextKeyRecord] };
+        }
+        return { messages: [] };
+      });
+
+      const result = await evaluateClosure(
+        msg,
+        store,
+        { kind: 'protocolSet', protocols: ['https://example.com/chat'] },
+        createClosureContext('did:example:alice'),
+      );
+
+      expect(result.complete).toBe(false);
+      expect(result.failure!.code).toBe(ClosureFailureCode.DependencyForbidden);
+      expect(result.failure!.edge.label).toBe('contextKeyRecord');
     });
   });
 
@@ -943,7 +1227,7 @@ describe('evaluateClosure', () => {
       (msg as any).recordId = 'msg-1';
       (msg as any).contextId = 'thread-1/msg-1';
 
-      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://example.com/chat' });
       (parentThread as any).recordId = 'thread-1';
 
       const store = mockMessageStore({
@@ -1008,7 +1292,7 @@ describe('evaluateClosure', () => {
       });
       (msg as any).recordId = 'comment-1';
 
-      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://threads.example.com' });
       (parentThread as any).recordId = 'thread-1';
 
       const store = mockMessageStore({
@@ -1059,7 +1343,7 @@ describe('evaluateClosure', () => {
       });
       (msg as any).recordId = 'comment-1';
 
-      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://threads.example.com' });
       (parentThread as any).recordId = 'thread-1';
 
       const store = mockMessageStore({
@@ -1128,7 +1412,7 @@ describe('evaluateClosure', () => {
         },
       };
 
-      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://threads.example.com' });
       (parentThread as any).recordId = 'thread-1';
 
       // The role record (participant) in the referenced protocol.
@@ -1229,7 +1513,7 @@ describe('evaluateClosure', () => {
         },
       };
 
-      const parentThread = mockMessage({ interface: 'Records', method: 'Write' });
+      const parentThread = mockMessage({ interface: 'Records', method: 'Write', protocol: 'https://threads.example.com' });
       (parentThread as any).recordId = 'thread-1';
 
       const store = mockMessageStore({
@@ -1287,9 +1571,9 @@ describe('evaluateClosure', () => {
 
       const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://comments.example.com',] }, createClosureContext('did:example:alice'));
 
-      // Class 2 parentRecord check fires first (before class 6 crossProtocolParent).
       expect(result.complete).toBe(false);
-      expect(result.failure!.code).toBe(ClosureFailureCode.ParentChainMissing);
+      expect(result.failure!.code).toBe(ClosureFailureCode.CrossProtocolReferenceMissing);
+      expect(result.failure!.edge.label).toBe('crossProtocolParent');
     });
   });
 
@@ -1370,8 +1654,8 @@ describe('evaluateClosure', () => {
       });
 
       const ctx = createClosureContext('did:example:alice');
-      // Pre-populate the satisfied set with the label:identifierType:identifier key format.
-      ctx.satisfiedDeps.add('protocolsConfigure:protocol:https://example.com/proto');
+      // Pre-populate the satisfied set with the scope-qualified dependency key format.
+      ctx.satisfiedDeps.add(protocolSetDependencyKey('https://example.com/proto', 'protocolsConfigure:protocol:https://example.com/proto'));
 
       const msg = mockMessage({ protocol: 'https://example.com/proto', dateCreated: '2025-01-01T00:00:00.000000Z' });
       const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, ctx);
@@ -1386,7 +1670,7 @@ describe('evaluateClosure', () => {
 
       const ctx = createClosureContext('did:example:alice');
       // Pre-populate the missing set.
-      ctx.missingDeps.add('protocolsConfigure:protocol:https://example.com/proto');
+      ctx.missingDeps.add(protocolSetDependencyKey('https://example.com/proto', 'protocolsConfigure:protocol:https://example.com/proto'));
 
       const msg = mockMessage({ protocol: 'https://example.com/proto', dateCreated: '2025-01-01T00:00:00.000000Z' });
       const result = await evaluateClosure(msg, store, { kind: 'protocolSet', protocols: ['https://example.com/proto',] }, ctx);
@@ -1417,7 +1701,7 @@ describe('evaluateClosure', () => {
     it('should invalidate grantCache when a grant write is processed', () => {
       const ctx = createClosureContext('did:example:alice');
       ctx.grantCache.set('grant-1', mockMessage());
-      ctx.satisfiedDeps.add('permissionGrant:grantId:grant-1');
+      ctx.satisfiedDeps.add(protocolSetDependencyKey('https://example.com/proto', 'permissionGrant:grantId:grant-1'));
 
       const grantMsg = mockMessage({
         interface    : 'Records',
@@ -1430,14 +1714,14 @@ describe('evaluateClosure', () => {
       invalidateClosureCache(ctx, grantMsg);
 
       expect(ctx.grantCache.has('grant-1')).toBe(false);
-      expect(ctx.satisfiedDeps.has('permissionGrant:grantId:grant-1')).toBe(false);
+      expect(ctx.satisfiedDeps.has(protocolSetDependencyKey('https://example.com/proto', 'permissionGrant:grantId:grant-1'))).toBe(false);
     });
 
     it('should invalidate grantCache revocation entry when a revocation is processed', () => {
       const ctx = createClosureContext('did:example:alice');
       ctx.grantCache.set('revocation:grant-1', mockMessage());
-      ctx.satisfiedDeps.add('grantRevocation:grantId:grant-1');
-      ctx.satisfiedDeps.add('permissionGrant:grantId:grant-1');
+      ctx.satisfiedDeps.add(protocolSetDependencyKey('https://example.com/proto', 'grantRevocation:grantId:grant-1'));
+      ctx.satisfiedDeps.add(protocolSetDependencyKey('https://example.com/proto', 'permissionGrant:grantId:grant-1'));
 
       const revocationMsg = mockMessage({
         interface    : 'Records',
@@ -1450,8 +1734,8 @@ describe('evaluateClosure', () => {
       invalidateClosureCache(ctx, revocationMsg);
 
       expect(ctx.grantCache.has('revocation:grant-1')).toBe(false);
-      expect(ctx.satisfiedDeps.has('grantRevocation:grantId:grant-1')).toBe(false);
-      expect(ctx.satisfiedDeps.has('permissionGrant:grantId:grant-1')).toBe(false);
+      expect(ctx.satisfiedDeps.has(protocolSetDependencyKey('https://example.com/proto', 'grantRevocation:grantId:grant-1'))).toBe(false);
+      expect(ctx.satisfiedDeps.has(protocolSetDependencyKey('https://example.com/proto', 'permissionGrant:grantId:grant-1'))).toBe(false);
     });
 
     it('should invalidate recordId-based satisfied/missing entries on any Records message', () => {
