@@ -27,6 +27,20 @@ export type PullMessageAcceptance = (
   entries: SyncMessageEntry[],
 ) => Promise<boolean>;
 
+/** Raised when an in-flight pull is cancelled before local apply can continue. */
+export class SyncPullAbortedError extends Error {
+  constructor() {
+    super('Sync pull aborted because the sync target is no longer current.');
+    this.name = 'SyncPullAbortedError';
+  }
+}
+
+function assertShouldContinue(shouldContinue: (() => boolean) | undefined): void {
+  if (shouldContinue?.() === false) {
+    throw new SyncPullAbortedError();
+  }
+}
+
 /**
  * 202: message was successfully written to the remote DWN
  * 204: an initial write message was written without any data
@@ -109,7 +123,7 @@ export async function getMessageCid(message: GenericMessage): Promise<string> {
  * Large payloads are re-fetched on retry since buffering them would consume
  * too much memory.
  */
-export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, prefetched, acceptEntry, agent }: {
+export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, prefetched, acceptEntry, shouldContinue, agent }: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
@@ -118,33 +132,41 @@ export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantId
   /** Pre-fetched message entries from the batched diff response (already have message + data). */
   prefetched?: MessagesSyncDiffEntry[];
   acceptEntry?: PullMessageAcceptance;
+  shouldContinue?: () => boolean;
   agent: EnboxPlatformAgent;
 }): Promise<string[]> {
+  assertShouldContinue(shouldContinue);
+
   // Step 1: Fetch remaining messages (not prefetched) from the remote.
   const fetched = messageCids.length > 0
     ? await fetchRemoteMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent })
     : [];
+  assertShouldContinue(shouldContinue);
 
   // Merge prefetched entries with remotely fetched ones.
   const allFetched = [...syncEntriesFromPrefetchedDiff(prefetched), ...fetched];
 
-  const { accepted, rejectedCids } = await applyPullAcceptanceGate(allFetched, acceptEntry);
+  const { accepted, rejectedCids } = await applyPullAcceptanceGate(allFetched, acceptEntry, shouldContinue);
+  assertShouldContinue(shouldContinue);
 
   // Step 2: Build dependency graph and topological sort.
   const sorted = topologicalSort(accepted);
 
   // Step 3: Buffer small data streams so they can be replayed on retry.
-  await bufferSmallStreams(sorted);
+  await bufferSmallStreams(sorted, shouldContinue);
+  assertShouldContinue(shouldContinue);
 
   // Step 4: Process messages in dependency order with multi-pass retry.
   const MAX_RETRY_PASSES = 3;
   let pending = sorted;
 
   for (let pass = 0; pass <= MAX_RETRY_PASSES && pending.length > 0; pass++) {
-    const failed = await processPullPass({ did, entries: pending, agent });
+    assertShouldContinue(shouldContinue);
+    const failed = await processPullPass({ did, entries: pending, shouldContinue, agent });
+    assertShouldContinue(shouldContinue);
     pending = failed.length === 0
       ? []
-      : await preparePullRetry({ did, dwnUrl, delegateDid, permissionGrantIds, failed, agent });
+      : await preparePullRetry({ did, dwnUrl, delegateDid, permissionGrantIds, failed, shouldContinue, agent });
   }
 
   // Return CIDs that permanently failed after all retry passes.
@@ -154,6 +176,7 @@ export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantId
 async function applyPullAcceptanceGate(
   entries: SyncMessageEntry[],
   acceptEntry: PullMessageAcceptance | undefined,
+  shouldContinue?: () => boolean,
 ): Promise<{ accepted: SyncMessageEntry[]; rejectedCids: string[] }> {
   if (!acceptEntry) {
     return { accepted: entries, rejectedCids: [] };
@@ -162,11 +185,13 @@ async function applyPullAcceptanceGate(
   const accepted: SyncMessageEntry[] = [];
   const rejectedCids: string[] = [];
   for (const entry of entries) {
+    assertShouldContinue(shouldContinue);
     if (await acceptEntry(entry, entries)) {
       accepted.push(entry);
     } else {
       rejectedCids.push(await getMessageCid(entry.message));
     }
+    assertShouldContinue(shouldContinue);
   }
 
   return { accepted, rejectedCids };
@@ -203,17 +228,20 @@ function replayableDataStream(entry: SyncMessageEntry): ReadableStream<Uint8Arra
   return entry.bufferedData ? dataStreamFromBytes(entry.bufferedData) : entry.dataStream;
 }
 
-async function processPullPass({ did, entries, agent }: {
+async function processPullPass({ did, entries, shouldContinue, agent }: {
   did: string;
   entries: SyncMessageEntry[];
+  shouldContinue?: () => boolean;
   agent: EnboxPlatformAgent;
 }): Promise<SyncMessageEntry[]> {
   const failed: SyncMessageEntry[] = [];
 
   for (const entry of entries) {
+    assertShouldContinue(shouldContinue);
     const pullReply = await agent.dwn.processRawMessage(did, entry.message, {
       dataStream: replayableDataStream(entry),
     });
+    assertShouldContinue(shouldContinue);
 
     if (!syncMessageReplyIsSuccessful(pullReply)) {
       failed.push(entry);
@@ -223,12 +251,13 @@ async function processPullPass({ did, entries, agent }: {
   return failed;
 }
 
-async function preparePullRetry({ did, dwnUrl, delegateDid, permissionGrantIds, failed, agent }: {
+async function preparePullRetry({ did, dwnUrl, delegateDid, permissionGrantIds, failed, shouldContinue, agent }: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
   permissionGrantIds?: string[];
   failed: SyncMessageEntry[];
+  shouldContinue?: () => boolean;
   agent: EnboxPlatformAgent;
 }): Promise<SyncMessageEntry[]> {
   const canRetry: SyncMessageEntry[] = [];
@@ -243,6 +272,7 @@ async function preparePullRetry({ did, dwnUrl, delegateDid, permissionGrantIds, 
   }
 
   if (needsRefetch.length > 0) {
+    assertShouldContinue(shouldContinue);
     canRetry.push(...await fetchRemoteMessages({
       did,
       dwnUrl,
@@ -251,6 +281,7 @@ async function preparePullRetry({ did, dwnUrl, delegateDid, permissionGrantIds, 
       messageCids: needsRefetch,
       agent,
     }));
+    assertShouldContinue(shouldContinue);
   }
 
   return topologicalSort(canRetry);
@@ -268,8 +299,9 @@ async function getMessageCids(entries: SyncMessageEntry[]): Promise<string[]> {
  * Buffers small data streams into `Uint8Array` so they can be replayed on retry.
  * Streams larger than `MAX_BUFFER_SIZE` are left as-is (will be re-fetched on retry).
  */
-async function bufferSmallStreams(entries: SyncMessageEntry[]): Promise<void> {
+async function bufferSmallStreams(entries: SyncMessageEntry[], shouldContinue?: () => boolean): Promise<void> {
   for (const entry of entries) {
+    assertShouldContinue(shouldContinue);
     if (!entry.dataStream) {
       continue;
     }
@@ -285,6 +317,7 @@ async function bufferSmallStreams(entries: SyncMessageEntry[]): Promise<void> {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) { break; }
+        assertShouldContinue(shouldContinue);
         totalSize += value.byteLength;
         if (totalSize > MAX_BUFFER_SIZE) {
           exceededThreshold = true;
@@ -314,6 +347,7 @@ async function bufferSmallStreams(entries: SyncMessageEntry[]): Promise<void> {
     entry.bufferedData = buffer;
     // Create a fresh ReadableStream from the buffer for the first processing attempt.
     entry.dataStream = dataStreamFromBytes(buffer);
+    assertShouldContinue(shouldContinue);
   }
 }
 

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import type { ReconcileTarget } from '../src/sync-link-reconciler.js';
 
 import { SyncLinkReconciler } from '../src/sync-link-reconciler.js';
+import { SyncPullAbortedError } from '../src/sync-messages.js';
 
 const target: ReconcileTarget = {
   did    : 'did:example:alice',
@@ -285,6 +286,22 @@ describe('SyncLinkReconciler', () => {
       expect(outcome.localRoot).toBe('rootA');
       expect(outcome.remoteRoot).toBe('rootB');
       expect(deps.pullMessages.called).toBe(false);
+    });
+
+    it('should abort when pullMessages detects a stale target before apply', async () => {
+      const deps = makeDeps({
+        getLocalRoot   : sinon.stub().resolves('rootA'),
+        getRemoteRoot  : sinon.stub().resolves('rootB'),
+        diffWithRemote : sinon.stub().resolves({ onlyRemote: [{ messageCid: 'cid-1' }], onlyLocal: ['cid-2'] }),
+        pullMessages   : sinon.stub().rejects(new SyncPullAbortedError()),
+      });
+      const reconciler = new SyncLinkReconciler(deps);
+
+      const outcome = await reconciler.reconcile(target);
+
+      expect(outcome.aborted).toBe(true);
+      expect(outcome.didPull).toBe(false);
+      expect(deps.pushMessages.called).toBe(false);
     });
   });
 

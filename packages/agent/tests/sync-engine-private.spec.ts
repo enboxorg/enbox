@@ -8,6 +8,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import { getMessagesPermissionGrantsForScope } from '../src/sync-permission-grants.js';
 import { ReplicationLedger } from '../src/sync-replication-ledger.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
+import { SyncPullAbortedError } from '../src/sync-messages.js';
 
 describe('SyncEngineLevel — private methods', () => {
   let db: Level<string, string>;
@@ -2377,6 +2378,36 @@ describe('SyncEngineLevel — private methods', () => {
       expect(mockAgent.dwn.processRawMessage.called).toBe(true);
     });
 
+    it('pullMessages should not record dead letters when the stale-target guard aborts', async () => {
+      const shouldContinue = sinon.stub()
+        .onFirstCall().returns(true)
+        .onSecondCall().returns(false);
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        processDwnRequest : sinon.stub().resolves({ message: {} }),
+        dwn               : {
+          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status : { code: 200 },
+            entry  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+
+      await expect((engine as any).pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        shouldContinue,
+      })).rejects.toThrow(SyncPullAbortedError);
+
+      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+      expect(await engine.getFailedMessages()).toHaveLength(0);
+    });
+
     it('pullMessages should reject prefetched entries outside the requested protocol', async () => {
       sinon.stub(console, 'warn');
       const mockAgent = {
@@ -3181,6 +3212,44 @@ describe('SyncEngineLevel — private methods', () => {
       const timer = (engine as any)._reconcileTimers.get(linkKey);
       if (timer) { clearTimeout(timer); }
     });
+
+    it('should not abort repair reconciliation when link status changes during pull', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+
+      const link = {
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
+        pull               : {},
+        needsReconcile     : false,
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+
+      sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
+      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-b');
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
+        onlyRemote : [{ messageCid: 'remote-cid-1' }],
+        onlyLocal  : [],
+      });
+      const pullStub = sinon.stub(engine as any, 'pullMessages').callsFake(async (): Promise<void> => {
+        link.status = 'degraded_poll';
+      });
+      const openPullStub = sinon.stub(engine as any, 'openLivePullSubscription').resolves();
+      const openPushStub = sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
+
+      const saveStub = sinon.stub().resolves();
+      const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
+      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+
+      await (engine as any).doRepairLink(linkKey);
+
+      expect(pullStub.calledOnce).toBe(true);
+      expect(openPullStub.calledOnce).toBe(true);
+      expect(openPushStub.calledOnce).toBe(true);
+      expect(link.status).toBe('live');
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -3758,6 +3827,41 @@ describe('SyncEngineLevel — private methods', () => {
       // Verify push was called with the onlyLocal CIDs.
       const pushArgs = pushStub.firstCall.args[0];
       expect(pushArgs.messageCids).toEqual(['local-cid-1']);
+    });
+
+    it('doReconcileLink should abort if the active link epoch changes during pull', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      let rootCallCount = 0;
+      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
+        rootCallCount++;
+        return rootCallCount <= 1 ? 'root-A' : 'root-converged';
+      });
+      sinon.stub(engine as any, 'getRemoteRoot').callsFake(async () => {
+        return rootCallCount <= 1 ? 'root-B' : 'root-converged';
+      });
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
+        onlyRemote : [{ messageCid: 'remote-cid-1' }],
+        onlyLocal  : ['local-cid-1'],
+      });
+      const pullStub = sinon.stub(engine as any, 'pullMessages').callsFake(async (params: any) => {
+        expect(params.shouldContinue()).toBe(true);
+        (engine as any)._activeLinks.delete(linkKey);
+        expect(params.shouldContinue()).toBe(false);
+      });
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
+      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
+      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      expect(pullStub.calledOnce).toBe(true);
+      expect(pushStub.called).toBe(false);
+      expect(clearStub.called).toBe(false);
+      expect(link.needsReconcile).toBe(true);
     });
   });
 
