@@ -169,6 +169,12 @@ export class MessagesSubscribeHandler implements MethodHandler {
       });
     };
 
+    // Deliberately do not cache delivery authorization here. Subscribe-open
+    // authorization validates static grant shape and filter scope; this per-event
+    // check revalidates dynamic grant state so expiry or revocation stops delivery
+    // before the next event is forwarded. Future throughput optimizations should
+    // split static and dynamic checks explicitly and document any bounded staleness
+    // introduced by caching revocation lookups.
     const authorizeAndDeliverEvent = async (subMessage: SubscriptionEvent): Promise<void> => {
       try {
         await MessagesGrantAuthorization.authorizeSubscribeDelivery({
