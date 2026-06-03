@@ -393,7 +393,7 @@ export type SyncEventListener = (event: SyncEvent) => void;
 // ---------------------------------------------------------------------------
 
 /** Category of sync failure for dead letter entries. */
-export type DeadLetterCategory = 'push-permanent' | 'push-exhausted' | 'pull-processing' | 'closure';
+export type DeadLetterCategory = 'push-permanent' | 'push-exhausted' | 'pull-processing' | 'pull-scope-rejected' | 'closure';
 
 /** A message that permanently failed to sync. */
 export type DeadLetterEntry = {

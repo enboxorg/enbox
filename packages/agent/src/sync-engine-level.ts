@@ -1,17 +1,19 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, RecordsWriteMessage, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
 import { Level } from 'level';
 import { sleep } from '@enbox/common';
-import { Encoder, hashToHex, initDefaultHashes, Message, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Encoder, hashToHex, initDefaultHashes, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
+import type { SyncMessageEntry } from './sync-messages.js';
+import type { SyncScopeClassification } from './sync-scope-acceptance.js';
 import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
@@ -22,9 +24,10 @@ import { ReplicationLedger } from './sync-replication-ledger.js';
 import { SyncLinkReconciler } from './sync-link-reconciler.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { buildLegacyCursorKey, buildLinkId } from './sync-link-id.js';
+import { classifySyncEventScope, classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { computeAuthorizationEpoch, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { createClosureContext, invalidateClosureCache } from './sync-closure-types.js';
-import { fetchRemoteMessages, pullMessages, pushMessages } from './sync-messages.js';
+import { fetchRemoteMessages, getMessageCid, pullMessages, pushMessages } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
 export type SyncEngineLevelParams = {
@@ -91,6 +94,10 @@ enum LinkSubscriptionOpenResult {
   Repairing = 'repairing',
 }
 
+type PullAcceptanceResult =
+  | { accepted: true }
+  | { accepted: false; classification: Exclude<SyncScopeClassification, 'in-scope'> };
+
 // ---------------------------------------------------------------------------
 // Per-link in-memory delivery-order tracking (not persisted to ledger)
 // ---------------------------------------------------------------------------
@@ -109,64 +116,6 @@ type InFlightCommit = {
   /** Whether processRawMessage has completed successfully. */
   committed: boolean;
 };
-
-type EventScopeClassification = 'in-scope' | 'out-of-scope' | 'unknown';
-
-/**
- * Classifies whether an event belongs to the link's current sync scope.
- *
- * Full links accept every message. Protocol-set links accept protocol
- * records, protocol configures, and permission records tagged for a covered
- * protocol. RecordsDelete has no descriptor protocol, so it must be classified
- * from the event's initial write. If that metadata is missing, the caller must
- * repair/reconcile instead of advancing past the event.
- */
-function classifyEventScope(event: MessageEvent, scope: SyncScope): EventScopeClassification {
-  if (scope.kind === 'full') { return 'in-scope'; }
-
-  const descriptor = event.message.descriptor as Record<string, unknown>;
-  const scopedDescriptor = getScopedEventDescriptor(event);
-  if (scopedDescriptor === undefined) {
-    return 'unknown';
-  }
-
-  const protocol = scopedDescriptor.protocol;
-  if (protocol === PermissionsProtocol.uri && typeof scopedDescriptor.tags === 'object' && scopedDescriptor.tags !== null) {
-    const taggedProtocol = (scopedDescriptor.tags as Record<string, unknown>).protocol;
-    return typeof taggedProtocol === 'string' && scope.protocols.includes(taggedProtocol)
-      ? 'in-scope'
-      : 'out-of-scope';
-  }
-
-  if (typeof protocol === 'string' && scope.protocols.includes(protocol)) {
-    return 'in-scope';
-  }
-  if (typeof protocol === 'string') {
-    return 'out-of-scope';
-  }
-
-  if (
-    descriptor.interface === 'Protocols' &&
-    descriptor.method === 'Configure' &&
-    typeof descriptor.definition === 'object' &&
-    descriptor.definition !== null
-  ) {
-    const definitionProtocol = (descriptor.definition as Record<string, unknown>).protocol;
-    return typeof definitionProtocol === 'string' && scope.protocols.includes(definitionProtocol)
-      ? 'in-scope'
-      : 'out-of-scope';
-  }
-
-  return 'out-of-scope';
-}
-
-function getScopedEventDescriptor(event: MessageEvent): Record<string, unknown> | undefined {
-  const descriptor = event.message.descriptor as Record<string, unknown>;
-  if (descriptor.interface === 'Records' && descriptor.method === 'Delete') {
-    return event.initialWrite?.descriptor as Record<string, unknown> | undefined;
-  }
-  return descriptor;
-}
 
 /**
  * Per-link runtime state held in memory. Not persisted — on crash,
@@ -1966,7 +1915,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     if (link) {
-      const scopeClassification = classifyEventScope(subMessage.event, link.scope);
+      const scopeClassification = classifySyncEventScope(subMessage.event, link.scope);
       if (scopeClassification === 'out-of-scope') {
         await this.skipOutOfScopePullEvent({ link, cursor: subMessage.cursor, isStale });
         return true;
@@ -2232,7 +2181,7 @@ export class SyncEngineLevel implements SyncEngine {
       const pushLinkKey = target.linkKey;
       const pushLink = this._activeLinks.get(pushLinkKey);
       if (pushLink) {
-        const scopeClassification = classifyEventScope(subMessage.event, pushLink.scope);
+        const scopeClassification = classifySyncEventScope(subMessage.event, pushLink.scope);
         if (scopeClassification === 'out-of-scope') {
           return;
         }
@@ -2464,7 +2413,7 @@ export class SyncEngineLevel implements SyncEngine {
   /** Push retry backoff schedule: immediate, 250ms, 1s, 2s, then give up. */
   private static readonly PUSH_RETRY_BACKOFF_MS = [0, 250, 1000, 2000];
   private static readonly ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES: ReadonlySet<DeadLetterCategory> =
-    new Set(['push-permanent', 'push-exhausted', 'pull-processing']);
+    new Set(['push-permanent', 'push-exhausted', 'pull-processing', 'pull-scope-rejected']);
 
   /**
    * Re-queues a failed push batch for retry, or marks the link
@@ -3170,22 +3119,118 @@ export class SyncEngineLevel implements SyncEngine {
     messageCids: string[];
     prefetched?: MessagesSyncDiffEntry[];
   }): Promise<void> {
+    const scope: SyncScope = protocol === undefined
+      ? { kind: 'full' }
+      : { kind: 'protocolSet', protocols: [protocol] };
+    const rejectedPullEntries = new Map<string, Extract<PullAcceptanceResult, { accepted: false }>>();
     const failedCids = await pullMessages({
-      did, dwnUrl, delegateDid, permissionGrantIds, messageCids, prefetched,
-      agent: this.agent,
+      did,
+      dwnUrl,
+      delegateDid,
+      permissionGrantIds,
+      messageCids,
+      prefetched,
+      agent       : this.agent,
+      acceptEntry : async (entry, entries) => {
+        const result = await this.acceptPulledSyncEntry(did, scope, entry, entries);
+        if (!result.accepted) {
+          rejectedPullEntries.set(await getMessageCid(entry.message), result);
+        }
+        return result.accepted;
+      },
     });
 
     // Record permanently failed pull entries in the dead letter store.
     for (const cid of failedCids) {
+      const rejection = rejectedPullEntries.get(cid);
       await this.recordDeadLetter({
         messageCid     : cid,
         tenantDid      : did,
         remoteEndpoint : dwnUrl,
         protocol,
-        category       : 'pull-processing',
-        errorDetail    : 'pull processing failed after retry passes exhausted',
+        category       : rejection ? 'pull-scope-rejected' : 'pull-processing',
+        errorCode      : rejection?.classification,
+        errorDetail    : rejection
+          ? `pulled message rejected by ${rejection.classification} sync scope gate`
+          : 'pull processing failed after retry passes exhausted',
       });
     }
+  }
+
+  private async acceptPulledSyncEntry(
+    did: string,
+    scope: SyncScope,
+    entry: SyncMessageEntry,
+    entries: SyncMessageEntry[],
+  ): Promise<PullAcceptanceResult> {
+    if (scope.kind === 'full') {
+      return { accepted: true };
+    }
+
+    const initialWrite = await this.resolvePulledDeleteInitialWrite(did, entry.message, entries);
+    const classification = classifySyncMessageScope({
+      message: entry.message,
+      initialWrite,
+      scope,
+    });
+
+    if (classification === 'in-scope') {
+      return { accepted: true };
+    }
+
+    const messageCid = await getMessageCid(entry.message);
+    console.warn(`SyncEngineLevel: refusing to apply ${classification} pulled message ${messageCid}`);
+    return { accepted: false, classification };
+  }
+
+  private async resolvePulledDeleteInitialWrite(
+    did: string,
+    message: GenericMessage,
+    entries: SyncMessageEntry[],
+  ): Promise<RecordsWriteMessage | undefined> {
+    const descriptor = message.descriptor as Record<string, unknown>;
+    if (
+      descriptor.interface !== DwnInterfaceName.Records ||
+      descriptor.method !== DwnMethodName.Delete ||
+      typeof descriptor.recordId !== 'string'
+    ) {
+      return undefined;
+    }
+
+    if (!this.agent.dwn.isRemoteMode) {
+      const localInitialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(
+        this.agent.dwn.node.storage.messageStore,
+        did,
+        descriptor.recordId,
+      );
+      if (localInitialWrite) {
+        return localInitialWrite;
+      }
+    }
+
+    // Batch entries are only used when the initial write has not been applied
+    // locally yet. The eventual processRawMessage call still authenticates the
+    // delete before any local mutation occurs.
+    return this.findInitialWriteInPullBatch(descriptor.recordId, entries);
+  }
+
+  private async findInitialWriteInPullBatch(
+    recordId: string,
+    entries: SyncMessageEntry[],
+  ): Promise<RecordsWriteMessage | undefined> {
+    for (const entry of entries) {
+      if (entry.message.descriptor.interface !== DwnInterfaceName.Records ||
+        entry.message.descriptor.method !== DwnMethodName.Write) {
+        continue;
+      }
+
+      const candidate = entry.message as RecordsWriteMessage;
+      if (candidate.recordId === recordId && await RecordsWrite.isInitialWrite(candidate)) {
+        return candidate;
+      }
+    }
+
+    return undefined;
   }
 
   // ---------------------------------------------------------------------------
