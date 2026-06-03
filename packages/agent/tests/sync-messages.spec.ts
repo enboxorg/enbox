@@ -416,6 +416,92 @@ describe('sync-messages', () => {
       expect(mockAgent.dwn.processRawMessage.called).toBe(false);
     });
 
+    it('should not apply later messages after shouldContinue turns false after local apply', async () => {
+      let shouldAbort = false;
+      const firstMessage = {
+        descriptor: {
+          interface  : DwnInterfaceName.Protocols,
+          method     : DwnMethodName.Configure,
+          definition : { protocol: 'https://example.com/first' },
+        },
+      } as any;
+      const secondMessage = {
+        descriptor: {
+          interface  : DwnInterfaceName.Protocols,
+          method     : DwnMethodName.Configure,
+          definition : { protocol: 'https://example.com/second' },
+        },
+      } as any;
+      const processRawMessage = sinon.stub().callsFake(async () => {
+        shouldAbort = true;
+        return { status: { code: 202 } };
+      });
+      const shouldContinue = (): boolean => !shouldAbort;
+      const mockAgent = {
+        processDwnRequest : sinon.stub(),
+        rpc               : { sendDwnRequest: sinon.stub() },
+        dwn               : { processRawMessage },
+      } as any;
+
+      await expect(pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [],
+        agent       : mockAgent,
+        prefetched  : [
+          { messageCid: 'cid-1', message: firstMessage },
+          { messageCid: 'cid-2', message: secondMessage },
+        ],
+        shouldContinue,
+      })).rejects.toThrow(SyncPullAbortedError);
+
+      expect(processRawMessage.callCount).toBe(1);
+      expect(processRawMessage.firstCall.args[1]).toBe(firstMessage);
+    });
+
+    it('should release data stream reader lock when aborting during buffering', async () => {
+      let shouldAbort = false;
+      const recordsWriteMessage = {
+        recordId   : 'record-1',
+        descriptor : {
+          interface        : DwnInterfaceName.Records,
+          method           : DwnMethodName.Write,
+          dateCreated      : '2026-01-01T00:00:00.000000Z',
+          messageTimestamp : '2026-01-01T00:00:00.000000Z',
+        },
+      } as any;
+      const dataStream = new ReadableStream<Uint8Array>({
+        pull(controller): void {
+          shouldAbort = true;
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      });
+      const mockAgent = {
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: {} } }),
+        rpc               : {
+          sendDwnRequest: sinon.stub().resolves({
+            status : { code: 200 },
+            entry  : { message: recordsWriteMessage, data: dataStream },
+          }),
+        },
+        dwn: {
+          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+
+      await expect(pullMessages({
+        did            : 'did:example:alice',
+        dwnUrl         : 'https://dwn.example.com',
+        messageCids    : ['cid-1'],
+        shouldContinue : () => !shouldAbort,
+        agent          : mockAgent,
+      })).rejects.toThrow(SyncPullAbortedError);
+
+      expect(dataStream.locked).toBe(false);
+      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+    });
+
     it('should reject prefetched messages before local apply when the acceptance gate fails', async () => {
       const message = {
         descriptor: {
