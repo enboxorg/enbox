@@ -11,6 +11,7 @@ import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesSync } from '../interfaces/messages-sync.js';
+import { Records } from '../utils/records.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 /**
@@ -21,6 +22,8 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
  * separately via MessagesRead.
  */
 const DEFAULT_MAX_INLINE_DATA_SIZE = DwnConstant.maxDataSizeAllowedToBeEncoded;
+
+type StoredMessageWithEncodedData = GenericMessage & { encodedData?: string };
 
 
 export class MessagesSyncHandler implements MethodHandler {
@@ -309,34 +312,34 @@ export class MessagesSyncHandler implements MethodHandler {
     // It must not be included in the wire-format message (the recipient's
     // DWN would reject it as an unexpected top-level property).
     let inlineEncodedData: string | undefined;
-    if ('encodedData' in storedMessage) {
-      inlineEncodedData = (storedMessage as any).encodedData as string;
-      delete (storedMessage as any).encodedData;
+    if (MessagesSyncHandler.hasEncodedData(storedMessage)) {
+      inlineEncodedData = storedMessage.encodedData;
+      delete storedMessage.encodedData;
     }
 
     let data: ReadableStream<Uint8Array> | undefined;
 
-    // Check if this is a RecordsWrite with data.
-    if (storedMessage.descriptor.interface === 'Records' &&
-        storedMessage.descriptor.method === 'Write') {
-      const dataCid = (storedMessage as any).descriptor?.dataCid as string | undefined;
-      if (dataCid) {
-        // Try DataStore first (for large payloads stored externally).
+    // Check if this is a RecordsWrite with data that is small enough to inline.
+    if (inlineEncodedData === undefined && Records.isRecordsWrite(storedMessage)) {
+      const { dataCid, dataSize } = storedMessage.descriptor;
+      if (dataSize <= DEFAULT_MAX_INLINE_DATA_SIZE) {
+        // Some stores may have small payload bytes in DataStore instead of encodedData.
         if (this.deps.dataStore) {
-          // DataStore uses recordId, not messageCid. For RecordsWrite, the
-          // recordId is in the descriptor.
-          const recordId = (storedMessage as any).descriptor?.recordId as string | undefined;
-          if (recordId) {
-            const dataResult = await this.deps.dataStore.get(tenant, recordId, dataCid);
-            if (dataResult?.dataStream) {
-              data = dataResult.dataStream;
-            }
+          // DataStore uses recordId, not messageCid. For RecordsWrite,
+          // recordId is a top-level message property.
+          const dataResult = await this.deps.dataStore.get(tenant, storedMessage.recordId, dataCid);
+          if (dataResult?.dataStream) {
+            data = dataResult.dataStream;
           }
         }
       }
     }
 
     return { message: storedMessage, encodedData: inlineEncodedData, data };
+  }
+
+  private static hasEncodedData(message: GenericMessage): message is StoredMessageWithEncodedData {
+    return 'encodedData' in message && typeof message.encodedData === 'string';
   }
 
   /**

@@ -18,7 +18,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
+import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 
@@ -729,6 +729,71 @@ export function testMessagesSyncHandler(): void {
             expect(reply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol);
           }
         });
+
+        it('returns only protocol-scoped diff entries for a delegated protocol grant', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const protocolA: ProtocolDefinition = { ...freeForAll, protocol: 'http://delegated-diff-protocol-a' };
+          const protocolB: ProtocolDefinition = { ...freeForAll, protocol: 'http://delegated-diff-protocol-b' };
+
+          for (const protocolDefinition of [protocolA, protocolB]) {
+            const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+              author: alice,
+              protocolDefinition,
+            });
+            expect((await dwn.processMessage(alice.did, protocolMessage)).status.code).toBe(202);
+          }
+
+          const { message: recordA, dataStream: dataStreamA } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolA.protocol,
+            protocolPath : 'post',
+            schema       : protocolA.types.post.schema,
+          });
+          expect((await dwn.processMessage(alice.did, recordA, { dataStream: dataStreamA })).status.code).toBe(202);
+
+          const { message: recordB, dataStream: dataStreamB } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolB.protocol,
+            protocolPath : 'post',
+            schema       : protocolB.types.post.schema,
+          });
+          expect((await dwn.processMessage(alice.did, recordB, { dataStream: dataStreamB })).status.code).toBe(202);
+
+          const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol  : protocolA.protocol,
+            },
+          });
+          expect((await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream })).status.code).toBe(202);
+
+          const { message: diffMsg } = await MessagesSync.create({
+            signer             : Jws.createSigner(bob),
+            action             : 'diff',
+            hashes             : {},
+            depth              : 2,
+            protocol           : protocolA.protocol,
+            permissionGrantIds : [grantMessage.recordId],
+          });
+
+          const reply = await dwn.processMessage(alice.did, diffMsg);
+          expect(reply.status.code).toBe(200);
+
+          const remoteCids = reply.onlyRemote!.map(entry => entry.messageCid);
+          expect(remoteCids).toContain(await Message.getCid(recordA));
+          expect(remoteCids).not.toContain(await Message.getCid(recordB));
+          expect(reply.onlyRemote!.every(entry => {
+            if (entry.message?.descriptor.interface !== DwnInterfaceName.Records) {
+              return true;
+            }
+            const recordsMessage = entry.message as { descriptor: { protocol?: string } };
+            return recordsMessage.descriptor.protocol === protocolA.protocol;
+          })).toBe(true);
+        });
       });
     });
 
@@ -947,6 +1012,43 @@ export function testMessagesSyncHandler(): void {
         expect(recordEntry).toBeDefined();
         expect(recordEntry!.encodedData).toBeDefined();
         expect(typeof recordEntry!.encodedData).toBe('string');
+      });
+
+      it('inlines small dataStore-backed payloads using the RecordsWrite recordId', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const dataBytes = new TextEncoder().encode('small data-store payload');
+        const { message: recordMessage, recordsWrite } = await TestDataGenerator.generateRecordsWrite({
+          author     : alice,
+          data       : dataBytes,
+          dataFormat : 'text/plain',
+        });
+        const indexes = await recordsWrite.constructIndexes(true);
+        const messageCid = await Message.getCid(recordMessage);
+
+        await dataStore.put(
+          alice.did,
+          recordMessage.recordId,
+          recordMessage.descriptor.dataCid,
+          DataStream.fromBytes(dataBytes)
+        );
+        await messageStore.put(alice.did, recordMessage, indexes);
+        await stateIndex.insert(alice.did, messageCid, indexes);
+
+        const { message: diffMsg } = await MessagesSync.create({
+          signer : Jws.createSigner(alice),
+          action : 'diff',
+          hashes : {},
+          depth  : 2,
+        });
+
+        const reply = await dwn.processMessage(alice.did, diffMsg);
+        expect(reply.status.code).toBe(200);
+
+        const recordEntry = reply.onlyRemote!.find(entry => entry.messageCid === messageCid);
+        expect(recordEntry).toBeDefined();
+        expect(recordEntry!.encodedData).toBe(Encoder.bytesToBase64Url(dataBytes));
       });
 
       it('returns 400 when hashes or depth are missing', async () => {
