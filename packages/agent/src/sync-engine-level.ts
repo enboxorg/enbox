@@ -86,6 +86,11 @@ type SyncTarget = {
 
 type LinkSyncTarget = SyncTarget & { linkKey: string };
 
+enum LinkSubscriptionOpenResult {
+  ReadyForLive = 'readyForLive',
+  Repairing = 'repairing',
+}
+
 // ---------------------------------------------------------------------------
 // Per-link in-memory delivery-order tracking (not persisted to ledger)
 // ---------------------------------------------------------------------------
@@ -1451,8 +1456,8 @@ export class SyncEngineLevel implements SyncEngine {
       await this.migrateLegacyCursorIfNeeded(target, link);
       this._activeLinks.set(linkKey, link);
 
-      const subscriptionsOpened = await this.openLinkSubscriptions({ ...target, linkKey });
-      if (subscriptionsOpened) {
+      const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey });
+      if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
         await this.markLinkLive(target, link, linkKey);
       }
     } catch (error: any) {
@@ -1491,12 +1496,12 @@ export class SyncEngineLevel implements SyncEngine {
     await this.deleteLegacyCursor(legacyKey);
   }
 
-  private async openLinkSubscriptions(target: LinkSyncTarget): Promise<boolean> {
+  private async openLinkSubscriptions(target: LinkSyncTarget): Promise<LinkSubscriptionOpenResult> {
     await this.openLivePullSubscription(target);
     const link = this._activeLinks.get(target.linkKey);
     if (link?.status === 'repairing') {
       await this.closeLiveSubscription(target.linkKey);
-      return false;
+      return LinkSubscriptionOpenResult.Repairing;
     }
 
     try {
@@ -1505,7 +1510,7 @@ export class SyncEngineLevel implements SyncEngine {
       await this.closeLiveSubscription(target.linkKey);
       throw error;
     }
-    return true;
+    return LinkSubscriptionOpenResult.ReadyForLive;
   }
 
   private async markLinkLive(target: SyncTarget, link: ReplicationLinkState, linkKey: string): Promise<void> {
