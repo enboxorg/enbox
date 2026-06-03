@@ -2373,6 +2373,47 @@ describe('SyncEngineLevel — private methods', () => {
       expect(mockAgent.dwn.processRawMessage.called).toBe(true);
     });
 
+    it('pullMessages should reject prefetched entries outside the requested protocol', async () => {
+      sinon.stub(console, 'warn');
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        processDwnRequest : sinon.stub().resolves({ message: {} }),
+        dwn               : {
+          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub(),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const outOfScopeMessage = {
+        descriptor: {
+          interface        : 'Records',
+          method           : 'Write',
+          protocol         : 'https://example.com/social',
+          protocolPath     : 'profile',
+          dateCreated      : '2026-01-01T00:00:00.000000Z',
+          messageTimestamp : '2026-01-01T00:00:00.000000Z',
+        },
+        recordId: 'record-1',
+      } as any;
+
+      await (engine as any).pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        protocol    : 'https://example.com/profile',
+        messageCids : [],
+        prefetched  : [{ messageCid: 'cid-1', message: outOfScopeMessage }],
+      });
+
+      const failedMessages = await engine.getFailedMessages();
+      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+      expect(failedMessages).toHaveLength(1);
+      expect(failedMessages[0].category).toBe('pull-processing');
+      expect(failedMessages[0].protocol).toBe('https://example.com/profile');
+      expect(failedMessages[0].remoteEndpoint).toBe('https://dwn.example.com');
+    });
+
     it('pushMessages should delegate to sync-messages pushMessages', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',

@@ -21,6 +21,12 @@ export type SyncMessageEntry = {
   bufferedData?: Uint8Array;
 };
 
+/** Optional pre-apply gate for inbound sync entries. */
+export type PullMessageAcceptance = (
+  entry: SyncMessageEntry,
+  entries: SyncMessageEntry[],
+) => Promise<boolean>;
+
 /**
  * 202: message was successfully written to the remote DWN
  * 204: an initial write message was written without any data
@@ -103,7 +109,7 @@ export async function getMessageCid(message: GenericMessage): Promise<string> {
  * Large payloads are re-fetched on retry since buffering them would consume
  * too much memory.
  */
-export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, prefetched, agent }: {
+export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, prefetched, acceptEntry, agent }: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
@@ -111,6 +117,7 @@ export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantId
   messageCids: string[];
   /** Pre-fetched message entries from the batched diff response (already have message + data). */
   prefetched?: MessagesSyncDiffEntry[];
+  acceptEntry?: PullMessageAcceptance;
   agent: EnboxPlatformAgent;
 }): Promise<string[]> {
   // Step 1: Fetch remaining messages (not prefetched) from the remote.
@@ -121,8 +128,10 @@ export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantId
   // Merge prefetched entries with remotely fetched ones.
   const allFetched = [...syncEntriesFromPrefetchedDiff(prefetched), ...fetched];
 
+  const { accepted, rejectedCids } = await applyPullAcceptanceGate(allFetched, acceptEntry);
+
   // Step 2: Build dependency graph and topological sort.
-  const sorted = topologicalSort(allFetched);
+  const sorted = topologicalSort(accepted);
 
   // Step 3: Buffer small data streams so they can be replayed on retry.
   await bufferSmallStreams(sorted);
@@ -139,7 +148,28 @@ export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantId
   }
 
   // Return CIDs that permanently failed after all retry passes.
-  return getMessageCids(pending);
+  return [...rejectedCids, ...await getMessageCids(pending)];
+}
+
+async function applyPullAcceptanceGate(
+  entries: SyncMessageEntry[],
+  acceptEntry: PullMessageAcceptance | undefined,
+): Promise<{ accepted: SyncMessageEntry[]; rejectedCids: string[] }> {
+  if (!acceptEntry) {
+    return { accepted: entries, rejectedCids: [] };
+  }
+
+  const accepted: SyncMessageEntry[] = [];
+  const rejectedCids: string[] = [];
+  for (const entry of entries) {
+    if (await acceptEntry(entry, entries)) {
+      accepted.push(entry);
+    } else {
+      rejectedCids.push(await getMessageCid(entry.message));
+    }
+  }
+
+  return { accepted, rejectedCids };
 }
 
 function syncEntriesFromPrefetchedDiff(prefetched?: MessagesSyncDiffEntry[]): SyncMessageEntry[] {
