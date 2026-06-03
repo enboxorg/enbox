@@ -13,6 +13,7 @@ import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncMessageEntry } from './sync-messages.js';
+import type { SyncScopeClassification } from './sync-scope-acceptance.js';
 import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
@@ -92,6 +93,10 @@ enum LinkSubscriptionOpenResult {
   ReadyForLive = 'readyForLive',
   Repairing = 'repairing',
 }
+
+type PullAcceptanceResult =
+  | { accepted: true }
+  | { accepted: false; classification: Exclude<SyncScopeClassification, 'in-scope'> };
 
 // ---------------------------------------------------------------------------
 // Per-link in-memory delivery-order tracking (not persisted to ledger)
@@ -2408,7 +2413,7 @@ export class SyncEngineLevel implements SyncEngine {
   /** Push retry backoff schedule: immediate, 250ms, 1s, 2s, then give up. */
   private static readonly PUSH_RETRY_BACKOFF_MS = [0, 250, 1000, 2000];
   private static readonly ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES: ReadonlySet<DeadLetterCategory> =
-    new Set(['push-permanent', 'push-exhausted', 'pull-processing']);
+    new Set(['push-permanent', 'push-exhausted', 'pull-processing', 'pull-scope-rejected']);
 
   /**
    * Re-queues a failed push batch for retry, or marks the link
@@ -3117,6 +3122,7 @@ export class SyncEngineLevel implements SyncEngine {
     const scope: SyncScope = protocol === undefined
       ? { kind: 'full' }
       : { kind: 'protocolSet', protocols: [protocol] };
+    const rejectedPullEntries = new Map<string, Extract<PullAcceptanceResult, { accepted: false }>>();
     const failedCids = await pullMessages({
       did,
       dwnUrl,
@@ -3125,18 +3131,28 @@ export class SyncEngineLevel implements SyncEngine {
       messageCids,
       prefetched,
       agent       : this.agent,
-      acceptEntry : (entry, entries) => this.acceptPulledSyncEntry(did, scope, entry, entries),
+      acceptEntry : async (entry, entries) => {
+        const result = await this.acceptPulledSyncEntry(did, scope, entry, entries);
+        if (!result.accepted) {
+          rejectedPullEntries.set(await getMessageCid(entry.message), result);
+        }
+        return result.accepted;
+      },
     });
 
     // Record permanently failed pull entries in the dead letter store.
     for (const cid of failedCids) {
+      const rejection = rejectedPullEntries.get(cid);
       await this.recordDeadLetter({
         messageCid     : cid,
         tenantDid      : did,
         remoteEndpoint : dwnUrl,
         protocol,
-        category       : 'pull-processing',
-        errorDetail    : 'pull processing failed after retry passes exhausted',
+        category       : rejection ? 'pull-scope-rejected' : 'pull-processing',
+        errorCode      : rejection?.classification,
+        errorDetail    : rejection
+          ? `pulled message rejected by ${rejection.classification} sync scope gate`
+          : 'pull processing failed after retry passes exhausted',
       });
     }
   }
@@ -3146,9 +3162,9 @@ export class SyncEngineLevel implements SyncEngine {
     scope: SyncScope,
     entry: SyncMessageEntry,
     entries: SyncMessageEntry[],
-  ): Promise<boolean> {
+  ): Promise<PullAcceptanceResult> {
     if (scope.kind === 'full') {
-      return true;
+      return { accepted: true };
     }
 
     const initialWrite = await this.resolvePulledDeleteInitialWrite(did, entry.message, entries);
@@ -3159,12 +3175,12 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     if (classification === 'in-scope') {
-      return true;
+      return { accepted: true };
     }
 
     const messageCid = await getMessageCid(entry.message);
     console.warn(`SyncEngineLevel: refusing to apply ${classification} pulled message ${messageCid}`);
-    return false;
+    return { accepted: false, classification };
   }
 
   private async resolvePulledDeleteInitialWrite(
@@ -3181,20 +3197,21 @@ export class SyncEngineLevel implements SyncEngine {
       return undefined;
     }
 
-    const batchInitialWrite = await this.findInitialWriteInPullBatch(descriptor.recordId, entries);
-    if (batchInitialWrite) {
-      return batchInitialWrite;
+    if (!this.agent.dwn.isRemoteMode) {
+      const localInitialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(
+        this.agent.dwn.node.storage.messageStore,
+        did,
+        descriptor.recordId,
+      );
+      if (localInitialWrite) {
+        return localInitialWrite;
+      }
     }
 
-    if (this.agent.dwn.isRemoteMode) {
-      return undefined;
-    }
-
-    return RecordsWrite.fetchInitialRecordsWriteMessage(
-      this.agent.dwn.node.storage.messageStore,
-      did,
-      descriptor.recordId,
-    );
+    // Batch entries are only used when the initial write has not been applied
+    // locally yet. The eventual processRawMessage call still authenticates the
+    // delete before any local mutation occurs.
+    return this.findInitialWriteInPullBatch(descriptor.recordId, entries);
   }
 
   private async findInitialWriteInPullBatch(

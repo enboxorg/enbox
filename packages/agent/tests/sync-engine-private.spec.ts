@@ -2,6 +2,7 @@ import sinon from 'sinon';
 
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
+import { Message, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { getMessagesPermissionGrantsForScope } from '../src/sync-permission-grants.js';
@@ -2346,6 +2347,9 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('pullMessages / pushMessages delegate wrappers', () => {
+    const profileProtocol = 'https://example.com/profile';
+    const socialProtocol = 'https://example.com/social';
+
     it('pullMessages should delegate to sync-messages pullMessages', async () => {
       const mockAgent = {
         agentDid          : 'did:example:agent',
@@ -2409,9 +2413,143 @@ describe('SyncEngineLevel — private methods', () => {
       const failedMessages = await engine.getFailedMessages();
       expect(mockAgent.dwn.processRawMessage.called).toBe(false);
       expect(failedMessages).toHaveLength(1);
-      expect(failedMessages[0].category).toBe('pull-processing');
+      expect(failedMessages[0].category).toBe('pull-scope-rejected');
+      expect(failedMessages[0].errorCode).toBe('out-of-scope');
       expect(failedMessages[0].protocol).toBe('https://example.com/profile');
       expect(failedMessages[0].remoteEndpoint).toBe('https://dwn.example.com');
+    });
+
+    it('pullMessages should classify a pulled delete from an in-scope batch initial write', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          isRemoteMode      : true,
+          processRawMessage : sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const recordsWrite = await TestDataGenerator.generateRecordsWrite({ protocol: profileProtocol });
+      const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+        author   : recordsWrite.author,
+        recordId : recordsWrite.message.recordId,
+      });
+
+      await (engine as any).pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        protocol    : profileProtocol,
+        messageCids : [],
+        prefetched  : [
+          { messageCid: await Message.getCid(recordsWrite.message), message: recordsWrite.message },
+          { messageCid: await Message.getCid(recordsDelete.message), message: recordsDelete.message },
+        ],
+      });
+
+      expect(mockAgent.dwn.processRawMessage.callCount).toBe(2);
+      expect(mockAgent.dwn.processRawMessage.secondCall.args[1]).toBe(recordsDelete.message);
+      expect(await engine.getFailedMessages()).toHaveLength(0);
+    });
+
+    it('pullMessages should reject a pulled delete from an out-of-scope batch initial write', async () => {
+      sinon.stub(console, 'warn');
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          isRemoteMode      : true,
+          processRawMessage : sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const recordsWrite = await TestDataGenerator.generateRecordsWrite({ protocol: socialProtocol });
+      const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+        author   : recordsWrite.author,
+        recordId : recordsWrite.message.recordId,
+      });
+      const deleteCid = await Message.getCid(recordsDelete.message);
+
+      await (engine as any).pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        protocol    : profileProtocol,
+        messageCids : [],
+        prefetched  : [
+          { messageCid: await Message.getCid(recordsWrite.message), message: recordsWrite.message },
+          { messageCid: deleteCid, message: recordsDelete.message },
+        ],
+      });
+
+      const failedMessages = await engine.getFailedMessages();
+      const deleteFailure = failedMessages.find(entry => entry.messageCid === deleteCid);
+      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+      expect(deleteFailure?.category).toBe('pull-scope-rejected');
+      expect(deleteFailure?.errorCode).toBe('out-of-scope');
+    });
+
+    it('pullMessages should classify a pulled delete from the local initial write', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          isRemoteMode      : false,
+          node              : { storage: { messageStore: {} } },
+          processRawMessage : sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const recordsWrite = await TestDataGenerator.generateRecordsWrite({ protocol: profileProtocol });
+      const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+        author   : recordsWrite.author,
+        recordId : recordsWrite.message.recordId,
+      });
+      const fetchInitialStub = sinon.stub(RecordsWrite, 'fetchInitialRecordsWriteMessage').resolves(recordsWrite.message);
+
+      await (engine as any).pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        protocol    : profileProtocol,
+        messageCids : [],
+        prefetched  : [{ messageCid: await Message.getCid(recordsDelete.message), message: recordsDelete.message }],
+      });
+
+      expect(fetchInitialStub.calledOnce).toBe(true);
+      expect(mockAgent.dwn.processRawMessage.calledOnce).toBe(true);
+      expect(mockAgent.dwn.processRawMessage.firstCall.args[1]).toBe(recordsDelete.message);
+      expect(await engine.getFailedMessages()).toHaveLength(0);
+    });
+
+    it('pullMessages should fail closed for an unknown pulled delete in remote mode', async () => {
+      sinon.stub(console, 'warn');
+      const fetchInitialStub = sinon.stub(RecordsWrite, 'fetchInitialRecordsWriteMessage');
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          isRemoteMode      : true,
+          processRawMessage : sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const recordsDelete = await TestDataGenerator.generateRecordsDelete();
+
+      await (engine as any).pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        protocol    : profileProtocol,
+        messageCids : [],
+        prefetched  : [{ messageCid: await Message.getCid(recordsDelete.message), message: recordsDelete.message }],
+      });
+
+      const failedMessages = await engine.getFailedMessages();
+      expect(fetchInitialStub.called).toBe(false);
+      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+      expect(failedMessages).toHaveLength(1);
+      expect(failedMessages[0].category).toBe('pull-scope-rejected');
+      expect(failedMessages[0].errorCode).toBe('unknown');
+
+      await (engine as any).clearRootConvergenceDeadLettersForScope(
+        'did:example:alice',
+        'https://dwn.example.com',
+        { kind: 'protocolSet', protocols: [profileProtocol] },
+      );
+      expect(await engine.getFailedMessages()).toHaveLength(0);
     });
 
     it('pushMessages should delegate to sync-messages pushMessages', async () => {
@@ -4396,12 +4534,21 @@ describe('SyncEngineLevel — private methods', () => {
         category       : 'pull-processing',
         errorDetail    : 'transient pull failure before root convergence',
       });
+      await engine.recordDeadLetter({
+        messageCid     : 'dl-scope',
+        tenantDid      : 'did:example:closure-health',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol       : 'https://example.com/proto',
+        category       : 'pull-scope-rejected',
+        errorCode      : 'unknown',
+        errorDetail    : 'transient pull scope rejection before root convergence',
+      });
 
       await (engine as any).clearDeadLettersForLink(
         'did:example:closure-health',
         'https://dwn.example.com',
         'https://example.com/proto',
-        { categories: new Set(['push-permanent', 'push-exhausted', 'pull-processing']) },
+        { categories: new Set(['push-permanent', 'push-exhausted', 'pull-processing', 'pull-scope-rejected']) },
       );
 
       const remaining = await engine.getFailedMessages();
