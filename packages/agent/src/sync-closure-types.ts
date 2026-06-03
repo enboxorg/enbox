@@ -37,6 +37,18 @@ export enum ClosureFailureCode {
   DepthExceeded = 'ClosureDepthExceeded',
 }
 
+const TERMINAL_CLOSURE_FAILURE_CODES = new Set<string>([
+  ClosureFailureCode.DependencyForbidden,
+  ClosureFailureCode.GrantExpired,
+  ClosureFailureCode.GrantNotYetActive,
+  ClosureFailureCode.GrantRevocationMissing,
+]);
+
+/** Returns true when repair cannot make the closure failure complete. */
+export function isTerminalClosureFailureCode(failureCode: string): boolean {
+  return TERMINAL_CLOSURE_FAILURE_CODES.has(failureCode);
+}
+
 // ---------------------------------------------------------------------------
 // Closure dependency edge
 // ---------------------------------------------------------------------------
@@ -57,6 +69,13 @@ export type ClosureDependencyEdge = {
   identifier: string;
   /** The type of identifier — determines the fetch strategy. */
   identifierType: 'messageCid' | 'recordId' | 'protocol' | 'grantId' | 'filter';
+  /**
+   * Protocol the resolved dependency must belong to when the dependency is
+   * expected to resolve outside the current primary sync scope. This is used
+   * for protocol-derived support records such as cross-protocol `$ref` parents
+   * and role records.
+   */
+  expectedProtocol?: string;
   /**
    * When `identifierType` is `'filter'`, this carries the full query filter
    * as a structured object. Used for dependencies that require multi-field
@@ -111,8 +130,10 @@ export type ClosureEvaluationContext = {
   grantCache: Map<string, GenericMessage | null>;
   /**
    * Set of dependency identifiers already known to be locally present.
-   * Keyed by `${identifierType}:${identifier}` to prevent cross-namespace
-   * collisions (e.g., a recordId and a grantId with the same string value).
+   * Keys include the sync scope, expected dependency protocol when one is
+   * known, and `${label}:${identifierType}:${identifier}` so dependencies
+   * proven under one scoped link cannot satisfy another link's closure check
+   * without being revalidated for that scope and dependency policy.
    */
   satisfiedDeps: Set<string>;
   /**
@@ -196,8 +217,8 @@ export function invalidateClosureCache(
     if (protocolPath === 'grant' && recordId) {
       // Grant write → invalidate the grant cache and dep keys.
       context.grantCache.delete(recordId);
-      context.satisfiedDeps.delete(`permissionGrant:grantId:${recordId}`);
-      context.missingDeps.delete(`permissionGrant:grantId:${recordId}`);
+      deleteDependencyCacheEntries(context.satisfiedDeps, `permissionGrant:grantId:${recordId}`);
+      deleteDependencyCacheEntries(context.missingDeps, `permissionGrant:grantId:${recordId}`);
     }
 
     if (protocolPath === 'grant/revocation') {
@@ -205,11 +226,11 @@ export function invalidateClosureCache(
       const parentId = desc.parentId as string | undefined;
       if (parentId) {
         context.grantCache.delete(`revocation:${parentId}`);
-        context.satisfiedDeps.delete(`grantRevocation:grantId:${parentId}`);
-        context.missingDeps.delete(`grantRevocation:grantId:${parentId}`);
+        deleteDependencyCacheEntries(context.satisfiedDeps, `grantRevocation:grantId:${parentId}`);
+        deleteDependencyCacheEntries(context.missingDeps, `grantRevocation:grantId:${parentId}`);
         // Also invalidate the grant itself since its revocation state changed.
-        context.satisfiedDeps.delete(`permissionGrant:grantId:${parentId}`);
-        context.missingDeps.delete(`permissionGrant:grantId:${parentId}`);
+        deleteDependencyCacheEntries(context.satisfiedDeps, `permissionGrant:grantId:${parentId}`);
+        deleteDependencyCacheEntries(context.missingDeps, `permissionGrant:grantId:${parentId}`);
       }
     }
   }
@@ -288,6 +309,14 @@ export function invalidateClosureCache(
       for (const key of context.missingDeps) {
         if (key.includes(ctxKeyFragment)) { context.missingDeps.delete(key); }
       }
+    }
+  }
+}
+
+function deleteDependencyCacheEntries(cache: Set<string>, dependencyKeySuffix: string): void {
+  for (const key of cache) {
+    if (key.endsWith(dependencyKeySuffix)) {
+      cache.delete(key);
     }
   }
 }

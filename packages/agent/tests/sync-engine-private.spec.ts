@@ -4,6 +4,7 @@ import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { Message, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
+import { ClosureFailureCode } from '../src/sync-closure-types.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { getMessagesPermissionGrantsForScope } from '../src/sync-permission-grants.js';
 import { ReplicationLedger } from '../src/sync-replication-ledger.js';
@@ -1243,7 +1244,7 @@ describe('SyncEngineLevel — private methods', () => {
   describe('flushPendingPushes', () => {
     it('should clear pending push entries after flushing', async () => {
       const engine = createEngine({ db });
-      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
+      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', status: 'live' });
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
@@ -1261,7 +1262,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
-      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
+      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', status: 'live' });
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
@@ -1296,7 +1297,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       // Simulate a push runtime left over from a previously retried batch
       // that eventually succeeded — retryCount is stale at 2.
-      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
+      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', status: 'live' });
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
@@ -1332,7 +1333,7 @@ describe('SyncEngineLevel — private methods', () => {
       // Simulate a runtime with stale retryCount from a prior batch,
       // plus new entries waiting. The batch-A entries will be flushed;
       // batch-B entries arrive while flush is in progress.
-      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
+      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', status: 'live' });
       const pushRuntime = {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
@@ -1375,7 +1376,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
-      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com' });
+      (engine as any)._activeLinks.set('key1', { tenantDid: 'did:example:alice', remoteEndpoint: 'https://dwn.example.com', status: 'live' });
       (engine as any)._pushRuntimes.set('key1', {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
@@ -1388,6 +1389,24 @@ describe('SyncEngineLevel — private methods', () => {
       // Should not throw — errors are caught
       await (engine as any).flushPendingPushes();
       expect(consoleStub.called).toBe(true);
+    });
+
+    it('should drop pending push runtime for a non-live link', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const timer = setTimeout(() => {}, 10_000);
+      (engine as any)._activeLinks.set(linkKey, { status: 'terminal_incomplete' });
+      (engine as any)._pushRuntimes.set(linkKey, {
+        did        : 'did:example:alice',
+        dwnUrl     : 'https://dwn.example.com',
+        entries    : [{ cid: 'cid-1' }],
+        retryCount : 0,
+        timer,
+      });
+
+      await (engine as any).flushPendingPushesForLink(linkKey);
+
+      expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
     });
   });
 
@@ -3618,6 +3637,118 @@ describe('SyncEngineLevel — private methods', () => {
       expect(health.failedMessageCount).toBe(1);
       expect(health.closureFailureCount).toBe(1);
       expect(health.syncHealthy).toBe(false);
+    });
+
+    for (const failureCode of [
+      ClosureFailureCode.DependencyForbidden,
+      ClosureFailureCode.GrantExpired,
+      ClosureFailureCode.GrantNotYetActive,
+      ClosureFailureCode.GrantRevocationMissing,
+    ]) {
+      it(`should mark terminal closure failure ${failureCode} without scheduling repair`, async () => {
+        const engine = createEngine({ db });
+        const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
+        const protocol = 'https://example.com/protocol';
+        const link = makeLiveLink({
+          scope: { kind: 'protocolSet', protocols: [protocol] },
+        });
+        (engine as any)._activeLinks.set(linkKey, link);
+
+        const transitionToRepairingStub = sinon.stub(engine as any, 'transitionToRepairing').resolves();
+        const closePullStub = sinon.stub().resolves();
+        const closePushStub = sinon.stub().resolves();
+        const pushTimer = setTimeout(() => {}, 10_000);
+        const reconcileTimer = setTimeout(() => {}, 10_000);
+        (engine as any)._liveSubscriptions.push({
+          linkKey,
+          did    : link.tenantDid,
+          dwnUrl : link.remoteEndpoint,
+          close  : closePullStub,
+        });
+        (engine as any)._localSubscriptions.push({
+          linkKey,
+          did    : link.tenantDid,
+          dwnUrl : link.remoteEndpoint,
+          close  : closePushStub,
+        });
+        (engine as any)._pushRuntimes.set(linkKey, { timer: pushTimer, entries: [], retryCount: 0 });
+        (engine as any)._reconcileTimers.set(linkKey, reconcileTimer);
+
+        await (engine as any).recordClosureFailure(
+          {
+            did     : link.tenantDid,
+            dwnUrl  : link.remoteEndpoint,
+            linkKey,
+            link,
+            isStale : () => false,
+          },
+          {
+            message: {
+              descriptor: {
+                interface : 'Records',
+                method    : 'Write',
+                protocol,
+              },
+            },
+          },
+          failureCode,
+          'terminal closure failure',
+        );
+
+        expect(transitionToRepairingStub.called).toBe(false);
+        expect(link.status).toBe('terminal_incomplete');
+        expect(link.connectivity).toBe('offline');
+        expect(closePullStub.calledOnce).toBe(true);
+        expect(closePushStub.calledOnce).toBe(true);
+        expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
+        expect((engine as any)._reconcileTimers.has(linkKey)).toBe(false);
+
+        const failures = await engine.getFailedMessages();
+        expect(failures.length).toBe(1);
+        expect(failures[0].category).toBe('closure');
+        expect(failures[0].errorCode).toBe(failureCode);
+
+        const health = await engine.getSyncHealth();
+        expect(health.closureFailureCount).toBe(1);
+        expect(health.degradedLinkCount).toBe(1);
+        expect(health.syncHealthy).toBe(false);
+      });
+    }
+
+    it('should transition transient closure failures to repair', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
+      const protocol = 'https://example.com/protocol';
+      const link = makeLiveLink({
+        scope: { kind: 'protocolSet', protocols: [protocol] },
+      });
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      const transitionToRepairingStub = sinon.stub(engine as any, 'transitionToRepairing').resolves();
+
+      await (engine as any).recordClosureFailure(
+        {
+          did     : link.tenantDid,
+          dwnUrl  : link.remoteEndpoint,
+          linkKey,
+          link,
+          isStale : () => false,
+        },
+        {
+          message: {
+            descriptor: {
+              interface : 'Records',
+              method    : 'Write',
+              protocol,
+            },
+          },
+        },
+        ClosureFailureCode.ProtocolMetadataMissing,
+        'missing protocol config',
+      );
+
+      expect(transitionToRepairingStub.calledOnceWith(linkKey, link)).toBe(true);
+      expect(link.status).toBe('live');
     });
 
     it('should NOT clear needsReconcile when roots still differ after reconciliation', async () => {

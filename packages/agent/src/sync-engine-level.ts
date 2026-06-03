@@ -26,7 +26,7 @@ import { topologicalSort } from './sync-topological-sort.js';
 import { buildLegacyCursorKey, buildLinkId } from './sync-link-id.js';
 import { classifySyncEventScope, classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { computeAuthorizationEpoch, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
-import { createClosureContext, invalidateClosureCache } from './sync-closure-types.js';
+import { createClosureContext, invalidateClosureCache, isTerminalClosureFailureCode } from './sync-closure-types.js';
 import { fetchRemoteMessages, getMessageCid, pullMessages, pushMessages } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
@@ -866,6 +866,10 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState,
     options?: { resumeToken?: ProgressToken },
   ): Promise<void> {
+    if (link.status === 'terminal_incomplete') {
+      return;
+    }
+
     const prevStatus = link.status;
     const prevConnectivity = link.connectivity;
     link.connectivity = 'offline';
@@ -893,6 +897,58 @@ export class SyncEngineLevel implements SyncEngine {
     void this.repairLink(linkKey).catch(() => {
       this.scheduleRepairRetry(linkKey);
     });
+  }
+
+  private async transitionToTerminalIncomplete(
+    linkKey: string,
+    link: ReplicationLinkState,
+  ): Promise<void> {
+    if (link.status === 'terminal_incomplete') {
+      return;
+    }
+
+    const prevStatus = link.status;
+    const prevConnectivity = link.connectivity;
+    link.connectivity = 'offline';
+    await this.ledger.setStatus(link, 'terminal_incomplete');
+
+    const eventScope = syncEventScope(link.scope);
+    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevStatus, to: 'terminal_incomplete' });
+    if (prevConnectivity !== 'offline') {
+      this.emitEvent({ type: 'link:connectivity-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevConnectivity, to: 'offline' });
+    }
+
+    await this.closeLinkSubscriptions(link);
+
+    const rt = this._linkRuntimes.get(linkKey);
+    if (rt) {
+      rt.inflight.clear();
+      rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
+    }
+
+    const retryTimer = this._repairRetryTimers.get(linkKey);
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      this._repairRetryTimers.delete(linkKey);
+    }
+    const degradedTimer = this._degradedPollTimers.get(linkKey);
+    if (degradedTimer) {
+      clearInterval(degradedTimer);
+      this._degradedPollTimers.delete(linkKey);
+    }
+    const reconcileTimer = this._reconcileTimers.get(linkKey);
+    if (reconcileTimer) {
+      clearTimeout(reconcileTimer);
+      this._reconcileTimers.delete(linkKey);
+    }
+    const pushRuntime = this._pushRuntimes.get(linkKey);
+    if (pushRuntime?.timer) {
+      clearTimeout(pushRuntime.timer);
+    }
+    this._pushRuntimes.delete(linkKey);
+
+    this._repairAttempts.delete(linkKey);
+    this._repairContext.delete(linkKey);
   }
 
   /**
@@ -1404,6 +1460,9 @@ export class SyncEngineLevel implements SyncEngine {
       const linkKey = this.getReplicationLinkKey(target, link);
       await this.migrateLegacyCursorIfNeeded(target, link);
       this._activeLinks.set(linkKey, link);
+      if (link.status === 'terminal_incomplete') {
+        return;
+      }
 
       const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey });
       if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
@@ -2050,6 +2109,11 @@ export class SyncEngineLevel implements SyncEngine {
       errorDetail    : failureDetail,
     });
 
+    if (link && !isStale() && isTerminalClosureFailureCode(failureCode)) {
+      await this.transitionToTerminalIncomplete(linkKey, link);
+      return;
+    }
+
     if (link && !isStale()) {
       await this.transitionToRepairing(linkKey, link);
     }
@@ -2295,10 +2359,16 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private takePushFlushBatch(linkKey: string): PushFlushBatch | undefined {
-    // Guard: bail if this link was hot-removed. Without this, a stale
-    // debounce timer or retry callback could send pushes after the DID
-    // was removed.
-    if (!this._activeLinks.has(linkKey)) {
+    // Guard: bail if this link was hot-removed or is no longer live. Without
+    // this, a stale debounce timer or retry callback could send pushes after
+    // the DID was removed or the link entered repair/terminal state.
+    const flushLink = this._activeLinks.get(linkKey);
+    if (flushLink?.status !== 'live') {
+      const staleRuntime = this._pushRuntimes.get(linkKey);
+      if (staleRuntime?.timer) {
+        clearTimeout(staleRuntime.timer);
+      }
+      this._pushRuntimes.delete(linkKey);
       return undefined;
     }
 
@@ -2319,7 +2389,6 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Capture the current active link identity so we can detect
     // remove+re-add during the await pushMessages() call.
-    const flushLink = this._activeLinks.get(linkKey);
     const isStale = (): boolean =>
       !this._activeLinks.has(linkKey) ||
       (flushLink !== undefined && this._activeLinks.get(linkKey) !== flushLink);
@@ -3479,7 +3548,7 @@ export class SyncEngineLevel implements SyncEngine {
     let degradedLinkCount = 0;
     const allLinks = await this.ledger.getAllLinks();
     for (const link of allLinks) {
-      if (link.status === 'repairing' || link.status === 'degraded_poll') {
+      if (link.status === 'repairing' || link.status === 'degraded_poll' || link.status === 'terminal_incomplete') {
         degradedLinkCount++;
       }
     }

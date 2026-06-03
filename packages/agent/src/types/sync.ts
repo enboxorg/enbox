@@ -247,9 +247,10 @@ export type DirectionCheckpoint = {
  * - `live` — actively receiving events via subscription.
  * - `repairing` — gap detected or pending overflow; running SMT reconciliation.
  * - `degraded_poll` — subscription failed; polling at reduced frequency.
+ * - `terminal_incomplete` — closure failed with a terminal dependency error; requires a new scope/authorization epoch.
  * - `paused` — explicitly paused by the application.
  */
-export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'degraded_poll' | 'paused';
+export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'degraded_poll' | 'terminal_incomplete' | 'paused';
 
 /**
  * Durable state of a single replication link. Persisted to LevelDB and
@@ -436,7 +437,7 @@ export type SyncHealthSummary = {
    * count keeps that state visible to callers.
    */
   closureFailureCount: number;
-  /** Number of links currently in 'repairing' or 'degraded_poll' status. */
+  /** Number of links currently in 'repairing', 'degraded_poll', or terminal-incomplete status. */
   degradedLinkCount: number;
   /** True only when there are no failed messages and no degraded links. */
   syncHealthy: boolean;

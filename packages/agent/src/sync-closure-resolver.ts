@@ -4,8 +4,9 @@ import type {
   ClosureEvaluationContext,
   ClosureResult,
 } from './sync-closure-types.js';
-import type { GenericMessage, MessageStore } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageStore, ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
 
+import { classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
 import { isMultiPartyContext } from './protocol-utils.js';
 import { ClosureFailureCode, createClosureContext } from './sync-closure-types.js';
@@ -44,70 +45,148 @@ function extractProtocolDeps(message: GenericMessage): ClosureDependencyEdge[] {
  * - initialWrite (for non-initial writes)
  * - parentId chain
  */
-function extractAncestryDeps(message: GenericMessage): ClosureDependencyEdge[] {
+function extractAncestryDeps(message: GenericMessage, protocolDef?: ProtocolDefinition): ClosureDependencyEdge[] {
   const desc = message.descriptor as Record<string, unknown>;
-  const edges: ClosureDependencyEdge[] = [];
 
   // Only Records interface messages have ancestry dependencies.
   if (desc.interface !== 'Records') { return []; }
 
-  const recordId = (message as any).recordId as string | undefined;
+  const context = createAncestryContext(message, desc, protocolDef);
+  return [
+    createParentRecordDependency(context),
+    createContextRootDependency(context),
+    createInitialWriteDependency(context),
+  ].filter((edge): edge is ClosureDependencyEdge => edge !== undefined);
+}
 
-  // parentId dependency — the parent record must be present.
-  const parentId = desc.parentId as string | undefined;
-  if (parentId) {
-    edges.push({
-      dependencyClass : 2,
-      label           : 'parentRecord',
-      identifier      : parentId,
-      identifierType  : 'recordId',
-    });
+function expectedProtocol(protocol: string | undefined): Partial<Pick<ClosureDependencyEdge, 'expectedProtocol'>> {
+  return protocol === undefined ? {} : { expectedProtocol: protocol };
+}
+
+type AncestryContext = {
+  descriptor: Record<string, unknown>;
+  recordId?: string;
+  protocol?: string;
+  parentId?: string;
+  contextId?: string;
+  rootRefProtocol?: string;
+  parentResolvedByCrossProtocolRef: boolean;
+};
+
+function createAncestryContext(
+  message: GenericMessage,
+  descriptor: Record<string, unknown>,
+  protocolDef: ProtocolDefinition | undefined,
+): AncestryContext {
+  const rootRefProtocol = getRootRefProtocol(descriptor, protocolDef);
+
+  return {
+    descriptor,
+    recordId                         : (message as any).recordId as string | undefined,
+    protocol                         : descriptor.protocol as string | undefined,
+    parentId                         : descriptor.parentId as string | undefined,
+    contextId                        : (message as any).contextId as string | undefined,
+    rootRefProtocol,
+    parentResolvedByCrossProtocolRef : rootRefProtocol !== undefined && isDirectChildOfRootRef(descriptor),
+  };
+}
+
+function createParentRecordDependency(context: AncestryContext): ClosureDependencyEdge | undefined {
+  if (!context.parentId || context.parentResolvedByCrossProtocolRef) { return undefined; }
+
+  return {
+    dependencyClass : 2,
+    label           : 'parentRecord',
+    identifier      : context.parentId,
+    identifierType  : 'recordId',
+    ...expectedProtocol(context.protocol),
+  };
+}
+
+function createContextRootDependency(context: AncestryContext): ClosureDependencyEdge | undefined {
+  const contextRootId = getContextRootId(context);
+  if (!contextRootId || contextRootIsCrossProtocolParent(context, contextRootId)) {
+    return undefined;
   }
 
-  // contextId dependency — if the record has a contextId that differs from
-  // its own recordId, the context root record must be present. The contextId
-  // is a hierarchical path of recordIds (e.g., "rootId/childId/grandchildId").
-  // The context root is the first segment.
-  const contextId = (message as any).contextId as string | undefined;
-  if (contextId && recordId && contextId !== recordId) {
-    const contextRootId = contextId.split('/')[0];
-    edges.push({
-      dependencyClass : 2,
-      label           : 'contextRoot',
-      identifier      : contextRootId,
-      identifierType  : 'recordId',
-    });
+  return {
+    dependencyClass : 2,
+    label           : 'contextRoot',
+    identifier      : contextRootId,
+    identifierType  : 'recordId',
+    ...expectedProtocol(context.rootRefProtocol ?? context.protocol),
+  };
+}
+
+function getContextRootId(context: AncestryContext): string | undefined {
+  if (!context.contextId || !context.recordId || context.contextId === context.recordId) {
+    return undefined;
   }
 
-  // initialWrite dependency — non-initial writes need their initialWrite.
-  // An initial write has entryId === recordId, but we can't compute entryId here
-  // without the full CID computation. Instead, check dateCreated vs messageTimestamp
-  // as a heuristic, then the resolver will verify via the message store.
-  if (recordId && desc.method === 'Write') {
-    const dateCreated = desc.dateCreated as string | undefined;
-    const messageTimestamp = desc.messageTimestamp as string | undefined;
-    if (dateCreated && messageTimestamp && dateCreated !== messageTimestamp) {
-      // Non-initial write — needs the initialWrite.
-      edges.push({
-        dependencyClass : 2,
-        label           : 'initialWrite',
-        identifier      : recordId,
-        identifierType  : 'recordId',
-      });
-    }
-  }
+  return context.contextId.split('/')[0];
+}
 
-  // RecordsDelete also needs the initialWrite for authorization and index construction.
-  if (recordId && desc.method === 'Delete') {
-    edges.push({
+function contextRootIsCrossProtocolParent(context: AncestryContext, contextRootId: string): boolean {
+  return context.parentResolvedByCrossProtocolRef && contextRootId === context.parentId;
+}
+
+function createInitialWriteDependency(context: AncestryContext): ClosureDependencyEdge | undefined {
+  if (!context.recordId) { return undefined; }
+
+  if (isNonInitialWrite(context.descriptor)) {
+    return {
       dependencyClass : 2,
       label           : 'initialWrite',
-      identifier      : recordId,
+      identifier      : context.recordId,
       identifierType  : 'recordId',
-    });
+      ...expectedProtocol(context.protocol),
+    };
   }
 
-  return edges;
+  if (context.descriptor.method === 'Delete') {
+    return {
+      dependencyClass : 2,
+      label           : 'initialWrite',
+      identifier      : context.recordId,
+      identifierType  : 'recordId',
+    };
+  }
+
+  return undefined;
+}
+
+function isNonInitialWrite(descriptor: Record<string, unknown>): boolean {
+  if (descriptor.method !== 'Write') { return false; }
+
+  const dateCreated = descriptor.dateCreated as string | undefined;
+  const messageTimestamp = descriptor.messageTimestamp as string | undefined;
+  return dateCreated !== undefined &&
+    messageTimestamp !== undefined &&
+    dateCreated !== messageTimestamp;
+}
+
+function isDirectChildOfRootRef(descriptor: Record<string, unknown>): boolean {
+  const protocolPath = descriptor.protocolPath as string | undefined;
+  return protocolPath?.split('/').length === 2;
+}
+
+function getRootRefProtocol(
+  descriptor: Record<string, unknown>,
+  protocolDef: ProtocolDefinition | undefined,
+): string | undefined {
+  const protocolPath = descriptor.protocolPath as string | undefined;
+  if (!protocolPath) { return undefined; }
+
+  const pathSegments = protocolPath.split('/');
+  const rootRuleSet = protocolDef?.structure?.[pathSegments[0]];
+  if (typeof rootRuleSet?.$ref !== 'string') { return undefined; }
+
+  const colonIdx = rootRuleSet.$ref.indexOf(':');
+  if (colonIdx <= 0) { return undefined; }
+
+  const alias = rootRuleSet.$ref.substring(0, colonIdx);
+  const referencedProtocol = protocolDef?.uses?.[alias];
+  return typeof referencedProtocol === 'string' ? referencedProtocol : undefined;
 }
 
 /**
@@ -154,22 +233,28 @@ function extractAuthorizationDeps(message: GenericMessage): ClosureDependencyEdg
  * (not in public API, reimplemented here to avoid internal path coupling).
  */
 function getRuleSetAtProtocolPath(
-  structure: Record<string, any> | undefined,
+  structure: ProtocolDefinition['structure'] | undefined,
   protocolPath: string,
-): any | undefined {
+): ProtocolRuleSet | undefined {
   if (!structure || !protocolPath) { return undefined; }
 
   const segments = protocolPath.split('/');
-  let currentLevel: Record<string, any> = structure;
-  let current: any;
+  let currentLevel: Record<string, unknown> = structure;
+  let current: ProtocolRuleSet | undefined;
 
   for (const segment of segments) {
     if (!Object.hasOwn(currentLevel, segment)) { return undefined; }
-    current = currentLevel[segment];
+    const next = currentLevel[segment];
+    if (!isProtocolRuleSet(next)) { return undefined; }
+    current = next;
     currentLevel = current;
   }
 
   return current;
+}
+
+function isProtocolRuleSet(value: unknown): value is ProtocolRuleSet {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -183,7 +268,7 @@ function getRuleSetAtProtocolPath(
  */
 function extractProtocolAwareDeps(
   message: GenericMessage,
-  protocolDef: any,
+  protocolDef: ProtocolDefinition,
   isDelegateSession?: boolean,
 ): ClosureDependencyEdge[] {
   const desc = message.descriptor as Record<string, unknown>;
@@ -326,10 +411,11 @@ function extractProtocolAwareDeps(
         const parentId = desc.parentId as string | undefined;
         if (pathSegments.length === 2 && parentId) {
           edges.push({
-            dependencyClass : 6,
-            label           : 'crossProtocolParent',
-            identifier      : `${referencedProtocol}|${parentId}`,
-            identifierType  : 'recordId',
+            dependencyClass  : 6,
+            label            : 'crossProtocolParent',
+            identifier       : `${referencedProtocol}|${parentId}`,
+            identifierType   : 'recordId',
+            expectedProtocol : referencedProtocol,
           });
         }
       }
@@ -405,11 +491,12 @@ function extractProtocolAwareDeps(
               const contextPrefix = roleFilter.contextId
                 ? JSON.stringify(roleFilter.contextId) : 'no-context';
               edges.push({
-                dependencyClass : 6,
-                label           : 'crossProtocolRoleRecord',
-                identifier      : `${roleProtocol}|${roleProtocolPath}|${messageAuthor}|${contextPrefix}`,
-                identifierType  : 'filter',
-                filter          : roleFilter,
+                dependencyClass  : 6,
+                label            : 'crossProtocolRoleRecord',
+                identifier       : `${roleProtocol}|${roleProtocolPath}|${messageAuthor}|${contextPrefix}`,
+                identifierType   : 'filter',
+                expectedProtocol : roleProtocol,
+                filter           : roleFilter,
               });
             }
           }
@@ -482,34 +569,37 @@ export async function evaluateClosure(
     for (let i = 0; i < batchSize; i++) {
       const current = queue.shift()!;
 
-      // Resolve static dependency edges first. This populates the protocol
+      // Resolve protocol metadata first. This populates the protocol
       // cache when a ProtocolsConfigure dependency is resolved, which is
-      // needed by protocol-definition-aware dependencies below.
-      const staticEdges = [
-        ...extractProtocolDeps(current),
-        ...extractAncestryDeps(current),
+      // needed to distinguish normal parent records from $ref parents.
+      const protocolResult = await resolveEdges(
+        extractProtocolDeps(current), allEdges, messageStore, scope, context, visited, queue, rootCid, currentDepth
+      );
+      if (protocolResult) { return protocolResult; } // Early failure.
+
+      const currentDesc = current.descriptor as Record<string, unknown>;
+      const currentProtocol = currentDesc.protocol as string | undefined;
+      const cachedProtocolMsg = currentProtocol ? context.protocolCache.get(currentProtocol) : undefined;
+      const protocolDef = cachedProtocolMsg?.descriptor?.definition as ProtocolDefinition | undefined;
+
+      const structuralEdges = [
+        ...extractAncestryDeps(current, protocolDef),
         ...extractAuthorizationDeps(current),
       ];
 
-      const resolveResult = await resolveEdges(
-        staticEdges, allEdges, messageStore, context, visited, queue, rootCid, currentDepth
+      const structuralResult = await resolveEdges(
+        structuralEdges, allEdges, messageStore, scope, context, visited, queue, rootCid, currentDepth
       );
-      if (resolveResult) { return resolveResult; } // Early failure.
+      if (structuralResult) { return structuralResult; } // Early failure.
 
       // Resolve protocol-definition-aware edges after static dependencies so
       // the ProtocolDefinition is in the cache.
-      const currentDesc = current.descriptor as Record<string, unknown>;
-      const currentProtocol = currentDesc.protocol as string | undefined;
-      if (currentProtocol) {
-        const cachedProtocolMsg = context.protocolCache.get(currentProtocol);
-        const protocolDef = cachedProtocolMsg?.descriptor?.definition;
-        if (protocolDef) {
-          const protoAwareEdges = extractProtocolAwareDeps(current, protocolDef, context.isDelegateSession);
-          const protoResult = await resolveEdges(
-            protoAwareEdges, allEdges, messageStore, context, visited, queue, rootCid, currentDepth
-          );
-          if (protoResult) { return protoResult; }
-        }
+      if (protocolDef) {
+        const protoAwareEdges = extractProtocolAwareDeps(current, protocolDef, context.isDelegateSession);
+        const protoResult = await resolveEdges(
+          protoAwareEdges, allEdges, messageStore, scope, context, visited, queue, rootCid, currentDepth
+        );
+        if (protoResult) { return protoResult; }
       }
 
       // Validate grant temporal ordering after all dependency edges resolve.
@@ -668,6 +758,7 @@ async function resolveEdges(
   edges: ClosureDependencyEdge[],
   allEdges: ClosureDependencyEdge[],
   messageStore: MessageStore,
+  scope: SyncScope,
   context: ClosureEvaluationContext,
   visited: Set<string>,
   queue: GenericMessage[],
@@ -680,7 +771,7 @@ async function resolveEdges(
     // Include label in dep key to distinguish edges with the same identifier
     // but different semantics (e.g., permissionGrant vs grantRevocation both
     // use identifierType:'grantId' with the same grantId).
-    const depKey = `${edge.label}:${edge.identifierType}:${edge.identifier}`;
+    const depKey = dependencyCacheKey(edge, scope);
     if (context.satisfiedDeps.has(depKey)) { continue; }
     if (context.missingDeps.has(depKey)) {
       return {
@@ -712,6 +803,20 @@ async function resolveEdges(
       };
     }
 
+    if (!isResolvedDependencyAllowed(edge, resolved, scope)) {
+      return {
+        complete       : false,
+        rootMessageCid : rootCid,
+        edges          : allEdges,
+        failure        : {
+          code   : ClosureFailureCode.DependencyForbidden,
+          edge,
+          detail : `dependency '${edge.label}' (${edge.identifier}) is outside the current sync scope`,
+        },
+        depth: currentDepth,
+      };
+    }
+
     context.satisfiedDeps.add(depKey);
 
     // Add resolved record to the BFS queue for transitive dependency evaluation,
@@ -732,6 +837,78 @@ async function resolveEdges(
   }
 
   return null; // All edges resolved successfully.
+}
+
+function dependencyCacheKey(edge: ClosureDependencyEdge, scope: SyncScope): string {
+  const expectedProtocolSegment = edge.expectedProtocol === undefined
+    ? ''
+    : `expectedProtocol:${edge.expectedProtocol}:`;
+  return `${scopeCacheKey(scope)}:${expectedProtocolSegment}${edge.label}:${edge.identifierType}:${edge.identifier}`;
+}
+
+function scopeCacheKey(scope: SyncScope): string {
+  return scope.kind === 'full'
+    ? 'full'
+    : `protocolSet:${scope.protocols.join('\u001f')}`;
+}
+
+function isResolvedDependencyAllowed(
+  edge: ClosureDependencyEdge,
+  resolved: GenericMessage,
+  scope: SyncScope,
+): boolean {
+  if (isSyntheticDependency(resolved)) {
+    return true;
+  }
+
+  // Protocol metadata is re-derived from an accepted primary and is safe to
+  // use as closure metadata even when it is not itself a primary in the scope.
+  if (edge.identifierType === 'protocol') {
+    return true;
+  }
+
+  if (edge.expectedProtocol !== undefined) {
+    return getMessageProtocol(resolved) === edge.expectedProtocol;
+  }
+
+  if (edge.label === 'contextKeyRecord') {
+    return isContextKeyDependencyAllowed(edge, resolved, scope);
+  }
+
+  return classifySyncMessageScope({ message: resolved, scope }) === 'in-scope';
+}
+
+function isSyntheticDependency(message: GenericMessage): boolean {
+  return (message.descriptor as Record<string, unknown>).interface === 'Synthetic';
+}
+
+function getMessageProtocol(message: GenericMessage): string | undefined {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  return typeof descriptor.protocol === 'string' ? descriptor.protocol : undefined;
+}
+
+function isContextKeyDependencyAllowed(
+  edge: ClosureDependencyEdge,
+  message: GenericMessage,
+  scope: SyncScope,
+): boolean {
+  if (scope.kind === 'full') { return true; }
+
+  const separatorIdx = edge.identifier.indexOf('|');
+  if (separatorIdx <= 0) { return false; }
+
+  const sourceProtocol = edge.identifier.substring(0, separatorIdx);
+  const rootContextId = edge.identifier.substring(separatorIdx + 1);
+  const descriptor = message.descriptor as Record<string, unknown>;
+  const tags = descriptor.tags as Record<string, unknown> | undefined;
+
+  return descriptor.interface === 'Records' &&
+    descriptor.method === 'Write' &&
+    descriptor.protocol === 'https://identity.foundation/protocols/key-delivery' &&
+    descriptor.protocolPath === 'contextKey' &&
+    tags?.protocol === sourceProtocol &&
+    tags?.contextId === rootContextId &&
+    scope.protocols.includes(sourceProtocol);
 }
 
 /**
