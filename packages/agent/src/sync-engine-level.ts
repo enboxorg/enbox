@@ -25,7 +25,7 @@ import { SyncLinkReconciler } from './sync-link-reconciler.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { buildLegacyCursorKey, buildLinkId } from './sync-link-id.js';
 import { classifySyncEventScope, classifySyncMessageScope } from './sync-scope-acceptance.js';
-import { computeAuthorizationEpoch, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
+import { computeAuthorizationEpoch, computeProjectionId, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { createClosureContext, invalidateClosureCache, isTerminalClosureFailureCode } from './sync-closure-types.js';
 import { fetchRemoteMessages, getMessageCid, pullMessages, pushMessages } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
@@ -86,6 +86,8 @@ type SyncTarget = {
   authorizationEpoch: string;
   permissionGrantIds?: NonEmptyStringArray;
 };
+
+type SyncTargetAuthorization = Pick<SyncTarget, 'authorization' | 'authorizationEpoch' | 'delegateDid' | 'permissionGrantIds'>;
 
 type LinkSyncTarget = SyncTarget & { linkKey: string };
 
@@ -291,14 +293,22 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async buildSyncTarget(did: string, dwnUrl: string, options: SyncIdentityOptions): Promise<SyncTarget> {
     const scope = syncScopeFromProtocols(options.protocols);
+    const authorization = await this.buildSyncTargetAuthorization(did, scope, options);
+
+    return {
+      did,
+      dwnUrl,
+      scope,
+      ...authorization,
+    };
+  }
+
+  private async buildSyncTargetAuthorization(did: string, scope: SyncScope, options: SyncIdentityOptions): Promise<SyncTargetAuthorization> {
     const protocols = protocolsForSyncScope(scope);
     const { delegateDid } = options;
 
     if (delegateDid === undefined) {
       return {
-        did,
-        dwnUrl,
-        scope,
         authorization      : { kind: 'owner' },
         authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
       };
@@ -317,10 +327,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return {
-      did,
-      dwnUrl,
       delegateDid,
-      scope,
       authorization: {
         kind: 'delegate',
         delegateDid,
@@ -3542,13 +3549,15 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    // Count degraded links from the durable ledger, not just in-memory
-    // _activeLinks. Links persist across restarts; a repairing/degraded_poll
-    // link from a previous session must still be reported.
+    // Superseded authorization epochs can leave durable link state behind. Only
+    // links that still belong to the current registered projection/epoch should
+    // affect health. Endpoint-level orphan cleanup is a separate GC concern.
+    const currentLinkIdentityKeys = await this.getCurrentDurableLinkIdentityKeys();
     let degradedLinkCount = 0;
     const allLinks = await this.ledger.getAllLinks();
     for (const link of allLinks) {
-      if (link.status === 'repairing' || link.status === 'degraded_poll' || link.status === 'terminal_incomplete') {
+      const isCurrentLink = currentLinkIdentityKeys === undefined || currentLinkIdentityKeys.has(this.getDurableLinkIdentityKey(link));
+      if (isCurrentLink && SyncEngineLevel.isUnhealthyLinkStatus(link.status)) {
         degradedLinkCount++;
       }
     }
@@ -3560,6 +3569,42 @@ export class SyncEngineLevel implements SyncEngine {
       degradedLinkCount   : degradedLinkCount,
       syncHealthy         : failedMessageCount === 0 && degradedLinkCount === 0,
     };
+  }
+
+  private async getCurrentDurableLinkIdentityKeys(): Promise<Set<string> | undefined> {
+    try {
+      const identityKeys = new Set<string>();
+      for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
+        let parsed: SyncIdentityOptions;
+        try {
+          parsed = JSON.parse(options) as SyncIdentityOptions;
+        } catch (error: unknown) {
+          console.warn(`SyncEngineLevel: Corrupt sync options for ${did}, skipping health target:`, error);
+          continue;
+        }
+
+        const scope = syncScopeFromProtocols(parsed.protocols);
+        const projectionId = await computeProjectionId(did, scope);
+        const { authorizationEpoch } = await this.buildSyncTargetAuthorization(did, scope, parsed);
+        identityKeys.add(SyncEngineLevel.durableLinkIdentityKey(did, projectionId, authorizationEpoch));
+      }
+      return identityKeys;
+    } catch (error: unknown) {
+      console.warn('SyncEngineLevel: Failed to resolve current durable link identity keys for health; falling back to all durable links', error);
+      return undefined;
+    }
+  }
+
+  private getDurableLinkIdentityKey(link: ReplicationLinkState): string {
+    return SyncEngineLevel.durableLinkIdentityKey(link.tenantDid, link.projectionId, link.authorizationEpoch);
+  }
+
+  private static durableLinkIdentityKey(tenantDid: string, projectionId: string, authorizationEpoch: string): string {
+    return `${tenantDid}^${projectionId}^${authorizationEpoch}`;
+  }
+
+  private static isUnhealthyLinkStatus(status: ReplicationLinkState['status']): boolean {
+    return status === 'repairing' || status === 'degraded_poll' || status === 'terminal_incomplete';
   }
 
   // ---------------------------------------------------------------------------
