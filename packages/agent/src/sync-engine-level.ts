@@ -2809,6 +2809,10 @@ export class SyncEngineLevel implements SyncEngine {
       return false;
     }
 
+    // Keep the remote diff combined across protocols so topologicalSort can
+    // order composed protocol configs before records that use them. Any future
+    // chunking for large protocol sets must preserve this global dependency
+    // order instead of reverting to independent per-protocol chunks.
     const { prefetched, needsFetchCids } = partitionRemoteEntries(SyncEngineLevel.dedupeRemoteEntries(onlyRemote));
     try {
       await this.pullMessages({
@@ -2892,6 +2896,8 @@ export class SyncEngineLevel implements SyncEngine {
     scope: SyncScope,
   ): Promise<void> {
     if (scope.kind === 'protocolSet' && scope.protocols.length > 1) {
+      // Batched multi-protocol pulls pass the full scope to pullMessages, so
+      // pull dead letters can be recorded without a single protocol key.
       await this.clearRootConvergenceDeadLetters(tenantDid, remoteEndpoint);
     }
 

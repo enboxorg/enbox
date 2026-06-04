@@ -21,6 +21,10 @@ export type SyncIdentityOptions = {
    * The protocols that should be synced for this identity.
    * - `'all'` — sync all protocols (full replica).
    * - `string[]` — sync only the listed protocol URIs.
+   *
+   * Composed protocols are not expanded automatically. If a protocol definition
+   * declares `uses`, include every referenced protocol that the local DWN must
+   * install or use while applying that projection.
    */
   protocols: 'all' | [string, ...string[]];
 };
@@ -68,7 +72,9 @@ export type NonEmptyStringArray = [string, ...string[]];
  * Sync currently supports full-tenant sync and protocol-set sync. A protocol-set link owns
  * one durable subscription/cursor for the whole set; reconciliation still walks
  * the existing per-protocol roots until dedicated path/context projection roots
- * are implemented.
+ * are implemented. For composed protocols, the scope must include the composed
+ * protocol and any `uses` targets required for local protocol installation and
+ * closure evaluation.
  */
 export type SyncScope = {
   /** Full-tenant projection. Valid only for owner sync or unscoped delegated grants. */
