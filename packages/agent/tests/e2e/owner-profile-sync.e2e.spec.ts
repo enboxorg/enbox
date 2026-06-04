@@ -16,12 +16,15 @@ import { DataStream } from '@enbox/dwn-sdk-js';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import type { BearerIdentity } from '../../src/bearer-identity.js';
+import type { EnboxUserAgent } from '../../src/enbox-user-agent.js';
 import type { PlatformAgentTestHarness } from '../../src/test-harness.js';
 
 import { PlatformAgentTestHarness as AgentTestHarness } from '../../src/test-harness.js';
 import { DwnInterface } from '../../src/types/dwn.js';
 import { TestAgent } from '../utils/test-agent.js';
 import { testDwnUrl } from '../utils/test-config.js';
+import { EnboxUserAgent as UserAgent } from '../../src/enbox-user-agent.js';
+import { IdentityProtocolDefinition, JwkProtocolDefinition } from '../../src/store-data-protocols.js';
 
 const testDwnUrls = [testDwnUrl];
 
@@ -149,6 +152,7 @@ const profileProtocol: ProtocolDefinition = {
 };
 
 const profileSyncProtocols: [string, ...string[]] = [socialGraphProtocol.protocol, profileProtocol.protocol];
+const agentDidSyncProtocols: [string, ...string[]] = [IdentityProtocolDefinition.protocol, JwkProtocolDefinition.protocol];
 
 async function setupHarness(testDataLocation: string): Promise<PlatformAgentTestHarness> {
   const harness = await AgentTestHarness.setup({
@@ -159,6 +163,31 @@ async function setupHarness(testDataLocation: string): Promise<PlatformAgentTest
   await harness.clearStorage();
   await harness.createAgentDid();
   return harness;
+}
+
+async function setupWalletHarness(testDataLocation: string): Promise<PlatformAgentTestHarness> {
+  const harness = await AgentTestHarness.setup({
+    agentClass       : UserAgent,
+    agentStores      : 'dwn',
+    testDataLocation : testDataLocation,
+  });
+  await harness.clearStorage();
+  return harness;
+}
+
+async function initializeWalletFromPhrase(
+  harness: PlatformAgentTestHarness,
+  password: string,
+  recoveryPhrase?: string
+): Promise<string | undefined> {
+  const agent = harness.agent as EnboxUserAgent;
+  const phrase = await agent.initialize({
+    password,
+    recoveryPhrase,
+    dwnEndpoints: testDwnUrls,
+  });
+  await agent.start({ password });
+  return phrase;
 }
 
 function isFreshDidResolutionFailure(status: { code: number; detail: string }): boolean {
@@ -292,6 +321,18 @@ async function readRecordBytes(
   return DataStream.toBytes(result.reply.entry!.data!);
 }
 
+async function expectIdentityDiscovered(
+  harness: PlatformAgentTestHarness,
+  did: string,
+  expectedName: string
+): Promise<BearerIdentity> {
+  const identities = await harness.agent.identity.list();
+  const identity = identities.find(candidate => candidate.did.uri === did);
+  expect(identity).toBeDefined();
+  expect(identity!.metadata.name).toBe(expectedName);
+  return identity!;
+}
+
 describe('E2E: same-owner profile sync convergence', () => {
   let walletA: PlatformAgentTestHarness;
   let walletB: PlatformAgentTestHarness;
@@ -406,4 +447,141 @@ describe('E2E: same-owner profile sync convergence', () => {
     expect(await readRecordBytes(walletA, did, avatarRecord.recordId)).toEqual(avatarBytes);
     expect(await readRecordBytes(walletA, did, heroRecord.recordId)).toEqual(heroBytes);
   }, 60_000);
+});
+
+describe('E2E: same-owner identity discovery and profile sync convergence', () => {
+  const password = 'track-a-identity-discovery-password';
+  const discoveredIdentityName = 'Track A Discovered Identity';
+
+  let walletA: PlatformAgentTestHarness;
+  let walletB: PlatformAgentTestHarness;
+  let discoveredIdentity: BearerIdentity;
+
+  beforeAll(async () => {
+    walletA = await setupWalletHarness('__TESTDATA__/e2e-owner-identity-discovery-wallet-a');
+    const recoveryPhrase = await initializeWalletFromPhrase(walletA, password);
+    expect(recoveryPhrase).toBeDefined();
+
+    walletB = await setupWalletHarness('__TESTDATA__/e2e-owner-identity-discovery-wallet-b');
+    await initializeWalletFromPhrase(walletB, password, recoveryPhrase);
+    expect(walletB.agent.agentDid.uri).toBe(walletA.agent.agentDid.uri);
+
+    for (const wallet of [walletA, walletB]) {
+      await wallet.agent.dwn.ensureKeyDeliveryProtocol(wallet.agent.agentDid.uri);
+      await wallet.agent.sync.registerIdentity({
+        did     : wallet.agent.agentDid.uri,
+        options : { protocols: agentDidSyncProtocols },
+      });
+    }
+  }, 60_000);
+
+  afterAll(async () => {
+    await walletA?.agent.sync.stopSync();
+    await walletB?.agent.sync.stopSync();
+    await walletA?.clearStorage();
+    await walletB?.clearStorage();
+    await walletA?.closeStorage();
+    await walletB?.closeStorage();
+  });
+
+  it('discovers a new identity from the agent identity index and then pulls its profile subtree', async () => {
+    discoveredIdentity = await walletB.createIdentity({
+      name: discoveredIdentityName,
+      testDwnUrls,
+    });
+
+    expect((await walletA.agent.identity.list()).map(identity => identity.did.uri))
+      .not.toContain(discoveredIdentity.did.uri);
+
+    await walletB.agent.sync.sync('push');
+
+    const pulledIdentities = await walletA.agent.sync.sync('pull')
+      .then(() => walletA.agent.identity.list());
+    expect(pulledIdentities.map(identity => identity.did.uri)).toContain(discoveredIdentity.did.uri);
+
+    const walletADiscoveredIdentity = await expectIdentityDiscovered(
+      walletA,
+      discoveredIdentity.did.uri,
+      discoveredIdentityName,
+    );
+    expect(walletADiscoveredIdentity.metadata.tenant).toBe(walletA.agent.agentDid.uri);
+
+    const did = discoveredIdentity.did.uri;
+    for (const definition of [socialGraphProtocol, profileProtocol]) {
+      await installProtocolLocalAndRemote(walletB, did, definition);
+    }
+
+    const profileData = {
+      displayName : 'Discovered Wallet Identity',
+      tagline     : 'Created on wallet B, discovered by wallet A',
+      bio         : 'Identity metadata and profile data converged across same-owner wallets.',
+    };
+    const profileBytes = Convert.string(JSON.stringify(profileData)).toUint8Array();
+    const avatarBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 9, 10, 11, 12]);
+    const heroBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 14, 15, 16]);
+
+    const profileRecord = await writeRecordLocalAndRemote(walletB, did, {
+      protocol     : profileProtocol.protocol,
+      protocolPath : 'profile',
+      schema       : profileProtocol.types.profile.schema,
+      dataFormat   : 'application/json',
+      published    : true,
+    }, profileBytes);
+
+    const avatarRecord = await writeRecordLocalAndRemote(walletB, did, {
+      protocol        : profileProtocol.protocol,
+      protocolPath    : 'profile/avatar',
+      parentContextId : profileRecord.contextId,
+      dataFormat      : 'image/png',
+      published       : true,
+    }, avatarBytes);
+
+    const heroRecord = await writeRecordLocalAndRemote(walletB, did, {
+      protocol        : profileProtocol.protocol,
+      protocolPath    : 'profile/hero',
+      parentContextId : profileRecord.contextId,
+      dataFormat      : 'image/png',
+      published       : true,
+    }, heroBytes);
+
+    await walletA.agent.sync.registerIdentity({
+      did     : did,
+      options : { protocols: profileSyncProtocols },
+    });
+    await walletB.agent.sync.registerIdentity({
+      did     : did,
+      options : { protocols: profileSyncProtocols },
+    });
+
+    await walletA.agent.sync.sync('pull');
+
+    await expectProtocolInstalled(walletA, did, socialGraphProtocol.protocol);
+    await expectProtocolInstalled(walletA, did, profileProtocol.protocol);
+
+    const pulledProfile = await expectRecord(walletA, did, {
+      protocol : profileProtocol.protocol,
+      recordId : profileRecord.recordId,
+    });
+    expect(pulledProfile.contextId).toBe(profileRecord.contextId);
+
+    const pulledAvatar = await expectRecord(walletA, did, {
+      protocol     : profileProtocol.protocol,
+      protocolPath : 'profile/avatar',
+      recordId     : avatarRecord.recordId,
+    });
+    expect(pulledAvatar.descriptor.parentId).toBe(profileRecord.recordId);
+
+    const pulledHero = await expectRecord(walletA, did, {
+      protocol     : profileProtocol.protocol,
+      protocolPath : 'profile/hero',
+      recordId     : heroRecord.recordId,
+    });
+    expect(pulledHero.descriptor.parentId).toBe(profileRecord.recordId);
+
+    const pulledProfileBytes = await readRecordBytes(walletA, did, profileRecord.recordId);
+    const pulledProfileData = JSON.parse(Convert.uint8Array(pulledProfileBytes).toString()) as typeof profileData;
+    expect(pulledProfileData).toEqual(profileData);
+    expect(await readRecordBytes(walletA, did, avatarRecord.recordId)).toEqual(avatarBytes);
+    expect(await readRecordBytes(walletA, did, heroRecord.recordId)).toEqual(heroBytes);
+  }, 90_000);
 });

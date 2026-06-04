@@ -2381,6 +2381,73 @@ describe('SyncEngineLevel — private methods', () => {
   // pullMessages / pushMessages delegate wrappers
   // ---------------------------------------------------------------------------
 
+  describe('protocol-set reconciliation', () => {
+    it('batches changed protocol diffs before pulling and pushing messages', async () => {
+      const profileProtocol = 'https://example.com/profile';
+      const socialProtocol = 'https://example.com/social';
+      const scope = { kind: 'protocolSet', protocols: [profileProtocol, socialProtocol] };
+      const profileEntry = {
+        messageCid : 'cid-profile',
+        message    : {
+          descriptor: {
+            interface        : 'Protocols',
+            method           : 'Configure',
+            messageTimestamp : '2026-01-01T00:00:00.000000Z',
+            definition       : {
+              protocol : profileProtocol,
+              uses     : { social: socialProtocol },
+            },
+          },
+        },
+      };
+      const socialEntry = {
+        messageCid : 'cid-social',
+        message    : {
+          descriptor: {
+            interface        : 'Protocols',
+            method           : 'Configure',
+            messageTimestamp : '2026-01-01T00:00:00.000000Z',
+            definition       : { protocol: socialProtocol },
+          },
+        },
+      };
+      const engine = createEngine({ db, agent: {} as any });
+      const getLocalRoot = sinon.stub(engine as any, 'getLocalRoot')
+        .callsFake(async (_did: string, _delegateDid: string | undefined, protocol: string) => `local-${protocol}`);
+      const getRemoteRoot = sinon.stub(engine as any, 'getRemoteRoot')
+        .callsFake(async (_did: string, _dwnUrl: string, _delegateDid: string | undefined, protocol: string) => `remote-${protocol}`);
+      const diffWithRemote = sinon.stub(engine as any, 'diffWithRemote')
+        .callsFake(async ({ protocol }: { protocol: string }) => protocol === profileProtocol
+          ? { onlyRemote: [profileEntry], onlyLocal: ['local-profile'] }
+          : { onlyRemote: [socialEntry], onlyLocal: ['local-social'] });
+      const pullMessagesStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const pushMessagesStub = sinon.stub(engine as any, 'pushMessages')
+        .resolves({ succeeded: [], failed: [], permanentlyFailed: [] });
+
+      await (engine as any).reconcileProjectionTarget({
+        did           : 'did:example:alice',
+        dwnUrl        : 'https://dwn.example.com',
+        scope,
+        authorization : { kind: 'owner' },
+      });
+
+      expect(getLocalRoot.callCount).toBe(2);
+      expect(getRemoteRoot.callCount).toBe(2);
+      expect(diffWithRemote.callCount).toBe(2);
+      expect(diffWithRemote.secondCall.calledBefore(pullMessagesStub.firstCall)).toBe(true);
+      expect(pullMessagesStub.calledOnce).toBe(true);
+      expect(pushMessagesStub.calledOnce).toBe(true);
+
+      const pullArgs = pullMessagesStub.firstCall.args[0];
+      expect(pullArgs.scope).toEqual(scope);
+      expect(pullArgs.messageCids).toEqual([]);
+      expect(pullArgs.prefetched.map((entry: { messageCid: string }) => entry.messageCid))
+        .toEqual(['cid-profile', 'cid-social']);
+
+      expect(pushMessagesStub.firstCall.args[0].messageCids).toEqual(['local-profile', 'local-social']);
+    });
+  });
+
   describe('pullMessages / pushMessages delegate wrappers', () => {
     const profileProtocol = 'https://example.com/profile';
     const socialProtocol = 'https://example.com/social';

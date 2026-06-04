@@ -70,6 +70,44 @@ describe('topologicalSort', () => {
     expect(result[1]).toBe(recordsWriteMsg);
   });
 
+  it('should place referenced ProtocolsConfigure before composed ProtocolsConfigure and records', () => {
+    const socialProtocol = 'https://identity.foundation/protocols/social-graph';
+    const profileProtocol = 'https://identity.foundation/protocols/profile';
+
+    const socialConfigure: SortEntry = {
+      message: makeMessage({
+        interface  : DwnInterfaceName.Protocols,
+        method     : DwnMethodName.Configure,
+        definition : { protocol: socialProtocol },
+      }),
+    };
+    const profileConfigure: SortEntry = {
+      message: makeMessage({
+        interface  : DwnInterfaceName.Protocols,
+        method     : DwnMethodName.Configure,
+        definition : {
+          protocol : profileProtocol,
+          uses     : { social: socialProtocol },
+        },
+      }),
+    };
+    const profileRecord: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol         : profileProtocol,
+          dateCreated      : '2024-01-01T00:00:00.000000Z',
+          messageTimestamp : '2024-01-01T00:00:00.000000Z',
+        }),
+        recordId: 'profile-rec',
+      } as unknown as GenericMessage,
+    };
+
+    const result = topologicalSort([profileRecord, profileConfigure, socialConfigure]);
+    expect(result[0]).toBe(socialConfigure);
+    expect(result[1]).toBe(profileConfigure);
+    expect(result[2]).toBe(profileRecord);
+  });
+
   it('should place initial write before update write for same recordId', () => {
     const initialWrite: SortEntry = {
       message: {
