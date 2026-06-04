@@ -70,7 +70,7 @@ describe('topologicalSort', () => {
     expect(result[1]).toBe(recordsWriteMsg);
   });
 
-  it('should place referenced ProtocolsConfigure before composed ProtocolsConfigure and records', () => {
+  it('should place ProtocolsConfigure uses targets before composed ProtocolsConfigure and records', () => {
     const socialProtocol = 'https://identity.foundation/protocols/social-graph';
     const profileProtocol = 'https://identity.foundation/protocols/profile';
 
