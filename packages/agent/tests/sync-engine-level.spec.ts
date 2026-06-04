@@ -2974,7 +2974,7 @@ describe('SyncEngineLevel', () => {
           syncEngine['_activeLinks'].set(linkKeyFor(did, testDwnUrls[0], link), link);
 
           const removeStub = sinon.stub(syncEngine as any, 'removeIdentityFromLiveSync').resolves();
-          const addStub = sinon.stub(syncEngine as any, 'addIdentityToLiveSync').resolves();
+          const addStub = sinon.stub(syncEngine as any, 'addIdentityToLiveSync').resolves(new Set());
 
           await syncEngine.updateIdentityOptions({
             did,
