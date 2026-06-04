@@ -63,7 +63,7 @@ type ReconcileDeps = {
   shouldContinue?: () => boolean;
 };
 
-function partitionRemoteEntries(entries: MessagesSyncDiffEntry[]): {
+export function partitionRemoteEntries(entries: MessagesSyncDiffEntry[]): {
   prefetched: (MessagesSyncDiffEntry & { message: GenericMessage })[];
   needsFetchCids: string[];
 } {

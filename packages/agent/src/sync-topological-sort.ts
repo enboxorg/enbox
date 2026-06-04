@@ -1,15 +1,71 @@
-import type { GenericMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+
+type DescriptorWithRecordId = GenericMessage['descriptor'] & {
+  recordId?: string;
+};
+
+type RecordsDescriptor = GenericMessage['descriptor'] & {
+  dateCreated?: string;
+  parentId?: string;
+  protocol?: string;
+  protocolPath?: string;
+};
+
+type ProtocolsConfigureDescriptor = GenericMessage['descriptor'] & {
+  definition?: Partial<ProtocolDefinition>;
+};
+
+function isRecordsDescriptor(descriptor: GenericMessage['descriptor']): descriptor is RecordsDescriptor {
+  return descriptor.interface === DwnInterfaceName.Records;
+}
+
+function isRecordsWriteDescriptor(descriptor: GenericMessage['descriptor']): descriptor is RecordsDescriptor {
+  return descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Write;
+}
+
+function isRecordsDeleteDescriptor(descriptor: GenericMessage['descriptor']): descriptor is DescriptorWithRecordId {
+  return descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Delete;
+}
+
+function isProtocolsConfigureDescriptor(
+  descriptor: GenericMessage['descriptor']
+): descriptor is ProtocolsConfigureDescriptor {
+  return descriptor.interface === DwnInterfaceName.Protocols && descriptor.method === DwnMethodName.Configure;
+}
+
+function getRecordId(message: GenericMessage): string | undefined {
+  return (message as GenericMessage & { recordId?: string }).recordId;
+}
+
+function getProtocolDefinition(message: GenericMessage): Partial<ProtocolDefinition> | undefined {
+  const { descriptor } = message;
+  return isProtocolsConfigureDescriptor(descriptor) ? descriptor.definition : undefined;
+}
+
+function getConfiguredProtocol(message: GenericMessage): string | undefined {
+  const protocol = getProtocolDefinition(message)?.protocol;
+  return typeof protocol === 'string' ? protocol : undefined;
+}
+
+function getComposedProtocolDependencies(message: GenericMessage): string[] {
+  const uses = getProtocolDefinition(message)?.uses;
+  if (!uses) {
+    return [];
+  }
+
+  return Object.values(uses).filter((protocol): protocol is string => typeof protocol === 'string');
+}
 
 /**
  * Checks whether a message is an initial RecordsWrite (not an update).
  * An initial write has dateCreated === messageTimestamp (first write for this recordId).
  */
 function isInitialWrite(message: GenericMessage): boolean {
-  const desc = message.descriptor as any;
-  if (desc.interface !== DwnInterfaceName.Records || desc.method !== DwnMethodName.Write) {
+  const desc = message.descriptor;
+  if (!isRecordsWriteDescriptor(desc)) {
     return false;
   }
   // A RecordsWrite is initial if dateCreated === messageTimestamp (first write for this recordId).
@@ -22,6 +78,7 @@ function isInitialWrite(message: GenericMessage): boolean {
  *
  * Dependencies:
  * - ProtocolsConfigure must come before any RecordsWrite using that protocol
+ * - Composed ProtocolsConfigure must come after ProtocolsConfigure messages for protocols in `uses`
  * - Parent record must come before child record (via parentId)
  * - Initial write must come before update writes (same recordId, not initial)
  * - Permission grants must come before messages that invoke them
@@ -45,14 +102,14 @@ export function topologicalSort<T extends { message: GenericMessage }>(
     const desc = entry.message.descriptor;
 
     if (desc.interface === DwnInterfaceName.Protocols && desc.method === DwnMethodName.Configure) {
-      const protocolUrl = (desc as any).definition?.protocol;
+      const protocolUrl = getConfiguredProtocol(entry.message);
       if (protocolUrl) {
         protocolConfigureIndex.set(protocolUrl, i);
       }
     }
 
-    if (desc.interface === DwnInterfaceName.Records && desc.method === DwnMethodName.Write) {
-      const recordId = (entry.message as any).recordId;
+    if (isRecordsWriteDescriptor(desc)) {
+      const recordId = getRecordId(entry.message);
       const initial = isInitialWrite(entry.message);
       if (initial && recordId) {
         initialWriteIndex.set(recordId, i);
@@ -60,8 +117,8 @@ export function topologicalSort<T extends { message: GenericMessage }>(
 
       // Index permission grants by recordId so dependents can reference them.
       if (
-        (desc as any).protocol === PermissionsProtocol.uri &&
-        (desc as any).protocolPath === PermissionsProtocol.grantPath &&
+        desc.protocol === PermissionsProtocol.uri &&
+        desc.protocolPath === PermissionsProtocol.grantPath &&
         recordId
       ) {
         grantIndex.set(recordId, i);
@@ -90,33 +147,42 @@ export function topologicalSort<T extends { message: GenericMessage }>(
   for (let i = 0; i < messages.length; i++) {
     const desc = messages[i].message.descriptor;
 
+    // Composition dependency: a composed protocol depends on its referenced protocol definitions.
+    if (isProtocolsConfigureDescriptor(desc)) {
+      for (const protocol of getComposedProtocolDependencies(messages[i].message)) {
+        if (protocolConfigureIndex.has(protocol)) {
+          addEdge(protocolConfigureIndex.get(protocol)!, i);
+        }
+      }
+    }
+
     // Protocol dependency: RecordsWrite depends on ProtocolsConfigure for its protocol.
-    if (desc.interface === DwnInterfaceName.Records) {
-      const protocol = (desc as any).protocol;
+    if (isRecordsDescriptor(desc)) {
+      const protocol = desc.protocol;
       if (protocol && protocolConfigureIndex.has(protocol)) {
         addEdge(protocolConfigureIndex.get(protocol)!, i);
       }
     }
 
     // Parent dependency: child record depends on parent record.
-    if (desc.interface === DwnInterfaceName.Records && (desc as any).parentId) {
-      const parentId = (desc as any).parentId;
+    if (isRecordsDescriptor(desc) && desc.parentId) {
+      const parentId = desc.parentId;
       if (initialWriteIndex.has(parentId)) {
         addEdge(initialWriteIndex.get(parentId)!, i);
       }
     }
 
     // Initial write dependency: update depends on initial write.
-    if (desc.interface === DwnInterfaceName.Records && desc.method === DwnMethodName.Write) {
-      const recordId = (messages[i].message as any).recordId;
+    if (isRecordsWriteDescriptor(desc)) {
+      const recordId = getRecordId(messages[i].message);
       if (recordId && !isInitialWrite(messages[i].message) && initialWriteIndex.has(recordId)) {
         addEdge(initialWriteIndex.get(recordId)!, i);
       }
     }
 
     // Delete depends on initial write.
-    if (desc.interface === DwnInterfaceName.Records && desc.method === DwnMethodName.Delete) {
-      const recordId = (desc as any).recordId;
+    if (isRecordsDeleteDescriptor(desc)) {
+      const recordId = desc.recordId;
       if (recordId && initialWriteIndex.has(recordId)) {
         addEdge(initialWriteIndex.get(recordId)!, i);
       }
