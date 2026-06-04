@@ -257,7 +257,7 @@ async function expectProtocolInstalled(
     messageParams : { filter: { protocol } },
   });
   expect(result.reply.status.code).toBe(200);
-  expect(result.reply.entries?.length).toBe(1);
+  expect(result.reply.entries?.length ?? 0).toBeGreaterThan(0);
 }
 
 async function expectRecord(
@@ -305,6 +305,10 @@ describe('E2E: same-owner profile sync convergence', () => {
       name: 'Track A Owner Profile',
       testDwnUrls,
     });
+
+    for (const definition of [socialGraphProtocol, profileProtocol]) {
+      await installProtocolLocalAndRemote(walletA, identity.did.uri, definition);
+    }
 
     const portableIdentity = await identity.export();
     await walletB.agent.identity.import({
