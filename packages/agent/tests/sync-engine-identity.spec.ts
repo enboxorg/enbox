@@ -432,7 +432,7 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._syncMode = 'live';
       (engine as any)._liveSubscriptions = [{ linkKey: 'existing', did: 'did:example:existing', dwnUrl: 'https://dwn.example.com', close: sinon.stub() }];
 
-      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
       await engine.registerIdentity({ did: 'did:example:hotadd1', options: { protocols: ['https://proto.example'] } });
 
@@ -446,7 +446,7 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._syncMode = 'live';
       (engine as any)._liveSubscriptions = [{ linkKey: 'existing', did: 'did:example:existing', dwnUrl: 'https://dwn.example.com', close: sinon.stub() }];
 
-      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
       await engine.registerIdentity({ did: 'did:example:hotadd-default', options: { protocols: 'all' } });
 
@@ -459,7 +459,7 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._syncMode = 'poll';
       (engine as any)._liveSubscriptions = [];
 
-      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
       await engine.registerIdentity({ did: 'did:example:nohot-poll', options: { protocols: 'all' } });
 
@@ -471,7 +471,7 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._syncMode = 'live';
       (engine as any)._liveSubscriptions = [];
 
-      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
       await engine.registerIdentity({ did: 'did:example:hot-after-removal', options: { protocols: 'all' } });
 
@@ -924,7 +924,7 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._activeLinks.set('did:example:update1^https://dwn.example.com', { tenantDid: 'did:example:update1' });
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
-      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
       const newOptions = { protocols: ['https://new-proto.example'], delegateDid: 'did:example:delegate' };
       await engine.updateIdentityOptions({ did: 'did:example:update1', options: newOptions });
@@ -943,7 +943,7 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._syncMode = 'poll';
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
-      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
       await engine.updateIdentityOptions({ did: 'did:example:update-poll', options: { protocols: ['https://new.example'] } });
 
@@ -959,7 +959,7 @@ describe('SyncEngineLevel — identity management', () => {
       // No active links for this DID
 
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
-      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
       await engine.updateIdentityOptions({ did: 'did:example:update-nolinks', options: { protocols: ['https://new.example'] } });
 
@@ -992,7 +992,7 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._liveSubscriptions = [];
       (engine as any)._localSubscriptions = [];
 
-      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
       await engine.registerIdentity({ did: 'did:example:after-last-removed', options: { protocols: 'all' } });
 
@@ -1025,7 +1025,7 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._syncMode = 'live';
       await engine.stopSync();
 
-      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves();
+      const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
       await engine.registerIdentity({ did: 'did:example:after-stop', options: { protocols: 'all' } });
 

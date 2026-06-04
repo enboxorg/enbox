@@ -96,6 +96,15 @@ enum LinkSubscriptionOpenResult {
   Repairing = 'repairing',
 }
 
+enum LinkInitializationStatus {
+  Active = 'active',
+  Failed = 'failed',
+}
+
+type LinkInitializationResult =
+  | { status: LinkInitializationStatus.Active; durableLinkIdentityKey: string }
+  | { status: LinkInitializationStatus.Failed };
+
 type PullAcceptanceResult =
   | { accepted: true }
   | { accepted: false; classification: Exclude<SyncScopeClassification, 'in-scope'> };
@@ -500,7 +509,12 @@ export class SyncEngineLevel implements SyncEngine {
 
     // If live sync is active, hot-add subscriptions for this identity.
     if (this._syncMode === 'live') {
-      await this.addIdentityToLiveSync(did, options);
+      const currentIdentityKeys = await this.addIdentityToLiveSync(did, options);
+      if (currentIdentityKeys.size > 0) {
+        await this.pruneSupersededDurableLinksForIdentity(did, currentIdentityKeys);
+      }
+    } else {
+      await this.tryPruneSupersededDurableLinksForRegisteredIdentity(did, options);
     }
   }
 
@@ -519,6 +533,7 @@ export class SyncEngineLevel implements SyncEngine {
     await registeredIdentities.del(did);
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
+    await this.pruneSupersededDurableLinksForIdentity(did, new Set());
   }
 
   public async getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined> {
@@ -557,7 +572,12 @@ export class SyncEngineLevel implements SyncEngine {
     // epoch, so existing durable links are not mutated in place.
     if (this._syncMode === 'live' && this.hasActiveLinksForDid(did)) {
       await this.removeIdentityFromLiveSync(did);
-      await this.addIdentityToLiveSync(did, options);
+      const currentIdentityKeys = await this.addIdentityToLiveSync(did, options);
+      if (currentIdentityKeys.size > 0) {
+        await this.pruneSupersededDurableLinksForIdentity(did, currentIdentityKeys);
+      }
+    } else {
+      await this.tryPruneSupersededDurableLinksForRegisteredIdentity(did, options);
     }
   }
 
@@ -1460,7 +1480,7 @@ export class SyncEngineLevel implements SyncEngine {
    * link, migrate legacy cursors, open pull + push subscriptions, and
    * transition the link to `'live'`.
    */
-  private async initializeLinkTarget(target: SyncTarget): Promise<void> {
+  private async initializeLinkTarget(target: SyncTarget): Promise<LinkInitializationResult> {
     let link: ReplicationLinkState | undefined;
     try {
       link = await this.getOrCreateReplicationLink(target);
@@ -1468,15 +1488,16 @@ export class SyncEngineLevel implements SyncEngine {
       await this.migrateLegacyCursorIfNeeded(target, link);
       this._activeLinks.set(linkKey, link);
       if (link.status === 'terminal_incomplete') {
-        return;
+        return this.createActiveLinkInitializationResult(link);
       }
 
       const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey });
       if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
         await this.markLinkLive(target, link, linkKey);
       }
+      return this.createActiveLinkInitializationResult(link);
     } catch (error: any) {
-      await this.handleInitializeLinkTargetError(target, link, error);
+      return this.handleInitializeLinkTargetError(target, link, error);
     }
   }
 
@@ -1548,7 +1569,7 @@ export class SyncEngineLevel implements SyncEngine {
     target: SyncTarget,
     link: ReplicationLinkState | undefined,
     error: any,
-  ): Promise<void> {
+  ): Promise<LinkInitializationResult> {
     const linkKey = link
       ? this.getReplicationLinkKey(target, link)
       : buildLegacyCursorKey(target.did, target.dwnUrl, singleProtocolForSyncScope(target.scope));
@@ -1565,7 +1586,7 @@ export class SyncEngineLevel implements SyncEngine {
       await this.transitionToRepairing(linkKey, link, {
         resumeToken: error.gapInfo?.latestAvailable,
       });
-      return;
+      return this.createActiveLinkInitializationResult(link);
     }
 
     console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
@@ -1573,6 +1594,14 @@ export class SyncEngineLevel implements SyncEngine {
     if (this.isDidResolutionFailure(error)) {
       throw error;
     }
+    return { status: LinkInitializationStatus.Failed };
+  }
+
+  private createActiveLinkInitializationResult(link: ReplicationLinkState): LinkInitializationResult {
+    return {
+      status                 : LinkInitializationStatus.Active,
+      durableLinkIdentityKey : this.getDurableLinkIdentityKey(link),
+    };
   }
 
   private cleanupFailedLinkInitialization(linkKey: string): void {
@@ -1592,23 +1621,23 @@ export class SyncEngineLevel implements SyncEngine {
    * causing a 401. Retrying with exponential backoff lets the
    * propagation settle before giving up.
    */
-  private async initializeLinkTargetWithRetry(target: SyncTarget): Promise<void> {
+  private async initializeLinkTargetWithRetry(target: SyncTarget): Promise<LinkInitializationResult> {
     try {
-      await this.initializeLinkTarget(target);
+      return await this.initializeLinkTarget(target);
     } catch (error: any) {
       if (!this.isDidResolutionFailure(error)) { throw error; }
 
       for (const delay of SyncEngineLevel.DID_RESOLUTION_RETRY_BACKOFF_MS) {
         await sleep(delay);
         try {
-          await this.initializeLinkTarget(target);
-          return;
+          return await this.initializeLinkTarget(target);
         } catch {
           // Continue to next attempt.
         }
       }
       // All retries exhausted — the original error was already logged
       // by initializeLinkTarget's catch block.
+      return { status: LinkInitializationStatus.Failed };
     }
   }
 
@@ -1635,16 +1664,23 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /** Hot-add a single identity to the active live sync session. */
-  private async addIdentityToLiveSync(did: string, options: SyncIdentityOptions): Promise<void> {
+  private async addIdentityToLiveSync(did: string, options: SyncIdentityOptions): Promise<Set<string>> {
     const dwnEndpointUrls = await this.agent.dwn.getDwnEndpointUrlsForTarget(did);
-    if (dwnEndpointUrls.length === 0) { return; }
+    if (dwnEndpointUrls.length === 0) { return new Set(); }
 
     const targets: SyncTarget[] = [];
     for (const dwnUrl of dwnEndpointUrls) {
       targets.push(await this.buildSyncTarget(did, dwnUrl, options));
     }
 
-    await Promise.allSettled(targets.map(t => this.initializeLinkTargetWithRetry(t)));
+    const results = await Promise.allSettled(targets.map(t => this.initializeLinkTargetWithRetry(t)));
+    const currentIdentityKeys = new Set<string>();
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value.status === LinkInitializationStatus.Active) {
+        currentIdentityKeys.add(result.value.durableLinkIdentityKey);
+      }
+    }
+    return currentIdentityKeys;
   }
 
   /** Hot-remove a single identity from the active live sync session. */
@@ -1691,6 +1727,32 @@ export class SyncEngineLevel implements SyncEngine {
       if (this.isLinkKeyForDid(key, did)) { this._activeLinks.delete(key); this._linkRuntimes.delete(key); }
     }
     this._closureContexts.delete(did);
+  }
+
+  private async tryPruneSupersededDurableLinksForRegisteredIdentity(did: string, options: SyncIdentityOptions): Promise<void> {
+    try {
+      const currentIdentityKeys = await this.getDurableLinkIdentityKeysForRegisteredIdentity(did, options);
+      await this.pruneSupersededDurableLinksForIdentity(did, currentIdentityKeys);
+    } catch (error: unknown) {
+      console.warn(`SyncEngineLevel: Failed to prune superseded durable links for ${did}`, error);
+    }
+  }
+
+  private async getDurableLinkIdentityKeysForRegisteredIdentity(did: string, options: SyncIdentityOptions): Promise<Set<string>> {
+    const scope = syncScopeFromProtocols(options.protocols);
+    const projectionId = await computeProjectionId(did, scope);
+    const { authorizationEpoch } = await this.buildSyncTargetAuthorization(did, scope, options);
+    return new Set([SyncEngineLevel.durableLinkIdentityKey(did, projectionId, authorizationEpoch)]);
+  }
+
+  private async pruneSupersededDurableLinksForIdentity(did: string, currentIdentityKeys: Set<string>): Promise<void> {
+    const links = await this.ledger.getLinksForTenant(did);
+    await Promise.all(links.map(async link => {
+      if (currentIdentityKeys.has(this.getDurableLinkIdentityKey(link))) {
+        return;
+      }
+      await this.ledger.deleteLink(link.tenantDid, link.remoteEndpoint, link.projectionId, link.authorizationEpoch);
+    }));
   }
 
   // ---------------------------------------------------------------------------

@@ -25,6 +25,15 @@ describe('SyncEngineLevel — private methods', () => {
     ...overrides,
   });
 
+  const activeInitializationResult = (link: {
+    tenantDid: string;
+    projectionId: string;
+    authorizationEpoch: string;
+  }): any => ({
+    status                 : 'active',
+    durableLinkIdentityKey : `${link.tenantDid}^${link.projectionId}^${link.authorizationEpoch}`,
+  });
+
   const messagesGrantEntry = (id: string, scope: Record<string, unknown>, overrides: Record<string, unknown> = {}): any => ({
     grant: {
       id,
@@ -1001,12 +1010,17 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
       const initializeStub = sinon.stub(engine as any, 'initializeLinkTarget');
       initializeStub.onFirstCall().rejects(new Error('GeneralJwsVerifierGetPublicKeyNotFound: unable to resolve DID'));
-      initializeStub.onSecondCall().resolves();
+      initializeStub.onSecondCall().resolves(activeInitializationResult({
+        tenantDid          : 'did:example:alice',
+        projectionId       : 'projection-test',
+        authorizationEpoch : 'authorization-test',
+      }));
 
       const originalDelays = (SyncEngineLevel as any).DID_RESOLUTION_RETRY_BACKOFF_MS;
       (SyncEngineLevel as any).DID_RESOLUTION_RETRY_BACKOFF_MS = [0];
       try {
-        await (engine as any).initializeLinkTargetWithRetry(syncTarget('did:example:alice', 'https://dwn.example.com'));
+        const result = await (engine as any).initializeLinkTargetWithRetry(syncTarget('did:example:alice', 'https://dwn.example.com'));
+        expect(result.status).toBe('active');
       } finally {
         (SyncEngineLevel as any).DID_RESOLUTION_RETRY_BACKOFF_MS = originalDelays;
       }
@@ -4315,6 +4329,270 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // updateIdentityOptions
+  // ---------------------------------------------------------------------------
+
+  describe('updateIdentityOptions', () => {
+    it('should prune durable links from superseded projections when sync is not live', async () => {
+      const engine = createEngine({ db });
+      const ledger = (engine as any).ledger;
+      const did = 'did:example:update-prune';
+      const protocol = 'https://example.com/profile';
+      const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
+      const ownerAuthorization = { kind: 'owner' } as const;
+
+      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+
+      await ledger.getOrCreateLink({
+        tenantDid          : did,
+        remoteEndpoint     : 'https://dwn.example.com',
+        scope              : { kind: 'full' },
+        authorization      : ownerAuthorization,
+        authorizationEpoch : ownerEpoch,
+      });
+      const currentLink = await ledger.getOrCreateLink({
+        tenantDid          : did,
+        remoteEndpoint     : 'https://dwn.example.com',
+        scope              : { kind: 'protocolSet', protocols: [protocol] },
+        authorization      : ownerAuthorization,
+        authorizationEpoch : ownerEpoch,
+      });
+
+      await engine.updateIdentityOptions({ did, options: { protocols: [protocol] } });
+
+      const links = await ledger.getLinksForTenant(did);
+      expect(links).toHaveLength(1);
+      expect(links[0].projectionId).toBe(currentLink.projectionId);
+      expect(links[0].authorizationEpoch).toBe(ownerEpoch);
+    });
+
+    it('should keep old durable links when live replacement initialization fails', async () => {
+      const did = 'did:example:update-live-fail';
+      const dwnUrl = 'https://dwn.example.com';
+      const protocol = 'https://example.com/profile';
+      const endpointLookupStub = sinon.stub().resolves([dwnUrl]);
+      const engine = createEngine({
+        db,
+        agent: {
+          agentDid : 'did:example:agent',
+          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+        } as any,
+      });
+      const ledger = (engine as any).ledger;
+      const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
+      const ownerAuthorization = { kind: 'owner' } as const;
+
+      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+      const oldLink = await ledger.getOrCreateLink({
+        tenantDid          : did,
+        remoteEndpoint     : dwnUrl,
+        scope              : { kind: 'full' },
+        authorization      : ownerAuthorization,
+        authorizationEpoch : ownerEpoch,
+      });
+      const oldLinkKey = (engine as any).buildLinkKey(did, dwnUrl, oldLink.projectionId, oldLink.authorizationEpoch);
+      (engine as any)._syncMode = 'live';
+      (engine as any)._activeLinks.set(oldLinkKey, oldLink);
+      sinon.stub(engine as any, 'initializeLinkTargetWithRetry').resolves({ status: 'failed' });
+
+      await engine.updateIdentityOptions({ did, options: { protocols: [protocol] } });
+
+      const links = await ledger.getLinksForTenant(did);
+      expect(links.some((link: any) => link.projectionId === oldLink.projectionId)).toBe(true);
+    });
+
+    it('should prune superseded durable links after live replacement initialization succeeds', async () => {
+      const did = 'did:example:update-live-prune';
+      const dwnUrl = 'https://dwn.example.com';
+      const protocol = 'https://example.com/profile';
+      const endpointLookupStub = sinon.stub().resolves([dwnUrl]);
+      const engine = createEngine({
+        db,
+        agent: {
+          agentDid : 'did:example:agent',
+          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+        } as any,
+      });
+      const ledger = (engine as any).ledger;
+      const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
+      const ownerAuthorization = { kind: 'owner' } as const;
+
+      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+      const oldLink = await ledger.getOrCreateLink({
+        tenantDid          : did,
+        remoteEndpoint     : dwnUrl,
+        scope              : { kind: 'full' },
+        authorization      : ownerAuthorization,
+        authorizationEpoch : ownerEpoch,
+      });
+      const currentLink = await ledger.getOrCreateLink({
+        tenantDid          : did,
+        remoteEndpoint     : dwnUrl,
+        scope              : { kind: 'protocolSet', protocols: [protocol] },
+        authorization      : ownerAuthorization,
+        authorizationEpoch : ownerEpoch,
+      });
+      const oldLinkKey = (engine as any).buildLinkKey(did, dwnUrl, oldLink.projectionId, oldLink.authorizationEpoch);
+      (engine as any)._syncMode = 'live';
+      (engine as any)._activeLinks.set(oldLinkKey, oldLink);
+      sinon.stub(engine as any, 'initializeLinkTargetWithRetry').resolves(activeInitializationResult(currentLink));
+
+      await engine.updateIdentityOptions({ did, options: { protocols: [protocol] } });
+
+      const links = await ledger.getLinksForTenant(did);
+      expect(links).toHaveLength(1);
+      expect(links[0].projectionId).toBe(currentLink.projectionId);
+    });
+
+    it('should keep the exact delegated epoch established during live replacement', async () => {
+      const did = 'did:example:delegate-epoch-prune';
+      const delegateDid = 'did:example:delegate';
+      const dwnUrl = 'https://dwn.example.com';
+      const protocol = 'https://example.com/profile';
+      const endpointLookupStub = sinon.stub().resolves([dwnUrl]);
+      const engine = createEngine({
+        db,
+        agent: {
+          agentDid : 'did:example:agent',
+          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+        } as any,
+      });
+      const grantE1 = messagesGrantEntry('grant-e1', { interface: 'Messages', method: 'Read', protocol }, {
+        grantor : did,
+        grantee : delegateDid,
+      });
+      const grantE2 = messagesGrantEntry('grant-e2', { interface: 'Messages', method: 'Read', protocol }, {
+        grantor : did,
+        grantee : delegateDid,
+      });
+      const fetchGrantsStub = sinon.stub();
+      fetchGrantsStub.onFirstCall().resolves([grantE1]);
+      fetchGrantsStub.onSecondCall().resolves([grantE2]);
+      (engine as any)._permissionsApi = { fetchGrants: fetchGrantsStub };
+
+      await db.sublevel('registeredIdentities').put(
+        did,
+        JSON.stringify({ protocols: 'all', delegateDid })
+      );
+      const ledger = (engine as any).ledger;
+      const oldLink = await ledger.getOrCreateLink({
+        tenantDid          : did,
+        remoteEndpoint     : dwnUrl,
+        scope              : { kind: 'full' },
+        authorization      : { kind: 'owner' },
+        authorizationEpoch : 'old-epoch',
+      });
+      const oldLinkKey = (engine as any).buildLinkKey(did, dwnUrl, oldLink.projectionId, oldLink.authorizationEpoch);
+      (engine as any)._syncMode = 'live';
+      (engine as any)._activeLinks.set(oldLinkKey, oldLink);
+      sinon.stub(engine as any, 'openLinkSubscriptions').resolves('readyForLive');
+
+      await engine.updateIdentityOptions({
+        did,
+        options: { protocols: [protocol], delegateDid },
+      });
+
+      const links = await ledger.getLinksForTenant(did);
+      expect(fetchGrantsStub.callCount).toBe(1);
+      expect(links).toHaveLength(1);
+      expect(links[0].authorization).toEqual({
+        kind               : 'delegate',
+        delegateDid,
+        permissionGrantIds : ['grant-e1'],
+      });
+    });
+
+    it('should keep all endpoints for the current projection and prune superseded projections', async () => {
+      const did = 'did:example:update-live-multi-endpoint';
+      const protocol = 'https://example.com/profile';
+      const endpointA = 'https://a.example.com';
+      const endpointB = 'https://b.example.com';
+      const endpointLookupStub = sinon.stub().resolves([endpointA, endpointB]);
+      const engine = createEngine({
+        db,
+        agent: {
+          agentDid : 'did:example:agent',
+          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+        } as any,
+      });
+      const ledger = (engine as any).ledger;
+      const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
+      const ownerAuthorization = { kind: 'owner' } as const;
+
+      await db.sublevel('registeredIdentities').put(
+        did,
+        JSON.stringify({ protocols: 'all' })
+      );
+      const oldLink = await ledger.getOrCreateLink({
+        tenantDid          : did,
+        remoteEndpoint     : endpointA,
+        scope              : { kind: 'full' },
+        authorization      : ownerAuthorization,
+        authorizationEpoch : ownerEpoch,
+      });
+      const oldLinkKey = (engine as any).buildLinkKey(did, endpointA, oldLink.projectionId, oldLink.authorizationEpoch);
+      (engine as any)._syncMode = 'live';
+      (engine as any)._activeLinks.set(oldLinkKey, oldLink);
+      sinon.stub(engine as any, 'openLinkSubscriptions').resolves('readyForLive');
+
+      await engine.updateIdentityOptions({ did, options: { protocols: [protocol] } });
+
+      const links = await ledger.getLinksForTenant(did);
+      expect(links).toHaveLength(2);
+      expect(links.map((link: any) => link.remoteEndpoint).sort()).toEqual([endpointA, endpointB]);
+      expect(links.every((link: any) => link.scope.kind === 'protocolSet')).toBe(true);
+    });
+
+    it('should keep a current terminal-incomplete link while pruning superseded links', async () => {
+      const did = 'did:example:update-live-terminal';
+      const dwnUrl = 'https://dwn.example.com';
+      const protocol = 'https://example.com/profile';
+      const endpointLookupStub = sinon.stub().resolves([dwnUrl]);
+      const engine = createEngine({
+        db,
+        agent: {
+          agentDid : 'did:example:agent',
+          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+        } as any,
+      });
+      const ledger = (engine as any).ledger;
+      const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
+      const ownerAuthorization = { kind: 'owner' } as const;
+
+      await db.sublevel('registeredIdentities').put(
+        did,
+        JSON.stringify({ protocols: 'all' })
+      );
+      const oldLink = await ledger.getOrCreateLink({
+        tenantDid          : did,
+        remoteEndpoint     : dwnUrl,
+        scope              : { kind: 'full' },
+        authorization      : ownerAuthorization,
+        authorizationEpoch : ownerEpoch,
+      });
+      const currentLink = await ledger.getOrCreateLink({
+        tenantDid          : did,
+        remoteEndpoint     : dwnUrl,
+        scope              : { kind: 'protocolSet', protocols: [protocol] },
+        authorization      : ownerAuthorization,
+        authorizationEpoch : ownerEpoch,
+      });
+      await ledger.setStatus(currentLink, 'terminal_incomplete');
+      const oldLinkKey = (engine as any).buildLinkKey(did, dwnUrl, oldLink.projectionId, oldLink.authorizationEpoch);
+      (engine as any)._syncMode = 'live';
+      (engine as any)._activeLinks.set(oldLinkKey, oldLink);
+      sinon.stub(engine as any, 'openLinkSubscriptions').rejects(new Error('terminal link should not open subscriptions'));
+
+      await engine.updateIdentityOptions({ did, options: { protocols: [protocol] } });
+
+      const links = await ledger.getLinksForTenant(did);
+      expect(links).toHaveLength(1);
+      expect(links[0].projectionId).toBe(currentLink.projectionId);
+      expect(links[0].status).toBe('terminal_incomplete');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // unregisterIdentity
   // ---------------------------------------------------------------------------
 
@@ -4330,6 +4608,43 @@ describe('SyncEngineLevel — private methods', () => {
 
       const after = await engine.getIdentityOptions('did:example:unreg-test');
       expect(after).toBeUndefined();
+    });
+
+    it('should prune durable links for the unregistered identity only', async () => {
+      const engine = createEngine({ db });
+      const ledger = (engine as any).ledger;
+      const did = 'did:example:unreg-links';
+      const otherDid = 'did:example:other-links';
+      const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
+      const ownerAuthorization = { kind: 'owner' } as const;
+
+      await engine.registerIdentity({ did, options: { protocols: 'all' } });
+      await ledger.getOrCreateLink({
+        tenantDid          : did,
+        remoteEndpoint     : 'https://dwn.example.com',
+        scope              : { kind: 'full' },
+        authorization      : ownerAuthorization,
+        authorizationEpoch : ownerEpoch,
+      });
+      await ledger.getOrCreateLink({
+        tenantDid          : did,
+        remoteEndpoint     : 'https://dwn-2.example.com',
+        scope              : { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
+        authorization      : ownerAuthorization,
+        authorizationEpoch : 'old-epoch',
+      });
+      await ledger.getOrCreateLink({
+        tenantDid          : otherDid,
+        remoteEndpoint     : 'https://dwn.example.com',
+        scope              : { kind: 'full' },
+        authorization      : ownerAuthorization,
+        authorizationEpoch : ownerEpoch,
+      });
+
+      await engine.unregisterIdentity(did);
+
+      expect(await ledger.getLinksForTenant(did)).toEqual([]);
+      expect(await ledger.getLinksForTenant(otherDid)).toHaveLength(1);
     });
 
     it('should throw when unregistering an identity that is not registered', async () => {
