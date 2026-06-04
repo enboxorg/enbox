@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { Message, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { ClosureFailureCode } from '../src/sync-closure-types.js';
+import { computeAuthorizationEpoch } from '../src/types/sync.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { getMessagesPermissionGrantsForScope } from '../src/sync-permission-grants.js';
 import { ReplicationLedger } from '../src/sync-replication-ledger.js';
@@ -3653,6 +3654,9 @@ describe('SyncEngineLevel — private methods', () => {
           scope: { kind: 'protocolSet', protocols: [protocol] },
         });
         (engine as any)._activeLinks.set(linkKey, link);
+        sinon.stub(engine as any, 'getCurrentDurableLinkIdentityKeys').resolves(
+          new Set([`${link.tenantDid}^${link.projectionId}^${link.authorizationEpoch}`])
+        );
 
         const transitionToRepairingStub = sinon.stub(engine as any, 'transitionToRepairing').resolves();
         const closePullStub = sinon.stub().resolves();
@@ -4877,31 +4881,123 @@ describe('SyncEngineLevel — private methods', () => {
       ).rejects.toThrow('disk full');
     });
 
-    it('should count degraded links from durable ledger, not just in-memory state', async () => {
-      const engine = createEngine({ db });
+    it('should count current degraded links from durable ledger, not just in-memory state', async () => {
+      const endpointLookupStub = sinon.stub().rejects(new Error('endpoint lookup should not run'));
+      const engine = createEngine({
+        db,
+        agent: {
+          agentDid : 'did:example:agent',
+          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+        } as any,
+      });
+      const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
+      await engine.registerIdentity({
+        did     : 'did:degraded-test',
+        options : { protocols: 'all' },
+      });
 
-      // Create links via the ledger (durable) — these survive restart.
+      const targetA = syncTarget('did:degraded-test', 'https://a.com', { authorizationEpoch: ownerEpoch });
+      const targetB = syncTarget('did:degraded-test', 'https://b.com', { authorizationEpoch: ownerEpoch });
+      const targetC = syncTarget('did:degraded-test', 'https://c.com', { authorizationEpoch: ownerEpoch });
+
+      // Create links via the ledger (durable). These survive restart and
+      // still count when they belong to the current registered projection/epoch.
       const ledger = (engine as any).ledger;
       const link1 = await ledger.getOrCreateLink({
-        tenantDid: 'did:degraded-test', remoteEndpoint: 'https://a.com', scope: { kind: 'full' },
+        tenantDid          : targetA.did,
+        remoteEndpoint     : targetA.dwnUrl,
+        scope              : targetA.scope,
+        authorization      : targetA.authorization,
+        authorizationEpoch : targetA.authorizationEpoch,
       });
       await ledger.setStatus(link1, 'degraded_poll');
 
       const link2 = await ledger.getOrCreateLink({
-        tenantDid: 'did:degraded-test', remoteEndpoint: 'https://b.com', scope: { kind: 'full' },
+        tenantDid          : targetB.did,
+        remoteEndpoint     : targetB.dwnUrl,
+        scope              : targetB.scope,
+        authorization      : targetB.authorization,
+        authorizationEpoch : targetB.authorizationEpoch,
       });
       await ledger.setStatus(link2, 'repairing');
 
       const link3 = await ledger.getOrCreateLink({
-        tenantDid: 'did:degraded-test', remoteEndpoint: 'https://c.com', scope: { kind: 'full' },
+        tenantDid          : targetC.did,
+        remoteEndpoint     : targetC.dwnUrl,
+        scope              : targetC.scope,
+        authorization      : targetC.authorization,
+        authorizationEpoch : targetC.authorizationEpoch,
       });
       await ledger.setStatus(link3, 'live');
 
-      // _activeLinks is empty — simulates a fresh restart.
+      // _activeLinks is empty; this simulates a fresh restart.
       expect((engine as any)._activeLinks.size).toBe(0);
 
       const health = await engine.getSyncHealth();
       expect(health.degradedLinkCount).toBe(2);
+      expect(endpointLookupStub.called).toBe(false);
+    });
+
+    it('should ignore degraded durable links from superseded authorization epochs', async () => {
+      const engine = createEngine({ db });
+      const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
+      await engine.registerIdentity({
+        did     : 'did:epoch-health',
+        options : { protocols: 'all' },
+      });
+      const currentTarget = syncTarget('did:epoch-health', 'https://dwn.example.com', {
+        authorizationEpoch: ownerEpoch,
+      });
+      const oldTarget = syncTarget('did:epoch-health', 'https://dwn.example.com', {
+        authorizationEpoch: 'epoch-old',
+      });
+
+      const ledger = (engine as any).ledger;
+      const oldLink = await ledger.getOrCreateLink({
+        tenantDid          : oldTarget.did,
+        remoteEndpoint     : oldTarget.dwnUrl,
+        scope              : oldTarget.scope,
+        authorization      : oldTarget.authorization,
+        authorizationEpoch : oldTarget.authorizationEpoch,
+      });
+      await ledger.setStatus(oldLink, 'terminal_incomplete');
+
+      const currentLink = await ledger.getOrCreateLink({
+        tenantDid          : currentTarget.did,
+        remoteEndpoint     : currentTarget.dwnUrl,
+        scope              : currentTarget.scope,
+        authorization      : currentTarget.authorization,
+        authorizationEpoch : currentTarget.authorizationEpoch,
+      });
+      await ledger.setStatus(currentLink, 'live');
+
+      const health = await engine.getSyncHealth();
+      expect(health.degradedLinkCount).toBe(0);
+      expect(health.syncHealthy).toBe(true);
+    });
+
+    it('should fall back to all durable links when current link identity keys cannot be resolved', async () => {
+      const engine = createEngine({ db });
+      const target = syncTarget('did:fallback-health', 'https://dwn.example.com');
+      await db.sublevel('registeredIdentities').put(
+        target.did,
+        JSON.stringify({ protocols: 'all', delegateDid: 'did:example:delegate' })
+      );
+      const warnStub = sinon.stub(console, 'warn');
+
+      const ledger = (engine as any).ledger;
+      const link = await ledger.getOrCreateLink({
+        tenantDid          : target.did,
+        remoteEndpoint     : target.dwnUrl,
+        scope              : target.scope,
+        authorization      : target.authorization,
+        authorizationEpoch : target.authorizationEpoch,
+      });
+      await ledger.setStatus(link, 'degraded_poll');
+
+      const health = await engine.getSyncHealth();
+      expect(health.degradedLinkCount).toBe(1);
+      expect(warnStub.calledOnce).toBe(true);
     });
   });
 });

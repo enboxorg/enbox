@@ -437,7 +437,7 @@ export type SyncHealthSummary = {
    * count keeps that state visible to callers.
    */
   closureFailureCount: number;
-  /** Number of links currently in 'repairing', 'degraded_poll', or terminal-incomplete status. */
+  /** Number of current sync links in 'repairing', 'degraded_poll', or terminal-incomplete status. */
   degradedLinkCount: number;
   /** True only when there are no failed messages and no degraded links. */
   syncHealthy: boolean;
