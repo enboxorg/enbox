@@ -1,6 +1,6 @@
-import type { GenericMessage, MessageEvent, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, ProtocolScope, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
-import { DwnInterfaceName, DwnMethodName, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, PermissionScopeMatcher, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 import type { SyncScope } from './types/sync.js';
 
@@ -42,6 +42,9 @@ export function classifySyncMessageScope({
   scope,
 }: SyncMessageScopeClassificationParams): SyncScopeClassification {
   if (scope.kind === 'full') { return 'in-scope'; }
+  if (scope.kind === 'recordsProjection') {
+    return classifyRecordsProjectionScope(message, initialWrite, scope);
+  }
 
   const descriptor = message.descriptor as Record<string, unknown>;
   const scopedDescriptor = getScopedMessageDescriptor(message, initialWrite);
@@ -90,6 +93,60 @@ function getScopedMessageDescriptor(
   return descriptor;
 }
 
+function classifyRecordsProjectionScope(
+  message: GenericMessage,
+  initialWrite: RecordsWriteMessage | undefined,
+  scope: Extract<SyncScope, { kind: 'recordsProjection' }>,
+): SyncScopeClassification {
+  const target = getRecordsProjectionTarget(message, initialWrite);
+  if (target === undefined) {
+    return isRecordsDelete(message) ? 'unknown' : 'out-of-scope';
+  }
+
+  return scope.scopes.some(projectionScope => PermissionScopeMatcher.matches(projectionScope, target))
+    ? 'in-scope'
+    : 'out-of-scope';
+}
+
+function getRecordsProjectionTarget(
+  message: GenericMessage,
+  initialWrite: RecordsWriteMessage | undefined,
+): ProtocolScope | undefined {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  if (descriptor.interface !== DwnInterfaceName.Records) {
+    return undefined;
+  }
+
+  if (descriptor.method === DwnMethodName.Write) {
+    return {
+      protocol     : stringField(descriptor.protocol),
+      protocolPath : stringField(descriptor.protocolPath),
+      contextId    : (message as RecordsWriteMessage).contextId,
+    };
+  }
+
+  if (descriptor.method === DwnMethodName.Delete) {
+    if (initialWrite === undefined) {
+      return undefined;
+    }
+    return {
+      protocol     : initialWrite.descriptor.protocol,
+      protocolPath : initialWrite.descriptor.protocolPath,
+      contextId    : initialWrite.contextId,
+    };
+  }
+}
+
+function isRecordsDelete(message: GenericMessage): boolean {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  return descriptor.interface === DwnInterfaceName.Records &&
+    descriptor.method === DwnMethodName.Delete;
+}
+
 function isRecordObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
 }

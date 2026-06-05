@@ -7,10 +7,10 @@ import { Message, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { ClosureFailureCode } from '../src/sync-closure-types.js';
 import { computeAuthorizationEpoch } from '../src/types/sync.js';
 import { DwnInterface } from '../src/types/dwn.js';
-import { getMessagesPermissionGrantsForScope } from '../src/sync-permission-grants.js';
 import { ReplicationLedger } from '../src/sync-replication-ledger.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncPullAbortedError } from '../src/sync-messages.js';
+import { getMessagesPermissionGrantsForScope, resolveMessagesSyncScopes } from '../src/sync-permission-grants.js';
 
 describe('SyncEngineLevel — private methods', () => {
   let db: Level<string, string>;
@@ -388,7 +388,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(result.map(entry => entry.grant.id)).toEqual(['grant-a', 'grant-b', 'grant-c']);
     });
 
-    it('should reject protocol-set sync when a requested protocol has only subtree grant coverage', async () => {
+    it('should resolve protocolPath grants to a Records projection scope', async () => {
       const permissionsApi = {
         fetchGrants: sinon.stub().resolves([
           grantEntry('grant-profile-path', {
@@ -400,13 +400,67 @@ describe('SyncEngineLevel — private methods', () => {
         ]),
       };
 
-      await expect(getMessagesPermissionGrantsForScope({
+      const result = await resolveMessagesSyncScopes({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
+        requestedScope : { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
         messageType    : DwnInterface.MessagesSync,
-        protocols      : ['https://example.com/profile'],
         permissionsApi : permissionsApi as any,
-      })).rejects.toThrow('No active Messages.Read permission found');
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0].scope).toEqual({
+        kind   : 'recordsProjection',
+        scopes : [{
+          protocol     : 'https://example.com/profile',
+          protocolPath : 'profile',
+        }],
+      });
+      expect(result[0].permissionGrants.map(entry => entry.grant.id)).toEqual(['grant-profile-path']);
+    });
+
+    it('should split broad protocol grants from narrow projected grants', async () => {
+      const permissionsApi = {
+        fetchGrants: sinon.stub().resolves([
+          grantEntry('grant-social', {
+            interface : 'Messages',
+            method    : 'Read',
+            protocol  : 'https://example.com/social',
+          }),
+          grantEntry('grant-profile-path', {
+            interface    : 'Messages',
+            method       : 'Read',
+            protocol     : 'https://example.com/profile',
+            protocolPath : 'profile/avatar',
+          }),
+        ]),
+      };
+
+      const result = await resolveMessagesSyncScopes({
+        did            : 'did:example:alice',
+        delegateDid    : 'did:example:delegate',
+        requestedScope : {
+          kind      : 'protocolSet',
+          protocols : ['https://example.com/profile', 'https://example.com/social'],
+        },
+        messageType    : DwnInterface.MessagesSync,
+        permissionsApi : permissionsApi as any,
+      });
+
+      expect(result).toHaveLength(2);
+      expect(result[0].scope).toEqual({
+        kind      : 'protocolSet',
+        protocols : ['https://example.com/social'],
+      });
+      expect(result[0].permissionGrants.map(entry => entry.grant.id)).toEqual(['grant-social']);
+      expect(result[1].scope).toEqual({
+        kind   : 'recordsProjection',
+        scopes : [{
+          protocol     : 'https://example.com/profile',
+          protocolPath : 'profile/avatar',
+        }],
+      });
+      expect(result[1].permissionGrants.map(entry => entry.grant.id)).toEqual(['grant-profile-path']);
     });
 
     it('should reject protocol-set sync when any requested protocol lacks coverage', async () => {
@@ -527,6 +581,60 @@ describe('SyncEngineLevel — private methods', () => {
       });
     });
 
+    it('should split delegated sync targets by broad and projected grant coverage', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      (engine as any)._permissionsApi = {
+        fetchGrants: sinon.stub().resolves([
+          messagesGrantEntry('grant-social', {
+            interface : 'Messages',
+            method    : 'Read',
+            protocol  : 'https://example.com/social',
+          }),
+          messagesGrantEntry('grant-profile-avatar', {
+            interface    : 'Messages',
+            method       : 'Read',
+            protocol     : 'https://example.com/profile',
+            protocolPath : 'profile/avatar',
+          }),
+        ]),
+      };
+
+      await engine.registerIdentity({
+        did     : 'did:example:carol',
+        options : {
+          protocols   : ['https://example.com/profile', 'https://example.com/social'],
+          delegateDid : 'did:example:delegate',
+        },
+      });
+
+      const targets = await (engine as any).getSyncTargets();
+
+      expect(targets).toHaveLength(2);
+      expect(targets.map((target: any) => target.scope)).toEqual([
+        {
+          kind      : 'protocolSet',
+          protocols : ['https://example.com/social'],
+        },
+        {
+          kind   : 'recordsProjection',
+          scopes : [{
+            protocol     : 'https://example.com/profile',
+            protocolPath : 'profile/avatar',
+          }],
+        },
+      ]);
+      expect(targets.map((target: any) => target.permissionGrantIds)).toEqual([
+        ['grant-social'],
+        ['grant-profile-avatar'],
+      ]);
+    });
+
     it('should handle invalid JSON in identity options gracefully', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
@@ -587,6 +695,39 @@ describe('SyncEngineLevel — private methods', () => {
 
       expect(pullStub.calledOnce).toBe(true);
       expect(pushStub.calledOnce).toBe(true);
+    });
+
+    it('should reconcile Records projection targets through projected roots', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const projectedScope = {
+        kind   : 'recordsProjection',
+        scopes : [{
+          protocol     : 'https://example.com/profile',
+          protocolPath : 'profile/avatar',
+        }],
+      };
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        syncTarget('did:example:1', 'https://dwn.example.com', { scope: projectedScope }),
+      ]);
+      const legacyLocalRoot = sinon.stub(engine as any, 'getLocalRoot').resolves('legacy-local');
+      const legacyRemoteRoot = sinon.stub(engine as any, 'getRemoteRoot').resolves('legacy-remote');
+      sinon.stub(engine as any, 'getLocalProjectedRoot').resolves('aabbcc');
+      sinon.stub(engine as any, 'getRemoteProjectedRoot').resolves('ddeeff');
+      sinon.stub(engine as any, 'diffProjectedWithRemote').resolves({
+        onlyLocal  : ['cid-local-1'],
+        onlyRemote : [{ messageCid: 'cid-remote-1' }],
+      });
+      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
+
+      await engine.sync();
+
+      expect(legacyLocalRoot.called).toBe(false);
+      expect(legacyRemoteRoot.called).toBe(false);
+      expect(pullStub.firstCall.args[0].scope).toEqual(projectedScope);
+      expect(pushStub.firstCall.args[0].messageCids).toEqual(['cid-local-1']);
     });
 
     it('should only pull when direction is "pull"', async () => {
@@ -1025,6 +1166,46 @@ describe('SyncEngineLevel — private methods', () => {
       expect(closePull.calledOnce).toBe(true);
       expect((engine as any)._activeLinks.get(linkKey)).toBe(link);
       expect(link.status).toBe('repairing');
+    });
+
+    it('should mark projected links polling without opening live subscriptions', async () => {
+      const engine = createEngine({ db });
+      const projectedScope = {
+        kind   : 'recordsProjection',
+        scopes : [{
+          protocol     : 'https://example.com/profile',
+          protocolPath : 'profile/avatar',
+        }],
+      };
+      const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
+      const link = {
+        tenantDid          : 'did:example:alice',
+        remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test',
+        authorizationEpoch : 'authorization-test',
+        authorization      : { kind: 'owner' },
+        scope              : projectedScope,
+        status             : 'initializing',
+        pull               : {},
+        connectivity       : 'unknown',
+        needsReconcile     : false,
+      } as any;
+
+      sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(link);
+      sinon.stub(engine as any, 'getReplicationLinkKey').returns(linkKey);
+      sinon.stub(engine as any, 'migrateLegacyCursorIfNeeded').resolves();
+      const openLivePullStub = sinon.stub(engine as any, 'openLivePullSubscription').rejects(new Error('unexpected live pull'));
+      const openLocalPushStub = sinon.stub(engine as any, 'openLocalPushSubscription').rejects(new Error('unexpected local push'));
+
+      const result = await (engine as any).initializeLinkTarget(syncTarget('did:example:alice', 'https://dwn.example.com', {
+        scope: projectedScope,
+      }));
+
+      expect(result.status).toBe('active');
+      expect(openLivePullStub.called).toBe(false);
+      expect(openLocalPushStub.called).toBe(false);
+      expect((engine as any)._activeLinks.get(linkKey)).toBe(link);
+      expect(link.status).toBe('polling');
     });
   });
 

@@ -1,11 +1,17 @@
 import type { DwnInterface } from './types/dwn.js';
-import type { GenericMessage, GenericSignaturePayload } from '@enbox/dwn-sdk-js';
-import type { NonEmptyStringArray, SyncAuthorizationGrant } from './types/sync.js';
+import type { GenericMessage, GenericSignaturePayload, MessagesPermissionScope, RecordsProjectionScope } from '@enbox/dwn-sdk-js';
+import type { NonEmptyStringArray, SyncAuthorizationGrant, SyncScope } from './types/sync.js';
 import type { PermissionGrantEntry, PermissionsApi } from './types/permissions.js';
 
 import { Jws, Message, PermissionScopeMatcher } from '@enbox/dwn-sdk-js';
 
-import { lexicographicalCompare } from './types/sync.js';
+import { lexicographicalCompare, syncScopeFromRecordsProjectionScopes } from './types/sync.js';
+
+export type MessagesSyncScopeResolution = {
+  scope: SyncScope;
+  permissionGrants: PermissionGrantEntry[];
+};
+
 /** Returns a sorted, duplicate-free grant ID set, or `undefined` for owner requests. */
 export function toMessagesPermissionGrantIds(permissionGrantIds: string[] | undefined): NonEmptyStringArray | undefined {
   if (permissionGrantIds === undefined || permissionGrantIds.length === 0) {
@@ -34,11 +40,46 @@ export async function getMessagesPermissionGrantsForScope({
   did: string;
   delegateDid?: string;
   protocols?: NonEmptyStringArray;
-  messageType: DwnInterface.MessagesRead | DwnInterface.MessagesSubscribe | DwnInterface.MessagesSync;
+  messageType: DwnInterface;
   permissionsApi: PermissionsApi;
 }): Promise<PermissionGrantEntry[]> {
+  const requestedScope: SyncScope = protocols === undefined
+    ? { kind: 'full' }
+    : { kind: 'protocolSet', protocols };
+  const resolutions = await resolveMessagesSyncScopes({
+    did,
+    delegateDid,
+    requestedScope,
+    messageType,
+    permissionsApi,
+  });
+  return resolutions
+    .flatMap(resolution => resolution.permissionGrants)
+    .sort((a, b) => lexicographicalCompare(a.grant.id, b.grant.id));
+}
+
+/**
+ * Resolves active Messages.Read grants into one or more sync targets.
+ *
+ * Broad protocol coverage remains on legacy full/protocol roots. Exact
+ * protocolPath and contextId grants are grouped into a Records-primary
+ * projection target so a narrow grant never authorizes a broad protocol root.
+ */
+export async function resolveMessagesSyncScopes({
+  did,
+  delegateDid,
+  requestedScope,
+  messageType,
+  permissionsApi,
+}: {
+  did: string;
+  delegateDid?: string;
+  requestedScope: SyncScope;
+  messageType: DwnInterface;
+  permissionsApi: PermissionsApi;
+}): Promise<MessagesSyncScopeResolution[]> {
   if (!delegateDid) {
-    return [];
+    return [{ scope: requestedScope, permissionGrants: [] }];
   }
 
   const now = new Date().toISOString();
@@ -49,16 +90,139 @@ export async function getMessagesPermissionGrantsForScope({
     grantee : delegateDid,
   })).filter(entry => isActiveMessagesGrant(entry, did, delegateDid, now));
 
-  const requestedProtocols = protocols ?? [undefined];
-  for (const protocol of requestedProtocols) {
-    if (!permissionGrants.some(entry => grantMatchesProtocol(entry, protocol))) {
-      throw new Error(`SyncPermissions: No active Messages.Read permission found for ${messageType}: ${protocol ?? 'all protocols'}`);
-    }
+  if (requestedScope.kind === 'full') {
+    return [resolveFullScope(permissionGrants, requestedScope, messageType)];
   }
 
-  return permissionGrants
-    .filter(entry => grantParticipatesInProjection(entry, protocols))
+  if (requestedScope.kind === 'protocolSet') {
+    return resolveProtocolSetScope(permissionGrants, requestedScope, messageType);
+  }
+
+  return [resolveRecordsProjectionScope(permissionGrants, requestedScope, messageType)];
+}
+
+function resolveFullScope(
+  permissionGrants: PermissionGrantEntry[],
+  requestedScope: Extract<SyncScope, { kind: 'full' }>,
+  messageType: DwnInterface,
+): MessagesSyncScopeResolution {
+  const grants = permissionGrants
+    .filter(entry => grantMatchesProtocol(entry, undefined))
     .sort((a, b) => lexicographicalCompare(a.grant.id, b.grant.id));
+  if (grants.length === 0) {
+    throw new Error(`SyncPermissions: No active Messages.Read permission found for ${messageType}: all protocols`);
+  }
+
+  return { scope: requestedScope, permissionGrants: grants };
+}
+
+function resolveProtocolSetScope(
+  permissionGrants: PermissionGrantEntry[],
+  requestedScope: Extract<SyncScope, { kind: 'protocolSet' }>,
+  messageType: DwnInterface,
+): MessagesSyncScopeResolution[] {
+  const broadProtocols: string[] = [];
+  const narrowScopes: RecordsProjectionScope[] = [];
+
+  for (const protocol of requestedScope.protocols) {
+    if (permissionGrants.some(entry => grantMatchesProtocol(entry, protocol))) {
+      broadProtocols.push(protocol);
+      continue;
+    }
+
+    const protocolNarrowScopes = permissionGrants
+      .map(entry => grantProjectionScopeForProtocol(entry, protocol))
+      .filter((scope): scope is RecordsProjectionScope => scope !== undefined);
+    if (protocolNarrowScopes.length === 0) {
+      throw new Error(`SyncPermissions: No active Messages.Read permission found for ${messageType}: ${protocol}`);
+    }
+    narrowScopes.push(...protocolNarrowScopes);
+  }
+
+  return [
+    ...broadProtocolResolution(permissionGrants, broadProtocols),
+    ...recordsProjectionResolution(permissionGrants, narrowScopes, messageType),
+  ];
+}
+
+function resolveRecordsProjectionScope(
+  permissionGrants: PermissionGrantEntry[],
+  requestedScope: Extract<SyncScope, { kind: 'recordsProjection' }>,
+  messageType: DwnInterface,
+): MessagesSyncScopeResolution {
+  const grants = permissionGrants
+    .filter(entry => requestedScope.scopes.some(scope => PermissionScopeMatcher.matches(entry.grant.scope, scope)))
+    .sort((a, b) => lexicographicalCompare(a.grant.id, b.grant.id));
+
+  if (grants.length === 0) {
+    throw new Error(`SyncPermissions: No active Messages.Read permission found for ${messageType}: projected Records scope`);
+  }
+
+  return { scope: requestedScope, permissionGrants: grants };
+}
+
+function broadProtocolResolution(
+  permissionGrants: PermissionGrantEntry[],
+  broadProtocols: string[],
+): MessagesSyncScopeResolution[] {
+  if (broadProtocols.length === 0) {
+    return [];
+  }
+
+  const protocols = [...new Set(broadProtocols)].sort(lexicographicalCompare) as NonEmptyStringArray;
+  const grants = permissionGrants
+    .filter(entry => grantParticipatesInLegacyProtocolSet(entry, protocols))
+    .sort((a, b) => lexicographicalCompare(a.grant.id, b.grant.id));
+
+  return [{
+    scope: {
+      kind: 'protocolSet',
+      protocols,
+    },
+    permissionGrants: grants,
+  }];
+}
+
+function recordsProjectionResolution(
+  permissionGrants: PermissionGrantEntry[],
+  projectionScopes: RecordsProjectionScope[],
+  messageType: DwnInterface,
+): MessagesSyncScopeResolution[] {
+  const [firstScope, ...remainingScopes] = projectionScopes;
+  if (firstScope === undefined) {
+    return [];
+  }
+
+  const requestedScope = syncScopeFromRecordsProjectionScopes([firstScope, ...remainingScopes]);
+  return [resolveRecordsProjectionScope(permissionGrants, requestedScope, messageType)];
+}
+
+function grantProjectionScopeForProtocol(
+  entry: PermissionGrantEntry,
+  protocol: string,
+): RecordsProjectionScope | undefined {
+  const scope = entry.grant.scope;
+  if (!isMessagesReadScope(scope) || scope.protocol !== protocol) {
+    return undefined;
+  }
+  if (scope.protocolPath !== undefined) {
+    return { protocol, protocolPath: scope.protocolPath };
+  }
+  if (scope.contextId !== undefined) {
+    return { protocol, contextId: scope.contextId };
+  }
+}
+
+function isMessagesReadScope(scope: PermissionGrantEntry['grant']['scope']): scope is MessagesPermissionScope {
+  return scope.interface === 'Messages' &&
+    scope.method === 'Read';
+}
+
+function grantParticipatesInLegacyProtocolSet(
+  entry: PermissionGrantEntry,
+  protocols: NonEmptyStringArray,
+): boolean {
+  return protocols.some(protocol => grantMatchesProtocol(entry, protocol));
 }
 
 /** Converts permission grant entries into authorization epoch inputs. */
@@ -100,13 +264,6 @@ function grantMatchesProtocol(
   protocol: string | undefined,
 ): boolean {
   return PermissionScopeMatcher.matches(entry.grant.scope, { protocol });
-}
-
-function grantParticipatesInProjection(
-  entry: PermissionGrantEntry,
-  protocols: NonEmptyStringArray | undefined,
-): boolean {
-  return (protocols ?? [undefined]).some(protocol => grantMatchesProtocol(entry, protocol));
 }
 
 /** Returns sorted grant IDs from permission grant entries. */

@@ -7,6 +7,7 @@ import {
   protocolsForSyncScope,
   singleProtocolForSyncScope,
   syncScopeFromProtocols,
+  syncScopeFromRecordsProjectionScopes,
 } from '../src/types/sync.js';
 
 describe('sync scope identity', () => {
@@ -43,6 +44,41 @@ describe('sync scope identity', () => {
   it('returns a single protocol label only for one-protocol scopes', () => {
     const scope = syncScopeFromProtocols(['https://example.com/profile']);
     expect(singleProtocolForSyncScope(scope)).toBe('https://example.com/profile');
+  });
+
+  it('normalizes Records projection scopes and exposes their covered protocols', () => {
+    const scope = syncScopeFromRecordsProjectionScopes([
+      {
+        protocol  : 'https://example.com/profile',
+        contextId : 'root/child',
+      },
+      {
+        protocol  : 'https://example.com/social',
+        contextId : 'thread',
+      },
+      {
+        protocol  : 'https://example.com/profile',
+        contextId : 'root',
+      },
+      {
+        protocol     : 'https://example.com/profile',
+        protocolPath : 'profile/avatar',
+      },
+    ]);
+
+    expect(scope).toEqual({
+      kind   : 'recordsProjection',
+      scopes : [
+        { protocol: 'https://example.com/profile', protocolPath: 'profile/avatar' },
+        { protocol: 'https://example.com/profile', contextId: 'root' },
+        { protocol: 'https://example.com/social', contextId: 'thread' },
+      ],
+    });
+    expect(protocolsForSyncScope(scope)).toEqual([
+      'https://example.com/profile',
+      'https://example.com/social',
+    ]);
+    expect(singleProtocolForSyncScope(scope)).toBeUndefined();
   });
 
   it('computes projection IDs from tenant and normalized scope', async () => {
@@ -131,5 +167,16 @@ describe('sync scope identity', () => {
 
     expect(projectionId).toBe(sameProjectionId);
     expect(oldEpoch).not.toBe(newEpoch);
+  });
+
+  it('uses distinct projection IDs for legacy protocol roots and Records-primary projection roots', async () => {
+    const tenantDid = 'did:example:alice';
+    const protocolScope = syncScopeFromProtocols(['https://example.com/profile']);
+    const projectedScope = syncScopeFromRecordsProjectionScopes([
+      { protocol: 'https://example.com/profile' },
+    ]);
+
+    await expect(computeProjectionId(tenantDid, protocolScope))
+      .resolves.not.toBe(await computeProjectionId(tenantDid, projectedScope));
   });
 });

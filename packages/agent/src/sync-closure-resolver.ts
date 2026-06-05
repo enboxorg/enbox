@@ -9,6 +9,7 @@ import type { GenericMessage, MessageStore, ProtocolDefinition, ProtocolRuleSet 
 import { classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
 import { isMultiPartyContext } from './protocol-utils.js';
+import { protocolsForSyncScope } from './types/sync.js';
 import { ClosureFailureCode, createClosureContext } from './sync-closure-types.js';
 import { Message, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
@@ -847,9 +848,15 @@ function dependencyCacheKey(edge: ClosureDependencyEdge, scope: SyncScope): stri
 }
 
 function scopeCacheKey(scope: SyncScope): string {
-  return scope.kind === 'full'
-    ? 'full'
-    : `protocolSet:${scope.protocols.join('\u001f')}`;
+  if (scope.kind === 'full') {
+    return 'full';
+  }
+
+  if (scope.kind === 'protocolSet') {
+    return `protocolSet:${scope.protocols.join('\u001f')}`;
+  }
+
+  return `recordsProjection:${scope.scopes.map(scopeEntry => JSON.stringify(scopeEntry)).join('\u001f')}`;
 }
 
 function isResolvedDependencyAllowed(
@@ -901,6 +908,7 @@ function isContextKeyDependencyAllowed(
   const rootContextId = edge.identifier.substring(separatorIdx + 1);
   const descriptor = message.descriptor as Record<string, unknown>;
   const tags = descriptor.tags as Record<string, unknown> | undefined;
+  const coveredProtocols = protocolsForSyncScope(scope);
 
   return descriptor.interface === 'Records' &&
     descriptor.method === 'Write' &&
@@ -908,7 +916,7 @@ function isContextKeyDependencyAllowed(
     descriptor.protocolPath === 'contextKey' &&
     tags?.protocol === sourceProtocol &&
     tags?.contextId === rootContextId &&
-    scope.protocols.includes(sourceProtocol);
+    coveredProtocols?.includes(sourceProtocol) === true;
 }
 
 /**
