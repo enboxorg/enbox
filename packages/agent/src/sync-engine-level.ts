@@ -17,6 +17,8 @@ import type { SyncScopeClassification } from './sync-scope-acceptance.js';
 import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
+import type { DwnMessageParams } from './types/dwn.js';
+
 import { DwnInterface } from './types/dwn.js';
 import { evaluateClosure } from './sync-closure-resolver.js';
 import { isRecordsWrite } from './utils.js';
@@ -126,6 +128,11 @@ type ProjectionReconcileOptions = {
 type ProjectionReconcileResult = {
   aborted?: boolean;
   converged?: boolean;
+};
+
+type ProjectionDiffResult = {
+  onlyRemote: MessagesSyncDiffEntry[];
+  onlyLocal: string[];
 };
 
 type ProtocolSetScope = Extract<SyncScope, { kind: 'protocolSet' }>;
@@ -933,16 +940,7 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    const prevStatus = link.status;
-    const prevConnectivity = link.connectivity;
-    link.connectivity = 'offline';
-    await this.ledger.setStatus(link, 'repairing');
-
-    const eventScope = syncEventScope(link.scope);
-    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevStatus, to: 'repairing' });
-    if (prevConnectivity !== 'offline') {
-      this.emitEvent({ type: 'link:connectivity-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevConnectivity, to: 'offline' });
-    }
+    await this.setLinkOfflineStatus(link, 'repairing');
 
     if (options?.resumeToken) {
       this._repairContext.set(linkKey, { resumeToken: options.resumeToken });
@@ -950,11 +948,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Clear runtime ordinals immediately — stale state must not linger
     // across repair attempts.
-    const rt = this._linkRuntimes.get(linkKey);
-    if (rt) {
-      rt.inflight.clear();
-      rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
-    }
+    this.clearLinkRuntimeInflight(linkKey);
 
     // Kick off repair with retry scheduling on failure.
     void this.repairLink(linkKey).catch(() => {
@@ -970,24 +964,11 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    const prevStatus = link.status;
-    const prevConnectivity = link.connectivity;
-    link.connectivity = 'offline';
-    await this.ledger.setStatus(link, 'terminal_incomplete');
-
-    const eventScope = syncEventScope(link.scope);
-    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevStatus, to: 'terminal_incomplete' });
-    if (prevConnectivity !== 'offline') {
-      this.emitEvent({ type: 'link:connectivity-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevConnectivity, to: 'offline' });
-    }
+    await this.setLinkOfflineStatus(link, 'terminal_incomplete');
 
     await this.closeLinkSubscriptions(link);
 
-    const rt = this._linkRuntimes.get(linkKey);
-    if (rt) {
-      rt.inflight.clear();
-      rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
-    }
+    this.clearLinkRuntimeInflight(linkKey);
 
     const retryTimer = this._repairRetryTimers.get(linkKey);
     if (retryTimer) {
@@ -1012,6 +993,29 @@ export class SyncEngineLevel implements SyncEngine {
 
     this._repairAttempts.delete(linkKey);
     this._repairContext.delete(linkKey);
+  }
+
+  private async setLinkOfflineStatus(link: ReplicationLinkState, status: ReplicationLinkState['status']): Promise<void> {
+    const prevStatus = link.status;
+    const prevConnectivity = link.connectivity;
+    link.connectivity = 'offline';
+    await this.ledger.setStatus(link, status);
+
+    const eventScope = syncEventScope(link.scope);
+    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevStatus, to: status });
+    if (prevConnectivity !== 'offline') {
+      this.emitEvent({ type: 'link:connectivity-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevConnectivity, to: 'offline' });
+    }
+  }
+
+  private clearLinkRuntimeInflight(linkKey: string): void {
+    const rt = this._linkRuntimes.get(linkKey);
+    if (!rt) {
+      return;
+    }
+
+    rt.inflight.clear();
+    rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
   }
 
   /**
@@ -2898,25 +2902,7 @@ export class SyncEngineLevel implements SyncEngine {
     // order composed protocol configs before records that use them. Any future
     // chunking for large protocol sets must preserve this global dependency
     // order instead of reverting to independent per-protocol chunks.
-    const { prefetched, needsFetchCids } = partitionRemoteEntries(SyncEngineLevel.dedupeRemoteEntries(onlyRemote));
-    try {
-      await this.pullMessages({
-        did                : target.did,
-        dwnUrl             : target.dwnUrl,
-        delegateDid        : target.delegateDid,
-        scope              : scope,
-        permissionGrantIds : permissionGrantIds,
-        messageCids        : needsFetchCids,
-        prefetched         : prefetched,
-        shouldContinue     : shouldContinue,
-      });
-    } catch (error) {
-      if (error instanceof SyncPullAbortedError) {
-        return true;
-      }
-      throw error;
-    }
-    return shouldContinue?.() === false;
+    return this.pullRemoteDiffEntries(target, scope, onlyRemote, permissionGrantIds, shouldContinue);
   }
 
   private async applyProjectedDiff(
@@ -2946,25 +2932,7 @@ export class SyncEngineLevel implements SyncEngine {
       return false;
     }
 
-    const { prefetched, needsFetchCids } = partitionRemoteEntries(SyncEngineLevel.dedupeRemoteEntries(onlyRemote));
-    try {
-      await this.pullMessages({
-        did                : target.did,
-        dwnUrl             : target.dwnUrl,
-        delegateDid        : target.delegateDid,
-        scope              : scope,
-        permissionGrantIds : permissionGrantIds,
-        messageCids        : needsFetchCids,
-        prefetched         : prefetched,
-        shouldContinue     : shouldContinue,
-      });
-    } catch (error) {
-      if (error instanceof SyncPullAbortedError) {
-        return true;
-      }
-      throw error;
-    }
-    return shouldContinue?.() === false;
+    return this.pullRemoteDiffEntries(target, scope, onlyRemote, permissionGrantIds, shouldContinue);
   }
 
   private async pushProjectedLocalDiff(
@@ -2978,14 +2946,7 @@ export class SyncEngineLevel implements SyncEngine {
       return false;
     }
 
-    await this.pushMessages({
-      did         : target.did,
-      dwnUrl      : target.dwnUrl,
-      delegateDid : target.delegateDid,
-      permissionGrantIds,
-      messageCids : SyncEngineLevel.dedupeStrings(onlyLocal),
-    });
-    return shouldContinue?.() === false;
+    return this.pushLocalDiffEntries(target, onlyLocal, permissionGrantIds, shouldContinue);
   }
 
   private async pushProtocolSetLocalDiff(
@@ -2999,6 +2960,43 @@ export class SyncEngineLevel implements SyncEngine {
       return false;
     }
 
+    return this.pushLocalDiffEntries(target, onlyLocal, permissionGrantIds, shouldContinue);
+  }
+
+  private async pullRemoteDiffEntries(
+    target: ProjectionReconcileTarget,
+    scope: SyncScope,
+    onlyRemote: MessagesSyncDiffEntry[],
+    permissionGrantIds: NonEmptyStringArray | undefined,
+    shouldContinue?: () => boolean,
+  ): Promise<boolean> {
+    const { prefetched, needsFetchCids } = partitionRemoteEntries(SyncEngineLevel.dedupeRemoteEntries(onlyRemote));
+    try {
+      await this.pullMessages({
+        did         : target.did,
+        dwnUrl      : target.dwnUrl,
+        delegateDid : target.delegateDid,
+        scope,
+        permissionGrantIds,
+        messageCids : needsFetchCids,
+        prefetched,
+        shouldContinue,
+      });
+    } catch (error) {
+      if (error instanceof SyncPullAbortedError) {
+        return true;
+      }
+      throw error;
+    }
+    return shouldContinue?.() === false;
+  }
+
+  private async pushLocalDiffEntries(
+    target: ProjectionReconcileTarget,
+    onlyLocal: string[],
+    permissionGrantIds: NonEmptyStringArray | undefined,
+    shouldContinue?: () => boolean,
+  ): Promise<boolean> {
     await this.pushMessages({
       did         : target.did,
       dwnUrl      : target.dwnUrl,
@@ -3508,48 +3506,27 @@ export class SyncEngineLevel implements SyncEngine {
     delegateDid?: string;
     protocol?: string;
     permissionGrantIds?: string[];
-  }): Promise<{ onlyRemote: MessagesSyncDiffEntry[]; onlyLocal: string[] }> {
+  }): Promise<ProjectionDiffResult> {
     // Step 1: Collect local subtree hashes at BATCHED_DIFF_DEPTH directly from StateIndex.
     const localHashes = await this.collectLocalSubtreeHashes(did, protocol, BATCHED_DIFF_DEPTH, permissionGrantIds);
 
     // Step 2: Send a single 'diff' request to the remote with our hashes.
-    const syncMessage = await this.agent.dwn.processRequest({
-      store         : false,
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.MessagesSync,
-      granteeDid    : delegateDid,
-      messageParams : {
-        action             : 'diff',
-        protocol,
-        hashes             : localHashes,
-        depth              : BATCHED_DIFF_DEPTH,
-        permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantIds),
-      }
-    });
-
-    const reply = await this.agent.rpc.sendDwnRequest({
-      dwnUrl,
-      targetDid : did,
-      message   : syncMessage.message,
-    }) as MessagesSyncReply;
-
-    if (reply.status.code !== 200) {
-      throw new Error(`SyncEngineLevel: diff failed with ${reply.status.code}: ${reply.status.detail}`);
-    }
+    const messageParams: DwnMessageParams[DwnInterface.MessagesSync] = {
+      action             : 'diff',
+      protocol,
+      hashes             : localHashes,
+      depth              : BATCHED_DIFF_DEPTH,
+      permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantIds),
+    };
 
     // Step 3: Enumerate local leaves for prefixes the remote reported as onlyLocal.
     // Reuse the same grant set from step 2.
-    const onlyLocalCids: string[] = [];
-    for (const prefix of reply.onlyLocal ?? []) {
-      const leaves = await this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantIds);
-      onlyLocalCids.push(...leaves);
-    }
-
-    return {
-      onlyRemote : reply.onlyRemote ?? [],
-      onlyLocal  : onlyLocalCids,
-    };
+    return this.diffRemoteMessages(
+      { did, dwnUrl, delegateDid },
+      messageParams,
+      prefix => this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantIds),
+      'diff',
+    );
   }
 
   private async diffProjectedWithRemote({ did, dwnUrl, delegateDid, scopes, permissionGrantIds }: {
@@ -3558,7 +3535,7 @@ export class SyncEngineLevel implements SyncEngine {
     delegateDid?: string;
     scopes: readonly [RecordsProjectionScope, ...RecordsProjectionScope[]];
     permissionGrantIds?: string[];
-  }): Promise<{ onlyRemote: MessagesSyncDiffEntry[]; onlyLocal: string[] }> {
+  }): Promise<ProjectionDiffResult> {
     const localHashes = await this.collectLocalProjectedSubtreeHashes(
       did,
       scopes,
@@ -3567,35 +3544,51 @@ export class SyncEngineLevel implements SyncEngine {
       permissionGrantIds,
     );
 
+    const messageParams: DwnMessageParams[DwnInterface.MessagesSync] = {
+      action                : 'diff',
+      projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+      projectionScopes      : [...scopes],
+      hashes                : localHashes,
+      depth                 : BATCHED_DIFF_DEPTH,
+      permissionGrantIds    : toMessagesPermissionGrantIds(permissionGrantIds),
+    };
+
+    return this.diffRemoteMessages(
+      { did, dwnUrl, delegateDid },
+      messageParams,
+      prefix => this.getLocalProjectedLeaves(did, prefix, delegateDid, scopes, permissionGrantIds),
+      'projected diff',
+    );
+  }
+
+  private async diffRemoteMessages(
+    target: Pick<ProjectionReconcileTarget, 'did' | 'dwnUrl' | 'delegateDid'>,
+    messageParams: DwnMessageParams[DwnInterface.MessagesSync],
+    getLocalLeavesForPrefix: (prefix: string) => Promise<string[]>,
+    operationName: string,
+  ): Promise<ProjectionDiffResult> {
     const syncMessage = await this.agent.dwn.processRequest({
-      store         : false,
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.MessagesSync,
-      granteeDid    : delegateDid,
-      messageParams : {
-        action                : 'diff',
-        projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
-        projectionScopes      : [...scopes],
-        hashes                : localHashes,
-        depth                 : BATCHED_DIFF_DEPTH,
-        permissionGrantIds    : toMessagesPermissionGrantIds(permissionGrantIds),
-      }
+      store       : false,
+      author      : target.did,
+      target      : target.did,
+      messageType : DwnInterface.MessagesSync,
+      granteeDid  : target.delegateDid,
+      messageParams,
     });
 
     const reply = await this.agent.rpc.sendDwnRequest({
-      dwnUrl,
-      targetDid : did,
+      dwnUrl    : target.dwnUrl,
+      targetDid : target.did,
       message   : syncMessage.message,
     }) as MessagesSyncReply;
 
     if (reply.status.code !== 200) {
-      throw new Error(`SyncEngineLevel: projected diff failed with ${reply.status.code}: ${reply.status.detail}`);
+      throw new Error(`SyncEngineLevel: ${operationName} failed with ${reply.status.code}: ${reply.status.detail}`);
     }
 
     const onlyLocalCids: string[] = [];
     for (const prefix of reply.onlyLocal ?? []) {
-      const leaves = await this.getLocalProjectedLeaves(did, prefix, delegateDid, scopes, permissionGrantIds);
+      const leaves = await getLocalLeavesForPrefix(prefix);
       onlyLocalCids.push(...leaves);
     }
 
