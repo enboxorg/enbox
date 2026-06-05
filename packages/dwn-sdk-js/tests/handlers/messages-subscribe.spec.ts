@@ -1286,6 +1286,57 @@ export function testMessagesSubscribeHandler(): void {
             expect(bobReply2.status.code).toBe(401);
             expect(bobReply2.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
             expect(bobReply2.subscription).toBeUndefined();
+
+            // A protocolPath-scoped grant cannot authorize a protocolPathPrefix
+            // filter because the prefix includes child paths and is broader than
+            // an exact protocolPath grant.
+            const { message: pathGrantMessage, dataStream: pathGrantDataStream } = await TestDataGenerator.generateGrantCreate({
+              author    : alice,
+              grantedTo : bob,
+              scope     : {
+                interface    : DwnInterfaceName.Messages,
+                method       : DwnMethodName.Read,
+                protocol     : protocol1.protocol,
+                protocolPath : 'post'
+              }
+            });
+
+            const pathGrantReply = await dwn.processMessage(alice.did, pathGrantMessage, { dataStream: pathGrantDataStream });
+            expect(pathGrantReply.status.code).toBe(202);
+
+            const { message: pathScopedSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
+              author             : bob,
+              filters            : [{ protocol: protocol1.protocol, protocolPathPrefix: 'post' }],
+              permissionGrantIds : [pathGrantMessage.recordId]
+            });
+            const pathScopedReply = await dwn.processMessage(alice.did, pathScopedSubscribe);
+            expect(pathScopedReply.status.code).toBe(401);
+            expect(pathScopedReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
+            expect(pathScopedReply.subscription).toBeUndefined();
+
+            const { message: contextGrantMessage, dataStream: contextGrantDataStream } = await TestDataGenerator.generateGrantCreate({
+              author    : alice,
+              grantedTo : bob,
+              scope     : {
+                interface : DwnInterfaceName.Messages,
+                method    : DwnMethodName.Read,
+                protocol  : protocol1.protocol,
+                contextId : 'root'
+              }
+            });
+
+            const contextGrantReply = await dwn.processMessage(alice.did, contextGrantMessage, { dataStream: contextGrantDataStream });
+            expect(contextGrantReply.status.code).toBe(202);
+
+            const { message: contextScopedSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
+              author             : bob,
+              filters            : [{ protocol: protocol1.protocol, contextIdPrefix: 'root' }],
+              permissionGrantIds : [contextGrantMessage.recordId]
+            });
+            const contextScopedReply = await dwn.processMessage(alice.did, contextScopedSubscribe);
+            expect(contextScopedReply.status.code).toBe(401);
+            expect(contextScopedReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
+            expect(contextScopedReply.subscription).toBeUndefined();
           });
         });
       });

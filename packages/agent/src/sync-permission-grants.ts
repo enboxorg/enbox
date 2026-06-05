@@ -106,14 +106,7 @@ function grantParticipatesInProjection(
   entry: PermissionGrantEntry,
   protocols: NonEmptyStringArray | undefined,
 ): boolean {
-  const { scope } = entry.grant;
-
-  if (protocols === undefined) {
-    return scope.protocol === undefined;
-  }
-
-  return scope.protocol === undefined ||
-    (typeof scope.protocol === 'string' && protocols.includes(scope.protocol));
+  return (protocols ?? [undefined]).some(protocol => grantMatchesProtocol(entry, protocol));
 }
 
 /** Returns sorted grant IDs from permission grant entries. */

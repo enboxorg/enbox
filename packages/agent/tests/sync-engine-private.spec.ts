@@ -357,6 +357,12 @@ describe('SyncEngineLevel — private methods', () => {
         method    : 'Read',
         protocol  : 'https://example.com/profile',
       });
+      const profilePath = grantEntry('grant-path', {
+        interface    : 'Messages',
+        method       : 'Read',
+        protocol     : 'https://example.com/profile',
+        protocolPath : 'profile',
+      });
       const social = grantEntry('grant-a', {
         interface : 'Messages',
         method    : 'Read',
@@ -368,7 +374,7 @@ describe('SyncEngineLevel — private methods', () => {
         protocol  : 'https://example.com/other',
       });
       const permissionsApi = {
-        fetchGrants: sinon.stub().resolves([unrelated, unscoped, profile, social]),
+        fetchGrants: sinon.stub().resolves([unrelated, unscoped, profilePath, profile, social]),
       };
 
       const result = await getMessagesPermissionGrantsForScope({
@@ -380,6 +386,27 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       expect(result.map(entry => entry.grant.id)).toEqual(['grant-a', 'grant-b', 'grant-c']);
+    });
+
+    it('should reject protocol-set sync when a requested protocol has only subtree grant coverage', async () => {
+      const permissionsApi = {
+        fetchGrants: sinon.stub().resolves([
+          grantEntry('grant-profile-path', {
+            interface    : 'Messages',
+            method       : 'Read',
+            protocol     : 'https://example.com/profile',
+            protocolPath : 'profile',
+          }),
+        ]),
+      };
+
+      await expect(getMessagesPermissionGrantsForScope({
+        did            : 'did:example:alice',
+        delegateDid    : 'did:example:delegate',
+        messageType    : DwnInterface.MessagesSync,
+        protocols      : ['https://example.com/profile'],
+        permissionsApi : permissionsApi as any,
+      })).rejects.toThrow('No active Messages.Read permission found');
     });
 
     it('should reject protocol-set sync when any requested protocol lacks coverage', async () => {

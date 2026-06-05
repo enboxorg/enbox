@@ -19,8 +19,47 @@
         },
         "protocol": {
           "type": "string"
+        },
+        "contextId": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "protocolPath": {
+          "type": "string",
+          "maxLength": 600
         }
-      }
+      },
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "contextId",
+              "protocolPath"
+            ]
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "contextId"
+                ]
+              },
+              {
+                "required": [
+                  "protocolPath"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "protocol"
+            ]
+          }
+        }
+      ]
     },
     "protocols-configure-scope": {
       "type": "object",
@@ -83,7 +122,8 @@
           "maxLength": 600
         },
         "protocolPath": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 600
         }
       }
     },
@@ -110,7 +150,8 @@
           "maxLength": 600
         },
         "protocolPath": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 600
         }
       }
     },
@@ -137,7 +178,8 @@
           "maxLength": 600
         },
         "protocolPath": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 600
         }
       }
     },
@@ -164,7 +206,8 @@
           "maxLength": 600
         },
         "protocolPath": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 600
         }
       }
     },
@@ -191,7 +234,8 @@
           "maxLength": 600
         },
         "protocolPath": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 600
         }
       }
     },
@@ -218,7 +262,8 @@
           "maxLength": 600
         },
         "protocolPath": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 600
         }
       }
     }

@@ -96,6 +96,10 @@ export type MessagesPermissionScope = {
   interface: DwnInterfaceName.Messages;
   method: DwnMethodName.Read;
   protocol?: string;
+  /** May only be present when `protocol` is defined and `protocolPath` is undefined */
+  contextId?: string;
+  /** May only be present when `protocol` is defined and `contextId` is undefined */
+  protocolPath?: string;
 };
 
 /**

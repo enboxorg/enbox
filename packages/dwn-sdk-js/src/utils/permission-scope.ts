@@ -48,7 +48,8 @@ export class PermissionScopeMatcher {
     return true;
   }
 
-  private static matchesContextId(scopeContextId: string, candidateContextId: string | undefined): boolean {
-    return candidateContextId === scopeContextId || candidateContextId?.startsWith(scopeContextId + '/') === true;
+  private static matchesContextId(scopeContextId: string, candidateContextId: unknown): boolean {
+    return typeof candidateContextId === 'string' &&
+      (candidateContextId === scopeContextId || candidateContextId.startsWith(scopeContextId + '/'));
   }
 }
