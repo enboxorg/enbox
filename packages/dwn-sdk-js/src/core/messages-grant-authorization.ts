@@ -9,6 +9,7 @@ import type { MessagesReadMessage, MessagesSubscribeMessage, MessagesSyncMessage
 
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
 import { GrantAuthorization } from './grant-authorization.js';
+import { isRecordsPrimaryProjectionExcludedProtocol } from './constants.js';
 import { PermissionScopeMatcher } from '../utils/permission-scope.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { Records } from '../utils/records.js';
@@ -112,6 +113,13 @@ export class MessagesGrantAuthorization {
     scopes: MessagesPermissionScope[],
     protocol: string | undefined
   ): void {
+    if (isRecordsPrimaryProjectionExcludedProtocol(protocol)) {
+      throw new DwnError(
+        DwnErrorCode.MessagesGrantAuthorizationProtocolSyncInfrastructureProtocol,
+        `Protocol-scoped MessagesSync cannot authorize infrastructure protocol ${protocol}`
+      );
+    }
+
     if (!MessagesGrantAuthorization.someScopeMatches(scopes, { protocol })) {
       throw new DwnError(
         DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol,
@@ -125,6 +133,13 @@ export class MessagesGrantAuthorization {
     projectionScopes: ProtocolScope[],
   ): void {
     for (const projectionScope of projectionScopes) {
+      if (isRecordsPrimaryProjectionExcludedProtocol(projectionScope.protocol)) {
+        throw new DwnError(
+          DwnErrorCode.MessagesGrantAuthorizationProjectionInfrastructureProtocol,
+          `Projected MessagesSync cannot authorize infrastructure protocol ${projectionScope.protocol}`
+        );
+      }
+
       if (MessagesGrantAuthorization.someScopeMatches(scopes, projectionScope)) {
         continue;
       }

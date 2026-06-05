@@ -5,6 +5,7 @@ import type { MessageStore, MessageStoreOptions } from '../types/message-store.j
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
 import { FilterUtility } from '../utils/filter.js';
 import { hashToHex } from '../smt/smt-utils.js';
+import { isRecordsPrimaryProjectionExcludedProtocol } from '../core/constants.js';
 import { lexicographicalCompare } from '../utils/string.js';
 import { Message } from '../core/message.js';
 import { SMTStoreMemory } from '../smt/smt-store-memory.js';
@@ -81,7 +82,11 @@ export class RecordsProjection {
     options,
   }: RecordsProjectionInput): Promise<string[]> {
     const filters = RecordsProjection.normalizeScopes(scopes)
+      .filter(scope => !isRecordsPrimaryProjectionExcludedProtocol(scope.protocol))
       .flatMap(scope => RecordsProjection.constructFilters(scope));
+    if (filters.length === 0) {
+      return [];
+    }
 
     const { messages } = await messageStore.query(tenant, filters, undefined, undefined, options);
     const messageCids = await Promise.all(messages.map(message => Message.getCid(message)));

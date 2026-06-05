@@ -4,9 +4,11 @@ import type { MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncMessage } 
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import { Message } from '../core/message.js';
+import { RECORDS_PROJECTION_ROOT_VERSION } from '../sync/records-projection.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
 import { validateProtocolUrlNormalized } from '../utils/url.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export type MessagesSyncOptions = {
@@ -32,6 +34,13 @@ export class MessagesSync extends AbstractMessage<MessagesSyncMessage> {
 
     if (message.descriptor.protocol !== undefined) {
       validateProtocolUrlNormalized(message.descriptor.protocol);
+    }
+    if (message.descriptor.projectionRootVersion !== undefined &&
+      message.descriptor.projectionRootVersion !== RECORDS_PROJECTION_ROOT_VERSION) {
+      throw new DwnError(
+        DwnErrorCode.MessagesSyncUnsupportedProjectionRootVersion,
+        `Unsupported projection root version ${message.descriptor.projectionRootVersion}`
+      );
     }
     for (const scope of message.descriptor.projectionScopes ?? []) {
       validateProtocolUrlNormalized(scope.protocol);

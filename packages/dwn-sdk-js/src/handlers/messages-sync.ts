@@ -301,7 +301,6 @@ export class MessagesSyncHandler implements MethodHandler {
   ): Promise<Record<string, string>> {
     const stateIndex = this.deps.stateIndex!;
     const result: Record<string, string> = {};
-    const defaultHashHex = await this.getDefaultHashHex(depth);
 
     const walk = async (prefix: string, currentDepth: number): Promise<void> => {
       const bitPath = MessagesSyncHandler.parseBitPrefix(prefix);
@@ -313,6 +312,7 @@ export class MessagesSyncHandler implements MethodHandler {
         bitPath
       );
       const hexHash = hashToHex(hash);
+      const defaultHashHex = await this.getDefaultHashHex(currentDepth);
 
       if (hexHash === defaultHashHex) {
         // Empty subtree — don't include in the result.
