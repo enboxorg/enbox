@@ -150,15 +150,22 @@ function resolveRecordsProjectionScope(
   requestedScope: Extract<SyncScope, { kind: 'recordsProjection' }>,
   messageType: DwnInterface,
 ): MessagesSyncScopeResolution {
+  if (!requestedScope.scopes.every(scope => isProjectionScopeCovered(permissionGrants, scope))) {
+    throw new Error(`SyncPermissions: No active Messages.Read permission found for ${messageType}: projected Records scope`);
+  }
+
   const grants = permissionGrants
     .filter(entry => requestedScope.scopes.some(scope => PermissionScopeMatcher.matches(entry.grant.scope, scope)))
     .sort((a, b) => lexicographicalCompare(a.grant.id, b.grant.id));
 
-  if (grants.length === 0) {
-    throw new Error(`SyncPermissions: No active Messages.Read permission found for ${messageType}: projected Records scope`);
-  }
-
   return { scope: requestedScope, permissionGrants: grants };
+}
+
+function isProjectionScopeCovered(
+  permissionGrants: PermissionGrantEntry[],
+  scope: RecordsProjectionScope,
+): boolean {
+  return permissionGrants.some(entry => PermissionScopeMatcher.matches(entry.grant.scope, scope));
 }
 
 function broadProtocolResolution(

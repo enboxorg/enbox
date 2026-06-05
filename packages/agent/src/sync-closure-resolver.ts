@@ -11,7 +11,7 @@ import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
 import { isMultiPartyContext } from './protocol-utils.js';
 import { protocolsForSyncScope } from './types/sync.js';
 import { ClosureFailureCode, createClosureContext } from './sync-closure-types.js';
-import { Message, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { Message, PermissionScopeMatcher, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
 // Dependency extraction helpers (one per dependency class)
@@ -908,15 +908,26 @@ function isContextKeyDependencyAllowed(
   const rootContextId = edge.identifier.substring(separatorIdx + 1);
   const descriptor = message.descriptor as Record<string, unknown>;
   const tags = descriptor.tags as Record<string, unknown> | undefined;
-  const coveredProtocols = protocolsForSyncScope(scope);
 
-  return descriptor.interface === 'Records' &&
+  const isContextKeyRecord = descriptor.interface === 'Records' &&
     descriptor.method === 'Write' &&
     descriptor.protocol === 'https://identity.foundation/protocols/key-delivery' &&
     descriptor.protocolPath === 'contextKey' &&
     tags?.protocol === sourceProtocol &&
-    tags?.contextId === rootContextId &&
-    coveredProtocols?.includes(sourceProtocol) === true;
+    tags?.contextId === rootContextId;
+  if (!isContextKeyRecord) {
+    return false;
+  }
+
+  if (scope.kind === 'recordsProjection') {
+    return scope.scopes.some(scopeEntry => PermissionScopeMatcher.matches(scopeEntry, {
+      protocol  : sourceProtocol,
+      contextId : rootContextId,
+    }));
+  }
+
+  const coveredProtocols = protocolsForSyncScope(scope);
+  return coveredProtocols?.includes(sourceProtocol) === true;
 }
 
 /**

@@ -1558,6 +1558,9 @@ export class SyncEngineLevel implements SyncEngine {
     if (link.pull.contiguousAppliedToken) {
       return;
     }
+    if (target.scope.kind === 'recordsProjection') {
+      return;
+    }
 
     const legacyKey = buildLegacyCursorKey(target.did, target.dwnUrl, singleProtocolForSyncScope(target.scope));
     const legacyCursor = await this.getCursor(legacyKey);
@@ -1592,6 +1595,8 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private static supportsLiveSubscriptions(scope: SyncScope): boolean {
+    // Records-primary projected links reconcile by root/diff polling until the
+    // DWN has explicit path/context live subscription semantics.
     return scope.kind !== 'recordsProjection';
   }
 
@@ -3424,6 +3429,8 @@ export class SyncEngineLevel implements SyncEngine {
     permissionGrantIds?: string[],
   ): Promise<string> {
     if (this.stateIndex) {
+      // Local projected roots use the already-derived scope directly. The
+      // remote root/diff request still re-authorizes the invoked grant set.
       return RecordsProjection.getRootHex({
         tenant       : did,
         messageStore : this.agent.dwn.node.storage.messageStore,
@@ -3938,8 +3945,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Batch entries are only used when the initial write has not been applied
-    // locally yet. The eventual processRawMessage call still authenticates the
-    // delete before any local mutation occurs.
+    // locally yet. RecordsWrite.isInitialWrite binds the candidate's CID to
+    // recordId, and processRawMessage still authenticates the delete before
+    // any local mutation occurs.
     return this.findInitialWriteInPullBatch(descriptor.recordId, entries);
   }
 

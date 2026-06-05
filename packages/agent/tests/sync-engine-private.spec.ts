@@ -184,6 +184,32 @@ describe('SyncEngineLevel — private methods', () => {
 
       await expect((syncEngine as any).getCursor('key')).rejects.toThrow();
     });
+
+    it('should not migrate legacy cursors into projected links', async () => {
+      const engine = createEngine({ db });
+      const getCursorStub = sinon.stub(engine as any, 'getCursor').resolves({
+        streamId   : 'stream',
+        epoch      : 'epoch',
+        position   : '1',
+        messageCid : 'cid',
+      });
+      const link = {
+        pull: {},
+      };
+
+      await (engine as any).migrateLegacyCursorIfNeeded(syncTarget('did:example:alice', 'https://dwn.example.com', {
+        scope: {
+          kind   : 'recordsProjection',
+          scopes : [{
+            protocol     : 'https://example.com/profile',
+            protocolPath : 'profile/avatar',
+          }],
+        },
+      }), link);
+
+      expect(getCursorStub.called).toBe(false);
+      expect(link.pull).toEqual({});
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -417,6 +443,39 @@ describe('SyncEngineLevel — private methods', () => {
         }],
       });
       expect(result[0].permissionGrants.map(entry => entry.grant.id)).toEqual(['grant-profile-path']);
+    });
+
+    it('should reject projected scope unions when any member lacks grant coverage', async () => {
+      const permissionsApi = {
+        fetchGrants: sinon.stub().resolves([
+          grantEntry('grant-profile-path', {
+            interface    : 'Messages',
+            method       : 'Read',
+            protocol     : 'https://example.com/profile',
+            protocolPath : 'profile/avatar',
+          }),
+        ]),
+      };
+
+      await expect(resolveMessagesSyncScopes({
+        did            : 'did:example:alice',
+        delegateDid    : 'did:example:delegate',
+        requestedScope : {
+          kind   : 'recordsProjection',
+          scopes : [
+            {
+              protocol     : 'https://example.com/profile',
+              protocolPath : 'profile/avatar',
+            },
+            {
+              protocol     : 'https://example.com/profile',
+              protocolPath : 'profile/banner',
+            },
+          ],
+        },
+        messageType    : DwnInterface.MessagesSync,
+        permissionsApi : permissionsApi as any,
+      })).rejects.toThrow('No active Messages.Read permission found for MessagesSync: projected Records scope');
     });
 
     it('should split broad protocol grants from narrow projected grants', async () => {
