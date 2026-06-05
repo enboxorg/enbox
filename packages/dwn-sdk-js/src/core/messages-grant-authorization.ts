@@ -86,35 +86,87 @@ export class MessagesGrantAuthorization {
 
     const scopes = permissionGrants.map(permissionGrant => permissionGrant.scope as MessagesPermissionScope);
 
-    // MessagesSync uses a direct `protocol` field on the descriptor.
     if ('action' in incomingMessage.descriptor) {
-      const syncMessage = incomingMessage as MessagesSyncMessage;
-      if (!scopes.some(scope => PermissionScopeMatcher.matches(scope, { protocol: syncMessage.descriptor.protocol }))) {
-        throw new DwnError(
-          DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol,
-          `No permission grant scope matches protocol ${syncMessage.descriptor.protocol}`
-        );
-      }
+      MessagesGrantAuthorization.authorizeSyncScope(incomingMessage as MessagesSyncMessage, scopes);
       return;
     }
 
-    // MessagesSubscribe uses filters.
-    const filteredMessage = incomingMessage as MessagesSubscribeMessage;
-    if (filteredMessage.descriptor.filters.length === 0 && !scopes.some(scope => scope.protocol === undefined)) {
+    MessagesGrantAuthorization.authorizeSubscribeScope(incomingMessage as MessagesSubscribeMessage, scopes);
+  }
+
+  private static authorizeSyncScope(
+    syncMessage: MessagesSyncMessage,
+    scopes: MessagesPermissionScope[]
+  ): void {
+    const { projectionScopes, protocol } = syncMessage.descriptor;
+
+    if (projectionScopes === undefined) {
+      MessagesGrantAuthorization.authorizeProtocolSyncScope(scopes, protocol);
+      return;
+    }
+
+    MessagesGrantAuthorization.authorizeProjectionScopes(scopes, projectionScopes);
+  }
+
+  private static authorizeProtocolSyncScope(
+    scopes: MessagesPermissionScope[],
+    protocol: string | undefined
+  ): void {
+    if (!MessagesGrantAuthorization.someScopeMatches(scopes, { protocol })) {
+      throw new DwnError(
+        DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol,
+        `No permission grant scope matches protocol ${protocol}`
+      );
+    }
+  }
+
+  private static authorizeProjectionScopes(
+    scopes: MessagesPermissionScope[],
+    projectionScopes: ProtocolScope[],
+  ): void {
+    for (const projectionScope of projectionScopes) {
+      if (MessagesGrantAuthorization.someScopeMatches(scopes, projectionScope)) {
+        continue;
+      }
+
+      throw new DwnError(
+        DwnErrorCode.MessagesGrantAuthorizationProjectionScopeMismatch,
+        `No permission grant scope matches projection scope ${JSON.stringify(projectionScope)}`
+      );
+    }
+  }
+
+  private static authorizeSubscribeScope(
+    subscribeMessage: MessagesSubscribeMessage,
+    scopes: MessagesPermissionScope[]
+  ): void {
+    const { filters } = subscribeMessage.descriptor;
+
+    if (filters.length === 0 && !MessagesGrantAuthorization.hasUnscopedGrant(scopes)) {
       throw new DwnError(
         DwnErrorCode.MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope,
         `A protocol-scoped grant cannot authorize an unfiltered subscription`
       );
     }
 
-    for (const filter of filteredMessage.descriptor.filters) {
-      if (!scopes.some(scope => PermissionScopeMatcher.matches(scope, { protocol: filter.protocol }))) {
-        throw new DwnError(
-          DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch,
-          `No permission grant scope matches protocol ${filter.protocol}`
-        );
+    for (const filter of filters) {
+      if (MessagesGrantAuthorization.someScopeMatches(scopes, { protocol: filter.protocol })) {
+        continue;
       }
+
+      throw new DwnError(
+        DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch,
+        `No permission grant scope matches protocol ${filter.protocol}`
+      );
     }
+  }
+
+  private static someScopeMatches(scopes: MessagesPermissionScope[], target: ProtocolScope): boolean {
+    return scopes.some(scope => PermissionScopeMatcher.matches(scope, target));
+  }
+
+  private static hasUnscopedGrant(scopes: MessagesPermissionScope[]): boolean {
+    return scopes.some(scope => scope.protocol === undefined);
   }
 
   /**

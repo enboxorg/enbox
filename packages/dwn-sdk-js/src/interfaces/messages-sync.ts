@@ -1,4 +1,5 @@
 import type { MessageSigner } from '../types/signer.js';
+import type { RecordsProjectionScope } from '../sync/records-projection.js';
 import type { MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncMessage } from '../types/messages-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -12,6 +13,8 @@ export type MessagesSyncOptions = {
   signer : MessageSigner;
   action : MessagesSyncAction;
   protocol? : string;
+  projectionRootVersion?: string;
+  projectionScopes?: RecordsProjectionScope[];
   prefix? : string;
   messageTimestamp? : string;
   permissionGrantIds? : string[];
@@ -30,6 +33,9 @@ export class MessagesSync extends AbstractMessage<MessagesSyncMessage> {
     if (message.descriptor.protocol !== undefined) {
       validateProtocolUrlNormalized(message.descriptor.protocol);
     }
+    for (const scope of message.descriptor.projectionScopes ?? []) {
+      validateProtocolUrlNormalized(scope.protocol);
+    }
 
     return new MessagesSync(message);
   }
@@ -40,14 +46,16 @@ export class MessagesSync extends AbstractMessage<MessagesSyncMessage> {
     });
 
     const descriptor: MessagesSyncDescriptor = {
-      interface        : DwnInterfaceName.Messages,
-      method           : DwnMethodName.Sync,
-      messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
-      action           : options.action,
-      protocol         : options.protocol,
-      prefix           : options.prefix,
-      hashes           : options.hashes,
-      depth            : options.depth,
+      interface             : DwnInterfaceName.Messages,
+      method                : DwnMethodName.Sync,
+      messageTimestamp      : options.messageTimestamp ?? Time.getCurrentTimestamp(),
+      action                : options.action,
+      protocol              : options.protocol,
+      projectionRootVersion : options.projectionRootVersion,
+      projectionScopes      : options.projectionScopes,
+      prefix                : options.prefix,
+      hashes                : options.hashes,
+      depth                 : options.depth,
       ...permissionGrantInvocation,
     };
 

@@ -44,6 +44,14 @@ export type RecordsProjectionTreeInput = RecordsProjectionInput & {
   prefix: boolean[];
 };
 
+export type RecordsProjectionSnapshot = {
+  getRoot(): Promise<Hash>;
+  getRootHex(): Promise<string>;
+  getSubtreeHash(prefix: boolean[]): Promise<Hash>;
+  getLeaves(prefix: boolean[]): Promise<string[]>;
+  close(): Promise<void>;
+};
+
 export type NormalizedRecordsProjectionScope = {
   protocol: string;
 } | {
@@ -57,10 +65,9 @@ export type NormalizedRecordsProjectionScope = {
 /**
  * Computes deterministic on-demand roots for Records projections.
  *
- * Root and leaf lookup methods perform a fresh store query. Production sync
- * serving still needs to thread a consistent snapshot/high-watermark and
- * bounded paging through this primitive before using it for large or
- * concurrently-mutating stores.
+ * The snapshot API performs one store enumeration and serves tree operations
+ * from that in-memory view. A future store-level snapshot/high-watermark can be
+ * threaded through the `options` input without changing the projection shape.
  */
 export class RecordsProjection {
 
@@ -111,6 +118,20 @@ export class RecordsProjection {
   }
 
   /**
+   * Builds an in-memory projection tree from one primary-CID enumeration.
+   */
+  public static async createSnapshot(input: RecordsProjectionInput): Promise<RecordsProjectionSnapshot> {
+    const tree = await RecordsProjection.createTree(input);
+    return {
+      close          : () => tree.close(),
+      getLeaves      : (prefix: boolean[]) => tree.getLeaves(prefix),
+      getRoot        : () => tree.getRoot(),
+      getRootHex     : async () => hashToHex(await tree.getRoot()),
+      getSubtreeHash : (prefix: boolean[]) => tree.getSubtreeHash(prefix),
+    };
+  }
+
+  /**
    * Normalizes a scope union into sorted, duplicate-free, subsumption-reduced entries.
    */
   public static normalizeScopes(
@@ -158,6 +179,16 @@ export class RecordsProjection {
     input: RecordsProjectionInput,
     fn: (tree: SparseMerkleTree) => Promise<T>,
   ): Promise<T> {
+    const tree = await RecordsProjection.createTree(input);
+
+    try {
+      return await fn(tree);
+    } finally {
+      await tree.close();
+    }
+  }
+
+  private static async createTree(input: RecordsProjectionInput): Promise<SparseMerkleTree> {
     const tree = new SparseMerkleTree(new SMTStoreMemory());
     await tree.initialize();
 
@@ -166,9 +197,11 @@ export class RecordsProjection {
       for (const messageCid of messageCids) {
         await tree.insert(messageCid);
       }
-      return await fn(tree);
-    } finally {
+
+      return tree;
+    } catch (error) {
       await tree.close();
+      throw error;
     }
   }
 

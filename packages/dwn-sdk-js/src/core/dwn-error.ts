@@ -23,6 +23,7 @@ export enum DwnErrorCode {
   EventLogNotOpenError = 'EventLogNotOpenError',
   EventLogProgressGap = 'EventLogProgressGap',
   MessagesGrantAuthorizationMismatchedProtocol = 'MessagesGrantAuthorizationMismatchedProtocol',
+  MessagesGrantAuthorizationProjectionScopeMismatch = 'MessagesGrantAuthorizationProjectionScopeMismatch',
   MessagesGrantAuthorizationSubscribeProtocolMismatch = 'MessagesGrantAuthorizationSubscribeProtocolMismatch',
   MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope = 'MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope',
   MessagesSubscribeAuthorizationFailed = 'MessagesSubscribeAuthorizationFailed',
