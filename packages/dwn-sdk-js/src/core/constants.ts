@@ -20,10 +20,10 @@ export const PERMISSIONS_PROTOCOL_URI = 'https://identity.foundation/dwn/permiss
  */
 export const KEY_DELIVERY_PROTOCOL_URI = 'https://identity.foundation/protocols/key-delivery';
 
-const RECORDS_PRIMARY_PROJECTION_EXCLUDED_PROTOCOLS: readonly string[] = [
+const RECORDS_PRIMARY_PROJECTION_EXCLUDED_PROTOCOLS = new Set<string>([
   KEY_DELIVERY_PROTOCOL_URI,
   PERMISSIONS_PROTOCOL_URI,
-];
+]);
 
 /**
  * Returns true for infrastructure protocols whose records are dependencies or
@@ -31,5 +31,5 @@ const RECORDS_PRIMARY_PROJECTION_EXCLUDED_PROTOCOLS: readonly string[] = [
  */
 export function isRecordsPrimaryProjectionExcludedProtocol(protocol: string | undefined): boolean {
   return protocol !== undefined &&
-    RECORDS_PRIMARY_PROJECTION_EXCLUDED_PROTOCOLS.includes(protocol);
+    RECORDS_PRIMARY_PROJECTION_EXCLUDED_PROTOCOLS.has(protocol);
 }
