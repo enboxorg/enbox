@@ -234,6 +234,68 @@ describe('AgentPermissionsApi', () => {
       // now cache was not set to true, so expect the fetchGrant method to have been called again
       expect(fetchGrantSpy.mock.calls.length).toBe(2);
     });
+
+    it('uses unambiguous cache keys for protocolPath-scoped grants', async () => {
+      const storeGrantForDelegate = async (scope: DwnPermissionScope): Promise<PermissionGrantEntry> => {
+        const grant = await testHarness.agent.permissions.createGrant({
+          store       : true,
+          author      : aliceDid.uri,
+          grantedTo   : bobDid.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+          scope
+        });
+
+        const { encodedData, ...grantMessage } = grant.message;
+        const reply = await testHarness.agent.processDwnRequest({
+          target      : bobDid.uri,
+          author      : bobDid.uri,
+          signAsOwner : true,
+          messageType : DwnInterface.RecordsWrite,
+          rawMessage  : grantMessage,
+          dataStream  : new Blob([ Convert.base64Url(encodedData).toUint8Array() ])
+        });
+        expect(reply.reply.status.code).toBe(202);
+
+        return grant;
+      };
+
+      const firstGrant = await storeGrantForDelegate({
+        interface    : DwnInterfaceName.Messages,
+        method       : DwnMethodName.Read,
+        protocol     : 'http://example.com/a',
+        protocolPath : 'b~c'
+      });
+      const secondGrant = await storeGrantForDelegate({
+        interface    : DwnInterfaceName.Messages,
+        method       : DwnMethodName.Read,
+        protocol     : 'http://example.com/a~b',
+        protocolPath : 'c'
+      });
+
+      const fetchGrantSpy = spyOn(testHarness.agent.permissions, 'fetchGrants');
+
+      const firstFetched = await testHarness.agent.permissions.getPermissionForRequest({
+        connectedDid : aliceDid.uri,
+        delegateDid  : bobDid.uri,
+        messageType  : DwnInterface.MessagesRead,
+        protocol     : 'http://example.com/a',
+        protocolPath : 'b~c',
+        cached       : false
+      });
+      expect(firstFetched.message.recordId).toBe(firstGrant.message.recordId);
+      expect(fetchGrantSpy.mock.calls.length).toBe(1);
+
+      const secondFetched = await testHarness.agent.permissions.getPermissionForRequest({
+        connectedDid : aliceDid.uri,
+        delegateDid  : bobDid.uri,
+        messageType  : DwnInterface.MessagesRead,
+        protocol     : 'http://example.com/a~b',
+        protocolPath : 'c',
+        cached       : true
+      });
+      expect(secondFetched.message.recordId).toBe(secondGrant.message.recordId);
+      expect(fetchGrantSpy.mock.calls.length).toBe(2);
+    });
   });
 
   describe('fetchGrants', () => {
@@ -1352,6 +1414,85 @@ describe('AgentPermissionsApi', () => {
         protocol    : 'http://example.com/other-protocol'
       }, readOnlyGrants);
       expect(noMatch).toBeUndefined();
+    });
+
+    it('Messages with protocolPath and contextId', async () => {
+      const aliceDeviceX = await testHarness.agent.identity.create({
+        store     : true,
+        metadata  : { name: 'Alice Device X' },
+        didMethod : 'jwk'
+      });
+
+      const protocol = 'http://example.com/messages-scope-protocol';
+
+      const pathGrant = await testHarness.agent.permissions.createGrant({
+        author      : aliceDid.uri,
+        grantedTo   : aliceDeviceX.did.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        store       : true,
+        scope       : {
+          interface    : DwnInterfaceName.Messages,
+          method       : DwnMethodName.Read,
+          protocol,
+          protocolPath : 'post'
+        }
+      });
+
+      const contextGrant = await testHarness.agent.permissions.createGrant({
+        author      : aliceDid.uri,
+        grantedTo   : aliceDeviceX.did.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        store       : true,
+        scope       : {
+          interface : DwnInterfaceName.Messages,
+          method    : DwnMethodName.Read,
+          protocol,
+          contextId : 'root'
+        }
+      });
+
+      const grants = [pathGrant, contextGrant];
+
+      const pathMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType  : DwnInterface.MessagesRead,
+        protocol,
+        protocolPath : 'post'
+      }, grants);
+      expect(pathMatch?.message.recordId).toBe(pathGrant.message.recordId);
+
+      const childPathMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType  : DwnInterface.MessagesRead,
+        protocol,
+        protocolPath : 'post/comment'
+      }, grants);
+      expect(childPathMatch).toBeUndefined();
+
+      const wrongProtocolPathMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType  : DwnInterface.MessagesRead,
+        protocol     : 'http://example.com/messages-scope-other-protocol',
+        protocolPath : 'post'
+      }, grants);
+      expect(wrongProtocolPathMatch).toBeUndefined();
+
+      const contextChildMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType : DwnInterface.MessagesRead,
+        protocol,
+        contextId   : 'root/child'
+      }, grants);
+      expect(contextChildMatch?.message.recordId).toBe(contextGrant.message.recordId);
+
+      const contextSiblingMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType : DwnInterface.MessagesRead,
+        protocol,
+        contextId   : 'root2'
+      }, grants);
+      expect(contextSiblingMatch).toBeUndefined();
+
+      const protocolOnlyMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType: DwnInterface.MessagesSync,
+        protocol
+      }, grants);
+      expect(protocolOnlyMatch).toBeUndefined();
     });
 
     it('Records', async () => {

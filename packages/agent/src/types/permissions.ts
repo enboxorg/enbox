@@ -79,6 +79,8 @@ export type GetPermissionParams = {
   delegateDid: string;
   messageType: DwnInterface;
   protocol?: string;
+  protocolPath?: string;
+  contextId?: string;
   cached?: boolean;
   delegate?: boolean;
 };

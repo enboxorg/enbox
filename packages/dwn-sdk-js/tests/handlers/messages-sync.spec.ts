@@ -2,6 +2,7 @@ import type { DidResolver } from '@enbox/dids';
 import type {
   DataStore,
   EventLog,
+  MessagesPermissionScope,
   MessageStore,
   ProtocolDefinition,
   ResumableTaskStore,
@@ -721,6 +722,48 @@ export function testMessagesSyncHandler(): void {
             const { message: syncMsg } = await MessagesSync.create({
               signer             : Jws.createSigner(bob),
               ...syncAction,
+              permissionGrantIds : [grantMessage.recordId],
+            });
+
+            const reply = await dwn.processMessage(alice.did, syncMsg);
+            expect(reply.status.code).toBe(401);
+            expect(reply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol);
+          }
+        });
+
+        it('rejects protocol sync with subtree-scoped grants', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocol = 'http://subtree-scoped-sync';
+          const scopedGrants: MessagesPermissionScope[] = [
+            {
+              interface    : DwnInterfaceName.Messages,
+              method       : DwnMethodName.Read,
+              protocol,
+              protocolPath : 'post',
+            },
+            {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol,
+              contextId : 'root',
+            },
+          ];
+
+          for (const scope of scopedGrants) {
+            const { message: grantMessage, dataStream } = await TestDataGenerator.generateGrantCreate({
+              author    : alice,
+              grantedTo : bob,
+              scope,
+            });
+            const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
+            expect(grantReply.status.code).toBe(202);
+
+            const { message: syncMsg } = await MessagesSync.create({
+              signer             : Jws.createSigner(bob),
+              action             : 'root',
+              protocol,
               permissionGrantIds : [grantMessage.recordId],
             });
 

@@ -3,6 +3,7 @@ import type { MessagesPermissionScope } from '../types/permission-types.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
+import type { ProtocolScope } from '../utils/permission-scope.js';
 import type { DataEncodedRecordsWriteMessage, RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 import type { MessagesReadMessage, MessagesSubscribeMessage, MessagesSyncMessage } from '../types/messages-types.js';
 
@@ -192,45 +193,101 @@ export class MessagesGrantAuthorization {
     messageStore: MessageStore,
   ): Promise<boolean> {
     if (incomingScope.protocol === undefined) {
-      // if no protocol is specified in the scope, then the grant is for all records
       return true;
     }
 
     if (messageToGet.descriptor.interface === DwnInterfaceName.Records) {
-      // if the message is a Records interface message, get the RecordsWrite message associated with the record
-      const recordsMessage = messageToGet as RecordsWriteMessage | RecordsDeleteMessage;
-      const recordsWriteMessage = Records.isRecordsWrite(recordsMessage) ? recordsMessage :
-        await RecordsWrite.fetchNewestRecordsWrite(messageStore, tenant, recordsMessage.descriptor.recordId);
+      return MessagesGrantAuthorization.isRecordsMessageScopeAuthorized(
+        tenant,
+        messageToGet as RecordsWriteMessage | RecordsDeleteMessage,
+        incomingScope,
+        messageStore
+      );
+    }
 
-      if (recordsWriteMessage.descriptor.protocol === incomingScope.protocol) {
-        // the record protocol matches the incoming scope protocol
-        return true;
-      }
-
-      // we check if the protocol is the internal PermissionsProtocol for further validation
-      if (recordsWriteMessage.descriptor.protocol === PermissionsProtocol.uri) {
-        // get the permission scope from the permission message
-        const permissionScope = await PermissionsProtocol.getScopeFromPermissionRecord(
-          tenant,
-          messageStore,
-          recordsWriteMessage as DataEncodedRecordsWriteMessage
-        );
-
-        if (PermissionsProtocol.hasProtocolScope(permissionScope) && permissionScope.protocol === incomingScope.protocol) {
-          // the permissions record scoped protocol matches the incoming scope protocol
-          return true;
-        }
-      }
-    } else if (messageToGet.descriptor.interface === DwnInterfaceName.Protocols) {
-      // if the message is a protocol message, it must be a `ProtocolConfigure` message
-      const protocolsConfigureMessage = messageToGet as ProtocolsConfigureMessage;
-      const configureProtocol = protocolsConfigureMessage.descriptor.definition.protocol;
-      if (configureProtocol === incomingScope.protocol) {
-        // the configured protocol matches the incoming scope protocol
-        return true;
-      }
+    if (messageToGet.descriptor.interface === DwnInterfaceName.Protocols) {
+      return MessagesGrantAuthorization.isProtocolsConfigureScopeAuthorized(
+        messageToGet as ProtocolsConfigureMessage,
+        incomingScope
+      );
     }
 
     return false;
+  }
+
+  private static async isRecordsMessageScopeAuthorized(
+    tenant: string,
+    recordsMessage: RecordsWriteMessage | RecordsDeleteMessage,
+    incomingScope: MessagesPermissionScope,
+    messageStore: MessageStore,
+  ): Promise<boolean> {
+    const recordsWriteMessage = await MessagesGrantAuthorization.getAssociatedRecordsWrite(
+      tenant,
+      recordsMessage,
+      messageStore
+    );
+
+    if (recordsWriteMessage.descriptor.protocol === PermissionsProtocol.uri) {
+      return MessagesGrantAuthorization.isPermissionRecordScopeAuthorized(
+        tenant,
+        recordsWriteMessage,
+        incomingScope,
+        messageStore
+      );
+    }
+
+    return PermissionScopeMatcher.matches(incomingScope, MessagesGrantAuthorization.getRecordsScopeTarget(recordsWriteMessage));
+  }
+
+  private static async isPermissionRecordScopeAuthorized(
+    tenant: string,
+    recordsWriteMessage: RecordsWriteMessage,
+    incomingScope: MessagesPermissionScope,
+    messageStore: MessageStore,
+  ): Promise<boolean> {
+    if (MessagesGrantAuthorization.isSubtreeScope(incomingScope)) {
+      return false;
+    }
+
+    const permissionScope = await PermissionsProtocol.getScopeFromPermissionRecord(
+      tenant,
+      messageStore,
+      recordsWriteMessage as DataEncodedRecordsWriteMessage
+    );
+
+    return PermissionsProtocol.hasProtocolScope(permissionScope)
+      && PermissionScopeMatcher.matches(incomingScope, permissionScope);
+  }
+
+  private static isProtocolsConfigureScopeAuthorized(
+    protocolsConfigureMessage: ProtocolsConfigureMessage,
+    incomingScope: MessagesPermissionScope
+  ): boolean {
+    return PermissionScopeMatcher.matches(
+      incomingScope,
+      { protocol: protocolsConfigureMessage.descriptor.definition.protocol }
+    );
+  }
+
+  private static async getAssociatedRecordsWrite(
+    tenant: string,
+    recordsMessage: RecordsWriteMessage | RecordsDeleteMessage,
+    messageStore: MessageStore,
+  ): Promise<RecordsWriteMessage> {
+    if (Records.isRecordsWrite(recordsMessage)) {
+      return recordsMessage;
+    }
+
+    return RecordsWrite.fetchNewestRecordsWrite(messageStore, tenant, recordsMessage.descriptor.recordId);
+  }
+
+  private static getRecordsScopeTarget(recordsWriteMessage: RecordsWriteMessage): ProtocolScope {
+    const { protocol, protocolPath } = recordsWriteMessage.descriptor;
+    const { contextId } = recordsWriteMessage;
+    return { protocol, protocolPath, contextId };
+  }
+
+  private static isSubtreeScope(scope: MessagesPermissionScope): boolean {
+    return scope.protocolPath !== undefined || scope.contextId !== undefined;
   }
 }

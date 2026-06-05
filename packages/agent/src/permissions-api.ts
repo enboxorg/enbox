@@ -36,11 +36,11 @@ export class AgentPermissionsApi implements PermissionsApi {
     delegate,
     messageType,
     protocol,
+    protocolPath,
+    contextId,
     cached = false
   }: GetPermissionParams): Promise<PermissionGrantEntry> {
-    // Currently we only support finding grants based on protocols
-    // A different approach may be necessary when we introduce `protocolPath` and `contextId` specific impersonation
-    const cacheKey = [ connectedDid, delegateDid, messageType, protocol ].join('~');
+    const cacheKey = JSON.stringify([ connectedDid, delegateDid, messageType, protocol, protocolPath, contextId ]);
     const cachedGrant = cached ? this._cachedPermissions.get(cacheKey) : undefined;
     if (cachedGrant) {
       return cachedGrant;
@@ -57,13 +57,13 @@ export class AgentPermissionsApi implements PermissionsApi {
     const grant = await AgentPermissionsApi.matchGrantFromArray(
       connectedDid,
       delegateDid,
-      { messageType, protocol },
+      { messageType, protocol, protocolPath, contextId },
       permissionGrants,
       delegate
     );
 
     if (!grant) {
-      throw new Error(`CachedPermissions: No permissions found for ${messageType}: ${protocol}`);
+      throw new Error(`CachedPermissions: No permissions found for ${messageType}: ${[protocol, protocolPath, contextId].filter(Boolean).join('/') || undefined}`);
     }
 
     this._cachedPermissions.set(cacheKey, grant);
@@ -437,7 +437,7 @@ export class AgentPermissionsApi implements PermissionsApi {
     protocolPath?: string,
     contextId?: string
   ): boolean {
-  // Check if the grant matches the provided parameters
+    // Check if the grant matches the provided parameters
     if (grant.grantee !== grantee || grant.grantor !== grantor) {
       return false;
     }
@@ -461,7 +461,7 @@ export class AgentPermissionsApi implements PermissionsApi {
         return PermissionScopeMatcher.matches(recordScope, { protocol, protocolPath, contextId });
       } else {
         const messagesScope = scope;
-        return PermissionScopeMatcher.matches(messagesScope, { protocol });
+        return PermissionScopeMatcher.matches(messagesScope, { protocol, protocolPath, contextId });
       }
     }
 

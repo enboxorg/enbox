@@ -14,8 +14,8 @@ import path from 'node:path';
 import url from 'node:url';
 
 import Ajv from 'ajv/dist/2020.js';
-import mkdirpModule from 'mkdirp';
-const mkdirp = mkdirpModule.default ?? mkdirpModule;
+import * as mkdirpModule from 'mkdirp';
+const mkdirp = mkdirpModule.mkdirp ?? mkdirpModule.default ?? mkdirpModule;
 import standaloneCode from 'ajv/dist/standalone/index.js';
 
 import Authorization from '../json-schemas/authorization.json' with { type: 'json' };

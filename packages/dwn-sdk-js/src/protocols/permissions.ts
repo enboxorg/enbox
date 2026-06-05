@@ -312,10 +312,22 @@ export class PermissionsProtocol implements CoreProtocol {
     dataEncodedMessage: DataEncodedRecordsWriteMessage,
   }> {
 
+    if (this.hasConflictingSubtreeScope(options.scope)) {
+      throw new DwnError(
+        DwnErrorCode.PermissionsProtocolCreateRequestScopeContextIdProtocolPathConflict,
+        'Permission request scopes cannot have both `contextId` and `protocolPath` present'
+      );
+    }
     if (this.isRecordPermissionScope(options.scope) && options.scope.protocol === undefined) {
       throw new DwnError(
         DwnErrorCode.PermissionsProtocolCreateRequestRecordsScopeMissingProtocol,
         'Permission request for Records must have a scope with a `protocol` property'
+      );
+    }
+    if (this.hasSubtreeScope(options.scope) && !this.hasProtocolScope(options.scope)) {
+      throw new DwnError(
+        DwnErrorCode.PermissionsProtocolCreateRequestSubtreeScopeMissingProtocol,
+        'Permission request subtree scopes must have a `protocol` property'
       );
     }
 
@@ -371,10 +383,22 @@ export class PermissionsProtocol implements CoreProtocol {
     dataEncodedMessage: DataEncodedRecordsWriteMessage,
   }> {
 
+    if (this.hasConflictingSubtreeScope(options.scope)) {
+      throw new DwnError(
+        DwnErrorCode.PermissionsProtocolCreateGrantScopeContextIdProtocolPathConflict,
+        'Permission grant scopes cannot have both `contextId` and `protocolPath` present'
+      );
+    }
     if (this.isRecordPermissionScope(options.scope) && options.scope.protocol === undefined) {
       throw new DwnError(
         DwnErrorCode.PermissionsProtocolCreateGrantRecordsScopeMissingProtocol,
         'Permission grants for Records must have a scope with a `protocol` property'
+      );
+    }
+    if (this.hasSubtreeScope(options.scope) && !this.hasProtocolScope(options.scope)) {
+      throw new DwnError(
+        DwnErrorCode.PermissionsProtocolCreateGrantSubtreeScopeMissingProtocol,
+        'Permission grant subtree scopes must have a `protocol` property'
       );
     }
 
@@ -600,6 +624,16 @@ export class PermissionsProtocol implements CoreProtocol {
     return 'protocol' in scope && scope.protocol !== undefined;
   }
 
+  private static hasSubtreeScope(scope: PermissionScope): scope is PermissionScope & ({ contextId: string } | { protocolPath: string }) {
+    return ('contextId' in scope && scope.contextId !== undefined)
+      || ('protocolPath' in scope && scope.protocolPath !== undefined);
+  }
+
+  private static hasConflictingSubtreeScope(scope: PermissionScope): boolean {
+    return ('contextId' in scope && scope.contextId !== undefined)
+      && ('protocolPath' in scope && scope.protocolPath !== undefined);
+  }
+
   /**
    * Validates that tags must include a protocol tag that matches the scoped protocol.
    */
@@ -633,18 +667,21 @@ export class PermissionsProtocol implements CoreProtocol {
       this.validateTags(requestOrGrant, scope.protocol);
     }
 
-    // if the scope is not a record permission scope, no additional validation is required
-    if (!this.isRecordPermissionScope(scope)) {
-      return;
-    }
-    // otherwise this is a record permission scope, more validation needed below
-
     // `contextId` and `protocolPath` are mutually exclusive
-    if (scope.contextId !== undefined && scope.protocolPath !== undefined) {
+    const hasContextId = 'contextId' in scope && scope.contextId !== undefined;
+    const hasProtocolPath = 'protocolPath' in scope && scope.protocolPath !== undefined;
+    if (hasContextId && hasProtocolPath) {
       throw new DwnError(
         DwnErrorCode.PermissionsProtocolValidateScopeContextIdProhibitedProperties,
         'Permission grants cannot have both `contextId` and `protocolPath` present'
       );
     }
+    if ((hasContextId || hasProtocolPath) && !this.hasProtocolScope(scope)) {
+      throw new DwnError(
+        DwnErrorCode.PermissionsProtocolValidateScopeSubtreeScopeMissingProtocol,
+        'Permission grant subtree scopes must have a `protocol` property'
+      );
+    }
+
   }
 };

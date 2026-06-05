@@ -8,6 +8,7 @@ import type {
   StateIndex,
 } from '../../src/index.js';
 
+import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { GeneralJwsVerifier } from '../../src/jose/jws/general/verifier.js';
 import { Message } from '../../src/core/message.js';
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
@@ -839,6 +840,292 @@ export function testMessagesReadHandler(): void {
           const messagesReadWithoutGrantReply = await dwn.processMessage(alice.did, messagesReadWithoutGrant.message);
           expect(messagesReadWithoutGrantReply.status.code).toBe(401);
           expect(messagesReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+        });
+
+        it('rejects reading arbitrary permission records with a grant scoped to the Permissions protocol', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const appProtocolGrant = await PermissionsProtocol.createGrant({
+            signer      : Jws.createSigner(alice),
+            grantedTo   : bob.did,
+            dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+            scope       : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol  : minimalProtocolDefinition.protocol,
+            }
+          });
+          expect((await dwn.processMessage(
+            alice.did,
+            appProtocolGrant.recordsWrite.message,
+            { dataStream: DataStream.fromBytes(appProtocolGrant.permissionGrantBytes) }
+          )).status.code).toBe(202);
+
+          const permissionsProtocolGrant = await PermissionsProtocol.createGrant({
+            signer      : Jws.createSigner(alice),
+            grantedTo   : bob.did,
+            dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+            scope       : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol  : PermissionsProtocol.uri,
+            }
+          });
+          expect((await dwn.processMessage(
+            alice.did,
+            permissionsProtocolGrant.recordsWrite.message,
+            { dataStream: DataStream.fromBytes(permissionsProtocolGrant.permissionGrantBytes) }
+          )).status.code).toBe(202);
+
+          const messagesRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(appProtocolGrant.recordsWrite.message),
+            permissionGrantIds : [permissionsProtocolGrant.recordsWrite.message.recordId],
+          });
+          const messagesReadReply = await dwn.processMessage(alice.did, messagesRead.message);
+          expect(messagesReadReply.status.code).toBe(401);
+          expect(messagesReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+        });
+
+        it('authorizes Records messages with exact protocolPath Messages.Read grants', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const protocolDefinition = { ...freeForAll, protocol: 'http://messages-read-path-scope' };
+          const otherProtocolDefinition = { ...freeForAll, protocol: 'http://messages-read-path-scope-other' };
+
+          const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition
+          });
+          expect((await dwn.processMessage(alice.did, protocolMessage)).status.code).toBe(202);
+          const { message: otherProtocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : otherProtocolDefinition
+          });
+          expect((await dwn.processMessage(alice.did, otherProtocolMessage)).status.code).toBe(202);
+
+          const { recordsWrite: post, dataStream: postData } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'post',
+            schema       : protocolDefinition.types.post.schema,
+          });
+          expect((await dwn.processMessage(alice.did, post.message, { dataStream: postData })).status.code).toBe(202);
+
+          const postContextId = post.message.contextId ?? post.message.recordId;
+          const { recordsWrite: attachment, dataStream: attachmentData } = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol        : protocolDefinition.protocol,
+            protocolPath    : 'post/attachment',
+            parentContextId : postContextId,
+          });
+          expect((await dwn.processMessage(alice.did, attachment.message, { dataStream: attachmentData })).status.code).toBe(202);
+
+          const { recordsWrite: otherProtocolPost, dataStream: otherProtocolPostData } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : otherProtocolDefinition.protocol,
+            protocolPath : 'post',
+            schema       : otherProtocolDefinition.types.post.schema,
+          });
+          expect((await dwn.processMessage(alice.did, otherProtocolPost.message, { dataStream: otherProtocolPostData })).status.code).toBe(202);
+
+          const { recordsDelete } = await TestDataGenerator.generateRecordsDelete({
+            author   : alice,
+            recordId : post.message.recordId,
+          });
+          expect((await dwn.processMessage(alice.did, recordsDelete.message)).status.code).toBe(202);
+
+          const permissionGrant = await PermissionsProtocol.createGrant({
+            signer      : Jws.createSigner(alice),
+            grantedTo   : bob.did,
+            dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+            scope       : {
+              interface    : DwnInterfaceName.Messages,
+              method       : DwnMethodName.Read,
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'post',
+            }
+          });
+          expect((await dwn.processMessage(
+            alice.did,
+            permissionGrant.recordsWrite.message,
+            { dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes) }
+          )).status.code).toBe(202);
+
+          const grantId = permissionGrant.recordsWrite.message.recordId;
+
+          const postRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(post.message),
+            permissionGrantIds : [grantId],
+          });
+          expect((await dwn.processMessage(alice.did, postRead.message)).status.code).toBe(200);
+
+          const deleteRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(recordsDelete.message),
+            permissionGrantIds : [grantId],
+          });
+          expect((await dwn.processMessage(alice.did, deleteRead.message)).status.code).toBe(200);
+
+          const attachmentRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(attachment.message),
+            permissionGrantIds : [grantId],
+          });
+          expect((await dwn.processMessage(alice.did, attachmentRead.message)).status.code).toBe(401);
+
+          const otherProtocolRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(otherProtocolPost.message),
+            permissionGrantIds : [grantId],
+          });
+          const otherProtocolReadReply = await dwn.processMessage(alice.did, otherProtocolRead.message);
+          expect(otherProtocolReadReply.status.code).toBe(401);
+          expect(otherProtocolReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+
+          const protocolRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(protocolMessage),
+            permissionGrantIds : [grantId],
+          });
+          const protocolReadReply = await dwn.processMessage(alice.did, protocolRead.message);
+          expect(protocolReadReply.status.code).toBe(401);
+          expect(protocolReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+
+          const grantRecordRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(permissionGrant.recordsWrite.message),
+            permissionGrantIds : [grantId],
+          });
+          const grantRecordReadReply = await dwn.processMessage(alice.did, grantRecordRead.message);
+          expect(grantRecordReadReply.status.code).toBe(401);
+          expect(grantRecordReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+
+          const expectPermissionsSubtreeGrantReadRejected = async (scope: { protocolPath: string } | { contextId: string }): Promise<void> => {
+            const grant = await PermissionsProtocol.createGrant({
+              signer      : Jws.createSigner(alice),
+              grantedTo   : bob.did,
+              dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+              scope       : {
+                interface : DwnInterfaceName.Messages,
+                method    : DwnMethodName.Read,
+                protocol  : PermissionsProtocol.uri,
+                ...scope,
+              }
+            });
+            expect((await dwn.processMessage(
+              alice.did,
+              grant.recordsWrite.message,
+              { dataStream: DataStream.fromBytes(grant.permissionGrantBytes) }
+            )).status.code).toBe(202);
+
+            const messagesRead = await TestDataGenerator.generateMessagesRead({
+              author             : bob,
+              messageCid         : await Message.getCid(permissionGrant.recordsWrite.message),
+              permissionGrantIds : [grant.recordsWrite.message.recordId],
+            });
+            const messagesReadReply = await dwn.processMessage(alice.did, messagesRead.message);
+            expect(messagesReadReply.status.code).toBe(401);
+            expect(messagesReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+          };
+
+          const permissionGrantContextId = permissionGrant.recordsWrite.message.contextId ?? permissionGrant.recordsWrite.message.recordId;
+          await expectPermissionsSubtreeGrantReadRejected({ protocolPath: PermissionsProtocol.grantPath });
+          await expectPermissionsSubtreeGrantReadRejected({ contextId: permissionGrantContextId });
+        });
+
+        it('authorizes Records messages with context subtree Messages.Read grants', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const protocolDefinition = { ...freeForAll, protocol: 'http://messages-read-context-scope' };
+
+          const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition
+          });
+          expect((await dwn.processMessage(alice.did, protocolMessage)).status.code).toBe(202);
+
+          const { recordsWrite: post, dataStream: postData } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'post',
+            schema       : protocolDefinition.types.post.schema,
+          });
+          expect((await dwn.processMessage(alice.did, post.message, { dataStream: postData })).status.code).toBe(202);
+
+          const postContextId = post.message.contextId ?? post.message.recordId;
+          const { recordsWrite: attachment, dataStream: attachmentData } = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol        : protocolDefinition.protocol,
+            protocolPath    : 'post/attachment',
+            parentContextId : postContextId,
+          });
+          expect((await dwn.processMessage(alice.did, attachment.message, { dataStream: attachmentData })).status.code).toBe(202);
+
+          const { recordsWrite: siblingPost, dataStream: siblingData } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'post',
+            schema       : protocolDefinition.types.post.schema,
+          });
+          expect((await dwn.processMessage(alice.did, siblingPost.message, { dataStream: siblingData })).status.code).toBe(202);
+
+          const permissionGrant = await PermissionsProtocol.createGrant({
+            signer      : Jws.createSigner(alice),
+            grantedTo   : bob.did,
+            dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
+            scope       : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol  : protocolDefinition.protocol,
+              contextId : postContextId,
+            }
+          });
+          expect((await dwn.processMessage(
+            alice.did,
+            permissionGrant.recordsWrite.message,
+            { dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes) }
+          )).status.code).toBe(202);
+
+          const grantId = permissionGrant.recordsWrite.message.recordId;
+
+          for (const message of [post.message, attachment.message]) {
+            const messagesRead = await TestDataGenerator.generateMessagesRead({
+              author             : bob,
+              messageCid         : await Message.getCid(message),
+              permissionGrantIds : [grantId],
+            });
+            expect((await dwn.processMessage(alice.did, messagesRead.message)).status.code).toBe(200);
+          }
+
+          const siblingRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(siblingPost.message),
+            permissionGrantIds : [grantId],
+          });
+          const siblingReadReply = await dwn.processMessage(alice.did, siblingRead.message);
+          expect(siblingReadReply.status.code).toBe(401);
+          expect(siblingReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+
+          const protocolRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(protocolMessage),
+            permissionGrantIds : [grantId],
+          });
+          const protocolReadReply = await dwn.processMessage(alice.did, protocolRead.message);
+          expect(protocolReadReply.status.code).toBe(401);
+          expect(protocolReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+
+          const grantRecordRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(permissionGrant.recordsWrite.message),
+            permissionGrantIds : [grantId],
+          });
+          const grantRecordReadReply = await dwn.processMessage(alice.did, grantRecordRead.message);
+          expect(grantRecordReadReply.status.code).toBe(401);
+          expect(grantRecordReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
         });
 
         it('rejects message if the RecordsWrite message is not found for a RecordsDelete being retrieved', async () => {

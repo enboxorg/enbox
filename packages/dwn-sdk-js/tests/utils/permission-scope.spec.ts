@@ -55,6 +55,10 @@ describe('PermissionScopeMatcher', () => {
     expect(PermissionScopeMatcher.matches(scope, {
       protocol: 'https://example.com/protocol',
     })).toBe(false);
+    expect(PermissionScopeMatcher.matches(scope, {
+      protocol  : 'https://example.com/protocol',
+      contextId : 42 as any,
+    })).toBe(false);
   });
 
   it('fails closed for path or context scopes without protocol', () => {

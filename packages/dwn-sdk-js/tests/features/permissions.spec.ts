@@ -375,6 +375,64 @@ export function testPermissions(): void {
       await expect(grantWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateGrantRecordsScopeMissingProtocol);
     });
 
+    it('should fail if a subtree permission scope is created without a protocol', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+
+      const permissionScope = {
+        interface    : DwnInterfaceName.Messages,
+        method       : DwnMethodName.Read,
+        protocolPath : 'post'
+      };
+
+      const requestWrite = PermissionsProtocol.createRequest({
+        signer      : Jws.createSigner(bob),
+        description : `Requesting to read Alice's DWN`,
+        delegated   : false,
+        scope       : permissionScope as any
+      });
+      await expect(requestWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateRequestSubtreeScopeMissingProtocol);
+
+      const grantWrite = PermissionsProtocol.createGrant({
+        signer      : Jws.createSigner(alice),
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        description : 'Allow Bob to read',
+        grantedTo   : bob.did,
+        scope       : permissionScope as any
+      });
+      await expect(grantWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateGrantSubtreeScopeMissingProtocol);
+    });
+
+    it('should fail if a permission scope is created with both protocolPath and contextId', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+
+      const permissionScope = {
+        interface    : DwnInterfaceName.Messages,
+        method       : DwnMethodName.Read,
+        protocol     : 'https://example.com/protocol/test',
+        protocolPath : 'post',
+        contextId    : 'root'
+      };
+
+      const requestWrite = PermissionsProtocol.createRequest({
+        signer      : Jws.createSigner(bob),
+        description : `Requesting to read Alice's DWN`,
+        delegated   : false,
+        scope       : permissionScope as any
+      });
+      await expect(requestWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateRequestScopeContextIdProtocolPathConflict);
+
+      const grantWrite = PermissionsProtocol.createGrant({
+        signer      : Jws.createSigner(alice),
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        description : 'Allow Bob to read',
+        grantedTo   : bob.did,
+        scope       : permissionScope as any
+      });
+      await expect(grantWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateGrantScopeContextIdProtocolPathConflict);
+    });
+
     it('should fail if an invalid protocolPath is used during Permissions schema validation', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
@@ -388,6 +446,28 @@ export function testPermissions(): void {
       expect(
         () => PermissionsProtocol.validateSchema(message, dataBytes!)
       ).toThrow(DwnErrorCode.PermissionsProtocolValidateSchemaUnexpectedRecord);
+    });
+
+    it('should fail if a permission scope protocolPath exceeds the maximum length', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+
+      const grant = await PermissionsProtocol.createGrant({
+        signer      : Jws.createSigner(alice),
+        grantedTo   : bob.did,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        scope       : {
+          interface    : DwnInterfaceName.Messages,
+          method       : DwnMethodName.Read,
+          protocol     : 'https://example.com/protocol/test',
+          protocolPath : 'a'.repeat(601)
+        }
+      });
+
+      const reply = await dwn.processMessage(alice.did, grant.recordsWrite.message, {
+        dataStream: DataStream.fromBytes(grant.permissionGrantBytes)
+      });
+      expect(reply.status.code).toBe(400);
     });
 
     it('performs additional validation to the tagged protocol in a Revocation message ensuring it matches the Grant it is revoking', async () => {
@@ -523,6 +603,45 @@ export function testPermissions(): void {
           dataStream: DataStream.fromBytes(messagesSubscribePermissions.permissionGrantBytes)
         });
         expect(messagesSubscribePermissionsReply.status.code).toBe(202);
+      });
+
+      it('MessagesRead with protocolPath and contextId scopes', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const withProtocolPath = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+          scope       : {
+            interface    : DwnInterfaceName.Messages,
+            method       : DwnMethodName.Read,
+            protocol     : 'https://example.com/protocol/test',
+            protocolPath : 'foo/bar'
+          }
+        });
+
+        const withProtocolPathReply = await dwn.processMessage(alice.did, withProtocolPath.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(withProtocolPath.permissionGrantBytes)
+        });
+        expect(withProtocolPathReply.status.code).toBe(202);
+
+        const withContextId = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+          scope       : {
+            interface : DwnInterfaceName.Messages,
+            method    : DwnMethodName.Read,
+            protocol  : 'https://example.com/protocol/test',
+            contextId : 'test-context'
+          }
+        });
+
+        const withContextIdReply = await dwn.processMessage(alice.did, withContextId.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(withContextId.permissionGrantBytes)
+        });
+        expect(withContextIdReply.status.code).toBe(202);
       });
 
       it('RecordsDelete', async () => {
@@ -959,6 +1078,39 @@ export function testPermissions(): void {
         expect(
           () => PermissionsProtocol['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
         ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeContextIdProhibitedProperties);
+
+        const messagesPermissionScope: PermissionScope = {
+          interface    : DwnInterfaceName.Messages,
+          method       : DwnMethodName.Read,
+          protocol     : 'https://example.com/protocol/test',
+          protocolPath : 'test/path',
+          contextId    : 'test-context'
+        };
+
+        expect(
+          () => PermissionsProtocol['validateScopeAndTags'](messagesPermissionScope, requestRecordsWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeContextIdProhibitedProperties);
+      });
+
+      it('should throw if a subtree permission scope is missing protocol during validation', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const permissionScope: PermissionScope = {
+          interface    : DwnInterfaceName.Messages,
+          method       : DwnMethodName.Read,
+          protocolPath : 'test/path'
+        };
+
+        const requestRecordsWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.requestPath,
+          data         : Encoder.stringToBytes(JSON.stringify({ })),
+        });
+
+        expect(
+          () => PermissionsProtocol['validateScopeAndTags'](permissionScope, requestRecordsWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeSubtreeScopeMissingProtocol);
       });
     });
 
