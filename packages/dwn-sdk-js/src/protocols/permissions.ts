@@ -14,6 +14,7 @@ import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { PermissionGrant } from './permission-grant.js';
 import { PermissionRequest } from './permission-request.js';
+import { PERMISSIONS_PROTOCOL_URI } from '../core/constants.js';
 import { Records } from '../utils/records.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { Time } from '../utils/time.js';
@@ -95,7 +96,7 @@ export class PermissionsProtocol implements CoreProtocol {
   /**
    * The URI of the DWN Permissions protocol.
    */
-  public static readonly uri = 'https://identity.foundation/dwn/permissions';
+  public static readonly uri = PERMISSIONS_PROTOCOL_URI;
 
   /**
    * The protocol path of the `request` record.

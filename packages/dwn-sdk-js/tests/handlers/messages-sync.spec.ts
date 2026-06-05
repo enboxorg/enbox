@@ -3,6 +3,7 @@ import type {
   DataStore,
   EventLog,
   MessagesPermissionScope,
+  MessagesSyncMessage,
   MessageStore,
   ProtocolDefinition,
   ResumableTaskStore,
@@ -11,6 +12,7 @@ import type {
 
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
+import { KEY_DELIVERY_PROTOCOL_URI } from '../../src/core/constants.js';
 import { Message } from '../../src/core/message.js';
 import { MessagesSync } from '../../src/interfaces/messages-sync.js';
 import { MessagesSyncHandler } from '../../src/handlers/messages-sync.js';
@@ -19,7 +21,19 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
+import {
+  DataStream,
+  Dwn,
+  DwnErrorCode,
+  DwnInterfaceName,
+  DwnMethodName,
+  Encoder,
+  PermissionGrant,
+  PermissionsProtocol,
+  RECORDS_PROJECTION_ROOT_VERSION,
+  RecordsProjection,
+  Time
+} from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 
@@ -283,6 +297,145 @@ export function testMessagesSyncHandler(): void {
         const recordCid = await Message.getCid(protoRecord);
         expect(reply.entries).toContain(protocolCid);
         expect(reply.entries).toContain(recordCid);
+      });
+
+      it('returns projected record leaves without protocol configs or out-of-path records', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true };
+        const protocol = protocolDefinition.protocol;
+
+        const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+          author: alice,
+          protocolDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, protocolMessage)).status.code).toBe(202);
+
+        const { message: postMessage, dataStream: postDataStream } = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol,
+          protocolPath : 'post',
+          schema       : protocolDefinition.types.post.schema,
+        });
+        expect((await dwn.processMessage(alice.did, postMessage, { dataStream: postDataStream })).status.code).toBe(202);
+
+        const { message: attachmentMessage, dataStream: attachmentDataStream } = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol,
+          protocolPath    : 'post/attachment',
+          parentContextId : postMessage.contextId,
+        });
+        expect((await dwn.processMessage(alice.did, attachmentMessage, { dataStream: attachmentDataStream })).status.code).toBe(202);
+
+        const { message } = await MessagesSync.create({
+          signer                : Jws.createSigner(alice),
+          action                : 'leaves',
+          prefix                : '',
+          projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+          projectionScopes      : [{ protocol, protocolPath: 'post' }],
+        });
+
+        const reply = await dwn.processMessage(alice.did, message);
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries).toEqual([await Message.getCid(postMessage)]);
+        expect(reply.entries).not.toContain(await Message.getCid(protocolMessage));
+        expect(reply.entries).not.toContain(await Message.getCid(attachmentMessage));
+      });
+
+      it('excludes infrastructure protocols from records-primary projection leaves', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const { message: permissionGrantMessage, dataStream: permissionGrantDataStream } = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : bob,
+          scope     : {
+            interface : DwnInterfaceName.Messages,
+            method    : DwnMethodName.Read,
+            protocol  : 'http://projected-sync-app-protocol',
+          },
+        });
+        expect((await dwn.processMessage(alice.did, permissionGrantMessage, { dataStream: permissionGrantDataStream })).status.code).toBe(202);
+
+        const keyDeliverySchema = 'https://identity.foundation/schemas/key-delivery/context-key';
+        const keyDeliveryProtocolDefinition: ProtocolDefinition = {
+          protocol  : KEY_DELIVERY_PROTOCOL_URI,
+          published : false,
+          types     : {
+            contextKey: {
+              schema      : keyDeliverySchema,
+              dataFormats : ['application/json'],
+            },
+          },
+          structure: {
+            contextKey: {},
+          },
+        };
+
+        const { message: keyDeliveryConfigureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : keyDeliveryProtocolDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, keyDeliveryConfigureMessage)).status.code).toBe(202);
+
+        const { message: keyDeliveryMessage, dataStream: keyDeliveryDataStream } = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : KEY_DELIVERY_PROTOCOL_URI,
+          protocolPath : 'contextKey',
+          schema       : keyDeliverySchema,
+        });
+        expect((await dwn.processMessage(alice.did, keyDeliveryMessage, { dataStream: keyDeliveryDataStream })).status.code).toBe(202);
+
+        for (const protocol of [PermissionsProtocol.uri, KEY_DELIVERY_PROTOCOL_URI]) {
+          const { message } = await MessagesSync.create({
+            signer                : Jws.createSigner(alice),
+            action                : 'leaves',
+            prefix                : '',
+            projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+            projectionScopes      : [{ protocol }],
+          });
+
+          const reply = await dwn.processMessage(alice.did, message);
+          expect(reply.status.code).toBe(200);
+          expect(reply.entries).toEqual([]);
+        }
+      });
+
+      it('returns projected roots from the Records projection algorithm', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true };
+        const protocol = protocolDefinition.protocol;
+        const projectionScopes = [{ protocol, protocolPath: 'post' }] as [{ protocol: string; protocolPath: string }];
+
+        const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+          author: alice,
+          protocolDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, protocolMessage)).status.code).toBe(202);
+
+        const { message: postMessage, dataStream: postDataStream } = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol,
+          protocolPath : 'post',
+          schema       : protocolDefinition.types.post.schema,
+        });
+        expect((await dwn.processMessage(alice.did, postMessage, { dataStream: postDataStream })).status.code).toBe(202);
+
+        const expectedRoot = await RecordsProjection.getRootHex({
+          tenant       : alice.did,
+          messageStore : messageStore,
+          scopes       : projectionScopes,
+        });
+
+        const { message } = await MessagesSync.create({
+          signer                : Jws.createSigner(alice),
+          action                : 'root',
+          projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+          projectionScopes,
+        });
+
+        const reply = await dwn.processMessage(alice.did, message);
+        expect(reply.status.code).toBe(200);
+        expect(reply.root).toBe(expectedRoot);
       });
     });
 
@@ -773,6 +926,284 @@ export function testMessagesSyncHandler(): void {
           }
         });
 
+        it('allows projected sync with a matching protocolPath Messages.Read grant', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true };
+          const protocol = protocolDefinition.protocol;
+
+          const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition,
+          });
+          expect((await dwn.processMessage(alice.did, protocolMessage)).status.code).toBe(202);
+
+          const { message: postMessage, dataStream: postDataStream } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol,
+            protocolPath : 'post',
+            schema       : protocolDefinition.types.post.schema,
+          });
+          expect((await dwn.processMessage(alice.did, postMessage, { dataStream: postDataStream })).status.code).toBe(202);
+
+          const { message: attachmentMessage, dataStream: attachmentDataStream } = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol,
+            protocolPath    : 'post/attachment',
+            parentContextId : postMessage.contextId,
+          });
+          expect((await dwn.processMessage(alice.did, attachmentMessage, { dataStream: attachmentDataStream })).status.code).toBe(202);
+
+          const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface    : DwnInterfaceName.Messages,
+              method       : DwnMethodName.Read,
+              protocol,
+              protocolPath : 'post',
+            },
+          });
+          expect((await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream })).status.code).toBe(202);
+
+          const { message: diffMsg } = await MessagesSync.create({
+            signer                : Jws.createSigner(bob),
+            action                : 'diff',
+            hashes                : {},
+            depth                 : 2,
+            projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+            projectionScopes      : [{ protocol, protocolPath: 'post' }],
+            permissionGrantIds    : [grantMessage.recordId],
+          });
+
+          const reply = await dwn.processMessage(alice.did, diffMsg);
+          expect(reply.status.code).toBe(200);
+
+          const remoteCids = reply.onlyRemote!.map(entry => entry.messageCid);
+          expect(remoteCids).toContain(await Message.getCid(postMessage));
+          expect(remoteCids).not.toContain(await Message.getCid(protocolMessage));
+          expect(remoteCids).not.toContain(await Message.getCid(attachmentMessage));
+        });
+
+        it('rejects projected sync when no grant covers a requested projection scope', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const protocol = 'http://projected-sync-scope-mismatch';
+
+          const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface    : DwnInterfaceName.Messages,
+              method       : DwnMethodName.Read,
+              protocol,
+              protocolPath : 'post',
+            },
+          });
+          expect((await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream })).status.code).toBe(202);
+
+          const { message: syncMsg } = await MessagesSync.create({
+            signer                : Jws.createSigner(bob),
+            action                : 'root',
+            projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+            projectionScopes      : [{ protocol }],
+            permissionGrantIds    : [grantMessage.recordId],
+          });
+
+          const reply = await dwn.processMessage(alice.did, syncMsg);
+          expect(reply.status.code).toBe(401);
+          expect(reply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationProjectionScopeMismatch);
+        });
+
+        it('rejects projected sync when any requested projection scope is uncovered', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const coveredProtocol = 'http://projected-sync-covered-scope';
+          const uncoveredProtocol = 'http://projected-sync-uncovered-scope';
+
+          const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface    : DwnInterfaceName.Messages,
+              method       : DwnMethodName.Read,
+              protocol     : coveredProtocol,
+              protocolPath : 'post',
+            },
+          });
+          expect((await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream })).status.code).toBe(202);
+
+          const { message: syncMsg } = await MessagesSync.create({
+            signer                : Jws.createSigner(bob),
+            action                : 'root',
+            projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+            projectionScopes      : [
+              { protocol: coveredProtocol, protocolPath: 'post' },
+              { protocol: uncoveredProtocol, protocolPath: 'post' },
+            ],
+            permissionGrantIds: [grantMessage.recordId],
+          });
+
+          const reply = await dwn.processMessage(alice.did, syncMsg);
+          expect(reply.status.code).toBe(401);
+          expect(reply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationProjectionScopeMismatch);
+        });
+
+        it('rejects delegated MessagesSync of infrastructure protocols', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const carol = await TestDataGenerator.generateDidKeyPersona();
+
+          const { message: permissionsGrantMessage, dataStream: permissionsGrantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol  : PermissionsProtocol.uri,
+            },
+          });
+          expect((await dwn.processMessage(alice.did, permissionsGrantMessage, { dataStream: permissionsGrantDataStream })).status.code).toBe(202);
+
+          const { message: keyDeliveryGrantMessage, dataStream: keyDeliveryGrantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol  : KEY_DELIVERY_PROTOCOL_URI,
+            },
+          });
+          expect((await dwn.processMessage(alice.did, keyDeliveryGrantMessage, { dataStream: keyDeliveryGrantDataStream })).status.code).toBe(202);
+
+          const { message: carolGrantMessage, dataStream: carolGrantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : carol,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol  : 'http://private-delegate-protocol',
+            },
+          });
+          expect((await dwn.processMessage(alice.did, carolGrantMessage, { dataStream: carolGrantDataStream })).status.code).toBe(202);
+
+          const { message: readMessage } = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(carolGrantMessage),
+            permissionGrantIds : [permissionsGrantMessage.recordId],
+          });
+          const readReply = await dwn.processMessage(alice.did, readMessage);
+          expect(readReply.status.code).toBe(401);
+          expect(readReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+
+          const legacySyncActions = [
+            { action: 'root' as const },
+            { action: 'subtree' as const, prefix: '' },
+            { action: 'leaves' as const, prefix: '' },
+            { action: 'diff' as const, hashes: {}, depth: 2 },
+          ];
+          const infrastructureProtocolGrants = [
+            { protocol: PermissionsProtocol.uri, grantId: permissionsGrantMessage.recordId },
+            { protocol: KEY_DELIVERY_PROTOCOL_URI, grantId: keyDeliveryGrantMessage.recordId },
+          ];
+
+          for (const { protocol, grantId } of infrastructureProtocolGrants) {
+            for (const syncAction of legacySyncActions) {
+              const { message: syncMessage } = await MessagesSync.create({
+                signer             : Jws.createSigner(bob),
+                ...syncAction,
+                protocol,
+                permissionGrantIds : [grantId],
+              });
+
+              const syncReply = await dwn.processMessage(alice.did, syncMessage);
+              expect(syncReply.status.code).toBe(401);
+              expect(syncReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationProtocolSyncInfrastructureProtocol);
+            }
+          }
+
+          for (const { protocol, grantId } of infrastructureProtocolGrants) {
+            const { message: projectedSyncMessage } = await MessagesSync.create({
+              signer                : Jws.createSigner(bob),
+              action                : 'diff',
+              hashes                : {},
+              depth                 : 2,
+              projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+              projectionScopes      : [{ protocol }],
+              permissionGrantIds    : [grantId],
+            });
+
+            const projectedSyncReply = await dwn.processMessage(alice.did, projectedSyncMessage);
+            expect(projectedSyncReply.status.code).toBe(401);
+            expect(projectedSyncReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationProjectionInfrastructureProtocol);
+          }
+        });
+
+        it('allows projected sync with a matching contextId Messages.Read grant', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true };
+          const protocol = protocolDefinition.protocol;
+
+          const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition,
+          });
+          expect((await dwn.processMessage(alice.did, protocolMessage)).status.code).toBe(202);
+
+          const { message: rootMessage, dataStream: rootDataStream } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol,
+            protocolPath : 'post',
+            schema       : protocolDefinition.types.post.schema,
+          });
+          expect((await dwn.processMessage(alice.did, rootMessage, { dataStream: rootDataStream })).status.code).toBe(202);
+
+          const { message: childMessage, dataStream: childDataStream } = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol,
+            protocolPath    : 'post/attachment',
+            parentContextId : rootMessage.contextId,
+          });
+          expect((await dwn.processMessage(alice.did, childMessage, { dataStream: childDataStream })).status.code).toBe(202);
+
+          const { message: siblingMessage, dataStream: siblingDataStream } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol,
+            protocolPath : 'post',
+            schema       : protocolDefinition.types.post.schema,
+          });
+          expect((await dwn.processMessage(alice.did, siblingMessage, { dataStream: siblingDataStream })).status.code).toBe(202);
+
+          const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol,
+              contextId : rootMessage.contextId!,
+            },
+          });
+          expect((await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream })).status.code).toBe(202);
+
+          const { message: syncMsg } = await MessagesSync.create({
+            signer                : Jws.createSigner(bob),
+            action                : 'leaves',
+            prefix                : '',
+            projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+            projectionScopes      : [{ protocol, contextId: rootMessage.contextId! }],
+            permissionGrantIds    : [grantMessage.recordId],
+          });
+
+          const reply = await dwn.processMessage(alice.did, syncMsg);
+          expect(reply.status.code).toBe(200);
+          expect(reply.entries).toContain(await Message.getCid(rootMessage));
+          expect(reply.entries).toContain(await Message.getCid(childMessage));
+          expect(reply.entries).not.toContain(await Message.getCid(protocolMessage));
+          expect(reply.entries).not.toContain(await Message.getCid(siblingMessage));
+        });
+
         it('returns only protocol-scoped diff entries for a delegated protocol grant', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
@@ -943,6 +1374,88 @@ export function testMessagesSyncHandler(): void {
           parseStub.restore();
         }
       });
+
+      it('returns 400 when projection scopes are provided without a projection root version', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const { message } = await MessagesSync.create({
+          signer                : Jws.createSigner(alice),
+          action                : 'root',
+          projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+          projectionScopes      : [{ protocol: 'http://projected-sync-schema' }],
+        });
+        delete (message.descriptor as any).projectionRootVersion;
+
+        const reply = await dwn.processMessage(alice.did, message);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain('SchemaValidatorFailure');
+      });
+
+      it('returns 400 when projection root version is provided without projection scopes', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const { message } = await MessagesSync.create({
+          signer                : Jws.createSigner(alice),
+          action                : 'root',
+          projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+          projectionScopes      : [{ protocol: 'http://projected-sync-schema' }],
+        });
+        delete (message.descriptor as any).projectionScopes;
+
+        const reply = await dwn.processMessage(alice.did, message);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain('SchemaValidatorFailure');
+      });
+
+      it('returns 400 when projection root version is unsupported', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const { message } = await MessagesSync.create({
+          signer                : Jws.createSigner(alice),
+          action                : 'root',
+          projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+          projectionScopes      : [{ protocol: 'http://projected-sync-schema' }],
+        });
+
+        const unsupportedProjectionRootVersion = 'records-primary-scope-root-v2';
+        const descriptor: MessagesSyncMessage['descriptor'] = {
+          ...message.descriptor,
+          projectionRootVersion: unsupportedProjectionRootVersion,
+        };
+        const authorization = await Message.createAuthorization({
+          descriptor,
+          signer: Jws.createSigner(alice),
+        });
+        const unsupportedVersionMessage: MessagesSyncMessage = {
+          ...message,
+          descriptor,
+          authorization,
+        };
+        const validateJsonSchemaStub = sinon.stub(Message, 'validateJsonSchema');
+
+        try {
+          const reply = await dwn.processMessage(alice.did, unsupportedVersionMessage);
+          expect(reply.status.code).toBe(400);
+          expect(reply.status.detail).toContain(DwnErrorCode.MessagesSyncUnsupportedProjectionRootVersion);
+        } finally {
+          validateJsonSchemaStub.restore();
+        }
+      });
+
+      it('returns 400 when projected sync also specifies a legacy protocol root', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const { message } = await MessagesSync.create({
+          signer                : Jws.createSigner(alice),
+          action                : 'root',
+          projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+          projectionScopes      : [{ protocol: 'http://projected-sync-schema' }],
+        });
+        (message.descriptor as any).protocol = 'http://projected-sync-schema';
+
+        const reply = await dwn.processMessage(alice.did, message);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain('SchemaValidatorFailure');
+      });
     });
 
     describe('diff action', () => {
@@ -1023,6 +1536,28 @@ export function testMessagesSyncHandler(): void {
         expect(reply.onlyRemote).toEqual([]);
         expect(reply.onlyLocal!).toContain('00');
         expect(reply.onlyLocal!).toContain('01');
+      });
+
+      it('prunes empty server subtrees at the current diff depth', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const getSubtreeHashSpy = sinon.spy(stateIndex, 'getSubtreeHash');
+
+        try {
+          const { message: diffMsg } = await MessagesSync.create({
+            signer : Jws.createSigner(alice),
+            action : 'diff',
+            hashes : {},
+            depth  : 64,
+          });
+
+          const reply = await dwn.processMessage(alice.did, diffMsg);
+          expect(reply.status.code).toBe(200);
+          expect(reply.onlyRemote).toEqual([]);
+          expect(reply.onlyLocal).toEqual([]);
+          expect(getSubtreeHashSpy.callCount).toBe(1);
+        } finally {
+          getSubtreeHashSpy.restore();
+        }
       });
 
       it('inlines small data payloads as encodedData in onlyRemote entries', async () => {

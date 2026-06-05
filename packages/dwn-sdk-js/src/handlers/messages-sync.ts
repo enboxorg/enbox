@@ -1,7 +1,9 @@
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
+import type { StateIndex } from '../types/state-index.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from '../types/messages-types.js';
+import type { RecordsProjectionScope, RecordsProjectionSnapshot } from '../sync/records-projection.js';
 
 import { authenticate } from '../core/auth.js';
 import { DwnConstant } from '../core/dwn-constant.js';
@@ -12,6 +14,7 @@ import { messageReplyFromError } from '../core/message-reply.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesSync } from '../interfaces/messages-sync.js';
 import { Records } from '../utils/records.js';
+import { RecordsProjection } from '../sync/records-projection.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 /**
@@ -24,6 +27,7 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 const DEFAULT_MAX_INLINE_DATA_SIZE = DwnConstant.maxDataSizeAllowedToBeEncoded;
 
 type StoredMessageWithEncodedData = GenericMessage & { encodedData?: string };
+type ProjectionScopes = readonly [RecordsProjectionScope, ...RecordsProjectionScope[]];
 
 
 export class MessagesSyncHandler implements MethodHandler {
@@ -49,44 +53,25 @@ export class MessagesSyncHandler implements MethodHandler {
       return messageReplyFromError(e, 401);
     }
 
-    const { action, protocol, prefix } = message.descriptor;
+    const { action } = message.descriptor;
+    const projectionScopes = MessagesSyncHandler.getProjectionScopes(message);
 
     try {
       switch (action) {
       case 'root': {
-        const rootHash = protocol === undefined
-          ? await this.deps.stateIndex!.getRoot(tenant)
-          : await this.deps.stateIndex!.getProtocolRoot(tenant, protocol);
-        return {
-          status : { code: 200, detail: 'OK' },
-          root   : hashToHex(rootHash),
-        };
+        return await this.handleRoot(tenant, message, projectionScopes);
       }
 
       case 'subtree': {
-        const bitPath = MessagesSyncHandler.parseBitPrefix(prefix!);
-        const hash = protocol === undefined
-          ? await this.deps.stateIndex!.getSubtreeHash(tenant, bitPath)
-          : await this.deps.stateIndex!.getProtocolSubtreeHash(tenant, protocol, bitPath);
-        return {
-          status : { code: 200, detail: 'OK' },
-          hash   : hashToHex(hash),
-        };
+        return await this.handleSubtree(tenant, message, projectionScopes);
       }
 
       case 'leaves': {
-        const bitPath = MessagesSyncHandler.parseBitPrefix(prefix!);
-        const leaves = protocol === undefined
-          ? await this.deps.stateIndex!.getLeaves(tenant, bitPath)
-          : await this.deps.stateIndex!.getProtocolLeaves(tenant, protocol, bitPath);
-        return {
-          status  : { code: 200, detail: 'OK' },
-          entries : leaves,
-        };
+        return await this.handleLeaves(tenant, message, projectionScopes);
       }
 
       case 'diff': {
-        return this.handleDiff(tenant, message);
+        return await this.handleDiff(tenant, message);
       }
 
       default: {
@@ -98,6 +83,112 @@ export class MessagesSyncHandler implements MethodHandler {
     } catch (e) {
       return messageReplyFromError(e, 500);
     }
+  }
+
+  private async handleRoot(
+    tenant: string,
+    message: MessagesSyncMessage,
+    projectionScopes: ProjectionScopes | undefined
+  ): Promise<MessagesSyncReply> {
+    const root = await this.getRootHex(tenant, message.descriptor.protocol, projectionScopes);
+    return {
+      status : { code: 200, detail: 'OK' },
+      root   : root,
+    };
+  }
+
+  private async getRootHex(
+    tenant: string,
+    protocol: string | undefined,
+    projectionScopes: ProjectionScopes | undefined
+  ): Promise<string> {
+    if (projectionScopes === undefined) {
+      const rootHash = await this.getIndexedRootHash(tenant, protocol);
+      return hashToHex(rootHash);
+    }
+
+    return this.withProjectionSnapshot(tenant, projectionScopes, snapshot => snapshot.getRootHex());
+  }
+
+  private async getIndexedRootHash(
+    tenant: string,
+    protocol: string | undefined
+  ): Promise<Uint8Array> {
+    if (protocol === undefined) {
+      return this.deps.stateIndex!.getRoot(tenant);
+    }
+
+    return this.deps.stateIndex!.getProtocolRoot(tenant, protocol);
+  }
+
+  private async handleSubtree(
+    tenant: string,
+    message: MessagesSyncMessage,
+    projectionScopes: ProjectionScopes | undefined
+  ): Promise<MessagesSyncReply> {
+    const bitPath = MessagesSyncHandler.parseBitPrefix(message.descriptor.prefix!);
+    const hash = await this.getSubtreeHash(tenant, message.descriptor.protocol, projectionScopes, bitPath);
+
+    return {
+      status : { code: 200, detail: 'OK' },
+      hash   : hashToHex(hash),
+    };
+  }
+
+  private async handleLeaves(
+    tenant: string,
+    message: MessagesSyncMessage,
+    projectionScopes: ProjectionScopes | undefined
+  ): Promise<MessagesSyncReply> {
+    const bitPath = MessagesSyncHandler.parseBitPrefix(message.descriptor.prefix!);
+    const leaves = await this.getLeaves(tenant, message.descriptor.protocol, projectionScopes, bitPath);
+
+    return {
+      status  : { code: 200, detail: 'OK' },
+      entries : leaves,
+    };
+  }
+
+  private async getSubtreeHash(
+    tenant: string,
+    protocol: string | undefined,
+    projectionScopes: ProjectionScopes | undefined,
+    bitPath: boolean[]
+  ): Promise<Uint8Array> {
+    if (projectionScopes === undefined) {
+      return this.getIndexedSubtreeHash(tenant, protocol, bitPath);
+    }
+
+    return this.withProjectionSnapshot(tenant, projectionScopes, snapshot => snapshot.getSubtreeHash(bitPath));
+  }
+
+  private async getLeaves(
+    tenant: string,
+    protocol: string | undefined,
+    projectionScopes: ProjectionScopes | undefined,
+    bitPath: boolean[]
+  ): Promise<string[]> {
+    if (projectionScopes === undefined) {
+      return this.getIndexedLeaves(tenant, protocol, bitPath);
+    }
+
+    return this.withProjectionSnapshot(tenant, projectionScopes, snapshot => snapshot.getLeaves(bitPath));
+  }
+
+  private async getIndexedSubtreeHash(
+    tenant: string,
+    protocol: string | undefined,
+    bitPath: boolean[]
+  ): Promise<Uint8Array> {
+    return MessagesSyncHandler.getIndexedSubtreeHashFromStateIndex(this.deps.stateIndex!, tenant, protocol, bitPath);
+  }
+
+  private async getIndexedLeaves(
+    tenant: string,
+    protocol: string | undefined,
+    bitPath: boolean[]
+  ): Promise<string[]> {
+    return MessagesSyncHandler.getIndexedLeavesFromStateIndex(this.deps.stateIndex!, tenant, protocol, bitPath);
   }
 
   /**
@@ -116,6 +207,7 @@ export class MessagesSyncHandler implements MethodHandler {
     message: MessagesSyncMessage,
   ): Promise<MessagesSyncReply> {
     const { protocol, hashes: clientHashes, depth } = message.descriptor;
+    const projectionScopes = MessagesSyncHandler.getProjectionScopes(message);
 
     if (!clientHashes || depth === undefined) {
       return {
@@ -124,68 +216,67 @@ export class MessagesSyncHandler implements MethodHandler {
     }
 
     const stateIndex = this.deps.stateIndex!;
+    const projectionSnapshot = await this.createProjectionSnapshot(tenant, projectionScopes);
     const onlyRemoteCids: string[] = [];
     const onlyLocalPrefixes: string[] = [];
 
-    // Get the default (empty subtree) hash at the given depth so we can
-    // filter out client entries that represent empty subtrees.
-    const defaultHashHex = await this.getDefaultHashHex(depth);
+    try {
+      // Get the default (empty subtree) hash at the given depth so we can
+      // filter out client entries that represent empty subtrees.
+      const defaultHashHex = await this.getDefaultHashHex(depth);
 
-    // Build the set of all prefixes at the given depth that either side has.
-    // Filter out client prefixes whose hash equals the default (empty subtree)
-    // hash — these represent empty subtrees and should be treated the same as
-    // omitted prefixes.
-    const allPrefixes = new Set<string>();
-    for (const [pfx, hash] of Object.entries(clientHashes)) {
-      if (hash !== defaultHashHex) {
-        allPrefixes.add(pfx);
-      }
-    }
-
-    // Enumerate server-side non-empty prefixes by walking the server's
-    // tree to the given depth and collecting leaf prefixes.
-    const serverHashes = await this.collectSubtreeHashes(tenant, protocol, depth);
-    for (const prefix of Object.keys(serverHashes)) {
-      allPrefixes.add(prefix);
-    }
-
-    // Compare each prefix's hash between client and server.
-    for (const pfx of allPrefixes) {
-      const clientHash = clientHashes[pfx]; // undefined if client has empty subtree
-      const serverHash = serverHashes[pfx]; // undefined if server has empty subtree
-
-      if (clientHash === serverHash) {
-        // Identical subtree — skip.
-        continue;
+      // Build the set of all prefixes at the given depth that either side has.
+      // Filter out client prefixes whose hash equals the default (empty subtree)
+      // hash — these represent empty subtrees and should be treated the same as
+      // omitted prefixes.
+      const allPrefixes = new Set<string>();
+      for (const [pfx, hash] of Object.entries(clientHashes)) {
+        if (hash !== defaultHashHex) {
+          allPrefixes.add(pfx);
+        }
       }
 
-      if (serverHash === undefined) {
-        // Client has entries the server doesn't.
-        onlyLocalPrefixes.push(pfx);
-        continue;
+      // Enumerate server-side non-empty prefixes by walking the server's
+      // tree to the given depth and collecting leaf prefixes.
+      const serverHashes = await this.collectSubtreeHashes(tenant, protocol, projectionSnapshot, depth);
+      for (const prefix of Object.keys(serverHashes)) {
+        allPrefixes.add(prefix);
       }
 
-      if (clientHash === undefined) {
-        // Server has entries the client doesn't — enumerate server leaves.
+      // Compare each prefix's hash between client and server.
+      for (const pfx of allPrefixes) {
+        const clientHash = clientHashes[pfx]; // undefined if client has empty subtree
+        const serverHash = serverHashes[pfx]; // undefined if server has empty subtree
+
+        if (clientHash === serverHash) {
+          // Identical subtree — skip.
+          continue;
+        }
+
+        if (serverHash === undefined) {
+          // Client has entries the server doesn't.
+          onlyLocalPrefixes.push(pfx);
+          continue;
+        }
+
         const bitPath = MessagesSyncHandler.parseBitPrefix(pfx);
-        const leaves = protocol === undefined
-          ? await stateIndex.getLeaves(tenant, bitPath)
-          : await stateIndex.getProtocolLeaves(tenant, protocol, bitPath);
-        onlyRemoteCids.push(...leaves);
-        continue;
+        const serverLeaves = await MessagesSyncHandler.getServerLeaves(
+          stateIndex,
+          tenant,
+          protocol,
+          projectionSnapshot,
+          bitPath
+        );
+
+        onlyRemoteCids.push(...serverLeaves);
+        if (clientHash !== undefined) {
+          // Both sides have entries but they differ. The client will enumerate
+          // its own leaves for this prefix and de-duplicate server leaves.
+          onlyLocalPrefixes.push(pfx);
+        }
       }
-
-      // Both sides have entries but they differ — enumerate both and set-diff.
-      const bitPath = MessagesSyncHandler.parseBitPrefix(pfx);
-      const serverLeaves = protocol === undefined
-        ? await stateIndex.getLeaves(tenant, bitPath)
-        : await stateIndex.getProtocolLeaves(tenant, protocol, bitPath);
-
-      // We don't have the client's leaves, so we report all server leaves
-      // as onlyRemote (the client will de-duplicate locally). We also
-      // report this prefix as onlyLocal so the client can check its own leaves.
-      onlyRemoteCids.push(...serverLeaves);
-      onlyLocalPrefixes.push(pfx);
+    } finally {
+      await projectionSnapshot?.close();
     }
 
     // Build response entries with inline message data where possible.
@@ -205,18 +296,23 @@ export class MessagesSyncHandler implements MethodHandler {
   private async collectSubtreeHashes(
     tenant: string,
     protocol: string | undefined,
+    projectionSnapshot: RecordsProjectionSnapshot | undefined,
     depth: number,
   ): Promise<Record<string, string>> {
     const stateIndex = this.deps.stateIndex!;
     const result: Record<string, string> = {};
-    const defaultHashHex = await this.getDefaultHashHex(depth);
 
     const walk = async (prefix: string, currentDepth: number): Promise<void> => {
       const bitPath = MessagesSyncHandler.parseBitPrefix(prefix);
-      const hash = protocol === undefined
-        ? await stateIndex.getSubtreeHash(tenant, bitPath)
-        : await stateIndex.getProtocolSubtreeHash(tenant, protocol, bitPath);
+      const hash = await MessagesSyncHandler.getServerSubtreeHash(
+        stateIndex,
+        tenant,
+        protocol,
+        projectionSnapshot,
+        bitPath
+      );
       const hexHash = hashToHex(hash);
+      const defaultHashHex = await this.getDefaultHashHex(currentDepth);
 
       if (hexHash === defaultHashHex) {
         // Empty subtree — don't include in the result.
@@ -238,6 +334,75 @@ export class MessagesSyncHandler implements MethodHandler {
 
     await walk('', 0);
     return result;
+  }
+
+  private async createProjectionSnapshot(
+    tenant: string,
+    projectionScopes: ProjectionScopes | undefined
+  ): Promise<RecordsProjectionSnapshot | undefined> {
+    if (projectionScopes === undefined) {
+      return undefined;
+    }
+
+    return RecordsProjection.createSnapshot({
+      tenant,
+      messageStore : this.deps.messageStore,
+      scopes       : projectionScopes,
+    });
+  }
+
+  private static async getServerLeaves(
+    stateIndex: StateIndex,
+    tenant: string,
+    protocol: string | undefined,
+    projectionSnapshot: RecordsProjectionSnapshot | undefined,
+    bitPath: boolean[]
+  ): Promise<string[]> {
+    if (projectionSnapshot === undefined) {
+      return MessagesSyncHandler.getIndexedLeavesFromStateIndex(stateIndex, tenant, protocol, bitPath);
+    }
+
+    return projectionSnapshot.getLeaves(bitPath);
+  }
+
+  private static async getServerSubtreeHash(
+    stateIndex: StateIndex,
+    tenant: string,
+    protocol: string | undefined,
+    projectionSnapshot: RecordsProjectionSnapshot | undefined,
+    bitPath: boolean[]
+  ): Promise<Uint8Array> {
+    if (projectionSnapshot === undefined) {
+      return MessagesSyncHandler.getIndexedSubtreeHashFromStateIndex(stateIndex, tenant, protocol, bitPath);
+    }
+
+    return projectionSnapshot.getSubtreeHash(bitPath);
+  }
+
+  private static async getIndexedLeavesFromStateIndex(
+    stateIndex: StateIndex,
+    tenant: string,
+    protocol: string | undefined,
+    bitPath: boolean[]
+  ): Promise<string[]> {
+    if (protocol === undefined) {
+      return stateIndex.getLeaves(tenant, bitPath);
+    }
+
+    return stateIndex.getProtocolLeaves(tenant, protocol, bitPath);
+  }
+
+  private static async getIndexedSubtreeHashFromStateIndex(
+    stateIndex: StateIndex,
+    tenant: string,
+    protocol: string | undefined,
+    bitPath: boolean[]
+  ): Promise<Uint8Array> {
+    if (protocol === undefined) {
+      return stateIndex.getSubtreeHash(tenant, bitPath);
+    }
+
+    return stateIndex.getProtocolSubtreeHash(tenant, protocol, bitPath);
   }
 
   /**
@@ -340,6 +505,35 @@ export class MessagesSyncHandler implements MethodHandler {
 
   private static hasEncodedData(message: GenericMessage): message is StoredMessageWithEncodedData {
     return 'encodedData' in message && typeof message.encodedData === 'string';
+  }
+
+  private static getProjectionScopes(
+    message: MessagesSyncMessage,
+  ): ProjectionScopes | undefined {
+    const { projectionScopes } = message.descriptor;
+    if (projectionScopes === undefined) {
+      return undefined;
+    }
+
+    return projectionScopes as [RecordsProjectionScope, ...RecordsProjectionScope[]];
+  }
+
+  private async withProjectionSnapshot<T>(
+    tenant: string,
+    scopes: readonly [RecordsProjectionScope, ...RecordsProjectionScope[]],
+    fn: (snapshot: RecordsProjectionSnapshot) => Promise<T>,
+  ): Promise<T> {
+    const snapshot = await RecordsProjection.createSnapshot({
+      tenant       : tenant,
+      messageStore : this.deps.messageStore,
+      scopes       : scopes,
+    });
+
+    try {
+      return await fn(snapshot);
+    } finally {
+      await snapshot.close();
+    }
   }
 
   /**

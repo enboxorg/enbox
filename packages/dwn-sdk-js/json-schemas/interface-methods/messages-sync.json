@@ -39,6 +39,35 @@
         "protocol": {
           "type": "string"
         },
+        "projectionRootVersion": {
+          "enum": ["records-primary-scope-root-v1"],
+          "type": "string"
+        },
+        "projectionScopes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["protocol"],
+            "properties": {
+              "protocol": {
+                "type": "string"
+              },
+              "protocolPath": {
+                "type": "string",
+                "maxLength": 600
+              },
+              "contextId": {
+                "type": "string",
+                "maxLength": 600
+              }
+            },
+            "not": {
+              "required": ["protocolPath", "contextId"]
+            }
+          }
+        },
         "prefix": {
           "type": "string",
           "pattern": "^[01]*$"
@@ -66,6 +95,28 @@
         }
       },
       "allOf": [
+        {
+          "if": {
+            "required": ["projectionRootVersion"]
+          },
+          "then": {
+            "required": ["projectionScopes"],
+            "not": {
+              "required": ["protocol"]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["projectionScopes"]
+          },
+          "then": {
+            "required": ["projectionRootVersion"],
+            "not": {
+              "required": ["protocol"]
+            }
+          }
+        },
         {
           "if": {
             "properties": { "action": { "const": "subtree" } }

@@ -5,6 +5,7 @@ import type { MessageStore, MessageStoreOptions } from '../types/message-store.j
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
 import { FilterUtility } from '../utils/filter.js';
 import { hashToHex } from '../smt/smt-utils.js';
+import { isRecordsPrimaryProjectionExcludedProtocol } from '../core/constants.js';
 import { lexicographicalCompare } from '../utils/string.js';
 import { Message } from '../core/message.js';
 import { SMTStoreMemory } from '../smt/smt-store-memory.js';
@@ -44,6 +45,14 @@ export type RecordsProjectionTreeInput = RecordsProjectionInput & {
   prefix: boolean[];
 };
 
+export type RecordsProjectionSnapshot = {
+  getRoot(): Promise<Hash>;
+  getRootHex(): Promise<string>;
+  getSubtreeHash(prefix: boolean[]): Promise<Hash>;
+  getLeaves(prefix: boolean[]): Promise<string[]>;
+  close(): Promise<void>;
+};
+
 export type NormalizedRecordsProjectionScope = {
   protocol: string;
 } | {
@@ -57,10 +66,9 @@ export type NormalizedRecordsProjectionScope = {
 /**
  * Computes deterministic on-demand roots for Records projections.
  *
- * Root and leaf lookup methods perform a fresh store query. Production sync
- * serving still needs to thread a consistent snapshot/high-watermark and
- * bounded paging through this primitive before using it for large or
- * concurrently-mutating stores.
+ * The snapshot API performs one store enumeration and serves tree operations
+ * from that in-memory view. A future store-level snapshot/high-watermark can be
+ * threaded through the `options` input without changing the projection shape.
  */
 export class RecordsProjection {
 
@@ -74,7 +82,11 @@ export class RecordsProjection {
     options,
   }: RecordsProjectionInput): Promise<string[]> {
     const filters = RecordsProjection.normalizeScopes(scopes)
+      .filter(scope => !isRecordsPrimaryProjectionExcludedProtocol(scope.protocol))
       .flatMap(scope => RecordsProjection.constructFilters(scope));
+    if (filters.length === 0) {
+      return [];
+    }
 
     const { messages } = await messageStore.query(tenant, filters, undefined, undefined, options);
     const messageCids = await Promise.all(messages.map(message => Message.getCid(message)));
@@ -108,6 +120,20 @@ export class RecordsProjection {
    */
   public static async getLeaves(input: RecordsProjectionTreeInput): Promise<string[]> {
     return RecordsProjection.withTree(input, tree => tree.getLeaves(input.prefix));
+  }
+
+  /**
+   * Builds an in-memory projection tree from one primary-CID enumeration.
+   */
+  public static async createSnapshot(input: RecordsProjectionInput): Promise<RecordsProjectionSnapshot> {
+    const tree = await RecordsProjection.createTree(input);
+    return {
+      close          : () => tree.close(),
+      getLeaves      : (prefix: boolean[]) => tree.getLeaves(prefix),
+      getRoot        : () => tree.getRoot(),
+      getRootHex     : async () => hashToHex(await tree.getRoot()),
+      getSubtreeHash : (prefix: boolean[]) => tree.getSubtreeHash(prefix),
+    };
   }
 
   /**
@@ -158,6 +184,16 @@ export class RecordsProjection {
     input: RecordsProjectionInput,
     fn: (tree: SparseMerkleTree) => Promise<T>,
   ): Promise<T> {
+    const tree = await RecordsProjection.createTree(input);
+
+    try {
+      return await fn(tree);
+    } finally {
+      await tree.close();
+    }
+  }
+
+  private static async createTree(input: RecordsProjectionInput): Promise<SparseMerkleTree> {
     const tree = new SparseMerkleTree(new SMTStoreMemory());
     await tree.initialize();
 
@@ -166,9 +202,11 @@ export class RecordsProjection {
       for (const messageCid of messageCids) {
         await tree.insert(messageCid);
       }
-      return await fn(tree);
-    } finally {
+
+      return tree;
+    } catch (error) {
       await tree.close();
+      throw error;
     }
   }
 

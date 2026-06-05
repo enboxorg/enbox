@@ -50,6 +50,12 @@ export type MessagesSyncDescriptor = {
   messageTimestamp : string;
   action : MessagesSyncAction;
   protocol? : string; // optional protocol scope
+  projectionRootVersion?: string;
+  projectionScopes?: {
+    protocol: string;
+    protocolPath?: string;
+    contextId?: string;
+  }[];
   prefix? : string; // bit path for subtree/leaves (e.g. "0110101...")
   permissionGrantIds? : string[];
   /**

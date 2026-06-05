@@ -104,7 +104,7 @@ export { SMTStoreMemory } from './smt/smt-store-memory.js';
 export type { Hash, SMTNode, SMTInternalNode, SMTLeafNode, SMTProof, SMTDiffResult, SMTNodeStore } from './types/smt-types.js';
 export { hashChildren, hashEquals, hashKey, hashLeaf, hashToHex, hexToHash, getBit, initDefaultHashes, getDefaultHashes, SMT_DEPTH, ZERO_HASH } from './smt/smt-utils.js';
 export { RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection } from './sync/records-projection.js';
-export type { NormalizedRecordsProjectionScope, RecordsProjectionInput, RecordsProjectionScope, RecordsProjectionTreeInput } from './sync/records-projection.js';
+export type { NormalizedRecordsProjectionScope, RecordsProjectionInput, RecordsProjectionScope, RecordsProjectionSnapshot, RecordsProjectionTreeInput } from './sync/records-projection.js';
 
 // test library exports
 export type { GenerateFromRecordsWriteInput, GenerateFromRecordsWriteOut, GenerateGrantCreateInput, GenerateGrantCreateOutput, GenerateMessagesReadInput, GenerateMessagesReadOutput, GenerateMessagesSubscribeInput, GenerateMessagesSubscribeOutput, GenerateProtocolsConfigureInput, GenerateProtocolsConfigureOutput, GenerateProtocolsQueryInput, GenerateProtocolsQueryOutput, GenerateRecordsCountInput, GenerateRecordsCountOutput, GenerateRecordsDeleteInput, GenerateRecordsDeleteOutput, GenerateRecordsQueryInput, GenerateRecordsQueryOutput, GenerateRecordsSubscribeInput, GenerateRecordsSubscribeOutput, GenerateRecordsWriteInput, GenerateRecordsWriteOutput, Persona } from '../tests/utils/test-data-generator.js';
