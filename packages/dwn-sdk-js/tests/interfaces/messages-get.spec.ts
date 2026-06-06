@@ -90,10 +90,10 @@ describe('MessagesRead Message', () => {
         signer: await Jws.createSigner(author),
         messageCid,
       });
-      const messageWithLegacyGrant = structuredClone(messagesRead.message) as any;
-      messageWithLegacyGrant.descriptor.permissionGrantId = 'grant-a';
+      const messageWithSingularGrant = structuredClone(messagesRead.message) as any;
+      messageWithSingularGrant.descriptor.permissionGrantId = 'grant-a';
 
-      await expect(MessagesRead.parse(messageWithLegacyGrant)).rejects.toThrow(DwnErrorCode.SchemaValidatorAdditionalPropertyNotAllowed);
+      await expect(MessagesRead.parse(messageWithSingularGrant)).rejects.toThrow(DwnErrorCode.SchemaValidatorAdditionalPropertyNotAllowed);
     });
 
     it('does not include permissionGrantIds in the descriptor when not provided', async () => {

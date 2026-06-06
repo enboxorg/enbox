@@ -146,7 +146,7 @@ export class GrantAuthorization {
     }
 
     // Messages.Read is the only valid Messages scope and covers Read, Subscribe, and Sync operations.
-    // Reject any Messages grant with method !== Read (malformed or legacy stored data).
+    // Reject any Messages grant with method !== Read.
     if (dwnInterface === DwnInterfaceName.Messages) {
       if (permissionGrant.scope.method !== DwnMethodName.Read) {
         throw new DwnError(

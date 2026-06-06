@@ -330,10 +330,10 @@ export class MessagesGrantAuthorization {
     protocolsConfigureMessage: ProtocolsConfigureMessage,
     incomingScope: MessagesPermissionScope
   ): boolean {
-    return PermissionScopeMatcher.matches(
-      incomingScope,
-      { protocol: protocolsConfigureMessage.descriptor.definition.protocol }
-    );
+    // A delegate with any Messages.Read grant inside a protocol needs that
+    // protocol definition to interpret and validate the records it can read.
+    return incomingScope.protocol !== undefined &&
+      incomingScope.protocol === protocolsConfigureMessage.descriptor.definition.protocol;
   }
 
   private static async getAssociatedRecordsWrite(
