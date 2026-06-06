@@ -775,7 +775,6 @@ describe('SyncEngineLevel — identity management', () => {
       }));
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await (engine as any).addIdentityToLiveSync('did:example:proto', {
         protocols: ['https://proto1.example', 'https://proto2.example'],
@@ -815,7 +814,6 @@ describe('SyncEngineLevel — identity management', () => {
       }));
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await (engine as any).addIdentityToLiveSync('did:example:full', { protocols: 'all' });
 
@@ -846,7 +844,6 @@ describe('SyncEngineLevel — identity management', () => {
         saveLink  : sinon.stub().resolves(),
         setStatus : sinon.stub().resolves(),
       }));
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       const pullCloseSpy = sinon.stub().resolves();
       sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (target: any) => {
