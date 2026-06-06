@@ -133,86 +133,6 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // getCursor (legacy migration helper)
-  // ---------------------------------------------------------------------------
-
-  describe('cursor persistence', () => {
-    it('should return undefined when cursor does not exist', async () => {
-      const cursor = await (syncEngine as any).getCursor('nonexistent-key');
-      expect(cursor).toBeUndefined();
-    });
-
-    it('should return undefined and delete legacy string cursors', async () => {
-      // Simulate an old-format string cursor stored before the ProgressToken migration.
-      const cursors = db.sublevel('syncCursors');
-      await cursors.put('legacy-key', 'old-string-cursor-42');
-      const cursor = await (syncEngine as any).getCursor('legacy-key');
-      expect(cursor).toBeUndefined();
-      // The invalid entry should have been deleted so it is not re-checked on
-      // every subsequent startup.
-      await expect(cursors.get('legacy-key')).rejects.toMatchObject({ code: 'LEVEL_NOT_FOUND' });
-    });
-
-    it('should return undefined and delete tokens with empty messageCid', async () => {
-      // A corrupted token with empty messageCid should be discarded and deleted —
-      // it would fail MessagesSubscribe JSON schema validation (minLength: 1).
-      const cursors = db.sublevel('syncCursors');
-      await cursors.put('bad-cid-key', JSON.stringify({
-        streamId: 's1', epoch: 'e1', position: '5', messageCid: '',
-      }));
-      const cursor = await (syncEngine as any).getCursor('bad-cid-key');
-      expect(cursor).toBeUndefined();
-      await expect(cursors.get('bad-cid-key')).rejects.toMatchObject({ code: 'LEVEL_NOT_FOUND' });
-    });
-
-    it('should return undefined and delete tokens with empty streamId', async () => {
-      const cursors = db.sublevel('syncCursors');
-      await cursors.put('bad-stream-key', JSON.stringify({
-        streamId: '', epoch: 'e1', position: '5', messageCid: 'cid-5',
-      }));
-      const cursor = await (syncEngine as any).getCursor('bad-stream-key');
-      expect(cursor).toBeUndefined();
-      await expect(cursors.get('bad-stream-key')).rejects.toMatchObject({ code: 'LEVEL_NOT_FOUND' });
-    });
-
-    it('should rethrow non-LEVEL_NOT_FOUND errors from getCursor', async () => {
-      const ioError = new Error('IO error') as Error & { code: string };
-      ioError.code = 'LEVEL_IO_ERROR';
-      const cursors = db.sublevel('syncCursors');
-      sinon.stub(cursors, 'get').rejects(ioError);
-      sinon.stub(db, 'sublevel').returns(cursors as any);
-
-      await expect((syncEngine as any).getCursor('key')).rejects.toThrow();
-    });
-
-    it('should not migrate legacy cursors into projected links', async () => {
-      const engine = createEngine({ db });
-      const getCursorStub = sinon.stub(engine as any, 'getCursor').resolves({
-        streamId   : 'stream',
-        epoch      : 'epoch',
-        position   : '1',
-        messageCid : 'cid',
-      });
-      const link = {
-        pull: {},
-      };
-
-      await (engine as any).migrateLegacyCursorIfNeeded(syncTarget('did:example:alice', 'https://dwn.example.com', {
-        scope: {
-          kind   : 'recordsProjection',
-          scopes : [{
-            protocol     : 'https://example.com/profile',
-            protocolPath : 'profile/avatar',
-          }],
-        },
-      }), link);
-
-      expect(getCursorStub.called).toBe(false);
-      expect(link.pull).toEqual({});
-    });
-  });
-
-  // ---------------------------------------------------------------------------
   // extractDataStream
   // ---------------------------------------------------------------------------
 
@@ -801,8 +721,8 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com', { scope: projectedScope }),
       ]);
-      const legacyLocalRoot = sinon.stub(engine as any, 'getLocalRoot').resolves('legacy-local');
-      const legacyRemoteRoot = sinon.stub(engine as any, 'getRemoteRoot').resolves('legacy-remote');
+      const stateIndexLocalRoot = sinon.stub(engine as any, 'getLocalRoot').resolves('state-index-local');
+      const stateIndexRemoteRoot = sinon.stub(engine as any, 'getRemoteRoot').resolves('state-index-remote');
       sinon.stub(engine as any, 'getLocalProjectedRoot').resolves('aabbcc');
       sinon.stub(engine as any, 'getRemoteProjectedRoot').resolves('ddeeff');
       sinon.stub(engine as any, 'diffProjectedWithRemote').resolves({
@@ -814,8 +734,8 @@ describe('SyncEngineLevel — private methods', () => {
 
       await engine.sync();
 
-      expect(legacyLocalRoot.called).toBe(false);
-      expect(legacyRemoteRoot.called).toBe(false);
+      expect(stateIndexLocalRoot.called).toBe(false);
+      expect(stateIndexRemoteRoot.called).toBe(false);
       expect(pullStub.firstCall.args[0].scope).toEqual(projectedScope);
       expect(pushStub.firstCall.args[0].messageCids).toEqual(['cid-local-1']);
     });
@@ -1241,7 +1161,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(link);
       sinon.stub(engine as any, 'getReplicationLinkKey').returns(linkKey);
-      sinon.stub(engine as any, 'migrateLegacyCursorIfNeeded').resolves();
       sinon.stub(engine as any, 'openLivePullSubscription').callsFake(async (): Promise<void> => {
         (engine as any)._liveSubscriptions.push({ linkKey, did: link.tenantDid, dwnUrl: link.remoteEndpoint, close: closePull });
         link.status = 'repairing';
@@ -1283,7 +1202,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(link);
       sinon.stub(engine as any, 'getReplicationLinkKey').returns(linkKey);
-      sinon.stub(engine as any, 'migrateLegacyCursorIfNeeded').resolves();
       const openLivePullStub = sinon.stub(engine as any, 'openLivePullSubscription').rejects(new Error('unexpected live pull'));
       const openLocalPushStub = sinon.stub(engine as any, 'openLocalPushSubscription').rejects(new Error('unexpected local push'));
 
@@ -1371,7 +1289,6 @@ describe('SyncEngineLevel — private methods', () => {
     it('should open a subscription and add it to _liveSubscriptions', async () => {
       const { agent, rpcStub } = createPullMockAgent();
       const engine = createEngine({ db, agent });
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await (engine as any).openLivePullSubscription(fullPullTarget());
 
@@ -1387,7 +1304,6 @@ describe('SyncEngineLevel — private methods', () => {
         subscription : undefined,
       });
       const engine = createEngine({ db, agent });
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await expect(
         (engine as any).openLivePullSubscription(fullPullTarget())
@@ -1399,7 +1315,6 @@ describe('SyncEngineLevel — private methods', () => {
     it('should include one subscription filter per protocol in a protocol-set scope', async () => {
       const { agent, processRequestStub } = createPullMockAgent();
       const engine = createEngine({ db, agent });
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await (engine as any).openLivePullSubscription(fullPullTarget({
         scope: {
@@ -1419,7 +1334,6 @@ describe('SyncEngineLevel — private methods', () => {
     it('should include delegate grant IDs when provided by the sync target', async () => {
       const { agent, processRequestStub } = createPullMockAgent();
       const engine = createEngine({ db, agent });
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       await (engine as any).openLivePullSubscription(fullPullTarget({
         delegateDid   : 'did:example:delegate',
@@ -1442,7 +1356,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent });
       const savedCursor = { streamId: 's1', epoch: 'e1', position: '42', messageCid: 'cid-42' };
 
-      // Set cursor on the link's pull checkpoint (not legacy getCursor).
+      // Set cursor on the link's durable pull checkpoint.
       const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
       const link = {
         tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
@@ -3752,7 +3666,6 @@ describe('SyncEngineLevel — private methods', () => {
         rpc      : { sendDwnRequest: rpcStub },
       } as any;
       const engine = createEngine({ db, agent });
-      sinon.stub(engine as any, 'getCursor').resolves(undefined);
 
       try {
         await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', {

@@ -47,7 +47,7 @@ export type SyncMode = 'poll' | 'live';
 // ---------------------------------------------------------------------------
 
 /**
- * Projection-root algorithm used by the legacy full/protocol sync scopes.
+ * Projection-root algorithm used by StateIndex full/protocol sync scopes.
  *
  * Sync compares either the existing full-tenant StateIndex root or existing
  * per-protocol StateIndex roots. Records-primary projection scopes use the
@@ -153,7 +153,7 @@ export function protocolsForSyncScope(scope: SyncScope): NonEmptyStringArray | u
   return normalizeSyncProtocols(scope.scopes.map(scope => scope.protocol));
 }
 
-/** Returns the single legacy protocol root covered by a scope, if any. */
+/** Returns the single protocol root covered by a protocol-set scope, if any. */
 export function singleProtocolForSyncScope(scope: SyncScope): string | undefined {
   return scope.kind === 'protocolSet' && scope.protocols.length === 1 ? scope.protocols[0] : undefined;
 }
@@ -382,7 +382,7 @@ export type StartSyncParams = {
    *   push. Falls back to SMT reconciliation on cold start or long disconnect.
    *   An infrequent SMT integrity check still runs at `interval`.
    *
-   * - `'poll'`: Legacy mode. Performs a full SMT set-reconciliation sync on a
+   * - `'poll'`: Performs a full SMT set-reconciliation sync on a
    *   fixed interval. No WebSocket subscriptions are used.
    */
   mode?: SyncMode;

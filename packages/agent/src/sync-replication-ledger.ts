@@ -75,7 +75,6 @@ export class ReplicationLedger {
     try {
       const raw = await this.sublevel.get(key);
       const link = JSON.parse(raw) as ReplicationLinkState;
-      delete (link as any).push; // strip legacy push field from old persisted links
       // connectivity is runtime state — always reset to 'unknown' on load
       // so stale 'online' from a previous session doesn't give false positives.
       link.connectivity = 'unknown';

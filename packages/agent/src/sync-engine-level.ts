@@ -19,12 +19,12 @@ import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResu
 import { AgentPermissionsApi } from './permissions-api.js';
 import type { DwnMessageParams } from './types/dwn.js';
 
+import { buildLinkId } from './sync-link-id.js';
 import { DwnInterface } from './types/dwn.js';
 import { evaluateClosure } from './sync-closure-resolver.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
-import { buildLegacyCursorKey, buildLinkId } from './sync-link-id.js';
 import { classifySyncEventScope, classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { computeAuthorizationEpoch, computeProjectionId, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { createClosureContext, invalidateClosureCache, isTerminalClosureFailureCode } from './sync-closure-types.js';
@@ -39,7 +39,7 @@ export type SyncEngineLevelParams = {
 };
 
 /**
- * Maximum bit prefix depth for the per-node tree walk (legacy fallback).
+ * Maximum bit prefix depth for the per-node tree walk fallback.
  * At depth 16, each subtree covers ~1/65536 of the key space.
  */
 const MAX_DIFF_DEPTH = 16;
@@ -761,7 +761,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Poll-mode sync (legacy)
+  // Poll-mode sync
   // ---------------------------------------------------------------------------
 
   private async startPollSync(intervalMilliseconds: number): Promise<void> {
@@ -1517,15 +1517,13 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Initialize a single replication link target: create or resume the durable
-   * link, migrate legacy cursors, open pull + push subscriptions, and
-   * transition the link to `'live'`.
+   * link, open pull + push subscriptions, and transition the link to `'live'`.
    */
   private async initializeLinkTarget(target: SyncTarget): Promise<LinkInitializationResult> {
     let link: ReplicationLinkState | undefined;
     try {
       link = await this.getOrCreateReplicationLink(target);
       const linkKey = this.getReplicationLinkKey(target, link);
-      await this.migrateLegacyCursorIfNeeded(target, link);
       this._activeLinks.set(linkKey, link);
       if (link.status === 'terminal_incomplete') {
         return this.createActiveLinkInitializationResult(link);
@@ -1556,25 +1554,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   private getReplicationLinkKey(target: SyncTarget, link: ReplicationLinkState): string {
     return this.buildLinkKey(target.did, target.dwnUrl, link.projectionId, link.authorizationEpoch);
-  }
-
-  private async migrateLegacyCursorIfNeeded(target: SyncTarget, link: ReplicationLinkState): Promise<void> {
-    if (link.pull.contiguousAppliedToken) {
-      return;
-    }
-    if (target.scope.kind === 'recordsProjection') {
-      return;
-    }
-
-    const legacyKey = buildLegacyCursorKey(target.did, target.dwnUrl, singleProtocolForSyncScope(target.scope));
-    const legacyCursor = await this.getCursor(legacyKey);
-    if (!legacyCursor) {
-      return;
-    }
-
-    ReplicationLedger.resetCheckpoint(link.pull, legacyCursor);
-    await this.ledger.saveLink(link);
-    await this.deleteLegacyCursor(legacyKey);
   }
 
   private async openLinkSubscriptions(target: LinkSyncTarget): Promise<LinkSubscriptionOpenResult> {
@@ -1637,11 +1616,8 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState | undefined,
     error: any,
   ): Promise<LinkInitializationResult> {
-    const linkKey = link
-      ? this.getReplicationLinkKey(target, link)
-      : buildLegacyCursorKey(target.did, target.dwnUrl, singleProtocolForSyncScope(target.scope));
-
     if (error.isProgressGap && link) {
+      const linkKey = this.getReplicationLinkKey(target, link);
       console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
       this.emitEvent({
         type           : 'gap:detected',
@@ -1657,7 +1633,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
-    this.cleanupFailedLinkInitialization(linkKey);
+    if (link) {
+      this.cleanupFailedLinkInitialization(this.getReplicationLinkKey(target, link));
+    }
     if (this.isDidResolutionFailure(error)) {
       throw error;
     }
@@ -1959,8 +1937,7 @@ export class SyncEngineLevel implements SyncEngine {
     dwnUrl: string;
     link?: ReplicationLinkState;
   }): Promise<ProgressToken | undefined> {
-    // Resolve the cursor from the link's durable pull checkpoint. Legacy
-    // syncCursors migration happens during link initialization.
+    // Resolve the cursor from the link's durable pull checkpoint.
     if (!link) {
       return undefined;
     }
@@ -2443,10 +2420,9 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
     }
 
-    const linkKey = target.linkKey ?? buildLegacyCursorKey(did, dwnUrl, protocol);
     const close = async (): Promise<void> => { await reply.subscription!.close(); };
     this._localSubscriptions.push({
-      linkKey,
+      linkKey: target.linkKey,
       did,
       dwnUrl,
       delegateDid,
@@ -3029,7 +3005,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (scope.kind === 'recordsProjection' || (scope.kind === 'protocolSet' && scope.protocols.length > 1)) {
       // Batched multi-protocol and projected pulls pass the full scope to
       // pullMessages, so pull dead letters can be recorded without a single
-      // legacy protocol key.
+      // protocol bucket.
       await this.clearRootConvergenceDeadLetters(tenantDid, remoteEndpoint);
     }
 
@@ -3186,58 +3162,6 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private buildLinkKey(did: string, dwnUrl: string, projectionId: string, authorizationEpoch: string): string {
     return buildLinkId(did, dwnUrl, projectionId, authorizationEpoch);
-  }
-
-  /**
-   * @deprecated Used by poll-mode sync and one-time migration only. Live mode
-   * uses ReplicationLedger checkpoints. Handles migration from old string cursors:
-   * if the stored value is a bare string (pre-ProgressToken format), it is treated
-   * as absent — the sync engine will do a full SMT reconciliation on first startup
-   * after upgrade, which is correct and safe.
-   */
-  private async getCursor(key: string): Promise<ProgressToken | undefined> {
-    const cursors = this._db.sublevel('syncCursors');
-    try {
-      const raw = await cursors.get(key);
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object' &&
-            typeof parsed.streamId === 'string' && parsed.streamId.length > 0 &&
-            typeof parsed.epoch === 'string' && parsed.epoch.length > 0 &&
-            typeof parsed.position === 'string' && parsed.position.length > 0 &&
-            typeof parsed.messageCid === 'string' && parsed.messageCid.length > 0) {
-          return parsed as ProgressToken;
-        }
-      } catch {
-        // Not valid JSON (old string cursor) — fall through to delete.
-      }
-      // Entry exists but is unparseable or has invalid/empty fields. Delete it
-      // so subsequent startups don't re-check it on every launch.
-      await this.deleteLegacyCursor(key);
-      return undefined;
-    } catch (error) {
-      const e = error as { code: string };
-      if (e.code === 'LEVEL_NOT_FOUND') {
-        return undefined;
-      }
-      throw error;
-    }
-  }
-
-
-  /**
-   * Delete a legacy cursor from the old syncCursors sublevel.
-   * Called as part of one-time migration to ReplicationLedger.
-   */
-  private async deleteLegacyCursor(key: string): Promise<void> {
-    const cursors = this._db.sublevel('syncCursors');
-    try {
-      await cursors.del(key);
-    } catch {
-      // Best-effort — ignore LEVEL_NOT_FOUND and transient I/O errors alike.
-      // A failed delete leaves the bad entry for one more re-check on the
-      // next startup, which is harmless.
-    }
   }
 
   // ---------------------------------------------------------------------------

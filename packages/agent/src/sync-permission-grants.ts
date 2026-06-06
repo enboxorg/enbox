@@ -61,7 +61,7 @@ export async function getMessagesPermissionGrantsForScope({
 /**
  * Resolves active Messages.Read grants into one or more sync targets.
  *
- * Broad protocol coverage remains on legacy full/protocol roots. Exact
+ * Broad protocol coverage remains on StateIndex full/protocol roots. Exact
  * protocolPath and contextId grants are grouped into a Records-primary
  * projection target so a narrow grant never authorizes a broad protocol root.
  */
@@ -178,7 +178,7 @@ function broadProtocolResolution(
 
   const protocols = [...new Set(broadProtocols)].sort(lexicographicalCompare) as NonEmptyStringArray;
   const grants = permissionGrants
-    .filter(entry => grantParticipatesInLegacyProtocolSet(entry, protocols))
+    .filter(entry => grantParticipatesInProtocolSet(entry, protocols))
     .sort((a, b) => lexicographicalCompare(a.grant.id, b.grant.id));
 
   return [{
@@ -225,7 +225,7 @@ function isMessagesReadScope(scope: PermissionGrantEntry['grant']['scope']): sco
     scope.method === 'Read';
 }
 
-function grantParticipatesInLegacyProtocolSet(
+function grantParticipatesInProtocolSet(
   entry: PermissionGrantEntry,
   protocols: NonEmptyStringArray,
 ): boolean {

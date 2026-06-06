@@ -169,7 +169,7 @@ describe('sync scope identity', () => {
     expect(oldEpoch).not.toBe(newEpoch);
   });
 
-  it('uses distinct projection IDs for legacy protocol roots and Records-primary projection roots', async () => {
+  it('uses distinct projection IDs for StateIndex protocol roots and Records-primary projection roots', async () => {
     const tenantDid = 'did:example:alice';
     const protocolScope = syncScopeFromProtocols(['https://example.com/profile']);
     const projectedScope = syncScopeFromRecordsProjectionScopes([
