@@ -2879,30 +2879,23 @@ export class SyncEngineLevel implements SyncEngine {
     options?: ProjectionReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<boolean> {
-    if (await this.pullProtocolSetRemoteDiff(target, scope, diffPlan.onlyRemote, permissionGrantIds, options, shouldContinue)) {
-      return true;
-    }
-
-    return this.pushProtocolSetLocalDiff(target, diffPlan.onlyLocal, permissionGrantIds, options, shouldContinue);
-  }
-
-  private async pullProtocolSetRemoteDiff(
-    target: ProjectionReconcileTarget,
-    scope: ProtocolSetScope,
-    onlyRemote: MessagesSyncDiffEntry[],
-    permissionGrantIds: NonEmptyStringArray | undefined,
-    options?: ProjectionReconcileOptions,
-    shouldContinue?: () => boolean,
-  ): Promise<boolean> {
-    if (options?.direction === 'push' || onlyRemote.length === 0) {
-      return false;
-    }
-
     // Keep the remote diff combined across protocols so topologicalSort can
     // order composed protocol configs before records that use them. Any future
     // chunking for large protocol sets must preserve this global dependency
     // order instead of reverting to independent per-protocol chunks.
-    return this.pullRemoteDiffEntries(target, scope, onlyRemote, permissionGrantIds, shouldContinue);
+    if (
+      options?.direction !== 'push' &&
+      diffPlan.onlyRemote.length > 0 &&
+      await this.pullRemoteDiffEntries(target, scope, diffPlan.onlyRemote, permissionGrantIds, shouldContinue)
+    ) {
+      return true;
+    }
+
+    if (options?.direction === 'pull' || diffPlan.onlyLocal.length === 0) {
+      return false;
+    }
+
+    return this.pushLocalDiffEntries(target, diffPlan.onlyLocal, permissionGrantIds, shouldContinue);
   }
 
   private async applyProjectedDiff(
@@ -2936,20 +2929,6 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async pushProjectedLocalDiff(
-    target: ProjectionReconcileTarget,
-    onlyLocal: string[],
-    permissionGrantIds: NonEmptyStringArray | undefined,
-    options?: ProjectionReconcileOptions,
-    shouldContinue?: () => boolean,
-  ): Promise<boolean> {
-    if (options?.direction === 'pull' || onlyLocal.length === 0) {
-      return false;
-    }
-
-    return this.pushLocalDiffEntries(target, onlyLocal, permissionGrantIds, shouldContinue);
-  }
-
-  private async pushProtocolSetLocalDiff(
     target: ProjectionReconcileTarget,
     onlyLocal: string[],
     permissionGrantIds: NonEmptyStringArray | undefined,

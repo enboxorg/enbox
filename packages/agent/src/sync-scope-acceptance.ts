@@ -13,6 +13,9 @@ type SyncMessageScopeClassificationParams = {
   scope: SyncScope;
 };
 
+type ProtocolSetSyncScope = Extract<SyncScope, { kind: 'protocolSet' }>;
+type RecordsProjectionSyncScope = Extract<SyncScope, { kind: 'recordsProjection' }>;
+
 /**
  * Classifies whether a live event belongs to the link's current sync scope.
  *
@@ -46,31 +49,62 @@ export function classifySyncMessageScope({
     return classifyRecordsProjectionScope(message, initialWrite, scope);
   }
 
+  return classifyProtocolSetScope(message, initialWrite, scope);
+}
+
+function classifyProtocolSetScope(
+  message: GenericMessage,
+  initialWrite: RecordsWriteMessage | undefined,
+  scope: ProtocolSetSyncScope,
+): SyncScopeClassification {
   const descriptor = message.descriptor as Record<string, unknown>;
   const scopedDescriptor = getScopedMessageDescriptor(message, initialWrite);
   if (scopedDescriptor === undefined) {
     return 'unknown';
   }
 
-  const protocol = scopedDescriptor.protocol;
-  if (protocol === PermissionsProtocol.uri && isRecordObject(scopedDescriptor.tags)) {
-    const taggedProtocol = scopedDescriptor.tags.protocol;
-    return typeof taggedProtocol === 'string' && scope.protocols.includes(taggedProtocol)
-      ? 'in-scope'
-      : 'out-of-scope';
+  const permissionRecordClassification = classifyTaggedPermissionRecord(scopedDescriptor, scope.protocols);
+  if (permissionRecordClassification !== undefined) { return permissionRecordClassification; }
+
+  const protocolClassification = classifyProtocolField(scopedDescriptor.protocol, scope.protocols);
+  if (protocolClassification !== undefined) { return protocolClassification; }
+
+  return classifyProtocolsConfigureDescriptor(descriptor, scope.protocols);
+}
+
+function classifyTaggedPermissionRecord(
+  descriptor: Record<string, unknown>,
+  protocols: readonly string[],
+): SyncScopeClassification | undefined {
+  if (descriptor.protocol !== PermissionsProtocol.uri || !isRecordObject(descriptor.tags)) {
+    return undefined;
   }
 
-  if (typeof protocol === 'string') {
-    return scope.protocols.includes(protocol) ? 'in-scope' : 'out-of-scope';
+  const taggedProtocol = descriptor.tags.protocol;
+  return typeof taggedProtocol === 'string' && protocols.includes(taggedProtocol)
+    ? 'in-scope'
+    : 'out-of-scope';
+}
+
+function classifyProtocolField(protocol: unknown, protocols: readonly string[]): SyncScopeClassification | undefined {
+  if (typeof protocol !== 'string') {
+    return undefined;
   }
 
+  return protocols.includes(protocol) ? 'in-scope' : 'out-of-scope';
+}
+
+function classifyProtocolsConfigureDescriptor(
+  descriptor: Record<string, unknown>,
+  protocols: readonly string[],
+): SyncScopeClassification {
   if (
     descriptor.interface === DwnInterfaceName.Protocols &&
     descriptor.method === DwnMethodName.Configure &&
     isRecordObject(descriptor.definition)
   ) {
     const definitionProtocol = descriptor.definition.protocol;
-    return typeof definitionProtocol === 'string' && scope.protocols.includes(definitionProtocol)
+    return typeof definitionProtocol === 'string' && protocols.includes(definitionProtocol)
       ? 'in-scope'
       : 'out-of-scope';
   }
@@ -96,7 +130,7 @@ function getScopedMessageDescriptor(
 function classifyRecordsProjectionScope(
   message: GenericMessage,
   initialWrite: RecordsWriteMessage | undefined,
-  scope: Extract<SyncScope, { kind: 'recordsProjection' }>,
+  scope: RecordsProjectionSyncScope,
 ): SyncScopeClassification {
   const target = getRecordsProjectionTarget(message, initialWrite);
   if (target === undefined) {
