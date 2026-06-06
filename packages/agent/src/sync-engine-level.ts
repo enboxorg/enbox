@@ -1,13 +1,13 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, RecordsWriteMessage, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, RecordsProjectionScope, RecordsWriteMessage, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
 import { Level } from 'level';
 import { sleep } from '@enbox/common';
-import { DwnInterfaceName, DwnMethodName, Encoder, hashToHex, initDefaultHashes, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Encoder, hashToHex, initDefaultHashes, Message, RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -17,18 +17,20 @@ import type { SyncScopeClassification } from './sync-scope-acceptance.js';
 import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
+import type { DwnMessageParams } from './types/dwn.js';
+
+import { buildLinkId } from './sync-link-id.js';
 import { DwnInterface } from './types/dwn.js';
 import { evaluateClosure } from './sync-closure-resolver.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
-import { buildLegacyCursorKey, buildLinkId } from './sync-link-id.js';
 import { classifySyncEventScope, classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { computeAuthorizationEpoch, computeProjectionId, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { createClosureContext, invalidateClosureCache, isTerminalClosureFailureCode } from './sync-closure-types.js';
 import { fetchRemoteMessages, getMessageCid, pullMessages, pushMessages, SyncPullAbortedError } from './sync-messages.js';
-import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 import { partitionRemoteEntries, SyncLinkReconciler } from './sync-link-reconciler.js';
+import { permissionGrantIdsFromEntries, resolveMessagesSyncScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
 export type SyncEngineLevelParams = {
   agent?: EnboxPlatformAgent;
@@ -37,7 +39,7 @@ export type SyncEngineLevelParams = {
 };
 
 /**
- * Maximum bit prefix depth for the per-node tree walk (legacy fallback).
+ * Maximum bit prefix depth for the per-node tree walk fallback.
  * At depth 16, each subtree covers ~1/65536 of the key space.
  */
 const MAX_DIFF_DEPTH = 16;
@@ -87,12 +89,13 @@ type SyncTarget = {
   permissionGrantIds?: NonEmptyStringArray;
 };
 
-type SyncTargetAuthorization = Pick<SyncTarget, 'authorization' | 'authorizationEpoch' | 'delegateDid' | 'permissionGrantIds'>;
+type SyncTargetResolution = Pick<SyncTarget, 'authorization' | 'authorizationEpoch' | 'delegateDid' | 'permissionGrantIds' | 'scope'>;
 
 type LinkSyncTarget = SyncTarget & { linkKey: string };
 
 enum LinkSubscriptionOpenResult {
   ReadyForLive = 'readyForLive',
+  Polling = 'polling',
   Repairing = 'repairing',
 }
 
@@ -127,7 +130,13 @@ type ProjectionReconcileResult = {
   converged?: boolean;
 };
 
+type ProjectionDiffResult = {
+  onlyRemote: MessagesSyncDiffEntry[];
+  onlyLocal: string[];
+};
+
 type ProtocolSetScope = Extract<SyncScope, { kind: 'protocolSet' }>;
+type RecordsProjectionSyncScope = Extract<SyncScope, { kind: 'recordsProjection' }>;
 
 type ProtocolSetDiffPlan = {
   changedProtocols: string[];
@@ -205,11 +214,16 @@ type PullDelivery = {
 };
 
 function syncEventScope(scope: SyncScope | undefined): SyncEventScope {
-  if (scope === undefined || scope.kind === 'full') {
+  if (scope === undefined) {
     return {};
   }
 
-  const protocols = [...scope.protocols] as NonEmptyStringArray;
+  const coveredProtocols = protocolsForSyncScope(scope);
+  if (coveredProtocols === undefined) {
+    return {};
+  }
+
+  const protocols = [...coveredProtocols] as NonEmptyStringArray;
   return protocols.length === 1
     ? { protocol: protocols[0], protocols }
     : { protocols };
@@ -326,55 +340,58 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async buildSyncTarget(did: string, dwnUrl: string, options: SyncIdentityOptions): Promise<SyncTarget> {
-    const scope = syncScopeFromProtocols(options.protocols);
-    const authorization = await this.buildSyncTargetAuthorization(did, scope, options);
+  private async buildSyncTargetsForEndpoint(did: string, dwnUrl: string, options: SyncIdentityOptions): Promise<SyncTarget[]> {
+    const requestedScope = syncScopeFromProtocols(options.protocols);
+    const resolutions = await this.buildSyncTargetResolutions(did, requestedScope, options);
 
-    return {
+    return resolutions.map(resolution => ({
       did,
       dwnUrl,
-      scope,
-      ...authorization,
-    };
+      ...resolution,
+    }));
   }
 
-  private async buildSyncTargetAuthorization(did: string, scope: SyncScope, options: SyncIdentityOptions): Promise<SyncTargetAuthorization> {
-    const protocols = protocolsForSyncScope(scope);
+  private async buildSyncTargetResolutions(did: string, requestedScope: SyncScope, options: SyncIdentityOptions): Promise<SyncTargetResolution[]> {
     const { delegateDid } = options;
 
     if (delegateDid === undefined) {
-      return {
+      return [{
+        scope              : requestedScope,
         authorization      : { kind: 'owner' },
         authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
-      };
+      }];
     }
 
-    const permissionGrants = await getMessagesPermissionGrantsForScope({
+    const resolvedScopes = await resolveMessagesSyncScopes({
       did,
       delegateDid,
-      protocols,
+      requestedScope,
       messageType    : DwnInterface.MessagesSync,
       permissionsApi : this._permissionsApi,
     });
-    const permissionGrantIds = permissionGrantIdsFromEntries(permissionGrants);
-    if (permissionGrantIds === undefined) {
-      throw new Error(`SyncEngineLevel: delegate ${delegateDid} has no active sync grants for ${did}.`);
-    }
 
-    return {
-      delegateDid,
-      authorization: {
-        kind: 'delegate',
+    return Promise.all(resolvedScopes.map(async ({ scope, permissionGrants }) => {
+      const permissionGrantIds = permissionGrantIdsFromEntries(permissionGrants);
+      if (permissionGrantIds === undefined) {
+        throw new Error(`SyncEngineLevel: delegate ${delegateDid} has no active sync grants for ${did}.`);
+      }
+
+      return {
+        scope,
         delegateDid,
+        authorization: {
+          kind: 'delegate' as const,
+          delegateDid,
+          permissionGrantIds,
+        },
+        authorizationEpoch: await computeAuthorizationEpoch({
+          kind   : 'delegate' as const,
+          delegateDid,
+          grants : toSyncAuthorizationGrants(permissionGrants),
+        }),
         permissionGrantIds,
-      },
-      authorizationEpoch: await computeAuthorizationEpoch({
-        kind   : 'delegate',
-        delegateDid,
-        grants : toSyncAuthorizationGrants(permissionGrants),
-      }),
-      permissionGrantIds,
-    };
+      };
+    }));
   }
 
   /**
@@ -744,7 +761,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Poll-mode sync (legacy)
+  // Poll-mode sync
   // ---------------------------------------------------------------------------
 
   private async startPollSync(intervalMilliseconds: number): Promise<void> {
@@ -923,16 +940,7 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    const prevStatus = link.status;
-    const prevConnectivity = link.connectivity;
-    link.connectivity = 'offline';
-    await this.ledger.setStatus(link, 'repairing');
-
-    const eventScope = syncEventScope(link.scope);
-    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevStatus, to: 'repairing' });
-    if (prevConnectivity !== 'offline') {
-      this.emitEvent({ type: 'link:connectivity-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevConnectivity, to: 'offline' });
-    }
+    await this.setLinkOfflineStatus(link, 'repairing');
 
     if (options?.resumeToken) {
       this._repairContext.set(linkKey, { resumeToken: options.resumeToken });
@@ -940,11 +948,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Clear runtime ordinals immediately — stale state must not linger
     // across repair attempts.
-    const rt = this._linkRuntimes.get(linkKey);
-    if (rt) {
-      rt.inflight.clear();
-      rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
-    }
+    this.clearLinkRuntimeInflight(linkKey);
 
     // Kick off repair with retry scheduling on failure.
     void this.repairLink(linkKey).catch(() => {
@@ -960,24 +964,11 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    const prevStatus = link.status;
-    const prevConnectivity = link.connectivity;
-    link.connectivity = 'offline';
-    await this.ledger.setStatus(link, 'terminal_incomplete');
-
-    const eventScope = syncEventScope(link.scope);
-    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevStatus, to: 'terminal_incomplete' });
-    if (prevConnectivity !== 'offline') {
-      this.emitEvent({ type: 'link:connectivity-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevConnectivity, to: 'offline' });
-    }
+    await this.setLinkOfflineStatus(link, 'terminal_incomplete');
 
     await this.closeLinkSubscriptions(link);
 
-    const rt = this._linkRuntimes.get(linkKey);
-    if (rt) {
-      rt.inflight.clear();
-      rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
-    }
+    this.clearLinkRuntimeInflight(linkKey);
 
     const retryTimer = this._repairRetryTimers.get(linkKey);
     if (retryTimer) {
@@ -1002,6 +993,29 @@ export class SyncEngineLevel implements SyncEngine {
 
     this._repairAttempts.delete(linkKey);
     this._repairContext.delete(linkKey);
+  }
+
+  private async setLinkOfflineStatus(link: ReplicationLinkState, status: ReplicationLinkState['status']): Promise<void> {
+    const prevStatus = link.status;
+    const prevConnectivity = link.connectivity;
+    link.connectivity = 'offline';
+    await this.ledger.setStatus(link, status);
+
+    const eventScope = syncEventScope(link.scope);
+    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevStatus, to: status });
+    if (prevConnectivity !== 'offline') {
+      this.emitEvent({ type: 'link:connectivity-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevConnectivity, to: 'offline' });
+    }
+  }
+
+  private clearLinkRuntimeInflight(linkKey: string): void {
+    const rt = this._linkRuntimes.get(linkKey);
+    if (!rt) {
+      return;
+    }
+
+    rt.inflight.clear();
+    rt.nextCommitOrdinal = rt.nextDeliveryOrdinal;
   }
 
   /**
@@ -1503,15 +1517,13 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Initialize a single replication link target: create or resume the durable
-   * link, migrate legacy cursors, open pull + push subscriptions, and
-   * transition the link to `'live'`.
+   * link, open pull + push subscriptions, and transition the link to `'live'`.
    */
   private async initializeLinkTarget(target: SyncTarget): Promise<LinkInitializationResult> {
     let link: ReplicationLinkState | undefined;
     try {
       link = await this.getOrCreateReplicationLink(target);
       const linkKey = this.getReplicationLinkKey(target, link);
-      await this.migrateLegacyCursorIfNeeded(target, link);
       this._activeLinks.set(linkKey, link);
       if (link.status === 'terminal_incomplete') {
         return this.createActiveLinkInitializationResult(link);
@@ -1520,6 +1532,8 @@ export class SyncEngineLevel implements SyncEngine {
       const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey });
       if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
         await this.markLinkLive(target, link, linkKey);
+      } else if (subscriptionResult === LinkSubscriptionOpenResult.Polling) {
+        await this.markLinkPolling(target, link);
       }
       return this.createActiveLinkInitializationResult(link);
     } catch (error: any) {
@@ -1542,23 +1556,11 @@ export class SyncEngineLevel implements SyncEngine {
     return this.buildLinkKey(target.did, target.dwnUrl, link.projectionId, link.authorizationEpoch);
   }
 
-  private async migrateLegacyCursorIfNeeded(target: SyncTarget, link: ReplicationLinkState): Promise<void> {
-    if (link.pull.contiguousAppliedToken) {
-      return;
-    }
-
-    const legacyKey = buildLegacyCursorKey(target.did, target.dwnUrl, singleProtocolForSyncScope(target.scope));
-    const legacyCursor = await this.getCursor(legacyKey);
-    if (!legacyCursor) {
-      return;
-    }
-
-    ReplicationLedger.resetCheckpoint(link.pull, legacyCursor);
-    await this.ledger.saveLink(link);
-    await this.deleteLegacyCursor(legacyKey);
-  }
-
   private async openLinkSubscriptions(target: LinkSyncTarget): Promise<LinkSubscriptionOpenResult> {
+    if (!SyncEngineLevel.supportsLiveSubscriptions(target.scope)) {
+      return LinkSubscriptionOpenResult.Polling;
+    }
+
     await this.openLivePullSubscription(target);
     const link = this._activeLinks.get(target.linkKey);
     if (link?.status === 'repairing') {
@@ -1573,6 +1575,12 @@ export class SyncEngineLevel implements SyncEngine {
       throw error;
     }
     return LinkSubscriptionOpenResult.ReadyForLive;
+  }
+
+  private static supportsLiveSubscriptions(scope: SyncScope): boolean {
+    // Records-primary projected links reconcile by root/diff polling until the
+    // DWN has explicit path/context live subscription semantics.
+    return scope.kind !== 'recordsProjection';
   }
 
   private async markLinkLive(target: SyncTarget, link: ReplicationLinkState, linkKey: string): Promise<void> {
@@ -1591,16 +1599,25 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  private async markLinkPolling(target: SyncTarget, link: ReplicationLinkState): Promise<void> {
+    this.emitEvent({
+      type           : 'link:status-change',
+      tenantDid      : target.did,
+      remoteEndpoint : target.dwnUrl,
+      ...syncEventScope(target.scope),
+      from           : 'initializing',
+      to             : 'polling'
+    });
+    await this.ledger.setStatus(link, 'polling');
+  }
+
   private async handleInitializeLinkTargetError(
     target: SyncTarget,
     link: ReplicationLinkState | undefined,
     error: any,
   ): Promise<LinkInitializationResult> {
-    const linkKey = link
-      ? this.getReplicationLinkKey(target, link)
-      : buildLegacyCursorKey(target.did, target.dwnUrl, singleProtocolForSyncScope(target.scope));
-
     if (error.isProgressGap && link) {
+      const linkKey = this.getReplicationLinkKey(target, link);
       console.warn(`SyncEngineLevel: ProgressGap detected for ${target.did} -> ${target.dwnUrl}, initiating repair`);
       this.emitEvent({
         type           : 'gap:detected',
@@ -1616,7 +1633,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     console.error(`SyncEngineLevel: Failed to open live subscription for ${target.did} -> ${target.dwnUrl}`, error);
-    this.cleanupFailedLinkInitialization(linkKey);
+    if (link) {
+      this.cleanupFailedLinkInitialization(this.getReplicationLinkKey(target, link));
+    }
     if (this.isDidResolutionFailure(error)) {
       throw error;
     }
@@ -1696,7 +1715,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     const targets: SyncTarget[] = [];
     for (const dwnUrl of dwnEndpointUrls) {
-      targets.push(await this.buildSyncTarget(did, dwnUrl, options));
+      targets.push(...await this.buildSyncTargetsForEndpoint(did, dwnUrl, options));
     }
 
     const results = await Promise.allSettled(targets.map(t => this.initializeLinkTargetWithRetry(t)));
@@ -1766,9 +1785,13 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async getDurableLinkIdentityKeysForRegisteredIdentity(did: string, options: SyncIdentityOptions): Promise<Set<string>> {
     const scope = syncScopeFromProtocols(options.protocols);
-    const projectionId = await computeProjectionId(did, scope);
-    const { authorizationEpoch } = await this.buildSyncTargetAuthorization(did, scope, options);
-    return new Set([SyncEngineLevel.durableLinkIdentityKey(did, projectionId, authorizationEpoch)]);
+    const resolutions = await this.buildSyncTargetResolutions(did, scope, options);
+    const keys = new Set<string>();
+    for (const resolution of resolutions) {
+      const projectionId = await computeProjectionId(did, resolution.scope);
+      keys.add(SyncEngineLevel.durableLinkIdentityKey(did, projectionId, resolution.authorizationEpoch));
+    }
+    return keys;
   }
 
   private async pruneSupersededDurableLinksForIdentity(did: string, currentIdentityKeys: Set<string>): Promise<void> {
@@ -1914,8 +1937,7 @@ export class SyncEngineLevel implements SyncEngine {
     dwnUrl: string;
     link?: ReplicationLinkState;
   }): Promise<ProgressToken | undefined> {
-    // Resolve the cursor from the link's durable pull checkpoint. Legacy
-    // syncCursors migration happens during link initialization.
+    // Resolve the cursor from the link's durable pull checkpoint.
     if (!link) {
       return undefined;
     }
@@ -2161,7 +2183,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async ensureClosureComplete(context: LivePullContext, event: MessageEvent): Promise<boolean> {
     const { did, delegateDid, link, isStale } = context;
-    if (link?.scope.kind !== 'protocolSet') {
+    if (!link || link.scope.kind === 'full') {
       return true;
     }
 
@@ -2398,10 +2420,9 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error(`SyncEngineLevel: Local MessagesSubscribe failed for ${did}: ${reply.status.code} ${reply.status.detail}`);
     }
 
-    const linkKey = target.linkKey ?? buildLegacyCursorKey(did, dwnUrl, protocol);
     const close = async (): Promise<void> => { await reply.subscription!.close(); };
     this._localSubscriptions.push({
-      linkKey,
+      linkKey: target.linkKey,
       did,
       dwnUrl,
       delegateDid,
@@ -2663,7 +2684,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private getReconcileProtocols(scope: SyncScope): (string | undefined)[] {
-    return scope.kind === 'full' ? [undefined] : scope.protocols;
+    return protocolsForSyncScope(scope) ?? [undefined];
   }
 
   private getAuthorizationGrantIds(authorization: SyncAuthorization): NonEmptyStringArray | undefined {
@@ -2675,6 +2696,10 @@ export class SyncEngineLevel implements SyncEngine {
     options?: ProjectionReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<ProjectionReconcileResult> {
+    if (target.scope.kind === 'recordsProjection') {
+      return this.reconcileRecordsProjectionTarget(target, target.scope, options, shouldContinue);
+    }
+
     if (target.scope.kind === 'protocolSet' && target.scope.protocols.length > 1) {
       return this.reconcileProtocolSetProjectionTarget(target, options, shouldContinue);
     }
@@ -2700,6 +2725,46 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return options?.verifyConvergence === true ? { converged } : {};
+  }
+
+  private async reconcileRecordsProjectionTarget(
+    target: ProjectionReconcileTarget,
+    scope: RecordsProjectionSyncScope,
+    options?: ProjectionReconcileOptions,
+    shouldContinue?: () => boolean,
+  ): Promise<ProjectionReconcileResult> {
+    const permissionGrantIds = this.getAuthorizationGrantIds(target.authorization);
+    const localRoot = await this.getLocalProjectedRoot(target.did, target.delegateDid, scope.scopes, permissionGrantIds);
+    if (shouldContinue?.() === false) { return { aborted: true }; }
+
+    const remoteRoot = await this.getRemoteProjectedRoot(target.did, target.dwnUrl, target.delegateDid, scope.scopes, permissionGrantIds);
+    if (shouldContinue?.() === false) { return { aborted: true }; }
+
+    if (localRoot !== remoteRoot) {
+      const diff = await this.diffProjectedWithRemote({
+        did         : target.did,
+        dwnUrl      : target.dwnUrl,
+        delegateDid : target.delegateDid,
+        scopes      : scope.scopes,
+        permissionGrantIds,
+      });
+      if (shouldContinue?.() === false) { return { aborted: true }; }
+
+      const aborted = await this.applyProjectedDiff(target, scope, diff, permissionGrantIds, options, shouldContinue);
+      if (aborted) { return { aborted: true }; }
+    }
+
+    if (options?.verifyConvergence !== true) {
+      return {};
+    }
+
+    const postLocalRoot = await this.getLocalProjectedRoot(target.did, target.delegateDid, scope.scopes, permissionGrantIds);
+    if (shouldContinue?.() === false) { return { aborted: true }; }
+
+    const postRemoteRoot = await this.getRemoteProjectedRoot(target.did, target.dwnUrl, target.delegateDid, scope.scopes, permissionGrantIds);
+    if (shouldContinue?.() === false) { return { aborted: true }; }
+
+    return { converged: postLocalRoot === postRemoteRoot };
   }
 
   private async reconcileProtocolSetProjectionTarget(
@@ -2790,16 +2855,43 @@ export class SyncEngineLevel implements SyncEngine {
     options?: ProjectionReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<boolean> {
-    if (await this.pullProtocolSetRemoteDiff(target, scope, diffPlan.onlyRemote, permissionGrantIds, options, shouldContinue)) {
+    // Keep the remote diff combined across protocols so topologicalSort can
+    // order composed protocol configs before records that use them. Any future
+    // chunking for large protocol sets must preserve this global dependency
+    // order instead of reverting to independent per-protocol chunks.
+    if (
+      options?.direction !== 'push' &&
+      diffPlan.onlyRemote.length > 0 &&
+      await this.pullRemoteDiffEntries(target, scope, diffPlan.onlyRemote, permissionGrantIds, shouldContinue)
+    ) {
       return true;
     }
 
-    return this.pushProtocolSetLocalDiff(target, diffPlan.onlyLocal, permissionGrantIds, options, shouldContinue);
+    if (options?.direction === 'pull' || diffPlan.onlyLocal.length === 0) {
+      return false;
+    }
+
+    return this.pushLocalDiffEntries(target, diffPlan.onlyLocal, permissionGrantIds, shouldContinue);
   }
 
-  private async pullProtocolSetRemoteDiff(
+  private async applyProjectedDiff(
     target: ProjectionReconcileTarget,
-    scope: ProtocolSetScope,
+    scope: RecordsProjectionSyncScope,
+    diff: { onlyRemote: MessagesSyncDiffEntry[]; onlyLocal: string[] },
+    permissionGrantIds: NonEmptyStringArray | undefined,
+    options?: ProjectionReconcileOptions,
+    shouldContinue?: () => boolean,
+  ): Promise<boolean> {
+    if (await this.pullProjectedRemoteDiff(target, scope, diff.onlyRemote, permissionGrantIds, options, shouldContinue)) {
+      return true;
+    }
+
+    return this.pushProjectedLocalDiff(target, diff.onlyLocal, permissionGrantIds, options, shouldContinue);
+  }
+
+  private async pullProjectedRemoteDiff(
+    target: ProjectionReconcileTarget,
+    scope: RecordsProjectionSyncScope,
     onlyRemote: MessagesSyncDiffEntry[],
     permissionGrantIds: NonEmptyStringArray | undefined,
     options?: ProjectionReconcileOptions,
@@ -2809,32 +2901,10 @@ export class SyncEngineLevel implements SyncEngine {
       return false;
     }
 
-    // Keep the remote diff combined across protocols so topologicalSort can
-    // order composed protocol configs before records that use them. Any future
-    // chunking for large protocol sets must preserve this global dependency
-    // order instead of reverting to independent per-protocol chunks.
-    const { prefetched, needsFetchCids } = partitionRemoteEntries(SyncEngineLevel.dedupeRemoteEntries(onlyRemote));
-    try {
-      await this.pullMessages({
-        did                : target.did,
-        dwnUrl             : target.dwnUrl,
-        delegateDid        : target.delegateDid,
-        scope              : scope,
-        permissionGrantIds : permissionGrantIds,
-        messageCids        : needsFetchCids,
-        prefetched         : prefetched,
-        shouldContinue     : shouldContinue,
-      });
-    } catch (error) {
-      if (error instanceof SyncPullAbortedError) {
-        return true;
-      }
-      throw error;
-    }
-    return shouldContinue?.() === false;
+    return this.pullRemoteDiffEntries(target, scope, onlyRemote, permissionGrantIds, shouldContinue);
   }
 
-  private async pushProtocolSetLocalDiff(
+  private async pushProjectedLocalDiff(
     target: ProjectionReconcileTarget,
     onlyLocal: string[],
     permissionGrantIds: NonEmptyStringArray | undefined,
@@ -2845,6 +2915,43 @@ export class SyncEngineLevel implements SyncEngine {
       return false;
     }
 
+    return this.pushLocalDiffEntries(target, onlyLocal, permissionGrantIds, shouldContinue);
+  }
+
+  private async pullRemoteDiffEntries(
+    target: ProjectionReconcileTarget,
+    scope: SyncScope,
+    onlyRemote: MessagesSyncDiffEntry[],
+    permissionGrantIds: NonEmptyStringArray | undefined,
+    shouldContinue?: () => boolean,
+  ): Promise<boolean> {
+    const { prefetched, needsFetchCids } = partitionRemoteEntries(SyncEngineLevel.dedupeRemoteEntries(onlyRemote));
+    try {
+      await this.pullMessages({
+        did         : target.did,
+        dwnUrl      : target.dwnUrl,
+        delegateDid : target.delegateDid,
+        scope,
+        permissionGrantIds,
+        messageCids : needsFetchCids,
+        prefetched,
+        shouldContinue,
+      });
+    } catch (error) {
+      if (error instanceof SyncPullAbortedError) {
+        return true;
+      }
+      throw error;
+    }
+    return shouldContinue?.() === false;
+  }
+
+  private async pushLocalDiffEntries(
+    target: ProjectionReconcileTarget,
+    onlyLocal: string[],
+    permissionGrantIds: NonEmptyStringArray | undefined,
+    shouldContinue?: () => boolean,
+  ): Promise<boolean> {
     await this.pushMessages({
       did         : target.did,
       dwnUrl      : target.dwnUrl,
@@ -2895,9 +3002,10 @@ export class SyncEngineLevel implements SyncEngine {
     remoteEndpoint: string,
     scope: SyncScope,
   ): Promise<void> {
-    if (scope.kind === 'protocolSet' && scope.protocols.length > 1) {
-      // Batched multi-protocol pulls pass the full scope to pullMessages, so
-      // pull dead letters can be recorded without a single protocol key.
+    if (scope.kind === 'recordsProjection' || (scope.kind === 'protocolSet' && scope.protocols.length > 1)) {
+      // Batched multi-protocol and projected pulls pass the full scope to
+      // pullMessages, so pull dead letters can be recorded without a single
+      // protocol bucket.
       await this.clearRootConvergenceDeadLetters(tenantDid, remoteEndpoint);
     }
 
@@ -3054,58 +3162,6 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private buildLinkKey(did: string, dwnUrl: string, projectionId: string, authorizationEpoch: string): string {
     return buildLinkId(did, dwnUrl, projectionId, authorizationEpoch);
-  }
-
-  /**
-   * @deprecated Used by poll-mode sync and one-time migration only. Live mode
-   * uses ReplicationLedger checkpoints. Handles migration from old string cursors:
-   * if the stored value is a bare string (pre-ProgressToken format), it is treated
-   * as absent — the sync engine will do a full SMT reconciliation on first startup
-   * after upgrade, which is correct and safe.
-   */
-  private async getCursor(key: string): Promise<ProgressToken | undefined> {
-    const cursors = this._db.sublevel('syncCursors');
-    try {
-      const raw = await cursors.get(key);
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object' &&
-            typeof parsed.streamId === 'string' && parsed.streamId.length > 0 &&
-            typeof parsed.epoch === 'string' && parsed.epoch.length > 0 &&
-            typeof parsed.position === 'string' && parsed.position.length > 0 &&
-            typeof parsed.messageCid === 'string' && parsed.messageCid.length > 0) {
-          return parsed as ProgressToken;
-        }
-      } catch {
-        // Not valid JSON (old string cursor) — fall through to delete.
-      }
-      // Entry exists but is unparseable or has invalid/empty fields. Delete it
-      // so subsequent startups don't re-check it on every launch.
-      await this.deleteLegacyCursor(key);
-      return undefined;
-    } catch (error) {
-      const e = error as { code: string };
-      if (e.code === 'LEVEL_NOT_FOUND') {
-        return undefined;
-      }
-      throw error;
-    }
-  }
-
-
-  /**
-   * Delete a legacy cursor from the old syncCursors sublevel.
-   * Called as part of one-time migration to ReplicationLedger.
-   */
-  private async deleteLegacyCursor(key: string): Promise<void> {
-    const cursors = this._db.sublevel('syncCursors');
-    try {
-      await cursors.del(key);
-    } catch {
-      // Best-effort — ignore LEVEL_NOT_FOUND and transient I/O errors alike.
-      // A failed delete leaves the bad entry for one more re-check on the
-      // next startup, which is harmless.
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -3267,6 +3323,68 @@ export class SyncEngineLevel implements SyncEngine {
     return reply.root ?? '';
   }
 
+  private async getLocalProjectedRoot(
+    did: string,
+    delegateDid: string | undefined,
+    scopes: readonly [RecordsProjectionScope, ...RecordsProjectionScope[]],
+    permissionGrantIds?: string[],
+  ): Promise<string> {
+    if (this.stateIndex) {
+      // Local projected roots use the already-derived scope directly. The
+      // remote root/diff request still re-authorizes the invoked grant set.
+      return RecordsProjection.getRootHex({
+        tenant       : did,
+        messageStore : this.agent.dwn.node.storage.messageStore,
+        scopes,
+      });
+    }
+
+    const response = await this.agent.dwn.processRequest({
+      author        : did,
+      target        : did,
+      messageType   : DwnInterface.MessagesSync,
+      granteeDid    : delegateDid,
+      messageParams : {
+        action                : 'root',
+        projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+        projectionScopes      : [...scopes],
+        permissionGrantIds    : toMessagesPermissionGrantIds(permissionGrantIds),
+      }
+    });
+    const reply = response.reply as MessagesSyncReply;
+    return reply.root ?? '';
+  }
+
+  private async getRemoteProjectedRoot(
+    did: string,
+    dwnUrl: string,
+    delegateDid: string | undefined,
+    scopes: readonly [RecordsProjectionScope, ...RecordsProjectionScope[]],
+    permissionGrantIds?: string[],
+  ): Promise<string> {
+    const syncMessage = await this.agent.dwn.processRequest({
+      store         : false,
+      author        : did,
+      target        : did,
+      messageType   : DwnInterface.MessagesSync,
+      granteeDid    : delegateDid,
+      messageParams : {
+        action                : 'root',
+        projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+        projectionScopes      : [...scopes],
+        permissionGrantIds    : toMessagesPermissionGrantIds(permissionGrantIds),
+      }
+    });
+
+    const reply = await this.agent.rpc.sendDwnRequest({
+      dwnUrl,
+      targetDid : did,
+      message   : syncMessage.message,
+    }) as MessagesSyncReply;
+
+    return reply.root ?? '';
+  }
+
   // ---------------------------------------------------------------------------
   // ---------------------------------------------------------------------------
   // Batched Diff — single round-trip set reconciliation
@@ -3291,41 +3409,89 @@ export class SyncEngineLevel implements SyncEngine {
     delegateDid?: string;
     protocol?: string;
     permissionGrantIds?: string[];
-  }): Promise<{ onlyRemote: MessagesSyncDiffEntry[]; onlyLocal: string[] }> {
+  }): Promise<ProjectionDiffResult> {
     // Step 1: Collect local subtree hashes at BATCHED_DIFF_DEPTH directly from StateIndex.
     const localHashes = await this.collectLocalSubtreeHashes(did, protocol, BATCHED_DIFF_DEPTH, permissionGrantIds);
 
     // Step 2: Send a single 'diff' request to the remote with our hashes.
+    const messageParams: DwnMessageParams[DwnInterface.MessagesSync] = {
+      action             : 'diff',
+      protocol,
+      hashes             : localHashes,
+      depth              : BATCHED_DIFF_DEPTH,
+      permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantIds),
+    };
+
+    // Step 3: Enumerate local leaves for prefixes the remote reported as onlyLocal.
+    // Reuse the same grant set from step 2.
+    return this.diffRemoteMessages(
+      { did, dwnUrl, delegateDid },
+      messageParams,
+      prefix => this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantIds),
+      'diff',
+    );
+  }
+
+  private async diffProjectedWithRemote({ did, dwnUrl, delegateDid, scopes, permissionGrantIds }: {
+    did: string;
+    dwnUrl: string;
+    delegateDid?: string;
+    scopes: readonly [RecordsProjectionScope, ...RecordsProjectionScope[]];
+    permissionGrantIds?: string[];
+  }): Promise<ProjectionDiffResult> {
+    const localHashes = await this.collectLocalProjectedSubtreeHashes(
+      did,
+      scopes,
+      BATCHED_DIFF_DEPTH,
+      delegateDid,
+      permissionGrantIds,
+    );
+
+    const messageParams: DwnMessageParams[DwnInterface.MessagesSync] = {
+      action                : 'diff',
+      projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+      projectionScopes      : [...scopes],
+      hashes                : localHashes,
+      depth                 : BATCHED_DIFF_DEPTH,
+      permissionGrantIds    : toMessagesPermissionGrantIds(permissionGrantIds),
+    };
+
+    return this.diffRemoteMessages(
+      { did, dwnUrl, delegateDid },
+      messageParams,
+      prefix => this.getLocalProjectedLeaves(did, prefix, delegateDid, scopes, permissionGrantIds),
+      'projected diff',
+    );
+  }
+
+  private async diffRemoteMessages(
+    target: Pick<ProjectionReconcileTarget, 'did' | 'dwnUrl' | 'delegateDid'>,
+    messageParams: DwnMessageParams[DwnInterface.MessagesSync],
+    getLocalLeavesForPrefix: (prefix: string) => Promise<string[]>,
+    operationName: string,
+  ): Promise<ProjectionDiffResult> {
     const syncMessage = await this.agent.dwn.processRequest({
-      store         : false,
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.MessagesSync,
-      granteeDid    : delegateDid,
-      messageParams : {
-        action             : 'diff',
-        protocol,
-        hashes             : localHashes,
-        depth              : BATCHED_DIFF_DEPTH,
-        permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantIds),
-      }
+      store       : false,
+      author      : target.did,
+      target      : target.did,
+      messageType : DwnInterface.MessagesSync,
+      granteeDid  : target.delegateDid,
+      messageParams,
     });
 
     const reply = await this.agent.rpc.sendDwnRequest({
-      dwnUrl,
-      targetDid : did,
+      dwnUrl    : target.dwnUrl,
+      targetDid : target.did,
       message   : syncMessage.message,
     }) as MessagesSyncReply;
 
     if (reply.status.code !== 200) {
-      throw new Error(`SyncEngineLevel: diff failed with ${reply.status.code}: ${reply.status.detail}`);
+      throw new Error(`SyncEngineLevel: ${operationName} failed with ${reply.status.code}: ${reply.status.detail}`);
     }
 
-    // Step 3: Enumerate local leaves for prefixes the remote reported as onlyLocal.
-    // Reuse the same grant set from step 2.
     const onlyLocalCids: string[] = [];
     for (const prefix of reply.onlyLocal ?? []) {
-      const leaves = await this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantIds);
+      const leaves = await getLocalLeavesForPrefix(prefix);
       onlyLocalCids.push(...leaves);
     }
 
@@ -3389,6 +3555,52 @@ export class SyncEngineLevel implements SyncEngine {
     return result;
   }
 
+  private async collectLocalProjectedSubtreeHashes(
+    did: string,
+    scopes: readonly [RecordsProjectionScope, ...RecordsProjectionScope[]],
+    depth: number,
+    delegateDid?: string,
+    permissionGrantIds?: string[],
+  ): Promise<Record<string, string>> {
+    const result: Record<string, string> = {};
+    const snapshot = this.stateIndex
+      ? await RecordsProjection.createSnapshot({
+        tenant       : did,
+        messageStore : this.agent.dwn.node.storage.messageStore,
+        scopes,
+      })
+      : undefined;
+
+    try {
+      const walk = async (prefix: string, currentDepth: number): Promise<void> => {
+        const bitPath = SyncEngineLevel.parseBitPrefix(prefix);
+        const hexHash = snapshot
+          ? hashToHex(await snapshot.getSubtreeHash(bitPath))
+          : await this.getLocalProjectedSubtreeHash(did, prefix, delegateDid, scopes, permissionGrantIds);
+        const defaultHash = await this.getDefaultHashHex(currentDepth);
+
+        if (hexHash === defaultHash) {
+          return;
+        }
+
+        if (currentDepth >= depth) {
+          result[prefix] = hexHash;
+          return;
+        }
+
+        await Promise.all([
+          walk(prefix + '0', currentDepth + 1),
+          walk(prefix + '1', currentDepth + 1),
+        ]);
+      };
+
+      await walk('', 0);
+      return result;
+    } finally {
+      await snapshot?.close();
+    }
+  }
+
   /**
    * Get the subtree hash at a given bit prefix from the local DWN.
    *
@@ -3424,6 +3636,30 @@ export class SyncEngineLevel implements SyncEngine {
     return reply.hash ?? '';
   }
 
+  private async getLocalProjectedSubtreeHash(
+    did: string,
+    prefix: string,
+    delegateDid: string | undefined,
+    scopes: readonly [RecordsProjectionScope, ...RecordsProjectionScope[]],
+    permissionGrantIds?: string[],
+  ): Promise<string> {
+    const response = await this.agent.dwn.processRequest({
+      author        : did,
+      target        : did,
+      messageType   : DwnInterface.MessagesSync,
+      granteeDid    : delegateDid,
+      messageParams : {
+        action                : 'subtree',
+        prefix,
+        projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+        projectionScopes      : [...scopes],
+        permissionGrantIds    : toMessagesPermissionGrantIds(permissionGrantIds)
+      }
+    });
+    const reply = response.reply as MessagesSyncReply;
+    return reply.hash ?? '';
+  }
+
   /**
    * Get all leaf messageCids under a given prefix from the local DWN.
    *
@@ -3452,6 +3688,39 @@ export class SyncEngineLevel implements SyncEngine {
         prefix,
         protocol,
         permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantIds)
+      }
+    });
+    const reply = response.reply as MessagesSyncReply;
+    return reply.entries ?? [];
+  }
+
+  private async getLocalProjectedLeaves(
+    did: string,
+    prefix: string,
+    delegateDid: string | undefined,
+    scopes: readonly [RecordsProjectionScope, ...RecordsProjectionScope[]],
+    permissionGrantIds?: string[],
+  ): Promise<string[]> {
+    if (this.stateIndex) {
+      return RecordsProjection.getLeaves({
+        tenant       : did,
+        messageStore : this.agent.dwn.node.storage.messageStore,
+        scopes,
+        prefix       : SyncEngineLevel.parseBitPrefix(prefix),
+      });
+    }
+
+    const response = await this.agent.dwn.processRequest({
+      author        : did,
+      target        : did,
+      messageType   : DwnInterface.MessagesSync,
+      granteeDid    : delegateDid,
+      messageParams : {
+        action                : 'leaves',
+        prefix,
+        projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+        projectionScopes      : [...scopes],
+        permissionGrantIds    : toMessagesPermissionGrantIds(permissionGrantIds)
       }
     });
     const reply = response.reply as MessagesSyncReply;
@@ -3572,8 +3841,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     // Batch entries are only used when the initial write has not been applied
-    // locally yet. The eventual processRawMessage call still authenticates the
-    // delete before any local mutation occurs.
+    // locally yet. RecordsWrite.isInitialWrite binds the candidate's CID to
+    // recordId, and processRawMessage still authenticates the delete before
+    // any local mutation occurs.
     return this.findInitialWriteInPullBatch(descriptor.recordId, entries);
   }
 
@@ -3865,9 +4135,11 @@ export class SyncEngineLevel implements SyncEngine {
         }
 
         const scope = syncScopeFromProtocols(parsed.protocols);
-        const projectionId = await computeProjectionId(did, scope);
-        const { authorizationEpoch } = await this.buildSyncTargetAuthorization(did, scope, parsed);
-        identityKeys.add(SyncEngineLevel.durableLinkIdentityKey(did, projectionId, authorizationEpoch));
+        const resolutions = await this.buildSyncTargetResolutions(did, scope, parsed);
+        for (const resolution of resolutions) {
+          const projectionId = await computeProjectionId(did, resolution.scope);
+          identityKeys.add(SyncEngineLevel.durableLinkIdentityKey(did, projectionId, resolution.authorizationEpoch));
+        }
       }
       return identityKeys;
     } catch (error: unknown) {
@@ -3932,7 +4204,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       for (const dwnUrl of dwnEndpointUrls) {
-        targets.push(await this.buildSyncTarget(did, dwnUrl, parsed));
+        targets.push(...await this.buildSyncTargetsForEndpoint(did, dwnUrl, parsed));
       }
     }
 

@@ -11,6 +11,13 @@ describe('sync-scope-acceptance', () => {
   const profileProtocol = 'https://identity.foundation/protocols/profile';
   const socialProtocol = 'https://identity.foundation/protocols/social-graph';
   const profileScope: SyncScope = { kind: 'protocolSet', protocols: [profileProtocol] };
+  const profileAvatarProjectionScope: SyncScope = {
+    kind   : 'recordsProjection',
+    scopes : [{
+      protocol     : profileProtocol,
+      protocolPath : 'profile/avatar',
+    }],
+  };
 
   it('accepts RecordsWrite messages for a covered protocol', async () => {
     const { message } = await TestDataGenerator.generateRecordsWrite({ protocol: profileProtocol });
@@ -115,6 +122,82 @@ describe('sync-scope-acceptance', () => {
     } as unknown as GenericMessage;
 
     const classification = classifySyncMessageScope({ message, scope: profileScope });
+
+    expect(classification).toBe('out-of-scope');
+  });
+
+  it('accepts RecordsWrite messages matching a projected protocolPath scope', async () => {
+    const { message } = await TestDataGenerator.generateRecordsWrite({
+      protocol     : profileProtocol,
+      protocolPath : 'profile/avatar',
+    });
+
+    const classification = classifySyncMessageScope({
+      message,
+      scope: profileAvatarProjectionScope,
+    });
+
+    expect(classification).toBe('in-scope');
+  });
+
+  it('rejects RecordsWrite messages outside a projected protocolPath scope', async () => {
+    const { message } = await TestDataGenerator.generateRecordsWrite({
+      protocol     : profileProtocol,
+      protocolPath : 'profile/banner',
+    });
+
+    const classification = classifySyncMessageScope({
+      message,
+      scope: profileAvatarProjectionScope,
+    });
+
+    expect(classification).toBe('out-of-scope');
+  });
+
+  it('accepts RecordsDelete messages when the initial write matches a projected scope', async () => {
+    const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+      protocol     : profileProtocol,
+      protocolPath : 'profile/avatar',
+    });
+    const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+      author   : recordsWrite.author,
+      recordId : recordsWrite.message.recordId,
+    });
+
+    const classification = classifySyncMessageScope({
+      message      : recordsDelete.message,
+      initialWrite : recordsWrite.message,
+      scope        : profileAvatarProjectionScope,
+    });
+
+    expect(classification).toBe('in-scope');
+  });
+
+  it('returns unknown for projected RecordsDelete without initial write metadata', async () => {
+    const { message } = await TestDataGenerator.generateRecordsDelete();
+
+    const classification = classifySyncMessageScope({
+      message,
+      scope: profileAvatarProjectionScope,
+    });
+
+    expect(classification).toBe('unknown');
+  });
+
+  it('rejects ProtocolsConfigure as Records-primary projected data', async () => {
+    const { message } = await TestDataGenerator.generateProtocolsConfigure({
+      protocolDefinition: {
+        protocol  : profileProtocol,
+        published : true,
+        types     : {},
+        structure : {},
+      },
+    });
+
+    const classification = classifySyncMessageScope({
+      message,
+      scope: profileAvatarProjectionScope,
+    });
 
     expect(classification).toBe('out-of-scope');
   });

@@ -1441,7 +1441,7 @@ export function testMessagesSyncHandler(): void {
         }
       });
 
-      it('returns 400 when projected sync also specifies a legacy protocol root', async () => {
+      it('returns 400 when projected sync also specifies a protocol root', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         const { message } = await MessagesSync.create({

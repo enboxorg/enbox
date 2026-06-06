@@ -1,6 +1,8 @@
-import type { ProgressToken } from '@enbox/dwn-sdk-js';
+import type { NormalizedRecordsProjectionScope, ProgressToken, RecordsProjectionScope } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './agent.js';
+
+import { RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection } from '@enbox/dwn-sdk-js';
 
 /** Deterministic bytewise string comparator for hash inputs and canonical IDs. */
 export function lexicographicalCompare(a: string, b: string): number {
@@ -45,12 +47,11 @@ export type SyncMode = 'poll' | 'live';
 // ---------------------------------------------------------------------------
 
 /**
- * Projection-root algorithm used by the current full/protocol sync scopes.
+ * Projection-root algorithm used by StateIndex full/protocol sync scopes.
  *
  * Sync compares either the existing full-tenant StateIndex root or existing
- * per-protocol StateIndex roots. ProtocolPath/contextId projection roots are
- * intentionally not represented here; add a projection-root builder before
- * enabling those scopes.
+ * per-protocol StateIndex roots. Records-primary projection scopes use the
+ * DWN SDK's `RECORDS_PROJECTION_ROOT_VERSION` instead.
  */
 export const SYNC_PROJECTION_ROOT_VERSION = 'state-index-full-protocol-root-v1';
 
@@ -66,15 +67,18 @@ export const SYNC_AUTHORIZATION_EPOCH_VERSION = 'messages-read-grants-v1';
 /** A non-empty, sorted, duplicate-free string list. */
 export type NonEmptyStringArray = [string, ...string[]];
 
+/** A non-empty, sorted, duplicate-free, subsumption-reduced Records projection scope union. */
+export type NonEmptyRecordsProjectionScopes = [NormalizedRecordsProjectionScope, ...NormalizedRecordsProjectionScope[]];
+
 /**
  * Describes the primary CID set a replication link syncs.
  *
- * Sync currently supports full-tenant sync and protocol-set sync. A protocol-set link owns
- * one durable subscription/cursor for the whole set; reconciliation still walks
- * the existing per-protocol roots until dedicated path/context projection roots
- * are implemented. For composed protocols, the scope must include the composed
- * protocol and any `uses` targets required for local protocol installation and
- * closure evaluation.
+ * Full and protocol-set sync use the existing StateIndex roots. Records
+ * projections use the `records-primary-scope-root-v1` root over latest Records
+ * primary messages selected by protocol, exact protocolPath, or context
+ * subtree. For composed protocols, the scope must include the composed protocol
+ * and any `uses` targets required for local protocol installation and closure
+ * evaluation.
  */
 export type SyncScope = {
   /** Full-tenant projection. Valid only for owner sync or unscoped delegated grants. */
@@ -83,6 +87,10 @@ export type SyncScope = {
   /** Protocol-set projection over one or more protocol roots. */
   kind: 'protocolSet';
   protocols: NonEmptyStringArray;
+} | {
+  /** Records-primary projected root over protocol/path/context scope entries. */
+  kind: 'recordsProjection';
+  scopes: NonEmptyRecordsProjectionScopes;
 };
 
 /**
@@ -122,12 +130,30 @@ export function syncScopeFromProtocols(protocols: SyncIdentityOptions['protocols
     : { kind: 'protocolSet', protocols: normalizeSyncProtocols(protocols) };
 }
 
-/** Returns the protocol list covered by a scope, or `undefined` for full scope. */
-export function protocolsForSyncScope(scope: SyncScope): NonEmptyStringArray | undefined {
-  return scope.kind === 'protocolSet' ? scope.protocols : undefined;
+/** Converts Records projection scopes into the canonical sync scope shape. */
+export function syncScopeFromRecordsProjectionScopes(
+  scopes: readonly [RecordsProjectionScope, ...RecordsProjectionScope[]],
+): Extract<SyncScope, { kind: 'recordsProjection' }> {
+  return {
+    kind   : 'recordsProjection',
+    scopes : RecordsProjection.normalizeScopes(scopes),
+  };
 }
 
-/** Returns the single covered protocol, or `undefined` for full/multi-protocol scopes. */
+/** Returns the protocol list covered by a scope, or `undefined` for full scope. */
+export function protocolsForSyncScope(scope: SyncScope): NonEmptyStringArray | undefined {
+  if (scope.kind === 'full') {
+    return undefined;
+  }
+
+  if (scope.kind === 'protocolSet') {
+    return scope.protocols;
+  }
+
+  return normalizeSyncProtocols(scope.scopes.map(scope => scope.protocol));
+}
+
+/** Returns the single protocol root covered by a protocol-set scope, if any. */
 export function singleProtocolForSyncScope(scope: SyncScope): string | undefined {
   return scope.kind === 'protocolSet' && scope.protocols.length === 1 ? scope.protocols[0] : undefined;
 }
@@ -151,9 +177,18 @@ async function hashCanonicalObject(value: Record<string, unknown>): Promise<stri
 
 /** Returns a canonical JSON-ready representation of a sync scope. */
 export function canonicalizeSyncScope(scope: SyncScope): SyncScope {
-  return scope.kind === 'full'
-    ? { kind: 'full' }
-    : { kind: 'protocolSet', protocols: normalizeSyncProtocols(scope.protocols) };
+  if (scope.kind === 'full') {
+    return { kind: 'full' };
+  }
+
+  if (scope.kind === 'protocolSet') {
+    return { kind: 'protocolSet', protocols: normalizeSyncProtocols(scope.protocols) };
+  }
+
+  return {
+    kind   : 'recordsProjection',
+    scopes : RecordsProjection.normalizeScopes(scope.scopes),
+  };
 }
 
 /**
@@ -165,10 +200,14 @@ export function canonicalizeSyncScope(scope: SyncScope): SyncScope {
  */
 export async function computeProjectionId(tenantDid: string, scope: SyncScope): Promise<string> {
   const canonicalScope = canonicalizeSyncScope(scope);
+  const version = canonicalScope.kind === 'recordsProjection'
+    ? RECORDS_PROJECTION_ROOT_VERSION
+    : SYNC_PROJECTION_ROOT_VERSION;
+
   return hashCanonicalObject({
-    scope   : canonicalScope,
+    scope: canonicalScope,
     tenantDid,
-    version : SYNC_PROJECTION_ROOT_VERSION,
+    version,
   });
 }
 
@@ -251,12 +290,13 @@ export type DirectionCheckpoint = {
  *
  * - `initializing` — link created, no subscriptions open yet.
  * - `live` — actively receiving events via subscription.
+ * - `polling` — current link is reconciled by periodic SMT sync; live subscription is not supported for its scope.
  * - `repairing` — gap detected or pending overflow; running SMT reconciliation.
  * - `degraded_poll` — subscription failed; polling at reduced frequency.
  * - `terminal_incomplete` — closure failed with a terminal dependency error; requires a new scope/authorization epoch.
  * - `paused` — explicitly paused by the application.
  */
-export type LinkStatus = 'initializing' | 'live' | 'repairing' | 'degraded_poll' | 'terminal_incomplete' | 'paused';
+export type LinkStatus = 'initializing' | 'live' | 'polling' | 'repairing' | 'degraded_poll' | 'terminal_incomplete' | 'paused';
 
 /**
  * Durable state of a single replication link. Persisted to LevelDB and
@@ -342,7 +382,7 @@ export type StartSyncParams = {
    *   push. Falls back to SMT reconciliation on cold start or long disconnect.
    *   An infrequent SMT integrity check still runs at `interval`.
    *
-   * - `'poll'`: Legacy mode. Performs a full SMT set-reconciliation sync on a
+   * - `'poll'`: Performs a full SMT set-reconciliation sync on a
    *   fixed interval. No WebSocket subscriptions are used.
    */
   mode?: SyncMode;
