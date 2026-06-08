@@ -1,8 +1,10 @@
 import sinon from 'sinon';
 
+import type { GenericMessage, MessagesSyncDependencyEntry, ProtocolDefinition, ProtocolsConfigureMessage } from '@enbox/dwn-sdk-js';
+
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
-import { Message, RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Message, RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { ClosureFailureCode } from '../src/sync-closure-types.js';
 import { computeAuthorizationEpoch } from '../src/types/sync.js';
@@ -2858,6 +2860,83 @@ describe('SyncEngineLevel — private methods', () => {
         permissionGrantIds : ['grant-1'],
       },
     };
+    const projectedProtocol = projectedScope.scopes[0].protocol;
+
+    const projectedRecordMessage = (
+      protocolPath = 'profile/avatar',
+      protocol = projectedProtocol,
+    ): GenericMessage => ({
+      contextId  : 'record-1',
+      recordId   : 'record-1',
+      descriptor : {
+        interface        : DwnInterfaceName.Records,
+        method           : DwnMethodName.Write,
+        protocol,
+        protocolPath,
+        dateCreated      : '2026-01-01T00:00:00.000000Z',
+        messageTimestamp : '2026-01-01T00:00:00.000000Z',
+      },
+    });
+
+    const protocolDefinition = (
+      protocol = projectedProtocol,
+      uses?: Record<string, string>,
+    ): ProtocolDefinition => ({
+      protocol,
+      published : false,
+      types     : {
+        entry: {
+          dataFormats: ['application/json'],
+        },
+      },
+      structure: {
+        entry: {},
+      },
+      ...(uses === undefined ? {} : { uses }),
+    });
+
+    const createResolvingAgent = (
+      ...authors: Parameters<typeof TestDataGenerator.createDidResolutionResult>[0][]
+    ): { agentDid: string; did: { resolve: sinon.SinonStub } } => {
+      const resolve = sinon.stub();
+      for (const author of authors) {
+        resolve.withArgs(author.did).resolves(TestDataGenerator.createDidResolutionResult(author));
+      }
+      resolve.resolves({ didDocument: undefined, didDocumentMetadata: {}, didResolutionMetadata: { error: 'notFound' } });
+      return {
+        agentDid : 'did:example:agent',
+        did      : { resolve },
+      };
+    };
+
+    const protocolsConfigureMessage = async ({
+      author,
+      protocol = projectedProtocol,
+      uses,
+      messageTimestamp = '2025-12-31T00:00:00.000000Z',
+    }: {
+      author: Parameters<typeof TestDataGenerator.createDidResolutionResult>[0];
+      protocol?: string;
+      uses?: Record<string, string>;
+      messageTimestamp?: string;
+    }): Promise<ProtocolsConfigureMessage> => {
+      const { message } = await TestDataGenerator.generateProtocolsConfigure({
+        author,
+        messageTimestamp,
+        protocolDefinition: protocolDefinition(protocol, uses),
+      });
+      return message;
+    };
+
+    const dependencyEntry = async (
+      message: ProtocolsConfigureMessage | GenericMessage,
+      rootMessageCid: string,
+    ): Promise<MessagesSyncDependencyEntry> => ({
+      dependencyClass : 'protocolsConfigure',
+      messageCid      : await Message.getCid(message),
+      message,
+      rootMessageCid,
+    });
 
     it('reconcileRecordsProjectionTarget should diff and verify convergence for projected roots', async () => {
       const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
@@ -2946,6 +3025,369 @@ describe('SyncEngineLevel — private methods', () => {
       expect(pushStub.firstCall.args[0].messageCids).toEqual(['cid-local']);
     });
 
+    it('pullProjectedRemoteDiff should apply verified protocol-config dependency hints before primary entries', async () => {
+      const author = await TestDataGenerator.generatePersona();
+      const tenantTarget = { ...target, did: author.did };
+      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
+      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const socialProtocol = 'https://identity.foundation/protocols/social-graph';
+      const unrelatedProtocol = 'https://example.com/unrelated';
+      const primaryMessage = projectedRecordMessage();
+      const dependencyMessage = await protocolsConfigureMessage({
+        author,
+        protocol : projectedProtocol,
+        uses     : { social: socialProtocol },
+      });
+      const usedDependencyMessage = await protocolsConfigureMessage({ author, protocol: socialProtocol });
+      const unrelatedDependencyMessage = await protocolsConfigureMessage({ author, protocol: unrelatedProtocol });
+      const primaryCid = await Message.getCid(primaryMessage);
+      const dependency = await dependencyEntry(dependencyMessage, primaryCid);
+      const usedDependency = await dependencyEntry(usedDependencyMessage, primaryCid);
+      const unrelatedDependency = await dependencyEntry(unrelatedDependencyMessage, primaryCid);
+
+      const aborted = await (engine as any).pullProjectedRemoteDiff(
+        tenantTarget,
+        projectedScope,
+        {
+          dependencies : [dependency, unrelatedDependency, usedDependency],
+          onlyLocal    : [],
+          onlyRemote   : [{ messageCid: primaryCid, message: primaryMessage }],
+        },
+        ['grant-1'],
+      );
+
+      expect(aborted).toBe(false);
+      expect(pullStub.callCount).toBe(2);
+      expect(pullStub.firstCall.args[0]).toMatchObject({
+        did         : author.did,
+        scope       : { kind: 'protocolSet', protocols: [projectedProtocol, socialProtocol] },
+        messageCids : [],
+        prefetched  : [dependency, usedDependency],
+      });
+      expect(pullStub.secondCall.args[0]).toMatchObject({
+        scope       : projectedScope,
+        messageCids : [],
+      });
+    });
+
+    it('verifyProjectedProtocolConfigDependencies should reject malformed or out-of-scope hints', async () => {
+      const author = await TestDataGenerator.generatePersona();
+      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
+      const primaryMessage = projectedRecordMessage();
+      const outOfScopePrimary = projectedRecordMessage('profile/banner');
+      const dependencyMessage = await protocolsConfigureMessage({ author });
+      const wrongProtocolConfig = await protocolsConfigureMessage({ author, protocol: 'https://example.com/other' });
+      const futureProtocolConfig = await protocolsConfigureMessage({
+        author,
+        messageTimestamp: '2026-01-02T00:00:00.000000Z',
+      });
+      const primaryCid = await Message.getCid(primaryMessage);
+      const outOfScopePrimaryCid = await Message.getCid(outOfScopePrimary);
+      const dependencyCid = await Message.getCid(dependencyMessage);
+      const wrongProtocolConfigCid = await Message.getCid(wrongProtocolConfig);
+      const futureProtocolConfigCid = await Message.getCid(futureProtocolConfig);
+
+      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
+        author.did,
+        projectedScope,
+        [
+          { messageCid: primaryCid, message: primaryMessage },
+          { messageCid: outOfScopePrimaryCid, message: outOfScopePrimary },
+        ],
+        [
+          {
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : dependencyCid,
+            message         : dependencyMessage,
+            rootMessageCid  : 'missing-root',
+          },
+          {
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : 'wrong-cid',
+            message         : dependencyMessage,
+            rootMessageCid  : primaryCid,
+          },
+          {
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : wrongProtocolConfigCid,
+            message         : wrongProtocolConfig,
+            rootMessageCid  : primaryCid,
+          },
+          {
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : dependencyCid,
+            message         : dependencyMessage,
+            rootMessageCid  : outOfScopePrimaryCid,
+          },
+          {
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : futureProtocolConfigCid,
+            message         : futureProtocolConfig,
+            rootMessageCid  : primaryCid,
+          },
+        ],
+      );
+
+      expect(verified).toEqual([]);
+    });
+
+    it('verifyProjectedProtocolConfigDependencies should ignore non-config and unknown-class hints', async () => {
+      const author = await TestDataGenerator.generatePersona();
+      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
+      const primaryMessage = projectedRecordMessage();
+      const primaryCid = await Message.getCid(primaryMessage);
+      const { message: recordsWrite } = await TestDataGenerator.generateRecordsWrite({
+        author,
+        protocol     : projectedProtocol,
+        protocolPath : 'profile/avatar',
+      });
+      const protocolConfig = await protocolsConfigureMessage({ author });
+      const unknownClassDependency = {
+        ...await dependencyEntry(protocolConfig, primaryCid),
+        dependencyClass: 'recordAncestry',
+      } as unknown as MessagesSyncDependencyEntry;
+
+      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
+        author.did,
+        projectedScope,
+        [{ messageCid: primaryCid, message: primaryMessage }],
+        [
+          await dependencyEntry(recordsWrite, primaryCid),
+          unknownClassDependency,
+        ],
+      );
+
+      expect(verified).toEqual([]);
+    });
+
+    it('verifyProjectedProtocolConfigDependencies should not follow uses from unauthenticated config hints', async () => {
+      const author = await TestDataGenerator.generatePersona();
+      const secretProtocol = 'https://example.com/secret-medical';
+      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
+      const primaryMessage = projectedRecordMessage();
+      const primaryCid = await Message.getCid(primaryMessage);
+      const forgedConfig: GenericMessage = {
+        descriptor: {
+          interface        : DwnInterfaceName.Protocols,
+          method           : DwnMethodName.Configure,
+          messageTimestamp : '2025-12-31T00:00:00.000000Z',
+          definition       : protocolDefinition(projectedProtocol, { secret: secretProtocol }),
+        },
+      };
+      const secretConfig = await protocolsConfigureMessage({ author, protocol: secretProtocol });
+
+      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
+        author.did,
+        projectedScope,
+        [{ messageCid: primaryCid, message: primaryMessage }],
+        [
+          await dependencyEntry(forgedConfig, primaryCid),
+          await dependencyEntry(secretConfig, primaryCid),
+        ],
+      );
+
+      expect(verified).toEqual([]);
+    });
+
+    it('verifyProjectedProtocolConfigDependencies should not follow uses from non-tenant-authored config hints', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const attacker = await TestDataGenerator.generatePersona();
+      const secretProtocol = 'https://example.com/secret-medical';
+      const engine = createEngine({ db, agent: createResolvingAgent(tenant, attacker) as any });
+      const primaryMessage = projectedRecordMessage();
+      const primaryCid = await Message.getCid(primaryMessage);
+      const forgedConfig = await protocolsConfigureMessage({
+        author   : attacker,
+        protocol : projectedProtocol,
+        uses     : { secret: secretProtocol },
+      });
+      const secretConfig = await protocolsConfigureMessage({ author: tenant, protocol: secretProtocol });
+
+      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
+        tenant.did,
+        projectedScope,
+        [{ messageCid: primaryCid, message: primaryMessage }],
+        [
+          await dependencyEntry(forgedConfig, primaryCid),
+          await dependencyEntry(secretConfig, primaryCid),
+        ],
+      );
+
+      expect(verified).toEqual([]);
+    });
+
+    it('verifyProjectedProtocolConfigDependencies should terminate cyclic uses graphs', async () => {
+      const author = await TestDataGenerator.generatePersona();
+      const usedProtocol = 'https://example.com/cyclic-used';
+      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
+      const primaryMessage = projectedRecordMessage();
+      const primaryCid = await Message.getCid(primaryMessage);
+      const rootConfig = await protocolsConfigureMessage({
+        author,
+        protocol : projectedProtocol,
+        uses     : { used: usedProtocol },
+      });
+      const usedConfig = await protocolsConfigureMessage({
+        author,
+        protocol : usedProtocol,
+        uses     : { root: projectedProtocol },
+      });
+      const expectedCids = [
+        await Message.getCid(rootConfig),
+        await Message.getCid(usedConfig),
+      ].sort();
+
+      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
+        author.did,
+        projectedScope,
+        [{ messageCid: primaryCid, message: primaryMessage }],
+        [
+          await dependencyEntry(rootConfig, primaryCid),
+          await dependencyEntry(usedConfig, primaryCid),
+        ],
+      );
+
+      expect(verified.map(entry => entry.messageCid).sort()).toEqual(expectedCids);
+      expect(verified.every(entry => entry.rootMessageCid === primaryCid)).toBe(true);
+    });
+
+    it('verifyProjectedProtocolConfigDependencies should not let a forged newer config govern', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const attacker = await TestDataGenerator.generatePersona();
+      const secretProtocol = 'https://example.com/forged-newer-secret';
+      const engine = createEngine({ db, agent: createResolvingAgent(tenant, attacker) as any });
+      const primaryMessage = projectedRecordMessage();
+      const primaryCid = await Message.getCid(primaryMessage);
+      const tenantConfig = await protocolsConfigureMessage({
+        author           : tenant,
+        messageTimestamp : '2025-01-01T00:00:00.000000Z',
+      });
+      const forgedNewerConfig = await protocolsConfigureMessage({
+        author           : attacker,
+        uses             : { secret: secretProtocol },
+        messageTimestamp : '2025-12-31T00:00:00.000000Z',
+      });
+      const secretConfig = await protocolsConfigureMessage({ author: tenant, protocol: secretProtocol });
+
+      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
+        tenant.did,
+        projectedScope,
+        [{ messageCid: primaryCid, message: primaryMessage }],
+        [
+          await dependencyEntry(tenantConfig, primaryCid),
+          await dependencyEntry(forgedNewerConfig, primaryCid),
+          await dependencyEntry(secretConfig, primaryCid),
+        ],
+      );
+
+      expect(verified).toEqual([await dependencyEntry(tenantConfig, primaryCid)]);
+    });
+
+    it('verifyProjectedProtocolConfigDependencies should isolate closure evaluation per primary root', async () => {
+      const author = await TestDataGenerator.generatePersona();
+      const siblingProtocol = 'https://example.com/closure-sibling';
+      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
+      const multiScope = {
+        kind   : 'recordsProjection',
+        scopes : [
+          projectedScope.scopes[0],
+          { protocol: siblingProtocol, protocolPath: 'profile/avatar' },
+        ],
+      };
+      const primaryA = projectedRecordMessage();
+      const primaryB = projectedRecordMessage('profile/avatar', siblingProtocol);
+      const primaryACid = await Message.getCid(primaryA);
+      const primaryBCid = await Message.getCid(primaryB);
+      const configA = await protocolsConfigureMessage({ author, protocol: projectedProtocol });
+      const configB = await protocolsConfigureMessage({ author, protocol: siblingProtocol });
+
+      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
+        author.did,
+        multiScope,
+        [
+          { messageCid: primaryACid, message: primaryA },
+          { messageCid: primaryBCid, message: primaryB },
+        ],
+        [
+          await dependencyEntry(configA, primaryACid),
+          await dependencyEntry(configB, primaryACid),
+          await dependencyEntry(configB, primaryBCid),
+        ],
+      );
+
+      expect(verified).toEqual([
+        await dependencyEntry(configA, primaryACid),
+        await dependencyEntry(configB, primaryBCid),
+      ]);
+    });
+
+    it('verifyProjectedProtocolConfigDependencies should derive uses from the governing config version only', async () => {
+      const author = await TestDataGenerator.generatePersona();
+      const oldUsedProtocol = 'https://example.com/old-used-protocol';
+      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
+      const primaryMessage = projectedRecordMessage();
+      const primaryCid = await Message.getCid(primaryMessage);
+      const oldConfig = await protocolsConfigureMessage({
+        author,
+        uses             : { old: oldUsedProtocol },
+        messageTimestamp : '2025-01-01T00:00:00.000000Z',
+      });
+      const governingConfig = await protocolsConfigureMessage({
+        author,
+        messageTimestamp: '2025-12-31T00:00:00.000000Z',
+      });
+      const oldUsedConfig = await protocolsConfigureMessage({ author, protocol: oldUsedProtocol });
+
+      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
+        author.did,
+        projectedScope,
+        [{ messageCid: primaryCid, message: primaryMessage }],
+        [
+          await dependencyEntry(oldConfig, primaryCid),
+          await dependencyEntry(governingConfig, primaryCid),
+          await dependencyEntry(oldUsedConfig, primaryCid),
+        ],
+      );
+
+      expect(verified).toEqual([await dependencyEntry(governingConfig, primaryCid)]);
+    });
+
+    it('pullProjectedRemoteDiff should apply only verified dependency hints through the pull path', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const attacker = await TestDataGenerator.generatePersona();
+      const processRawMessage = sinon.stub().resolves({ status: { code: 202 } });
+      const agent = {
+        ...createResolvingAgent(tenant, attacker),
+        dwn: { processRawMessage },
+      };
+      const tenantTarget = { ...target, did: tenant.did };
+      const engine = createEngine({ db, agent: agent as any });
+      const primaryMessage = projectedRecordMessage();
+      const primaryCid = await Message.getCid(primaryMessage);
+      const tenantConfig = await protocolsConfigureMessage({ author: tenant });
+      const forgedConfig = await protocolsConfigureMessage({ author: attacker });
+
+      const aborted = await (engine as any).pullProjectedRemoteDiff(
+        tenantTarget,
+        projectedScope,
+        {
+          dependencies: [
+            await dependencyEntry(forgedConfig, primaryCid),
+            await dependencyEntry(tenantConfig, primaryCid),
+          ],
+          onlyLocal  : [],
+          onlyRemote : [{ messageCid: primaryCid, message: primaryMessage }],
+        },
+        ['grant-1'],
+      );
+
+      expect(aborted).toBe(false);
+      expect(processRawMessage.callCount).toBe(2);
+      expect(processRawMessage.firstCall.args[1]).toBe(tenantConfig);
+      expect(processRawMessage.secondCall.args[1]).toBe(primaryMessage);
+      expect(processRawMessage.getCalls().map(call => call.args[1])).not.toContain(forgedConfig);
+    });
+
     it('pullProjectedRemoteDiff should report aborted pulls without pushing', async () => {
       const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
       sinon.stub(engine as any, 'pullMessages').rejects(new SyncPullAbortedError());
@@ -2953,7 +3395,7 @@ describe('SyncEngineLevel — private methods', () => {
       const aborted = await (engine as any).pullProjectedRemoteDiff(
         target,
         projectedScope,
-        [{ messageCid: 'cid-remote' }],
+        { onlyLocal: [], onlyRemote: [{ messageCid: 'cid-remote' }] },
         ['grant-1'],
       );
 
@@ -2968,7 +3410,7 @@ describe('SyncEngineLevel — private methods', () => {
       const pullAborted = await (engine as any).pullProjectedRemoteDiff(
         target,
         projectedScope,
-        [{ messageCid: 'cid-remote' }],
+        { onlyLocal: [], onlyRemote: [{ messageCid: 'cid-remote' }] },
         ['grant-1'],
         { direction: 'push' },
       );
@@ -3013,8 +3455,9 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       expect(result).toEqual({
-        onlyRemote : [{ messageCid: 'cid-remote' }],
-        onlyLocal  : ['cid-local-00', 'cid-local-11'],
+        dependencies : [],
+        onlyRemote   : [{ messageCid: 'cid-remote' }],
+        onlyLocal    : ['cid-local-00', 'cid-local-11'],
       });
       expect(processRequest.firstCall.args[0]).toMatchObject({
         store         : false,

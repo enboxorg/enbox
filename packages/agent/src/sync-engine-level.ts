@@ -1,13 +1,13 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, RecordsProjectionScope, RecordsWriteMessage, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDependencyEntry, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, ProtocolsConfigureMessage, RecordsProjectionScope, RecordsWriteMessage, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
 import { Level } from 'level';
 import { sleep } from '@enbox/common';
-import { DwnInterfaceName, DwnMethodName, Encoder, hashToHex, initDefaultHashes, Message, RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { authenticate, DwnInterfaceName, DwnMethodName, Encoder, hashToHex, initDefaultHashes, Message, ProtocolsConfigure, RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import type { ClosureEvaluationContext } from './sync-closure-types.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -112,6 +112,29 @@ type PullAcceptanceResult =
   | { accepted: true }
   | { accepted: false; classification: Exclude<SyncScopeClassification, 'in-scope'> };
 
+type RecordsWriteProtocolDescriptor = GenericMessage['descriptor'] & { protocol?: unknown };
+type RecordsWriteProtocolMessage = GenericMessage & { descriptor: RecordsWriteProtocolDescriptor };
+type ProtocolsConfigureDefinition = {
+  protocol: string;
+  uses?: Record<string, unknown>;
+};
+type ProtocolsConfigureDefinitionDescriptor = GenericMessage['descriptor'] & {
+  definition: ProtocolsConfigureDefinition;
+};
+type MaybeProtocolsConfigureDefinitionDescriptor = GenericMessage['descriptor'] & {
+  definition?: {
+    protocol?: string;
+    uses?: Record<string, unknown>;
+  };
+};
+type SyncDiffEntryWithMessage = MessagesSyncDiffEntry & { message: GenericMessage };
+type SyncDependencyEntryWithMessage = MessagesSyncDependencyEntry & { message: GenericMessage };
+type VerifiedProtocolConfigCandidate = {
+  rootMessageCid: string;
+  dependency: AuthenticatedProtocolConfigDependency;
+};
+type AuthenticatedProtocolConfigDependency = SyncDependencyEntryWithMessage & { message: ProtocolsConfigureMessage };
+
 type ProjectionReconcileTarget = {
   did: string;
   dwnUrl: string;
@@ -131,6 +154,7 @@ type ProjectionReconcileResult = {
 };
 
 type ProjectionDiffResult = {
+  dependencies?: MessagesSyncDependencyEntry[];
   onlyRemote: MessagesSyncDiffEntry[];
   onlyLocal: string[];
 };
@@ -2877,12 +2901,12 @@ export class SyncEngineLevel implements SyncEngine {
   private async applyProjectedDiff(
     target: ProjectionReconcileTarget,
     scope: RecordsProjectionSyncScope,
-    diff: { onlyRemote: MessagesSyncDiffEntry[]; onlyLocal: string[] },
+    diff: ProjectionDiffResult,
     permissionGrantIds: NonEmptyStringArray | undefined,
     options?: ProjectionReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<boolean> {
-    if (await this.pullProjectedRemoteDiff(target, scope, diff.onlyRemote, permissionGrantIds, options, shouldContinue)) {
+    if (await this.pullProjectedRemoteDiff(target, scope, diff, permissionGrantIds, options, shouldContinue)) {
       return true;
     }
 
@@ -2892,16 +2916,16 @@ export class SyncEngineLevel implements SyncEngine {
   private async pullProjectedRemoteDiff(
     target: ProjectionReconcileTarget,
     scope: RecordsProjectionSyncScope,
-    onlyRemote: MessagesSyncDiffEntry[],
+    diff: ProjectionDiffResult,
     permissionGrantIds: NonEmptyStringArray | undefined,
     options?: ProjectionReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<boolean> {
-    if (options?.direction === 'push' || onlyRemote.length === 0) {
+    if (options?.direction === 'push' || diff.onlyRemote.length === 0) {
       return false;
     }
 
-    return this.pullRemoteDiffEntries(target, scope, onlyRemote, permissionGrantIds, shouldContinue);
+    return this.pullRemoteDiffEntries(target, scope, diff.onlyRemote, permissionGrantIds, shouldContinue, diff.dependencies ?? []);
   }
 
   private async pushProjectedLocalDiff(
@@ -2924,9 +2948,15 @@ export class SyncEngineLevel implements SyncEngine {
     onlyRemote: MessagesSyncDiffEntry[],
     permissionGrantIds: NonEmptyStringArray | undefined,
     shouldContinue?: () => boolean,
+    dependencies: MessagesSyncDependencyEntry[] = [],
   ): Promise<boolean> {
-    const { prefetched, needsFetchCids } = partitionRemoteEntries(SyncEngineLevel.dedupeRemoteEntries(onlyRemote));
+    const primaryEntries = SyncEngineLevel.dedupeRemoteEntries(onlyRemote);
     try {
+      if (scope.kind === 'recordsProjection') {
+        await this.pullProjectedDependencyHints(target, scope, primaryEntries, dependencies, permissionGrantIds, shouldContinue);
+      }
+
+      const { prefetched, needsFetchCids } = partitionRemoteEntries(primaryEntries);
       await this.pullMessages({
         did         : target.did,
         dwnUrl      : target.dwnUrl,
@@ -2944,6 +2974,387 @@ export class SyncEngineLevel implements SyncEngine {
       throw error;
     }
     return shouldContinue?.() === false;
+  }
+
+  private async pullProjectedDependencyHints(
+    target: ProjectionReconcileTarget,
+    scope: RecordsProjectionSyncScope,
+    primaryEntries: MessagesSyncDiffEntry[],
+    dependencies: MessagesSyncDependencyEntry[],
+    permissionGrantIds: NonEmptyStringArray | undefined,
+    shouldContinue?: () => boolean,
+  ): Promise<void> {
+    const verified = await this.verifyProjectedProtocolConfigDependencies(target.did, scope, primaryEntries, dependencies);
+    if (verified.length === 0) {
+      return;
+    }
+
+    await this.pullMessages({
+      did         : target.did,
+      dwnUrl      : target.dwnUrl,
+      delegateDid : target.delegateDid,
+      scope       : SyncEngineLevel.protocolSetScopeForProtocolConfigDependencies(verified),
+      permissionGrantIds,
+      messageCids : [],
+      prefetched  : verified,
+      shouldContinue,
+    });
+  }
+
+  private async verifyProjectedProtocolConfigDependencies(
+    tenantDid: string,
+    scope: RecordsProjectionSyncScope,
+    primaryEntries: MessagesSyncDiffEntry[],
+    dependencies: MessagesSyncDependencyEntry[],
+  ): Promise<MessagesSyncDependencyEntry[]> {
+    // Projected sync dependency entries are untrusted server hints. Before any
+    // config is applied, bind it to an accepted primary record by CID,
+    // tenant authorship, signature, timestamp, scope, and protocol closure;
+    // malformed or unrelated hints are ignored.
+    const primaryByCid = SyncEngineLevel.indexEntriesWithMessage(primaryEntries);
+    const candidatesByRoot = await this.collectProjectedProtocolConfigCandidates(tenantDid, scope, primaryByCid, dependencies);
+    const verified = new Map<string, MessagesSyncDependencyEntry>();
+
+    for (const [rootMessageCid, rootCandidates] of candidatesByRoot) {
+      const primary = primaryByCid.get(rootMessageCid);
+      const primaryProtocol = primary === undefined
+        ? undefined
+        : SyncEngineLevel.recordsWriteProtocol(primary.message);
+      if (primaryProtocol === undefined) {
+        continue;
+      }
+
+      for (const dependency of SyncEngineLevel.filterProtocolConfigClosure(primaryProtocol, rootCandidates)) {
+        verified.set(dependency.messageCid, dependency);
+      }
+    }
+
+    return [...verified.values()];
+  }
+
+  private static indexEntriesWithMessage(
+    entries: MessagesSyncDiffEntry[],
+  ): Map<string, SyncDiffEntryWithMessage> {
+    const entriesByCid = new Map<string, SyncDiffEntryWithMessage>();
+    for (const entry of entries) {
+      if (SyncEngineLevel.hasMessage(entry)) {
+        entriesByCid.set(entry.messageCid, entry);
+      }
+    }
+    return entriesByCid;
+  }
+
+  private async collectProjectedProtocolConfigCandidates(
+    tenantDid: string,
+    scope: RecordsProjectionSyncScope,
+    primaryByCid: Map<string, SyncDiffEntryWithMessage>,
+    dependencies: MessagesSyncDependencyEntry[],
+  ): Promise<Map<string, AuthenticatedProtocolConfigDependency[]>> {
+    const candidatesByRoot = new Map<string, AuthenticatedProtocolConfigDependency[]>();
+    for (const dependency of dependencies) {
+      const verified = await this.verifyProtocolConfigCandidate(tenantDid, scope, primaryByCid, dependency);
+      if (verified === undefined) {
+        continue;
+      }
+
+      const rootCandidates = candidatesByRoot.get(verified.rootMessageCid) ?? [];
+      rootCandidates.push(verified.dependency);
+      candidatesByRoot.set(verified.rootMessageCid, rootCandidates);
+    }
+    return candidatesByRoot;
+  }
+
+  private async verifyProtocolConfigCandidate(
+    tenantDid: string,
+    scope: RecordsProjectionSyncScope,
+    primaryByCid: Map<string, SyncDiffEntryWithMessage>,
+    dependency: MessagesSyncDependencyEntry,
+  ): Promise<VerifiedProtocolConfigCandidate | undefined> {
+    if (dependency.dependencyClass !== 'protocolsConfigure' || !SyncEngineLevel.hasMessage(dependency)) {
+      return undefined;
+    }
+
+    const primary = primaryByCid.get(dependency.rootMessageCid);
+    if (primary === undefined) {
+      return undefined;
+    }
+
+    const verifiedDependency = await this.verifyProtocolConfigCandidateMessage(tenantDid, scope, primary, dependency);
+    return verifiedDependency === undefined
+      ? undefined
+      : { dependency: verifiedDependency, rootMessageCid: dependency.rootMessageCid };
+  }
+
+  private async verifyProtocolConfigCandidateMessage(
+    tenantDid: string,
+    scope: RecordsProjectionSyncScope,
+    primary: SyncDiffEntryWithMessage,
+    dependency: SyncDependencyEntryWithMessage,
+  ): Promise<AuthenticatedProtocolConfigDependency | undefined> {
+    // Protocol authorization is temporal: a record is governed by the protocol
+    // definition active at its creation timestamp. Future configs may add
+    // unrelated `uses` dependencies, so they must not widen this primary's
+    // dependency closure.
+    if (!await SyncEngineLevel.projectedDependencyCidsMatch({
+      dependencyCid     : dependency.messageCid,
+      dependencyMessage : dependency.message,
+      primaryCid        : primary.messageCid,
+      primaryMessage    : primary.message,
+    })) {
+      return undefined;
+    }
+
+    const authenticatedDependency = await this.toAuthenticatedProtocolConfigDependency(tenantDid, dependency);
+    if (authenticatedDependency === undefined) {
+      return undefined;
+    }
+
+    const primaryIsInScope = SyncEngineLevel.recordsWriteProtocol(primary.message) !== undefined &&
+      classifySyncMessageScope({ message: primary.message, scope }) === 'in-scope';
+    if (!primaryIsInScope ||
+      !SyncEngineLevel.protocolsConfigureIsNotNewerThanRecordsWrite(authenticatedDependency.message, primary.message)) {
+      return undefined;
+    }
+
+    return authenticatedDependency;
+  }
+
+  private async toAuthenticatedProtocolConfigDependency(
+    tenantDid: string,
+    dependency: SyncDependencyEntryWithMessage,
+  ): Promise<AuthenticatedProtocolConfigDependency | undefined> {
+    if (!SyncEngineLevel.isProtocolsConfigureDefinitionMessage(dependency.message)) {
+      return undefined;
+    }
+
+    try {
+      await ProtocolsConfigure.parse(dependency.message);
+      if (Message.getAuthor(dependency.message) !== tenantDid) {
+        return undefined;
+      }
+      await authenticate(dependency.message.authorization, this.agent.did);
+      return { ...dependency, message: dependency.message };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private static async projectedDependencyCidsMatch({
+    dependencyCid,
+    dependencyMessage,
+    primaryCid,
+    primaryMessage,
+  }: {
+    dependencyCid: string;
+    dependencyMessage: GenericMessage;
+    primaryCid: string;
+    primaryMessage: GenericMessage;
+  }): Promise<boolean> {
+    return await Message.getCid(primaryMessage) === primaryCid &&
+      await Message.getCid(dependencyMessage) === dependencyCid;
+  }
+
+  private static recordsWriteProtocol(message: GenericMessage): string | undefined {
+    if (!SyncEngineLevel.isRecordsWriteProtocolMessage(message)) {
+      return undefined;
+    }
+
+    const { protocol } = message.descriptor;
+    return typeof protocol === 'string' ? protocol : undefined;
+  }
+
+  private static protocolsConfigureProtocol(message: ProtocolsConfigureMessage): string {
+    return message.descriptor.definition.protocol;
+  }
+
+  private static protocolsConfigureProtocolFromGenericMessage(message: GenericMessage): string | undefined {
+    if (!SyncEngineLevel.isProtocolsConfigureDefinitionMessage(message)) {
+      return undefined;
+    }
+
+    return message.descriptor.definition.protocol;
+  }
+
+  private static protocolsConfigureIsNotNewerThanRecordsWrite(
+    protocolsConfigureMessage: GenericMessage,
+    recordsWriteMessage: GenericMessage,
+  ): boolean {
+    return protocolsConfigureMessage.descriptor.messageTimestamp <= recordsWriteMessage.descriptor.messageTimestamp;
+  }
+
+  private static protocolsConfigureUses(message: ProtocolsConfigureMessage): string[] {
+    const uses = message.descriptor.definition?.uses;
+    return uses === undefined
+      ? []
+      : Object.values(uses).filter((protocol): protocol is string => typeof protocol === 'string');
+  }
+
+  private static hasMessage<T extends MessagesSyncDiffEntry>(
+    entry: T | undefined,
+  ): entry is T & { message: GenericMessage } {
+    return entry?.message !== undefined;
+  }
+
+  private static isRecordsWriteProtocolMessage(message: GenericMessage): message is RecordsWriteProtocolMessage {
+    return message.descriptor.interface === DwnInterfaceName.Records &&
+      message.descriptor.method === DwnMethodName.Write;
+  }
+
+  private static isProtocolsConfigureDefinitionMessage(message: GenericMessage): message is ProtocolsConfigureMessage {
+    return message.descriptor.interface === DwnInterfaceName.Protocols &&
+      message.descriptor.method === DwnMethodName.Configure &&
+      message.authorization !== undefined &&
+      SyncEngineLevel.hasProtocolsConfigureDefinition(message.descriptor);
+  }
+
+  private static hasProtocolsConfigureDefinition(
+    descriptor: MaybeProtocolsConfigureDefinitionDescriptor,
+  ): descriptor is ProtocolsConfigureDefinitionDescriptor {
+    return SyncEngineLevel.isProtocolsConfigureDefinition(descriptor.definition);
+  }
+
+  private static isProtocolsConfigureDefinition(
+    definition: unknown,
+  ): definition is ProtocolsConfigureDefinition {
+    return typeof definition === 'object' &&
+      definition !== null &&
+      'protocol' in definition &&
+      typeof definition.protocol === 'string';
+  }
+
+  private static filterProtocolConfigClosure(
+    primaryProtocol: string,
+    candidates: AuthenticatedProtocolConfigDependency[],
+  ): MessagesSyncDependencyEntry[] {
+    // Start from the primary record's protocol and walk only protocols named by
+    // accepted, signed config definitions. This keeps composed-protocol support
+    // narrow: the governing config can admit its `uses` targets, but arbitrary
+    // protocol config hints cannot enter the apply set.
+    const candidatesByProtocol = SyncEngineLevel.groupGoverningProtocolConfigCandidatesByProtocol(candidates);
+    const visitedProtocols = new Set<string>();
+    const pendingProtocols = [primaryProtocol];
+    const accepted = new Map<string, MessagesSyncDependencyEntry>();
+
+    for (
+      let protocol = SyncEngineLevel.takeNextUnvisitedProtocol(pendingProtocols, visitedProtocols);
+      protocol !== undefined;
+      protocol = SyncEngineLevel.takeNextUnvisitedProtocol(pendingProtocols, visitedProtocols)
+    ) {
+      SyncEngineLevel.acceptProtocolConfigCandidates({
+        protocol,
+        candidatesByProtocol,
+        visitedProtocols,
+        pendingProtocols,
+        accepted,
+      });
+    }
+
+    return [...accepted.values()];
+  }
+
+  private static groupGoverningProtocolConfigCandidatesByProtocol(
+    candidates: AuthenticatedProtocolConfigDependency[],
+  ): Map<string, AuthenticatedProtocolConfigDependency> {
+    const candidatesByProtocol = new Map<string, AuthenticatedProtocolConfigDependency>();
+    for (const candidate of candidates) {
+      const protocol = SyncEngineLevel.protocolsConfigureProtocol(candidate.message);
+      const existing = candidatesByProtocol.get(protocol);
+      if (existing !== undefined && SyncEngineLevel.isProtocolConfigCandidateAtLeastAsNew(existing, candidate)) {
+        continue;
+      }
+
+      candidatesByProtocol.set(protocol, candidate);
+    }
+    return candidatesByProtocol;
+  }
+
+  private static isProtocolConfigCandidateAtLeastAsNew(
+    existing: AuthenticatedProtocolConfigDependency,
+    candidate: AuthenticatedProtocolConfigDependency,
+  ): boolean {
+    const existingTimestamp = existing.message.descriptor.messageTimestamp;
+    const candidateTimestamp = candidate.message.descriptor.messageTimestamp;
+    if (existingTimestamp !== candidateTimestamp) {
+      return existingTimestamp > candidateTimestamp;
+    }
+    return lexicographicalCompare(existing.messageCid, candidate.messageCid) >= 0;
+  }
+
+  private static takeNextUnvisitedProtocol(
+    pendingProtocols: string[],
+    visitedProtocols: Set<string>,
+  ): string | undefined {
+    while (pendingProtocols.length > 0) {
+      const protocol = pendingProtocols.shift()!;
+      if (visitedProtocols.has(protocol)) {
+        continue;
+      }
+      visitedProtocols.add(protocol);
+      return protocol;
+    }
+    return undefined;
+  }
+
+  private static acceptProtocolConfigCandidates({
+    protocol,
+    candidatesByProtocol,
+    visitedProtocols,
+    pendingProtocols,
+    accepted,
+  }: {
+    protocol: string;
+    candidatesByProtocol: Map<string, AuthenticatedProtocolConfigDependency>;
+    visitedProtocols: Set<string>;
+    pendingProtocols: string[];
+    accepted: Map<string, MessagesSyncDependencyEntry>;
+  }): void {
+    const candidate = candidatesByProtocol.get(protocol);
+    if (candidate === undefined) {
+      return;
+    }
+
+    accepted.set(candidate.messageCid, candidate);
+    SyncEngineLevel.queueUnvisitedProtocols(
+      SyncEngineLevel.protocolsConfigureUses(candidate.message),
+      visitedProtocols,
+      pendingProtocols,
+    );
+  }
+
+  private static queueUnvisitedProtocols(
+    protocols: string[],
+    visitedProtocols: Set<string>,
+    pendingProtocols: string[],
+  ): void {
+    for (const protocol of protocols) {
+      if (!visitedProtocols.has(protocol)) {
+        pendingProtocols.push(protocol);
+      }
+    }
+  }
+
+  private static protocolSetScopeForProtocolConfigDependencies(
+    dependencies: MessagesSyncDependencyEntry[],
+  ): Extract<SyncScope, { kind: 'protocolSet' }> {
+    // Verification above is the security boundary. This protocolSet scope only
+    // routes already-verified config dependencies through the existing
+    // pull/apply path, which expects every prefetched message to be accepted by
+    // the supplied sync scope before it reaches processRawMessage().
+    const protocols = SyncEngineLevel.dedupeStrings(
+      dependencies
+        .map(dependency => dependency.message === undefined
+          ? undefined
+          : SyncEngineLevel.protocolsConfigureProtocolFromGenericMessage(dependency.message))
+        .filter((protocol): protocol is string => protocol !== undefined)
+    ).sort(lexicographicalCompare);
+    if (protocols.length === 0) {
+      throw new Error('SyncEngineLevel: projected protocol-config dependency hints contained no protocols.');
+    }
+
+    return {
+      kind      : 'protocolSet',
+      protocols : protocols as NonEmptyStringArray,
+    };
   }
 
   private async pushLocalDiffEntries(
@@ -3496,8 +3907,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return {
-      onlyRemote : reply.onlyRemote ?? [],
-      onlyLocal  : onlyLocalCids,
+      dependencies : reply.dependencies ?? [],
+      onlyRemote   : reply.onlyRemote ?? [],
+      onlyLocal    : onlyLocalCids,
     };
   }
 
