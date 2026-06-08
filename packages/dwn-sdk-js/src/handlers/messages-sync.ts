@@ -2,7 +2,7 @@ import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { StateIndex } from '../types/state-index.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
-import type { MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from '../types/messages-types.js';
+import type { MessagesSyncDependencyEntry, MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from '../types/messages-types.js';
 import type { RecordsProjectionScope, RecordsProjectionSnapshot } from '../sync/records-projection.js';
 
 import { authenticate } from '../core/auth.js';
@@ -15,7 +15,9 @@ import { MessagesGrantAuthorization } from '../core/messages-grant-authorization
 import { MessagesSync } from '../interfaces/messages-sync.js';
 import { Records } from '../utils/records.js';
 import { RecordsProjection } from '../sync/records-projection.js';
+import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
+import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 /**
  * Maximum inline data size for diff responses — aligned with the
@@ -27,6 +29,8 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 const DEFAULT_MAX_INLINE_DATA_SIZE = DwnConstant.maxDataSizeAllowedToBeEncoded;
 
 type StoredMessageWithEncodedData = GenericMessage & { encodedData?: string };
+type RecordsWriteProtocolDescriptor = GenericMessage['descriptor'] & { protocol?: unknown };
+type RecordsWriteProtocolMetadata = { protocol: string; messageTimestamp: string };
 type ProjectionScopes = readonly [RecordsProjectionScope, ...RecordsProjectionScope[]];
 
 
@@ -281,11 +285,15 @@ export class MessagesSyncHandler implements MethodHandler {
 
     // Build response entries with inline message data where possible.
     const onlyRemote = await this.buildDiffEntries(tenant, onlyRemoteCids);
+    const dependencies = projectionScopes === undefined
+      ? []
+      : await this.buildProjectedDependencyEntries(tenant, onlyRemote);
 
     return {
       status    : { code: 200, detail: 'OK' },
       onlyRemote,
       onlyLocal : onlyLocalPrefixes,
+      ...(dependencies.length > 0 ? { dependencies } : {}),
     };
   }
 
@@ -457,6 +465,75 @@ export class MessagesSyncHandler implements MethodHandler {
     }
 
     return entries;
+  }
+
+  private async buildProjectedDependencyEntries(
+    tenant: string,
+    primaryEntries: MessagesSyncDiffEntry[],
+  ): Promise<MessagesSyncDependencyEntry[]> {
+    const dependenciesByCid = new Map<string, MessagesSyncDependencyEntry>();
+
+    for (const primaryEntry of primaryEntries) {
+      const protocolMetadata = MessagesSyncHandler.recordsWriteProtocolMetadata(primaryEntry.message);
+      if (protocolMetadata === undefined) {
+        continue;
+      }
+
+      const dependency = await this.readActiveProtocolsConfigure(
+        tenant,
+        protocolMetadata.protocol,
+        protocolMetadata.messageTimestamp,
+      );
+      if (dependency === undefined) {
+        continue;
+      }
+
+      const dependencyCid = await Message.getCid(dependency);
+      if (!dependenciesByCid.has(dependencyCid)) {
+        dependenciesByCid.set(dependencyCid, {
+          dependencyClass : 'protocolsConfigure',
+          messageCid      : dependencyCid,
+          message         : dependency,
+          rootMessageCid  : primaryEntry.messageCid,
+        });
+      }
+    }
+
+    return [...dependenciesByCid.values()];
+  }
+
+  private static recordsWriteProtocolMetadata(message: GenericMessage | undefined): RecordsWriteProtocolMetadata | undefined {
+    if (
+      message?.descriptor.interface !== DwnInterfaceName.Records ||
+      message.descriptor.method !== DwnMethodName.Write
+    ) {
+      return undefined;
+    }
+
+    const protocol = (message.descriptor as RecordsWriteProtocolDescriptor).protocol;
+    return typeof protocol === 'string'
+      ? { protocol, messageTimestamp: message.descriptor.messageTimestamp }
+      : undefined;
+  }
+
+  private async readActiveProtocolsConfigure(
+    tenant: string,
+    protocol: string,
+    messageTimestamp: string,
+  ): Promise<GenericMessage | undefined> {
+    const { messages } = await this.deps.messageStore.query(
+      tenant,
+      [{
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        protocol,
+        messageTimestamp : { lte: messageTimestamp },
+      }],
+      { messageTimestamp: SortDirection.Descending },
+      { limit: 1 },
+    );
+
+    return messages[0];
   }
 
   /**

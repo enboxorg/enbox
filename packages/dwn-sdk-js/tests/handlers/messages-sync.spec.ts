@@ -979,10 +979,19 @@ export function testMessagesSyncHandler(): void {
           const reply = await dwn.processMessage(alice.did, diffMsg);
           expect(reply.status.code).toBe(200);
 
+          const protocolCid = await Message.getCid(protocolMessage);
+          const postCid = await Message.getCid(postMessage);
           const remoteCids = reply.onlyRemote!.map(entry => entry.messageCid);
-          expect(remoteCids).toContain(await Message.getCid(postMessage));
-          expect(remoteCids).not.toContain(await Message.getCid(protocolMessage));
+          expect(remoteCids).toContain(postCid);
+          expect(remoteCids).not.toContain(protocolCid);
           expect(remoteCids).not.toContain(await Message.getCid(attachmentMessage));
+
+          expect(reply.dependencies).toEqual([{
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : protocolCid,
+            message         : protocolMessage,
+            rootMessageCid  : postCid,
+          }]);
         });
 
         it('rejects projected sync when no grant covers a requested projection scope', async () => {

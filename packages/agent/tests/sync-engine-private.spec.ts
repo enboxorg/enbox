@@ -1,8 +1,10 @@
 import sinon from 'sinon';
 
+import type { GenericMessage } from '@enbox/dwn-sdk-js';
+
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
-import { Message, RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Message, RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { ClosureFailureCode } from '../src/sync-closure-types.js';
 import { computeAuthorizationEpoch } from '../src/types/sync.js';
@@ -2858,6 +2860,29 @@ describe('SyncEngineLevel — private methods', () => {
         permissionGrantIds : ['grant-1'],
       },
     };
+    const projectedProtocol = projectedScope.scopes[0].protocol;
+
+    const projectedRecordMessage = (protocolPath = 'profile/avatar'): GenericMessage => ({
+      contextId  : 'record-1',
+      recordId   : 'record-1',
+      descriptor : {
+        interface        : DwnInterfaceName.Records,
+        method           : DwnMethodName.Write,
+        protocol         : projectedProtocol,
+        protocolPath,
+        dateCreated      : '2026-01-01T00:00:00.000000Z',
+        messageTimestamp : '2026-01-01T00:00:00.000000Z',
+      },
+    });
+
+    const protocolsConfigureMessage = (protocol = projectedProtocol): GenericMessage => ({
+      descriptor: {
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        messageTimestamp : '2025-12-31T00:00:00.000000Z',
+        definition       : { protocol },
+      },
+    });
 
     it('reconcileRecordsProjectionTarget should diff and verify convergence for projected roots', async () => {
       const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
@@ -2946,6 +2971,107 @@ describe('SyncEngineLevel — private methods', () => {
       expect(pushStub.firstCall.args[0].messageCids).toEqual(['cid-local']);
     });
 
+    it('pullProjectedRemoteDiff should apply verified protocol-config dependency hints before primary entries', async () => {
+      const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
+      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const primaryMessage = projectedRecordMessage();
+      const dependencyMessage = protocolsConfigureMessage();
+      const primaryCid = await Message.getCid(primaryMessage);
+      const dependencyCid = await Message.getCid(dependencyMessage);
+      const dependency = {
+        dependencyClass : 'protocolsConfigure',
+        messageCid      : dependencyCid,
+        message         : dependencyMessage,
+        rootMessageCid  : primaryCid,
+      };
+
+      const aborted = await (engine as any).pullProjectedRemoteDiff(
+        target,
+        projectedScope,
+        {
+          dependencies : [dependency],
+          onlyLocal    : [],
+          onlyRemote   : [{ messageCid: primaryCid, message: primaryMessage }],
+        },
+        ['grant-1'],
+      );
+
+      expect(aborted).toBe(false);
+      expect(pullStub.callCount).toBe(2);
+      expect(pullStub.firstCall.args[0]).toMatchObject({
+        scope       : { kind: 'protocolSet', protocols: [projectedProtocol] },
+        messageCids : [],
+        prefetched  : [dependency],
+      });
+      expect(pullStub.secondCall.args[0]).toMatchObject({
+        scope       : projectedScope,
+        messageCids : [],
+      });
+    });
+
+    it('verifyProjectedProtocolConfigDependencies should reject malformed or out-of-scope hints', async () => {
+      const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
+      const primaryMessage = projectedRecordMessage();
+      const outOfScopePrimary = projectedRecordMessage('profile/banner');
+      const dependencyMessage = protocolsConfigureMessage();
+      const wrongProtocolConfig = protocolsConfigureMessage('https://example.com/other');
+      const futureProtocolConfig: GenericMessage = {
+        descriptor: {
+          interface        : DwnInterfaceName.Protocols,
+          method           : DwnMethodName.Configure,
+          messageTimestamp : '2026-01-02T00:00:00.000000Z',
+          definition       : { protocol: projectedProtocol },
+        },
+      };
+      const primaryCid = await Message.getCid(primaryMessage);
+      const outOfScopePrimaryCid = await Message.getCid(outOfScopePrimary);
+      const dependencyCid = await Message.getCid(dependencyMessage);
+      const wrongProtocolConfigCid = await Message.getCid(wrongProtocolConfig);
+      const futureProtocolConfigCid = await Message.getCid(futureProtocolConfig);
+
+      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
+        projectedScope,
+        [
+          { messageCid: primaryCid, message: primaryMessage },
+          { messageCid: outOfScopePrimaryCid, message: outOfScopePrimary },
+        ],
+        [
+          {
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : dependencyCid,
+            message         : dependencyMessage,
+            rootMessageCid  : 'missing-root',
+          },
+          {
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : 'wrong-cid',
+            message         : dependencyMessage,
+            rootMessageCid  : primaryCid,
+          },
+          {
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : wrongProtocolConfigCid,
+            message         : wrongProtocolConfig,
+            rootMessageCid  : primaryCid,
+          },
+          {
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : dependencyCid,
+            message         : dependencyMessage,
+            rootMessageCid  : outOfScopePrimaryCid,
+          },
+          {
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : futureProtocolConfigCid,
+            message         : futureProtocolConfig,
+            rootMessageCid  : primaryCid,
+          },
+        ],
+      );
+
+      expect(verified).toEqual([]);
+    });
+
     it('pullProjectedRemoteDiff should report aborted pulls without pushing', async () => {
       const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
       sinon.stub(engine as any, 'pullMessages').rejects(new SyncPullAbortedError());
@@ -2953,7 +3079,7 @@ describe('SyncEngineLevel — private methods', () => {
       const aborted = await (engine as any).pullProjectedRemoteDiff(
         target,
         projectedScope,
-        [{ messageCid: 'cid-remote' }],
+        { onlyLocal: [], onlyRemote: [{ messageCid: 'cid-remote' }] },
         ['grant-1'],
       );
 
@@ -2968,7 +3094,7 @@ describe('SyncEngineLevel — private methods', () => {
       const pullAborted = await (engine as any).pullProjectedRemoteDiff(
         target,
         projectedScope,
-        [{ messageCid: 'cid-remote' }],
+        { onlyLocal: [], onlyRemote: [{ messageCid: 'cid-remote' }] },
         ['grant-1'],
         { direction: 'push' },
       );
@@ -3013,8 +3139,9 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       expect(result).toEqual({
-        onlyRemote : [{ messageCid: 'cid-remote' }],
-        onlyLocal  : ['cid-local-00', 'cid-local-11'],
+        dependencies : [],
+        onlyRemote   : [{ messageCid: 'cid-remote' }],
+        onlyLocal    : ['cid-local-00', 'cid-local-11'],
       });
       expect(processRequest.firstCall.args[0]).toMatchObject({
         store         : false,

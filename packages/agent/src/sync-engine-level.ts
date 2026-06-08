@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, RecordsProjectionScope, RecordsWriteMessage, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDependencyEntry, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, RecordsProjectionScope, RecordsWriteMessage, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
@@ -112,6 +112,11 @@ type PullAcceptanceResult =
   | { accepted: true }
   | { accepted: false; classification: Exclude<SyncScopeClassification, 'in-scope'> };
 
+type RecordsWriteProtocolDescriptor = GenericMessage['descriptor'] & { protocol?: unknown };
+type ProtocolsConfigureDefinitionDescriptor = GenericMessage['descriptor'] & {
+  definition?: { protocol?: unknown };
+};
+
 type ProjectionReconcileTarget = {
   did: string;
   dwnUrl: string;
@@ -131,6 +136,7 @@ type ProjectionReconcileResult = {
 };
 
 type ProjectionDiffResult = {
+  dependencies?: MessagesSyncDependencyEntry[];
   onlyRemote: MessagesSyncDiffEntry[];
   onlyLocal: string[];
 };
@@ -2877,12 +2883,12 @@ export class SyncEngineLevel implements SyncEngine {
   private async applyProjectedDiff(
     target: ProjectionReconcileTarget,
     scope: RecordsProjectionSyncScope,
-    diff: { onlyRemote: MessagesSyncDiffEntry[]; onlyLocal: string[] },
+    diff: ProjectionDiffResult,
     permissionGrantIds: NonEmptyStringArray | undefined,
     options?: ProjectionReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<boolean> {
-    if (await this.pullProjectedRemoteDiff(target, scope, diff.onlyRemote, permissionGrantIds, options, shouldContinue)) {
+    if (await this.pullProjectedRemoteDiff(target, scope, diff, permissionGrantIds, options, shouldContinue)) {
       return true;
     }
 
@@ -2892,16 +2898,16 @@ export class SyncEngineLevel implements SyncEngine {
   private async pullProjectedRemoteDiff(
     target: ProjectionReconcileTarget,
     scope: RecordsProjectionSyncScope,
-    onlyRemote: MessagesSyncDiffEntry[],
+    diff: ProjectionDiffResult,
     permissionGrantIds: NonEmptyStringArray | undefined,
     options?: ProjectionReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<boolean> {
-    if (options?.direction === 'push' || onlyRemote.length === 0) {
+    if (options?.direction === 'push' || diff.onlyRemote.length === 0) {
       return false;
     }
 
-    return this.pullRemoteDiffEntries(target, scope, onlyRemote, permissionGrantIds, shouldContinue);
+    return this.pullRemoteDiffEntries(target, scope, diff.onlyRemote, permissionGrantIds, shouldContinue, diff.dependencies ?? []);
   }
 
   private async pushProjectedLocalDiff(
@@ -2924,9 +2930,15 @@ export class SyncEngineLevel implements SyncEngine {
     onlyRemote: MessagesSyncDiffEntry[],
     permissionGrantIds: NonEmptyStringArray | undefined,
     shouldContinue?: () => boolean,
+    dependencies: MessagesSyncDependencyEntry[] = [],
   ): Promise<boolean> {
-    const { prefetched, needsFetchCids } = partitionRemoteEntries(SyncEngineLevel.dedupeRemoteEntries(onlyRemote));
+    const primaryEntries = SyncEngineLevel.dedupeRemoteEntries(onlyRemote);
     try {
+      if (scope.kind === 'recordsProjection') {
+        await this.pullProjectedDependencyHints(target, scope, primaryEntries, dependencies, permissionGrantIds, shouldContinue);
+      }
+
+      const { prefetched, needsFetchCids } = partitionRemoteEntries(primaryEntries);
       await this.pullMessages({
         did         : target.did,
         dwnUrl      : target.dwnUrl,
@@ -2944,6 +2956,143 @@ export class SyncEngineLevel implements SyncEngine {
       throw error;
     }
     return shouldContinue?.() === false;
+  }
+
+  private async pullProjectedDependencyHints(
+    target: ProjectionReconcileTarget,
+    scope: RecordsProjectionSyncScope,
+    primaryEntries: MessagesSyncDiffEntry[],
+    dependencies: MessagesSyncDependencyEntry[],
+    permissionGrantIds: NonEmptyStringArray | undefined,
+    shouldContinue?: () => boolean,
+  ): Promise<void> {
+    const verified = await this.verifyProjectedProtocolConfigDependencies(scope, primaryEntries, dependencies);
+    if (verified.length === 0) {
+      return;
+    }
+
+    await this.pullMessages({
+      did         : target.did,
+      dwnUrl      : target.dwnUrl,
+      delegateDid : target.delegateDid,
+      scope       : SyncEngineLevel.protocolSetScopeForProtocolConfigDependencies(verified),
+      permissionGrantIds,
+      messageCids : [],
+      prefetched  : verified,
+      shouldContinue,
+    });
+  }
+
+  private async verifyProjectedProtocolConfigDependencies(
+    scope: RecordsProjectionSyncScope,
+    primaryEntries: MessagesSyncDiffEntry[],
+    dependencies: MessagesSyncDependencyEntry[],
+  ): Promise<MessagesSyncDependencyEntry[]> {
+    const primaryByCid = new Map(primaryEntries.map(entry => [entry.messageCid, entry]));
+    const verified = new Map<string, MessagesSyncDependencyEntry>();
+
+    for (const dependency of dependencies) {
+      if (dependency.dependencyClass !== 'protocolsConfigure' || dependency.message === undefined) {
+        continue;
+      }
+
+      const primary = primaryByCid.get(dependency.rootMessageCid);
+      if (primary?.message === undefined) {
+        continue;
+      }
+
+      if (!await SyncEngineLevel.projectedDependencyCidsMatch({
+        dependencyCid     : dependency.messageCid,
+        dependencyMessage : dependency.message,
+        primaryCid        : primary.messageCid,
+        primaryMessage    : primary.message,
+      })) {
+        continue;
+      }
+
+      const primaryProtocol = SyncEngineLevel.recordsWriteProtocol(primary.message);
+      if (primaryProtocol === undefined || SyncEngineLevel.protocolsConfigureProtocol(dependency.message) !== primaryProtocol) {
+        continue;
+      }
+
+      if (!SyncEngineLevel.protocolsConfigureIsNotNewerThanRecordsWrite(dependency.message, primary.message)) {
+        continue;
+      }
+
+      if (classifySyncMessageScope({ message: primary.message, scope }) !== 'in-scope') {
+        continue;
+      }
+
+      verified.set(dependency.messageCid, dependency);
+    }
+
+    return [...verified.values()];
+  }
+
+  private static async projectedDependencyCidsMatch({
+    dependencyCid,
+    dependencyMessage,
+    primaryCid,
+    primaryMessage,
+  }: {
+    dependencyCid: string;
+    dependencyMessage: GenericMessage;
+    primaryCid: string;
+    primaryMessage: GenericMessage;
+  }): Promise<boolean> {
+    return await Message.getCid(primaryMessage) === primaryCid &&
+      await Message.getCid(dependencyMessage) === dependencyCid;
+  }
+
+  private static recordsWriteProtocol(message: GenericMessage): string | undefined {
+    if (
+      message.descriptor.interface !== DwnInterfaceName.Records ||
+      message.descriptor.method !== DwnMethodName.Write
+    ) {
+      return undefined;
+    }
+
+    const protocol = (message.descriptor as RecordsWriteProtocolDescriptor).protocol;
+    return typeof protocol === 'string' ? protocol : undefined;
+  }
+
+  private static protocolsConfigureProtocol(message: GenericMessage): string | undefined {
+    if (
+      message.descriptor.interface !== DwnInterfaceName.Protocols ||
+      message.descriptor.method !== DwnMethodName.Configure
+    ) {
+      return undefined;
+    }
+
+    const definition = (message.descriptor as ProtocolsConfigureDefinitionDescriptor).definition;
+    return typeof definition?.protocol === 'string' ? definition.protocol : undefined;
+  }
+
+  private static protocolsConfigureIsNotNewerThanRecordsWrite(
+    protocolsConfigureMessage: GenericMessage,
+    recordsWriteMessage: GenericMessage,
+  ): boolean {
+    return protocolsConfigureMessage.descriptor.messageTimestamp <= recordsWriteMessage.descriptor.messageTimestamp;
+  }
+
+  private static protocolSetScopeForProtocolConfigDependencies(
+    dependencies: MessagesSyncDependencyEntry[],
+  ): Extract<SyncScope, { kind: 'protocolSet' }> {
+    const protocols = SyncEngineLevel.dedupeStrings(
+      dependencies
+        .map(dependency => dependency.message === undefined
+          ? undefined
+          : SyncEngineLevel.protocolsConfigureProtocol(dependency.message))
+        .filter((protocol): protocol is string => protocol !== undefined)
+    ).sort(lexicographicalCompare);
+    if (protocols.length === 0) {
+      throw new Error('SyncEngineLevel: projected protocol-config dependency hints contained no protocols.');
+    }
+
+    return {
+      kind      : 'protocolSet',
+      protocols : protocols as NonEmptyStringArray,
+    };
   }
 
   private async pushLocalDiffEntries(
@@ -3496,8 +3645,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return {
-      onlyRemote : reply.onlyRemote ?? [],
-      onlyLocal  : onlyLocalCids,
+      dependencies : reply.dependencies ?? [],
+      onlyRemote   : reply.onlyRemote ?? [],
+      onlyLocal    : onlyLocalCids,
     };
   }
 

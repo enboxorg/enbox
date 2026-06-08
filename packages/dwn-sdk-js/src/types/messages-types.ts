@@ -91,6 +91,18 @@ export type MessagesSyncDiffEntry = {
   encodedData? : string;
 };
 
+export type MessagesSyncDependencyClass = 'protocolsConfigure';
+
+/**
+ * Advisory dependency hint returned with projected diff responses. Dependency
+ * entries are not part of the projected root; clients must rederive that the
+ * dependency is required by the referenced primary before applying it.
+ */
+export type MessagesSyncDependencyEntry = MessagesSyncDiffEntry & {
+  dependencyClass: MessagesSyncDependencyClass;
+  rootMessageCid: string;
+};
+
 export type MessagesSyncReply = GenericMessageReply & {
   root? : string; // hex-encoded root hash (for 'root' action)
   hash? : string; // hex-encoded subtree hash (for 'subtree' action)
@@ -99,6 +111,8 @@ export type MessagesSyncReply = GenericMessageReply & {
   onlyRemote? : MessagesSyncDiffEntry[];
   /** For 'diff' action: bit prefixes where the client has entries the server doesn't. */
   onlyLocal? : string[];
+  /** Advisory dependency messages needed to apply projected `onlyRemote` primary entries. */
+  dependencies? : MessagesSyncDependencyEntry[];
 };
 
 export type MessagesSubscribeMessageOptions = {
