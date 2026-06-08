@@ -134,6 +134,11 @@ type VerifiedProtocolConfigCandidate = {
   dependency: AuthenticatedProtocolConfigDependency;
 };
 type AuthenticatedProtocolConfigDependency = SyncDependencyEntryWithMessage & { message: ProtocolsConfigureMessage };
+type VerifiedRecordsInitialWriteCandidate = {
+  rootMessageCid: string;
+  dependency: AuthenticatedRecordsInitialWriteDependency;
+};
+type AuthenticatedRecordsInitialWriteDependency = SyncDependencyEntryWithMessage & { message: RecordsWriteMessage };
 
 type ProjectionReconcileTarget = {
   did: string;
@@ -2952,8 +2957,16 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<boolean> {
     const primaryEntries = SyncEngineLevel.dedupeRemoteEntries(onlyRemote);
     try {
+      let verifiedInitialWrites: RecordsWriteMessage[] = [];
       if (scope.kind === 'recordsProjection') {
-        await this.pullProjectedDependencyHints(target, scope, primaryEntries, dependencies, permissionGrantIds, shouldContinue);
+        verifiedInitialWrites = await this.pullProjectedDependencyHints(
+          target,
+          scope,
+          primaryEntries,
+          dependencies,
+          permissionGrantIds,
+          shouldContinue,
+        );
       }
 
       const { prefetched, needsFetchCids } = partitionRemoteEntries(primaryEntries);
@@ -2965,6 +2978,7 @@ export class SyncEngineLevel implements SyncEngine {
         permissionGrantIds,
         messageCids : needsFetchCids,
         prefetched,
+        verifiedInitialWrites,
         shouldContinue,
       });
     } catch (error) {
@@ -2983,22 +2997,50 @@ export class SyncEngineLevel implements SyncEngine {
     dependencies: MessagesSyncDependencyEntry[],
     permissionGrantIds: NonEmptyStringArray | undefined,
     shouldContinue?: () => boolean,
-  ): Promise<void> {
-    const verified = await this.verifyProjectedProtocolConfigDependencies(target.did, scope, primaryEntries, dependencies);
+  ): Promise<RecordsWriteMessage[]> {
+    const verified = await this.verifyProjectedDependencies(target.did, scope, primaryEntries, dependencies);
     if (verified.length === 0) {
-      return;
+      return [];
     }
 
     await this.pullMessages({
       did         : target.did,
       dwnUrl      : target.dwnUrl,
       delegateDid : target.delegateDid,
-      scope       : SyncEngineLevel.protocolSetScopeForProtocolConfigDependencies(verified),
+      scope       : SyncEngineLevel.protocolSetScopeForProjectedDependencies(verified),
       permissionGrantIds,
       messageCids : [],
       prefetched  : verified,
       shouldContinue,
     });
+
+    return SyncEngineLevel.recordsInitialWritesFromVerifiedDependencies(verified);
+  }
+
+  private async verifyProjectedDependencies(
+    tenantDid: string,
+    scope: RecordsProjectionSyncScope,
+    primaryEntries: MessagesSyncDiffEntry[],
+    dependencies: MessagesSyncDependencyEntry[],
+  ): Promise<MessagesSyncDependencyEntry[]> {
+    const primaryByCid = SyncEngineLevel.indexEntriesWithMessage(primaryEntries);
+    const initialWritesByRoot = await this.collectProjectedRecordsInitialWriteDependencies(
+      scope,
+      primaryByCid,
+      dependencies,
+    );
+    const protocolConfigs = await this.verifyProjectedProtocolConfigDependencies(
+      tenantDid,
+      scope,
+      primaryEntries,
+      dependencies,
+      initialWritesByRoot,
+    );
+
+    return SyncEngineLevel.dedupeDependencyEntries([
+      ...protocolConfigs,
+      ...initialWritesByRoot.values(),
+    ]);
   }
 
   private async verifyProjectedProtocolConfigDependencies(
@@ -3006,25 +3048,33 @@ export class SyncEngineLevel implements SyncEngine {
     scope: RecordsProjectionSyncScope,
     primaryEntries: MessagesSyncDiffEntry[],
     dependencies: MessagesSyncDependencyEntry[],
+    initialWritesByRoot: Map<string, AuthenticatedRecordsInitialWriteDependency> = new Map(),
   ): Promise<MessagesSyncDependencyEntry[]> {
     // Projected sync dependency entries are untrusted server hints. Before any
     // config is applied, bind it to an accepted primary record by CID,
     // tenant authorship, signature, timestamp, scope, and protocol closure;
     // malformed or unrelated hints are ignored.
     const primaryByCid = SyncEngineLevel.indexEntriesWithMessage(primaryEntries);
-    const candidatesByRoot = await this.collectProjectedProtocolConfigCandidates(tenantDid, scope, primaryByCid, dependencies);
+    const candidatesByRoot = await this.collectProjectedProtocolConfigCandidates(
+      tenantDid,
+      scope,
+      primaryByCid,
+      dependencies,
+      initialWritesByRoot,
+    );
     const verified = new Map<string, MessagesSyncDependencyEntry>();
 
     for (const [rootMessageCid, rootCandidates] of candidatesByRoot) {
       const primary = primaryByCid.get(rootMessageCid);
-      const primaryProtocol = primary === undefined
+      const rootRecordsWrite = primary === undefined
         ? undefined
-        : SyncEngineLevel.recordsWriteProtocol(primary.message);
-      if (primaryProtocol === undefined) {
+        : SyncEngineLevel.protocolConfigRootRecordsWrite(primary.message, initialWritesByRoot.get(rootMessageCid)?.message);
+      const rootProtocol = SyncEngineLevel.recordsWriteProtocol(rootRecordsWrite);
+      if (rootProtocol === undefined) {
         continue;
       }
 
-      for (const dependency of SyncEngineLevel.filterProtocolConfigClosure(primaryProtocol, rootCandidates)) {
+      for (const dependency of SyncEngineLevel.filterProtocolConfigClosure(rootProtocol, rootCandidates)) {
         verified.set(dependency.messageCid, dependency);
       }
     }
@@ -3044,15 +3094,96 @@ export class SyncEngineLevel implements SyncEngine {
     return entriesByCid;
   }
 
+  private static recordsInitialWritesFromVerifiedDependencies(
+    entries: MessagesSyncDependencyEntry[],
+  ): RecordsWriteMessage[] {
+    const initialWrites: RecordsWriteMessage[] = [];
+    for (const entry of entries) {
+      if (SyncEngineLevel.hasMessage(entry) && SyncEngineLevel.isRecordsWriteMessage(entry.message)) {
+        initialWrites.push(entry.message);
+      }
+    }
+    return initialWrites;
+  }
+
+  private async collectProjectedRecordsInitialWriteDependencies(
+    scope: RecordsProjectionSyncScope,
+    primaryByCid: Map<string, SyncDiffEntryWithMessage>,
+    dependencies: MessagesSyncDependencyEntry[],
+  ): Promise<Map<string, AuthenticatedRecordsInitialWriteDependency>> {
+    const dependenciesByRoot = new Map<string, AuthenticatedRecordsInitialWriteDependency>();
+    for (const dependency of dependencies) {
+      const verified = await this.verifyRecordsInitialWriteCandidate(scope, primaryByCid, dependency);
+      if (verified === undefined) {
+        continue;
+      }
+
+      dependenciesByRoot.set(verified.rootMessageCid, verified.dependency);
+    }
+    return dependenciesByRoot;
+  }
+
+  private async verifyRecordsInitialWriteCandidate(
+    scope: RecordsProjectionSyncScope,
+    primaryByCid: Map<string, SyncDiffEntryWithMessage>,
+    dependency: MessagesSyncDependencyEntry,
+  ): Promise<VerifiedRecordsInitialWriteCandidate | undefined> {
+    if (dependency.dependencyClass !== 'recordsInitialWrite' ||
+      !SyncEngineLevel.hasMessage(dependency) ||
+      SyncEngineLevel.hasDependencyPayloadBytes(dependency)) {
+      return undefined;
+    }
+
+    const primary = primaryByCid.get(dependency.rootMessageCid);
+    if (primary === undefined ||
+      !SyncEngineLevel.isRecordsDeleteMessage(primary.message) ||
+      !await SyncEngineLevel.projectedDependencyCidsMatch({
+        dependencyCid     : dependency.messageCid,
+        dependencyMessage : dependency.message,
+        primaryCid        : primary.messageCid,
+        primaryMessage    : primary.message,
+      })) {
+      return undefined;
+    }
+
+    const initialWrite = await this.toAuthenticatedRecordsInitialWriteDependency(dependency);
+    if (initialWrite === undefined ||
+      initialWrite.message.recordId !== SyncEngineLevel.recordsDeleteRecordId(primary.message) ||
+      classifySyncMessageScope({ message: primary.message, initialWrite: initialWrite.message, scope }) !== 'in-scope') {
+      return undefined;
+    }
+
+    return { dependency: initialWrite, rootMessageCid: dependency.rootMessageCid };
+  }
+
+  private async toAuthenticatedRecordsInitialWriteDependency(
+    dependency: SyncDependencyEntryWithMessage,
+  ): Promise<AuthenticatedRecordsInitialWriteDependency | undefined> {
+    if (!SyncEngineLevel.isRecordsWriteMessage(dependency.message)) {
+      return undefined;
+    }
+
+    try {
+      const recordsWrite = await RecordsWrite.parse(dependency.message);
+      await authenticate(recordsWrite.message.authorization, this.agent.did, recordsWrite.message.attestation);
+      return await recordsWrite.isInitialWrite()
+        ? { ...dependency, message: recordsWrite.message }
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async collectProjectedProtocolConfigCandidates(
     tenantDid: string,
     scope: RecordsProjectionSyncScope,
     primaryByCid: Map<string, SyncDiffEntryWithMessage>,
     dependencies: MessagesSyncDependencyEntry[],
+    initialWritesByRoot: Map<string, AuthenticatedRecordsInitialWriteDependency>,
   ): Promise<Map<string, AuthenticatedProtocolConfigDependency[]>> {
     const candidatesByRoot = new Map<string, AuthenticatedProtocolConfigDependency[]>();
     for (const dependency of dependencies) {
-      const verified = await this.verifyProtocolConfigCandidate(tenantDid, scope, primaryByCid, dependency);
+      const verified = await this.verifyProtocolConfigCandidate(tenantDid, scope, primaryByCid, dependency, initialWritesByRoot);
       if (verified === undefined) {
         continue;
       }
@@ -3069,6 +3200,7 @@ export class SyncEngineLevel implements SyncEngine {
     scope: RecordsProjectionSyncScope,
     primaryByCid: Map<string, SyncDiffEntryWithMessage>,
     dependency: MessagesSyncDependencyEntry,
+    initialWritesByRoot: Map<string, AuthenticatedRecordsInitialWriteDependency>,
   ): Promise<VerifiedProtocolConfigCandidate | undefined> {
     if (dependency.dependencyClass !== 'protocolsConfigure' || !SyncEngineLevel.hasMessage(dependency)) {
       return undefined;
@@ -3079,7 +3211,13 @@ export class SyncEngineLevel implements SyncEngine {
       return undefined;
     }
 
-    const verifiedDependency = await this.verifyProtocolConfigCandidateMessage(tenantDid, scope, primary, dependency);
+    const verifiedDependency = await this.verifyProtocolConfigCandidateMessage(
+      tenantDid,
+      scope,
+      primary,
+      dependency,
+      initialWritesByRoot.get(dependency.rootMessageCid)?.message,
+    );
     return verifiedDependency === undefined
       ? undefined
       : { dependency: verifiedDependency, rootMessageCid: dependency.rootMessageCid };
@@ -3090,6 +3228,7 @@ export class SyncEngineLevel implements SyncEngine {
     scope: RecordsProjectionSyncScope,
     primary: SyncDiffEntryWithMessage,
     dependency: SyncDependencyEntryWithMessage,
+    initialWrite: RecordsWriteMessage | undefined,
   ): Promise<AuthenticatedProtocolConfigDependency | undefined> {
     // Protocol authorization is temporal: a record is governed by the protocol
     // definition active at its creation timestamp. Future configs may add
@@ -3109,10 +3248,11 @@ export class SyncEngineLevel implements SyncEngine {
       return undefined;
     }
 
-    const primaryIsInScope = SyncEngineLevel.recordsWriteProtocol(primary.message) !== undefined &&
-      classifySyncMessageScope({ message: primary.message, scope }) === 'in-scope';
+    const rootRecordsWrite = SyncEngineLevel.protocolConfigRootRecordsWrite(primary.message, initialWrite);
+    const primaryIsInScope = rootRecordsWrite !== undefined &&
+      classifySyncMessageScope({ message: primary.message, initialWrite, scope }) === 'in-scope';
     if (!primaryIsInScope ||
-      !SyncEngineLevel.protocolsConfigureIsNotNewerThanRecordsWrite(authenticatedDependency.message, primary.message)) {
+      !SyncEngineLevel.protocolsConfigureIsNotNewerThanRecordsWrite(authenticatedDependency.message, rootRecordsWrite)) {
       return undefined;
     }
 
@@ -3154,13 +3294,33 @@ export class SyncEngineLevel implements SyncEngine {
       await Message.getCid(dependencyMessage) === dependencyCid;
   }
 
-  private static recordsWriteProtocol(message: GenericMessage): string | undefined {
+  private static recordsWriteProtocol(message: GenericMessage | undefined): string | undefined {
     if (!SyncEngineLevel.isRecordsWriteProtocolMessage(message)) {
       return undefined;
     }
 
     const { protocol } = message.descriptor;
     return typeof protocol === 'string' ? protocol : undefined;
+  }
+
+  private static recordsDeleteRecordId(message: GenericMessage): string | undefined {
+    if (!SyncEngineLevel.isRecordsDeleteMessage(message)) {
+      return undefined;
+    }
+
+    const recordId = (message.descriptor as Record<string, unknown>).recordId;
+    return typeof recordId === 'string' ? recordId : undefined;
+  }
+
+  private static protocolConfigRootRecordsWrite(
+    primary: GenericMessage,
+    initialWrite: RecordsWriteMessage | undefined,
+  ): RecordsWriteMessage | undefined {
+    if (SyncEngineLevel.isRecordsWriteMessage(primary)) {
+      return primary;
+    }
+
+    return SyncEngineLevel.isRecordsDeleteMessage(primary) ? initialWrite : undefined;
   }
 
   private static protocolsConfigureProtocol(message: ProtocolsConfigureMessage): string {
@@ -3195,9 +3355,22 @@ export class SyncEngineLevel implements SyncEngine {
     return entry?.message !== undefined;
   }
 
-  private static isRecordsWriteProtocolMessage(message: GenericMessage): message is RecordsWriteProtocolMessage {
-    return message.descriptor.interface === DwnInterfaceName.Records &&
+  private static isRecordsWriteProtocolMessage(message: GenericMessage | undefined): message is RecordsWriteProtocolMessage {
+    return message?.descriptor.interface === DwnInterfaceName.Records &&
       message.descriptor.method === DwnMethodName.Write;
+  }
+
+  private static isRecordsWriteMessage(message: GenericMessage | undefined): message is RecordsWriteMessage {
+    return SyncEngineLevel.isRecordsWriteProtocolMessage(message) &&
+      'recordId' in message &&
+      typeof message.recordId === 'string' &&
+      'contextId' in message &&
+      typeof message.contextId === 'string';
+  }
+
+  private static isRecordsDeleteMessage(message: GenericMessage): boolean {
+    return message.descriptor.interface === DwnInterfaceName.Records &&
+      message.descriptor.method === DwnMethodName.Delete;
   }
 
   private static isProtocolsConfigureDefinitionMessage(message: GenericMessage): message is ProtocolsConfigureMessage {
@@ -3333,7 +3506,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private static protocolSetScopeForProtocolConfigDependencies(
+  private static protocolSetScopeForProjectedDependencies(
     dependencies: MessagesSyncDependencyEntry[],
   ): Extract<SyncScope, { kind: 'protocolSet' }> {
     // Verification above is the security boundary. This protocolSet scope only
@@ -3342,19 +3515,46 @@ export class SyncEngineLevel implements SyncEngine {
     // the supplied sync scope before it reaches processRawMessage().
     const protocols = SyncEngineLevel.dedupeStrings(
       dependencies
-        .map(dependency => dependency.message === undefined
-          ? undefined
-          : SyncEngineLevel.protocolsConfigureProtocolFromGenericMessage(dependency.message))
-        .filter((protocol): protocol is string => protocol !== undefined)
+        .flatMap(dependency => SyncEngineLevel.projectedDependencyProtocols(dependency))
     ).sort(lexicographicalCompare);
     if (protocols.length === 0) {
-      throw new Error('SyncEngineLevel: projected protocol-config dependency hints contained no protocols.');
+      throw new Error('SyncEngineLevel: projected dependency hints contained no protocols.');
     }
 
     return {
       kind      : 'protocolSet',
       protocols : protocols as NonEmptyStringArray,
     };
+  }
+
+  private static projectedDependencyProtocols(dependency: MessagesSyncDependencyEntry): string[] {
+    if (dependency.message === undefined) {
+      return [];
+    }
+
+    const protocol = dependency.dependencyClass === 'protocolsConfigure'
+      ? SyncEngineLevel.protocolsConfigureProtocolFromGenericMessage(dependency.message)
+      : SyncEngineLevel.recordsWriteProtocol(dependency.message);
+    return protocol === undefined ? [] : [protocol];
+  }
+
+  private static hasDependencyPayloadBytes(dependency: MessagesSyncDependencyEntry): boolean {
+    if (dependency.encodedData !== undefined) {
+      return true;
+    }
+
+    const message = dependency.message as Record<string, unknown> | undefined;
+    return message !== undefined && 'encodedData' in message;
+  }
+
+  private static dedupeDependencyEntries(
+    dependencies: Iterable<MessagesSyncDependencyEntry>,
+  ): MessagesSyncDependencyEntry[] {
+    const deduped = new Map<string, MessagesSyncDependencyEntry>();
+    for (const dependency of dependencies) {
+      deduped.set(dependency.messageCid, dependency);
+    }
+    return [...deduped.values()];
   }
 
   private async pushLocalDiffEntries(
@@ -4151,7 +4351,18 @@ export class SyncEngineLevel implements SyncEngine {
    * they are processed directly without additional HTTP round-trips.
    * Only `messageCids` that were NOT prefetched are fetched individually.
    */
-  private async pullMessages({ did, dwnUrl, delegateDid, protocol, scope, permissionGrantIds, messageCids, prefetched, shouldContinue }: {
+  private async pullMessages({
+    did,
+    dwnUrl,
+    delegateDid,
+    protocol,
+    scope,
+    permissionGrantIds,
+    messageCids,
+    prefetched,
+    verifiedInitialWrites,
+    shouldContinue,
+  }: {
     did: string;
     dwnUrl: string;
     delegateDid?: string;
@@ -4160,6 +4371,7 @@ export class SyncEngineLevel implements SyncEngine {
     permissionGrantIds?: string[];
     messageCids: string[];
     prefetched?: MessagesSyncDiffEntry[];
+    verifiedInitialWrites?: RecordsWriteMessage[];
     shouldContinue?: () => boolean;
   }): Promise<void> {
     const acceptanceScope: SyncScope = scope ?? (protocol === undefined
@@ -4176,7 +4388,7 @@ export class SyncEngineLevel implements SyncEngine {
       shouldContinue,
       agent       : this.agent,
       acceptEntry : async (entry, entries) => {
-        const result = await this.acceptPulledSyncEntry(did, acceptanceScope, entry, entries);
+        const result = await this.acceptPulledSyncEntry(did, acceptanceScope, entry, entries, verifiedInitialWrites);
         if (!result.accepted) {
           rejectedPullEntries.set(await getMessageCid(entry.message), result);
         }
@@ -4206,12 +4418,13 @@ export class SyncEngineLevel implements SyncEngine {
     scope: SyncScope,
     entry: SyncMessageEntry,
     entries: SyncMessageEntry[],
+    verifiedInitialWrites: RecordsWriteMessage[] = [],
   ): Promise<PullAcceptanceResult> {
     if (scope.kind === 'full') {
       return { accepted: true };
     }
 
-    const initialWrite = await this.resolvePulledDeleteInitialWrite(did, entry.message, entries);
+    const initialWrite = await this.resolvePulledDeleteInitialWrite(did, entry.message, entries, verifiedInitialWrites);
     const classification = classifySyncMessageScope({
       message: entry.message,
       initialWrite,
@@ -4231,6 +4444,7 @@ export class SyncEngineLevel implements SyncEngine {
     did: string,
     message: GenericMessage,
     entries: SyncMessageEntry[],
+    verifiedInitialWrites: RecordsWriteMessage[] = [],
   ): Promise<RecordsWriteMessage | undefined> {
     const descriptor = message.descriptor as Record<string, unknown>;
     if (
@@ -4252,11 +4466,25 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
+    const verifiedInitialWrite = SyncEngineLevel.findInitialWriteByRecordId(descriptor.recordId, verifiedInitialWrites);
+    if (verifiedInitialWrite !== undefined) {
+      return verifiedInitialWrite;
+    }
+
     // Batch entries are only used when the initial write has not been applied
-    // locally yet. RecordsWrite.isInitialWrite binds the candidate's CID to
-    // recordId, and processRawMessage still authenticates the delete before
-    // any local mutation occurs.
+    // locally yet. Verified dependency hints cover the projected remote-mode
+    // path where the initial write was applied in the previous pull batch and
+    // no embedded local message store is available. Batch entries are still
+    // parsed as initial RecordsWrite messages, and processRawMessage
+    // authenticates the delete before any local mutation occurs.
     return this.findInitialWriteInPullBatch(descriptor.recordId, entries);
+  }
+
+  private static findInitialWriteByRecordId(
+    recordId: string,
+    initialWrites: RecordsWriteMessage[],
+  ): RecordsWriteMessage | undefined {
+    return initialWrites.find(initialWrite => initialWrite.recordId === recordId);
   }
 
   private async findInitialWriteInPullBatch(

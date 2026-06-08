@@ -15,6 +15,7 @@ import { MessagesGrantAuthorization } from '../core/messages-grant-authorization
 import { MessagesSync } from '../interfaces/messages-sync.js';
 import { Records } from '../utils/records.js';
 import { RecordsProjection } from '../sync/records-projection.js';
+import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -29,6 +30,10 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 const DEFAULT_MAX_INLINE_DATA_SIZE = DwnConstant.maxDataSizeAllowedToBeEncoded;
 
 type StoredMessageWithEncodedData = GenericMessage & { encodedData?: string };
+type StoredMessageWithInternalFields = GenericMessage & {
+  encodedData?: unknown;
+  initialWrite?: unknown;
+};
 type RecordsWriteProtocolDescriptor = GenericMessage['descriptor'] & { protocol?: unknown };
 type RecordsWriteProtocolMetadata = { protocol: string; messageTimestamp: string };
 type ProtocolsConfigureDefinitionDescriptor = GenericMessage['descriptor'] & {
@@ -482,14 +487,38 @@ export class MessagesSyncHandler implements MethodHandler {
 
     for (const primaryEntry of primaryEntries) {
       const protocolMetadata = MessagesSyncHandler.recordsWriteProtocolMetadata(primaryEntry.message);
-      if (protocolMetadata === undefined) {
+      if (protocolMetadata !== undefined) {
+        await this.addProtocolConfigClosureDependencies(
+          tenant,
+          protocolMetadata.protocol,
+          protocolMetadata.messageTimestamp,
+          primaryEntry.messageCid,
+          configsByProtocol,
+          dependenciesByCid,
+        );
+        continue;
+      }
+
+      const initialWrite = await this.readRecordsDeleteInitialWrite(tenant, primaryEntry.message);
+      if (initialWrite === undefined) {
+        continue;
+      }
+
+      await MessagesSyncHandler.addRecordsInitialWriteDependency(
+        primaryEntry.messageCid,
+        initialWrite,
+        dependenciesByCid,
+      );
+
+      const initialWriteMetadata = MessagesSyncHandler.recordsWriteProtocolMetadata(initialWrite);
+      if (initialWriteMetadata === undefined) {
         continue;
       }
 
       await this.addProtocolConfigClosureDependencies(
         tenant,
-        protocolMetadata.protocol,
-        protocolMetadata.messageTimestamp,
+        initialWriteMetadata.protocol,
+        initialWriteMetadata.messageTimestamp,
         primaryEntry.messageCid,
         configsByProtocol,
         dependenciesByCid,
@@ -497,6 +526,42 @@ export class MessagesSyncHandler implements MethodHandler {
     }
 
     return [...dependenciesByCid.values()];
+  }
+
+  private async readRecordsDeleteInitialWrite(
+    tenant: string,
+    message: GenericMessage | undefined,
+  ): Promise<GenericMessage | undefined> {
+    const recordId = MessagesSyncHandler.recordsDeleteRecordId(message);
+    if (recordId === undefined) {
+      return undefined;
+    }
+
+    const { messages } = await this.deps.messageStore.query(tenant, [{
+      interface : DwnInterfaceName.Records,
+      method    : DwnMethodName.Write,
+      recordId,
+    }]);
+    const initialWrite = await RecordsWrite.getInitialWrite(messages);
+    return initialWrite === undefined ? undefined : MessagesSyncHandler.toWireMessage(initialWrite);
+  }
+
+  private static async addRecordsInitialWriteDependency(
+    rootMessageCid: string,
+    dependency: GenericMessage,
+    dependenciesByCid: Map<string, MessagesSyncDependencyEntry>,
+  ): Promise<void> {
+    const dependencyCid = await Message.getCid(dependency);
+    if (dependenciesByCid.has(dependencyCid)) {
+      return;
+    }
+
+    dependenciesByCid.set(dependencyCid, {
+      dependencyClass : 'recordsInitialWrite',
+      messageCid      : dependencyCid,
+      message         : dependency,
+      rootMessageCid,
+    });
   }
 
   private async addProtocolConfigClosureDependencies(
@@ -666,6 +731,23 @@ export class MessagesSyncHandler implements MethodHandler {
     return typeof protocol === 'string'
       ? { protocol, messageTimestamp: message.descriptor.messageTimestamp }
       : undefined;
+  }
+
+  private static recordsDeleteRecordId(message: GenericMessage | undefined): string | undefined {
+    if (
+      message?.descriptor.interface !== DwnInterfaceName.Records ||
+      message.descriptor.method !== DwnMethodName.Delete
+    ) {
+      return undefined;
+    }
+
+    const recordId = (message.descriptor as Record<string, unknown>).recordId;
+    return typeof recordId === 'string' ? recordId : undefined;
+  }
+
+  private static toWireMessage(message: GenericMessage): GenericMessage {
+    const { encodedData: _encodedData, initialWrite: _initialWrite, ...wireMessage } = message as StoredMessageWithInternalFields;
+    return wireMessage;
   }
 
   /**
