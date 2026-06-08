@@ -991,8 +991,17 @@ export function testMessagesReadHandler(): void {
             permissionGrantIds : [grantId],
           });
           const protocolReadReply = await dwn.processMessage(alice.did, protocolRead.message);
-          expect(protocolReadReply.status.code).toBe(401);
-          expect(protocolReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+          expect(protocolReadReply.status.code).toBe(200);
+          expect(protocolReadReply.entry!.message).toEqual(protocolMessage);
+
+          const otherProtocolConfigRead = await TestDataGenerator.generateMessagesRead({
+            author             : bob,
+            messageCid         : await Message.getCid(otherProtocolMessage),
+            permissionGrantIds : [grantId],
+          });
+          const otherProtocolConfigReadReply = await dwn.processMessage(alice.did, otherProtocolConfigRead.message);
+          expect(otherProtocolConfigReadReply.status.code).toBe(401);
+          expect(otherProtocolConfigReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
 
           const grantRecordRead = await TestDataGenerator.generateMessagesRead({
             author             : bob,
@@ -1115,8 +1124,8 @@ export function testMessagesReadHandler(): void {
             permissionGrantIds : [grantId],
           });
           const protocolReadReply = await dwn.processMessage(alice.did, protocolRead.message);
-          expect(protocolReadReply.status.code).toBe(401);
-          expect(protocolReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+          expect(protocolReadReply.status.code).toBe(200);
+          expect(protocolReadReply.entry!.message).toEqual(protocolMessage);
 
           const grantRecordRead = await TestDataGenerator.generateMessagesRead({
             author             : bob,

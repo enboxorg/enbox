@@ -1096,7 +1096,7 @@ export function testMessagesSyncHandler(): void {
           expect(readReply.status.code).toBe(401);
           expect(readReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
 
-          const legacySyncActions = [
+          const stateIndexSyncActions = [
             { action: 'root' as const },
             { action: 'subtree' as const, prefix: '' },
             { action: 'leaves' as const, prefix: '' },
@@ -1108,7 +1108,7 @@ export function testMessagesSyncHandler(): void {
           ];
 
           for (const { protocol, grantId } of infrastructureProtocolGrants) {
-            for (const syncAction of legacySyncActions) {
+            for (const syncAction of stateIndexSyncActions) {
               const { message: syncMessage } = await MessagesSync.create({
                 signer             : Jws.createSigner(bob),
                 ...syncAction,
