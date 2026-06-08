@@ -3,4 +3,4 @@
 "@enbox/dwn-sdk-js": patch
 ---
 
-Add projected MessagesSync protocol-config dependency hints and apply verified hints before projected primary records.
+Add projected MessagesSync protocol-config closure hints and apply verified config dependencies before projected primary records.

@@ -2875,12 +2875,15 @@ describe('SyncEngineLevel — private methods', () => {
       },
     });
 
-    const protocolsConfigureMessage = (protocol = projectedProtocol): GenericMessage => ({
+    const protocolsConfigureMessage = (
+      protocol = projectedProtocol,
+      uses?: Record<string, string>,
+    ): GenericMessage => ({
       descriptor: {
         interface        : DwnInterfaceName.Protocols,
         method           : DwnMethodName.Configure,
         messageTimestamp : '2025-12-31T00:00:00.000000Z',
-        definition       : { protocol },
+        definition       : { protocol, ...(uses === undefined ? {} : { uses }) },
       },
     });
 
@@ -2974,14 +2977,23 @@ describe('SyncEngineLevel — private methods', () => {
     it('pullProjectedRemoteDiff should apply verified protocol-config dependency hints before primary entries', async () => {
       const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
       const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const socialProtocol = 'https://identity.foundation/protocols/social-graph';
       const primaryMessage = projectedRecordMessage();
-      const dependencyMessage = protocolsConfigureMessage();
+      const dependencyMessage = protocolsConfigureMessage(projectedProtocol, { social: socialProtocol });
+      const usedDependencyMessage = protocolsConfigureMessage(socialProtocol);
       const primaryCid = await Message.getCid(primaryMessage);
       const dependencyCid = await Message.getCid(dependencyMessage);
+      const usedDependencyCid = await Message.getCid(usedDependencyMessage);
       const dependency = {
         dependencyClass : 'protocolsConfigure',
         messageCid      : dependencyCid,
         message         : dependencyMessage,
+        rootMessageCid  : primaryCid,
+      };
+      const usedDependency = {
+        dependencyClass : 'protocolsConfigure',
+        messageCid      : usedDependencyCid,
+        message         : usedDependencyMessage,
         rootMessageCid  : primaryCid,
       };
 
@@ -2989,7 +3001,7 @@ describe('SyncEngineLevel — private methods', () => {
         target,
         projectedScope,
         {
-          dependencies : [dependency],
+          dependencies : [dependency, usedDependency],
           onlyLocal    : [],
           onlyRemote   : [{ messageCid: primaryCid, message: primaryMessage }],
         },
@@ -2999,9 +3011,9 @@ describe('SyncEngineLevel — private methods', () => {
       expect(aborted).toBe(false);
       expect(pullStub.callCount).toBe(2);
       expect(pullStub.firstCall.args[0]).toMatchObject({
-        scope       : { kind: 'protocolSet', protocols: [projectedProtocol] },
+        scope       : { kind: 'protocolSet', protocols: [projectedProtocol, socialProtocol] },
         messageCids : [],
-        prefetched  : [dependency],
+        prefetched  : [dependency, usedDependency],
       });
       expect(pullStub.secondCall.args[0]).toMatchObject({
         scope       : projectedScope,

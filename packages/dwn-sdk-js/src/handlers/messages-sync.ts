@@ -31,6 +31,12 @@ const DEFAULT_MAX_INLINE_DATA_SIZE = DwnConstant.maxDataSizeAllowedToBeEncoded;
 type StoredMessageWithEncodedData = GenericMessage & { encodedData?: string };
 type RecordsWriteProtocolDescriptor = GenericMessage['descriptor'] & { protocol?: unknown };
 type RecordsWriteProtocolMetadata = { protocol: string; messageTimestamp: string };
+type ProtocolsConfigureDefinitionDescriptor = GenericMessage['descriptor'] & {
+  definition?: {
+    protocol?: unknown;
+    uses?: Record<string, unknown>;
+  };
+};
 type ProjectionScopes = readonly [RecordsProjectionScope, ...RecordsProjectionScope[]];
 
 
@@ -472,6 +478,7 @@ export class MessagesSyncHandler implements MethodHandler {
     primaryEntries: MessagesSyncDiffEntry[],
   ): Promise<MessagesSyncDependencyEntry[]> {
     const dependenciesByCid = new Map<string, MessagesSyncDependencyEntry>();
+    const configsByProtocol = new Map<string, GenericMessage[]>();
 
     for (const primaryEntry of primaryEntries) {
       const protocolMetadata = MessagesSyncHandler.recordsWriteProtocolMetadata(primaryEntry.message);
@@ -479,27 +486,95 @@ export class MessagesSyncHandler implements MethodHandler {
         continue;
       }
 
-      const dependency = await this.readActiveProtocolsConfigure(
+      await this.addProtocolConfigClosureDependencies(
         tenant,
         protocolMetadata.protocol,
         protocolMetadata.messageTimestamp,
+        primaryEntry.messageCid,
+        configsByProtocol,
+        dependenciesByCid,
       );
-      if (dependency === undefined) {
-        continue;
-      }
-
-      const dependencyCid = await Message.getCid(dependency);
-      if (!dependenciesByCid.has(dependencyCid)) {
-        dependenciesByCid.set(dependencyCid, {
-          dependencyClass : 'protocolsConfigure',
-          messageCid      : dependencyCid,
-          message         : dependency,
-          rootMessageCid  : primaryEntry.messageCid,
-        });
-      }
     }
 
     return [...dependenciesByCid.values()];
+  }
+
+  private async addProtocolConfigClosureDependencies(
+    tenant: string,
+    rootProtocol: string,
+    rootMessageTimestamp: string,
+    rootMessageCid: string,
+    configsByProtocol: Map<string, GenericMessage[]>,
+    dependenciesByCid: Map<string, MessagesSyncDependencyEntry>,
+  ): Promise<void> {
+    const visitedProtocols = new Set<string>();
+    const pendingProtocols = [rootProtocol];
+
+    while (pendingProtocols.length > 0) {
+      const protocol = pendingProtocols.shift()!;
+      if (visitedProtocols.has(protocol)) {
+        continue;
+      }
+      visitedProtocols.add(protocol);
+
+      const configCacheKey = JSON.stringify([protocol, rootMessageTimestamp]);
+      let configs = configsByProtocol.get(configCacheKey);
+      if (configs === undefined) {
+        configs = await this.readProtocolsConfigureHistory(tenant, protocol, rootMessageTimestamp);
+        configsByProtocol.set(configCacheKey, configs);
+      }
+
+      for (const dependency of configs) {
+        const dependencyCid = await Message.getCid(dependency);
+        if (!dependenciesByCid.has(dependencyCid)) {
+          dependenciesByCid.set(dependencyCid, {
+            dependencyClass : 'protocolsConfigure',
+            messageCid      : dependencyCid,
+            message         : dependency,
+            rootMessageCid,
+          });
+        }
+
+        for (const usedProtocol of MessagesSyncHandler.protocolsConfigureUses(dependency)) {
+          if (!visitedProtocols.has(usedProtocol)) {
+            pendingProtocols.push(usedProtocol);
+          }
+        }
+      }
+    }
+  }
+
+  private static protocolsConfigureUses(message: GenericMessage): string[] {
+    if (
+      message.descriptor.interface !== DwnInterfaceName.Protocols ||
+      message.descriptor.method !== DwnMethodName.Configure
+    ) {
+      return [];
+    }
+
+    const uses = (message.descriptor as ProtocolsConfigureDefinitionDescriptor).definition?.uses;
+    return uses === undefined
+      ? []
+      : Object.values(uses).filter((protocol): protocol is string => typeof protocol === 'string');
+  }
+
+  private async readProtocolsConfigureHistory(
+    tenant: string,
+    protocol: string,
+    messageTimestamp: string,
+  ): Promise<GenericMessage[]> {
+    const { messages } = await this.deps.messageStore.query(
+      tenant,
+      [{
+        interface        : DwnInterfaceName.Protocols,
+        method           : DwnMethodName.Configure,
+        protocol,
+        messageTimestamp : { lte: messageTimestamp },
+      }],
+      { messageTimestamp: SortDirection.Ascending },
+    );
+
+    return messages;
   }
 
   private static recordsWriteProtocolMetadata(message: GenericMessage | undefined): RecordsWriteProtocolMetadata | undefined {
@@ -514,26 +589,6 @@ export class MessagesSyncHandler implements MethodHandler {
     return typeof protocol === 'string'
       ? { protocol, messageTimestamp: message.descriptor.messageTimestamp }
       : undefined;
-  }
-
-  private async readActiveProtocolsConfigure(
-    tenant: string,
-    protocol: string,
-    messageTimestamp: string,
-  ): Promise<GenericMessage | undefined> {
-    const { messages } = await this.deps.messageStore.query(
-      tenant,
-      [{
-        interface        : DwnInterfaceName.Protocols,
-        method           : DwnMethodName.Configure,
-        protocol,
-        messageTimestamp : { lte: messageTimestamp },
-      }],
-      { messageTimestamp: SortDirection.Descending },
-      { limit: 1 },
-    );
-
-    return messages[0];
   }
 
   /**

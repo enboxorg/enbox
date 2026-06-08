@@ -114,7 +114,10 @@ type PullAcceptanceResult =
 
 type RecordsWriteProtocolDescriptor = GenericMessage['descriptor'] & { protocol?: unknown };
 type ProtocolsConfigureDefinitionDescriptor = GenericMessage['descriptor'] & {
-  definition?: { protocol?: unknown };
+  definition?: {
+    protocol?: unknown;
+    uses?: Record<string, unknown>;
+  };
 };
 
 type ProjectionReconcileTarget = {
@@ -2989,7 +2992,7 @@ export class SyncEngineLevel implements SyncEngine {
     dependencies: MessagesSyncDependencyEntry[],
   ): Promise<MessagesSyncDependencyEntry[]> {
     const primaryByCid = new Map(primaryEntries.map(entry => [entry.messageCid, entry]));
-    const verified = new Map<string, MessagesSyncDependencyEntry>();
+    const candidatesByRoot = new Map<string, MessagesSyncDependencyEntry[]>();
 
     for (const dependency of dependencies) {
       if (dependency.dependencyClass !== 'protocolsConfigure' || dependency.message === undefined) {
@@ -3011,7 +3014,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       const primaryProtocol = SyncEngineLevel.recordsWriteProtocol(primary.message);
-      if (primaryProtocol === undefined || SyncEngineLevel.protocolsConfigureProtocol(dependency.message) !== primaryProtocol) {
+      if (primaryProtocol === undefined) {
         continue;
       }
 
@@ -3023,7 +3026,26 @@ export class SyncEngineLevel implements SyncEngine {
         continue;
       }
 
-      verified.set(dependency.messageCid, dependency);
+      const rootCandidates = candidatesByRoot.get(dependency.rootMessageCid) ?? [];
+      rootCandidates.push(dependency);
+      candidatesByRoot.set(dependency.rootMessageCid, rootCandidates);
+    }
+
+    const verified = new Map<string, MessagesSyncDependencyEntry>();
+    for (const [rootMessageCid, rootCandidates] of candidatesByRoot) {
+      const primary = primaryByCid.get(rootMessageCid);
+      if (primary?.message === undefined) {
+        continue;
+      }
+
+      const primaryProtocol = SyncEngineLevel.recordsWriteProtocol(primary.message);
+      if (primaryProtocol === undefined) {
+        continue;
+      }
+
+      for (const dependency of SyncEngineLevel.filterProtocolConfigClosure(primaryProtocol, rootCandidates)) {
+        verified.set(dependency.messageCid, dependency);
+      }
     }
 
     return [...verified.values()];
@@ -3075,9 +3097,74 @@ export class SyncEngineLevel implements SyncEngine {
     return protocolsConfigureMessage.descriptor.messageTimestamp <= recordsWriteMessage.descriptor.messageTimestamp;
   }
 
+  private static protocolsConfigureUses(message: GenericMessage): string[] {
+    if (
+      message.descriptor.interface !== DwnInterfaceName.Protocols ||
+      message.descriptor.method !== DwnMethodName.Configure
+    ) {
+      return [];
+    }
+
+    const uses = (message.descriptor as ProtocolsConfigureDefinitionDescriptor).definition?.uses;
+    return uses === undefined
+      ? []
+      : Object.values(uses).filter((protocol): protocol is string => typeof protocol === 'string');
+  }
+
+  private static filterProtocolConfigClosure(
+    primaryProtocol: string,
+    candidates: MessagesSyncDependencyEntry[],
+  ): MessagesSyncDependencyEntry[] {
+    const candidatesByProtocol = new Map<string, MessagesSyncDependencyEntry[]>();
+    for (const candidate of candidates) {
+      const protocol = candidate.message === undefined
+        ? undefined
+        : SyncEngineLevel.protocolsConfigureProtocol(candidate.message);
+      if (protocol === undefined) {
+        continue;
+      }
+
+      const protocolCandidates = candidatesByProtocol.get(protocol) ?? [];
+      protocolCandidates.push(candidate);
+      candidatesByProtocol.set(protocol, protocolCandidates);
+    }
+
+    const allowedProtocols = new Set<string>();
+    const pendingProtocols = [primaryProtocol];
+    const accepted = new Map<string, MessagesSyncDependencyEntry>();
+
+    while (pendingProtocols.length > 0) {
+      const protocol = pendingProtocols.shift()!;
+      if (allowedProtocols.has(protocol)) {
+        continue;
+      }
+      allowedProtocols.add(protocol);
+
+      for (const candidate of candidatesByProtocol.get(protocol) ?? []) {
+        const message = candidate.message;
+        if (message === undefined) {
+          continue;
+        }
+
+        accepted.set(candidate.messageCid, candidate);
+        for (const usedProtocol of SyncEngineLevel.protocolsConfigureUses(message)) {
+          if (!allowedProtocols.has(usedProtocol)) {
+            pendingProtocols.push(usedProtocol);
+          }
+        }
+      }
+    }
+
+    return [...accepted.values()];
+  }
+
   private static protocolSetScopeForProtocolConfigDependencies(
     dependencies: MessagesSyncDependencyEntry[],
   ): Extract<SyncScope, { kind: 'protocolSet' }> {
+    // Verification above is the security boundary. This protocolSet scope only
+    // routes already-verified config dependencies through the existing
+    // pull/apply path, which expects every prefetched message to be accepted by
+    // the supplied sync scope before it reaches processRawMessage().
     const protocols = SyncEngineLevel.dedupeStrings(
       dependencies
         .map(dependency => dependency.message === undefined
