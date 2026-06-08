@@ -994,7 +994,7 @@ export function testMessagesSyncHandler(): void {
           }]);
         });
 
-        it('returns protocol config history dependencies for projected sync', async () => {
+        it('returns the governing protocol config dependency for projected sync', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
           const protocol = 'http://projected-sync-config-history';
@@ -1062,14 +1062,9 @@ export function testMessagesSyncHandler(): void {
 
           const postCid = await Message.getCid(postMessage);
           expect(reply.onlyRemote!.map(entry => entry.messageCid)).toContain(postCid);
+          expect(reply.dependencies!.map(entry => entry.messageCid)).not.toContain(await Message.getCid(firstProtocolMessage));
           expect(reply.dependencies!.map(entry => entry.messageCid)).not.toContain(await Message.getCid(futureProtocolMessage));
           expect(reply.dependencies).toEqual([
-            {
-              dependencyClass : 'protocolsConfigure',
-              messageCid      : await Message.getCid(firstProtocolMessage),
-              message         : firstProtocolMessage,
-              rootMessageCid  : postCid,
-            },
             {
               dependencyClass : 'protocolsConfigure',
               messageCid      : await Message.getCid(secondProtocolMessage),

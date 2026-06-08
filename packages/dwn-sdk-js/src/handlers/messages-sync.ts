@@ -519,7 +519,7 @@ export class MessagesSyncHandler implements MethodHandler {
       protocol !== undefined;
       protocol = MessagesSyncHandler.takeNextUnvisitedProtocol(pendingProtocols, visitedProtocols)
     ) {
-      const configs = await this.getCachedProtocolsConfigureHistory(
+      const configs = await this.getCachedGoverningProtocolsConfigure(
         tenant,
         protocol,
         rootMessageTimestamp,
@@ -535,7 +535,7 @@ export class MessagesSyncHandler implements MethodHandler {
     }
   }
 
-  private async getCachedProtocolsConfigureHistory(
+  private async getCachedGoverningProtocolsConfigure(
     tenant: string,
     protocol: string,
     messageTimestamp: string,
@@ -547,7 +547,7 @@ export class MessagesSyncHandler implements MethodHandler {
       return cachedConfigs;
     }
 
-    const configs = await this.readProtocolsConfigureHistory(tenant, protocol, messageTimestamp);
+    const configs = await this.readGoverningProtocolsConfigure(tenant, protocol, messageTimestamp);
     configsByProtocol.set(configCacheKey, configs);
     return configs;
   }
@@ -634,7 +634,7 @@ export class MessagesSyncHandler implements MethodHandler {
       : Object.values(uses).filter((protocol): protocol is string => typeof protocol === 'string');
   }
 
-  private async readProtocolsConfigureHistory(
+  private async readGoverningProtocolsConfigure(
     tenant: string,
     protocol: string,
     messageTimestamp: string,
@@ -647,10 +647,11 @@ export class MessagesSyncHandler implements MethodHandler {
         protocol,
         messageTimestamp : { lte: messageTimestamp },
       }],
-      { messageTimestamp: SortDirection.Ascending },
+      { messageTimestamp: SortDirection.Descending },
     );
 
-    return messages;
+    const governingMessage = await Message.getNewestMessage(messages);
+    return governingMessage === undefined ? [] : [governingMessage];
   }
 
   private static recordsWriteProtocolMetadata(message: GenericMessage | undefined): RecordsWriteProtocolMetadata | undefined {
