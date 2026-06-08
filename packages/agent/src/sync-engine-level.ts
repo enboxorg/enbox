@@ -114,9 +114,16 @@ type PullAcceptanceResult =
 
 type RecordsWriteProtocolDescriptor = GenericMessage['descriptor'] & { protocol?: unknown };
 type RecordsWriteProtocolMessage = GenericMessage & { descriptor: RecordsWriteProtocolDescriptor };
+type ProtocolsConfigureDefinition = {
+  protocol: string;
+  uses?: Record<string, unknown>;
+};
 type ProtocolsConfigureDefinitionDescriptor = GenericMessage['descriptor'] & {
+  definition: ProtocolsConfigureDefinition;
+};
+type MaybeProtocolsConfigureDefinitionDescriptor = GenericMessage['descriptor'] & {
   definition?: {
-    protocol?: unknown;
+    protocol?: string;
     uses?: Record<string, unknown>;
   };
 };
@@ -3197,7 +3204,22 @@ export class SyncEngineLevel implements SyncEngine {
     return message.descriptor.interface === DwnInterfaceName.Protocols &&
       message.descriptor.method === DwnMethodName.Configure &&
       message.authorization !== undefined &&
-      typeof (message.descriptor as ProtocolsConfigureDefinitionDescriptor).definition?.protocol === 'string';
+      SyncEngineLevel.hasProtocolsConfigureDefinition(message.descriptor);
+  }
+
+  private static hasProtocolsConfigureDefinition(
+    descriptor: MaybeProtocolsConfigureDefinitionDescriptor,
+  ): descriptor is ProtocolsConfigureDefinitionDescriptor {
+    return SyncEngineLevel.isProtocolsConfigureDefinition(descriptor.definition);
+  }
+
+  private static isProtocolsConfigureDefinition(
+    definition: unknown,
+  ): definition is ProtocolsConfigureDefinition {
+    return typeof definition === 'object' &&
+      definition !== null &&
+      'protocol' in definition &&
+      typeof definition.protocol === 'string';
   }
 
   private static filterProtocolConfigClosure(
