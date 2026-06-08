@@ -507,39 +507,115 @@ export class MessagesSyncHandler implements MethodHandler {
     configsByProtocol: Map<string, GenericMessage[]>,
     dependenciesByCid: Map<string, MessagesSyncDependencyEntry>,
   ): Promise<void> {
+    // Dependency hints are not part of the projected root; they are advisory
+    // bootstrap data for the receiver. Bound each closure to the primary
+    // RecordsWrite timestamp because protocol authorization uses the definition
+    // active when that record was created, not whatever config is newest today.
     const visitedProtocols = new Set<string>();
     const pendingProtocols = [rootProtocol];
 
+    for (
+      let protocol = MessagesSyncHandler.takeNextUnvisitedProtocol(pendingProtocols, visitedProtocols);
+      protocol !== undefined;
+      protocol = MessagesSyncHandler.takeNextUnvisitedProtocol(pendingProtocols, visitedProtocols)
+    ) {
+      const configs = await this.getCachedProtocolsConfigureHistory(
+        tenant,
+        protocol,
+        rootMessageTimestamp,
+        configsByProtocol,
+      );
+      await MessagesSyncHandler.addProtocolConfigDependencies({
+        configs,
+        rootMessageCid,
+        visitedProtocols,
+        pendingProtocols,
+        dependenciesByCid,
+      });
+    }
+  }
+
+  private async getCachedProtocolsConfigureHistory(
+    tenant: string,
+    protocol: string,
+    messageTimestamp: string,
+    configsByProtocol: Map<string, GenericMessage[]>,
+  ): Promise<GenericMessage[]> {
+    const configCacheKey = JSON.stringify([protocol, messageTimestamp]);
+    const cachedConfigs = configsByProtocol.get(configCacheKey);
+    if (cachedConfigs !== undefined) {
+      return cachedConfigs;
+    }
+
+    const configs = await this.readProtocolsConfigureHistory(tenant, protocol, messageTimestamp);
+    configsByProtocol.set(configCacheKey, configs);
+    return configs;
+  }
+
+  private static async addProtocolConfigDependencies({
+    configs,
+    rootMessageCid,
+    visitedProtocols,
+    pendingProtocols,
+    dependenciesByCid,
+  }: {
+    configs: GenericMessage[];
+    rootMessageCid: string;
+    visitedProtocols: Set<string>;
+    pendingProtocols: string[];
+    dependenciesByCid: Map<string, MessagesSyncDependencyEntry>;
+  }): Promise<void> {
+    for (const dependency of configs) {
+      await MessagesSyncHandler.addProtocolConfigDependency(rootMessageCid, dependency, dependenciesByCid);
+      MessagesSyncHandler.queueUnvisitedProtocols(
+        MessagesSyncHandler.protocolsConfigureUses(dependency),
+        visitedProtocols,
+        pendingProtocols,
+      );
+    }
+  }
+
+  private static async addProtocolConfigDependency(
+    rootMessageCid: string,
+    dependency: GenericMessage,
+    dependenciesByCid: Map<string, MessagesSyncDependencyEntry>,
+  ): Promise<void> {
+    const dependencyCid = await Message.getCid(dependency);
+    if (dependenciesByCid.has(dependencyCid)) {
+      return;
+    }
+
+    dependenciesByCid.set(dependencyCid, {
+      dependencyClass : 'protocolsConfigure',
+      messageCid      : dependencyCid,
+      message         : dependency,
+      rootMessageCid,
+    });
+  }
+
+  private static takeNextUnvisitedProtocol(
+    pendingProtocols: string[],
+    visitedProtocols: Set<string>,
+  ): string | undefined {
     while (pendingProtocols.length > 0) {
       const protocol = pendingProtocols.shift()!;
       if (visitedProtocols.has(protocol)) {
         continue;
       }
       visitedProtocols.add(protocol);
+      return protocol;
+    }
+    return undefined;
+  }
 
-      const configCacheKey = JSON.stringify([protocol, rootMessageTimestamp]);
-      let configs = configsByProtocol.get(configCacheKey);
-      if (configs === undefined) {
-        configs = await this.readProtocolsConfigureHistory(tenant, protocol, rootMessageTimestamp);
-        configsByProtocol.set(configCacheKey, configs);
-      }
-
-      for (const dependency of configs) {
-        const dependencyCid = await Message.getCid(dependency);
-        if (!dependenciesByCid.has(dependencyCid)) {
-          dependenciesByCid.set(dependencyCid, {
-            dependencyClass : 'protocolsConfigure',
-            messageCid      : dependencyCid,
-            message         : dependency,
-            rootMessageCid,
-          });
-        }
-
-        for (const usedProtocol of MessagesSyncHandler.protocolsConfigureUses(dependency)) {
-          if (!visitedProtocols.has(usedProtocol)) {
-            pendingProtocols.push(usedProtocol);
-          }
-        }
+  private static queueUnvisitedProtocols(
+    protocols: string[],
+    visitedProtocols: Set<string>,
+    pendingProtocols: string[],
+  ): void {
+    for (const protocol of protocols) {
+      if (!visitedProtocols.has(protocol)) {
+        pendingProtocols.push(protocol);
       }
     }
   }
