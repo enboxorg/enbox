@@ -1074,6 +1074,88 @@ export function testMessagesSyncHandler(): void {
           ]);
         });
 
+        it('returns initial write and protocol config dependencies for projected delete tombstones', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const protocolDefinition: ProtocolDefinition = { ...freeForAll, protocol: 'http://projected-sync-delete-hints', published: true };
+          const unrelatedDefinition: ProtocolDefinition = { ...freeForAll, protocol: 'http://projected-sync-delete-hints-unrelated', published: true };
+          const protocol = protocolDefinition.protocol;
+
+          const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition,
+          });
+          expect((await dwn.processMessage(alice.did, protocolMessage)).status.code).toBe(202);
+
+          const { message: unrelatedProtocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : unrelatedDefinition,
+          });
+          expect((await dwn.processMessage(alice.did, unrelatedProtocolMessage)).status.code).toBe(202);
+
+          const { message: postMessage, dataStream: postDataStream } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol,
+            protocolPath : 'post',
+            schema       : protocolDefinition.types.post.schema,
+          });
+          expect((await dwn.processMessage(alice.did, postMessage, { dataStream: postDataStream })).status.code).toBe(202);
+
+          const { message: deleteMessage } = await TestDataGenerator.generateRecordsDelete({
+            author   : alice,
+            recordId : postMessage.recordId,
+          });
+          expect((await dwn.processMessage(alice.did, deleteMessage)).status.code).toBe(202);
+
+          const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : {
+              interface    : DwnInterfaceName.Messages,
+              method       : DwnMethodName.Read,
+              protocol,
+              protocolPath : 'post',
+            },
+          });
+          expect((await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream })).status.code).toBe(202);
+
+          const { message: diffMsg } = await MessagesSync.create({
+            signer                : Jws.createSigner(bob),
+            action                : 'diff',
+            hashes                : {},
+            depth                 : 2,
+            projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
+            projectionScopes      : [{ protocol, protocolPath: 'post' }],
+            permissionGrantIds    : [grantMessage.recordId],
+          });
+
+          const reply = await dwn.processMessage(alice.did, diffMsg);
+          expect(reply.status.code).toBe(200);
+
+          const deleteCid = await Message.getCid(deleteMessage);
+          const postCid = await Message.getCid(postMessage);
+          const protocolCid = await Message.getCid(protocolMessage);
+          expect(reply.onlyRemote!.map(entry => entry.messageCid)).toEqual([deleteCid]);
+          expect(reply.dependencies!.map(entry => entry.messageCid)).not.toContain(await Message.getCid(unrelatedProtocolMessage));
+          expect(reply.dependencies).toEqual([
+            {
+              dependencyClass : 'recordsInitialWrite',
+              messageCid      : postCid,
+              message         : postMessage,
+              rootMessageCid  : deleteCid,
+            },
+            {
+              dependencyClass : 'protocolsConfigure',
+              messageCid      : protocolCid,
+              message         : protocolMessage,
+              rootMessageCid  : deleteCid,
+            },
+          ]);
+          const initialWriteDependency = reply.dependencies!.find(entry => entry.dependencyClass === 'recordsInitialWrite')!;
+          expect(initialWriteDependency.encodedData).toBeUndefined();
+          expect('encodedData' in initialWriteDependency.message!).toBe(false);
+        });
+
         it('returns composed protocol config dependencies for projected sync', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();

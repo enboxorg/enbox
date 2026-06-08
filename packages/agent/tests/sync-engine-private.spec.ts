@@ -2938,6 +2938,16 @@ describe('SyncEngineLevel — private methods', () => {
       rootMessageCid,
     });
 
+    const initialWriteDependencyEntry = async (
+      message: GenericMessage,
+      rootMessageCid: string,
+    ): Promise<MessagesSyncDependencyEntry> => ({
+      dependencyClass : 'recordsInitialWrite',
+      messageCid      : await Message.getCid(message),
+      message,
+      rootMessageCid,
+    });
+
     it('reconcileRecordsProjectionTarget should diff and verify convergence for projected roots', async () => {
       const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
       sinon.stub(engine as any, 'getLocalProjectedRoot')
@@ -3070,6 +3080,101 @@ describe('SyncEngineLevel — private methods', () => {
       });
     });
 
+    it('pullProjectedRemoteDiff should apply verified initial-write dependencies before delete primaries', async () => {
+      const author = await TestDataGenerator.generatePersona();
+      const processRawMessage = sinon.stub().resolves({ status: { code: 202 } });
+      const agent = {
+        ...createResolvingAgent(author),
+        dwn: {
+          isRemoteMode : false,
+          node         : { storage: { messageStore: {} } },
+          processRawMessage,
+        },
+      };
+      const engine = createEngine({ db, agent: agent as any });
+      const tenantTarget = { ...target, did: author.did };
+      const protocolConfig = await protocolsConfigureMessage({ author });
+      const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+        author,
+        protocol     : projectedProtocol,
+        protocolPath : 'profile/avatar',
+      });
+      const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+        author   : recordsWrite.author,
+        recordId : recordsWrite.message.recordId,
+      });
+      const deleteCid = await Message.getCid(recordsDelete.message);
+      const fetchInitialStub = sinon.stub(RecordsWrite, 'fetchInitialRecordsWriteMessage').resolves(recordsWrite.message);
+
+      const aborted = await (engine as any).pullProjectedRemoteDiff(
+        tenantTarget,
+        projectedScope,
+        {
+          dependencies: [
+            await initialWriteDependencyEntry(recordsWrite.message, deleteCid),
+            await dependencyEntry(protocolConfig, deleteCid),
+          ],
+          onlyLocal  : [],
+          onlyRemote : [{ messageCid: deleteCid, message: recordsDelete.message }],
+        },
+        ['grant-1'],
+      );
+
+      expect(aborted).toBe(false);
+      expect(fetchInitialStub.calledOnce).toBe(true);
+      expect(processRawMessage.callCount).toBe(3);
+      expect(await Message.getCid(processRawMessage.firstCall.args[1])).toBe(await Message.getCid(protocolConfig));
+      expect(await Message.getCid(processRawMessage.secondCall.args[1])).toBe(await Message.getCid(recordsWrite.message));
+      expect(await Message.getCid(processRawMessage.thirdCall.args[1])).toBe(await Message.getCid(recordsDelete.message));
+    });
+
+    it('pullProjectedRemoteDiff should use verified initial-write dependencies for remote-mode delete classification', async () => {
+      const author = await TestDataGenerator.generatePersona();
+      const processRawMessage = sinon.stub().resolves({ status: { code: 202 } });
+      const agent = {
+        ...createResolvingAgent(author),
+        dwn: {
+          isRemoteMode: true,
+          processRawMessage,
+        },
+      };
+      const engine = createEngine({ db, agent: agent as any });
+      const tenantTarget = { ...target, did: author.did };
+      const protocolConfig = await protocolsConfigureMessage({ author });
+      const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+        author,
+        protocol     : projectedProtocol,
+        protocolPath : 'profile/avatar',
+      });
+      const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+        author   : recordsWrite.author,
+        recordId : recordsWrite.message.recordId,
+      });
+      const deleteCid = await Message.getCid(recordsDelete.message);
+      const fetchInitialStub = sinon.stub(RecordsWrite, 'fetchInitialRecordsWriteMessage');
+
+      const aborted = await (engine as any).pullProjectedRemoteDiff(
+        tenantTarget,
+        projectedScope,
+        {
+          dependencies: [
+            await initialWriteDependencyEntry(recordsWrite.message, deleteCid),
+            await dependencyEntry(protocolConfig, deleteCid),
+          ],
+          onlyLocal  : [],
+          onlyRemote : [{ messageCid: deleteCid, message: recordsDelete.message }],
+        },
+        ['grant-1'],
+      );
+
+      expect(aborted).toBe(false);
+      expect(fetchInitialStub.called).toBe(false);
+      expect(processRawMessage.callCount).toBe(3);
+      expect(await Message.getCid(processRawMessage.firstCall.args[1])).toBe(await Message.getCid(protocolConfig));
+      expect(await Message.getCid(processRawMessage.secondCall.args[1])).toBe(await Message.getCid(recordsWrite.message));
+      expect(await Message.getCid(processRawMessage.thirdCall.args[1])).toBe(await Message.getCid(recordsDelete.message));
+    });
+
     it('verifyProjectedProtocolConfigDependencies should reject malformed or out-of-scope hints', async () => {
       const author = await TestDataGenerator.generatePersona();
       const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
@@ -3125,6 +3230,76 @@ describe('SyncEngineLevel — private methods', () => {
             message         : futureProtocolConfig,
             rootMessageCid  : primaryCid,
           },
+        ],
+      );
+
+      expect(verified).toEqual([]);
+    });
+
+    it('verifyProjectedDependencies should reject malformed or out-of-scope initial-write hints', async () => {
+      const author = await TestDataGenerator.generatePersona();
+      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
+      const inScopeWrite = await TestDataGenerator.generateRecordsWrite({
+        author,
+        protocol     : projectedProtocol,
+        protocolPath : 'profile/avatar',
+      });
+      const inScopeDelete = await TestDataGenerator.generateRecordsDelete({
+        author   : inScopeWrite.author,
+        recordId : inScopeWrite.message.recordId,
+      });
+      const protocolConfig = await protocolsConfigureMessage({ author });
+      const outOfScopeWrite = await TestDataGenerator.generateRecordsWrite({
+        author,
+        protocol     : projectedProtocol,
+        protocolPath : 'profile/banner',
+      });
+      const outOfScopeDelete = await TestDataGenerator.generateRecordsDelete({
+        author   : outOfScopeWrite.author,
+        recordId : outOfScopeWrite.message.recordId,
+      });
+      const otherInScopeWrite = await TestDataGenerator.generateRecordsWrite({
+        author,
+        protocol     : projectedProtocol,
+        protocolPath : 'profile/avatar',
+      });
+      const nonInitialWrite = await TestDataGenerator.generateFromRecordsWrite({
+        author,
+        existingWrite: inScopeWrite.recordsWrite,
+      });
+      const inScopeDeleteCid = await Message.getCid(inScopeDelete.message);
+      const outOfScopeDeleteCid = await Message.getCid(outOfScopeDelete.message);
+      const inScopeWriteCid = await Message.getCid(inScopeWrite.message);
+      const validInitialWriteDependency = await initialWriteDependencyEntry(inScopeWrite.message, inScopeDeleteCid);
+      const outOfScopeInitialWriteDependency = await initialWriteDependencyEntry(outOfScopeWrite.message, outOfScopeDeleteCid);
+      const encodedInitialWriteMessage: GenericMessage & { encodedData: string } = {
+        ...validInitialWriteDependency.message!,
+        encodedData: 'eyJub3QiOiJhbGxvd2VkIn0',
+      };
+      const { authorization: _authorization, ...unauthenticatedInitialWriteMessage } = inScopeWrite.message;
+
+      const verified = await (engine as any).verifyProjectedDependencies(
+        author.did,
+        projectedScope,
+        [
+          { messageCid: inScopeDeleteCid, message: inScopeDelete.message },
+          { messageCid: outOfScopeDeleteCid, message: outOfScopeDelete.message },
+          { messageCid: inScopeWriteCid, message: inScopeWrite.message },
+        ],
+        [
+          { ...validInitialWriteDependency, messageCid: 'wrong-cid' },
+          { ...validInitialWriteDependency, encodedData: 'eyJub3QiOiJhbGxvd2VkIn0' },
+          {
+            ...validInitialWriteDependency,
+            message: encodedInitialWriteMessage,
+          },
+          await initialWriteDependencyEntry(otherInScopeWrite.message, inScopeDeleteCid),
+          await initialWriteDependencyEntry(nonInitialWrite.message, inScopeDeleteCid),
+          await initialWriteDependencyEntry(unauthenticatedInitialWriteMessage, inScopeDeleteCid),
+          await initialWriteDependencyEntry(inScopeWrite.message, inScopeWriteCid),
+          await dependencyEntry(protocolConfig, inScopeDeleteCid),
+          await initialWriteDependencyEntry(outOfScopeWrite.message, inScopeDeleteCid),
+          outOfScopeInitialWriteDependency,
         ],
       );
 

@@ -91,7 +91,7 @@ export type MessagesSyncDiffEntry = {
   encodedData? : string;
 };
 
-export type MessagesSyncDependencyClass = 'protocolsConfigure';
+export type MessagesSyncDependencyClass = 'protocolsConfigure' | 'recordsInitialWrite';
 
 /**
  * Advisory dependency hint returned with projected diff responses. Dependency
