@@ -2977,7 +2977,7 @@ export class SyncEngineLevel implements SyncEngine {
     permissionGrantIds: NonEmptyStringArray | undefined,
     shouldContinue?: () => boolean,
   ): Promise<void> {
-    const verified = await this.verifyProjectedProtocolConfigDependencies(scope, primaryEntries, dependencies);
+    const verified = await this.verifyProjectedProtocolConfigDependencies(target.did, scope, primaryEntries, dependencies);
     if (verified.length === 0) {
       return;
     }
@@ -2995,16 +2995,17 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async verifyProjectedProtocolConfigDependencies(
+    tenantDid: string,
     scope: RecordsProjectionSyncScope,
     primaryEntries: MessagesSyncDiffEntry[],
     dependencies: MessagesSyncDependencyEntry[],
   ): Promise<MessagesSyncDependencyEntry[]> {
     // Projected sync dependency entries are untrusted server hints. Before any
     // config is applied, bind it to an accepted primary record by CID,
-    // signature, timestamp, scope, and protocol closure; malformed or unrelated
-    // hints are ignored.
+    // tenant authorship, signature, timestamp, scope, and protocol closure;
+    // malformed or unrelated hints are ignored.
     const primaryByCid = SyncEngineLevel.indexEntriesWithMessage(primaryEntries);
-    const candidatesByRoot = await this.collectProjectedProtocolConfigCandidates(scope, primaryByCid, dependencies);
+    const candidatesByRoot = await this.collectProjectedProtocolConfigCandidates(tenantDid, scope, primaryByCid, dependencies);
     const verified = new Map<string, MessagesSyncDependencyEntry>();
 
     for (const [rootMessageCid, rootCandidates] of candidatesByRoot) {
@@ -3037,13 +3038,14 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async collectProjectedProtocolConfigCandidates(
+    tenantDid: string,
     scope: RecordsProjectionSyncScope,
     primaryByCid: Map<string, SyncDiffEntryWithMessage>,
     dependencies: MessagesSyncDependencyEntry[],
   ): Promise<Map<string, AuthenticatedProtocolConfigDependency[]>> {
     const candidatesByRoot = new Map<string, AuthenticatedProtocolConfigDependency[]>();
     for (const dependency of dependencies) {
-      const verified = await this.verifyProtocolConfigCandidate(scope, primaryByCid, dependency);
+      const verified = await this.verifyProtocolConfigCandidate(tenantDid, scope, primaryByCid, dependency);
       if (verified === undefined) {
         continue;
       }
@@ -3056,6 +3058,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async verifyProtocolConfigCandidate(
+    tenantDid: string,
     scope: RecordsProjectionSyncScope,
     primaryByCid: Map<string, SyncDiffEntryWithMessage>,
     dependency: MessagesSyncDependencyEntry,
@@ -3069,13 +3072,14 @@ export class SyncEngineLevel implements SyncEngine {
       return undefined;
     }
 
-    const verifiedDependency = await this.verifyProtocolConfigCandidateMessage(scope, primary, dependency);
+    const verifiedDependency = await this.verifyProtocolConfigCandidateMessage(tenantDid, scope, primary, dependency);
     return verifiedDependency === undefined
       ? undefined
       : { dependency: verifiedDependency, rootMessageCid: dependency.rootMessageCid };
   }
 
   private async verifyProtocolConfigCandidateMessage(
+    tenantDid: string,
     scope: RecordsProjectionSyncScope,
     primary: SyncDiffEntryWithMessage,
     dependency: SyncDependencyEntryWithMessage,
@@ -3093,7 +3097,7 @@ export class SyncEngineLevel implements SyncEngine {
       return undefined;
     }
 
-    const authenticatedDependency = await this.toAuthenticatedProtocolConfigDependency(dependency);
+    const authenticatedDependency = await this.toAuthenticatedProtocolConfigDependency(tenantDid, dependency);
     if (authenticatedDependency === undefined) {
       return undefined;
     }
@@ -3109,6 +3113,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async toAuthenticatedProtocolConfigDependency(
+    tenantDid: string,
     dependency: SyncDependencyEntryWithMessage,
   ): Promise<AuthenticatedProtocolConfigDependency | undefined> {
     if (!SyncEngineLevel.isProtocolsConfigureDefinitionMessage(dependency.message)) {
@@ -3117,6 +3122,9 @@ export class SyncEngineLevel implements SyncEngine {
 
     try {
       await ProtocolsConfigure.parse(dependency.message);
+      if (Message.getAuthor(dependency.message) !== tenantDid) {
+        return undefined;
+      }
       await authenticate(dependency.message.authorization, this.agent.did);
       return { ...dependency, message: dependency.message };
     } catch {
