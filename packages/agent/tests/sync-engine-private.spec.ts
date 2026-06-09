@@ -2474,7 +2474,7 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('protocol-set reconciliation', () => {
-    it('reconciles protocol-set roots one protocol at a time', async () => {
+    it('reconciles protocol-set roots in one dependency-sorted batch', async () => {
       const profileProtocol = 'https://example.com/profile';
       const socialProtocol = 'https://example.com/social';
       const scope = { kind: 'protocolSet', protocols: [profileProtocol, socialProtocol] };
@@ -2528,21 +2528,18 @@ describe('SyncEngineLevel — private methods', () => {
       expect(diffWithRemote.callCount).toBe(2);
       expect(diffWithRemote.firstCall.args[0].protocol).toBe(profileProtocol);
       expect(diffWithRemote.secondCall.args[0].protocol).toBe(socialProtocol);
-      expect(pullMessagesStub.callCount).toBe(2);
-      expect(pushMessagesStub.callCount).toBe(2);
+      expect(pullMessagesStub.callCount).toBe(1);
+      expect(pushMessagesStub.callCount).toBe(1);
 
       const pullArgs = pullMessagesStub.firstCall.args[0];
-      expect(pullArgs.protocol).toBe(profileProtocol);
+      expect(pullArgs.protocol).toBeUndefined();
+      expect(pullArgs.scope).toEqual(scope);
       expect(pullArgs.messageCids).toEqual([]);
       expect(pullArgs.prefetched.map((entry: { messageCid: string }) => entry.messageCid))
-        .toEqual(['cid-profile']);
+        .toEqual(['cid-profile', 'cid-social']);
 
-      expect(pushMessagesStub.firstCall.args[0].messageCids).toEqual(['local-profile']);
-      expect(pullMessagesStub.secondCall.args[0].protocol).toBe(socialProtocol);
-      expect(pullMessagesStub.secondCall.args[0].messageCids).toEqual([]);
-      expect(pullMessagesStub.secondCall.args[0].prefetched.map((entry: { messageCid: string }) => entry.messageCid))
-        .toEqual(['cid-social']);
-      expect(pushMessagesStub.secondCall.args[0].messageCids).toEqual(['local-social']);
+      expect(pushMessagesStub.firstCall.args[0].protocol).toBeUndefined();
+      expect(pushMessagesStub.firstCall.args[0].messageCids).toEqual(['local-profile', 'local-social']);
     });
   });
 

@@ -24,12 +24,12 @@ import { DwnInterface } from './types/dwn.js';
 import { evaluateClosure } from './sync-closure-resolver.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
-import { SyncLinkReconciler } from './sync-link-reconciler.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { classifySyncEventScope, classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { ClosureFailureCode, createClosureContext, invalidateClosureCache, isTerminalClosureFailureCode } from './sync-closure-types.js';
 import { computeAuthorizationEpoch, computeProjectionId, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
-import { fetchRemoteMessages, getMessageCid, pullMessages, pushMessages } from './sync-messages.js';
+import { fetchRemoteMessages, getMessageCid, pullMessages, pushMessages, SyncPullAbortedError } from './sync-messages.js';
+import { partitionRemoteEntries, SyncLinkReconciler } from './sync-link-reconciler.js';
 import { permissionGrantIdsFromEntries, resolveMessagesSyncScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
 export type SyncEngineLevelParams = {
@@ -3077,11 +3077,16 @@ export class SyncEngineLevel implements SyncEngine {
     options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
+    const protocols = protocolsForSyncScope(target.scope);
+    if (protocols && protocols.length > 1) {
+      return this.reconcileProtocolSetSyncTarget(target, protocols, options, shouldContinue);
+    }
+
     let converged = true;
     const permissionGrantIds = this.getAuthorizationGrantIds(target.authorization);
     const reconciler = this.createLinkReconciler(shouldContinue);
 
-    for (const protocol of this.getReconcileProtocols(target.scope)) {
+    for (const protocol of protocols ?? [undefined]) {
       const outcome = await reconciler.reconcile({
         did         : target.did,
         dwnUrl      : target.dwnUrl,
@@ -3100,6 +3105,83 @@ export class SyncEngineLevel implements SyncEngine {
     return options?.verifyConvergence === true ? { converged } : {};
   }
 
+  private async reconcileProtocolSetSyncTarget(
+    target: SyncReconcileTarget,
+    protocols: NonEmptyStringArray,
+    options?: SyncReconcileOptions,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncReconcileResult> {
+    const { did, dwnUrl, delegateDid, scope, authorization } = target;
+    const permissionGrantIds = this.getAuthorizationGrantIds(authorization);
+    const diffs: SyncDiffResult[] = [];
+
+    for (const protocol of protocols) {
+      const localRoot = await this.getLocalRoot(did, delegateDid, protocol, permissionGrantIds);
+      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+
+      const remoteRoot = await this.getRemoteRoot(did, dwnUrl, delegateDid, protocol, permissionGrantIds);
+      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+      if (localRoot === remoteRoot) {
+        continue;
+      }
+
+      diffs.push(await this.diffWithRemote({ did, dwnUrl, delegateDid, protocol, permissionGrantIds }));
+      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+    }
+
+    const onlyRemote = diffs.flatMap(diff => diff.onlyRemote);
+    if ((!options?.direction || options.direction === 'pull') && onlyRemote.length > 0) {
+      const { prefetched, needsFetchCids } = partitionRemoteEntries(onlyRemote);
+      try {
+        await this.pullMessages({
+          did,
+          dwnUrl,
+          delegateDid,
+          scope,
+          permissionGrantIds,
+          messageCids: needsFetchCids,
+          prefetched,
+          shouldContinue,
+        });
+      } catch (error) {
+        if (error instanceof SyncPullAbortedError) {
+          return { aborted: true };
+        }
+        throw error;
+      }
+      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+    }
+
+    const onlyLocal = [...new Set(diffs.flatMap(diff => diff.onlyLocal))];
+    if ((!options?.direction || options.direction === 'push') && onlyLocal.length > 0) {
+      await this.pushMessages({
+        did,
+        dwnUrl,
+        delegateDid,
+        permissionGrantIds,
+        messageCids: onlyLocal,
+      });
+      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+    }
+
+    if (options?.verifyConvergence !== true) {
+      return {};
+    }
+
+    for (const protocol of protocols) {
+      const postLocalRoot = await this.getLocalRoot(did, delegateDid, protocol, permissionGrantIds);
+      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+
+      const postRemoteRoot = await this.getRemoteRoot(did, dwnUrl, delegateDid, protocol, permissionGrantIds);
+      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+      if (postLocalRoot !== postRemoteRoot) {
+        return { converged: false };
+      }
+    }
+
+    return { converged: true };
+  }
+
   private async clearRootConvergenceDeadLettersForScope(
     tenantDid: string,
     remoteEndpoint: string,
@@ -3107,6 +3189,12 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<void> {
     for (const protocol of this.getReconcileProtocols(scope)) {
       await this.clearRootConvergenceDeadLetters(tenantDid, remoteEndpoint, protocol);
+    }
+    if (scope.kind === 'protocolSet' && scope.protocols.length > 1) {
+      // Multi-protocol reconciliation applies one combined dependency-sorted
+      // batch, so operational dead letters from that batch are stored without a
+      // single protocol label.
+      await this.clearRootConvergenceDeadLetters(tenantDid, remoteEndpoint);
     }
   }
 

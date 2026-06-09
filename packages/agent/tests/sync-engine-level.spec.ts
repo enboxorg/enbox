@@ -528,7 +528,7 @@ describe('SyncEngineLevel', () => {
 
         await expect(
           syncEngine.sync('pull')
-        ).rejects.toThrow('SyncPermissions: No active Messages.Read permission found for MessagesSync: https://protocol.xyz/foo');
+        ).rejects.toThrow('SyncPermissions: No active protocol-root Messages.Read permission found for MessagesSync: https://protocol.xyz/foo');
       });
 
       it('succeeds with only a MessagesSync grant when messages are inlined in the diff response', async () => {
@@ -1006,7 +1006,7 @@ describe('SyncEngineLevel', () => {
 
         await expect(
           syncEngine.sync('push')
-        ).rejects.toThrow('SyncPermissions: No active Messages.Read permission found for MessagesSync: https://protocol.xyz/foo');
+        ).rejects.toThrow('SyncPermissions: No active protocol-root Messages.Read permission found for MessagesSync: https://protocol.xyz/foo');
       });
 
       it('logs an error when push fails due to missing permissions on the remote DWN', async () => {
