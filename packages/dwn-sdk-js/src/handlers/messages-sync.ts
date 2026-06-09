@@ -2,8 +2,7 @@ import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { StateIndex } from '../types/state-index.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
-import type { MessagesSyncDependencyEntry, MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from '../types/messages-types.js';
-import type { RecordsProjectionScope, RecordsProjectionSnapshot } from '../sync/records-projection.js';
+import type { MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { DwnConstant } from '../core/dwn-constant.js';
@@ -14,38 +13,19 @@ import { messageReplyFromError } from '../core/message-reply.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesSync } from '../interfaces/messages-sync.js';
 import { Records } from '../utils/records.js';
-import { RecordsProjection } from '../sync/records-projection.js';
-import { RecordsWrite } from '../interfaces/records-write.js';
-import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
-import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 /**
- * Maximum inline data size for diff responses — aligned with the
- * {@link DwnConstant.maxDataSizeAllowedToBeEncoded} threshold (30 KB).
- * RecordsWrite data payloads smaller than this are base64url-encoded and
- * included directly in the diff reply.  Larger payloads must be fetched
- * separately via MessagesRead.
+ * Maximum inline data size for diff responses, aligned with the
+ * {@link DwnConstant.maxDataSizeAllowedToBeEncoded} threshold.
  */
 const DEFAULT_MAX_INLINE_DATA_SIZE = DwnConstant.maxDataSizeAllowedToBeEncoded;
 
 type StoredMessageWithEncodedData = GenericMessage & { encodedData?: string };
-type StoredMessageWithInternalFields = GenericMessage & {
-  encodedData?: unknown;
-  initialWrite?: unknown;
-};
-type RecordsWriteProtocolDescriptor = GenericMessage['descriptor'] & { protocol?: unknown };
-type RecordsWriteProtocolMetadata = { protocol: string; messageTimestamp: string };
-type ProtocolsConfigureDefinitionDescriptor = GenericMessage['descriptor'] & {
-  definition?: {
-    protocol?: unknown;
-    uses?: Record<string, unknown>;
-  };
-};
-type ProjectionScopes = readonly [RecordsProjectionScope, ...RecordsProjectionScope[]];
-
 
 export class MessagesSyncHandler implements MethodHandler {
+
+  private _defaultHashHexCache?: Map<number, string>;
 
   constructor(private readonly deps: HandlerDependencies) { }
 
@@ -68,32 +48,24 @@ export class MessagesSyncHandler implements MethodHandler {
       return messageReplyFromError(e, 401);
     }
 
-    const { action } = message.descriptor;
-    const projectionScopes = MessagesSyncHandler.getProjectionScopes(message);
-
     try {
-      switch (action) {
-      case 'root': {
-        return await this.handleRoot(tenant, message, projectionScopes);
-      }
+      switch (message.descriptor.action) {
+      case 'root':
+        return await this.handleRoot(tenant, message);
 
-      case 'subtree': {
-        return await this.handleSubtree(tenant, message, projectionScopes);
-      }
+      case 'subtree':
+        return await this.handleSubtree(tenant, message);
 
-      case 'leaves': {
-        return await this.handleLeaves(tenant, message, projectionScopes);
-      }
+      case 'leaves':
+        return await this.handleLeaves(tenant, message);
 
-      case 'diff': {
+      case 'diff':
         return await this.handleDiff(tenant, message);
-      }
 
-      default: {
+      default:
         return {
-          status: { code: 400, detail: `Unknown action: ${action as string}` },
+          status: { code: 400, detail: `Unknown action: ${message.descriptor.action as string}` },
         };
-      }
       }
     } catch (e) {
       return messageReplyFromError(e, 500);
@@ -103,26 +75,114 @@ export class MessagesSyncHandler implements MethodHandler {
   private async handleRoot(
     tenant: string,
     message: MessagesSyncMessage,
-    projectionScopes: ProjectionScopes | undefined
   ): Promise<MessagesSyncReply> {
-    const root = await this.getRootHex(tenant, message.descriptor.protocol, projectionScopes);
+    const root = hashToHex(await this.getIndexedRootHash(tenant, message.descriptor.protocol));
     return {
-      status : { code: 200, detail: 'OK' },
-      root   : root,
+      status: { code: 200, detail: 'OK' },
+      root,
     };
   }
 
-  private async getRootHex(
+  private async handleSubtree(
     tenant: string,
-    protocol: string | undefined,
-    projectionScopes: ProjectionScopes | undefined
-  ): Promise<string> {
-    if (projectionScopes === undefined) {
-      const rootHash = await this.getIndexedRootHash(tenant, protocol);
-      return hashToHex(rootHash);
+    message: MessagesSyncMessage,
+  ): Promise<MessagesSyncReply> {
+    const bitPath = MessagesSyncHandler.parseBitPrefix(message.descriptor.prefix!);
+    const hash = await MessagesSyncHandler.getIndexedSubtreeHash(
+      this.deps.stateIndex!,
+      tenant,
+      message.descriptor.protocol,
+      bitPath,
+    );
+
+    return {
+      status : { code: 200, detail: 'OK' },
+      hash   : hashToHex(hash),
+    };
+  }
+
+  private async handleLeaves(
+    tenant: string,
+    message: MessagesSyncMessage,
+  ): Promise<MessagesSyncReply> {
+    const bitPath = MessagesSyncHandler.parseBitPrefix(message.descriptor.prefix!);
+    const leaves = await MessagesSyncHandler.getIndexedLeaves(
+      this.deps.stateIndex!,
+      tenant,
+      message.descriptor.protocol,
+      bitPath,
+    );
+
+    return {
+      status  : { code: 200, detail: 'OK' },
+      entries : leaves,
+    };
+  }
+
+  /**
+   * Computes a single-round diff between the client's sparse Merkle tree view
+   * and this DWN's full/protocol StateIndex tree.
+   */
+  private async handleDiff(
+    tenant: string,
+    message: MessagesSyncMessage,
+  ): Promise<MessagesSyncReply> {
+    const { protocol, hashes: clientHashes, depth } = message.descriptor;
+
+    if (!clientHashes || depth === undefined) {
+      return {
+        status: { code: 400, detail: 'diff action requires hashes and depth' },
+      };
     }
 
-    return this.withProjectionSnapshot(tenant, projectionScopes, snapshot => snapshot.getRootHex());
+    const onlyRemoteCids: string[] = [];
+    const onlyLocalPrefixes: string[] = [];
+    const defaultHashHex = await this.getDefaultHashHex(depth);
+    const allPrefixes = new Set<string>();
+
+    for (const [prefix, hash] of Object.entries(clientHashes)) {
+      if (hash !== defaultHashHex) {
+        allPrefixes.add(prefix);
+      }
+    }
+
+    const serverHashes = await this.collectSubtreeHashes(tenant, protocol, depth);
+    for (const prefix of Object.keys(serverHashes)) {
+      allPrefixes.add(prefix);
+    }
+
+    for (const prefix of allPrefixes) {
+      const clientHash = clientHashes[prefix];
+      const serverHash = serverHashes[prefix];
+
+      if (clientHash === serverHash) {
+        continue;
+      }
+
+      if (serverHash === undefined) {
+        onlyLocalPrefixes.push(prefix);
+        continue;
+      }
+
+      const bitPath = MessagesSyncHandler.parseBitPrefix(prefix);
+      const serverLeaves = await MessagesSyncHandler.getIndexedLeaves(
+        this.deps.stateIndex!,
+        tenant,
+        protocol,
+        bitPath,
+      );
+
+      onlyRemoteCids.push(...serverLeaves);
+      if (clientHash !== undefined) {
+        onlyLocalPrefixes.push(prefix);
+      }
+    }
+
+    return {
+      status     : { code: 200, detail: 'OK' },
+      onlyRemote : await this.buildDiffEntries(tenant, onlyRemoteCids),
+      onlyLocal  : onlyLocalPrefixes,
+    };
   }
 
   private async getIndexedRootHash(
@@ -136,215 +196,37 @@ export class MessagesSyncHandler implements MethodHandler {
     return this.deps.stateIndex!.getProtocolRoot(tenant, protocol);
   }
 
-  private async handleSubtree(
-    tenant: string,
-    message: MessagesSyncMessage,
-    projectionScopes: ProjectionScopes | undefined
-  ): Promise<MessagesSyncReply> {
-    const bitPath = MessagesSyncHandler.parseBitPrefix(message.descriptor.prefix!);
-    const hash = await this.getSubtreeHash(tenant, message.descriptor.protocol, projectionScopes, bitPath);
-
-    return {
-      status : { code: 200, detail: 'OK' },
-      hash   : hashToHex(hash),
-    };
-  }
-
-  private async handleLeaves(
-    tenant: string,
-    message: MessagesSyncMessage,
-    projectionScopes: ProjectionScopes | undefined
-  ): Promise<MessagesSyncReply> {
-    const bitPath = MessagesSyncHandler.parseBitPrefix(message.descriptor.prefix!);
-    const leaves = await this.getLeaves(tenant, message.descriptor.protocol, projectionScopes, bitPath);
-
-    return {
-      status  : { code: 200, detail: 'OK' },
-      entries : leaves,
-    };
-  }
-
-  private async getSubtreeHash(
-    tenant: string,
-    protocol: string | undefined,
-    projectionScopes: ProjectionScopes | undefined,
-    bitPath: boolean[]
-  ): Promise<Uint8Array> {
-    if (projectionScopes === undefined) {
-      return this.getIndexedSubtreeHash(tenant, protocol, bitPath);
-    }
-
-    return this.withProjectionSnapshot(tenant, projectionScopes, snapshot => snapshot.getSubtreeHash(bitPath));
-  }
-
-  private async getLeaves(
-    tenant: string,
-    protocol: string | undefined,
-    projectionScopes: ProjectionScopes | undefined,
-    bitPath: boolean[]
-  ): Promise<string[]> {
-    if (projectionScopes === undefined) {
-      return this.getIndexedLeaves(tenant, protocol, bitPath);
-    }
-
-    return this.withProjectionSnapshot(tenant, projectionScopes, snapshot => snapshot.getLeaves(bitPath));
-  }
-
-  private async getIndexedSubtreeHash(
-    tenant: string,
-    protocol: string | undefined,
-    bitPath: boolean[]
-  ): Promise<Uint8Array> {
-    return MessagesSyncHandler.getIndexedSubtreeHashFromStateIndex(this.deps.stateIndex!, tenant, protocol, bitPath);
-  }
-
-  private async getIndexedLeaves(
-    tenant: string,
-    protocol: string | undefined,
-    bitPath: boolean[]
-  ): Promise<string[]> {
-    return MessagesSyncHandler.getIndexedLeavesFromStateIndex(this.deps.stateIndex!, tenant, protocol, bitPath);
-  }
-
   /**
-   * Handle the 'diff' action: the client sends its subtree hashes at a given
-   * depth, and the server compares them against its own tree to compute the
-   * set difference in a single round-trip.
-   *
-   * Response includes:
-   * - `onlyRemote`: messages the server has that the client doesn't, with
-   *   inline data for small payloads.
-   * - `onlyLocal`: bit prefixes where the client has entries the server
-   *   doesn't (client can enumerate its own leaves for these prefixes).
-   */
-  private async handleDiff(
-    tenant: string,
-    message: MessagesSyncMessage,
-  ): Promise<MessagesSyncReply> {
-    const { protocol, hashes: clientHashes, depth } = message.descriptor;
-    const projectionScopes = MessagesSyncHandler.getProjectionScopes(message);
-
-    if (!clientHashes || depth === undefined) {
-      return {
-        status: { code: 400, detail: 'diff action requires hashes and depth' },
-      };
-    }
-
-    const stateIndex = this.deps.stateIndex!;
-    const projectionSnapshot = await this.createProjectionSnapshot(tenant, projectionScopes);
-    const onlyRemoteCids: string[] = [];
-    const onlyLocalPrefixes: string[] = [];
-
-    try {
-      // Get the default (empty subtree) hash at the given depth so we can
-      // filter out client entries that represent empty subtrees.
-      const defaultHashHex = await this.getDefaultHashHex(depth);
-
-      // Build the set of all prefixes at the given depth that either side has.
-      // Filter out client prefixes whose hash equals the default (empty subtree)
-      // hash — these represent empty subtrees and should be treated the same as
-      // omitted prefixes.
-      const allPrefixes = new Set<string>();
-      for (const [pfx, hash] of Object.entries(clientHashes)) {
-        if (hash !== defaultHashHex) {
-          allPrefixes.add(pfx);
-        }
-      }
-
-      // Enumerate server-side non-empty prefixes by walking the server's
-      // tree to the given depth and collecting leaf prefixes.
-      const serverHashes = await this.collectSubtreeHashes(tenant, protocol, projectionSnapshot, depth);
-      for (const prefix of Object.keys(serverHashes)) {
-        allPrefixes.add(prefix);
-      }
-
-      // Compare each prefix's hash between client and server.
-      for (const pfx of allPrefixes) {
-        const clientHash = clientHashes[pfx]; // undefined if client has empty subtree
-        const serverHash = serverHashes[pfx]; // undefined if server has empty subtree
-
-        if (clientHash === serverHash) {
-          // Identical subtree — skip.
-          continue;
-        }
-
-        if (serverHash === undefined) {
-          // Client has entries the server doesn't.
-          onlyLocalPrefixes.push(pfx);
-          continue;
-        }
-
-        const bitPath = MessagesSyncHandler.parseBitPrefix(pfx);
-        const serverLeaves = await MessagesSyncHandler.getServerLeaves(
-          stateIndex,
-          tenant,
-          protocol,
-          projectionSnapshot,
-          bitPath
-        );
-
-        onlyRemoteCids.push(...serverLeaves);
-        if (clientHash !== undefined) {
-          // Both sides have entries but they differ. The client will enumerate
-          // its own leaves for this prefix and de-duplicate server leaves.
-          onlyLocalPrefixes.push(pfx);
-        }
-      }
-    } finally {
-      await projectionSnapshot?.close();
-    }
-
-    // Build response entries with inline message data where possible.
-    const onlyRemote = await this.buildDiffEntries(tenant, onlyRemoteCids);
-    const dependencies = projectionScopes === undefined
-      ? []
-      : await this.buildProjectedDependencyEntries(tenant, onlyRemote);
-
-    return {
-      status    : { code: 200, detail: 'OK' },
-      onlyRemote,
-      onlyLocal : onlyLocalPrefixes,
-      ...(dependencies.length > 0 ? { dependencies } : {}),
-    };
-  }
-
-  /**
-   * Walk the server's SMT to the given depth and collect all non-empty
-   * subtree hashes as a `{ prefix: hexHash }` map.
+   * Walks this DWN's StateIndex tree to the requested depth and returns only
+   * non-empty subtree hashes keyed by bit prefix.
    */
   private async collectSubtreeHashes(
     tenant: string,
     protocol: string | undefined,
-    projectionSnapshot: RecordsProjectionSnapshot | undefined,
     depth: number,
   ): Promise<Record<string, string>> {
-    const stateIndex = this.deps.stateIndex!;
     const result: Record<string, string> = {};
 
     const walk = async (prefix: string, currentDepth: number): Promise<void> => {
       const bitPath = MessagesSyncHandler.parseBitPrefix(prefix);
-      const hash = await MessagesSyncHandler.getServerSubtreeHash(
-        stateIndex,
+      const hash = await MessagesSyncHandler.getIndexedSubtreeHash(
+        this.deps.stateIndex!,
         tenant,
         protocol,
-        projectionSnapshot,
-        bitPath
+        bitPath,
       );
       const hexHash = hashToHex(hash);
       const defaultHashHex = await this.getDefaultHashHex(currentDepth);
 
       if (hexHash === defaultHashHex) {
-        // Empty subtree — don't include in the result.
         return;
       }
 
       if (currentDepth >= depth) {
-        // Reached target depth with a non-empty subtree.
         result[prefix] = hexHash;
         return;
       }
 
-      // Recurse into children.
       await Promise.all([
         walk(prefix + '0', currentDepth + 1),
         walk(prefix + '1', currentDepth + 1),
@@ -355,50 +237,7 @@ export class MessagesSyncHandler implements MethodHandler {
     return result;
   }
 
-  private async createProjectionSnapshot(
-    tenant: string,
-    projectionScopes: ProjectionScopes | undefined
-  ): Promise<RecordsProjectionSnapshot | undefined> {
-    if (projectionScopes === undefined) {
-      return undefined;
-    }
-
-    return RecordsProjection.createSnapshot({
-      tenant,
-      messageStore : this.deps.messageStore,
-      scopes       : projectionScopes,
-    });
-  }
-
-  private static async getServerLeaves(
-    stateIndex: StateIndex,
-    tenant: string,
-    protocol: string | undefined,
-    projectionSnapshot: RecordsProjectionSnapshot | undefined,
-    bitPath: boolean[]
-  ): Promise<string[]> {
-    if (projectionSnapshot === undefined) {
-      return MessagesSyncHandler.getIndexedLeavesFromStateIndex(stateIndex, tenant, protocol, bitPath);
-    }
-
-    return projectionSnapshot.getLeaves(bitPath);
-  }
-
-  private static async getServerSubtreeHash(
-    stateIndex: StateIndex,
-    tenant: string,
-    protocol: string | undefined,
-    projectionSnapshot: RecordsProjectionSnapshot | undefined,
-    bitPath: boolean[]
-  ): Promise<Uint8Array> {
-    if (projectionSnapshot === undefined) {
-      return MessagesSyncHandler.getIndexedSubtreeHashFromStateIndex(stateIndex, tenant, protocol, bitPath);
-    }
-
-    return projectionSnapshot.getSubtreeHash(bitPath);
-  }
-
-  private static async getIndexedLeavesFromStateIndex(
+  private static async getIndexedLeaves(
     stateIndex: StateIndex,
     tenant: string,
     protocol: string | undefined,
@@ -411,7 +250,7 @@ export class MessagesSyncHandler implements MethodHandler {
     return stateIndex.getProtocolLeaves(tenant, protocol, bitPath);
   }
 
-  private static async getIndexedSubtreeHashFromStateIndex(
+  private static async getIndexedSubtreeHash(
     stateIndex: StateIndex,
     tenant: string,
     protocol: string | undefined,
@@ -424,10 +263,6 @@ export class MessagesSyncHandler implements MethodHandler {
     return stateIndex.getProtocolSubtreeHash(tenant, protocol, bitPath);
   }
 
-  /**
-   * Get the hex-encoded default hash for a given depth. Lazily cached.
-   */
-  private _defaultHashHexCache?: Map<number, string>;
   private async getDefaultHashHex(depth: number): Promise<string> {
     if (this._defaultHashHexCache === undefined) {
       const { initDefaultHashes } = await import('../smt/smt-utils.js');
@@ -441,9 +276,8 @@ export class MessagesSyncHandler implements MethodHandler {
   }
 
   /**
-   * Build diff response entries for the given messageCids.
-   * Reads each message from the MessageStore and, for small RecordsWrite
-   * payloads, inlines the data as base64url.
+   * Builds diff entries and inlines data when it is small enough for the
+   * MessagesSync response. Large record data remains fetch-by-CID.
    */
   private async buildDiffEntries(
     tenant: string,
@@ -454,22 +288,18 @@ export class MessagesSyncHandler implements MethodHandler {
     for (const messageCid of messageCids) {
       const { message, encodedData: inlineData, data } = await this.readMessageByCid(tenant, messageCid);
       if (!message) {
-        // Message was deleted between diff computation and read — skip.
         continue;
       }
 
       const entry: MessagesSyncDiffEntry = { messageCid, message };
 
-      // Use inline data from the MessageStore if available (small payloads).
       if (inlineData) {
         entry.encodedData = inlineData;
       } else if (data) {
-        // Data is in the DataStore — inline it if small enough.
         const bytes = await MessagesSyncHandler.streamToBytes(data);
         if (bytes.byteLength <= DEFAULT_MAX_INLINE_DATA_SIZE) {
           entry.encodedData = Encoder.bytesToBase64Url(bytes);
         }
-        // Large payloads are NOT inlined — client fetches via MessagesRead.
       }
 
       entries.push(entry);
@@ -478,281 +308,6 @@ export class MessagesSyncHandler implements MethodHandler {
     return entries;
   }
 
-  private async buildProjectedDependencyEntries(
-    tenant: string,
-    primaryEntries: MessagesSyncDiffEntry[],
-  ): Promise<MessagesSyncDependencyEntry[]> {
-    const dependenciesByCid = new Map<string, MessagesSyncDependencyEntry>();
-    const configsByProtocol = new Map<string, GenericMessage[]>();
-
-    for (const primaryEntry of primaryEntries) {
-      const protocolMetadata = MessagesSyncHandler.recordsWriteProtocolMetadata(primaryEntry.message);
-      if (protocolMetadata !== undefined) {
-        await this.addProtocolConfigClosureDependencies(
-          tenant,
-          protocolMetadata.protocol,
-          protocolMetadata.messageTimestamp,
-          primaryEntry.messageCid,
-          configsByProtocol,
-          dependenciesByCid,
-        );
-        continue;
-      }
-
-      const initialWrite = await this.readRecordsDeleteInitialWrite(tenant, primaryEntry.message);
-      if (initialWrite === undefined) {
-        continue;
-      }
-
-      await MessagesSyncHandler.addRecordsInitialWriteDependency(
-        primaryEntry.messageCid,
-        initialWrite,
-        dependenciesByCid,
-      );
-
-      const initialWriteMetadata = MessagesSyncHandler.recordsWriteProtocolMetadata(initialWrite);
-      if (initialWriteMetadata === undefined) {
-        continue;
-      }
-
-      await this.addProtocolConfigClosureDependencies(
-        tenant,
-        initialWriteMetadata.protocol,
-        initialWriteMetadata.messageTimestamp,
-        primaryEntry.messageCid,
-        configsByProtocol,
-        dependenciesByCid,
-      );
-    }
-
-    return [...dependenciesByCid.values()];
-  }
-
-  private async readRecordsDeleteInitialWrite(
-    tenant: string,
-    message: GenericMessage | undefined,
-  ): Promise<GenericMessage | undefined> {
-    const recordId = MessagesSyncHandler.recordsDeleteRecordId(message);
-    if (recordId === undefined) {
-      return undefined;
-    }
-
-    const { messages } = await this.deps.messageStore.query(tenant, [{
-      interface : DwnInterfaceName.Records,
-      method    : DwnMethodName.Write,
-      recordId,
-    }]);
-    const initialWrite = await RecordsWrite.getInitialWrite(messages);
-    return initialWrite === undefined ? undefined : MessagesSyncHandler.toWireMessage(initialWrite);
-  }
-
-  private static async addRecordsInitialWriteDependency(
-    rootMessageCid: string,
-    dependency: GenericMessage,
-    dependenciesByCid: Map<string, MessagesSyncDependencyEntry>,
-  ): Promise<void> {
-    const dependencyCid = await Message.getCid(dependency);
-    if (dependenciesByCid.has(dependencyCid)) {
-      return;
-    }
-
-    dependenciesByCid.set(dependencyCid, {
-      dependencyClass : 'recordsInitialWrite',
-      messageCid      : dependencyCid,
-      message         : dependency,
-      rootMessageCid,
-    });
-  }
-
-  private async addProtocolConfigClosureDependencies(
-    tenant: string,
-    rootProtocol: string,
-    rootMessageTimestamp: string,
-    rootMessageCid: string,
-    configsByProtocol: Map<string, GenericMessage[]>,
-    dependenciesByCid: Map<string, MessagesSyncDependencyEntry>,
-  ): Promise<void> {
-    // Dependency hints are not part of the projected root; they are advisory
-    // bootstrap data for the receiver. Bound each closure to the primary
-    // RecordsWrite timestamp because protocol authorization uses the definition
-    // active when that record was created, not whatever config is newest today.
-    const visitedProtocols = new Set<string>();
-    const pendingProtocols = [rootProtocol];
-
-    for (
-      let protocol = MessagesSyncHandler.takeNextUnvisitedProtocol(pendingProtocols, visitedProtocols);
-      protocol !== undefined;
-      protocol = MessagesSyncHandler.takeNextUnvisitedProtocol(pendingProtocols, visitedProtocols)
-    ) {
-      const configs = await this.getCachedGoverningProtocolsConfigure(
-        tenant,
-        protocol,
-        rootMessageTimestamp,
-        configsByProtocol,
-      );
-      await MessagesSyncHandler.addProtocolConfigDependencies({
-        configs,
-        rootMessageCid,
-        visitedProtocols,
-        pendingProtocols,
-        dependenciesByCid,
-      });
-    }
-  }
-
-  private async getCachedGoverningProtocolsConfigure(
-    tenant: string,
-    protocol: string,
-    messageTimestamp: string,
-    configsByProtocol: Map<string, GenericMessage[]>,
-  ): Promise<GenericMessage[]> {
-    const configCacheKey = JSON.stringify([protocol, messageTimestamp]);
-    const cachedConfigs = configsByProtocol.get(configCacheKey);
-    if (cachedConfigs !== undefined) {
-      return cachedConfigs;
-    }
-
-    const configs = await this.readGoverningProtocolsConfigure(tenant, protocol, messageTimestamp);
-    configsByProtocol.set(configCacheKey, configs);
-    return configs;
-  }
-
-  private static async addProtocolConfigDependencies({
-    configs,
-    rootMessageCid,
-    visitedProtocols,
-    pendingProtocols,
-    dependenciesByCid,
-  }: {
-    configs: GenericMessage[];
-    rootMessageCid: string;
-    visitedProtocols: Set<string>;
-    pendingProtocols: string[];
-    dependenciesByCid: Map<string, MessagesSyncDependencyEntry>;
-  }): Promise<void> {
-    for (const dependency of configs) {
-      await MessagesSyncHandler.addProtocolConfigDependency(rootMessageCid, dependency, dependenciesByCid);
-      MessagesSyncHandler.queueUnvisitedProtocols(
-        MessagesSyncHandler.protocolsConfigureUses(dependency),
-        visitedProtocols,
-        pendingProtocols,
-      );
-    }
-  }
-
-  private static async addProtocolConfigDependency(
-    rootMessageCid: string,
-    dependency: GenericMessage,
-    dependenciesByCid: Map<string, MessagesSyncDependencyEntry>,
-  ): Promise<void> {
-    const dependencyCid = await Message.getCid(dependency);
-    if (dependenciesByCid.has(dependencyCid)) {
-      return;
-    }
-
-    dependenciesByCid.set(dependencyCid, {
-      dependencyClass : 'protocolsConfigure',
-      messageCid      : dependencyCid,
-      message         : dependency,
-      rootMessageCid,
-    });
-  }
-
-  private static takeNextUnvisitedProtocol(
-    pendingProtocols: string[],
-    visitedProtocols: Set<string>,
-  ): string | undefined {
-    while (pendingProtocols.length > 0) {
-      const protocol = pendingProtocols.shift()!;
-      if (visitedProtocols.has(protocol)) {
-        continue;
-      }
-      visitedProtocols.add(protocol);
-      return protocol;
-    }
-    return undefined;
-  }
-
-  private static queueUnvisitedProtocols(
-    protocols: string[],
-    visitedProtocols: Set<string>,
-    pendingProtocols: string[],
-  ): void {
-    for (const protocol of protocols) {
-      if (!visitedProtocols.has(protocol)) {
-        pendingProtocols.push(protocol);
-      }
-    }
-  }
-
-  private static protocolsConfigureUses(message: GenericMessage): string[] {
-    if (
-      message.descriptor.interface !== DwnInterfaceName.Protocols ||
-      message.descriptor.method !== DwnMethodName.Configure
-    ) {
-      return [];
-    }
-
-    const uses = (message.descriptor as ProtocolsConfigureDefinitionDescriptor).definition?.uses;
-    return uses === undefined
-      ? []
-      : Object.values(uses).filter((protocol): protocol is string => typeof protocol === 'string');
-  }
-
-  private async readGoverningProtocolsConfigure(
-    tenant: string,
-    protocol: string,
-    messageTimestamp: string,
-  ): Promise<GenericMessage[]> {
-    const { messages } = await this.deps.messageStore.query(
-      tenant,
-      [{
-        interface        : DwnInterfaceName.Protocols,
-        method           : DwnMethodName.Configure,
-        protocol,
-        messageTimestamp : { lte: messageTimestamp },
-      }],
-      { messageTimestamp: SortDirection.Descending },
-    );
-
-    const governingMessage = await Message.getNewestMessage(messages);
-    return governingMessage === undefined ? [] : [governingMessage];
-  }
-
-  private static recordsWriteProtocolMetadata(message: GenericMessage | undefined): RecordsWriteProtocolMetadata | undefined {
-    if (
-      message?.descriptor.interface !== DwnInterfaceName.Records ||
-      message.descriptor.method !== DwnMethodName.Write
-    ) {
-      return undefined;
-    }
-
-    const protocol = (message.descriptor as RecordsWriteProtocolDescriptor).protocol;
-    return typeof protocol === 'string'
-      ? { protocol, messageTimestamp: message.descriptor.messageTimestamp }
-      : undefined;
-  }
-
-  private static recordsDeleteRecordId(message: GenericMessage | undefined): string | undefined {
-    if (
-      message?.descriptor.interface !== DwnInterfaceName.Records ||
-      message.descriptor.method !== DwnMethodName.Delete
-    ) {
-      return undefined;
-    }
-
-    const recordId = (message.descriptor as Record<string, unknown>).recordId;
-    return typeof recordId === 'string' ? recordId : undefined;
-  }
-
-  private static toWireMessage(message: GenericMessage): GenericMessage {
-    const { encodedData: _encodedData, initialWrite: _initialWrite, ...wireMessage } = message as StoredMessageWithInternalFields;
-    return wireMessage;
-  }
-
-  /**
-   * Read a message and its data from the MessageStore + DataStore by CID.
-   */
   private async readMessageByCid(
     tenant: string,
     messageCid: string,
@@ -762,11 +317,6 @@ export class MessagesSyncHandler implements MethodHandler {
       return {};
     }
 
-    // Extract and strip `encodedData` from the stored message.
-    // `encodedData` is an internal storage optimization for small payloads
-    // that are stored inline in the MessageStore rather than in the DataStore.
-    // It must not be included in the wire-format message (the recipient's
-    // DWN would reject it as an unexpected top-level property).
     let inlineEncodedData: string | undefined;
     if (MessagesSyncHandler.hasEncodedData(storedMessage)) {
       inlineEncodedData = storedMessage.encodedData;
@@ -774,20 +324,11 @@ export class MessagesSyncHandler implements MethodHandler {
     }
 
     let data: ReadableStream<Uint8Array> | undefined;
-
-    // Check if this is a RecordsWrite with data that is small enough to inline.
     if (inlineEncodedData === undefined && Records.isRecordsWrite(storedMessage)) {
       const { dataCid, dataSize } = storedMessage.descriptor;
-      if (dataSize <= DEFAULT_MAX_INLINE_DATA_SIZE) {
-        // Some stores may have small payload bytes in DataStore instead of encodedData.
-        if (this.deps.dataStore) {
-          // DataStore uses recordId, not messageCid. For RecordsWrite,
-          // recordId is a top-level message property.
-          const dataResult = await this.deps.dataStore.get(tenant, storedMessage.recordId, dataCid);
-          if (dataResult?.dataStream) {
-            data = dataResult.dataStream;
-          }
-        }
+      if (dataSize <= DEFAULT_MAX_INLINE_DATA_SIZE && this.deps.dataStore) {
+        const dataResult = await this.deps.dataStore.get(tenant, storedMessage.recordId, dataCid);
+        data = dataResult?.dataStream;
       }
     }
 
@@ -798,38 +339,6 @@ export class MessagesSyncHandler implements MethodHandler {
     return 'encodedData' in message && typeof message.encodedData === 'string';
   }
 
-  private static getProjectionScopes(
-    message: MessagesSyncMessage,
-  ): ProjectionScopes | undefined {
-    const { projectionScopes } = message.descriptor;
-    if (projectionScopes === undefined) {
-      return undefined;
-    }
-
-    return projectionScopes as [RecordsProjectionScope, ...RecordsProjectionScope[]];
-  }
-
-  private async withProjectionSnapshot<T>(
-    tenant: string,
-    scopes: readonly [RecordsProjectionScope, ...RecordsProjectionScope[]],
-    fn: (snapshot: RecordsProjectionSnapshot) => Promise<T>,
-  ): Promise<T> {
-    const snapshot = await RecordsProjection.createSnapshot({
-      tenant       : tenant,
-      messageStore : this.deps.messageStore,
-      scopes       : scopes,
-    });
-
-    try {
-      return await fn(snapshot);
-    } finally {
-      await snapshot.close();
-    }
-  }
-
-  /**
-   * Read a ReadableStream to completion and return the bytes.
-   */
   private static async streamToBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
     const reader = stream.getReader();
     const chunks: Uint8Array[] = [];
@@ -851,9 +360,6 @@ export class MessagesSyncHandler implements MethodHandler {
     return result;
   }
 
-  /**
-   * Parse a bit prefix string (e.g. "0110101") into a boolean array.
-   */
   private static parseBitPrefix(prefix: string): boolean[] {
     if (!/^[01]*$/.test(prefix)) {
       throw new DwnError(
@@ -889,8 +395,9 @@ export class MessagesSyncHandler implements MethodHandler {
         permissionGrants,
         messageStore
       });
-    } else {
-      throw new DwnError(DwnErrorCode.MessagesSyncAuthorizationFailed, 'message failed authorization');
+      return;
     }
+
+    throw new DwnError(DwnErrorCode.MessagesSyncAuthorizationFailed, 'message failed authorization');
   }
 }

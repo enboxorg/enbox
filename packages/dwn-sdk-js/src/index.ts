@@ -2,7 +2,7 @@
 export type { DwnConfig } from './dwn.js';
 export type { EventListener, EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, MessageEvent, ProgressGapInfo, ProgressGapReason, ProgressToken, SubscriptionEose, SubscriptionError, SubscriptionEvent, SubscriptionListener, SubscriptionMessage, SubscriptionReply } from './types/subscriptions.js';
 export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSort, MessageSubscription, Pagination, QueryResultEntry, Status } from './types/message-types.js';
-export type { MessagesFilter, MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessagesSubscribeMessageOptions, MessagesSyncAction, MessagesSyncDependencyClass, MessagesSyncDependencyEntry, MessagesSyncDescriptor, MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
+export type { MessagesFilter, MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessagesSubscribeMessageOptions, MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
 export type { GT, LT, Filter, FilterValue, KeyValues, EqualFilter, OneOfFilter, RangeFilter, RangeCriterion, PaginationCursor, QueryOptions, RangeValue, StartsWithFilter } from './types/query-types.js';
 export type { ProtocolsConfigureDescriptor, ProtocolDefinition, ProtocolTypes, ProtocolRuleSet, ProtocolsQueryFilter, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply, ProtocolActionRule, ProtocolDeliveryStrategy, ProtocolPathEncryption, ProtocolsQueryDescriptor, ProtocolRecordLimitDefinition, ProtocolSizeDefinition, ProtocolTagsDefinition, ProtocolTagSchema, ProtocolType, ProtocolUses } from './types/protocols-types.js';
 export { ProtocolRecordLimitStrategy } from './types/protocols-types.js';
@@ -103,9 +103,6 @@ export { SMTStoreLevel } from './smt/smt-store-level.js';
 export { SMTStoreMemory } from './smt/smt-store-memory.js';
 export type { Hash, SMTNode, SMTInternalNode, SMTLeafNode, SMTProof, SMTDiffResult, SMTNodeStore } from './types/smt-types.js';
 export { hashChildren, hashEquals, hashKey, hashLeaf, hashToHex, hexToHash, getBit, initDefaultHashes, getDefaultHashes, SMT_DEPTH, ZERO_HASH } from './smt/smt-utils.js';
-export { RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection } from './sync/records-projection.js';
-export type { NormalizedRecordsProjectionScope, RecordsProjectionInput, RecordsProjectionScope, RecordsProjectionSnapshot, RecordsProjectionTreeInput } from './sync/records-projection.js';
-
 // test library exports
 export type { GenerateFromRecordsWriteInput, GenerateFromRecordsWriteOut, GenerateGrantCreateInput, GenerateGrantCreateOutput, GenerateMessagesReadInput, GenerateMessagesReadOutput, GenerateMessagesSubscribeInput, GenerateMessagesSubscribeOutput, GenerateProtocolsConfigureInput, GenerateProtocolsConfigureOutput, GenerateProtocolsQueryInput, GenerateProtocolsQueryOutput, GenerateRecordsCountInput, GenerateRecordsCountOutput, GenerateRecordsDeleteInput, GenerateRecordsDeleteOutput, GenerateRecordsQueryInput, GenerateRecordsQueryOutput, GenerateRecordsSubscribeInput, GenerateRecordsSubscribeOutput, GenerateRecordsWriteInput, GenerateRecordsWriteOutput, Persona } from '../tests/utils/test-data-generator.js';
 export { TestDataGenerator } from '../tests/utils/test-data-generator.js';

@@ -1,7 +1,6 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { SyncIdentityOptions } from '../src/index.js';
-import type { SyncScope } from '../src/types/sync.js';
-import type { GenericMessage, MessagesSyncDependencyEntry, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -9,7 +8,7 @@ import { AbstractLevel } from 'abstract-level';
 import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, PermissionsProtocol, RecordsProjection, Time } from '@enbox/dwn-sdk-js';
+import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
@@ -1406,104 +1405,6 @@ describe('SyncEngineLevel', () => {
         });
         expect(queryResponse.reply.status.code).toBe(200);
         expect(queryResponse.reply.entries).toHaveLength(0);
-      });
-
-      it('applies projected delete dependency hints through the real local DWN', async () => {
-        const protocolDefinition: ProtocolDefinition = {
-          ...freeForAllProtocolDefinition,
-          protocol: `https://protocol.xyz/projected-delete-apply/${CryptoUtils.randomUuid()}`,
-        };
-        const protocolResponse = await testHarness.agent.dwn.sendRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.ProtocolsConfigure,
-          messageParams : { definition: protocolDefinition },
-        });
-        expect(protocolResponse.reply.status.code).toBe(202);
-
-        const writeResponse = await testHarness.agent.dwn.sendRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsWrite,
-          messageParams : {
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-          },
-          dataStream: new Blob(['Record to delete through projected sync'])
-        });
-        expect(writeResponse.reply.status.code).toBe(202);
-
-        const deleteResponse = await testHarness.agent.dwn.sendRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsDelete,
-          messageParams : { recordId: writeResponse.message!.recordId }
-        });
-        expect(deleteResponse.reply.status.code).toBe(202);
-
-        const protocolMessage = protocolResponse.message!;
-        const initialWriteMessage = writeResponse.message!;
-        const deleteMessage = deleteResponse.message!;
-        const protocolCid = await Message.getCid(protocolMessage);
-        const initialWriteCid = await Message.getCid(initialWriteMessage);
-        const deleteCid = await Message.getCid(deleteMessage);
-        const dependencies: MessagesSyncDependencyEntry[] = [
-          {
-            dependencyClass : 'protocolsConfigure',
-            messageCid      : protocolCid,
-            message         : protocolMessage,
-            rootMessageCid  : deleteCid,
-          },
-          {
-            dependencyClass : 'recordsInitialWrite',
-            messageCid      : initialWriteCid,
-            message         : initialWriteMessage,
-            rootMessageCid  : deleteCid,
-          },
-        ];
-
-        const projectedScope = {
-          kind   : 'recordsProjection',
-          scopes : RecordsProjection.normalizeScopes([{ protocol: protocolDefinition.protocol, protocolPath: 'post' }]),
-        } satisfies Extract<SyncScope, { kind: 'recordsProjection' }>;
-        const projectedTarget = {
-          did           : alice.did.uri,
-          dwnUrl        : testDwnUrl,
-          scope         : projectedScope,
-          authorization : { kind: 'owner' },
-        } satisfies Parameters<typeof syncEngine['pullProjectedRemoteDiff']>[0];
-
-        const aborted = await syncEngine['pullProjectedRemoteDiff'](
-          projectedTarget,
-          projectedScope,
-          {
-            dependencies,
-            onlyLocal  : [],
-            onlyRemote : [{ messageCid: deleteCid, message: deleteMessage }],
-          },
-          undefined,
-        );
-
-        expect(aborted).toBe(false);
-
-        const deleteRead = await testHarness.agent.dwn.processRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.MessagesRead,
-          messageParams : { messageCid: deleteCid },
-        });
-        expect(deleteRead.reply.status.code).toBe(200);
-        expect(deleteRead.reply.entry?.message.descriptor.method).toBe(DwnMethodName.Delete);
-
-        const localQuery = await testHarness.agent.dwn.processRequest({
-          author        : alice.did.uri,
-          target        : alice.did.uri,
-          messageType   : DwnInterface.RecordsQuery,
-          messageParams : { filter: { recordId: initialWriteMessage.recordId } }
-        });
-        expect(localQuery.reply.status.code).toBe(200);
-        expect(localQuery.reply.entries).toHaveLength(0);
       });
 
       it('syncs RecordsDelete messages from local to remote', async () => {

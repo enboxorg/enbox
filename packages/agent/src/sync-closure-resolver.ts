@@ -11,7 +11,7 @@ import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
 import { isMultiPartyContext } from './protocol-utils.js';
 import { protocolsForSyncScope } from './types/sync.js';
 import { ClosureFailureCode, createClosureContext } from './sync-closure-types.js';
-import { Message, PermissionScopeMatcher, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { Message, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
 // Dependency extraction helpers (one per dependency class)
@@ -852,11 +852,7 @@ function scopeCacheKey(scope: SyncScope): string {
     return 'full';
   }
 
-  if (scope.kind === 'protocolSet') {
-    return `protocolSet:${scope.protocols.join('\u001f')}`;
-  }
-
-  return `recordsProjection:${scope.scopes.map(scopeEntry => JSON.stringify(scopeEntry)).join('\u001f')}`;
+  return `protocolSet:${scope.protocols.join('\u001f')}`;
 }
 
 function isResolvedDependencyAllowed(
@@ -917,13 +913,6 @@ function isContextKeyDependencyAllowed(
     tags?.contextId === rootContextId;
   if (!isContextKeyRecord) {
     return false;
-  }
-
-  if (scope.kind === 'recordsProjection') {
-    return scope.scopes.some(scopeEntry => PermissionScopeMatcher.matches(scopeEntry, {
-      protocol  : sourceProtocol,
-      contextId : rootContextId,
-    }));
   }
 
   const coveredProtocols = protocolsForSyncScope(scope);

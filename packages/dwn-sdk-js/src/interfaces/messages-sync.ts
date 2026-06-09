@@ -1,22 +1,17 @@
 import type { MessageSigner } from '../types/signer.js';
-import type { RecordsProjectionScope } from '../sync/records-projection.js';
 import type { MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncMessage } from '../types/messages-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import { Message } from '../core/message.js';
-import { RECORDS_PROJECTION_ROOT_VERSION } from '../sync/records-projection.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
 import { validateProtocolUrlNormalized } from '../utils/url.js';
-import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export type MessagesSyncOptions = {
   signer : MessageSigner;
   action : MessagesSyncAction;
   protocol? : string;
-  projectionRootVersion?: string;
-  projectionScopes?: RecordsProjectionScope[];
   prefix? : string;
   messageTimestamp? : string;
   permissionGrantIds? : string[];
@@ -35,16 +30,6 @@ export class MessagesSync extends AbstractMessage<MessagesSyncMessage> {
     if (message.descriptor.protocol !== undefined) {
       validateProtocolUrlNormalized(message.descriptor.protocol);
     }
-    if (message.descriptor.projectionRootVersion !== undefined &&
-      message.descriptor.projectionRootVersion !== RECORDS_PROJECTION_ROOT_VERSION) {
-      throw new DwnError(
-        DwnErrorCode.MessagesSyncUnsupportedProjectionRootVersion,
-        `Unsupported projection root version ${message.descriptor.projectionRootVersion}`
-      );
-    }
-    for (const scope of message.descriptor.projectionScopes ?? []) {
-      validateProtocolUrlNormalized(scope.protocol);
-    }
 
     return new MessagesSync(message);
   }
@@ -55,16 +40,14 @@ export class MessagesSync extends AbstractMessage<MessagesSyncMessage> {
     });
 
     const descriptor: MessagesSyncDescriptor = {
-      interface             : DwnInterfaceName.Messages,
-      method                : DwnMethodName.Sync,
-      messageTimestamp      : options.messageTimestamp ?? Time.getCurrentTimestamp(),
-      action                : options.action,
-      protocol              : options.protocol,
-      projectionRootVersion : options.projectionRootVersion,
-      projectionScopes      : options.projectionScopes,
-      prefix                : options.prefix,
-      hashes                : options.hashes,
-      depth                 : options.depth,
+      interface        : DwnInterfaceName.Messages,
+      method           : DwnMethodName.Sync,
+      messageTimestamp : options.messageTimestamp ?? Time.getCurrentTimestamp(),
+      action           : options.action,
+      protocol         : options.protocol,
+      prefix           : options.prefix,
+      hashes           : options.hashes,
+      depth            : options.depth,
       ...permissionGrantInvocation,
     };
 

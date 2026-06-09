@@ -25,7 +25,6 @@ import { testRecordsCountHandler } from './handlers/records-count.spec.js';
 import { testRecordsDeleteHandler } from './handlers/records-delete.spec.js';
 import { testRecordsDelivery } from './features/records-delivery.spec.js';
 import { testRecordsImmutable } from './features/records-immutable.spec.js';
-import { testRecordsProjection } from './sync/records-projection.spec.js';
 import { testRecordsPrune } from './features/records-prune.spec.js';
 import { testRecordsPruneCrossProtocol } from './features/records-prune-cross-protocol.spec.js';
 import { testRecordsQueryHandler } from './handlers/records-query.spec.js';
@@ -76,7 +75,6 @@ export class TestSuite {
     testRecordsReadHandler();
     testRecordsSubscribeHandler();
     testRecordsWriteHandler();
-    testRecordsProjection();
 
     // feature tests
     testAuthorDelegatedGrant();
