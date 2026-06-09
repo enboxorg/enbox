@@ -181,22 +181,24 @@ function isActiveMessagesGrant(
 function grantMatchesFullRoot(entry: PermissionGrantEntry): boolean {
   const scope = entry.grant.scope;
   return isMessagesReadScope(scope) &&
-    scope.protocol === undefined;
+    scope.protocol === undefined &&
+    scope.protocolPath === undefined &&
+    scope.contextId === undefined;
 }
 
 function grantMatchesProtocolRoot(
   entry: PermissionGrantEntry,
   protocol: string,
 ): boolean {
+  if (grantMatchesFullRoot(entry)) {
+    return true;
+  }
+
   const scope = entry.grant.scope;
-  return isMessagesReadScope(scope) && (
-    scope.protocol === undefined ||
-    (
-      scope.protocol === protocol &&
-      scope.protocolPath === undefined &&
-      scope.contextId === undefined
-    )
-  );
+  return isMessagesReadScope(scope) &&
+    scope.protocol === protocol &&
+    scope.protocolPath === undefined &&
+    scope.contextId === undefined;
 }
 
 /** Returns sorted grant IDs from permission grant entries. */

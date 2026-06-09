@@ -149,6 +149,20 @@ type SyncDiffResult = {
   onlyLocal: string[];
 };
 
+type ProtocolSetReconcileContext = {
+  did: string;
+  dwnUrl: string;
+  delegateDid?: string;
+  scope: SyncScope;
+  permissionGrantIds?: NonEmptyStringArray;
+  protocols: NonEmptyStringArray;
+  shouldContinue?: () => boolean;
+};
+
+type ProtocolSetDiffCollectionResult =
+  | { aborted: true }
+  | { aborted: false; diffs: SyncDiffResult[] };
+
 // ---------------------------------------------------------------------------
 // Per-link in-memory delivery-order tracking (not persisted to ledger)
 // ---------------------------------------------------------------------------
@@ -2534,14 +2548,15 @@ export class SyncEngineLevel implements SyncEngine {
   private static isProtocolsConfigureDefinitionMessage(
     message: GenericMessage,
   ): message is ProtocolsConfigureMessage & { descriptor: ProtocolsConfigureDefinitionDescriptor } {
-    const descriptor = message.descriptor as MaybeProtocolsConfigureDefinitionDescriptor;
-    return descriptor.interface === DwnInterfaceName.Protocols &&
+    const descriptor: MaybeProtocolsConfigureDefinitionDescriptor = message.descriptor;
+    return message.authorization !== undefined &&
+      descriptor.interface === DwnInterfaceName.Protocols &&
       descriptor.method === DwnMethodName.Configure &&
       typeof descriptor.definition?.protocol === 'string';
   }
 
   private static protocolsConfigureUses(message: ProtocolsConfigureMessage): string[] {
-    const uses = (message.descriptor as ProtocolsConfigureDefinitionDescriptor).definition.uses;
+    const uses = message.descriptor.definition.uses;
     if (uses === undefined) {
       return [];
     }
@@ -3111,69 +3126,175 @@ export class SyncEngineLevel implements SyncEngine {
     options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
-    const { did, dwnUrl, delegateDid, scope, authorization } = target;
-    const permissionGrantIds = this.getAuthorizationGrantIds(authorization);
-    const diffs: SyncDiffResult[] = [];
-
-    for (const protocol of protocols) {
-      const localRoot = await this.getLocalRoot(did, delegateDid, protocol, permissionGrantIds);
-      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
-
-      const remoteRoot = await this.getRemoteRoot(did, dwnUrl, delegateDid, protocol, permissionGrantIds);
-      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
-      if (localRoot === remoteRoot) {
-        continue;
-      }
-
-      diffs.push(await this.diffWithRemote({ did, dwnUrl, delegateDid, protocol, permissionGrantIds }));
-      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+    const context = this.createProtocolSetReconcileContext(target, protocols, shouldContinue);
+    const diffResult = await this.collectProtocolSetDiffs(context);
+    if (diffResult.aborted) {
+      return { aborted: true };
     }
 
-    const onlyRemote = diffs.flatMap(diff => diff.onlyRemote);
-    if ((!options?.direction || options.direction === 'pull') && onlyRemote.length > 0) {
-      const { prefetched, needsFetchCids } = partitionRemoteEntries(onlyRemote);
-      try {
-        await this.pullMessages({
-          did,
-          dwnUrl,
-          delegateDid,
-          scope,
-          permissionGrantIds,
-          messageCids: needsFetchCids,
-          prefetched,
-          shouldContinue,
-        });
-      } catch (error) {
-        if (error instanceof SyncPullAbortedError) {
-          return { aborted: true };
-        }
-        throw error;
-      }
-      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+    const pullResult = await this.applyProtocolSetRemoteDiffs(context, diffResult.diffs, options);
+    if (pullResult) {
+      return pullResult;
     }
 
-    const onlyLocal = [...new Set(diffs.flatMap(diff => diff.onlyLocal))];
-    if ((!options?.direction || options.direction === 'push') && onlyLocal.length > 0) {
-      await this.pushMessages({
-        did,
-        dwnUrl,
-        delegateDid,
-        permissionGrantIds,
-        messageCids: onlyLocal,
-      });
-      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+    const pushResult = await this.applyProtocolSetLocalDiffs(context, diffResult.diffs, options);
+    if (pushResult) {
+      return pushResult;
     }
 
     if (options?.verifyConvergence !== true) {
       return {};
     }
 
-    for (const protocol of protocols) {
-      const postLocalRoot = await this.getLocalRoot(did, delegateDid, protocol, permissionGrantIds);
-      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+    return this.verifyProtocolSetConvergence(context);
+  }
 
-      const postRemoteRoot = await this.getRemoteRoot(did, dwnUrl, delegateDid, protocol, permissionGrantIds);
-      if (shouldContinue && !shouldContinue()) { return { aborted: true }; }
+  private createProtocolSetReconcileContext(
+    target: SyncReconcileTarget,
+    protocols: NonEmptyStringArray,
+    shouldContinue?: () => boolean,
+  ): ProtocolSetReconcileContext {
+    return {
+      did                : target.did,
+      dwnUrl             : target.dwnUrl,
+      delegateDid        : target.delegateDid,
+      scope              : target.scope,
+      permissionGrantIds : this.getAuthorizationGrantIds(target.authorization),
+      protocols,
+      shouldContinue,
+    };
+  }
+
+  private static shouldAbortReconcile(shouldContinue?: () => boolean): boolean {
+    return shouldContinue?.() === false;
+  }
+
+  private async collectProtocolSetDiffs(
+    context: ProtocolSetReconcileContext,
+  ): Promise<ProtocolSetDiffCollectionResult> {
+    const diffs: SyncDiffResult[] = [];
+
+    for (const protocol of context.protocols) {
+      const localRoot = await this.getLocalRoot(
+        context.did,
+        context.delegateDid,
+        protocol,
+        context.permissionGrantIds,
+      );
+      if (SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)) {
+        return { aborted: true };
+      }
+
+      const remoteRoot = await this.getRemoteRoot(
+        context.did,
+        context.dwnUrl,
+        context.delegateDid,
+        protocol,
+        context.permissionGrantIds,
+      );
+      if (SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)) {
+        return { aborted: true };
+      }
+      if (localRoot === remoteRoot) {
+        continue;
+      }
+
+      diffs.push(await this.diffWithRemote({
+        did                : context.did,
+        dwnUrl             : context.dwnUrl,
+        delegateDid        : context.delegateDid,
+        protocol,
+        permissionGrantIds : context.permissionGrantIds,
+      }));
+      if (SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)) {
+        return { aborted: true };
+      }
+    }
+
+    return { aborted: false, diffs };
+  }
+
+  private async applyProtocolSetRemoteDiffs(
+    context: ProtocolSetReconcileContext,
+    diffs: SyncDiffResult[],
+    options?: SyncReconcileOptions,
+  ): Promise<SyncReconcileResult | undefined> {
+    const onlyRemote = diffs.flatMap(diff => diff.onlyRemote);
+    if (options?.direction === 'push' || onlyRemote.length === 0) {
+      return undefined;
+    }
+
+    const { prefetched, needsFetchCids } = partitionRemoteEntries(onlyRemote);
+    try {
+      await this.pullMessages({
+        did                : context.did,
+        dwnUrl             : context.dwnUrl,
+        delegateDid        : context.delegateDid,
+        scope              : context.scope,
+        permissionGrantIds : context.permissionGrantIds,
+        messageCids        : needsFetchCids,
+        prefetched,
+        shouldContinue     : context.shouldContinue,
+      });
+    } catch (error) {
+      if (error instanceof SyncPullAbortedError) {
+        return { aborted: true };
+      }
+      throw error;
+    }
+
+    return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
+      ? { aborted: true }
+      : undefined;
+  }
+
+  private async applyProtocolSetLocalDiffs(
+    context: ProtocolSetReconcileContext,
+    diffs: SyncDiffResult[],
+    options?: SyncReconcileOptions,
+  ): Promise<SyncReconcileResult | undefined> {
+    const onlyLocal = [...new Set(diffs.flatMap(diff => diff.onlyLocal))];
+    if (options?.direction === 'pull' || onlyLocal.length === 0) {
+      return undefined;
+    }
+
+    await this.pushMessages({
+      did                : context.did,
+      dwnUrl             : context.dwnUrl,
+      delegateDid        : context.delegateDid,
+      permissionGrantIds : context.permissionGrantIds,
+      messageCids        : onlyLocal,
+    });
+
+    return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
+      ? { aborted: true }
+      : undefined;
+  }
+
+  private async verifyProtocolSetConvergence(
+    context: ProtocolSetReconcileContext,
+  ): Promise<SyncReconcileResult> {
+    for (const protocol of context.protocols) {
+      const postLocalRoot = await this.getLocalRoot(
+        context.did,
+        context.delegateDid,
+        protocol,
+        context.permissionGrantIds,
+      );
+      if (SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)) {
+        return { aborted: true };
+      }
+
+      const postRemoteRoot = await this.getRemoteRoot(
+        context.did,
+        context.dwnUrl,
+        context.delegateDid,
+        protocol,
+        context.permissionGrantIds,
+      );
+      if (SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)) {
+        return { aborted: true };
+      }
       if (postLocalRoot !== postRemoteRoot) {
         return { converged: false };
       }
@@ -4144,7 +4265,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     const targets: SyncTarget[] = [];
     let hasRegisteredIdentities = false;
-    let anyEndpointMissing = false;
+    let anyTargetUnavailable = false;
 
     for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
       hasRegisteredIdentities = true;
@@ -4158,23 +4279,28 @@ export class SyncEngineLevel implements SyncEngine {
 
       const dwnEndpointUrls = await this.agent.dwn.getDwnEndpointUrlsForTarget(did);
       if (dwnEndpointUrls.length === 0) {
-        anyEndpointMissing = true;
+        anyTargetUnavailable = true;
         continue;
       }
 
       for (const dwnUrl of dwnEndpointUrls) {
-        targets.push(...await this.buildSyncTargetsForEndpoint(did, dwnUrl, parsed));
+        try {
+          targets.push(...await this.buildSyncTargetsForEndpoint(did, dwnUrl, parsed));
+        } catch (error: unknown) {
+          anyTargetUnavailable = true;
+          console.warn(`SyncEngineLevel: Unable to resolve sync targets for ${did} at ${dwnUrl}, skipping identity endpoint:`, error);
+        }
       }
     }
 
     // Only cache when:
     // - The result is non-empty (empty = transient resolution failure).
     // - All registered identities resolved successfully (partial =
-    //   one identity's endpoints failed transiently; caching would
-    //   suppress retries for that identity for the full TTL).
+    //   one identity's endpoints or sync authorization failed transiently;
+    //   caching would suppress retries for that identity for the full TTL).
     // - The generation hasn't changed (a concurrent register/unregister
     //   invalidated the cache while we were awaiting).
-    const isComplete = hasRegisteredIdentities && !anyEndpointMissing;
+    const isComplete = hasRegisteredIdentities && !anyTargetUnavailable;
     if (targets.length > 0 && isComplete && this._syncTargetsCacheGeneration === generationAtStart) {
       this._syncTargetsCache = { targets, timestamp: Date.now() };
     }

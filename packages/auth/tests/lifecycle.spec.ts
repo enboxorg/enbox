@@ -97,6 +97,15 @@ describe('deriveSyncScopeFromGrants', () => {
     expect(result).toEqual(['https://proto.example/a', 'https://proto.example/b']);
   });
 
+  test('ignores narrow Messages.Read grants because protocol-root sync requires root coverage', () => {
+    const grants = [
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/a', protocolPath: 'post' }),
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/b', contextId: 'bafyroot/bafychild' }),
+      mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/c' }),
+    ];
+    expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://proto.example/c']);
+  });
+
   test('deduplicates protocol URIs', () => {
     const grants = [
       mockGrant({ interface: 'Messages', method: 'Read', protocol: 'https://proto.example/a' }),

@@ -508,7 +508,7 @@ describe('SyncEngineLevel', () => {
         sendDwnRequestSpy.restore();
       });
 
-      it('should propagate the error when delegate permission grant is missing during pull', async () => {
+      it('should skip the identity when delegate permission grant is missing during pull', async () => {
         // create new identity to not conflict the previous tests's remote records
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
@@ -526,9 +526,13 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        await expect(
-          syncEngine.sync('pull')
-        ).rejects.toThrow('SyncPermissions: No active protocol-root Messages.Read permission found for MessagesSync: https://protocol.xyz/foo');
+        const warnSpy = sinon.stub(console, 'warn');
+
+        await syncEngine.sync('pull');
+
+        expect(warnSpy.calledWithMatch(
+          `SyncEngineLevel: Unable to resolve sync targets for ${aliceSync.did.uri} at ${testDwnUrl}, skipping identity endpoint:`
+        )).toBe(true);
       });
 
       it('succeeds with only a MessagesSync grant when messages are inlined in the diff response', async () => {
@@ -986,7 +990,7 @@ describe('SyncEngineLevel', () => {
         processRequestSpy.restore();
       });
 
-      it('should propagate the error when delegate permission grant is missing during push', async () => {
+      it('should skip the identity when delegate permission grant is missing during push', async () => {
         // create new identity to not conflict the previous tests's remote records
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
@@ -1004,9 +1008,13 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        await expect(
-          syncEngine.sync('push')
-        ).rejects.toThrow('SyncPermissions: No active protocol-root Messages.Read permission found for MessagesSync: https://protocol.xyz/foo');
+        const warnSpy = sinon.stub(console, 'warn');
+
+        await syncEngine.sync('push');
+
+        expect(warnSpy.calledWithMatch(
+          `SyncEngineLevel: Unable to resolve sync targets for ${aliceSync.did.uri} at ${testDwnUrl}, skipping identity endpoint:`
+        )).toBe(true);
       });
 
       it('logs an error when push fails due to missing permissions on the remote DWN', async () => {

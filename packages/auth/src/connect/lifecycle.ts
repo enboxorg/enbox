@@ -310,6 +310,9 @@ export function deriveSyncScopeFromGrants(grants: DwnPermissionGrant[]): 'all' |
       return 'all';
     }
     if (protocol !== PermissionsProtocol.uri) {
+      if (scope.protocolPath !== undefined || scope.contextId !== undefined) {
+        continue;
+      }
       protocols.add(protocol);
     }
   }
