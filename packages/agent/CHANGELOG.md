@@ -1,5 +1,41 @@
 # @enbox/agent
 
+## 0.7.8
+
+### Patch Changes
+
+- [#975](https://github.com/enboxorg/enbox/pull/975) [`6aaab40`](https://github.com/enboxorg/enbox/commit/6aaab40bffd77b09d05275f2d786b8091c336188) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Resolve delegated path and context `Messages.Read` grants into Records-primary projected `MessagesSync` targets.
+
+- [#968](https://github.com/enboxorg/enbox/pull/968) [`edd4b0f`](https://github.com/enboxorg/enbox/commit/edd4b0f27685de001bcff3cb9ca75410708043b0) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Order composed protocol configurations after their referenced protocol configurations during sync apply.
+
+- [#959](https://github.com/enboxorg/enbox/pull/959) [`e0badc8`](https://github.com/enboxorg/enbox/commit/e0badc848e26b23e45fbdf79b53cb49bbf0afcc2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Close delegated MessagesSubscribe streams when invoked grants become invalid during delivery, surface terminal live-query errors, and keep subscription resume checkpoints monotonic.
+
+- [#971](https://github.com/enboxorg/enbox/pull/971) [`151ab89`](https://github.com/enboxorg/enbox/commit/151ab894a7a2f18a7805a6b984b137dcef009e19) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Support exact protocolPath and contextId subtree scope matching for Messages.Read grants. Permission records are now authorized through the protocol scope embedded in each grant record instead of blanket access from a grant scoped directly to the Permissions protocol.
+
+- [#981](https://github.com/enboxorg/enbox/pull/981) [`eea8c4a`](https://github.com/enboxorg/enbox/commit/eea8c4a10d41fd034773c2d543d1c400cc6d2926) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Include and verify payload-free initial-write dependency hints for projected sync delete tombstones.
+
+- [#978](https://github.com/enboxorg/enbox/pull/978) [`2910f50`](https://github.com/enboxorg/enbox/commit/2910f503f62b6a0d1fda09666defad44475fd97c) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add projected MessagesSync protocol-config closure hints and apply verified config dependencies before projected primary records.
+
+- [#956](https://github.com/enboxorg/enbox/pull/956) [`d89d29e`](https://github.com/enboxorg/enbox/commit/d89d29ec27de665afe6a12619d3aa3ae73be48d3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add a shared permission scope matcher and use it for scoped grant checks. Scoped grant authorization now uses exact protocolPath matching, boundary-aware contextId subtree matching, and distinct Messages grant authorization error codes.
+
+- [#964](https://github.com/enboxorg/enbox/pull/964) [`5bcc5ac`](https://github.com/enboxorg/enbox/commit/5bcc5ac00a2c478c09737e725d6df50d4d017c2f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Validate locally present closure dependencies against the current sync scope and dependency policy.
+
+- [#965](https://github.com/enboxorg/enbox/pull/965) [`92011b6`](https://github.com/enboxorg/enbox/commit/92011b6938b0e59eabf3b7ee3849f6e5f339c7a3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Scope sync health degraded-link counts to current durable sync targets.
+
+- [#961](https://github.com/enboxorg/enbox/pull/961) [`e7946e7`](https://github.com/enboxorg/enbox/commit/e7946e7e7e517be5c1c1b9c643f6e01305252ef9) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Abort in-flight reconciliation pulls when their sync link is no longer current.
+
+- [#954](https://github.com/enboxorg/enbox/pull/954) [`37cac82`](https://github.com/enboxorg/enbox/commit/37cac82c0f3476f1e76eeae22665b1656a4c687e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Preserve closure dead letters when sync roots converge and expose closure failure state in sync health.
+
+- [#966](https://github.com/enboxorg/enbox/pull/966) [`31111b6`](https://github.com/enboxorg/enbox/commit/31111b651716e2a56f68fba93a43891e38c82161) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Prune superseded durable sync links when identity sync scope or authorization epoch changes.
+
+- [#960](https://github.com/enboxorg/enbox/pull/960) [`6222ba9`](https://github.com/enboxorg/enbox/commit/6222ba9c90552e891cd4797196835544bd437a38) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Reject pulled sync messages that fall outside a protocol-scoped link before applying them locally.
+
+- [#958](https://github.com/enboxorg/enbox/pull/958) [`485bc75`](https://github.com/enboxorg/enbox/commit/485bc757375824265de3c294a00db9ab826620c8) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Use canonical sync projection IDs and authorization epochs for full/protocol sync links. Protocol-list sync now uses one protocol-set link per tenant, endpoint, projection, and authorization epoch while delegated sync invokes the active Messages.Read grant set.
+
+- Updated dependencies [[`22dffaa`](https://github.com/enboxorg/enbox/commit/22dffaa13cceb18935a20508fb131f5bb83993dd), [`e0badc8`](https://github.com/enboxorg/enbox/commit/e0badc848e26b23e45fbdf79b53cb49bbf0afcc2), [`1a9ba9d`](https://github.com/enboxorg/enbox/commit/1a9ba9db3aa09e7dd73e22e6f555c63eba978fb1), [`923b14f`](https://github.com/enboxorg/enbox/commit/923b14ffc986a7c98ee11a73d979d5d869579881), [`151ab89`](https://github.com/enboxorg/enbox/commit/151ab894a7a2f18a7805a6b984b137dcef009e19), [`650f630`](https://github.com/enboxorg/enbox/commit/650f6306d42b6aaece08a811c437a59f4eb896b3), [`c801dc7`](https://github.com/enboxorg/enbox/commit/c801dc7045a109f210a1a6d7306f3e215bca9db7), [`eea8c4a`](https://github.com/enboxorg/enbox/commit/eea8c4a10d41fd034773c2d543d1c400cc6d2926), [`2910f50`](https://github.com/enboxorg/enbox/commit/2910f503f62b6a0d1fda09666defad44475fd97c), [`67947ca`](https://github.com/enboxorg/enbox/commit/67947ca12d3e5e1343f3ade8dd8c6e261ad41ac3), [`d89d29e`](https://github.com/enboxorg/enbox/commit/d89d29ec27de665afe6a12619d3aa3ae73be48d3)]:
+  - @enbox/dwn-sdk-js@0.3.8
+  - @enbox/dwn-clients@0.4.3
+
 ## 0.7.7
 
 ### Patch Changes
