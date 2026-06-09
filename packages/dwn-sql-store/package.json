@@ -1,6 +1,6 @@
 {
   "name": "@enbox/dwn-sql-store",
-  "version": "0.0.22",
+  "version": "0.0.23",
   "description": "SQL backed implementations of DWN MessageStore, DataStore, and StateIndex",
   "type": "module",
   "license": "Apache-2.0",
