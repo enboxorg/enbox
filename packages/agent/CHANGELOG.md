@@ -1,5 +1,11 @@
 # @enbox/agent
 
+## 0.7.9
+
+### Patch Changes
+
+- [#984](https://github.com/enboxorg/enbox/pull/984) [`4837d72`](https://github.com/enboxorg/enbox/commit/4837d725a96739c2c5fae892018087b238577e8a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Repair scoped live sync closure when protocol metadata arrives after records by fetching and applying tenant-signed protocol configs from the remote DWN.
+
 ## 0.7.8
 
 ### Patch Changes
