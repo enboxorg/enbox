@@ -172,6 +172,17 @@ export type TypedCreateRequest<
   protocolRole?: string;
 
   /**
+   * Compact the record's `$squash`-enabled path on write.
+   *
+   * When `true`, the write carries the `$squash` directive so the DWN
+   * purges older siblings per the protocol's `$squash` configuration
+   * (e.g. compacting a CRDT delta/snapshot history). No-op on paths
+   * without `$squash`. The low-level `records.write` already supports
+   * this; the typed surface forwards it.
+   */
+  squash?: true;
+
+  /**
    * The MIME type / data format for the record.
    *
    * If omitted, defaults to the first entry in the protocol type's
@@ -977,6 +988,7 @@ export class TypedEnbox<
           datePublished   : request.datePublished,
           recipient       : request.recipient,
           protocolRole    : request.protocolRole,
+          squash          : request.squash,
           tags            : request.tags,
           protocol        : this._definition.protocol,
           protocolPath    : normalizedPath,

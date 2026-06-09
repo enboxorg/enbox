@@ -259,6 +259,64 @@ describe('TypedProtocol API', () => {
       });
     });
 
+    describe('create() with $squash (#972)', () => {
+      // Self-contained protocol with a $squash path, so the shared Todo fixture is untouched.
+      const SquashDefinition = {
+        protocol  : 'https://example.com/protocols/squash-test',
+        published : true,
+        types     : {
+          doc      : { schema: 'https://example.com/schemas/doc', dataFormats: ['application/json'] },
+          snapshot : { schema: 'https://example.com/schemas/snapshot', dataFormats: ['application/json'] },
+        },
+        structure: {
+          doc: {
+            $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+            snapshot : {
+              $immutable : true,
+              $squash    : true,
+              $actions   : [{ who: 'anyone', can: ['create', 'read'] }],
+            },
+          },
+        },
+      } as const satisfies ProtocolDefinition;
+
+      type SquashSchemaMap = { doc: { n?: string }; snapshot: { v?: string } };
+      const SquashProtocol = defineProtocol(SquashDefinition, {} as SquashSchemaMap);
+
+      let squashed: TypedEnbox<typeof SquashDefinition, SquashSchemaMap>;
+      beforeEach(async () => {
+        squashed = new TypedEnbox(dwnAlice, SquashProtocol);
+        await squashed.configure();
+      });
+
+      it('forwards squash:true to the underlying write message descriptor', async () => {
+        const { record: doc } = await squashed.records.create('doc', { data: { n: 'd' } });
+        expect(doc).toBeDefined();
+
+        const { status, record } = await squashed.records.create('doc/snapshot', {
+          data            : { v: 's1' },
+          parentContextId : doc.contextId,
+          squash          : true,
+        });
+
+        // If `squash` were dropped by the typed wrapper, this would be an ordinary
+        // (non-squashing) write — the descriptor would lack the directive.
+        expect(status.code).toBe(202);
+        const descriptor = record.rawRecord.rawMessage.descriptor as { squash?: true };
+        expect(descriptor.squash).toBe(true);
+      });
+
+      it('omits squash when not requested (no false-y field)', async () => {
+        const { record: doc } = await squashed.records.create('doc', { data: { n: 'd2' } });
+        const { record } = await squashed.records.create('doc/snapshot', {
+          data            : { v: 's2' },
+          parentContextId : doc.contextId,
+        });
+        const descriptor = record.rawRecord.rawMessage.descriptor as { squash?: true };
+        expect(descriptor.squash).toBeUndefined();
+      });
+    });
+
     describe('query()', () => {
       it('should query records and return TypedRecord instances', async () => {
         // Write two lists
