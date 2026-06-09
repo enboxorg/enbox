@@ -1,5 +1,11 @@
 # @enbox/dwn-sdk-js
 
+## 0.3.9
+
+### Patch Changes
+
+- [#988](https://github.com/enboxorg/enbox/pull/988) [`5908941`](https://github.com/enboxorg/enbox/commit/590894124552537f9088638b7a3527d4f7f3fda9) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Treat exact RecordsWrite replays as idempotent before mutable protocol-state validation.
+
 ## 0.3.8
 
 ### Patch Changes
