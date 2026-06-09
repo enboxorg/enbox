@@ -111,9 +111,9 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
   });
 
   it('scopes squash per-call — only the create that sets it carries it', async () => {
-    await typed.records.create('doc', { data: { n: 'd' } });                 // no squash
+    await typed.records.create('doc', { data: { n: 'd' } }); // no squash
     await typed.records.create('doc/snapshot', { data: { v: 's' }, squash: true });
-    await typed.records.create('doc/snapshot', { data: { v: 's2' } });        // no squash
+    await typed.records.create('doc/snapshot', { data: { v: 's2' } }); // no squash
 
     expect(writes.map((w) => w.squash)).toEqual([undefined, true, undefined]);
   });

@@ -284,6 +284,7 @@ describe('TypedProtocol API', () => {
       const SquashProtocol = defineProtocol(SquashDefinition, {} as SquashSchemaMap);
 
       let squashed: TypedEnbox<typeof SquashDefinition, SquashSchemaMap>;
+
       beforeEach(async () => {
         squashed = new TypedEnbox(dwnAlice, SquashProtocol);
         await squashed.configure();
