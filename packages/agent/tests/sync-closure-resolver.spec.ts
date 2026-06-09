@@ -1768,17 +1768,33 @@ describe('evaluateClosure', () => {
   describe('invalidateClosureCache', () => {
     it('should invalidate protocolCache when a ProtocolsConfigure is processed', () => {
       const ctx = createClosureContext('did:example:alice');
-      ctx.protocolCache.set('https://example.com/proto', { some: 'cached-definition' });
+      const protocol = 'https://example.com/proto';
+      const protocolDepKeys = [
+        'protocolsConfigure',
+        'encryptionKeyMaterial',
+        'keyDeliveryProtocol',
+        'crossProtocolConfig',
+        'crossProtocolRoleConfig',
+      ].map(label => protocolSetDependencyKey(protocol, `${label}:protocol:${protocol}`));
+      ctx.protocolCache.set(protocol, { some: 'cached-definition' });
+      for (const key of protocolDepKeys) {
+        ctx.satisfiedDeps.add(key);
+        ctx.missingDeps.add(key);
+      }
 
       const protocolMsg = mockMessage({
         interface  : 'Protocols',
         method     : 'Configure',
-        definition : { protocol: 'https://example.com/proto' },
+        definition : { protocol },
       });
 
       invalidateClosureCache(ctx, protocolMsg);
 
-      expect(ctx.protocolCache.has('https://example.com/proto')).toBe(false);
+      expect(ctx.protocolCache.has(protocol)).toBe(false);
+      for (const key of protocolDepKeys) {
+        expect(ctx.satisfiedDeps.has(key)).toBe(false);
+        expect(ctx.missingDeps.has(key)).toBe(false);
+      }
     });
 
     it('should invalidate grantCache when a grant write is processed', () => {

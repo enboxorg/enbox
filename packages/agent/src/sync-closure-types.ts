@@ -206,6 +206,8 @@ export function invalidateClosureCache(
       : undefined;
     if (protocol) {
       context.protocolCache.delete(protocol);
+      deleteProtocolDependencyCacheEntries(context.satisfiedDeps, protocol);
+      deleteProtocolDependencyCacheEntries(context.missingDeps, protocol);
     }
   }
 
@@ -316,6 +318,20 @@ export function invalidateClosureCache(
 function deleteDependencyCacheEntries(cache: Set<string>, dependencyKeySuffix: string): void {
   for (const key of cache) {
     if (key.endsWith(dependencyKeySuffix)) {
+      cache.delete(key);
+    }
+  }
+}
+
+function deleteProtocolDependencyCacheEntries(cache: Set<string>, protocol: string): void {
+  const marker = ':protocol:';
+  for (const key of cache) {
+    const markerIndex = key.lastIndexOf(marker);
+    if (markerIndex === -1) {
+      continue;
+    }
+    const protocolIdentifier = key.substring(markerIndex + marker.length);
+    if (protocolIdentifier === protocol) {
       cache.delete(key);
     }
   }

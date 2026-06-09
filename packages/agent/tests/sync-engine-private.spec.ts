@@ -6,12 +6,12 @@ import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DwnInterfaceName, DwnMethodName, Message, RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
-import { ClosureFailureCode } from '../src/sync-closure-types.js';
 import { computeAuthorizationEpoch } from '../src/types/sync.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { ReplicationLedger } from '../src/sync-replication-ledger.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncPullAbortedError } from '../src/sync-messages.js';
+import { ClosureFailureCode, createClosureContext } from '../src/sync-closure-types.js';
 import { getMessagesPermissionGrantsForScope, resolveMessagesSyncScopes } from '../src/sync-permission-grants.js';
 
 describe('SyncEngineLevel — private methods', () => {
@@ -135,27 +135,64 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // extractDataStream
+  // createLivePullDataStreamFactory
   // ---------------------------------------------------------------------------
 
-  describe('extractDataStream', () => {
-    it('should return undefined for non-RecordsWrite events', () => {
-      const event = { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } };
-      expect((syncEngine as any).extractDataStream(event)).toBeUndefined();
+  describe('createLivePullDataStreamFactory', () => {
+    const livePullContext = {
+      did        : 'did:example:alice',
+      dwnUrl     : 'https://dwn.example',
+      eventScope : {},
+      linkKey    : 'link-key',
+      isStale    : (): boolean => false,
+    };
+
+    const textStream = (text: string): ReadableStream<Uint8Array> => new ReadableStream<Uint8Array>({
+      start(controller): void {
+        controller.enqueue(new TextEncoder().encode(text));
+        controller.close();
+      }
     });
 
-    it('should return data stream for RecordsWrite with data', () => {
-      const mockStream = new ReadableStream();
+    const readStreamText = async (stream: ReadableStream<Uint8Array> | undefined): Promise<string | undefined> => {
+      if (!stream) {
+        return undefined;
+      }
+
+      const reader = stream.getReader();
+      const chunks: Uint8Array[] = [];
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) { break; }
+          chunks.push(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      return new TextDecoder().decode(Buffer.concat(chunks));
+    };
+
+    it('should return undefined for non-RecordsWrite events', async () => {
+      const event = { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } };
+      const factory = await (syncEngine as any).createLivePullDataStreamFactory(livePullContext, event);
+      expect(await factory()).toBeUndefined();
+    });
+
+    it('should return data stream for RecordsWrite with data', async () => {
       const event = {
         message : { descriptor: { interface: 'Records', method: 'Write' } },
-        data    : mockStream,
+        data    : textStream('hello from event'),
       };
-      expect((syncEngine as any).extractDataStream(event)).toBe(mockStream);
+      const factory = await (syncEngine as any).createLivePullDataStreamFactory(livePullContext, event);
+      expect(await readStreamText(await factory())).toBe('hello from event');
     });
 
-    it('should return undefined for RecordsWrite without data', () => {
+    it('should return undefined for RecordsWrite without data', async () => {
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } };
-      expect((syncEngine as any).extractDataStream(event)).toBeUndefined();
+      const factory = await (syncEngine as any).createLivePullDataStreamFactory(livePullContext, event);
+      expect(await factory()).toBeUndefined();
     });
 
     it('should decode inline encodedData and delete it from the message', async () => {
@@ -172,7 +209,8 @@ describe('SyncEngineLevel — private methods', () => {
         },
       };
 
-      const stream = (syncEngine as any).extractDataStream(event);
+      const factory = await (syncEngine as any).createLivePullDataStreamFactory(livePullContext, event);
+      const stream = await factory();
       expect(stream).toBeInstanceOf(ReadableStream);
 
       // encodedData must be deleted so the DWN schema validator does not
@@ -180,9 +218,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect((event.message as any).encodedData).toBeUndefined();
 
       // Verify the stream yields the original data.
-      const reader = stream.getReader();
-      const { value } = await reader.read();
-      expect(new TextDecoder().decode(value)).toBe(originalData);
+      expect(await readStreamText(stream)).toBe(originalData);
     });
   });
 
@@ -3525,6 +3561,401 @@ describe('SyncEngineLevel — private methods', () => {
       );
 
       expect(verified).toEqual([await dependencyEntry(governingConfig, primaryCid)]);
+    });
+
+    it('tryRepairMissingProtocolMetadata should fetch and apply composed protocol configs before retrying closure', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const usedProtocol = 'https://identity.foundation/protocols/social-graph';
+      const profileConfig = await protocolsConfigureMessage({
+        author   : tenant,
+        protocol : projectedProtocol,
+        uses     : { social: usedProtocol },
+      });
+      const socialConfig = await protocolsConfigureMessage({
+        author   : tenant,
+        protocol : usedProtocol,
+      });
+      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
+        message: {
+          descriptor: {
+            filter: request.messageParams.filter,
+          },
+        },
+      }));
+      const sendDwnRequest = sinon.stub().callsFake(async ({ message }: { message: any }) => {
+        const protocol = message.descriptor.filter.protocol;
+        return {
+          status  : { code: 200, detail: 'OK' },
+          entries : protocol === projectedProtocol
+            ? [profileConfig]
+            : protocol === usedProtocol
+              ? [socialConfig]
+              : [],
+        };
+      });
+      const agent = {
+        ...createResolvingAgent(tenant),
+        dwn : { processRawMessage },
+        processDwnRequest,
+        rpc : { sendDwnRequest },
+      };
+      const engine = createEngine({ db, agent: agent as any });
+      const closureCtx = createClosureContext(tenant.did);
+      closureCtx.missingDeps.add(
+        `protocolSet:${projectedProtocol}:protocolsConfigure:protocol:${projectedProtocol}`,
+      );
+
+      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
+        {
+          did        : tenant.did,
+          dwnUrl     : 'https://dwn.example',
+          eventScope : { protocols: [projectedProtocol] },
+          linkKey    : 'link-key',
+          isStale    : (): boolean => false,
+        },
+        closureCtx,
+        {
+          complete       : false,
+          rootMessageCid : 'root-cid',
+          edges          : [],
+          depth          : 0,
+          failure        : {
+            code   : ClosureFailureCode.ProtocolMetadataMissing,
+            detail : `dependency 'protocolsConfigure' (${projectedProtocol}) not found locally`,
+            edge   : {
+              dependencyClass : 1,
+              identifier      : projectedProtocol,
+              identifierType  : 'protocol',
+              label           : 'protocolsConfigure',
+            },
+          },
+        },
+      );
+
+      expect(repaired).toBe(true);
+      expect(processDwnRequest.getCalls().map(call => call.args[0])).toEqual([
+        {
+          author        : tenant.did,
+          messageParams : { filter: { protocol: projectedProtocol } },
+          messageType   : DwnInterface.ProtocolsQuery,
+          store         : false,
+          target        : tenant.did,
+        },
+        {
+          author        : tenant.did,
+          messageParams : { filter: { protocol: usedProtocol } },
+          messageType   : DwnInterface.ProtocolsQuery,
+          store         : false,
+          target        : tenant.did,
+        },
+      ]);
+      expect(sendDwnRequest.getCalls().map(call => call.args[0].dwnUrl)).toEqual([
+        'https://dwn.example',
+        'https://dwn.example',
+      ]);
+      expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
+        socialConfig,
+        profileConfig,
+      ]);
+      expect(closureCtx.missingDeps.has(
+        `protocolSet:${projectedProtocol}:protocolsConfigure:protocol:${projectedProtocol}`,
+      )).toBe(false);
+    });
+
+    for (const repairCase of [
+      {
+        dependencyClass : 5,
+        failureCode     : ClosureFailureCode.EncryptionDependencyMissing,
+        label           : 'keyDeliveryProtocol',
+      },
+      {
+        dependencyClass : 6,
+        failureCode     : ClosureFailureCode.CrossProtocolReferenceMissing,
+        label           : 'crossProtocolConfig',
+      },
+    ]) {
+      it(`tryRepairMissingProtocolMetadata should repair ${repairCase.failureCode} protocol misses`, async () => {
+        const tenant = await TestDataGenerator.generatePersona();
+        const dependencyProtocol = `https://example.com/${repairCase.label}`;
+        const dependencyConfig = await protocolsConfigureMessage({
+          author   : tenant,
+          protocol : dependencyProtocol,
+        });
+        const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+        const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
+          message: {
+            descriptor: {
+              filter: request.messageParams.filter,
+            },
+          },
+        }));
+        const sendDwnRequest = sinon.stub().callsFake(async ({ message }: { message: any }) => ({
+          status  : { code: 200, detail: 'OK' },
+          entries : message.descriptor.filter.protocol === dependencyProtocol ? [dependencyConfig] : [],
+        }));
+        const agent = {
+          ...createResolvingAgent(tenant),
+          dwn : { processRawMessage },
+          processDwnRequest,
+          rpc : { sendDwnRequest },
+        };
+        const engine = createEngine({ db, agent: agent as any });
+        const closureCtx = createClosureContext(tenant.did);
+        const depKey = `protocolSet:${projectedProtocol}:${repairCase.label}:protocol:${dependencyProtocol}`;
+        closureCtx.missingDeps.add(depKey);
+
+        const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
+          {
+            did        : tenant.did,
+            dwnUrl     : 'https://dwn.example',
+            eventScope : { protocols: [projectedProtocol] },
+            linkKey    : 'link-key',
+            isStale    : (): boolean => false,
+          },
+          closureCtx,
+          {
+            complete       : false,
+            rootMessageCid : 'root-cid',
+            edges          : [],
+            depth          : 0,
+            failure        : {
+              code   : repairCase.failureCode,
+              detail : `dependency '${repairCase.label}' (${dependencyProtocol}) not found locally`,
+              edge   : {
+                dependencyClass : repairCase.dependencyClass,
+                identifier      : dependencyProtocol,
+                identifierType  : 'protocol',
+                label           : repairCase.label,
+              },
+            },
+          },
+        );
+
+        expect(repaired).toBe(true);
+        expect(processDwnRequest.firstCall.args[0].messageParams).toEqual({
+          filter: { protocol: dependencyProtocol },
+        });
+        expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
+          dependencyConfig,
+        ]);
+        expect(closureCtx.missingDeps.has(depKey)).toBe(false);
+      });
+    }
+
+    it('tryRepairMissingProtocolMetadata should reject non-tenant-authored protocol configs', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const attacker = await TestDataGenerator.generatePersona();
+      const forgedConfig = await protocolsConfigureMessage({
+        author   : attacker,
+        protocol : projectedProtocol,
+      });
+      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
+        message: {
+          descriptor: {
+            filter: request.messageParams.filter,
+          },
+        },
+      }));
+      const sendDwnRequest = sinon.stub().resolves({
+        status  : { code: 200, detail: 'OK' },
+        entries : [forgedConfig],
+      });
+      const agent = {
+        ...createResolvingAgent(tenant, attacker),
+        dwn : { processRawMessage },
+        processDwnRequest,
+        rpc : { sendDwnRequest },
+      };
+      const engine = createEngine({ db, agent: agent as any });
+
+      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
+        {
+          did        : tenant.did,
+          dwnUrl     : 'https://dwn.example',
+          eventScope : { protocols: [projectedProtocol] },
+          linkKey    : 'link-key',
+          isStale    : (): boolean => false,
+        },
+        createClosureContext(tenant.did),
+        {
+          complete       : false,
+          rootMessageCid : 'root-cid',
+          edges          : [],
+          depth          : 0,
+          failure        : {
+            code   : ClosureFailureCode.ProtocolMetadataMissing,
+            detail : `dependency 'protocolsConfigure' (${projectedProtocol}) not found locally`,
+            edge   : {
+              dependencyClass : 1,
+              identifier      : projectedProtocol,
+              identifierType  : 'protocol',
+              label           : 'protocolsConfigure',
+            },
+          },
+        },
+      );
+
+      expect(repaired).toBe(false);
+      expect(processRawMessage.called).toBe(false);
+      expect(processDwnRequest.callCount).toBe(1);
+      expect(sendDwnRequest.callCount).toBe(1);
+    });
+
+    it('tryRepairMissingProtocolMetadata should attach delegated ProtocolsQuery grants when available', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const delegate = await TestDataGenerator.generatePersona();
+      const profileConfig = await protocolsConfigureMessage({
+        author   : tenant,
+        protocol : projectedProtocol,
+      });
+      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
+        message: {
+          descriptor: {
+            filter            : request.messageParams.filter,
+            permissionGrantId : request.messageParams.permissionGrantId,
+          },
+        },
+      }));
+      const sendDwnRequest = sinon.stub().resolves({
+        status  : { code: 200, detail: 'OK' },
+        entries : [profileConfig],
+      });
+      const getPermissionForRequest = sinon.stub().resolves({ grant: { id: 'protocol-query-grant' } });
+      const agent = {
+        ...createResolvingAgent(tenant, delegate),
+        dwn : { processRawMessage },
+        processDwnRequest,
+        rpc : { sendDwnRequest },
+      };
+      const engine = createEngine({ db, agent: agent as any });
+      (engine as any)._permissionsApi = {
+        clear: sinon.stub().resolves(),
+        getPermissionForRequest,
+      };
+
+      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
+        {
+          delegateDid : delegate.did,
+          did         : tenant.did,
+          dwnUrl      : 'https://dwn.example',
+          eventScope  : { protocols: [projectedProtocol] },
+          linkKey     : 'link-key',
+          isStale     : (): boolean => false,
+        },
+        createClosureContext(tenant.did),
+        {
+          complete       : false,
+          rootMessageCid : 'root-cid',
+          edges          : [],
+          depth          : 0,
+          failure        : {
+            code   : ClosureFailureCode.ProtocolMetadataMissing,
+            detail : `dependency 'protocolsConfigure' (${projectedProtocol}) not found locally`,
+            edge   : {
+              dependencyClass : 1,
+              identifier      : projectedProtocol,
+              identifierType  : 'protocol',
+              label           : 'protocolsConfigure',
+            },
+          },
+        },
+      );
+
+      expect(repaired).toBe(true);
+      expect(getPermissionForRequest.firstCall.args[0]).toEqual({
+        connectedDid : tenant.did,
+        delegateDid  : delegate.did,
+        protocol     : projectedProtocol,
+        cached       : true,
+        messageType  : DwnInterface.ProtocolsQuery,
+      });
+      expect(processDwnRequest.firstCall.args[0].author).toBe(delegate.did);
+      expect(processDwnRequest.firstCall.args[0].messageParams).toEqual({
+        filter            : { protocol: projectedProtocol },
+        permissionGrantId : 'protocol-query-grant',
+      });
+    });
+
+    it('processLivePullEvent should re-apply a record after repairing missing protocol metadata', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const record = projectedRecordMessage('profile/avatar', projectedProtocol);
+      const recordCid = await Message.getCid(record);
+      const profileConfig = await protocolsConfigureMessage({
+        author   : tenant,
+        protocol : projectedProtocol,
+      });
+      let installedConfig: ProtocolsConfigureMessage | undefined;
+      const messageStore = {
+        query: sinon.stub().callsFake(async (_tenant: string, filters: any[]) => {
+          const filter = filters[0];
+          if (
+            filter.interface === DwnInterfaceName.Protocols &&
+            filter.method === DwnMethodName.Configure &&
+            filter.protocol === projectedProtocol &&
+            installedConfig !== undefined
+          ) {
+            return { messages: [installedConfig] };
+          }
+          return { messages: [] };
+        }),
+      };
+      const recordStatuses = [
+        { code: 401, detail: 'ProtocolAuthorizationProtocolNotFound' },
+        { code: 202, detail: 'Accepted' },
+      ];
+      const processRawMessage = sinon.stub().callsFake(async (_did: string, message: GenericMessage) => {
+        if (message.descriptor.interface === DwnInterfaceName.Protocols) {
+          installedConfig = message as ProtocolsConfigureMessage;
+          return { status: { code: 202, detail: 'Accepted' } };
+        }
+        return { status: recordStatuses.shift() };
+      });
+      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
+        message: {
+          descriptor: {
+            filter: request.messageParams.filter,
+          },
+        },
+      }));
+      const sendDwnRequest = sinon.stub().resolves({
+        status  : { code: 200, detail: 'OK' },
+        entries : [profileConfig],
+      });
+      const agent = {
+        ...createResolvingAgent(tenant),
+        dwn: {
+          node: {
+            storage: { messageStore },
+          },
+          processRawMessage,
+        },
+        processDwnRequest,
+        rpc: { sendDwnRequest },
+      };
+      const engine = createEngine({ db, agent: agent as any });
+
+      const cid = await (engine as any).processLivePullEvent(
+        {
+          did        : tenant.did,
+          dwnUrl     : 'https://dwn.example',
+          eventScope : { protocols: [projectedProtocol] },
+          link       : { scope: { kind: 'protocolSet', protocols: [projectedProtocol] } },
+          linkKey    : 'link-key',
+          isStale    : (): boolean => false,
+        },
+        { message: record },
+      );
+
+      expect(cid).toBe(recordCid);
+      expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
+        record,
+        profileConfig,
+        record,
+      ]);
+      expect(recordStatuses).toEqual([]);
     });
 
     it('pullProjectedRemoteDiff should apply only verified dependency hints through the pull path', async () => {
