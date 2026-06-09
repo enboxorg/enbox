@@ -315,6 +315,54 @@ describe('TypedProtocol API', () => {
         const descriptor = record.rawRecord.rawMessage.descriptor as { squash?: true };
         expect(descriptor.squash).toBeUndefined();
       });
+
+      it('compacts older siblings end-to-end — a squash write purges prior snapshots', async () => {
+        const { record: doc } = await squashed.records.create('doc', { data: { n: 'doc' } });
+
+        // two ordinary snapshots under the document context
+        await squashed.records.create('doc/snapshot', { data: { v: 's1' }, parentContextId: doc.contextId });
+        await new Promise((r) => setTimeout(r, 5)); // guarantee a distinct, later messageTimestamp
+        await squashed.records.create('doc/snapshot', { data: { v: 's2' }, parentContextId: doc.contextId });
+        await new Promise((r) => setTimeout(r, 5));
+
+        // a squashing snapshot — must purge the two older siblings in this context
+        const { status, record: squashRec } = await squashed.records.create('doc/snapshot', {
+          data            : { v: 's3' },
+          parentContextId : doc.contextId,
+          squash          : true,
+        });
+        expect(status.code).toBe(202);
+
+        // only the squash record survives (this is the whole point of the flag reaching the write)
+        const { records } = await squashed.records.query('doc/snapshot');
+        expect(records.length).toBe(1);
+        expect(records[0].id).toBe(squashRec.id);
+      });
+
+      it('rejects squash:true on a path without $squash (error surfaced, not swallowed)', async () => {
+        // `doc` has no $squash — the squash backstop must reject the write,
+        // and the typed surface must pass that failure through (not a silent 202).
+        const { status, record } = await squashed.records.create('doc', {
+          data   : { n: 'nope' },
+          squash : true,
+        });
+
+        expect(status.code).toBe(400);
+        expect(status.detail ?? '').toContain('Squash');
+        expect(record).toBeUndefined();
+      });
+
+      it('a squashing write still stores and reads back its data', async () => {
+        const { record: doc } = await squashed.records.create('doc', { data: { n: 'doc' } });
+        const { record } = await squashed.records.create('doc/snapshot', {
+          data            : { v: 'payload' },
+          parentContextId : doc.contextId,
+          squash          : true,
+        });
+
+        const readBack = await record.data.json();
+        expect(readBack.v).toBe('payload');
+      });
     });
 
     describe('query()', () => {
