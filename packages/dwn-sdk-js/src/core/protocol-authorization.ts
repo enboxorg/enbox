@@ -14,6 +14,7 @@ import { getRuleSetAtPath } from '../utils/protocols.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
 import { authorizeAgainstAllowedActions, verifyInvokedRole } from './protocol-authorization-action.js';
 import { constructRecordChain, fetchInitialWrite, getGoverningTimestamp } from './record-chain.js';
@@ -111,6 +112,52 @@ export class ProtocolAuthorization {
 
     // Verify record count limit
     await verifyRecordLimit(tenant, incomingMessage, ruleSet, messageStore);
+  }
+
+  /**
+   * Revalidates a stored initial write against the protocol definition that governed its creation timestamp.
+   *
+   * This is used only for destructive config-history repair, so it deliberately validates config-owned
+   * structure and avoids live dependency checks. Missing grant, role, or parent records must not cause
+   * an already-admitted record to be hard-purged.
+   */
+  public static async validateStoredInitialWrite(
+    tenant: string,
+    incomingMessage: RecordsWrite,
+    messageStore: MessageStore,
+    coreProtocols?: CoreProtocolRegistry,
+  ): Promise<void> {
+    await ProtocolAuthorization.verifyStoredInitialWrite(incomingMessage);
+
+    const governingTimestamp = incomingMessage.message.descriptor.messageTimestamp;
+    const protocolDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
+      tenant,
+      incomingMessage.message.descriptor.protocol,
+      messageStore,
+      governingTimestamp,
+      coreProtocols,
+    );
+
+    const boundFetchDefinition = ProtocolAuthorization.createBoundFetchDefinition(coreProtocols);
+
+    await verifyTypeWithComposition(
+      tenant, incomingMessage.message, protocolDefinition, messageStore, boundFetchDefinition, governingTimestamp
+    );
+
+    const ruleSet = ProtocolAuthorization.getRuleSet(
+      incomingMessage.message.descriptor.protocolPath,
+      protocolDefinition,
+    );
+
+    ProtocolAuthorization.verifyStoredInitialWriteRoleRecipientIfNeeded(incomingMessage, ruleSet);
+    verifySizeLimit(incomingMessage, ruleSet);
+    verifyTagsIfNeeded(incomingMessage, ruleSet);
+    await verifySquashEligibility(incomingMessage, ruleSet);
+    ProtocolAuthorization.verifyStoredInitialWriteCreateAction(tenant, incomingMessage, ruleSet);
+
+    // `verifyRecordLimit()` is not replayed here. It is stateful and counts the present
+    // latest live set, which would incorrectly reject the record being revalidated.
+    // Inbound writes continue to enforce record limits at admission time.
   }
 
   /**
@@ -442,6 +489,89 @@ export class ProtocolAuthorization {
         `No rule set defined for protocolPath ${protocolPath}`);
     }
     return ruleSet;
+  }
+
+  private static async verifyStoredInitialWrite(incomingMessage: RecordsWrite): Promise<void> {
+    if (await incomingMessage.isInitialWrite()) {
+      return;
+    }
+
+    throw new DwnError(
+      DwnErrorCode.ProtocolAuthorizationInitialWriteRevalidationNotInitial,
+      'stored write revalidation only supports initial RecordsWrite messages'
+    );
+  }
+
+  private static verifyStoredInitialWriteRoleRecipientIfNeeded(
+    incomingMessage: RecordsWrite,
+    ruleSet: ProtocolRuleSet,
+  ): void {
+    if (ruleSet.$role !== true || incomingMessage.message.descriptor.recipient !== undefined) {
+      return;
+    }
+
+    throw new DwnError(
+      DwnErrorCode.ProtocolAuthorizationStoredInitialWriteRoleMissingRecipient,
+      'role records must have a recipient'
+    );
+  }
+
+  private static verifyStoredInitialWriteCreateAction(
+    tenant: string,
+    incomingMessage: RecordsWrite,
+    ruleSet: ProtocolRuleSet,
+  ): void {
+    if (ProtocolAuthorization.isStoredInitialWriteDirectlyAuthorized(tenant, incomingMessage)) {
+      return;
+    }
+
+    const actions = incomingMessage.message.descriptor.squash === true
+      ? [ProtocolAction.Squash, ProtocolAction.Create]
+      : [ProtocolAction.Create];
+    const actionRules = ruleSet.$actions;
+    if (actionRules === undefined) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolAuthorizationStoredInitialWriteActionRulesNotFound,
+        `no create action rule defined for stored RecordsWrite by author ${incomingMessage.author}`
+      );
+    }
+
+    const invokedRole = incomingMessage.signaturePayload?.protocolRole;
+    for (const actionRule of actionRules) {
+      if (!actionRule.can.some((allowedAction: string): boolean => actions.includes(allowedAction as ProtocolAction))) {
+        continue;
+      }
+
+      if (invokedRole !== undefined) {
+        if (actionRule.role === invokedRole) {
+          return;
+        }
+        continue;
+      }
+
+      if (actionRule.who === ProtocolActor.Anyone) {
+        return;
+      }
+
+      // Author/recipient-of rules depend on the parent chain. This repair path preserves
+      // instead of hard-purging when validity depends on mutable or missing dependency records.
+      if (actionRule.who === ProtocolActor.Author || actionRule.who === ProtocolActor.Recipient) {
+        return;
+      }
+    }
+
+    throw new DwnError(
+      DwnErrorCode.ProtocolAuthorizationStoredInitialWriteActionNotAllowed,
+      `stored RecordsWrite by author ${incomingMessage.author} is not allowed by the governing protocol config`
+    );
+  }
+
+  private static isStoredInitialWriteDirectlyAuthorized(tenant: string, incomingMessage: RecordsWrite): boolean {
+    return incomingMessage.owner !== undefined ||
+      incomingMessage.author === tenant ||
+      incomingMessage.isSignedByAuthorDelegate ||
+      incomingMessage.isSignedByOwnerDelegate ||
+      incomingMessage.signaturePayload?.permissionGrantId !== undefined;
   }
 
 }

@@ -228,6 +228,408 @@ export function testProtocolsConfigureHandler(): void {
         expect(queryReply.entries?.length).toBe(1);
       });
 
+      it('should purge records invalidated by a newly learned governing protocol config', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocol = 'http://config-validity.example/protocol';
+        const openDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            post: {
+              schema      : 'post',
+              dataFormats : ['application/json']
+            }
+          },
+          structure: {
+            post: {
+              $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }]
+            }
+          }
+        };
+        const stricterDefinition: ProtocolDefinition = {
+          ...openDefinition,
+          structure: {
+            post: {}
+          }
+        };
+
+        const openConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : openDefinition,
+          messageTimestamp   : '2025-01-01T00:00:00.000000Z'
+        });
+        const openConfigReply = await dwn.processMessage(alice.did, openConfig.message);
+        expect(openConfigReply.status.code).toBe(202);
+
+        const oldBobRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : bob,
+          protocol,
+          protocolPath     : 'post',
+          schema           : 'post',
+          dataFormat       : 'application/json',
+          dateCreated      : '2025-01-01T12:00:00.000000Z',
+          messageTimestamp : '2025-01-01T12:00:00.000000Z'
+        });
+        const invalidBobRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : bob,
+          protocol,
+          protocolPath     : 'post',
+          schema           : 'post',
+          dataFormat       : 'application/json',
+          dateCreated      : '2025-01-03T00:00:00.000000Z',
+          messageTimestamp : '2025-01-03T00:00:00.000000Z'
+        });
+        const tenantRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol,
+          protocolPath     : 'post',
+          schema           : 'post',
+          dataFormat       : 'application/json',
+          dateCreated      : '2025-01-03T12:00:00.000000Z',
+          messageTimestamp : '2025-01-03T12:00:00.000000Z'
+        });
+
+        const oldBobReply = await dwn.processMessage(alice.did, oldBobRecord.message, { dataStream: oldBobRecord.dataStream });
+        expect(oldBobReply.status.code).toBe(202);
+        const invalidBobReply = await dwn.processMessage(alice.did, invalidBobRecord.message, { dataStream: invalidBobRecord.dataStream });
+        expect(invalidBobReply.status.code).toBe(202);
+        const tenantRecordReply = await dwn.processMessage(alice.did, tenantRecord.message, { dataStream: tenantRecord.dataStream });
+        expect(tenantRecordReply.status.code).toBe(202);
+
+        const stricterConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : stricterDefinition,
+          messageTimestamp   : '2025-01-02T00:00:00.000000Z'
+        });
+        const stricterConfigReply = await dwn.processMessage(alice.did, stricterConfig.message);
+        expect(stricterConfigReply.status.code).toBe(202);
+
+        const oldBobMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : oldBobRecord.message.recordId
+        }]);
+        expect(oldBobMessages.messages.length).toBeGreaterThan(0);
+
+        const invalidBobMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : invalidBobRecord.message.recordId
+        }]);
+        expect(invalidBobMessages.messages.length).toBe(0);
+
+        const tenantMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : tenantRecord.message.recordId
+        }]);
+        expect(tenantMessages.messages.length).toBeGreaterThan(0);
+      });
+
+      it('should preserve grant-authorized records if the grant is later deleted', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocol = 'http://config-validity.example/grant-delete';
+        const openDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : { post: { schema: 'post', dataFormats: ['application/json'] } },
+          structure : {
+            post: {
+              $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }]
+            }
+          }
+        };
+        const grantOnlyDefinition: ProtocolDefinition = {
+          ...openDefinition,
+          structure: { post: {} }
+        };
+
+        const openConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : openDefinition,
+          messageTimestamp   : '2025-02-01T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, openConfig.message)).status.code).toBe(202);
+
+        const permissionGrant = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          grantedTo   : bob.did,
+          dateGranted : '2025-02-01T12:00:00.000000Z',
+          dateExpires : '2025-02-10T00:00:00.000000Z',
+          scope       : {
+            interface    : DwnInterfaceName.Records,
+            method       : DwnMethodName.Write,
+            protocol,
+            protocolPath : 'post'
+          }
+        });
+        const grantReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(permissionGrant.permissionGrantBytes)
+        });
+        expect(grantReply.status.code).toBe(202);
+
+        const bobRecord = await TestDataGenerator.generateRecordsWrite({
+          author            : bob,
+          permissionGrantId : permissionGrant.recordsWrite.message.recordId,
+          protocol,
+          protocolPath      : 'post',
+          schema            : 'post',
+          dataFormat        : 'application/json',
+          dateCreated       : '2025-02-03T00:00:00.000000Z',
+          messageTimestamp  : '2025-02-03T00:00:00.000000Z'
+        });
+        const bobReply = await dwn.processMessage(alice.did, bobRecord.message, { dataStream: bobRecord.dataStream });
+        expect(bobReply.status.code).toBe(202);
+
+        const grantDelete = await RecordsDelete.create({
+          signer   : Jws.createSigner(alice),
+          recordId : permissionGrant.recordsWrite.message.recordId
+        });
+        expect((await dwn.processMessage(alice.did, grantDelete.message)).status.code).toBe(202);
+
+        const grantOnlyConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : grantOnlyDefinition,
+          messageTimestamp   : '2025-02-02T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, grantOnlyConfig.message)).status.code).toBe(202);
+
+        const { messages } = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : bobRecord.message.recordId
+        }]);
+        expect(messages.length).toBeGreaterThan(0);
+      });
+
+      it('should preserve child records if the parent is later deleted', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocol = 'http://config-validity.example/parent-delete';
+        const definition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            post    : { schema: 'post', dataFormats: ['application/json'] },
+            comment : { schema: 'comment', dataFormats: ['application/json'] }
+          },
+          structure: {
+            post: {
+              $actions : [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read, ProtocolAction.Delete] }],
+              comment  : {
+                $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }]
+              }
+            }
+          }
+        };
+
+        const openConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : definition,
+          messageTimestamp   : '2025-03-01T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, openConfig.message)).status.code).toBe(202);
+
+        const post = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol,
+          protocolPath     : 'post',
+          schema           : 'post',
+          dataFormat       : 'application/json',
+          dateCreated      : '2025-03-03T00:00:00.000000Z',
+          messageTimestamp : '2025-03-03T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, post.message, { dataStream: post.dataStream })).status.code).toBe(202);
+
+        const comment = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol,
+          protocolPath     : 'post/comment',
+          schema           : 'comment',
+          dataFormat       : 'application/json',
+          parentContextId  : post.message.contextId,
+          dateCreated      : '2025-03-03T12:00:00.000000Z',
+          messageTimestamp : '2025-03-03T12:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, comment.message, { dataStream: comment.dataStream })).status.code).toBe(202);
+
+        const deletePost = await RecordsDelete.create({
+          signer   : Jws.createSigner(alice),
+          recordId : post.message.recordId
+        });
+        expect((await dwn.processMessage(alice.did, deletePost.message)).status.code).toBe(202);
+
+        const laterConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : definition,
+          messageTimestamp   : '2025-03-02T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, laterConfig.message)).status.code).toBe(202);
+
+        const { messages } = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : comment.message.recordId
+        }]);
+        expect(messages.length).toBeGreaterThan(0);
+      });
+
+      it('should preserve role-authorized records if the role is later deleted', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocol = 'http://config-validity.example/role-delete';
+        const definition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            friend : { schema: 'friend', dataFormats: ['application/json'] },
+            chat   : { schema: 'chat', dataFormats: ['application/json'] }
+          },
+          structure: {
+            friend: {
+              $role: true
+            },
+            chat: {
+              $actions: [
+                { role: 'friend', can: [ProtocolAction.Create, ProtocolAction.Read] }
+              ]
+            }
+          }
+        };
+
+        const openConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : definition,
+          messageTimestamp   : '2025-04-01T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, openConfig.message)).status.code).toBe(202);
+
+        const role = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          recipient        : bob.did,
+          protocol,
+          protocolPath     : 'friend',
+          schema           : 'friend',
+          dataFormat       : 'application/json',
+          dateCreated      : '2025-04-01T12:00:00.000000Z',
+          messageTimestamp : '2025-04-01T12:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, role.message, { dataStream: role.dataStream })).status.code).toBe(202);
+
+        const chat = await TestDataGenerator.generateRecordsWrite({
+          author           : bob,
+          protocol,
+          protocolPath     : 'chat',
+          protocolRole     : 'friend',
+          schema           : 'chat',
+          dataFormat       : 'application/json',
+          dateCreated      : '2025-04-03T00:00:00.000000Z',
+          messageTimestamp : '2025-04-03T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, chat.message, { dataStream: chat.dataStream })).status.code).toBe(202);
+
+        const deleteRole = await RecordsDelete.create({
+          signer   : Jws.createSigner(alice),
+          recordId : role.message.recordId
+        });
+        expect((await dwn.processMessage(alice.did, deleteRole.message)).status.code).toBe(202);
+
+        const laterConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : definition,
+          messageTimestamp   : '2025-04-02T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, laterConfig.message)).status.code).toBe(202);
+
+        const { messages } = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : chat.message.recordId
+        }]);
+        expect(messages.length).toBeGreaterThan(0);
+      });
+
+      it('should not cascade-purge valid descendants of an invalid parent', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocol = 'http://config-validity.example/no-cascade';
+        const openDefinition: ProtocolDefinition = {
+          protocol,
+          published : true,
+          types     : {
+            post    : { schema: 'post', dataFormats: ['application/json'] },
+            comment : { schema: 'comment', dataFormats: ['application/json'] }
+          },
+          structure: {
+            post: {
+              $actions : [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }],
+              comment  : {
+                $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }]
+              }
+            }
+          }
+        };
+        const stricterDefinition: ProtocolDefinition = {
+          ...openDefinition,
+          structure: {
+            post: {
+              comment: {
+                $actions: [{ who: 'anyone', can: [ProtocolAction.Create, ProtocolAction.Read] }]
+              }
+            }
+          }
+        };
+
+        const openConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : openDefinition,
+          messageTimestamp   : '2025-05-01T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, openConfig.message)).status.code).toBe(202);
+
+        const post = await TestDataGenerator.generateRecordsWrite({
+          author           : bob,
+          protocol,
+          protocolPath     : 'post',
+          schema           : 'post',
+          dataFormat       : 'application/json',
+          dateCreated      : '2025-05-03T00:00:00.000000Z',
+          messageTimestamp : '2025-05-03T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, post.message, { dataStream: post.dataStream })).status.code).toBe(202);
+
+        const comment = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol,
+          protocolPath     : 'post/comment',
+          schema           : 'comment',
+          dataFormat       : 'application/json',
+          parentContextId  : post.message.contextId,
+          dateCreated      : '2025-05-03T12:00:00.000000Z',
+          messageTimestamp : '2025-05-03T12:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, comment.message, { dataStream: comment.dataStream })).status.code).toBe(202);
+
+        const stricterConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : stricterDefinition,
+          messageTimestamp   : '2025-05-02T00:00:00.000000Z'
+        });
+        expect((await dwn.processMessage(alice.did, stricterConfig.message)).status.code).toBe(202);
+
+        const postMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : post.message.recordId
+        }]);
+        expect(postMessages.messages.length).toBe(0);
+
+        const commentMessages = await messageStore.query(alice.did, [{
+          interface : DwnInterfaceName.Records,
+          recordId  : comment.message.recordId
+        }]);
+        expect(commentMessages.messages.length).toBeGreaterThan(0);
+      });
+
       it('should return 400 if protocol is not normalized', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 

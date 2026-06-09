@@ -1,5 +1,6 @@
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { MessageStore } from '../types//message-store.js';
+import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
@@ -7,11 +8,33 @@ import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
+import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { ProtocolsConfigure } from '../interfaces/protocols-configure.js';
 import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorization.js';
+import { RecordsWrite } from '../interfaces/records-write.js';
+import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { getRuleSetAtPath, parseCrossProtocolRef } from '../utils/protocols.js';
+
+type StoredInitialWriteConfigValidity = 'valid' | 'invalid' | 'unknown';
+
+const STORED_INITIAL_WRITE_CONFIG_INVALID_CODES = new Set<string>([
+  DwnErrorCode.ProtocolAuthorizationEncryptionRequired,
+  DwnErrorCode.ProtocolAuthorizationIncorrectDataFormat,
+  DwnErrorCode.ProtocolAuthorizationInitialWriteRevalidationNotInitial,
+  DwnErrorCode.ProtocolAuthorizationInvalidSchema,
+  DwnErrorCode.ProtocolAuthorizationInvalidType,
+  DwnErrorCode.ProtocolAuthorizationMaxSizeInvalid,
+  DwnErrorCode.ProtocolAuthorizationMinSizeInvalid,
+  DwnErrorCode.ProtocolAuthorizationMissingRuleSet,
+  DwnErrorCode.ProtocolAuthorizationSquashNotEnabled,
+  DwnErrorCode.ProtocolAuthorizationSquashNotInitialWrite,
+  DwnErrorCode.ProtocolAuthorizationStoredInitialWriteActionNotAllowed,
+  DwnErrorCode.ProtocolAuthorizationStoredInitialWriteActionRulesNotFound,
+  DwnErrorCode.ProtocolAuthorizationStoredInitialWriteRoleMissingRecipient,
+  DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema,
+]);
 
 export class ProtocolsConfigureHandler implements MethodHandler {
 
@@ -115,6 +138,8 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       }
     }
 
+    await this.purgeRecordsInvalidatedByProtocolConfig(tenant, message.descriptor.definition.protocol);
+
     return messageReply;
   };
 
@@ -155,6 +180,81 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     } else {
       throw new DwnError(DwnErrorCode.ProtocolsConfigureAuthorizationFailed, 'message failed authorization');
     }
+  }
+
+  private async purgeRecordsInvalidatedByProtocolConfig(tenant: string, protocol: string): Promise<void> {
+    const dataStore = this.deps.dataStore;
+    const stateIndex = this.deps.stateIndex;
+    if (dataStore === undefined || stateIndex === undefined) {
+      return;
+    }
+
+    const { messages } = await this.deps.messageStore.query(tenant, [{
+      interface : DwnInterfaceName.Records,
+      method    : DwnMethodName.Write,
+      protocol,
+    }]);
+
+    const checkedRecordIds = new Set<string>();
+    for (const message of messages) {
+      const recordsWriteMessage = message as RecordsWriteMessage;
+      if (checkedRecordIds.has(recordsWriteMessage.recordId)) {
+        continue;
+      }
+
+      const isInitialWrite = await RecordsWrite.isInitialWrite(recordsWriteMessage);
+      if (!isInitialWrite) {
+        continue;
+      }
+
+      checkedRecordIds.add(recordsWriteMessage.recordId);
+
+      const validity = await this.getStoredInitialWriteConfigValidity(tenant, recordsWriteMessage);
+      if (validity !== 'invalid') {
+        continue;
+      }
+
+      const { messages: recordMessages } = await this.deps.messageStore.query(tenant, [{
+        interface : DwnInterfaceName.Records,
+        recordId  : recordsWriteMessage.recordId,
+      }]);
+      if (recordMessages.length === 0) {
+        continue;
+      }
+
+      // A DWN cannot synthesize a valid RecordsDelete on behalf of the record author.
+      // This repair therefore performs a local hard purge of only the invalid initial
+      // record. Descendants are evaluated independently so valid child records are not
+      // destroyed as collateral.
+      await StorageController.purgeRecordMessages(
+        tenant, recordMessages, this.deps.messageStore, dataStore, stateIndex
+      );
+    }
+  }
+
+  private async getStoredInitialWriteConfigValidity(
+    tenant: string,
+    message: RecordsWriteMessage,
+  ): Promise<StoredInitialWriteConfigValidity> {
+    try {
+      const recordsWrite = await RecordsWrite.parse(message);
+      // Stored records were authenticated when admitted. Reconciliation should not make
+      // record retention depend on fresh DID resolution availability or mutable dependency state.
+      await ProtocolAuthorization.validateStoredInitialWrite(
+        tenant, recordsWrite, this.deps.messageStore, this.deps.coreProtocols
+      );
+      return 'valid';
+    } catch (error) {
+      if (ProtocolsConfigureHandler.isStoredInitialWriteConfigInvalidError(error)) {
+        return 'invalid';
+      }
+
+      return 'unknown';
+    }
+  }
+
+  private static isStoredInitialWriteConfigInvalidError(error: unknown): boolean {
+    return error instanceof DwnError && STORED_INITIAL_WRITE_CONFIG_INVALID_CODES.has(error.code);
   }
 
   /**
