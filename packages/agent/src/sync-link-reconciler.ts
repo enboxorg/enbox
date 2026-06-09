@@ -42,7 +42,7 @@ type ReconcileDeps = {
     permissionGrantIds?: string[],
   ) => Promise<string>;
   diffWithRemote: (target: ReconcileTarget) => Promise<{ onlyRemote: MessagesSyncDiffEntry[]; onlyLocal: string[] }>;
-  pullMessages: (params: {
+  admitRemoteMessages: (params: {
     did: string;
     dwnUrl: string;
     delegateDid?: string;
@@ -73,12 +73,7 @@ export function partitionRemoteEntries(entries: MessagesSyncDiffEntry[]): {
   for (const entry of entries) {
     if (!entry.message) {
       needsFetchCids.push(entry.messageCid);
-    } else if (
-      entry.message.descriptor.interface === 'Records' &&
-      entry.message.descriptor.method === 'Write' &&
-      (entry.message.descriptor as any).dataCid &&
-      !entry.encodedData
-    ) {
+    } else if (needsIndividualFetchForData(entry)) {
       needsFetchCids.push(entry.messageCid);
     } else {
       prefetched.push(entry as MessagesSyncDiffEntry & { message: GenericMessage });
@@ -121,7 +116,7 @@ export class SyncLinkReconciler {
       if ((!direction || direction === 'pull') && diff.onlyRemote.length > 0) {
         const { prefetched, needsFetchCids } = partitionRemoteEntries(diff.onlyRemote);
         try {
-          await this._deps.pullMessages({
+          await this._deps.admitRemoteMessages({
             did,
             dwnUrl,
             delegateDid,
@@ -185,4 +180,18 @@ export class SyncLinkReconciler {
       pushResult,
     };
   }
+}
+
+function needsIndividualFetchForData(entry: MessagesSyncDiffEntry): boolean {
+  const message = entry.message;
+  if (message === undefined) {
+    return false;
+  }
+
+  const { descriptor } = message;
+  if (descriptor.interface !== 'Records' || descriptor.method !== 'Write') {
+    return false;
+  }
+
+  return typeof (descriptor as { dataCid?: unknown }).dataCid === 'string' && entry.encodedData === undefined;
 }

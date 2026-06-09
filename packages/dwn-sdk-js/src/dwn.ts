@@ -1,5 +1,7 @@
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
+import type { KeyValues } from './types/query-types.js';
+import type { MessageEvent } from './types/subscriptions.js';
 import type { MessageStore } from './types/message-store.js';
 import type { ResumableTaskStore } from './types/resumable-task-store.js';
 import type { StateIndex } from './types/state-index.js';
@@ -11,6 +13,7 @@ import type { HandlerDependencies, MethodHandler } from './types/method-handler.
 import type { MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
 import type { ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
 import type { RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
+import type { ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
 import { CoreProtocolRegistry } from './core/core-protocol.js';
@@ -20,14 +23,18 @@ import { MessagesReadHandler } from './handlers/messages-read.js';
 import { MessagesSubscribeHandler } from './handlers/messages-subscribe.js';
 import { MessagesSyncHandler } from './handlers/messages-sync.js';
 import { PermissionsProtocol } from './protocols/permissions.js';
+import { ProtocolsConfigure } from './interfaces/protocols-configure.js';
 import { ProtocolsConfigureHandler } from './handlers/protocols-configure.js';
 import { ProtocolsQueryHandler } from './handlers/protocols-query.js';
 import { RecordsCountHandler } from './handlers/records-count.js';
+import { RecordsDelete } from './interfaces/records-delete.js';
 import { RecordsDeleteHandler } from './handlers/records-delete.js';
 import { RecordsQueryHandler } from './handlers/records-query.js';
 import { RecordsReadHandler } from './handlers/records-read.js';
 import { RecordsSubscribeHandler } from './handlers/records-subscribe.js';
+import { RecordsWrite } from './interfaces/records-write.js';
 import { RecordsWriteHandler } from './handlers/records-write.js';
+import { replicationApplyResultFromReply } from './core/replication-apply.js';
 import { ResumableTaskManager } from './core/resumable-task-manager.js';
 import { StorageController } from './store/storage-controller.js';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
@@ -227,6 +234,227 @@ export class Dwn {
     });
 
     return methodHandlerReply;
+  }
+
+  /**
+   * Applies a message obtained through replication and returns a structured
+   * outcome instead of an HTTP-like handler status. Normal authoring still
+   * uses `processMessage`; sync uses this entry point so missing local
+   * dependencies can be fetched and retried without treating the replicated
+   * message as permanently invalid.
+   */
+  public async applyReplicatedMessage(
+    tenant: string,
+    rawMessage: GenericMessage,
+    options: ReplicationApplyOptions = {},
+  ): Promise<ReplicationApplyResult> {
+    const tenantError = await this.validateTenant(tenant);
+    if (tenantError !== undefined) {
+      return { kind: 'Deferred', reason: 'tenant-inactive' };
+    }
+
+    const integrityError = await this.validateMessageIntegrity(rawMessage);
+    if (integrityError !== undefined) {
+      return { kind: 'Invalid', reason: integrityError.status.detail };
+    }
+
+    if (await this.replicatedMessageAlreadyStored(tenant, rawMessage, options)) {
+      return { kind: 'Duplicate' };
+    }
+
+    const reply = await this.processMessage(tenant, rawMessage, options);
+    return replicationApplyResultFromReply(rawMessage, reply);
+  }
+
+  private async replicatedMessageAlreadyStored(
+    tenant: string,
+    message: GenericMessage,
+    options: ReplicationApplyOptions,
+  ): Promise<boolean> {
+    const existingMessages = await this.getExistingMessagesForReplicationDedup(tenant, message);
+    if (existingMessages.length === 0) {
+      return false;
+    }
+
+    const incomingCid = await Message.getCid(message);
+    for (const existing of existingMessages) {
+      if (await Message.getCid(existing) !== incomingCid) {
+        continue;
+      }
+
+      if (options.dataStream !== undefined && Dwn.existingReplicatedWriteMayNeedDataCompletion(existing, message)) {
+        return false;
+      }
+
+      await this.repairReplicationIndexesForDuplicate(tenant, message, existingMessages, incomingCid);
+      return true;
+    }
+
+    return false;
+  }
+
+  private async getExistingMessagesForReplicationDedup(
+    tenant: string,
+    message: GenericMessage,
+  ): Promise<GenericMessage[]> {
+    const { descriptor } = message;
+    if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Write) {
+      const recordId = (message as { recordId?: unknown }).recordId;
+      if (typeof recordId !== 'string') {
+        return [];
+      }
+
+      const { messages } = await this.messageStore.query(tenant, [{
+        interface: DwnInterfaceName.Records,
+        recordId,
+      }]);
+      return messages;
+    }
+
+    if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Delete) {
+      const recordId = (descriptor as { recordId?: unknown }).recordId;
+      if (typeof recordId !== 'string') {
+        return [];
+      }
+
+      const { messages } = await this.messageStore.query(tenant, [{
+        interface: DwnInterfaceName.Records,
+        recordId,
+      }]);
+      return messages;
+    }
+
+    if (descriptor.interface === DwnInterfaceName.Protocols && descriptor.method === DwnMethodName.Configure) {
+      const protocol = (descriptor as { definition?: { protocol?: unknown } }).definition?.protocol;
+      if (typeof protocol !== 'string') {
+        return [];
+      }
+
+      const { messages } = await this.messageStore.query(tenant, [{
+        interface : DwnInterfaceName.Protocols,
+        method    : DwnMethodName.Configure,
+        protocol,
+      }]);
+      return messages;
+    }
+
+    return [];
+  }
+
+  private static existingReplicatedWriteMayNeedDataCompletion(existing: GenericMessage, incoming: GenericMessage): boolean {
+    if (
+      incoming.descriptor.interface !== DwnInterfaceName.Records ||
+      incoming.descriptor.method !== DwnMethodName.Write ||
+      existing.descriptor.interface !== DwnInterfaceName.Records ||
+      existing.descriptor.method !== DwnMethodName.Write
+    ) {
+      return false;
+    }
+
+    const existingWrite = existing as { encodedData?: string; descriptor: { dateCreated?: string; messageTimestamp?: string } };
+    const isInitialWrite = existingWrite.descriptor.dateCreated === existingWrite.descriptor.messageTimestamp;
+    return isInitialWrite && existingWrite.encodedData === undefined;
+  }
+
+  private async repairReplicationIndexesForDuplicate(
+    tenant: string,
+    message: GenericMessage,
+    existingMessages: GenericMessage[],
+    messageCid: string,
+  ): Promise<void> {
+    const leaves = await this.stateIndex.getLeaves(tenant, []);
+    if (leaves.includes(messageCid)) {
+      return;
+    }
+
+    const repair = await this.constructReplicationIndexRepair(tenant, message, existingMessages);
+    if (repair === undefined) {
+      return;
+    }
+
+    await this.stateIndex.insert(tenant, messageCid, repair.indexes);
+    if (repair.emitEvent) {
+      await this.eventLog?.emit(tenant, repair.event, repair.indexes, messageCid);
+    }
+  }
+
+  private async constructReplicationIndexRepair(
+    tenant: string,
+    message: GenericMessage,
+    existingMessages: GenericMessage[],
+  ): Promise<{ indexes: KeyValues; event: MessageEvent; emitEvent: boolean } | undefined> {
+    const { descriptor } = message;
+
+    if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Write) {
+      const isLatest = await Dwn.isNewestStoredMessage(message, existingMessages);
+      const recordsWrite = await RecordsWrite.parse(message as RecordsWriteMessage);
+      const indexes = await recordsWrite.constructIndexes(isLatest);
+      const initialWrite = await this.getInitialWriteForReplicationEvent(tenant, message as RecordsWriteMessage);
+      return {
+        indexes,
+        event     : { message, initialWrite },
+        emitEvent : isLatest && Dwn.replicatedWriteHasQueryableData(message),
+      };
+    }
+
+    if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Delete) {
+      const initialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(
+        this.messageStore,
+        tenant,
+        (message as RecordsDeleteMessage).descriptor.recordId,
+      );
+      if (initialWrite === undefined) {
+        return undefined;
+      }
+
+      const recordsDelete = await RecordsDelete.parse(message as RecordsDeleteMessage);
+      const isLatest = await Dwn.isNewestStoredMessage(message, existingMessages);
+      return {
+        indexes   : recordsDelete.constructIndexes(initialWrite),
+        event     : { message, initialWrite },
+        emitEvent : isLatest,
+      };
+    }
+
+    if (descriptor.interface === DwnInterfaceName.Protocols && descriptor.method === DwnMethodName.Configure) {
+      const protocolsConfigure = await ProtocolsConfigure.parse(message as ProtocolsConfigureMessage);
+      const isLatest = await Dwn.isNewestStoredMessage(message, existingMessages);
+      return {
+        indexes   : ProtocolsConfigureHandler.constructIndexes(protocolsConfigure, isLatest),
+        event     : { message },
+        emitEvent : isLatest,
+      };
+    }
+
+    return undefined;
+  }
+
+  private static async isNewestStoredMessage(
+    message: GenericMessage,
+    existingMessages: GenericMessage[],
+  ): Promise<boolean> {
+    const newestMessage = await Message.getNewestMessage(existingMessages);
+    return newestMessage !== undefined && await Message.getCid(newestMessage) === await Message.getCid(message);
+  }
+
+  private async getInitialWriteForReplicationEvent(
+    tenant: string,
+    message: RecordsWriteMessage,
+  ): Promise<RecordsWriteMessage | undefined> {
+    if (await RecordsWrite.isInitialWrite(message)) {
+      return message;
+    }
+
+    return RecordsWrite.fetchInitialRecordsWriteMessage(this.messageStore, tenant, message.recordId);
+  }
+
+  private static replicatedWriteHasQueryableData(message: GenericMessage): boolean {
+    if (message.descriptor.interface !== DwnInterfaceName.Records || message.descriptor.method !== DwnMethodName.Write) {
+      return false;
+    }
+
+    return (message as { encodedData?: unknown }).encodedData !== undefined ||
+      (message as RecordsWriteMessage).descriptor.dateCreated !== (message as RecordsWriteMessage).descriptor.messageTimestamp;
   }
 
   /**

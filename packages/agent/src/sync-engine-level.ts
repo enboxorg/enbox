@@ -1,34 +1,31 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, ProtocolsConfigureMessage, ProtocolsQueryReply, RecordsWriteMessage, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
 import { Level } from 'level';
 import { sleep } from '@enbox/common';
-import { authenticate, DwnInterfaceName, DwnMethodName, Encoder, hashToHex, initDefaultHashes, Message, ProtocolsConfigure, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
 
 import type { DwnMessageParams } from './types/dwn.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncMessageEntry } from './sync-messages.js';
-import type { SyncScopeClassification } from './sync-scope-acceptance.js';
-import type { ClosureEvaluationContext, ClosureResult } from './sync-closure-types.js';
 import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 
+import { admitClosure } from './sync-admit-closure.js';
 import { buildLinkId } from './sync-link-id.js';
+import { classifySyncEventScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
-import { evaluateClosure } from './sync-closure-resolver.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
-import { classifySyncEventScope, classifySyncMessageScope } from './sync-scope-acceptance.js';
-import { ClosureFailureCode, createClosureContext, invalidateClosureCache, isTerminalClosureFailureCode } from './sync-closure-types.js';
 import { computeAuthorizationEpoch, computeProjectionId, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
-import { fetchRemoteMessages, getMessageCid, pullMessages, pushMessages, SyncPullAbortedError } from './sync-messages.js';
+import { fetchRemoteMessages, pushMessages, SyncPullAbortedError } from './sync-messages.js';
 import { partitionRemoteEntries, SyncLinkReconciler } from './sync-link-reconciler.js';
 import { permissionGrantIdsFromEntries, resolveMessagesSyncScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
@@ -108,24 +105,6 @@ type LinkInitializationResult =
   | { status: LinkInitializationStatus.Active; durableLinkIdentityKey: string }
   | { status: LinkInitializationStatus.Failed };
 
-type PullAcceptanceResult =
-  | { accepted: true }
-  | { accepted: false; classification: Exclude<SyncScopeClassification, 'in-scope'> };
-
-type ProtocolsConfigureDefinition = {
-  protocol: string;
-  uses?: Record<string, unknown>;
-};
-type ProtocolsConfigureDefinitionDescriptor = GenericMessage['descriptor'] & {
-  definition: ProtocolsConfigureDefinition;
-};
-type MaybeProtocolsConfigureDefinitionDescriptor = GenericMessage['descriptor'] & {
-  definition?: {
-    protocol?: string;
-    uses?: Record<string, unknown>;
-  };
-};
-
 type SyncReconcileTarget = {
   did: string;
   dwnUrl: string;
@@ -178,7 +157,7 @@ type InFlightCommit = {
   ordinal: number;
   /** The token associated with this delivery. */
   token: ProgressToken;
-  /** Whether processRawMessage has completed successfully. */
+  /** Whether replicated admission has completed successfully. */
   committed: boolean;
 };
 
@@ -232,11 +211,18 @@ type PullDelivery = {
   ordinal: number;
 };
 
+type LivePullProcessResult = {
+  messageCid: string;
+  admitted: boolean;
+};
+
 type LivePullDataStreamFactory = () => Promise<ReadableStream<Uint8Array> | undefined>;
 
-type ApplyStatus = {
-  code: number;
-  detail?: string;
+type LivePullRecordsWriteEvent = MessageEvent & {
+  data?: ReadableStream<Uint8Array>;
+  message: GenericMessage & {
+    descriptor: GenericMessage['descriptor'] & { dataCid?: string };
+  };
 };
 
 function syncEventScope(scope: SyncScope | undefined): SyncEventScope {
@@ -342,16 +328,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** TTL for echo-loop suppression entries (60 seconds). */
   private static readonly ECHO_SUPPRESS_TTL_MS = 60_000;
-
-  /**
-   * Per-tenant closure evaluation contexts for the current live sync session.
-   * Caches ProtocolsConfigure and grant lookups across events for the same
-   * tenant. Keyed by tenantDid to prevent cross-tenant cache pollution.
-   */
-  private readonly _closureContexts: Map<string, ClosureEvaluationContext> = new Map();
-
-  /** Deduplicates concurrent live-sync repairs for the same tenant/protocol. */
-  private readonly _protocolMetadataRepairs: Map<string, Promise<boolean>> = new Map();
 
   /** Maximum entries in the echo-loop suppression cache. */
   private static readonly ECHO_SUPPRESS_MAX_ENTRIES = 10_000;
@@ -1130,7 +1106,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Identity guard helper: if the DID was hot-removed and quickly re-added,
     // `_activeLinks` may contain a *different* link object for the same key.
-    // The old repair closure must not mutate the replacement link's state.
+    // A stale repair callback must not mutate the replacement link's state.
     const isStaleLink = (): boolean => this._activeLinks.get(linkKey) !== link;
 
     const { tenantDid: did, remoteEndpoint: dwnUrl, delegateDid, scope, authorization } = link;
@@ -1236,8 +1212,8 @@ export class SyncEngineLevel implements SyncEngine {
       await this.ledger.setStatus(link, 'live');
 
       // Root convergence proves primary CID membership matches, but it does
-      // not prove dependencies are usable. Keep closure failures until a later
-      // successful apply/closure pass clears the specific CID.
+      // not prove a failed root can be admitted. Keep admission failures until
+      // that specific CID later applies successfully.
       await this.clearRootConvergenceDeadLettersForScope(did, dwnUrl, scope);
       this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
       if (prevRepairConnectivity !== 'online') {
@@ -1333,7 +1309,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       // Resolve the *current* link from _activeLinks on each tick, not the
-      // captured closure reference. After hot-remove + re-add, the captured
+      // captured callback reference. After hot-remove + re-add, the captured
       // `link` object is stale and must not be used for status checks or
       // ledger writes.
       const currentLink = this._activeLinks.get(linkKey);
@@ -1531,9 +1507,6 @@ export class SyncEngineLevel implements SyncEngine {
     this._reconcileTimers.clear();
     this._reconcileInFlight.clear();
 
-    // Clear closure evaluation contexts.
-    this._closureContexts.clear();
-    this._protocolMetadataRepairs.clear();
     this._recentlyPulledCids.clear();
 
     // Clear the in-memory link and runtime state.
@@ -1791,7 +1764,6 @@ export class SyncEngineLevel implements SyncEngine {
     for (const key of this._activeLinks.keys()) {
       if (this.isLinkKeyForDid(key, did)) { this._activeLinks.delete(key); this._linkRuntimes.delete(key); }
     }
-    this._closureContexts.delete(did);
   }
 
   private async tryPruneSupersededDurableLinksForRegisteredIdentity(did: string, options: SyncIdentityOptions): Promise<void> {
@@ -2080,11 +2052,13 @@ export class SyncEngineLevel implements SyncEngine {
 
     const delivery = this.startPullDelivery(context, subMessage.cursor);
     try {
-      const pulledCid = await this.processLivePullEvent(context, event);
-      if (!pulledCid) { return; }
+      const result = await this.processLivePullEvent(context, event);
+      if (!result) { return; }
 
-      this.trackRecentlyPulledMessage(pulledCid, context.dwnUrl);
-      this.clearFailedMessage(pulledCid, context.dwnUrl).catch(() => { /* teardown race */ });
+      if (result.admitted) {
+        this.trackRecentlyPulledMessage(result.messageCid, context.dwnUrl);
+        this.clearFailedMessage(result.messageCid, context.dwnUrl).catch(() => { /* teardown race */ });
+      }
       await this.commitPullDelivery(context, subMessage.cursor, delivery);
     } catch (error: any) {
       await this.handleLivePullProcessingError(context, event, error);
@@ -2153,45 +2127,58 @@ export class SyncEngineLevel implements SyncEngine {
     return { runtime, ordinal };
   }
 
-  private async processLivePullEvent(context: LivePullContext, event: MessageEvent): Promise<string | undefined> {
+  private async processLivePullEvent(context: LivePullContext, event: MessageEvent): Promise<LivePullProcessResult | undefined> {
     const dataStreamFactory = await this.createLivePullDataStreamFactory(context, event);
-    let applyStatus = await this.applyLivePullEvent(context, event, dataStreamFactory);
+    const rootCid = await Message.getCid(event.message);
+    const prefetched: SyncMessageEntry[] = [{ message: event.message, dataStreamFactory }];
+    if (event.initialWrite !== undefined) {
+      prefetched.push({ message: event.initialWrite });
+    }
+
+    const outcome = await admitClosure(rootCid, {
+      did                : context.did,
+      dwnUrl             : context.dwnUrl,
+      delegateDid        : context.delegateDid,
+      permissionGrantIds : context.permissionGrantIds,
+      scope              : context.link?.scope,
+      agent              : this.agent,
+      permissionsApi     : this._permissionsApi,
+      prefetched,
+      shouldContinue     : () => !context.isStale(),
+    });
+
     if (context.isStale()) { return undefined; }
 
-    let applied = SyncEngineLevel.isApplySuccess(applyStatus.code);
-    if (applied) {
-      this.invalidateClosureCacheForMessage(context.did, event.message);
+    if (outcome.kind === 'admitted') {
+      return { messageCid: rootCid, admitted: true };
     }
 
-    if (!await this.ensureClosureComplete(context, event)) {
-      return undefined;
+    if (outcome.kind === 'failed') {
+      await this.recordAdmissionFailure(context, rootCid, event, outcome);
+      return { messageCid: rootCid, admitted: false };
     }
 
-    if (!applied) {
-      applyStatus = await this.applyLivePullEvent(context, event, dataStreamFactory);
-      if (context.isStale()) { return undefined; }
-
-      applied = SyncEngineLevel.isApplySuccess(applyStatus.code);
-      if (!applied) {
-        throw await this.createLivePullApplyError(event, applyStatus);
-      }
-      this.invalidateClosureCacheForMessage(context.did, event.message);
+    if (context.link !== undefined) {
+      this.markLinkNeedsReconcile(context.linkKey, context.link, `pull-${outcome.kind}`);
     }
-
-    // Squash convergence: processRawMessage triggers the DWN's built-in
-    // squash resumable task (performRecordsSquash), so no additional
-    // sync-engine side effect is needed here.
-    return Message.getCid(event.message);
+    return undefined;
   }
 
-  private async applyLivePullEvent(
+  private async recordAdmissionFailure(
     context: LivePullContext,
+    rootCid: string,
     event: MessageEvent,
-    dataStreamFactory: LivePullDataStreamFactory,
-  ): Promise<ApplyStatus> {
-    const dataStream = await dataStreamFactory();
-    const reply = await this.agent.dwn.processRawMessage(context.did, event.message, { dataStream });
-    return reply.status;
+    outcome: { kind: 'failed'; reason: 'invalid' | 'terminal'; detail?: string },
+  ): Promise<void> {
+    await this.recordDeadLetter({
+      messageCid     : rootCid,
+      tenantDid      : context.did,
+      remoteEndpoint : context.dwnUrl,
+      protocol       : (event.message.descriptor as Record<string, unknown>).protocol as string | undefined,
+      category       : 'admit-failed',
+      errorCode      : outcome.reason,
+      errorDetail    : outcome.detail ?? 'replicated message admission failed',
+    });
   }
 
   private async createLivePullDataStreamFactory(
@@ -2202,20 +2189,21 @@ export class SyncEngineLevel implements SyncEngine {
       return async () => undefined;
     }
 
-    const encodedData = (event.message as any).encodedData as string | undefined;
+    const recordsWriteEvent = event as LivePullRecordsWriteEvent;
+    const { encodedData } = recordsWriteEvent.message;
     if (encodedData) {
-      delete (event.message as any).encodedData;
+      delete recordsWriteEvent.message.encodedData;
       const bytes = Encoder.base64UrlToBytes(encodedData);
       return async () => SyncEngineLevel.dataStreamFromBytes(bytes);
     }
 
-    const eventData = (event as any).data as ReadableStream<Uint8Array> | undefined;
+    const eventData = recordsWriteEvent.data;
     if (eventData) {
       const bytes = await SyncEngineLevel.readStreamBytes(eventData);
       return async () => SyncEngineLevel.dataStreamFromBytes(bytes);
     }
 
-    if (!(event.message.descriptor as any).dataCid) {
+    if (recordsWriteEvent.message.descriptor.dataCid === undefined) {
       return async () => undefined;
     }
 
@@ -2235,13 +2223,6 @@ export class SyncEngineLevel implements SyncEngine {
       });
       return fetched[0]?.dataStream;
     };
-  }
-
-  private async createLivePullApplyError(event: MessageEvent, status: ApplyStatus): Promise<Error> {
-    const cid = await Message.getCid(event.message);
-    return new Error(
-      `SyncEngineLevel: live pull apply failed for ${cid}: ${status.code} ${status.detail ?? ''}`.trim()
-    );
   }
 
   private static dataStreamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
@@ -2276,360 +2257,6 @@ export class SyncEngineLevel implements SyncEngine {
       offset += chunk.byteLength;
     }
     return bytes;
-  }
-
-  private static isApplySuccess(code: number): boolean {
-    return (code >= 200 && code < 300) || code === 409;
-  }
-
-  private invalidateClosureCacheForMessage(did: string, message: GenericMessage): void {
-    // Must run before closure validation so subsequent evaluations in the same
-    // session see the updated local state.
-    const closureCtx = this._closureContexts.get(did);
-    if (closureCtx) {
-      invalidateClosureCache(closureCtx, message);
-    }
-  }
-
-  private async ensureClosureComplete(context: LivePullContext, event: MessageEvent): Promise<boolean> {
-    const { did, delegateDid, link, isStale } = context;
-    if (!link || link.scope.kind === 'full') {
-      return true;
-    }
-
-    let closureCtx = this._closureContexts.get(did);
-    if (!closureCtx) {
-      closureCtx = createClosureContext(did, undefined, {
-        isDelegateSession: !!delegateDid,
-      });
-      this._closureContexts.set(did, closureCtx);
-    }
-
-    const messageStore = this.agent.dwn.node.storage.messageStore;
-    let closureResult = await evaluateClosure(event.message, messageStore, link.scope, closureCtx);
-    if (isStale()) { return false; }
-    if (closureResult.complete) { return true; }
-
-    if (await this.tryRepairMissingProtocolMetadata(context, closureCtx, closureResult)) {
-      if (isStale()) { return false; }
-
-      closureResult = await evaluateClosure(event.message, messageStore, link.scope, closureCtx);
-      if (isStale()) { return false; }
-      if (closureResult.complete) { return true; }
-    }
-
-    await this.recordClosureFailure(context, event, closureResult.failure!.code, closureResult.failure!.detail);
-    return false;
-  }
-
-  private async tryRepairMissingProtocolMetadata(
-    context: LivePullContext,
-    closureCtx: ClosureEvaluationContext,
-    closureResult: ClosureResult,
-  ): Promise<boolean> {
-    const failure = closureResult.failure;
-    if (!SyncEngineLevel.isRepairableProtocolMetadataFailure(failure)) {
-      return false;
-    }
-
-    const { did } = context;
-    const repairKey = `${did}|${failure.edge.identifier}`;
-    const activeRepair = this._protocolMetadataRepairs.get(repairKey);
-    if (activeRepair) {
-      return activeRepair;
-    }
-
-    const repair = this.repairMissingProtocolMetadata(context, closureCtx, failure.edge.identifier);
-    this._protocolMetadataRepairs.set(repairKey, repair);
-    repair.finally(() => {
-      if (this._protocolMetadataRepairs.get(repairKey) === repair) {
-        this._protocolMetadataRepairs.delete(repairKey);
-      }
-    }).catch(() => { /* caller handles the repair result */ });
-    return repair;
-  }
-
-  private async repairMissingProtocolMetadata(
-    { did, dwnUrl, delegateDid, isStale }: LivePullContext,
-    closureCtx: ClosureEvaluationContext,
-    protocol: string,
-  ): Promise<boolean> {
-    if (isStale()) {
-      return false;
-    }
-
-    const configs = await this.fetchRemoteProtocolConfigClosure({
-      authorDid : delegateDid ?? did,
-      delegateDid,
-      dwnUrl,
-      protocol,
-      tenantDid : did,
-    });
-    if (isStale() || configs.length === 0) {
-      return false;
-    }
-
-    // Live subscriptions can deliver scoped records before the local replica
-    // has the tenant's protocol metadata. Reuse the DWN ProtocolsQuery path and
-    // only install configs that are signed by the tenant, including composed
-    // protocol dependencies needed to authorize the record.
-    let repaired = false;
-    for (const config of configs) {
-      if (isStale()) {
-        return repaired;
-      }
-      const reply = await this.agent.dwn.processRawMessage(did, config);
-      if (isStale()) {
-        return repaired;
-      }
-      if (!SyncEngineLevel.protocolConfigApplySucceeded(reply.status.code)) {
-        return repaired;
-      }
-
-      invalidateClosureCache(closureCtx, config);
-      repaired = true;
-    }
-
-    return repaired;
-  }
-
-  private async fetchRemoteProtocolConfigClosure({
-    authorDid,
-    delegateDid,
-    dwnUrl,
-    protocol,
-    tenantDid,
-  }: {
-    authorDid: string;
-    delegateDid?: string;
-    dwnUrl: string;
-    protocol: string;
-    tenantDid: string;
-  }): Promise<ProtocolsConfigureMessage[]> {
-    const configsByProtocol = new Map<string, ProtocolsConfigureMessage>();
-    const visiting = new Set<string>();
-
-    const visit = async (protocolUri: string): Promise<boolean> => {
-      if (configsByProtocol.has(protocolUri)) {
-        return true;
-      }
-      if (visiting.has(protocolUri)) {
-        return true;
-      }
-      visiting.add(protocolUri);
-
-      const config = await this.fetchRemoteProtocolConfig({
-        authorDid,
-        delegateDid,
-        dwnUrl,
-        protocol: protocolUri,
-        tenantDid,
-      });
-      if (config === undefined) {
-        visiting.delete(protocolUri);
-        return false;
-      }
-
-      for (const usedProtocol of SyncEngineLevel.protocolsConfigureUses(config)) {
-        if (!await visit(usedProtocol)) {
-          visiting.delete(protocolUri);
-          return false;
-        }
-      }
-
-      configsByProtocol.set(protocolUri, config);
-      visiting.delete(protocolUri);
-      return true;
-    };
-
-    return await visit(protocol) ? [...configsByProtocol.values()] : [];
-  }
-
-  private async fetchRemoteProtocolConfig({
-    authorDid,
-    delegateDid,
-    dwnUrl,
-    protocol,
-    tenantDid,
-  }: {
-    authorDid: string;
-    delegateDid?: string;
-    dwnUrl: string;
-    protocol: string;
-    tenantDid: string;
-  }): Promise<ProtocolsConfigureMessage | undefined> {
-    try {
-      const permissionGrantId = await this.getProtocolsQueryPermissionGrantId({
-        delegateDid,
-        protocol,
-        tenantDid,
-      });
-      const { message } = await this.agent.processDwnRequest({
-        author        : authorDid,
-        messageParams : {
-          filter: { protocol },
-          ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
-        },
-        messageType : DwnInterface.ProtocolsQuery,
-        store       : false,
-        target      : tenantDid,
-      });
-
-      const reply = await this.agent.rpc.sendDwnRequest({
-        dwnUrl,
-        message,
-        targetDid: tenantDid,
-      }) as ProtocolsQueryReply;
-      if (reply.status.code !== 200 || reply.entries === undefined) {
-        return undefined;
-      }
-
-      const candidates: ProtocolsConfigureMessage[] = [];
-      for (const entry of reply.entries) {
-        const config = await this.toAuthenticatedTenantProtocolConfig(tenantDid, entry);
-        if (config?.descriptor.definition.protocol === protocol) {
-          candidates.push(config);
-        }
-      }
-
-      return SyncEngineLevel.newestProtocolConfig(candidates);
-    } catch {
-      return undefined;
-    }
-  }
-
-  private async getProtocolsQueryPermissionGrantId({
-    delegateDid,
-    protocol,
-    tenantDid,
-  }: {
-    delegateDid?: string;
-    protocol: string;
-    tenantDid: string;
-  }): Promise<string | undefined> {
-    if (delegateDid === undefined) {
-      return undefined;
-    }
-
-    try {
-      const { grant } = await this._permissionsApi.getPermissionForRequest({
-        connectedDid : tenantDid,
-        delegateDid,
-        protocol,
-        cached       : true,
-        messageType  : DwnInterface.ProtocolsQuery,
-      });
-      return grant.id;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private async toAuthenticatedTenantProtocolConfig(
-    tenantDid: string,
-    message: GenericMessage,
-  ): Promise<ProtocolsConfigureMessage | undefined> {
-    if (!SyncEngineLevel.isProtocolsConfigureDefinitionMessage(message)) {
-      return undefined;
-    }
-
-    try {
-      await ProtocolsConfigure.parse(message);
-      if (Message.getAuthor(message) !== tenantDid) {
-        return undefined;
-      }
-      await authenticate(message.authorization, this.agent.did);
-      return message;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private static isProtocolsConfigureDefinitionMessage(
-    message: GenericMessage,
-  ): message is ProtocolsConfigureMessage & { descriptor: ProtocolsConfigureDefinitionDescriptor } {
-    const descriptor: MaybeProtocolsConfigureDefinitionDescriptor = message.descriptor;
-    return message.authorization !== undefined &&
-      descriptor.interface === DwnInterfaceName.Protocols &&
-      descriptor.method === DwnMethodName.Configure &&
-      typeof descriptor.definition?.protocol === 'string';
-  }
-
-  private static protocolsConfigureUses(message: ProtocolsConfigureMessage): string[] {
-    const uses = message.descriptor.definition.uses;
-    if (uses === undefined) {
-      return [];
-    }
-
-    return Object.values(uses)
-      .filter((protocol): protocol is string => typeof protocol === 'string')
-      .sort(lexicographicalCompare);
-  }
-
-  private static newestProtocolConfig(
-    configs: ProtocolsConfigureMessage[],
-  ): ProtocolsConfigureMessage | undefined {
-    let newest: ProtocolsConfigureMessage | undefined;
-    for (const config of configs) {
-      if (newest === undefined || SyncEngineLevel.isProtocolConfigNewer(config, newest)) {
-        newest = config;
-      }
-    }
-    return newest;
-  }
-
-  private static isProtocolConfigNewer(
-    candidate: ProtocolsConfigureMessage,
-    current: ProtocolsConfigureMessage,
-  ): boolean {
-    return candidate.descriptor.messageTimestamp > current.descriptor.messageTimestamp;
-  }
-
-  private static protocolConfigApplySucceeded(code: number): boolean {
-    return (code >= 200 && code < 300) || code === 409;
-  }
-
-  private static isRepairableProtocolMetadataFailure(
-    failure: ClosureResult['failure'] | undefined,
-  ): failure is NonNullable<ClosureResult['failure']> {
-    return failure?.edge.identifierType === 'protocol' &&
-      (
-        failure.code === ClosureFailureCode.ProtocolMetadataMissing ||
-        failure.code === ClosureFailureCode.CrossProtocolReferenceMissing ||
-        failure.code === ClosureFailureCode.EncryptionDependencyMissing
-      );
-  }
-
-  private async recordClosureFailure(
-    { did, dwnUrl, linkKey, link, isStale }: LivePullContext,
-    event: MessageEvent,
-    failureCode: string,
-    failureDetail: string,
-  ): Promise<void> {
-    console.warn(
-      `SyncEngineLevel: Closure incomplete for ${did} -> ${dwnUrl}: ` +
-      `${failureCode} — ${failureDetail}`
-    );
-
-    const closureCid = await Message.getCid(event.message);
-    void this.recordDeadLetter({
-      messageCid     : closureCid,
-      tenantDid      : did,
-      remoteEndpoint : dwnUrl,
-      protocol       : (event.message.descriptor as Record<string, unknown>).protocol as string | undefined,
-      category       : 'closure',
-      errorCode      : failureCode,
-      errorDetail    : failureDetail,
-    });
-
-    if (link && !isStale() && isTerminalClosureFailureCode(failureCode)) {
-      await this.transitionToTerminalIncomplete(linkKey, link);
-      return;
-    }
-
-    if (link && !isStale()) {
-      await this.transitionToRepairing(linkKey, link);
-    }
   }
 
   private trackRecentlyPulledMessage(messageCid: string, dwnUrl: string): void {
@@ -2686,9 +2313,9 @@ export class SyncEngineLevel implements SyncEngine {
     error: any,
   ): Promise<void> {
     console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
-    await this.recordPullProcessingFailure({ did, dwnUrl, event, error });
+    await this.recordPullAdmissionError({ did, dwnUrl, event, error });
 
-    // A failed processRawMessage means local state is incomplete. Transition
+    // A failed replicated admission means local state is incomplete. Transition
     // to repairing immediately — do NOT advance the checkpoint past this
     // failure or let later ordinals commit past it. SMT reconciliation will
     // discover and fill the gap.
@@ -2697,7 +2324,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async recordPullProcessingFailure({ did, dwnUrl, event, error }: {
+  private async recordPullAdmissionError({ did, dwnUrl, event, error }: {
     did: string;
     dwnUrl: string;
     event: MessageEvent;
@@ -2710,7 +2337,7 @@ export class SyncEngineLevel implements SyncEngine {
         tenantDid      : did,
         remoteEndpoint : dwnUrl,
         protocol       : (event.message.descriptor as Record<string, unknown>).protocol as string | undefined,
-        category       : 'pull-processing',
+        category       : 'admit-failed',
         errorDetail    : error.message ?? String(error),
       });
     } catch {
@@ -2994,7 +2621,7 @@ export class SyncEngineLevel implements SyncEngine {
   /** Push retry backoff schedule: immediate, 250ms, 1s, 2s, then give up. */
   private static readonly PUSH_RETRY_BACKOFF_MS = [0, 250, 1000, 2000];
   private static readonly ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES: ReadonlySet<DeadLetterCategory> =
-    new Set(['push-permanent', 'push-exhausted', 'pull-processing', 'pull-scope-rejected']);
+    new Set(['push-permanent', 'push-exhausted']);
 
   /**
    * Re-queues a failed push batch for retry, or marks the link
@@ -3072,9 +2699,9 @@ export class SyncEngineLevel implements SyncEngine {
       getLocalRoot  : async (did, delegateDid, protocol, permissionGrantIds) => this.getLocalRoot(did, delegateDid, protocol, permissionGrantIds),
       getRemoteRoot : async (did, dwnUrl, delegateDid, protocol, permissionGrantIds) =>
         this.getRemoteRoot(did, dwnUrl, delegateDid, protocol, permissionGrantIds),
-      diffWithRemote : async (target) => this.diffWithRemote(target),
-      pullMessages   : async (params) => this.pullMessages(params),
-      pushMessages   : async (params) => this.pushMessages(params),
+      diffWithRemote      : async (target) => this.diffWithRemote(target),
+      admitRemoteMessages : async (params) => this.admitRemoteMessages(params),
+      pushMessages        : async (params) => this.pushMessages(params),
       shouldContinue,
     });
   }
@@ -3226,7 +2853,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     const { prefetched, needsFetchCids } = partitionRemoteEntries(onlyRemote);
     try {
-      await this.pullMessages({
+      await this.admitRemoteMessages({
         did                : context.did,
         dwnUrl             : context.dwnUrl,
         delegateDid        : context.delegateDid,
@@ -3391,7 +3018,7 @@ export class SyncEngineLevel implements SyncEngine {
     const generation = this._engineGeneration;
 
     // Identity guard: if the DID was hot-removed and re-added, this
-    // closure's captured `link` reference may no longer be the active
+    // callback's captured `link` reference may no longer be the active
     // link object. Bail before mutating the replacement's state.
     const isStaleLink = (): boolean => this._activeLinks.get(linkKey) !== link;
     const shouldContinue = (): boolean =>
@@ -3420,7 +3047,7 @@ export class SyncEngineLevel implements SyncEngine {
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
       } else {
         // Roots still differ — retry after a delay. This can happen when
-        // pushMessages() had permanent failures, pullMessages() partially
+        // pushMessages() had permanent failures, remote admission partially
         // failed, or new writes arrived during reconciliation.
         if (!isStaleLink()) { this.scheduleReconcile(linkKey, 5000); }
       }
@@ -3798,7 +3425,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Pull / Push — delegates to standalone functions in sync-messages.ts
+  // Remote admission / push
   // ---------------------------------------------------------------------------
 
   /**
@@ -3809,7 +3436,7 @@ export class SyncEngineLevel implements SyncEngine {
    * they are processed directly without additional HTTP round-trips.
    * Only `messageCids` that were NOT prefetched are fetched individually.
    */
-  private async pullMessages({
+  private async admitRemoteMessages({
     did,
     dwnUrl,
     delegateDid,
@@ -3830,120 +3457,71 @@ export class SyncEngineLevel implements SyncEngine {
     prefetched?: MessagesSyncDiffEntry[];
     shouldContinue?: () => boolean;
   }): Promise<void> {
-    const acceptanceScope: SyncScope = scope ?? (protocol === undefined
+    const admissionScope: SyncScope = scope ?? (protocol === undefined
       ? { kind: 'full' }
       : { kind: 'protocolSet', protocols: [protocol] });
-    const rejectedPullEntries = new Map<string, Extract<PullAcceptanceResult, { accepted: false }>>();
-    const failedCids = await pullMessages({
-      did,
-      dwnUrl,
-      delegateDid,
-      permissionGrantIds,
-      messageCids,
-      prefetched,
-      shouldContinue,
-      agent       : this.agent,
-      acceptEntry : async (entry, entries) => {
-        const result = await this.acceptPulledSyncEntry(did, acceptanceScope, entry, entries);
-        if (!result.accepted) {
-          rejectedPullEntries.set(await getMessageCid(entry.message), result);
-        }
-        return result.accepted;
-      },
-    });
+    const prefetchedEntries = SyncEngineLevel.syncEntriesFromPrefetchedDiff(prefetched);
+    const rootCids = [
+      ...(prefetched ?? []).map(entry => entry.messageCid),
+      ...messageCids,
+    ];
 
-    // Record permanently failed pull entries in the dead letter store.
-    for (const cid of failedCids) {
-      const rejection = rejectedPullEntries.get(cid);
-      await this.recordDeadLetter({
-        messageCid     : cid,
-        tenantDid      : did,
-        remoteEndpoint : dwnUrl,
-        protocol,
-        category       : rejection ? 'pull-scope-rejected' : 'pull-processing',
-        errorCode      : rejection?.classification,
-        errorDetail    : rejection
-          ? `pulled message rejected by ${rejection.classification} sync scope gate`
-          : 'pull processing failed after retry passes exhausted',
-      });
-    }
-  }
-
-  private async acceptPulledSyncEntry(
-    did: string,
-    scope: SyncScope,
-    entry: SyncMessageEntry,
-    entries: SyncMessageEntry[],
-  ): Promise<PullAcceptanceResult> {
-    if (scope.kind === 'full') {
-      return { accepted: true };
-    }
-
-    const initialWrite = await this.resolvePulledDeleteInitialWrite(did, entry.message, entries);
-    const classification = classifySyncMessageScope({
-      message: entry.message,
-      initialWrite,
-      scope,
-    });
-
-    if (classification === 'in-scope') {
-      return { accepted: true };
-    }
-
-    const messageCid = await getMessageCid(entry.message);
-    console.warn(`SyncEngineLevel: refusing to apply ${classification} pulled message ${messageCid}`);
-    return { accepted: false, classification };
-  }
-
-  private async resolvePulledDeleteInitialWrite(
-    did: string,
-    message: GenericMessage,
-    entries: SyncMessageEntry[],
-  ): Promise<RecordsWriteMessage | undefined> {
-    const descriptor = message.descriptor as Record<string, unknown>;
-    if (
-      descriptor.interface !== DwnInterfaceName.Records ||
-      descriptor.method !== DwnMethodName.Delete ||
-      typeof descriptor.recordId !== 'string'
-    ) {
-      return undefined;
-    }
-
-    if (!this.agent.dwn.isRemoteMode) {
-      const localInitialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(
-        this.agent.dwn.node.storage.messageStore,
-        did,
-        descriptor.recordId,
-      );
-      if (localInitialWrite) {
-        return localInitialWrite;
-      }
-    }
-
-    // Batch entries are only used when the initial write has not been applied
-    // locally yet. They are still parsed as initial RecordsWrite messages, and
-    // processRawMessage authenticates the delete before any local mutation
-    // occurs.
-    return this.findInitialWriteInPullBatch(descriptor.recordId, entries);
-  }
-
-  private async findInitialWriteInPullBatch(
-    recordId: string,
-    entries: SyncMessageEntry[],
-  ): Promise<RecordsWriteMessage | undefined> {
-    for (const entry of entries) {
-      if (entry.message.descriptor.interface !== DwnInterfaceName.Records ||
-        entry.message.descriptor.method !== DwnMethodName.Write) {
+    for (const rootCid of [...new Set(rootCids)]) {
+      if (await this.hasAdmissionDeadLetter(did, dwnUrl, rootCid)) {
         continue;
       }
 
-      const candidate = entry.message as RecordsWriteMessage;
-      if (candidate.recordId === recordId && await RecordsWrite.isInitialWrite(candidate)) {
-        return candidate;
+      if (shouldContinue?.() === false) {
+        throw new SyncPullAbortedError();
+      }
+
+      const outcome = await admitClosure(rootCid, {
+        did,
+        dwnUrl,
+        delegateDid,
+        permissionGrantIds,
+        scope          : admissionScope,
+        agent          : this.agent,
+        permissionsApi : this._permissionsApi,
+        prefetched     : prefetchedEntries,
+        shouldContinue,
+      });
+
+      if (outcome.kind === 'failed') {
+        await this.recordDeadLetter({
+          messageCid     : rootCid,
+          tenantDid      : did,
+          remoteEndpoint : dwnUrl,
+          protocol,
+          category       : 'admit-failed',
+          errorCode      : outcome.reason,
+          errorDetail    : outcome.detail ?? 'replicated message admission failed',
+        });
       }
     }
+  }
 
-    return undefined;
+  private static syncEntriesFromPrefetchedDiff(prefetched?: MessagesSyncDiffEntry[]): SyncMessageEntry[] {
+    if (prefetched === undefined) {
+      return [];
+    }
+
+    const entries: SyncMessageEntry[] = [];
+    for (const entry of prefetched) {
+      if (entry.message === undefined) {
+        continue;
+      }
+
+      const { encodedData: messageEncodedData, ...message } = entry.message;
+      const syncEntry: SyncMessageEntry = { message };
+      if (entry.encodedData !== undefined) {
+        syncEntry.bufferedData = Encoder.base64UrlToBytes(entry.encodedData);
+      } else if (messageEncodedData !== undefined) {
+        syncEntry.bufferedData = Encoder.base64UrlToBytes(messageEncodedData);
+      }
+      entries.push(syncEntry);
+    }
+    return entries;
   }
 
   // ---------------------------------------------------------------------------
@@ -4107,6 +3685,23 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  private async hasAdmissionDeadLetter(
+    tenantDid: string,
+    remoteEndpoint: string,
+    messageCid: string,
+  ): Promise<boolean> {
+    const key = SyncEngineLevel.deadLetterKey(messageCid, remoteEndpoint);
+    try {
+      const value = await this._deadLetters.get(key);
+      const entry = JSON.parse(value) as DeadLetterEntry;
+      return entry.tenantDid === tenantDid && entry.category === 'admit-failed';
+    } catch (error) {
+      const e = error as { code?: string };
+      if (e.code === 'LEVEL_NOT_FOUND') { return false; }
+      throw error;
+    }
+  }
+
   public async getFailedMessages(tenantDid?: string): Promise<DeadLetterEntry[]> {
     const entries: DeadLetterEntry[] = [];
     for await (const [, value] of this._deadLetters.iterator()) {
@@ -4171,12 +3766,12 @@ export class SyncEngineLevel implements SyncEngine {
 
   public async getSyncHealth(): Promise<SyncHealthSummary> {
     let failedMessageCount = 0;
-    let closureFailureCount = 0;
+    let admissionFailureCount = 0;
     for await (const [, value] of this._deadLetters.iterator()) {
       failedMessageCount++;
       const entry = JSON.parse(value) as DeadLetterEntry;
-      if (entry.category === 'closure') {
-        closureFailureCount++;
+      if (entry.category === 'admit-failed') {
+        admissionFailureCount++;
       }
     }
 
@@ -4194,11 +3789,11 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return {
-      connectivity        : this.connectivityState,
-      failedMessageCount  : failedMessageCount,
-      closureFailureCount : closureFailureCount,
-      degradedLinkCount   : degradedLinkCount,
-      syncHealthy         : failedMessageCount === 0 && degradedLinkCount === 0,
+      connectivity          : this.connectivityState,
+      failedMessageCount    : failedMessageCount,
+      admissionFailureCount : admissionFailureCount,
+      degradedLinkCount     : degradedLinkCount,
+      syncHealthy           : failedMessageCount === 0 && degradedLinkCount === 0,
     };
   }
 
