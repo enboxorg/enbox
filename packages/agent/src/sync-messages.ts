@@ -3,7 +3,7 @@ import type { GenericMessage, MessagesReadReply, MessagesSyncDiffEntry, UnionMes
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermanentPushFailure, PushResult } from './types/sync.js';
 
-import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
@@ -74,13 +74,15 @@ export function syncMessageReplyIsSuccessful(reply: UnionMessageReply, pushedMes
 }
 
 /**
- * 400 detail substrings that indicate a protocol dependency hasn't
- * arrived on the remote yet. These resolve on retry once the
- * dependency is pushed, so they must NOT be treated as permanent.
+ * 400 error codes that indicate a dependency has not arrived on the remote yet.
+ * These resolve on retry once the missing dependency is pushed, so they must not
+ * be treated as permanent.
  */
-const TRANSIENT_DEPENDENCY_PATTERNS = [
-  'ComposedProtocolNotInstalled',
-  'ProtocolNotFound',
+const TRANSIENT_DEPENDENCY_ERROR_CODES = [
+  DwnErrorCode.ProtocolsConfigureComposedProtocolNotInstalled,
+  DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound,
+  DwnErrorCode.ProtocolAuthorizationParentRecordNotFound,
+  DwnErrorCode.ProtocolAuthorizationProtocolNotFound,
 ];
 
 /**
@@ -97,7 +99,7 @@ export function isPermanentPushFailure(reply: UnionMessageReply): boolean {
   if (code === 401 || code === 403) { return true; }
 
   if (code === 400) {
-    return !TRANSIENT_DEPENDENCY_PATTERNS.some(pattern => detail?.includes(pattern));
+    return !TRANSIENT_DEPENDENCY_ERROR_CODES.some(errorCode => detail?.startsWith(`${errorCode}:`));
   }
 
   return false;
