@@ -37,18 +37,8 @@ export class RecordsWriteHandler implements MethodHandler {
     let recordsWrite: RecordsWrite;
     try {
       recordsWrite = await RecordsWrite.parse(message);
-
-      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.deps.messageStore, this.deps.coreProtocols);
     } catch (e) {
       return messageReplyFromError(e, 400);
-    }
-
-    // authentication & authorization
-    try {
-      await authenticate(message.authorization, this.deps.didResolver, message.attestation);
-      await this.authorizeRecordsWrite(tenant, recordsWrite, this.deps.messageStore);
-    } catch (e) {
-      return messageReplyFromError(e, 401);
     }
 
     // get existing messages matching the `recordId`
@@ -58,9 +48,10 @@ export class RecordsWriteHandler implements MethodHandler {
     };
     const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [ query ]);
 
-    // If the exact same message already exists, return 409 immediately.
-    // This prevents duplicate delivery races from re-processing large data
-    // streams and hitting unique constraints in SQL-backed data stores.
+    // If the exact same message already exists, return 409 before re-running
+    // mutable validation. An already-stored message has already passed
+    // admission; replay should not be reinterpreted against current protocol,
+    // parent, role, grant, or record-limit state.
     //
     // Exception: an initial write may have been stored earlier without data
     // (204). A later delivery of the same message with data must be allowed
@@ -81,6 +72,20 @@ export class RecordsWriteHandler implements MethodHandler {
       if (!canCompleteMissingData) {
         return { status: { code: 409, detail: 'Conflict' } };
       }
+    }
+
+    try {
+      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.deps.messageStore, this.deps.coreProtocols);
+    } catch (e) {
+      return messageReplyFromError(e, 400);
+    }
+
+    // authentication & authorization
+    try {
+      await authenticate(message.authorization, this.deps.didResolver, message.attestation);
+      await this.authorizeRecordsWrite(tenant, recordsWrite, this.deps.messageStore);
+    } catch (e) {
+      return messageReplyFromError(e, 401);
     }
 
     // if the incoming write is not the initial write, then it must not modify any immutable properties defined by the initial write
