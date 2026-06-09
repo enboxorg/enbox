@@ -4,6 +4,7 @@ import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, S
 
 import sinon from 'sinon';
 
+import { DataStream } from '../../src/utils/data-stream.js';
 import { DidKey } from '@enbox/dids';
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
@@ -371,6 +372,13 @@ export function testRecordsRecordLimit(): void {
         const reply1 = await dwn.processMessage(alice.did, record1.message, { dataStream: record1.dataStream });
         expect(reply1.status.code).toBe(202);
 
+        // exact duplicate delivery is idempotent and should not count the
+        // same recordId against its own singleton limit
+        const duplicateReply = await dwn.processMessage(alice.did, record1.message, {
+          dataStream: DataStream.fromBytes(record1.dataBytes!),
+        });
+        expect(duplicateReply.status.code).toBe(409);
+
         // second record should be rejected
         const record2 = await TestDataGenerator.generateRecordsWrite({
           author       : alice,
@@ -542,6 +550,7 @@ export function testRecordsRecordLimit(): void {
         expect(room2Reply.status.code).toBe(202);
 
         // write 2 messages in room1 — both should succeed
+        let firstRoom1Message: Awaited<ReturnType<typeof TestDataGenerator.generateRecordsWrite>> | undefined;
         for (let i = 0; i < 2; i++) {
           const msg = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
@@ -552,7 +561,14 @@ export function testRecordsRecordLimit(): void {
           });
           const msgReply = await dwn.processMessage(alice.did, msg.message, { dataStream: msg.dataStream });
           expect(msgReply.status.code).toBe(202);
+          firstRoom1Message ??= msg;
         }
+
+        // exact duplicate nested delivery is idempotent within the parent context
+        const duplicateNestedReply = await dwn.processMessage(alice.did, firstRoom1Message!.message, {
+          dataStream: DataStream.fromBytes(firstRoom1Message!.dataBytes!),
+        });
+        expect(duplicateNestedReply.status.code).toBe(409);
 
         // 3rd message in room1 should be rejected
         const msg3 = await TestDataGenerator.generateRecordsWrite({

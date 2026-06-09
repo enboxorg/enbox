@@ -206,6 +206,51 @@ export function testRecordsWriteHandler(): void {
         expect(duplicateReply.status.code).toBe(409);
       });
 
+      it('should return 409 for an exact duplicate RecordsWrite before mutable parent validation', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition = nestedProtocol as ProtocolDefinition;
+        const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author: alice,
+          protocolDefinition
+        });
+        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+        expect(protocolsConfigureReply.status.code).toBe(202);
+
+        const parentWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'foo',
+          schema       : protocolDefinition.types.foo.schema,
+          dataFormat   : protocolDefinition.types.foo.dataFormats![0],
+        });
+        const parentWriteReply = await dwn.processMessage(alice.did, parentWrite.message, { dataStream: parentWrite.dataStream });
+        expect(parentWriteReply.status.code).toBe(202);
+
+        const childWrite = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : protocolDefinition.protocol,
+          protocolPath    : 'foo/bar',
+          schema          : protocolDefinition.types.bar.schema,
+          dataFormat      : protocolDefinition.types.bar.dataFormats![0],
+          parentContextId : parentWrite.message.contextId,
+        });
+        const childWriteReply = await dwn.processMessage(alice.did, childWrite.message, { dataStream: childWrite.dataStream });
+        expect(childWriteReply.status.code).toBe(202);
+
+        const parentDelete = await RecordsDelete.create({
+          recordId : parentWrite.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
+        const parentDeleteReply = await dwn.processMessage(alice.did, parentDelete.message);
+        expect(parentDeleteReply.status.code).toBe(202);
+
+        const duplicateChildReply = await dwn.processMessage(alice.did, childWrite.message, {
+          dataStream: DataStream.fromBytes(childWrite.dataBytes!),
+        });
+        expect(duplicateChildReply.status.code).toBe(409);
+      });
+
       it('should only be able to overwrite existing record if new message CID is larger when `messageTimestamp` value is the same', async () => {
       // start by writing an originating message
         const author = await TestDataGenerator.generatePersona();
@@ -4508,6 +4553,7 @@ export function testRecordsWriteHandler(): void {
         const mismatchingPersona = await TestDataGenerator.generatePersona({ did: author.did, keyId: author.keyId });
         const didResolver = TestStubGenerator.createDidResolverStub(mismatchingPersona);
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
+        messageStoreStub.query.resolves({ messages: [] });
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
         // stub protocol validation so the handler reaches authentication/authorization
@@ -4528,6 +4574,7 @@ export function testRecordsWriteHandler(): void {
         // setting up a stub DID resolver & message store
         const didResolver = TestStubGenerator.createDidResolverStub(author);
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
+        messageStoreStub.query.resolves({ messages: [] });
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
         // stub protocol validation so the handler reaches authentication/authorization
