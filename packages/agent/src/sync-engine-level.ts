@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDependencyEntry, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, ProtocolsConfigureMessage, RecordsProjectionScope, RecordsWriteMessage, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDependencyEntry, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, ProtocolsConfigureMessage, ProtocolsQueryReply, RecordsProjectionScope, RecordsWriteMessage, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
@@ -9,15 +9,15 @@ import { Level } from 'level';
 import { sleep } from '@enbox/common';
 import { authenticate, DwnInterfaceName, DwnMethodName, Encoder, hashToHex, initDefaultHashes, Message, ProtocolsConfigure, RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection, RecordsWrite } from '@enbox/dwn-sdk-js';
 
-import type { ClosureEvaluationContext } from './sync-closure-types.js';
+import type { DwnMessageParams } from './types/dwn.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { SyncScopeClassification } from './sync-scope-acceptance.js';
+import type { ClosureEvaluationContext, ClosureResult } from './sync-closure-types.js';
 import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
-import type { DwnMessageParams } from './types/dwn.js';
 
 import { buildLinkId } from './sync-link-id.js';
 import { DwnInterface } from './types/dwn.js';
@@ -26,8 +26,8 @@ import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { classifySyncEventScope, classifySyncMessageScope } from './sync-scope-acceptance.js';
+import { ClosureFailureCode, createClosureContext, invalidateClosureCache, isTerminalClosureFailureCode } from './sync-closure-types.js';
 import { computeAuthorizationEpoch, computeProjectionId, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
-import { createClosureContext, invalidateClosureCache, isTerminalClosureFailureCode } from './sync-closure-types.js';
 import { fetchRemoteMessages, getMessageCid, pullMessages, pushMessages, SyncPullAbortedError } from './sync-messages.js';
 import { partitionRemoteEntries, SyncLinkReconciler } from './sync-link-reconciler.js';
 import { permissionGrantIdsFromEntries, resolveMessagesSyncScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
@@ -242,6 +242,13 @@ type PullDelivery = {
   ordinal: number;
 };
 
+type LivePullDataStreamFactory = () => Promise<ReadableStream<Uint8Array> | undefined>;
+
+type ApplyStatus = {
+  code: number;
+  detail?: string;
+};
+
 function syncEventScope(scope: SyncScope | undefined): SyncEventScope {
   if (scope === undefined) {
     return {};
@@ -352,6 +359,9 @@ export class SyncEngineLevel implements SyncEngine {
    * tenant. Keyed by tenantDid to prevent cross-tenant cache pollution.
    */
   private readonly _closureContexts: Map<string, ClosureEvaluationContext> = new Map();
+
+  /** Deduplicates concurrent live-sync repairs for the same tenant/protocol. */
+  private readonly _protocolMetadataRepairs: Map<string, Promise<boolean>> = new Map();
 
   /** Maximum entries in the echo-loop suppression cache. */
   private static readonly ECHO_SUPPRESS_MAX_ENTRIES = 10_000;
@@ -1533,6 +1543,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Clear closure evaluation contexts.
     this._closureContexts.clear();
+    this._protocolMetadataRepairs.clear();
     this._recentlyPulledCids.clear();
 
     // Clear the in-memory link and runtime state.
@@ -2163,13 +2174,28 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async processLivePullEvent(context: LivePullContext, event: MessageEvent): Promise<string | undefined> {
-    const dataStream = await this.getLivePullDataStream(context, event);
-    await this.agent.dwn.processRawMessage(context.did, event.message, { dataStream });
+    const dataStreamFactory = await this.createLivePullDataStreamFactory(context, event);
+    let applyStatus = await this.applyLivePullEvent(context, event, dataStreamFactory);
     if (context.isStale()) { return undefined; }
 
-    this.invalidateClosureCacheForMessage(context.did, event.message);
+    let applied = SyncEngineLevel.isApplySuccess(applyStatus.code);
+    if (applied) {
+      this.invalidateClosureCacheForMessage(context.did, event.message);
+    }
+
     if (!await this.ensureClosureComplete(context, event)) {
       return undefined;
+    }
+
+    if (!applied) {
+      applyStatus = await this.applyLivePullEvent(context, event, dataStreamFactory);
+      if (context.isStale()) { return undefined; }
+
+      applied = SyncEngineLevel.isApplySuccess(applyStatus.code);
+      if (!applied) {
+        throw await this.createLivePullApplyError(event, applyStatus);
+      }
+      this.invalidateClosureCacheForMessage(context.did, event.message);
     }
 
     // Squash convergence: processRawMessage triggers the DWN's built-in
@@ -2178,27 +2204,102 @@ export class SyncEngineLevel implements SyncEngine {
     return Message.getCid(event.message);
   }
 
-  private async getLivePullDataStream(
-    { did, dwnUrl, delegateDid, permissionGrantIds }: LivePullContext,
+  private async applyLivePullEvent(
+    context: LivePullContext,
     event: MessageEvent,
-  ): Promise<ReadableStream<Uint8Array> | undefined> {
-    const inlineData = this.extractDataStream(event);
-    if (inlineData || !isRecordsWrite(event) || !(event.message.descriptor as any).dataCid) {
-      return inlineData;
+    dataStreamFactory: LivePullDataStreamFactory,
+  ): Promise<ApplyStatus> {
+    const dataStream = await dataStreamFactory();
+    const reply = await this.agent.dwn.processRawMessage(context.did, event.message, { dataStream });
+    return reply.status;
+  }
+
+  private async createLivePullDataStreamFactory(
+    context: LivePullContext,
+    event: MessageEvent,
+  ): Promise<LivePullDataStreamFactory> {
+    if (!isRecordsWrite(event)) {
+      return async () => undefined;
+    }
+
+    const encodedData = (event.message as any).encodedData as string | undefined;
+    if (encodedData) {
+      delete (event.message as any).encodedData;
+      const bytes = Encoder.base64UrlToBytes(encodedData);
+      return async () => SyncEngineLevel.dataStreamFromBytes(bytes);
+    }
+
+    const eventData = (event as any).data as ReadableStream<Uint8Array> | undefined;
+    if (eventData) {
+      const bytes = await SyncEngineLevel.readStreamBytes(eventData);
+      return async () => SyncEngineLevel.dataStreamFromBytes(bytes);
+    }
+
+    if (!(event.message.descriptor as any).dataCid) {
+      return async () => undefined;
     }
 
     // For large RecordsWrite messages (no inline data), fetch the data from
-    // the remote DWN via MessagesRead before storing locally.
+    // the remote DWN via MessagesRead before each store attempt. ReadableStream
+    // instances are single-use, so a repair-triggered retry needs a fresh fetch.
+    const { did, dwnUrl, delegateDid, permissionGrantIds } = context;
     const messageCid = await Message.getCid(event.message);
-    const fetched = await fetchRemoteMessages({
-      did,
-      dwnUrl,
-      delegateDid,
-      permissionGrantIds,
-      messageCids : [messageCid],
-      agent       : this.agent,
+    return async () => {
+      const fetched = await fetchRemoteMessages({
+        did,
+        dwnUrl,
+        delegateDid,
+        permissionGrantIds,
+        messageCids : [messageCid],
+        agent       : this.agent,
+      });
+      return fetched[0]?.dataStream;
+    };
+  }
+
+  private async createLivePullApplyError(event: MessageEvent, status: ApplyStatus): Promise<Error> {
+    const cid = await Message.getCid(event.message);
+    return new Error(
+      `SyncEngineLevel: live pull apply failed for ${cid}: ${status.code} ${status.detail ?? ''}`.trim()
+    );
+  }
+
+  private static dataStreamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+      start(controller): void {
+        controller.enqueue(bytes);
+        controller.close();
+      }
     });
-    return fetched[0]?.dataStream;
+  }
+
+  private static async readStreamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+    const reader = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalSize = 0;
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) { break; }
+        chunks.push(value);
+        totalSize += value.byteLength;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    const bytes = new Uint8Array(totalSize);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
+  }
+
+  private static isApplySuccess(code: number): boolean {
+    return (code >= 200 && code < 300) || code === 409;
   }
 
   private invalidateClosureCacheForMessage(did: string, message: GenericMessage): void {
@@ -2225,12 +2326,277 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const messageStore = this.agent.dwn.node.storage.messageStore;
-    const closureResult = await evaluateClosure(event.message, messageStore, link.scope, closureCtx);
+    let closureResult = await evaluateClosure(event.message, messageStore, link.scope, closureCtx);
     if (isStale()) { return false; }
     if (closureResult.complete) { return true; }
 
+    if (await this.tryRepairMissingProtocolMetadata(context, closureCtx, closureResult)) {
+      if (isStale()) { return false; }
+
+      closureResult = await evaluateClosure(event.message, messageStore, link.scope, closureCtx);
+      if (isStale()) { return false; }
+      if (closureResult.complete) { return true; }
+    }
+
     await this.recordClosureFailure(context, event, closureResult.failure!.code, closureResult.failure!.detail);
     return false;
+  }
+
+  private async tryRepairMissingProtocolMetadata(
+    context: LivePullContext,
+    closureCtx: ClosureEvaluationContext,
+    closureResult: ClosureResult,
+  ): Promise<boolean> {
+    const failure = closureResult.failure;
+    if (!SyncEngineLevel.isRepairableProtocolMetadataFailure(failure)) {
+      return false;
+    }
+
+    const { did } = context;
+    const repairKey = `${did}|${failure.edge.identifier}`;
+    const activeRepair = this._protocolMetadataRepairs.get(repairKey);
+    if (activeRepair) {
+      return activeRepair;
+    }
+
+    const repair = this.repairMissingProtocolMetadata(context, closureCtx, failure.edge.identifier);
+    this._protocolMetadataRepairs.set(repairKey, repair);
+    repair.finally(() => {
+      if (this._protocolMetadataRepairs.get(repairKey) === repair) {
+        this._protocolMetadataRepairs.delete(repairKey);
+      }
+    }).catch(() => { /* caller handles the repair result */ });
+    return repair;
+  }
+
+  private async repairMissingProtocolMetadata(
+    { did, dwnUrl, delegateDid, isStale }: LivePullContext,
+    closureCtx: ClosureEvaluationContext,
+    protocol: string,
+  ): Promise<boolean> {
+    if (isStale()) {
+      return false;
+    }
+
+    const configs = await this.fetchRemoteProtocolConfigClosure({
+      authorDid : delegateDid ?? did,
+      delegateDid,
+      dwnUrl,
+      protocol,
+      tenantDid : did,
+    });
+    if (isStale() || configs.length === 0) {
+      return false;
+    }
+
+    // Live subscriptions can deliver scoped records before the local replica
+    // has the tenant's protocol metadata. Reuse the DWN ProtocolsQuery path and
+    // only install configs that are signed by the tenant, including composed
+    // protocol dependencies needed to authorize the record.
+    let repaired = false;
+    for (const config of configs) {
+      if (isStale()) {
+        return repaired;
+      }
+      const reply = await this.agent.dwn.processRawMessage(did, config);
+      if (isStale()) {
+        return repaired;
+      }
+      if (!SyncEngineLevel.protocolConfigApplySucceeded(reply.status.code)) {
+        return repaired;
+      }
+
+      invalidateClosureCache(closureCtx, config);
+      repaired = true;
+    }
+
+    return repaired;
+  }
+
+  private async fetchRemoteProtocolConfigClosure({
+    authorDid,
+    delegateDid,
+    dwnUrl,
+    protocol,
+    tenantDid,
+  }: {
+    authorDid: string;
+    delegateDid?: string;
+    dwnUrl: string;
+    protocol: string;
+    tenantDid: string;
+  }): Promise<ProtocolsConfigureMessage[]> {
+    const configsByProtocol = new Map<string, ProtocolsConfigureMessage>();
+    const visiting = new Set<string>();
+
+    const visit = async (protocolUri: string): Promise<boolean> => {
+      if (configsByProtocol.has(protocolUri)) {
+        return true;
+      }
+      if (visiting.has(protocolUri)) {
+        return true;
+      }
+      visiting.add(protocolUri);
+
+      const config = await this.fetchRemoteProtocolConfig({
+        authorDid,
+        delegateDid,
+        dwnUrl,
+        protocol: protocolUri,
+        tenantDid,
+      });
+      if (config === undefined) {
+        visiting.delete(protocolUri);
+        return false;
+      }
+
+      for (const usedProtocol of SyncEngineLevel.protocolsConfigureUses(config)) {
+        if (!await visit(usedProtocol)) {
+          visiting.delete(protocolUri);
+          return false;
+        }
+      }
+
+      configsByProtocol.set(protocolUri, config);
+      visiting.delete(protocolUri);
+      return true;
+    };
+
+    return await visit(protocol) ? [...configsByProtocol.values()] : [];
+  }
+
+  private async fetchRemoteProtocolConfig({
+    authorDid,
+    delegateDid,
+    dwnUrl,
+    protocol,
+    tenantDid,
+  }: {
+    authorDid: string;
+    delegateDid?: string;
+    dwnUrl: string;
+    protocol: string;
+    tenantDid: string;
+  }): Promise<ProtocolsConfigureMessage | undefined> {
+    try {
+      const permissionGrantId = await this.getProtocolsQueryPermissionGrantId({
+        delegateDid,
+        protocol,
+        tenantDid,
+      });
+      const { message } = await this.agent.processDwnRequest({
+        author        : authorDid,
+        messageParams : {
+          filter: { protocol },
+          ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
+        },
+        messageType : DwnInterface.ProtocolsQuery,
+        store       : false,
+        target      : tenantDid,
+      });
+
+      const reply = await this.agent.rpc.sendDwnRequest({
+        dwnUrl,
+        message,
+        targetDid: tenantDid,
+      }) as ProtocolsQueryReply;
+      if (reply.status.code !== 200 || reply.entries === undefined) {
+        return undefined;
+      }
+
+      const candidates: ProtocolsConfigureMessage[] = [];
+      for (const entry of reply.entries) {
+        const config = await this.toAuthenticatedTenantProtocolConfig(tenantDid, entry);
+        if (config?.descriptor.definition.protocol === protocol) {
+          candidates.push(config);
+        }
+      }
+
+      return SyncEngineLevel.newestProtocolConfig(candidates);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async getProtocolsQueryPermissionGrantId({
+    delegateDid,
+    protocol,
+    tenantDid,
+  }: {
+    delegateDid?: string;
+    protocol: string;
+    tenantDid: string;
+  }): Promise<string | undefined> {
+    if (delegateDid === undefined) {
+      return undefined;
+    }
+
+    try {
+      const { grant } = await this._permissionsApi.getPermissionForRequest({
+        connectedDid : tenantDid,
+        delegateDid,
+        protocol,
+        cached       : true,
+        messageType  : DwnInterface.ProtocolsQuery,
+      });
+      return grant.id;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async toAuthenticatedTenantProtocolConfig(
+    tenantDid: string,
+    message: GenericMessage,
+  ): Promise<ProtocolsConfigureMessage | undefined> {
+    if (!SyncEngineLevel.isProtocolsConfigureDefinitionMessage(message)) {
+      return undefined;
+    }
+
+    try {
+      await ProtocolsConfigure.parse(message);
+      if (Message.getAuthor(message) !== tenantDid) {
+        return undefined;
+      }
+      await authenticate(message.authorization, this.agent.did);
+      return message;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private static newestProtocolConfig(
+    configs: ProtocolsConfigureMessage[],
+  ): ProtocolsConfigureMessage | undefined {
+    let newest: ProtocolsConfigureMessage | undefined;
+    for (const config of configs) {
+      if (newest === undefined || SyncEngineLevel.isProtocolConfigNewer(config, newest)) {
+        newest = config;
+      }
+    }
+    return newest;
+  }
+
+  private static isProtocolConfigNewer(
+    candidate: ProtocolsConfigureMessage,
+    current: ProtocolsConfigureMessage,
+  ): boolean {
+    return candidate.descriptor.messageTimestamp > current.descriptor.messageTimestamp;
+  }
+
+  private static protocolConfigApplySucceeded(code: number): boolean {
+    return (code >= 200 && code < 300) || code === 409;
+  }
+
+  private static isRepairableProtocolMetadataFailure(
+    failure: ClosureResult['failure'] | undefined,
+  ): failure is NonNullable<ClosureResult['failure']> {
+    return failure?.edge.identifierType === 'protocol' &&
+      (
+        failure.code === ClosureFailureCode.ProtocolMetadataMissing ||
+        failure.code === ClosureFailureCode.CrossProtocolReferenceMissing ||
+        failure.code === ClosureFailureCode.EncryptionDependencyMissing
+      );
   }
 
   private async recordClosureFailure(
@@ -3263,20 +3629,12 @@ export class SyncEngineLevel implements SyncEngine {
     tenantDid: string,
     dependency: SyncDependencyEntryWithMessage,
   ): Promise<AuthenticatedProtocolConfigDependency | undefined> {
-    if (!SyncEngineLevel.isProtocolsConfigureDefinitionMessage(dependency.message)) {
+    const config = await this.toAuthenticatedTenantProtocolConfig(tenantDid, dependency.message);
+    if (config === undefined) {
       return undefined;
     }
 
-    try {
-      await ProtocolsConfigure.parse(dependency.message);
-      if (Message.getAuthor(dependency.message) !== tenantDid) {
-        return undefined;
-      }
-      await authenticate(dependency.message.authorization, this.agent.did);
-      return { ...dependency, message: dependency.message };
-    } catch {
-      return undefined;
-    }
+    return { ...dependency, message: config };
   }
 
   private static async projectedDependencyCidsMatch({
@@ -3773,43 +4131,6 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private buildLinkKey(did: string, dwnUrl: string, projectionId: string, authorizationEpoch: string): string {
     return buildLinkId(did, dwnUrl, projectionId, authorizationEpoch);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Utility helpers
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Extracts a ReadableStream from a MessageEvent if it contains a
-   * RecordsWrite with data — either as an inline `encodedData` field
-   * (for records <= 30 KB) or as a pre-existing data stream.
-   */
-  private extractDataStream(event: MessageEvent): ReadableStream<Uint8Array> | undefined {
-    if (!isRecordsWrite(event)) {
-      return undefined;
-    }
-
-    // Check for inline base64url-encoded data (small records from EventLog).
-    // Delete the transport-level field so the DWN schema validator does not
-    // reject the message for having unevaluated properties.
-    const encodedData = (event.message as any).encodedData as string | undefined;
-    if (encodedData) {
-      delete (event.message as any).encodedData;
-      const bytes = Encoder.base64UrlToBytes(encodedData);
-      return new ReadableStream<Uint8Array>({
-        start(controller): void {
-          controller.enqueue(bytes);
-          controller.close();
-        }
-      });
-    }
-
-    // Check for a pre-existing data stream (e.g. from a direct message read).
-    if ((event as any).data) {
-      return (event as any).data;
-    }
-
-    return undefined;
   }
 
   // ---------------------------------------------------------------------------
