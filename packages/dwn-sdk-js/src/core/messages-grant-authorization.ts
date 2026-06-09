@@ -99,14 +99,7 @@ export class MessagesGrantAuthorization {
     syncMessage: MessagesSyncMessage,
     scopes: MessagesPermissionScope[]
   ): void {
-    const { projectionScopes, protocol } = syncMessage.descriptor;
-
-    if (projectionScopes === undefined) {
-      MessagesGrantAuthorization.authorizeProtocolSyncScope(scopes, protocol);
-      return;
-    }
-
-    MessagesGrantAuthorization.authorizeProjectionScopes(scopes, projectionScopes);
+    MessagesGrantAuthorization.authorizeProtocolSyncScope(scopes, syncMessage.descriptor.protocol);
   }
 
   private static authorizeProtocolSyncScope(
@@ -124,29 +117,6 @@ export class MessagesGrantAuthorization {
       throw new DwnError(
         DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol,
         `No permission grant scope matches protocol ${protocol}`
-      );
-    }
-  }
-
-  private static authorizeProjectionScopes(
-    scopes: MessagesPermissionScope[],
-    projectionScopes: ProtocolScope[],
-  ): void {
-    for (const projectionScope of projectionScopes) {
-      if (isRecordsPrimaryProjectionExcludedProtocol(projectionScope.protocol)) {
-        throw new DwnError(
-          DwnErrorCode.MessagesGrantAuthorizationProjectionInfrastructureProtocol,
-          `Projected MessagesSync cannot authorize infrastructure protocol ${projectionScope.protocol}`
-        );
-      }
-
-      if (MessagesGrantAuthorization.someScopeMatches(scopes, projectionScope)) {
-        continue;
-      }
-
-      throw new DwnError(
-        DwnErrorCode.MessagesGrantAuthorizationProjectionScopeMismatch,
-        `No permission grant scope matches projection scope ${JSON.stringify(projectionScope)}`
       );
     }
   }

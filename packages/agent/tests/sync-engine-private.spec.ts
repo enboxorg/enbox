@@ -1,10 +1,10 @@
 import sinon from 'sinon';
 
-import type { GenericMessage, MessagesSyncDependencyEntry, ProtocolDefinition, ProtocolsConfigureMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, ProtocolDefinition, ProtocolsConfigureMessage } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName, Message, RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Message, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { computeAuthorizationEpoch } from '../src/types/sync.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -334,7 +334,7 @@ describe('SyncEngineLevel — private methods', () => {
       })).rejects.toThrow('No active Messages.Read permission found for MessagesSync: all protocols');
     });
 
-    it('should return all active grants that participate in a protocol-set projection', async () => {
+    it('should return all active grants that participate in a protocol-set root', async () => {
       const unscoped = grantEntry('grant-c', { interface: 'Messages', method: 'Read' });
       const profile = grantEntry('grant-b', {
         interface : 'Messages',
@@ -372,7 +372,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(result.map(entry => entry.grant.id)).toEqual(['grant-a', 'grant-b', 'grant-c']);
     });
 
-    it('should resolve protocolPath grants to a Records projection scope', async () => {
+    it('should reject protocolPath grants for protocol-root sync', async () => {
       const permissionsApi = {
         fetchGrants: sinon.stub().resolves([
           grantEntry('grant-profile-path', {
@@ -384,26 +384,16 @@ describe('SyncEngineLevel — private methods', () => {
         ]),
       };
 
-      const result = await resolveMessagesSyncScopes({
+      await expect(resolveMessagesSyncScopes({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
         requestedScope : { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
         messageType    : DwnInterface.MessagesSync,
         permissionsApi : permissionsApi as any,
-      });
-
-      expect(result).toHaveLength(1);
-      expect(result[0].scope).toEqual({
-        kind   : 'recordsProjection',
-        scopes : [{
-          protocol     : 'https://example.com/profile',
-          protocolPath : 'profile',
-        }],
-      });
-      expect(result[0].permissionGrants.map(entry => entry.grant.id)).toEqual(['grant-profile-path']);
+      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesSync: https://example.com/profile');
     });
 
-    it('should resolve contextId grants to a Records projection scope', async () => {
+    it('should reject contextId grants for protocol-root sync', async () => {
       const permissionsApi = {
         fetchGrants: sinon.stub().resolves([
           grantEntry('grant-profile-context', {
@@ -415,59 +405,16 @@ describe('SyncEngineLevel — private methods', () => {
         ]),
       };
 
-      const result = await resolveMessagesSyncScopes({
+      await expect(resolveMessagesSyncScopes({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
         requestedScope : { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
         messageType    : DwnInterface.MessagesSync,
         permissionsApi : permissionsApi as any,
-      });
-
-      expect(result).toHaveLength(1);
-      expect(result[0].scope).toEqual({
-        kind   : 'recordsProjection',
-        scopes : [{
-          protocol  : 'https://example.com/profile',
-          contextId : 'bafyroot/bafyprofile',
-        }],
-      });
-      expect(result[0].permissionGrants.map(entry => entry.grant.id)).toEqual(['grant-profile-context']);
+      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesSync: https://example.com/profile');
     });
 
-    it('should reject projected scope unions when any member lacks grant coverage', async () => {
-      const permissionsApi = {
-        fetchGrants: sinon.stub().resolves([
-          grantEntry('grant-profile-path', {
-            interface    : 'Messages',
-            method       : 'Read',
-            protocol     : 'https://example.com/profile',
-            protocolPath : 'profile/avatar',
-          }),
-        ]),
-      };
-
-      await expect(resolveMessagesSyncScopes({
-        did            : 'did:example:alice',
-        delegateDid    : 'did:example:delegate',
-        requestedScope : {
-          kind   : 'recordsProjection',
-          scopes : [
-            {
-              protocol     : 'https://example.com/profile',
-              protocolPath : 'profile/avatar',
-            },
-            {
-              protocol     : 'https://example.com/profile',
-              protocolPath : 'profile/banner',
-            },
-          ],
-        },
-        messageType    : DwnInterface.MessagesSync,
-        permissionsApi : permissionsApi as any,
-      })).rejects.toThrow('No active Messages.Read permission found for MessagesSync: projected Records scope');
-    });
-
-    it('should split broad protocol grants from narrow projected grants', async () => {
+    it('should reject protocol-set sync when a requested protocol only has narrow grant coverage', async () => {
       const permissionsApi = {
         fetchGrants: sinon.stub().resolves([
           grantEntry('grant-social', {
@@ -484,7 +431,7 @@ describe('SyncEngineLevel — private methods', () => {
         ]),
       };
 
-      const result = await resolveMessagesSyncScopes({
+      await expect(resolveMessagesSyncScopes({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
         requestedScope : {
@@ -493,22 +440,7 @@ describe('SyncEngineLevel — private methods', () => {
         },
         messageType    : DwnInterface.MessagesSync,
         permissionsApi : permissionsApi as any,
-      });
-
-      expect(result).toHaveLength(2);
-      expect(result[0].scope).toEqual({
-        kind      : 'protocolSet',
-        protocols : ['https://example.com/social'],
-      });
-      expect(result[0].permissionGrants.map(entry => entry.grant.id)).toEqual(['grant-social']);
-      expect(result[1].scope).toEqual({
-        kind   : 'recordsProjection',
-        scopes : [{
-          protocol     : 'https://example.com/profile',
-          protocolPath : 'profile/avatar',
-        }],
-      });
-      expect(result[1].permissionGrants.map(entry => entry.grant.id)).toEqual(['grant-profile-path']);
+      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesSync: https://example.com/profile');
     });
 
     it('should reject protocol-set sync when any requested protocol lacks coverage', async () => {
@@ -528,7 +460,7 @@ describe('SyncEngineLevel — private methods', () => {
         messageType    : DwnInterface.MessagesSync,
         protocols      : ['https://example.com/profile', 'https://example.com/social'],
         permissionsApi : permissionsApi as any,
-      })).rejects.toThrow('No active Messages.Read permission found');
+      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesSync: https://example.com/social');
     });
   });
 
@@ -629,7 +561,7 @@ describe('SyncEngineLevel — private methods', () => {
       });
     });
 
-    it('should split delegated sync targets by broad and projected grant coverage', async () => {
+    it('should skip one delegated identity with only narrow coverage without stalling other identities', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
@@ -638,19 +570,31 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = {
-        fetchGrants: sinon.stub().resolves([
-          messagesGrantEntry('grant-social', {
-            interface : 'Messages',
-            method    : 'Read',
-            protocol  : 'https://example.com/social',
-          }),
-          messagesGrantEntry('grant-profile-avatar', {
-            interface    : 'Messages',
-            method       : 'Read',
-            protocol     : 'https://example.com/profile',
-            protocolPath : 'profile/avatar',
-          }),
-        ]),
+        fetchGrants: sinon.stub().callsFake(async ({ grantor }: { grantor: string }) => {
+          if (grantor === 'did:example:valid') {
+            return [
+              messagesGrantEntry('grant-valid-social', {
+                interface : 'Messages',
+                method    : 'Read',
+                protocol  : 'https://example.com/social',
+              }, { grantor: 'did:example:valid' }),
+            ];
+          }
+
+          return [
+            messagesGrantEntry('grant-social', {
+              interface : 'Messages',
+              method    : 'Read',
+              protocol  : 'https://example.com/social',
+            }),
+            messagesGrantEntry('grant-profile-avatar', {
+              interface    : 'Messages',
+              method       : 'Read',
+              protocol     : 'https://example.com/profile',
+              protocolPath : 'profile/avatar',
+            }),
+          ];
+        }),
       };
 
       await engine.registerIdentity({
@@ -660,27 +604,18 @@ describe('SyncEngineLevel — private methods', () => {
           delegateDid : 'did:example:delegate',
         },
       });
+      await engine.registerIdentity({
+        did     : 'did:example:valid',
+        options : { protocols: ['https://example.com/social'], delegateDid: 'did:example:delegate' },
+      });
 
       const targets = await (engine as any).getSyncTargets();
-
-      expect(targets).toHaveLength(2);
-      expect(targets.map((target: any) => target.scope)).toEqual([
-        {
-          kind      : 'protocolSet',
-          protocols : ['https://example.com/social'],
-        },
-        {
-          kind   : 'recordsProjection',
-          scopes : [{
-            protocol     : 'https://example.com/profile',
-            protocolPath : 'profile/avatar',
-          }],
-        },
-      ]);
-      expect(targets.map((target: any) => target.permissionGrantIds)).toEqual([
-        ['grant-social'],
-        ['grant-profile-avatar'],
-      ]);
+      expect(targets).toHaveLength(1);
+      expect(targets[0].did).toBe('did:example:valid');
+      expect(targets[0].scope).toEqual({
+        kind      : 'protocolSet',
+        protocols : ['https://example.com/social'],
+      });
     });
 
     it('should handle invalid JSON in identity options gracefully', async () => {
@@ -743,39 +678,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       expect(pullStub.calledOnce).toBe(true);
       expect(pushStub.calledOnce).toBe(true);
-    });
-
-    it('should reconcile Records projection targets through projected roots', async () => {
-      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      const projectedScope = {
-        kind   : 'recordsProjection',
-        scopes : [{
-          protocol     : 'https://example.com/profile',
-          protocolPath : 'profile/avatar',
-        }],
-      };
-
-      sinon.stub(engine as any, 'getSyncTargets').resolves([
-        syncTarget('did:example:1', 'https://dwn.example.com', { scope: projectedScope }),
-      ]);
-      const stateIndexLocalRoot = sinon.stub(engine as any, 'getLocalRoot').resolves('state-index-local');
-      const stateIndexRemoteRoot = sinon.stub(engine as any, 'getRemoteRoot').resolves('state-index-remote');
-      sinon.stub(engine as any, 'getLocalProjectedRoot').resolves('aabbcc');
-      sinon.stub(engine as any, 'getRemoteProjectedRoot').resolves('ddeeff');
-      sinon.stub(engine as any, 'diffProjectedWithRemote').resolves({
-        onlyLocal  : ['cid-local-1'],
-        onlyRemote : [{ messageCid: 'cid-remote-1' }],
-      });
-      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
-
-      await engine.sync();
-
-      expect(stateIndexLocalRoot.called).toBe(false);
-      expect(stateIndexRemoteRoot.called).toBe(false);
-      expect(pullStub.firstCall.args[0].scope).toEqual(projectedScope);
-      expect(pushStub.firstCall.args[0].messageCids).toEqual(['cid-local-1']);
     });
 
     it('should only pull when direction is "pull"', async () => {
@@ -1215,44 +1117,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(link.status).toBe('repairing');
     });
 
-    it('should mark projected links polling without opening live subscriptions', async () => {
-      const engine = createEngine({ db });
-      const projectedScope = {
-        kind   : 'recordsProjection',
-        scopes : [{
-          protocol     : 'https://example.com/profile',
-          protocolPath : 'profile/avatar',
-        }],
-      };
-      const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
-      const link = {
-        tenantDid          : 'did:example:alice',
-        remoteEndpoint     : 'https://dwn.example.com',
-        projectionId       : 'projection-test',
-        authorizationEpoch : 'authorization-test',
-        authorization      : { kind: 'owner' },
-        scope              : projectedScope,
-        status             : 'initializing',
-        pull               : {},
-        connectivity       : 'unknown',
-        needsReconcile     : false,
-      } as any;
-
-      sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(link);
-      sinon.stub(engine as any, 'getReplicationLinkKey').returns(linkKey);
-      const openLivePullStub = sinon.stub(engine as any, 'openLivePullSubscription').rejects(new Error('unexpected live pull'));
-      const openLocalPushStub = sinon.stub(engine as any, 'openLocalPushSubscription').rejects(new Error('unexpected local push'));
-
-      const result = await (engine as any).initializeLinkTarget(syncTarget('did:example:alice', 'https://dwn.example.com', {
-        scope: projectedScope,
-      }));
-
-      expect(result.status).toBe('active');
-      expect(openLivePullStub.called).toBe(false);
-      expect(openLocalPushStub.called).toBe(false);
-      expect((engine as any)._activeLinks.get(linkKey)).toBe(link);
-      expect(link.status).toBe('polling');
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1744,100 +1608,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(root).toBe('remotehash');
     });
 
-    it('getLocalProjectedRoot should request a local projected root when StateIndex is unavailable', async () => {
-      const scopes = [{ protocol: 'https://example.com/profile', protocolPath: 'profile/avatar' }];
-      const processRequest = sinon.stub().resolves({
-        reply: { status: { code: 200 }, root: 'local-projected-root' },
-      });
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { isRemoteMode: true, processRequest },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      const root = await (engine as any).getLocalProjectedRoot(
-        'did:example:alice',
-        'did:example:delegate',
-        scopes,
-        ['grant-1'],
-      );
-
-      expect(root).toBe('local-projected-root');
-      expect(processRequest.firstCall.args[0]).toMatchObject({
-        author        : 'did:example:alice',
-        target        : 'did:example:alice',
-        granteeDid    : 'did:example:delegate',
-        messageParams : {
-          action                : 'root',
-          projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
-          projectionScopes      : scopes,
-          permissionGrantIds    : ['grant-1'],
-        },
-      });
-    });
-
-    it('getLocalProjectedRoot should use RecordsProjection directly when StateIndex is available', async () => {
-      const scopes = [{ protocol: 'https://example.com/profile', contextId: 'bafyroot' }];
-      const messageStore = {};
-      const getRootStub = sinon.stub(RecordsProjection, 'getRootHex').resolves('indexed-projected-root');
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { node: { storage: { messageStore, stateIndex: {} } } },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      const root = await (engine as any).getLocalProjectedRoot(
-        'did:example:alice',
-        undefined,
-        scopes,
-      );
-
-      expect(root).toBe('indexed-projected-root');
-      expect(getRootStub.firstCall.args[0]).toEqual({
-        tenant: 'did:example:alice',
-        messageStore,
-        scopes,
-      });
-    });
-
-    it('getRemoteProjectedRoot should send a projected root request to the remote DWN', async () => {
-      const scopes = [{ protocol: 'https://example.com/profile', protocolPath: 'profile/avatar' }];
-      const syncMessage = { descriptor: { action: 'root' } };
-      const processRequest = sinon.stub().resolves({ message: syncMessage });
-      const sendDwnRequest = sinon.stub().resolves({ status: { code: 200 }, root: 'remote-projected-root' });
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { processRequest },
-        rpc      : { sendDwnRequest },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      const root = await (engine as any).getRemoteProjectedRoot(
-        'did:example:alice',
-        'https://dwn.example.com',
-        'did:example:delegate',
-        scopes,
-        ['grant-1'],
-      );
-
-      expect(root).toBe('remote-projected-root');
-      expect(processRequest.firstCall.args[0]).toMatchObject({
-        store         : false,
-        author        : 'did:example:alice',
-        target        : 'did:example:alice',
-        messageParams : {
-          action                : 'root',
-          projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
-          projectionScopes      : scopes,
-          permissionGrantIds    : ['grant-1'],
-        },
-      });
-      expect(sendDwnRequest.firstCall.args[0]).toEqual({
-        dwnUrl    : 'https://dwn.example.com',
-        targetDid : 'did:example:alice',
-        message   : syncMessage,
-      });
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1910,157 +1680,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       const leaves = await (engine as any).getLocalLeaves('did:example:alice', '01');
       expect(leaves).toEqual([]);
-    });
-
-    it('getLocalProjectedSubtreeHash should request a local projected subtree hash', async () => {
-      const scopes = [{ protocol: 'https://example.com/profile', protocolPath: 'profile/avatar' }];
-      const processRequest = sinon.stub().resolves({
-        reply: { status: { code: 200 }, hash: 'projected-subtree-hash' },
-      });
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { isRemoteMode: true, processRequest },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      const hash = await (engine as any).getLocalProjectedSubtreeHash(
-        'did:example:alice',
-        '01',
-        'did:example:delegate',
-        scopes,
-        ['grant-1'],
-      );
-
-      expect(hash).toBe('projected-subtree-hash');
-      expect(processRequest.firstCall.args[0]).toMatchObject({
-        author        : 'did:example:alice',
-        target        : 'did:example:alice',
-        granteeDid    : 'did:example:delegate',
-        messageParams : {
-          action                : 'subtree',
-          prefix                : '01',
-          projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
-          projectionScopes      : scopes,
-          permissionGrantIds    : ['grant-1'],
-        },
-      });
-    });
-
-    it('getLocalProjectedLeaves should request local projected leaves when StateIndex is unavailable', async () => {
-      const scopes = [{ protocol: 'https://example.com/profile', protocolPath: 'profile/avatar' }];
-      const processRequest = sinon.stub().resolves({
-        reply: { status: { code: 200 }, entries: ['cid-a', 'cid-b'] },
-      });
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { isRemoteMode: true, processRequest },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      const leaves = await (engine as any).getLocalProjectedLeaves(
-        'did:example:alice',
-        '01',
-        'did:example:delegate',
-        scopes,
-        ['grant-1'],
-      );
-
-      expect(leaves).toEqual(['cid-a', 'cid-b']);
-      expect(processRequest.firstCall.args[0]).toMatchObject({
-        messageParams: {
-          action                : 'leaves',
-          prefix                : '01',
-          projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
-          projectionScopes      : scopes,
-          permissionGrantIds    : ['grant-1'],
-        },
-      });
-    });
-
-    it('getLocalProjectedLeaves should use RecordsProjection directly when StateIndex is available', async () => {
-      const scopes = [{ protocol: 'https://example.com/profile', contextId: 'bafyroot' }];
-      const messageStore = {};
-      const getLeavesStub = sinon.stub(RecordsProjection, 'getLeaves').resolves(['cid-projected']);
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { node: { storage: { messageStore, stateIndex: {} } } },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      const leaves = await (engine as any).getLocalProjectedLeaves(
-        'did:example:alice',
-        '01',
-        undefined,
-        scopes,
-      );
-
-      expect(leaves).toEqual(['cid-projected']);
-      expect(getLeavesStub.firstCall.args[0]).toEqual({
-        tenant : 'did:example:alice',
-        messageStore,
-        scopes,
-        prefix : [false, true],
-      });
-    });
-
-    it('collectLocalProjectedSubtreeHashes should prune empty projected subtrees by current depth', async () => {
-      const scopes = [{ protocol: 'https://example.com/profile', protocolPath: 'profile/avatar' }];
-      const engine = createEngine({ db, agent: { agentDid: 'did:example:agent', dwn: { isRemoteMode: true } } as any });
-      const getSubtreeHashStub = sinon.stub(engine as any, 'getLocalProjectedSubtreeHash')
-        .callsFake(async (_did: string, prefix: string): Promise<string> => {
-          if (prefix === '') { return 'root-hash'; }
-          if (prefix === '0') { return 'left-hash'; }
-          return 'default-depth-1';
-        });
-      sinon.stub(engine as any, 'getDefaultHashHex')
-        .callsFake(async (depth: number): Promise<string> => `default-depth-${depth}`);
-
-      const hashes = await (engine as any).collectLocalProjectedSubtreeHashes(
-        'did:example:alice',
-        scopes,
-        1,
-        'did:example:delegate',
-        ['grant-1'],
-      );
-
-      expect(hashes).toEqual({ '0': 'left-hash' });
-      expect(getSubtreeHashStub.getCalls().map(call => call.args[1]).sort()).toEqual(['', '0', '1']);
-    });
-
-    it('collectLocalProjectedSubtreeHashes should close StateIndex projection snapshots', async () => {
-      const scopes = [{ protocol: 'https://example.com/profile', protocolPath: 'profile/avatar' }];
-      const messageStore = {};
-      const nonEmptyHash = new Uint8Array(32);
-      nonEmptyHash[0] = 0x01;
-      const emptyHash = new Uint8Array(32);
-      const snapshot = {
-        close          : sinon.stub().resolves(),
-        getSubtreeHash : sinon.stub().callsFake(async (prefix: boolean[]): Promise<Uint8Array> => {
-          return prefix.length === 1 && prefix[0] === true ? emptyHash : nonEmptyHash;
-        }),
-      };
-      const createSnapshotStub = sinon.stub(RecordsProjection, 'createSnapshot').resolves(snapshot as any);
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { node: { storage: { messageStore, stateIndex: {} } } },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      sinon.stub(engine as any, 'getDefaultHashHex')
-        .callsFake(async (depth: number): Promise<string> => depth === 1 ? '00'.repeat(32) : 'default-root');
-
-      const hashes = await (engine as any).collectLocalProjectedSubtreeHashes(
-        'did:example:alice',
-        scopes,
-        1,
-      );
-
-      expect(hashes).toEqual({ '0': `01${'00'.repeat(31)}` });
-      expect(createSnapshotStub.firstCall.args[0]).toEqual({
-        tenant: 'did:example:alice',
-        messageStore,
-        scopes,
-      });
-      expect(snapshot.close.calledOnce).toBe(true);
     });
 
   });
@@ -2874,1239 +2493,11 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // pullMessages / pushMessages delegate wrappers
+  // Protocol-set reconciliation
   // ---------------------------------------------------------------------------
 
-  describe('projected reconciliation', () => {
-    const projectedScope = {
-      kind   : 'recordsProjection',
-      scopes : [{
-        protocol     : 'https://example.com/profile',
-        protocolPath : 'profile/avatar',
-      }],
-    };
-    const target = {
-      did           : 'did:example:alice',
-      dwnUrl        : 'https://dwn.example.com',
-      delegateDid   : 'did:example:delegate',
-      scope         : projectedScope,
-      authorization : {
-        kind               : 'delegate',
-        delegateDid        : 'did:example:delegate',
-        permissionGrantIds : ['grant-1'],
-      },
-    };
-    const projectedProtocol = projectedScope.scopes[0].protocol;
-
-    const projectedRecordMessage = (
-      protocolPath = 'profile/avatar',
-      protocol = projectedProtocol,
-    ): GenericMessage => ({
-      contextId  : 'record-1',
-      recordId   : 'record-1',
-      descriptor : {
-        interface        : DwnInterfaceName.Records,
-        method           : DwnMethodName.Write,
-        protocol,
-        protocolPath,
-        dateCreated      : '2026-01-01T00:00:00.000000Z',
-        messageTimestamp : '2026-01-01T00:00:00.000000Z',
-      },
-    });
-
-    const protocolDefinition = (
-      protocol = projectedProtocol,
-      uses?: Record<string, string>,
-    ): ProtocolDefinition => ({
-      protocol,
-      published : false,
-      types     : {
-        entry: {
-          dataFormats: ['application/json'],
-        },
-      },
-      structure: {
-        entry: {},
-      },
-      ...(uses === undefined ? {} : { uses }),
-    });
-
-    const createResolvingAgent = (
-      ...authors: Parameters<typeof TestDataGenerator.createDidResolutionResult>[0][]
-    ): { agentDid: string; did: { resolve: sinon.SinonStub } } => {
-      const resolve = sinon.stub();
-      for (const author of authors) {
-        resolve.withArgs(author.did).resolves(TestDataGenerator.createDidResolutionResult(author));
-      }
-      resolve.resolves({ didDocument: undefined, didDocumentMetadata: {}, didResolutionMetadata: { error: 'notFound' } });
-      return {
-        agentDid : 'did:example:agent',
-        did      : { resolve },
-      };
-    };
-
-    const protocolsConfigureMessage = async ({
-      author,
-      protocol = projectedProtocol,
-      uses,
-      messageTimestamp = '2025-12-31T00:00:00.000000Z',
-    }: {
-      author: Parameters<typeof TestDataGenerator.createDidResolutionResult>[0];
-      protocol?: string;
-      uses?: Record<string, string>;
-      messageTimestamp?: string;
-    }): Promise<ProtocolsConfigureMessage> => {
-      const { message } = await TestDataGenerator.generateProtocolsConfigure({
-        author,
-        messageTimestamp,
-        protocolDefinition: protocolDefinition(protocol, uses),
-      });
-      return message;
-    };
-
-    const dependencyEntry = async (
-      message: ProtocolsConfigureMessage | GenericMessage,
-      rootMessageCid: string,
-    ): Promise<MessagesSyncDependencyEntry> => ({
-      dependencyClass : 'protocolsConfigure',
-      messageCid      : await Message.getCid(message),
-      message,
-      rootMessageCid,
-    });
-
-    const initialWriteDependencyEntry = async (
-      message: GenericMessage,
-      rootMessageCid: string,
-    ): Promise<MessagesSyncDependencyEntry> => ({
-      dependencyClass : 'recordsInitialWrite',
-      messageCid      : await Message.getCid(message),
-      message,
-      rootMessageCid,
-    });
-
-    it('reconcileRecordsProjectionTarget should diff and verify convergence for projected roots', async () => {
-      const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
-      sinon.stub(engine as any, 'getLocalProjectedRoot')
-        .onFirstCall().resolves('local-before')
-        .onSecondCall().resolves('converged-root');
-      sinon.stub(engine as any, 'getRemoteProjectedRoot')
-        .onFirstCall().resolves('remote-before')
-        .onSecondCall().resolves('converged-root');
-      const diffStub = sinon.stub(engine as any, 'diffProjectedWithRemote').resolves({
-        onlyLocal  : ['cid-local'],
-        onlyRemote : [{ messageCid: 'cid-remote' }],
-      });
-      const applyStub = sinon.stub(engine as any, 'applyProjectedDiff').resolves(false);
-
-      const result = await (engine as any).reconcileRecordsProjectionTarget(
-        target,
-        projectedScope,
-        { verifyConvergence: true },
-      );
-
-      expect(result).toEqual({ converged: true });
-      expect(diffStub.firstCall.args[0]).toMatchObject({
-        did                : 'did:example:alice',
-        dwnUrl             : 'https://dwn.example.com',
-        delegateDid        : 'did:example:delegate',
-        permissionGrantIds : ['grant-1'],
-      });
-      expect(diffStub.firstCall.args[0].scopes).toEqual(projectedScope.scopes);
-      expect(applyStub.firstCall.args[2]).toEqual({
-        onlyLocal  : ['cid-local'],
-        onlyRemote : [{ messageCid: 'cid-remote' }],
-      });
-    });
-
-    it('reconcileRecordsProjectionTarget should abort after projected root reads', async () => {
-      const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
-      sinon.stub(engine as any, 'getLocalProjectedRoot').resolves('local-root');
-      const remoteRootStub = sinon.stub(engine as any, 'getRemoteProjectedRoot').resolves('remote-root');
-      const diffStub = sinon.stub(engine as any, 'diffProjectedWithRemote').resolves({ onlyLocal: [], onlyRemote: [] });
-
-      const result = await (engine as any).reconcileRecordsProjectionTarget(
-        target,
-        projectedScope,
-        undefined,
-        () => false,
-      );
-
-      expect(result).toEqual({ aborted: true });
-      expect(remoteRootStub.called).toBe(false);
-      expect(diffStub.called).toBe(false);
-    });
-
-    it('applyProjectedDiff should pull remote entries before pushing local projected CIDs', async () => {
-      const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
-      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
-      const diff = {
-        onlyRemote: [
-          { messageCid: 'cid-prefetched', message: { descriptor: { interface: 'Records', method: 'Write' } } },
-          { messageCid: 'cid-fetch' },
-          { messageCid: 'cid-fetch' },
-        ],
-        onlyLocal: ['cid-local', 'cid-local'],
-      };
-
-      const aborted = await (engine as any).applyProjectedDiff(
-        target,
-        projectedScope,
-        diff,
-        ['grant-1'],
-      );
-
-      expect(aborted).toBe(false);
-      expect(pullStub.firstCall.args[0]).toMatchObject({
-        did                : 'did:example:alice',
-        dwnUrl             : 'https://dwn.example.com',
-        delegateDid        : 'did:example:delegate',
-        scope              : projectedScope,
-        permissionGrantIds : ['grant-1'],
-        messageCids        : ['cid-fetch'],
-      });
-      expect(pullStub.firstCall.args[0].prefetched).toEqual([
-        { messageCid: 'cid-prefetched', message: { descriptor: { interface: 'Records', method: 'Write' } } },
-      ]);
-      expect(pushStub.firstCall.args[0].messageCids).toEqual(['cid-local']);
-    });
-
-    it('pullProjectedRemoteDiff should apply verified protocol-config dependency hints before primary entries', async () => {
-      const author = await TestDataGenerator.generatePersona();
-      const tenantTarget = { ...target, did: author.did };
-      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
-      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
-      const socialProtocol = 'https://identity.foundation/protocols/social-graph';
-      const unrelatedProtocol = 'https://example.com/unrelated';
-      const primaryMessage = projectedRecordMessage();
-      const dependencyMessage = await protocolsConfigureMessage({
-        author,
-        protocol : projectedProtocol,
-        uses     : { social: socialProtocol },
-      });
-      const usedDependencyMessage = await protocolsConfigureMessage({ author, protocol: socialProtocol });
-      const unrelatedDependencyMessage = await protocolsConfigureMessage({ author, protocol: unrelatedProtocol });
-      const primaryCid = await Message.getCid(primaryMessage);
-      const dependency = await dependencyEntry(dependencyMessage, primaryCid);
-      const usedDependency = await dependencyEntry(usedDependencyMessage, primaryCid);
-      const unrelatedDependency = await dependencyEntry(unrelatedDependencyMessage, primaryCid);
-
-      const aborted = await (engine as any).pullProjectedRemoteDiff(
-        tenantTarget,
-        projectedScope,
-        {
-          dependencies : [dependency, unrelatedDependency, usedDependency],
-          onlyLocal    : [],
-          onlyRemote   : [{ messageCid: primaryCid, message: primaryMessage }],
-        },
-        ['grant-1'],
-      );
-
-      expect(aborted).toBe(false);
-      expect(pullStub.callCount).toBe(2);
-      expect(pullStub.firstCall.args[0]).toMatchObject({
-        did         : author.did,
-        scope       : { kind: 'protocolSet', protocols: [projectedProtocol, socialProtocol] },
-        messageCids : [],
-        prefetched  : [dependency, usedDependency],
-      });
-      expect(pullStub.secondCall.args[0]).toMatchObject({
-        scope       : projectedScope,
-        messageCids : [],
-      });
-    });
-
-    it('pullProjectedRemoteDiff should apply verified initial-write dependencies before delete primaries', async () => {
-      const author = await TestDataGenerator.generatePersona();
-      const processRawMessage = sinon.stub().resolves({ status: { code: 202 } });
-      const agent = {
-        ...createResolvingAgent(author),
-        dwn: {
-          isRemoteMode : false,
-          node         : { storage: { messageStore: {} } },
-          processRawMessage,
-        },
-      };
-      const engine = createEngine({ db, agent: agent as any });
-      const tenantTarget = { ...target, did: author.did };
-      const protocolConfig = await protocolsConfigureMessage({ author });
-      const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-        author,
-        protocol     : projectedProtocol,
-        protocolPath : 'profile/avatar',
-      });
-      const recordsDelete = await TestDataGenerator.generateRecordsDelete({
-        author   : recordsWrite.author,
-        recordId : recordsWrite.message.recordId,
-      });
-      const deleteCid = await Message.getCid(recordsDelete.message);
-      const fetchInitialStub = sinon.stub(RecordsWrite, 'fetchInitialRecordsWriteMessage').resolves(recordsWrite.message);
-
-      const aborted = await (engine as any).pullProjectedRemoteDiff(
-        tenantTarget,
-        projectedScope,
-        {
-          dependencies: [
-            await initialWriteDependencyEntry(recordsWrite.message, deleteCid),
-            await dependencyEntry(protocolConfig, deleteCid),
-          ],
-          onlyLocal  : [],
-          onlyRemote : [{ messageCid: deleteCid, message: recordsDelete.message }],
-        },
-        ['grant-1'],
-      );
-
-      expect(aborted).toBe(false);
-      expect(fetchInitialStub.calledOnce).toBe(true);
-      expect(processRawMessage.callCount).toBe(3);
-      expect(await Message.getCid(processRawMessage.firstCall.args[1])).toBe(await Message.getCid(protocolConfig));
-      expect(await Message.getCid(processRawMessage.secondCall.args[1])).toBe(await Message.getCid(recordsWrite.message));
-      expect(await Message.getCid(processRawMessage.thirdCall.args[1])).toBe(await Message.getCid(recordsDelete.message));
-    });
-
-    it('pullProjectedRemoteDiff should use verified initial-write dependencies for remote-mode delete classification', async () => {
-      const author = await TestDataGenerator.generatePersona();
-      const processRawMessage = sinon.stub().resolves({ status: { code: 202 } });
-      const agent = {
-        ...createResolvingAgent(author),
-        dwn: {
-          isRemoteMode: true,
-          processRawMessage,
-        },
-      };
-      const engine = createEngine({ db, agent: agent as any });
-      const tenantTarget = { ...target, did: author.did };
-      const protocolConfig = await protocolsConfigureMessage({ author });
-      const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-        author,
-        protocol     : projectedProtocol,
-        protocolPath : 'profile/avatar',
-      });
-      const recordsDelete = await TestDataGenerator.generateRecordsDelete({
-        author   : recordsWrite.author,
-        recordId : recordsWrite.message.recordId,
-      });
-      const deleteCid = await Message.getCid(recordsDelete.message);
-      const fetchInitialStub = sinon.stub(RecordsWrite, 'fetchInitialRecordsWriteMessage');
-
-      const aborted = await (engine as any).pullProjectedRemoteDiff(
-        tenantTarget,
-        projectedScope,
-        {
-          dependencies: [
-            await initialWriteDependencyEntry(recordsWrite.message, deleteCid),
-            await dependencyEntry(protocolConfig, deleteCid),
-          ],
-          onlyLocal  : [],
-          onlyRemote : [{ messageCid: deleteCid, message: recordsDelete.message }],
-        },
-        ['grant-1'],
-      );
-
-      expect(aborted).toBe(false);
-      expect(fetchInitialStub.called).toBe(false);
-      expect(processRawMessage.callCount).toBe(3);
-      expect(await Message.getCid(processRawMessage.firstCall.args[1])).toBe(await Message.getCid(protocolConfig));
-      expect(await Message.getCid(processRawMessage.secondCall.args[1])).toBe(await Message.getCid(recordsWrite.message));
-      expect(await Message.getCid(processRawMessage.thirdCall.args[1])).toBe(await Message.getCid(recordsDelete.message));
-    });
-
-    it('verifyProjectedProtocolConfigDependencies should reject malformed or out-of-scope hints', async () => {
-      const author = await TestDataGenerator.generatePersona();
-      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
-      const primaryMessage = projectedRecordMessage();
-      const outOfScopePrimary = projectedRecordMessage('profile/banner');
-      const dependencyMessage = await protocolsConfigureMessage({ author });
-      const wrongProtocolConfig = await protocolsConfigureMessage({ author, protocol: 'https://example.com/other' });
-      const futureProtocolConfig = await protocolsConfigureMessage({
-        author,
-        messageTimestamp: '2026-01-02T00:00:00.000000Z',
-      });
-      const primaryCid = await Message.getCid(primaryMessage);
-      const outOfScopePrimaryCid = await Message.getCid(outOfScopePrimary);
-      const dependencyCid = await Message.getCid(dependencyMessage);
-      const wrongProtocolConfigCid = await Message.getCid(wrongProtocolConfig);
-      const futureProtocolConfigCid = await Message.getCid(futureProtocolConfig);
-
-      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
-        author.did,
-        projectedScope,
-        [
-          { messageCid: primaryCid, message: primaryMessage },
-          { messageCid: outOfScopePrimaryCid, message: outOfScopePrimary },
-        ],
-        [
-          {
-            dependencyClass : 'protocolsConfigure',
-            messageCid      : dependencyCid,
-            message         : dependencyMessage,
-            rootMessageCid  : 'missing-root',
-          },
-          {
-            dependencyClass : 'protocolsConfigure',
-            messageCid      : 'wrong-cid',
-            message         : dependencyMessage,
-            rootMessageCid  : primaryCid,
-          },
-          {
-            dependencyClass : 'protocolsConfigure',
-            messageCid      : wrongProtocolConfigCid,
-            message         : wrongProtocolConfig,
-            rootMessageCid  : primaryCid,
-          },
-          {
-            dependencyClass : 'protocolsConfigure',
-            messageCid      : dependencyCid,
-            message         : dependencyMessage,
-            rootMessageCid  : outOfScopePrimaryCid,
-          },
-          {
-            dependencyClass : 'protocolsConfigure',
-            messageCid      : futureProtocolConfigCid,
-            message         : futureProtocolConfig,
-            rootMessageCid  : primaryCid,
-          },
-        ],
-      );
-
-      expect(verified).toEqual([]);
-    });
-
-    it('verifyProjectedDependencies should reject malformed or out-of-scope initial-write hints', async () => {
-      const author = await TestDataGenerator.generatePersona();
-      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
-      const inScopeWrite = await TestDataGenerator.generateRecordsWrite({
-        author,
-        protocol     : projectedProtocol,
-        protocolPath : 'profile/avatar',
-      });
-      const inScopeDelete = await TestDataGenerator.generateRecordsDelete({
-        author   : inScopeWrite.author,
-        recordId : inScopeWrite.message.recordId,
-      });
-      const protocolConfig = await protocolsConfigureMessage({ author });
-      const outOfScopeWrite = await TestDataGenerator.generateRecordsWrite({
-        author,
-        protocol     : projectedProtocol,
-        protocolPath : 'profile/banner',
-      });
-      const outOfScopeDelete = await TestDataGenerator.generateRecordsDelete({
-        author   : outOfScopeWrite.author,
-        recordId : outOfScopeWrite.message.recordId,
-      });
-      const otherInScopeWrite = await TestDataGenerator.generateRecordsWrite({
-        author,
-        protocol     : projectedProtocol,
-        protocolPath : 'profile/avatar',
-      });
-      const nonInitialWrite = await TestDataGenerator.generateFromRecordsWrite({
-        author,
-        existingWrite: inScopeWrite.recordsWrite,
-      });
-      const inScopeDeleteCid = await Message.getCid(inScopeDelete.message);
-      const outOfScopeDeleteCid = await Message.getCid(outOfScopeDelete.message);
-      const inScopeWriteCid = await Message.getCid(inScopeWrite.message);
-      const validInitialWriteDependency = await initialWriteDependencyEntry(inScopeWrite.message, inScopeDeleteCid);
-      const outOfScopeInitialWriteDependency = await initialWriteDependencyEntry(outOfScopeWrite.message, outOfScopeDeleteCid);
-      const encodedInitialWriteMessage: GenericMessage & { encodedData: string } = {
-        ...validInitialWriteDependency.message!,
-        encodedData: 'eyJub3QiOiJhbGxvd2VkIn0',
-      };
-      const { authorization: _authorization, ...unauthenticatedInitialWriteMessage } = inScopeWrite.message;
-
-      const verified = await (engine as any).verifyProjectedDependencies(
-        author.did,
-        projectedScope,
-        [
-          { messageCid: inScopeDeleteCid, message: inScopeDelete.message },
-          { messageCid: outOfScopeDeleteCid, message: outOfScopeDelete.message },
-          { messageCid: inScopeWriteCid, message: inScopeWrite.message },
-        ],
-        [
-          { ...validInitialWriteDependency, messageCid: 'wrong-cid' },
-          { ...validInitialWriteDependency, encodedData: 'eyJub3QiOiJhbGxvd2VkIn0' },
-          {
-            ...validInitialWriteDependency,
-            message: encodedInitialWriteMessage,
-          },
-          await initialWriteDependencyEntry(otherInScopeWrite.message, inScopeDeleteCid),
-          await initialWriteDependencyEntry(nonInitialWrite.message, inScopeDeleteCid),
-          await initialWriteDependencyEntry(unauthenticatedInitialWriteMessage, inScopeDeleteCid),
-          await initialWriteDependencyEntry(inScopeWrite.message, inScopeWriteCid),
-          await dependencyEntry(protocolConfig, inScopeDeleteCid),
-          await initialWriteDependencyEntry(outOfScopeWrite.message, inScopeDeleteCid),
-          outOfScopeInitialWriteDependency,
-        ],
-      );
-
-      expect(verified).toEqual([]);
-    });
-
-    it('verifyProjectedProtocolConfigDependencies should ignore non-config and unknown-class hints', async () => {
-      const author = await TestDataGenerator.generatePersona();
-      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
-      const primaryMessage = projectedRecordMessage();
-      const primaryCid = await Message.getCid(primaryMessage);
-      const { message: recordsWrite } = await TestDataGenerator.generateRecordsWrite({
-        author,
-        protocol     : projectedProtocol,
-        protocolPath : 'profile/avatar',
-      });
-      const protocolConfig = await protocolsConfigureMessage({ author });
-      const unknownClassDependency = {
-        ...await dependencyEntry(protocolConfig, primaryCid),
-        dependencyClass: 'recordAncestry',
-      } as unknown as MessagesSyncDependencyEntry;
-
-      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
-        author.did,
-        projectedScope,
-        [{ messageCid: primaryCid, message: primaryMessage }],
-        [
-          await dependencyEntry(recordsWrite, primaryCid),
-          unknownClassDependency,
-        ],
-      );
-
-      expect(verified).toEqual([]);
-    });
-
-    it('verifyProjectedProtocolConfigDependencies should not follow uses from unauthenticated config hints', async () => {
-      const author = await TestDataGenerator.generatePersona();
-      const secretProtocol = 'https://example.com/secret-medical';
-      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
-      const primaryMessage = projectedRecordMessage();
-      const primaryCid = await Message.getCid(primaryMessage);
-      const forgedConfig: GenericMessage = {
-        descriptor: {
-          interface        : DwnInterfaceName.Protocols,
-          method           : DwnMethodName.Configure,
-          messageTimestamp : '2025-12-31T00:00:00.000000Z',
-          definition       : protocolDefinition(projectedProtocol, { secret: secretProtocol }),
-        },
-      };
-      const secretConfig = await protocolsConfigureMessage({ author, protocol: secretProtocol });
-
-      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
-        author.did,
-        projectedScope,
-        [{ messageCid: primaryCid, message: primaryMessage }],
-        [
-          await dependencyEntry(forgedConfig, primaryCid),
-          await dependencyEntry(secretConfig, primaryCid),
-        ],
-      );
-
-      expect(verified).toEqual([]);
-    });
-
-    it('verifyProjectedProtocolConfigDependencies should not follow uses from non-tenant-authored config hints', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const attacker = await TestDataGenerator.generatePersona();
-      const secretProtocol = 'https://example.com/secret-medical';
-      const engine = createEngine({ db, agent: createResolvingAgent(tenant, attacker) as any });
-      const primaryMessage = projectedRecordMessage();
-      const primaryCid = await Message.getCid(primaryMessage);
-      const forgedConfig = await protocolsConfigureMessage({
-        author   : attacker,
-        protocol : projectedProtocol,
-        uses     : { secret: secretProtocol },
-      });
-      const secretConfig = await protocolsConfigureMessage({ author: tenant, protocol: secretProtocol });
-
-      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
-        tenant.did,
-        projectedScope,
-        [{ messageCid: primaryCid, message: primaryMessage }],
-        [
-          await dependencyEntry(forgedConfig, primaryCid),
-          await dependencyEntry(secretConfig, primaryCid),
-        ],
-      );
-
-      expect(verified).toEqual([]);
-    });
-
-    it('verifyProjectedProtocolConfigDependencies should terminate cyclic uses graphs', async () => {
-      const author = await TestDataGenerator.generatePersona();
-      const usedProtocol = 'https://example.com/cyclic-used';
-      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
-      const primaryMessage = projectedRecordMessage();
-      const primaryCid = await Message.getCid(primaryMessage);
-      const rootConfig = await protocolsConfigureMessage({
-        author,
-        protocol : projectedProtocol,
-        uses     : { used: usedProtocol },
-      });
-      const usedConfig = await protocolsConfigureMessage({
-        author,
-        protocol : usedProtocol,
-        uses     : { root: projectedProtocol },
-      });
-      const expectedCids = [
-        await Message.getCid(rootConfig),
-        await Message.getCid(usedConfig),
-      ].sort();
-
-      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
-        author.did,
-        projectedScope,
-        [{ messageCid: primaryCid, message: primaryMessage }],
-        [
-          await dependencyEntry(rootConfig, primaryCid),
-          await dependencyEntry(usedConfig, primaryCid),
-        ],
-      );
-
-      expect(verified.map(entry => entry.messageCid).sort()).toEqual(expectedCids);
-      expect(verified.every(entry => entry.rootMessageCid === primaryCid)).toBe(true);
-    });
-
-    it('verifyProjectedProtocolConfigDependencies should not let a forged newer config govern', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const attacker = await TestDataGenerator.generatePersona();
-      const secretProtocol = 'https://example.com/forged-newer-secret';
-      const engine = createEngine({ db, agent: createResolvingAgent(tenant, attacker) as any });
-      const primaryMessage = projectedRecordMessage();
-      const primaryCid = await Message.getCid(primaryMessage);
-      const tenantConfig = await protocolsConfigureMessage({
-        author           : tenant,
-        messageTimestamp : '2025-01-01T00:00:00.000000Z',
-      });
-      const forgedNewerConfig = await protocolsConfigureMessage({
-        author           : attacker,
-        uses             : { secret: secretProtocol },
-        messageTimestamp : '2025-12-31T00:00:00.000000Z',
-      });
-      const secretConfig = await protocolsConfigureMessage({ author: tenant, protocol: secretProtocol });
-
-      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
-        tenant.did,
-        projectedScope,
-        [{ messageCid: primaryCid, message: primaryMessage }],
-        [
-          await dependencyEntry(tenantConfig, primaryCid),
-          await dependencyEntry(forgedNewerConfig, primaryCid),
-          await dependencyEntry(secretConfig, primaryCid),
-        ],
-      );
-
-      expect(verified).toEqual([await dependencyEntry(tenantConfig, primaryCid)]);
-    });
-
-    it('verifyProjectedProtocolConfigDependencies should isolate closure evaluation per primary root', async () => {
-      const author = await TestDataGenerator.generatePersona();
-      const siblingProtocol = 'https://example.com/closure-sibling';
-      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
-      const multiScope = {
-        kind   : 'recordsProjection',
-        scopes : [
-          projectedScope.scopes[0],
-          { protocol: siblingProtocol, protocolPath: 'profile/avatar' },
-        ],
-      };
-      const primaryA = projectedRecordMessage();
-      const primaryB = projectedRecordMessage('profile/avatar', siblingProtocol);
-      const primaryACid = await Message.getCid(primaryA);
-      const primaryBCid = await Message.getCid(primaryB);
-      const configA = await protocolsConfigureMessage({ author, protocol: projectedProtocol });
-      const configB = await protocolsConfigureMessage({ author, protocol: siblingProtocol });
-
-      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
-        author.did,
-        multiScope,
-        [
-          { messageCid: primaryACid, message: primaryA },
-          { messageCid: primaryBCid, message: primaryB },
-        ],
-        [
-          await dependencyEntry(configA, primaryACid),
-          await dependencyEntry(configB, primaryACid),
-          await dependencyEntry(configB, primaryBCid),
-        ],
-      );
-
-      expect(verified).toEqual([
-        await dependencyEntry(configA, primaryACid),
-        await dependencyEntry(configB, primaryBCid),
-      ]);
-    });
-
-    it('verifyProjectedProtocolConfigDependencies should derive uses from the governing config version only', async () => {
-      const author = await TestDataGenerator.generatePersona();
-      const oldUsedProtocol = 'https://example.com/old-used-protocol';
-      const engine = createEngine({ db, agent: createResolvingAgent(author) as any });
-      const primaryMessage = projectedRecordMessage();
-      const primaryCid = await Message.getCid(primaryMessage);
-      const oldConfig = await protocolsConfigureMessage({
-        author,
-        uses             : { old: oldUsedProtocol },
-        messageTimestamp : '2025-01-01T00:00:00.000000Z',
-      });
-      const governingConfig = await protocolsConfigureMessage({
-        author,
-        messageTimestamp: '2025-12-31T00:00:00.000000Z',
-      });
-      const oldUsedConfig = await protocolsConfigureMessage({ author, protocol: oldUsedProtocol });
-
-      const verified = await (engine as any).verifyProjectedProtocolConfigDependencies(
-        author.did,
-        projectedScope,
-        [{ messageCid: primaryCid, message: primaryMessage }],
-        [
-          await dependencyEntry(oldConfig, primaryCid),
-          await dependencyEntry(governingConfig, primaryCid),
-          await dependencyEntry(oldUsedConfig, primaryCid),
-        ],
-      );
-
-      expect(verified).toEqual([await dependencyEntry(governingConfig, primaryCid)]);
-    });
-
-    it('tryRepairMissingProtocolMetadata should fetch and apply composed protocol configs before retrying closure', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const usedProtocol = 'https://identity.foundation/protocols/social-graph';
-      const profileConfig = await protocolsConfigureMessage({
-        author   : tenant,
-        protocol : projectedProtocol,
-        uses     : { social: usedProtocol },
-      });
-      const socialConfig = await protocolsConfigureMessage({
-        author   : tenant,
-        protocol : usedProtocol,
-      });
-      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
-        message: {
-          descriptor: {
-            filter: request.messageParams.filter,
-          },
-        },
-      }));
-      const sendDwnRequest = sinon.stub().callsFake(async ({ message }: { message: any }) => {
-        const protocol = message.descriptor.filter.protocol;
-        return {
-          status  : { code: 200, detail: 'OK' },
-          entries : protocol === projectedProtocol
-            ? [profileConfig]
-            : protocol === usedProtocol
-              ? [socialConfig]
-              : [],
-        };
-      });
-      const agent = {
-        ...createResolvingAgent(tenant),
-        dwn : { processRawMessage },
-        processDwnRequest,
-        rpc : { sendDwnRequest },
-      };
-      const engine = createEngine({ db, agent: agent as any });
-      const closureCtx = createClosureContext(tenant.did);
-      closureCtx.missingDeps.add(
-        `protocolSet:${projectedProtocol}:protocolsConfigure:protocol:${projectedProtocol}`,
-      );
-
-      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
-        {
-          did        : tenant.did,
-          dwnUrl     : 'https://dwn.example',
-          eventScope : { protocols: [projectedProtocol] },
-          linkKey    : 'link-key',
-          isStale    : (): boolean => false,
-        },
-        closureCtx,
-        {
-          complete       : false,
-          rootMessageCid : 'root-cid',
-          edges          : [],
-          depth          : 0,
-          failure        : {
-            code   : ClosureFailureCode.ProtocolMetadataMissing,
-            detail : `dependency 'protocolsConfigure' (${projectedProtocol}) not found locally`,
-            edge   : {
-              dependencyClass : 1,
-              identifier      : projectedProtocol,
-              identifierType  : 'protocol',
-              label           : 'protocolsConfigure',
-            },
-          },
-        },
-      );
-
-      expect(repaired).toBe(true);
-      expect(processDwnRequest.getCalls().map(call => call.args[0])).toEqual([
-        {
-          author        : tenant.did,
-          messageParams : { filter: { protocol: projectedProtocol } },
-          messageType   : DwnInterface.ProtocolsQuery,
-          store         : false,
-          target        : tenant.did,
-        },
-        {
-          author        : tenant.did,
-          messageParams : { filter: { protocol: usedProtocol } },
-          messageType   : DwnInterface.ProtocolsQuery,
-          store         : false,
-          target        : tenant.did,
-        },
-      ]);
-      expect(sendDwnRequest.getCalls().map(call => call.args[0].dwnUrl)).toEqual([
-        'https://dwn.example',
-        'https://dwn.example',
-      ]);
-      expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
-        socialConfig,
-        profileConfig,
-      ]);
-      expect(closureCtx.missingDeps.has(
-        `protocolSet:${projectedProtocol}:protocolsConfigure:protocol:${projectedProtocol}`,
-      )).toBe(false);
-    });
-
-    for (const repairCase of [
-      {
-        dependencyClass : 5,
-        failureCode     : ClosureFailureCode.EncryptionDependencyMissing,
-        label           : 'keyDeliveryProtocol',
-      },
-      {
-        dependencyClass : 6,
-        failureCode     : ClosureFailureCode.CrossProtocolReferenceMissing,
-        label           : 'crossProtocolConfig',
-      },
-    ]) {
-      it(`tryRepairMissingProtocolMetadata should repair ${repairCase.failureCode} protocol misses`, async () => {
-        const tenant = await TestDataGenerator.generatePersona();
-        const dependencyProtocol = `https://example.com/${repairCase.label}`;
-        const dependencyConfig = await protocolsConfigureMessage({
-          author   : tenant,
-          protocol : dependencyProtocol,
-        });
-        const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-        const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
-          message: {
-            descriptor: {
-              filter: request.messageParams.filter,
-            },
-          },
-        }));
-        const sendDwnRequest = sinon.stub().callsFake(async ({ message }: { message: any }) => ({
-          status  : { code: 200, detail: 'OK' },
-          entries : message.descriptor.filter.protocol === dependencyProtocol ? [dependencyConfig] : [],
-        }));
-        const agent = {
-          ...createResolvingAgent(tenant),
-          dwn : { processRawMessage },
-          processDwnRequest,
-          rpc : { sendDwnRequest },
-        };
-        const engine = createEngine({ db, agent: agent as any });
-        const closureCtx = createClosureContext(tenant.did);
-        const depKey = `protocolSet:${projectedProtocol}:${repairCase.label}:protocol:${dependencyProtocol}`;
-        closureCtx.missingDeps.add(depKey);
-
-        const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
-          {
-            did        : tenant.did,
-            dwnUrl     : 'https://dwn.example',
-            eventScope : { protocols: [projectedProtocol] },
-            linkKey    : 'link-key',
-            isStale    : (): boolean => false,
-          },
-          closureCtx,
-          {
-            complete       : false,
-            rootMessageCid : 'root-cid',
-            edges          : [],
-            depth          : 0,
-            failure        : {
-              code   : repairCase.failureCode,
-              detail : `dependency '${repairCase.label}' (${dependencyProtocol}) not found locally`,
-              edge   : {
-                dependencyClass : repairCase.dependencyClass,
-                identifier      : dependencyProtocol,
-                identifierType  : 'protocol',
-                label           : repairCase.label,
-              },
-            },
-          },
-        );
-
-        expect(repaired).toBe(true);
-        expect(processDwnRequest.firstCall.args[0].messageParams).toEqual({
-          filter: { protocol: dependencyProtocol },
-        });
-        expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
-          dependencyConfig,
-        ]);
-        expect(closureCtx.missingDeps.has(depKey)).toBe(false);
-      });
-    }
-
-    it('tryRepairMissingProtocolMetadata should reject non-tenant-authored protocol configs', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const attacker = await TestDataGenerator.generatePersona();
-      const forgedConfig = await protocolsConfigureMessage({
-        author   : attacker,
-        protocol : projectedProtocol,
-      });
-      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
-        message: {
-          descriptor: {
-            filter: request.messageParams.filter,
-          },
-        },
-      }));
-      const sendDwnRequest = sinon.stub().resolves({
-        status  : { code: 200, detail: 'OK' },
-        entries : [forgedConfig],
-      });
-      const agent = {
-        ...createResolvingAgent(tenant, attacker),
-        dwn : { processRawMessage },
-        processDwnRequest,
-        rpc : { sendDwnRequest },
-      };
-      const engine = createEngine({ db, agent: agent as any });
-
-      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
-        {
-          did        : tenant.did,
-          dwnUrl     : 'https://dwn.example',
-          eventScope : { protocols: [projectedProtocol] },
-          linkKey    : 'link-key',
-          isStale    : (): boolean => false,
-        },
-        createClosureContext(tenant.did),
-        {
-          complete       : false,
-          rootMessageCid : 'root-cid',
-          edges          : [],
-          depth          : 0,
-          failure        : {
-            code   : ClosureFailureCode.ProtocolMetadataMissing,
-            detail : `dependency 'protocolsConfigure' (${projectedProtocol}) not found locally`,
-            edge   : {
-              dependencyClass : 1,
-              identifier      : projectedProtocol,
-              identifierType  : 'protocol',
-              label           : 'protocolsConfigure',
-            },
-          },
-        },
-      );
-
-      expect(repaired).toBe(false);
-      expect(processRawMessage.called).toBe(false);
-      expect(processDwnRequest.callCount).toBe(1);
-      expect(sendDwnRequest.callCount).toBe(1);
-    });
-
-    it('tryRepairMissingProtocolMetadata should attach delegated ProtocolsQuery grants when available', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const delegate = await TestDataGenerator.generatePersona();
-      const profileConfig = await protocolsConfigureMessage({
-        author   : tenant,
-        protocol : projectedProtocol,
-      });
-      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
-        message: {
-          descriptor: {
-            filter            : request.messageParams.filter,
-            permissionGrantId : request.messageParams.permissionGrantId,
-          },
-        },
-      }));
-      const sendDwnRequest = sinon.stub().resolves({
-        status  : { code: 200, detail: 'OK' },
-        entries : [profileConfig],
-      });
-      const getPermissionForRequest = sinon.stub().resolves({ grant: { id: 'protocol-query-grant' } });
-      const agent = {
-        ...createResolvingAgent(tenant, delegate),
-        dwn : { processRawMessage },
-        processDwnRequest,
-        rpc : { sendDwnRequest },
-      };
-      const engine = createEngine({ db, agent: agent as any });
-      (engine as any)._permissionsApi = {
-        clear: sinon.stub().resolves(),
-        getPermissionForRequest,
-      };
-
-      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
-        {
-          delegateDid : delegate.did,
-          did         : tenant.did,
-          dwnUrl      : 'https://dwn.example',
-          eventScope  : { protocols: [projectedProtocol] },
-          linkKey     : 'link-key',
-          isStale     : (): boolean => false,
-        },
-        createClosureContext(tenant.did),
-        {
-          complete       : false,
-          rootMessageCid : 'root-cid',
-          edges          : [],
-          depth          : 0,
-          failure        : {
-            code   : ClosureFailureCode.ProtocolMetadataMissing,
-            detail : `dependency 'protocolsConfigure' (${projectedProtocol}) not found locally`,
-            edge   : {
-              dependencyClass : 1,
-              identifier      : projectedProtocol,
-              identifierType  : 'protocol',
-              label           : 'protocolsConfigure',
-            },
-          },
-        },
-      );
-
-      expect(repaired).toBe(true);
-      expect(getPermissionForRequest.firstCall.args[0]).toEqual({
-        connectedDid : tenant.did,
-        delegateDid  : delegate.did,
-        protocol     : projectedProtocol,
-        cached       : true,
-        messageType  : DwnInterface.ProtocolsQuery,
-      });
-      expect(processDwnRequest.firstCall.args[0].author).toBe(delegate.did);
-      expect(processDwnRequest.firstCall.args[0].messageParams).toEqual({
-        filter            : { protocol: projectedProtocol },
-        permissionGrantId : 'protocol-query-grant',
-      });
-    });
-
-    it('processLivePullEvent should re-apply a record after repairing missing protocol metadata', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const record = projectedRecordMessage('profile/avatar', projectedProtocol);
-      const recordCid = await Message.getCid(record);
-      const profileConfig = await protocolsConfigureMessage({
-        author   : tenant,
-        protocol : projectedProtocol,
-      });
-      let installedConfig: ProtocolsConfigureMessage | undefined;
-      const messageStore = {
-        query: sinon.stub().callsFake(async (_tenant: string, filters: any[]) => {
-          const filter = filters[0];
-          if (
-            filter.interface === DwnInterfaceName.Protocols &&
-            filter.method === DwnMethodName.Configure &&
-            filter.protocol === projectedProtocol &&
-            installedConfig !== undefined
-          ) {
-            return { messages: [installedConfig] };
-          }
-          return { messages: [] };
-        }),
-      };
-      const recordStatuses = [
-        { code: 401, detail: 'ProtocolAuthorizationProtocolNotFound' },
-        { code: 202, detail: 'Accepted' },
-      ];
-      const processRawMessage = sinon.stub().callsFake(async (_did: string, message: GenericMessage) => {
-        if (message.descriptor.interface === DwnInterfaceName.Protocols) {
-          installedConfig = message as ProtocolsConfigureMessage;
-          return { status: { code: 202, detail: 'Accepted' } };
-        }
-        return { status: recordStatuses.shift() };
-      });
-      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
-        message: {
-          descriptor: {
-            filter: request.messageParams.filter,
-          },
-        },
-      }));
-      const sendDwnRequest = sinon.stub().resolves({
-        status  : { code: 200, detail: 'OK' },
-        entries : [profileConfig],
-      });
-      const agent = {
-        ...createResolvingAgent(tenant),
-        dwn: {
-          node: {
-            storage: { messageStore },
-          },
-          processRawMessage,
-        },
-        processDwnRequest,
-        rpc: { sendDwnRequest },
-      };
-      const engine = createEngine({ db, agent: agent as any });
-
-      const cid = await (engine as any).processLivePullEvent(
-        {
-          did        : tenant.did,
-          dwnUrl     : 'https://dwn.example',
-          eventScope : { protocols: [projectedProtocol] },
-          link       : { scope: { kind: 'protocolSet', protocols: [projectedProtocol] } },
-          linkKey    : 'link-key',
-          isStale    : (): boolean => false,
-        },
-        { message: record },
-      );
-
-      expect(cid).toBe(recordCid);
-      expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
-        record,
-        profileConfig,
-        record,
-      ]);
-      expect(recordStatuses).toEqual([]);
-    });
-
-    it('pullProjectedRemoteDiff should apply only verified dependency hints through the pull path', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const attacker = await TestDataGenerator.generatePersona();
-      const processRawMessage = sinon.stub().resolves({ status: { code: 202 } });
-      const agent = {
-        ...createResolvingAgent(tenant, attacker),
-        dwn: { processRawMessage },
-      };
-      const tenantTarget = { ...target, did: tenant.did };
-      const engine = createEngine({ db, agent: agent as any });
-      const primaryMessage = projectedRecordMessage();
-      const primaryCid = await Message.getCid(primaryMessage);
-      const tenantConfig = await protocolsConfigureMessage({ author: tenant });
-      const forgedConfig = await protocolsConfigureMessage({ author: attacker });
-
-      const aborted = await (engine as any).pullProjectedRemoteDiff(
-        tenantTarget,
-        projectedScope,
-        {
-          dependencies: [
-            await dependencyEntry(forgedConfig, primaryCid),
-            await dependencyEntry(tenantConfig, primaryCid),
-          ],
-          onlyLocal  : [],
-          onlyRemote : [{ messageCid: primaryCid, message: primaryMessage }],
-        },
-        ['grant-1'],
-      );
-
-      expect(aborted).toBe(false);
-      expect(processRawMessage.callCount).toBe(2);
-      expect(processRawMessage.firstCall.args[1]).toBe(tenantConfig);
-      expect(processRawMessage.secondCall.args[1]).toBe(primaryMessage);
-      expect(processRawMessage.getCalls().map(call => call.args[1])).not.toContain(forgedConfig);
-    });
-
-    it('pullProjectedRemoteDiff should report aborted pulls without pushing', async () => {
-      const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
-      sinon.stub(engine as any, 'pullMessages').rejects(new SyncPullAbortedError());
-
-      const aborted = await (engine as any).pullProjectedRemoteDiff(
-        target,
-        projectedScope,
-        { onlyLocal: [], onlyRemote: [{ messageCid: 'cid-remote' }] },
-        ['grant-1'],
-      );
-
-      expect(aborted).toBe(true);
-    });
-
-    it('projected pull and push helpers should respect one-way sync direction gates', async () => {
-      const engine = createEngine({ db, agent: { agentDid: 'did:example:agent' } as any });
-      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
-
-      const pullAborted = await (engine as any).pullProjectedRemoteDiff(
-        target,
-        projectedScope,
-        { onlyLocal: [], onlyRemote: [{ messageCid: 'cid-remote' }] },
-        ['grant-1'],
-        { direction: 'push' },
-      );
-      const pushAborted = await (engine as any).pushProjectedLocalDiff(
-        target,
-        ['cid-local'],
-        ['grant-1'],
-        { direction: 'pull' },
-      );
-
-      expect(pullAborted).toBe(false);
-      expect(pushAborted).toBe(false);
-      expect(pullStub.called).toBe(false);
-      expect(pushStub.called).toBe(false);
-    });
-
-    it('diffProjectedWithRemote should request remote diff and expand local projected leaves', async () => {
-      const scopes = projectedScope.scopes;
-      const syncMessage = { descriptor: { action: 'diff' } };
-      const processRequest = sinon.stub().resolves({ message: syncMessage });
-      const sendDwnRequest = sinon.stub().resolves({
-        status     : { code: 200 },
-        onlyRemote : [{ messageCid: 'cid-remote' }],
-        onlyLocal  : ['00', '11'],
-      });
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { processRequest },
-        rpc      : { sendDwnRequest },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      sinon.stub(engine as any, 'collectLocalProjectedSubtreeHashes').resolves({ '0': 'hash-0' });
-      sinon.stub(engine as any, 'getLocalProjectedLeaves')
-        .callsFake(async (_did: string, prefix: string): Promise<string[]> => [`cid-local-${prefix}`]);
-
-      const result = await (engine as any).diffProjectedWithRemote({
-        did                : 'did:example:alice',
-        dwnUrl             : 'https://dwn.example.com',
-        delegateDid        : 'did:example:delegate',
-        scopes,
-        permissionGrantIds : ['grant-1'],
-      });
-
-      expect(result).toEqual({
-        dependencies : [],
-        onlyRemote   : [{ messageCid: 'cid-remote' }],
-        onlyLocal    : ['cid-local-00', 'cid-local-11'],
-      });
-      expect(processRequest.firstCall.args[0]).toMatchObject({
-        store         : false,
-        author        : 'did:example:alice',
-        target        : 'did:example:alice',
-        messageParams : {
-          action                : 'diff',
-          projectionRootVersion : RECORDS_PROJECTION_ROOT_VERSION,
-          projectionScopes      : scopes,
-          hashes                : { '0': 'hash-0' },
-          permissionGrantIds    : ['grant-1'],
-        },
-      });
-      expect(sendDwnRequest.firstCall.args[0]).toEqual({
-        dwnUrl    : 'https://dwn.example.com',
-        targetDid : 'did:example:alice',
-        message   : syncMessage,
-      });
-    });
-
-    it('diffProjectedWithRemote should reject failed remote diff replies', async () => {
-      const processRequest = sinon.stub().resolves({ message: { descriptor: { action: 'diff' } } });
-      const sendDwnRequest = sinon.stub().resolves({
-        status: { code: 401, detail: 'Unauthorized' },
-      });
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { processRequest },
-        rpc      : { sendDwnRequest },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      sinon.stub(engine as any, 'collectLocalProjectedSubtreeHashes').resolves({});
-
-      await expect((engine as any).diffProjectedWithRemote({
-        did    : 'did:example:alice',
-        dwnUrl : 'https://dwn.example.com',
-        scopes : projectedScope.scopes,
-      })).rejects.toThrow('SyncEngineLevel: projected diff failed with 401: Unauthorized');
-    });
-  });
-
   describe('protocol-set reconciliation', () => {
-    it('batches changed protocol diffs before pulling and pushing messages', async () => {
+    it('reconciles protocol-set roots in one dependency-sorted batch', async () => {
       const profileProtocol = 'https://example.com/profile';
       const socialProtocol = 'https://example.com/social';
       const scope = { kind: 'protocolSet', protocols: [profileProtocol, socialProtocol] };
@@ -4148,7 +2539,7 @@ describe('SyncEngineLevel — private methods', () => {
       const pushMessagesStub = sinon.stub(engine as any, 'pushMessages')
         .resolves({ succeeded: [], failed: [], permanentlyFailed: [] });
 
-      await (engine as any).reconcileProjectionTarget({
+      await (engine as any).reconcileSyncTarget({
         did           : 'did:example:alice',
         dwnUrl        : 'https://dwn.example.com',
         scope,
@@ -4158,16 +2549,19 @@ describe('SyncEngineLevel — private methods', () => {
       expect(getLocalRoot.callCount).toBe(2);
       expect(getRemoteRoot.callCount).toBe(2);
       expect(diffWithRemote.callCount).toBe(2);
-      expect(diffWithRemote.secondCall.calledBefore(pullMessagesStub.firstCall)).toBe(true);
-      expect(pullMessagesStub.calledOnce).toBe(true);
-      expect(pushMessagesStub.calledOnce).toBe(true);
+      expect(diffWithRemote.firstCall.args[0].protocol).toBe(profileProtocol);
+      expect(diffWithRemote.secondCall.args[0].protocol).toBe(socialProtocol);
+      expect(pullMessagesStub.callCount).toBe(1);
+      expect(pushMessagesStub.callCount).toBe(1);
 
       const pullArgs = pullMessagesStub.firstCall.args[0];
+      expect(pullArgs.protocol).toBeUndefined();
       expect(pullArgs.scope).toEqual(scope);
       expect(pullArgs.messageCids).toEqual([]);
       expect(pullArgs.prefetched.map((entry: { messageCid: string }) => entry.messageCid))
         .toEqual(['cid-profile', 'cid-social']);
 
+      expect(pushMessagesStub.firstCall.args[0].protocol).toBeUndefined();
       expect(pushMessagesStub.firstCall.args[0].messageCids).toEqual(['local-profile', 'local-social']);
     });
   });
@@ -5337,6 +3731,482 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
 
       expect(link.push).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Live-pull protocol metadata repair
+  // ---------------------------------------------------------------------------
+
+  describe('live-pull protocol metadata repair', () => {
+    const profileProtocol = 'https://example.com/profile';
+
+    const protocolRecordMessage = (
+      protocolPath = 'profile/avatar',
+      protocol = profileProtocol,
+    ): GenericMessage => ({
+      contextId  : 'record-1',
+      recordId   : 'record-1',
+      descriptor : {
+        interface        : DwnInterfaceName.Records,
+        method           : DwnMethodName.Write,
+        protocol,
+        protocolPath,
+        dateCreated      : '2026-01-01T00:00:00.000000Z',
+        messageTimestamp : '2026-01-01T00:00:00.000000Z',
+      },
+    });
+
+    const protocolDefinition = (
+      protocol = profileProtocol,
+      uses?: Record<string, string>,
+    ): ProtocolDefinition => ({
+      protocol,
+      published : false,
+      types     : {
+        entry: {
+          dataFormats: ['application/json'],
+        },
+      },
+      structure: {
+        entry: {},
+      },
+      ...(uses === undefined ? {} : { uses }),
+    });
+
+    const createResolvingAgent = (
+      ...authors: Parameters<typeof TestDataGenerator.createDidResolutionResult>[0][]
+    ): { agentDid: string; did: { resolve: sinon.SinonStub } } => {
+      const resolve = sinon.stub();
+      for (const author of authors) {
+        resolve.withArgs(author.did).resolves(TestDataGenerator.createDidResolutionResult(author));
+      }
+      resolve.resolves({ didDocument: undefined, didDocumentMetadata: {}, didResolutionMetadata: { error: 'notFound' } });
+      return {
+        agentDid : 'did:example:agent',
+        did      : { resolve },
+      };
+    };
+
+    const protocolsConfigureMessage = async ({
+      author,
+      protocol = profileProtocol,
+      uses,
+      messageTimestamp = '2025-12-31T00:00:00.000000Z',
+    }: {
+      author: Parameters<typeof TestDataGenerator.createDidResolutionResult>[0];
+      protocol?: string;
+      uses?: Record<string, string>;
+      messageTimestamp?: string;
+    }): Promise<ProtocolsConfigureMessage> => {
+      const { message } = await TestDataGenerator.generateProtocolsConfigure({
+        author,
+        messageTimestamp,
+        protocolDefinition: protocolDefinition(protocol, uses),
+      });
+      return message;
+    };
+
+    const protocolMetadataFailure = (
+      protocol = profileProtocol,
+      code = ClosureFailureCode.ProtocolMetadataMissing,
+      label = 'protocolsConfigure',
+      dependencyClass: 1 | 5 | 6 = 1,
+    ): any => ({
+      complete       : false,
+      rootMessageCid : 'root-cid',
+      edges          : [],
+      depth          : 0,
+      failure        : {
+        code,
+        detail : `dependency '${label}' (${protocol}) not found locally`,
+        edge   : {
+          dependencyClass,
+          identifier     : protocol,
+          identifierType : 'protocol',
+          label,
+        },
+      },
+    });
+
+    it('fetches and applies composed protocol configs before retrying closure', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const socialProtocol = 'https://identity.foundation/protocols/social-graph';
+      const profileConfig = await protocolsConfigureMessage({
+        author   : tenant,
+        protocol : profileProtocol,
+        uses     : { social: socialProtocol },
+      });
+      const socialConfig = await protocolsConfigureMessage({
+        author   : tenant,
+        protocol : socialProtocol,
+      });
+      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
+        message: {
+          descriptor: {
+            filter: request.messageParams.filter,
+          },
+        },
+      }));
+      const sendDwnRequest = sinon.stub().callsFake(async ({ message }: { message: any }) => {
+        const protocol = message.descriptor.filter.protocol;
+        return {
+          status  : { code: 200, detail: 'OK' },
+          entries : protocol === profileProtocol
+            ? [profileConfig]
+            : protocol === socialProtocol
+              ? [socialConfig]
+              : [],
+        };
+      });
+      const agent = {
+        ...createResolvingAgent(tenant),
+        dwn : { processRawMessage },
+        processDwnRequest,
+        rpc : { sendDwnRequest },
+      };
+      const engine = createEngine({ db, agent: agent as any });
+      const closureCtx = createClosureContext(tenant.did);
+      closureCtx.missingDeps.add(
+        `protocolSet:${profileProtocol}:protocolsConfigure:protocol:${profileProtocol}`,
+      );
+
+      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
+        {
+          did     : tenant.did,
+          dwnUrl  : 'https://dwn.example',
+          linkKey : 'link-key',
+          isStale : (): boolean => false,
+        },
+        closureCtx,
+        protocolMetadataFailure(),
+      );
+
+      expect(repaired).toBe(true);
+      expect(processDwnRequest.getCalls().map(call => call.args[0])).toEqual([
+        {
+          author        : tenant.did,
+          messageParams : { filter: { protocol: profileProtocol } },
+          messageType   : DwnInterface.ProtocolsQuery,
+          store         : false,
+          target        : tenant.did,
+        },
+        {
+          author        : tenant.did,
+          messageParams : { filter: { protocol: socialProtocol } },
+          messageType   : DwnInterface.ProtocolsQuery,
+          store         : false,
+          target        : tenant.did,
+        },
+      ]);
+      expect(sendDwnRequest.getCalls().map(call => call.args[0].dwnUrl)).toEqual([
+        'https://dwn.example',
+        'https://dwn.example',
+      ]);
+      expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
+        socialConfig,
+        profileConfig,
+      ]);
+      expect(closureCtx.missingDeps.has(
+        `protocolSet:${profileProtocol}:protocolsConfigure:protocol:${profileProtocol}`,
+      )).toBe(false);
+    });
+
+    for (const repairCase of [
+      {
+        dependencyClass : 5 as const,
+        failureCode     : ClosureFailureCode.EncryptionDependencyMissing,
+        label           : 'keyDeliveryProtocol',
+      },
+      {
+        dependencyClass : 6 as const,
+        failureCode     : ClosureFailureCode.CrossProtocolReferenceMissing,
+        label           : 'crossProtocolConfig',
+      },
+    ]) {
+      it(`repairs ${repairCase.failureCode} protocol misses`, async () => {
+        const tenant = await TestDataGenerator.generatePersona();
+        const dependencyProtocol = `https://example.com/${repairCase.label}`;
+        const dependencyConfig = await protocolsConfigureMessage({
+          author   : tenant,
+          protocol : dependencyProtocol,
+        });
+        const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+        const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
+          message: {
+            descriptor: {
+              filter: request.messageParams.filter,
+            },
+          },
+        }));
+        const sendDwnRequest = sinon.stub().callsFake(async ({ message }: { message: any }) => ({
+          status  : { code: 200, detail: 'OK' },
+          entries : message.descriptor.filter.protocol === dependencyProtocol ? [dependencyConfig] : [],
+        }));
+        const agent = {
+          ...createResolvingAgent(tenant),
+          dwn : { processRawMessage },
+          processDwnRequest,
+          rpc : { sendDwnRequest },
+        };
+        const engine = createEngine({ db, agent: agent as any });
+        const closureCtx = createClosureContext(tenant.did);
+        const depKey = `protocolSet:${profileProtocol}:${repairCase.label}:protocol:${dependencyProtocol}`;
+        closureCtx.missingDeps.add(depKey);
+
+        const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
+          {
+            did     : tenant.did,
+            dwnUrl  : 'https://dwn.example',
+            linkKey : 'link-key',
+            isStale : (): boolean => false,
+          },
+          closureCtx,
+          protocolMetadataFailure(
+            dependencyProtocol,
+            repairCase.failureCode,
+            repairCase.label,
+            repairCase.dependencyClass,
+          ),
+        );
+
+        expect(repaired).toBe(true);
+        expect(processDwnRequest.firstCall.args[0].messageParams).toEqual({
+          filter: { protocol: dependencyProtocol },
+        });
+        expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
+          dependencyConfig,
+        ]);
+        expect(closureCtx.missingDeps.has(depKey)).toBe(false);
+      });
+    }
+
+    it('rejects non-tenant-authored protocol configs', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const attacker = await TestDataGenerator.generatePersona();
+      const forgedConfig = await protocolsConfigureMessage({
+        author   : attacker,
+        protocol : profileProtocol,
+      });
+      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
+        message: {
+          descriptor: {
+            filter: request.messageParams.filter,
+          },
+        },
+      }));
+      const sendDwnRequest = sinon.stub().resolves({
+        status  : { code: 200, detail: 'OK' },
+        entries : [forgedConfig],
+      });
+      const agent = {
+        ...createResolvingAgent(tenant, attacker),
+        dwn : { processRawMessage },
+        processDwnRequest,
+        rpc : { sendDwnRequest },
+      };
+      const engine = createEngine({ db, agent: agent as any });
+
+      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
+        {
+          did     : tenant.did,
+          dwnUrl  : 'https://dwn.example',
+          linkKey : 'link-key',
+          isStale : (): boolean => false,
+        },
+        createClosureContext(tenant.did),
+        protocolMetadataFailure(),
+      );
+
+      expect(repaired).toBe(false);
+      expect(processRawMessage.called).toBe(false);
+      expect(processDwnRequest.callCount).toBe(1);
+      expect(sendDwnRequest.callCount).toBe(1);
+    });
+
+    it('rejects unsigned protocol config lookalikes', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const unsignedConfig: GenericMessage = {
+        descriptor: {
+          interface        : DwnInterfaceName.Protocols,
+          method           : DwnMethodName.Configure,
+          messageTimestamp : '2025-12-31T00:00:00.000000Z',
+          definition       : protocolDefinition(profileProtocol),
+        },
+      };
+      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
+        message: {
+          descriptor: {
+            filter: request.messageParams.filter,
+          },
+        },
+      }));
+      const sendDwnRequest = sinon.stub().resolves({
+        status  : { code: 200, detail: 'OK' },
+        entries : [unsignedConfig],
+      });
+      const agent = {
+        ...createResolvingAgent(tenant),
+        dwn : { processRawMessage },
+        processDwnRequest,
+        rpc : { sendDwnRequest },
+      };
+      const engine = createEngine({ db, agent: agent as any });
+
+      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
+        {
+          did     : tenant.did,
+          dwnUrl  : 'https://dwn.example',
+          linkKey : 'link-key',
+          isStale : (): boolean => false,
+        },
+        createClosureContext(tenant.did),
+        protocolMetadataFailure(),
+      );
+
+      expect(repaired).toBe(false);
+      expect(processRawMessage.called).toBe(false);
+    });
+
+    it('attaches delegated ProtocolsQuery grants when available', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const delegate = await TestDataGenerator.generatePersona();
+      const profileConfig = await protocolsConfigureMessage({
+        author   : tenant,
+        protocol : profileProtocol,
+      });
+      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
+        message: {
+          descriptor: {
+            filter            : request.messageParams.filter,
+            permissionGrantId : request.messageParams.permissionGrantId,
+          },
+        },
+      }));
+      const sendDwnRequest = sinon.stub().resolves({
+        status  : { code: 200, detail: 'OK' },
+        entries : [profileConfig],
+      });
+      const getPermissionForRequest = sinon.stub().resolves({ grant: { id: 'protocol-query-grant' } });
+      const agent = {
+        ...createResolvingAgent(tenant, delegate),
+        dwn : { processRawMessage },
+        processDwnRequest,
+        rpc : { sendDwnRequest },
+      };
+      const engine = createEngine({ db, agent: agent as any });
+      (engine as any)._permissionsApi = {
+        clear: sinon.stub().resolves(),
+        getPermissionForRequest,
+      };
+
+      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
+        {
+          delegateDid : delegate.did,
+          did         : tenant.did,
+          dwnUrl      : 'https://dwn.example',
+          linkKey     : 'link-key',
+          isStale     : (): boolean => false,
+        },
+        createClosureContext(tenant.did),
+        protocolMetadataFailure(),
+      );
+
+      expect(repaired).toBe(true);
+      expect(getPermissionForRequest.firstCall.args[0]).toEqual({
+        connectedDid : tenant.did,
+        delegateDid  : delegate.did,
+        protocol     : profileProtocol,
+        cached       : true,
+        messageType  : DwnInterface.ProtocolsQuery,
+      });
+      expect(processDwnRequest.firstCall.args[0].author).toBe(delegate.did);
+      expect(processDwnRequest.firstCall.args[0].messageParams).toEqual({
+        filter            : { protocol: profileProtocol },
+        permissionGrantId : 'protocol-query-grant',
+      });
+    });
+
+    it('re-applies a live-pulled record after repairing missing protocol metadata', async () => {
+      const tenant = await TestDataGenerator.generatePersona();
+      const record = protocolRecordMessage('profile/avatar', profileProtocol);
+      const recordCid = await Message.getCid(record);
+      const profileConfig = await protocolsConfigureMessage({
+        author   : tenant,
+        protocol : profileProtocol,
+      });
+      let installedConfig: ProtocolsConfigureMessage | undefined;
+      const messageStore = {
+        query: sinon.stub().callsFake(async (_tenant: string, filters: any[]) => {
+          const filter = filters[0];
+          if (
+            filter.interface === DwnInterfaceName.Protocols &&
+            filter.method === DwnMethodName.Configure &&
+            filter.protocol === profileProtocol &&
+            installedConfig !== undefined
+          ) {
+            return { messages: [installedConfig] };
+          }
+          return { messages: [] };
+        }),
+      };
+      const recordStatuses = [
+        { code: 401, detail: 'ProtocolAuthorizationProtocolNotFound' },
+        { code: 202, detail: 'Accepted' },
+      ];
+      const processRawMessage = sinon.stub().callsFake(async (_did: string, message: GenericMessage) => {
+        if (message.descriptor.interface === DwnInterfaceName.Protocols) {
+          installedConfig = message as ProtocolsConfigureMessage;
+          return { status: { code: 202, detail: 'Accepted' } };
+        }
+        return { status: recordStatuses.shift() };
+      });
+      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
+        message: {
+          descriptor: {
+            filter: request.messageParams.filter,
+          },
+        },
+      }));
+      const sendDwnRequest = sinon.stub().resolves({
+        status  : { code: 200, detail: 'OK' },
+        entries : [profileConfig],
+      });
+      const agent = {
+        ...createResolvingAgent(tenant),
+        dwn: {
+          node: {
+            storage: { messageStore },
+          },
+          processRawMessage,
+        },
+        processDwnRequest,
+        rpc: { sendDwnRequest },
+      };
+      const engine = createEngine({ db, agent: agent as any });
+
+      const cid = await (engine as any).processLivePullEvent(
+        {
+          did     : tenant.did,
+          dwnUrl  : 'https://dwn.example',
+          link    : { scope: { kind: 'protocolSet', protocols: [profileProtocol] } },
+          linkKey : 'link-key',
+          isStale : (): boolean => false,
+        },
+        { message: record },
+      );
+
+      expect(cid).toBe(recordCid);
+      expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
+        record,
+        profileConfig,
+        record,
+      ]);
+      expect(recordStatuses).toEqual([]);
     });
   });
 

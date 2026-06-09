@@ -1,8 +1,6 @@
-import type { NormalizedRecordsProjectionScope, ProgressToken, RecordsProjectionScope } from '@enbox/dwn-sdk-js';
+import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './agent.js';
-
-import { RECORDS_PROJECTION_ROOT_VERSION, RecordsProjection } from '@enbox/dwn-sdk-js';
 
 /** Deterministic bytewise string comparator for hash inputs and canonical IDs. */
 export function lexicographicalCompare(a: string, b: string): number {
@@ -26,7 +24,7 @@ export type SyncIdentityOptions = {
    *
    * Composed protocols are not expanded automatically. If a protocol definition
    * declares `uses`, include every referenced protocol that the local DWN must
-   * install or use while applying that projection.
+   * install or use while applying records for the requested protocol set.
    */
   protocols: 'all' | [string, ...string[]];
 };
@@ -47,11 +45,7 @@ export type SyncMode = 'poll' | 'live';
 // ---------------------------------------------------------------------------
 
 /**
- * Projection-root algorithm used by StateIndex full/protocol sync scopes.
- *
- * Sync compares either the existing full-tenant StateIndex root or existing
- * per-protocol StateIndex roots. Records-primary projection scopes use the
- * DWN SDK's `RECORDS_PROJECTION_ROOT_VERSION` instead.
+ * Root algorithm used by StateIndex full/protocol sync scopes.
  */
 export const SYNC_PROJECTION_ROOT_VERSION = 'state-index-full-protocol-root-v1';
 
@@ -67,30 +61,20 @@ export const SYNC_AUTHORIZATION_EPOCH_VERSION = 'messages-read-grants-v1';
 /** A non-empty, sorted, duplicate-free string list. */
 export type NonEmptyStringArray = [string, ...string[]];
 
-/** A non-empty, sorted, duplicate-free, subsumption-reduced Records projection scope union. */
-export type NonEmptyRecordsProjectionScopes = [NormalizedRecordsProjectionScope, ...NormalizedRecordsProjectionScope[]];
-
 /**
  * Describes the primary CID set a replication link syncs.
  *
- * Full and protocol-set sync use the existing StateIndex roots. Records
- * projections use the `records-primary-scope-root-v1` root over latest Records
- * primary messages selected by protocol, exact protocolPath, or context
- * subtree. For composed protocols, the scope must include the composed protocol
- * and any `uses` targets required for local protocol installation and closure
- * evaluation.
+ * Full and protocol-set sync use the existing StateIndex roots. Narrow
+ * protocolPath/contextId sync is not represented here; a delegate must have
+ * grant coverage for every full protocol root in the protocol set.
  */
 export type SyncScope = {
-  /** Full-tenant projection. Valid only for owner sync or unscoped delegated grants. */
+  /** Full-tenant scope. Valid only for owner sync or unscoped delegated grants. */
   kind: 'full';
 } | {
-  /** Protocol-set projection over one or more protocol roots. */
+  /** Protocol-set scope over one or more protocol roots. */
   kind: 'protocolSet';
   protocols: NonEmptyStringArray;
-} | {
-  /** Records-primary projected root over protocol/path/context scope entries. */
-  kind: 'recordsProjection';
-  scopes: NonEmptyRecordsProjectionScopes;
 };
 
 /**
@@ -130,27 +114,12 @@ export function syncScopeFromProtocols(protocols: SyncIdentityOptions['protocols
     : { kind: 'protocolSet', protocols: normalizeSyncProtocols(protocols) };
 }
 
-/** Converts Records projection scopes into the canonical sync scope shape. */
-export function syncScopeFromRecordsProjectionScopes(
-  scopes: readonly [RecordsProjectionScope, ...RecordsProjectionScope[]],
-): Extract<SyncScope, { kind: 'recordsProjection' }> {
-  return {
-    kind   : 'recordsProjection',
-    scopes : RecordsProjection.normalizeScopes(scopes),
-  };
-}
-
 /** Returns the protocol list covered by a scope, or `undefined` for full scope. */
 export function protocolsForSyncScope(scope: SyncScope): NonEmptyStringArray | undefined {
   if (scope.kind === 'full') {
     return undefined;
   }
-
-  if (scope.kind === 'protocolSet') {
-    return scope.protocols;
-  }
-
-  return normalizeSyncProtocols(scope.scopes.map(scope => scope.protocol));
+  return scope.protocols;
 }
 
 /** Returns the single protocol root covered by a protocol-set scope, if any. */
@@ -180,15 +149,7 @@ export function canonicalizeSyncScope(scope: SyncScope): SyncScope {
   if (scope.kind === 'full') {
     return { kind: 'full' };
   }
-
-  if (scope.kind === 'protocolSet') {
-    return { kind: 'protocolSet', protocols: normalizeSyncProtocols(scope.protocols) };
-  }
-
-  return {
-    kind   : 'recordsProjection',
-    scopes : RecordsProjection.normalizeScopes(scope.scopes),
-  };
+  return { kind: 'protocolSet', protocols: normalizeSyncProtocols(scope.protocols) };
 }
 
 /**
@@ -200,21 +161,18 @@ export function canonicalizeSyncScope(scope: SyncScope): SyncScope {
  */
 export async function computeProjectionId(tenantDid: string, scope: SyncScope): Promise<string> {
   const canonicalScope = canonicalizeSyncScope(scope);
-  const version = canonicalScope.kind === 'recordsProjection'
-    ? RECORDS_PROJECTION_ROOT_VERSION
-    : SYNC_PROJECTION_ROOT_VERSION;
 
   return hashCanonicalObject({
-    scope: canonicalScope,
+    scope   : canonicalScope,
     tenantDid,
-    version,
+    version : SYNC_PROJECTION_ROOT_VERSION,
   });
 }
 
 /**
  * Computes the authorization epoch for a link.
  *
- * Owner epochs are stable for the owner projection. Delegate epochs are derived
+ * Owner epochs are stable for owner sync. Delegate epochs are derived
  * from the delegate DID plus the active grant IDs and expiry metadata. A changed
  * grant set creates a new link key even when the projection ID is unchanged.
  */

@@ -12,7 +12,6 @@ export {
   normalizeSyncProtocols,
   protocolsForSyncScope,
   singleProtocolForSyncScope,
-  syncScopeFromRecordsProjectionScopes,
   syncScopeFromProtocols,
 } from './types/sync.js';
 export { ReplicationLedger } from './sync-replication-ledger.js';
