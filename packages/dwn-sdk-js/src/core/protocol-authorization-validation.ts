@@ -74,8 +74,8 @@ export async function verifyProtocolPathAndContextId(
     }
 
     throw new DwnError(
-      DwnErrorCode.ProtocolAuthorizationIncorrectProtocolPath,
-      `Could not find matching parent record to verify declared protocol path '${declaredProtocolPath}'.`
+      DwnErrorCode.ProtocolAuthorizationParentRecordNotFound,
+      `Could not find parent record '${parentId}' to verify declared protocol path '${declaredProtocolPath}'.`
     );
   }
 

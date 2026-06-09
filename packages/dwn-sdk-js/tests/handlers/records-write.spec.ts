@@ -3080,7 +3080,7 @@ export function testRecordsWriteHandler(): void {
 
           reply = await dwn.processMessage(pfi.did, fulfillmentMessageData.message, { dataStream: fulfillmentMessageData.dataStream });
           expect(reply.status.code).toBe(400);
-          expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationIncorrectProtocolPath);
+          expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
         });
 
         it('should 400 if expected CID of `encryption` mismatches the `encryptionCid` in `authorization`', async () => {
@@ -3654,7 +3654,7 @@ export function testRecordsWriteHandler(): void {
           const bar1 = await TestDataGenerator.generateRecordsWrite(barOptions);
           const bar1WriteResponse = await dwn.processMessage(alice.did, bar1.message, { dataStream: bar1.dataStream });
           expect(bar1WriteResponse.status.code).toBe(400);
-          expect(bar1WriteResponse.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationIncorrectProtocolPath);
+          expect(bar1WriteResponse.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
         });
 
         it('should fail if a write references a mismatching parent that compared to the parent in the `contextId` ', async () => {
