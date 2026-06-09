@@ -176,9 +176,11 @@ export type TypedCreateRequest<
    *
    * When `true`, the write carries the `$squash` directive so the DWN
    * purges older siblings per the protocol's `$squash` configuration
-   * (e.g. compacting a CRDT delta/snapshot history). No-op on paths
-   * without `$squash`. The low-level `records.write` already supports
-   * this; the typed surface forwards it.
+   * (e.g. compacting a CRDT delta/snapshot history). The protocol path
+   * MUST declare `$squash: true` — otherwise the write is **rejected**
+   * with `ProtocolAuthorizationSquashNotEnabled` (not silently ignored).
+   * The low-level `records.write` already supports this; the typed
+   * surface forwards it.
    */
   squash?: true;
 
