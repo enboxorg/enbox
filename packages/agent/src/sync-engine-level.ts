@@ -12,6 +12,7 @@ import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-j
 import type { DwnMessageParams } from './types/dwn.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
+import type { ReconcileOutcome } from './sync-link-reconciler.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushFailure, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
@@ -125,6 +126,14 @@ type SyncReconcileResult = {
   hasActionableDiffs?: boolean;
   ignoredLocalCids?: string[];
   pushFailures?: PushFailure[];
+};
+
+type SingleProtocolReconcileAccumulator = {
+  admittedCids: string[];
+  converged: boolean;
+  hasActionableDiffs: boolean;
+  ignoredLocalCids: string[];
+  pushFailures: PushFailure[];
 };
 
 type SyncDiffResult = {
@@ -2736,11 +2745,7 @@ export class SyncEngineLevel implements SyncEngine {
       return this.reconcileProtocolSetSyncTarget(target, protocols, options, shouldContinue);
     }
 
-    let converged = true;
-    const admittedCids: string[] = [];
-    const ignoredLocalCids: string[] = [];
-    const pushFailures: PushFailure[] = [];
-    let hasActionableDiffs = false;
+    const accumulator = SyncEngineLevel.createSingleProtocolReconcileAccumulator();
     const permissionGrantIds = this.getAuthorizationGrantIds(target.authorization);
     const reconciler = this.createLinkReconciler(shouldContinue);
 
@@ -2755,27 +2760,53 @@ export class SyncEngineLevel implements SyncEngine {
       if (outcome.aborted) {
         return { aborted: true };
       }
-      if (options?.verifyConvergence === true && outcome.converged !== true) {
-        converged = false;
-      }
-      if (outcome.admittedCids !== undefined) {
-        admittedCids.push(...outcome.admittedCids);
-      }
-      if (outcome.ignoredLocalCids !== undefined) {
-        ignoredLocalCids.push(...outcome.ignoredLocalCids);
-      }
-      if (outcome.pushResult !== undefined && outcome.pushResult.failed.length > 0) {
-        pushFailures.push(...outcome.pushResult.failed);
-        converged = false;
-      }
-      if (outcome.hasActionableDiffs === true) {
-        hasActionableDiffs = true;
-      }
+      SyncEngineLevel.recordSingleProtocolReconcileOutcome(accumulator, outcome, options);
     }
 
+    return SyncEngineLevel.singleProtocolReconcileResultFromAccumulator(accumulator, options);
+  }
+
+  private static createSingleProtocolReconcileAccumulator(): SingleProtocolReconcileAccumulator {
+    return {
+      admittedCids       : [],
+      converged          : true,
+      hasActionableDiffs : false,
+      ignoredLocalCids   : [],
+      pushFailures       : [],
+    };
+  }
+
+  private static recordSingleProtocolReconcileOutcome(
+    accumulator: SingleProtocolReconcileAccumulator,
+    outcome: ReconcileOutcome,
+    options?: SyncReconcileOptions,
+  ): void {
+    const pushFailures = outcome.pushResult?.failed ?? [];
+
+    accumulator.admittedCids.push(...(outcome.admittedCids ?? []));
+    accumulator.ignoredLocalCids.push(...(outcome.ignoredLocalCids ?? []));
+    accumulator.pushFailures.push(...pushFailures);
+    accumulator.hasActionableDiffs ||= outcome.hasActionableDiffs === true;
+
+    if ((options?.verifyConvergence === true && outcome.converged !== true) || pushFailures.length > 0) {
+      accumulator.converged = false;
+    }
+  }
+
+  private static singleProtocolReconcileResultFromAccumulator(
+    accumulator: SingleProtocolReconcileAccumulator,
+    options?: SyncReconcileOptions,
+  ): SyncReconcileResult {
+    const result = {
+      admittedCids       : accumulator.admittedCids,
+      hasActionableDiffs : accumulator.hasActionableDiffs,
+      ignoredLocalCids   : accumulator.ignoredLocalCids,
+      pushFailures       : accumulator.pushFailures,
+    };
+
     return options?.verifyConvergence === true
-      ? { admittedCids, converged, hasActionableDiffs, ignoredLocalCids, pushFailures }
-      : { admittedCids, hasActionableDiffs, ignoredLocalCids, pushFailures };
+      ? { ...result, converged: accumulator.converged }
+      : result;
   }
 
   private async reconcileProtocolSetSyncTarget(
