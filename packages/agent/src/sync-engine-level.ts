@@ -676,6 +676,15 @@ export class SyncEngineLevel implements SyncEngine {
         for (const target of targets) {
           try {
             const result = await this.reconcileSyncTarget(target, { direction });
+            if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
+              this.emitEvent({
+                type           : 'reconcile:applied',
+                tenantDid      : target.did,
+                remoteEndpoint : target.dwnUrl,
+                ...syncEventScope(target.scope),
+                messageCids    : result.admittedCids,
+              });
+            }
             if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
               const retryableFailures = await this.recordTerminalSyncPushFailures(target, result.pushFailures);
               if (retryableFailures > 0) {

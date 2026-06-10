@@ -839,6 +839,33 @@ describe('SyncEngineLevel — private methods', () => {
       expect(failedMessages[0].errorCode).toBe('Invalid');
     });
 
+    it('should emit reconcile:applied for CIDs admitted during one-shot sync', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const profileProtocol = 'https://example.com/profile';
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        syncTarget('did:example:1', 'https://dwn.example.com', {
+          scope: { kind: 'protocolSet', protocols: [profileProtocol] },
+        }),
+      ]);
+      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({
+        admittedCids : ['cid-protocol', 'cid-profile'],
+        pushFailures : [],
+      });
+
+      await engine.sync();
+
+      const appliedEvent = events.find(e => e.type === 'reconcile:applied');
+      expect(appliedEvent).toBeDefined();
+      expect(appliedEvent.tenantDid).toBe('did:example:1');
+      expect(appliedEvent.remoteEndpoint).toBe('https://dwn.example.com');
+      expect(appliedEvent.protocol).toBe(profileProtocol);
+      expect(appliedEvent.messageCids).toEqual(['cid-protocol', 'cid-profile']);
+    });
+
     it('should reconcile different dwnUrl groups concurrently', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });
