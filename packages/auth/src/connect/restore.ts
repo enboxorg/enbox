@@ -221,25 +221,32 @@ export async function restoreSession(
     identity, storedDelegateDid ?? undefined,
   );
 
-  // Ensure the sync registration is protocol-scoped for delegate sessions.
+  // Ensure the sync registration is scoped explicitly. Delegate sessions derive
+  // scope from grants; local sessions are updated only when the caller provides
+  // an explicit identity sync scope.
   // Previous versions registered delegates with protocols: [] (global sync),
   // which causes the sync engine to attempt syncing the permissions protocol
   // and fail with "No permissions found for MessagesSync".
-  // Derive the correct protocol list from stored grants and update.
   // Always repair regardless of sync state — a stale registration persists
   // on disk and would take effect if sync is later enabled.
   let syncRepairFailed = false;
-  if (delegateDid) {
-    try {
+  try {
+    if (delegateDid) {
       await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
-    } catch {
-      // Grant query or registration repair failed — don't block restore,
-      // but don't let a stale registration remain usable.
-      syncRepairFailed = true;
-      // Best-effort: remove any existing registration so a later manual
-      // startSync() cannot use stale scope for this connected DID.
-      try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* already gone or store error */ }
+    } else {
+      await registerSyncScopeForIdentity({
+        userAgent,
+        connectedDid,
+        identitySyncProtocols: ctx.defaultIdentitySyncProtocols,
+      });
     }
+  } catch {
+    // Grant query or registration repair failed — don't block restore,
+    // but don't let a stale registration remain usable.
+    syncRepairFailed = true;
+    // Best-effort: remove any existing registration so a later manual
+    // startSync() cannot use stale scope for this connected DID.
+    try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* already gone or store error */ }
   }
 
   // Restore delegate decryption/context keys BEFORE starting sync so that
@@ -581,4 +588,3 @@ export async function retryOrphanedRevocations(
  * permissions protocol itself (permission records are already included
  * in each protocol's sync stream via `constructAdditionalMessageFilter`).
  */
-

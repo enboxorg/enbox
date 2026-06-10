@@ -26,6 +26,15 @@ export type { EnboxUserAgent } from '@enbox/agent';
  */
 export type SyncOption = 'off' | `${number}${'s' | 'm' | 'h'}`;
 
+/**
+ * Protocol scope used when auth registers a local identity for sync.
+ *
+ * Auth never chooses `'all'` implicitly. Applications that truly want a
+ * full-DWN replica must pass `'all'` explicitly; product-scoped apps should
+ * pass the protocol URI list they own.
+ */
+export type IdentitySyncProtocols = 'all' | [string, ...string[]];
+
 // ─── Auth State Machine ─────────────────────────────────────────
 
 /**
@@ -371,6 +380,14 @@ export interface AuthManagerOptions {
    */
   sync?: SyncOption;
 
+  /**
+   * Protocol scope to register for local identity sync.
+   *
+   * Omit this to leave local identities unregistered by auth. Use `'all'`
+   * only for applications that explicitly mirror the entire identity DWN.
+   */
+  identitySyncProtocols?: IdentitySyncProtocols;
+
   /** Default DWN endpoints for new identities. */
   dwnEndpoints?: string[];
 
@@ -408,6 +425,9 @@ export interface VaultConnectOptions {
 
   /** Override manager default sync interval. */
   sync?: SyncOption;
+
+  /** Override manager default local identity sync scope. */
+  identitySyncProtocols?: IdentitySyncProtocols;
 
   /** Override manager default DWN endpoints. */
   dwnEndpoints?: string[];
@@ -572,6 +592,9 @@ export interface ImportFromPortableOptions {
 
   /** Override manager default sync interval. */
   sync?: SyncOption;
+
+  /** Override manager default local identity sync scope. */
+  identitySyncProtocols?: IdentitySyncProtocols;
 }
 
 /** Options for {@link AuthManager.restoreSession}. */

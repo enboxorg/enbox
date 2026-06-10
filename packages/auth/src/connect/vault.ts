@@ -44,6 +44,7 @@ export async function vaultConnect(
   const password = await resolvePassword(ctx, options.password, isFirstLaunch);
 
   const sync = options.sync ?? ctx.defaultSync;
+  const identitySyncProtocols = options.identitySyncProtocols ?? ctx.defaultIdentitySyncProtocols;
   const dwnEndpoints = options.dwnEndpoints ?? ctx.defaultDwnEndpoints ?? DEFAULT_DWN_ENDPOINTS;
   const shouldCreateIdentity = options.createIdentity === true;
 
@@ -92,7 +93,7 @@ export async function vaultConnect(
   // pull them from the remote DWN before deciding whether to create a new identity.
   if (!identity && options.recoveryPhrase && sync !== 'off') {
     try {
-      identities = await recoverIdentitiesFromRemote({ userAgent, dwnEndpoints, registration: ctx.registration, storage });
+      identities = await recoverIdentitiesFromRemote({ userAgent, dwnEndpoints, identitySyncProtocols, registration: ctx.registration, storage });
       identity = identities[0];
     } catch (err) {
       console.warn('[@enbox/auth] Seed phrase recovery failed:', err);
@@ -130,11 +131,13 @@ export async function vaultConnect(
     );
   }
   if (isNewIdentity && sync !== 'off') {
-    await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
+    await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid, identitySyncProtocols });
   } else if (!isNewIdentity && delegateDid) {
     // Persisted delegate identities need their sync scope refreshed from
     // current grants so revoked protocols do not keep syncing after restore.
     await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
+  } else if (!isNewIdentity && sync !== 'off') {
+    await registerSyncScopeForIdentity({ userAgent, connectedDid, identitySyncProtocols });
   }
 
   // Start sync.

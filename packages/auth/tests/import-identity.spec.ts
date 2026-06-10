@@ -48,7 +48,7 @@ describe('importFromPortable', () => {
     expect(session.delegateDid).toBe('did:dht:delegate');
   });
 
-  test('registers and starts sync when enabled', async () => {
+  test('registers explicit local identity sync scope and starts sync when enabled', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const syncRegCalls: any[] = [];
@@ -61,14 +61,41 @@ describe('importFromPortable', () => {
     });
 
     await importFromPortable(
-      { userAgent: agent, emitter, storage, defaultSync: '30s' },
+      {
+        userAgent                    : agent,
+        emitter,
+        storage,
+        defaultSync                  : '30s',
+        defaultIdentitySyncProtocols : ['https://proto.example/profile'],
+      },
       { portableIdentity: {} as any },
     );
 
     expect(syncRegCalls).toHaveLength(1);
-    expect(syncRegCalls[0].options.protocols).toBe('all');
+    expect(syncRegCalls[0].options.protocols).toEqual(['https://proto.example/profile']);
     expect(syncStartCalls).toHaveLength(1);
     expect(syncStartCalls[0].mode).toBe('poll');
+  });
+
+  test('leaves local sync registration to the application when no identity scope is provided', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const unregisterCalls: string[] = [];
+    const syncStartCalls: any[] = [];
+
+    const agent = createMockAgent({
+      identityImport         : async () => createMockIdentity(),
+      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+      syncStartSync          : async (params) => { syncStartCalls.push(params); },
+    });
+
+    await importFromPortable(
+      { userAgent: agent, emitter, storage, defaultSync: '30s' },
+      { portableIdentity: {} as any },
+    );
+
+    expect(unregisterCalls).toHaveLength(0);
+    expect(syncStartCalls).toHaveLength(1);
   });
 
   test('skips sync when disabled', async () => {

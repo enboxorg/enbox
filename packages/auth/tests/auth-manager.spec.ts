@@ -36,6 +36,7 @@ function createTestManager(
     password?: string;
     passwordProvider?: PasswordProvider;
     sync?: any;
+    identitySyncProtocols?: 'all' | [string, ...string[]];
     dwnEndpoints?: string[];
     initialState?: string;
   } = {},
@@ -55,6 +56,7 @@ function createTestManager(
   manager._defaultPassword = overrides.password;
   manager._passwordProvider = overrides.passwordProvider;
   manager._defaultSync = overrides.sync;
+  manager._defaultIdentitySyncProtocols = overrides.identitySyncProtocols;
   manager._defaultDwnEndpoints = overrides.dwnEndpoints;
 
   return manager as AuthManager;
@@ -1387,7 +1389,7 @@ describe('AuthManager', () => {
   });
 
   describe('switchIdentity() — sync registration', () => {
-    test('calls sync.registerIdentity for the target identity', async () => {
+    test('calls sync.registerIdentity with explicit local identity scope for the target identity', async () => {
       const registerCalls: any[] = [];
       const identity = createMockIdentity();
       const agent = createMockAgent({
@@ -1395,13 +1397,34 @@ describe('AuthManager', () => {
         syncRegisterIdentity : async (params) => { registerCalls.push(params); },
         syncStartSync        : async () => {},
       });
-      const manager = createTestManager(agent, { sync: '10s' });
+      const manager = createTestManager(agent, {
+        sync                  : '10s',
+        identitySyncProtocols : ['https://proto.example/profile'],
+      });
 
       await manager.switchIdentity('did:dht:testuser123');
 
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].did).toBe('did:dht:testuser123');
-      expect(registerCalls[0].options.protocols).toBe('all');
+      expect(registerCalls[0].options.protocols).toEqual(['https://proto.example/profile']);
+    });
+
+    test('leaves local identity sync registration to the application when no explicit scope is configured', async () => {
+      const registerCalls: any[] = [];
+      const unregisterCalls: string[] = [];
+      const identity = createMockIdentity();
+      const agent = createMockAgent({
+        identityGet            : async () => identity,
+        syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
+        syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
+        syncStartSync          : async () => {},
+      });
+      const manager = createTestManager(agent, { sync: '10s' });
+
+      await manager.switchIdentity('did:dht:testuser123');
+
+      expect(registerCalls).toHaveLength(0);
+      expect(unregisterCalls).toHaveLength(0);
     });
 
     test('unregisters sync for delegate with zero grants', async () => {
@@ -1417,7 +1440,10 @@ describe('AuthManager', () => {
         syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
         syncStartSync          : async () => {},
       });
-      const manager = createTestManager(agent, { sync: '10s' });
+      const manager = createTestManager(agent, {
+        sync                  : '10s',
+        identitySyncProtocols : ['https://proto.example/profile'],
+      });
 
       await manager.switchIdentity('did:delegate');
 
@@ -1474,7 +1500,10 @@ describe('AuthManager', () => {
           return { reply: { status: { code: 202, detail: 'Accepted' } } };
         },
       });
-      const manager = createTestManager(agent, { sync: '10s' });
+      const manager = createTestManager(agent, {
+        sync                  : '10s',
+        identitySyncProtocols : ['https://proto.example/profile'],
+      });
 
       await manager.switchIdentity('did:delegate');
 
@@ -1506,7 +1535,10 @@ describe('AuthManager', () => {
         syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
         syncStartSync             : async () => {},
       });
-      const manager = createTestManager(agent, { sync: '10s' });
+      const manager = createTestManager(agent, {
+        sync                  : '10s',
+        identitySyncProtocols : ['https://proto.example/profile'],
+      });
 
       // Should not throw — falls back to updateIdentityOptions.
       const session = await manager.switchIdentity('did:dht:testuser123');
@@ -1524,7 +1556,10 @@ describe('AuthManager', () => {
         syncRegisterIdentity : async (params) => { registerCalls.push(params); },
         syncStartSync        : async (params) => { syncStartCalls.push(params); },
       });
-      const manager = createTestManager(agent, { sync: 'off' });
+      const manager = createTestManager(agent, {
+        sync                  : 'off',
+        identitySyncProtocols : ['https://proto.example/profile'],
+      });
 
       await manager.switchIdentity('did:dht:testuser123');
 

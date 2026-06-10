@@ -11,10 +11,9 @@
  */
 
 import type { BearerIdentity, EnboxUserAgent } from '@enbox/agent';
+import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter } from '../types.js';
 
 import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
-
-import type { RegistrationOptions, StorageAdapter } from '../types.js';
 
 import { registerWithDwnEndpoints } from '../registration.js';
 
@@ -56,8 +55,9 @@ export async function registerAgentDidForSync(userAgent: EnboxUserAgent): Promis
  *   agent DID's DWN.
  *
  * Phase 2 — register each recovered identity DID as a tenant and for
- *   sync, then pull their profile data, protocol configurations, and
- *   records.
+ *   explicitly scoped sync, then pull the requested protocol data. If no
+ *   `identitySyncProtocols` is provided, auth recovers identity metadata only
+ *   and leaves product-scoped record sync to the application.
  *
  * Returns the recovered identities, or an empty array if the remote
  * had nothing (e.g. first-ever setup with a pre-generated phrase).
@@ -65,10 +65,11 @@ export async function registerAgentDidForSync(userAgent: EnboxUserAgent): Promis
 export async function recoverIdentitiesFromRemote(params: {
   userAgent: EnboxUserAgent;
   dwnEndpoints: string[];
+  identitySyncProtocols?: IdentitySyncProtocols;
   registration?: RegistrationOptions;
   storage: StorageAdapter;
 }): Promise<BearerIdentity[]> {
-  const { userAgent, dwnEndpoints, registration, storage } = params;
+  const { userAgent, dwnEndpoints, identitySyncProtocols, registration, storage } = params;
   const agentDid = userAgent.agentDid.uri;
 
   // Install the KeyDeliveryProtocol for the agent DID before pulling.
@@ -86,9 +87,11 @@ export async function recoverIdentitiesFromRemote(params: {
     return [];
   }
 
-  // Register each recovered identity DID as a DWN tenant, then for sync.
+  // Register each recovered identity DID as a DWN tenant. Register for sync
+  // only when the application supplied an explicit identity protocol scope.
   // Tenant registration must come first — sync('pull') issues
   // MessagesSync which requires the DID to be a recognised tenant.
+  let registeredIdentityForSync = false;
   for (const identity of identities) {
     const did = identity.metadata.connectedDid ?? identity.did.uri;
 
@@ -104,15 +107,20 @@ export async function recoverIdentitiesFromRemote(params: {
       }
     }
 
-    try {
-      await userAgent.sync.registerIdentity({ did, options: { protocols: 'all' } });
-    } catch {
-      // Already registered from a previous session.
+    if (identitySyncProtocols !== undefined) {
+      try {
+        await userAgent.sync.registerIdentity({ did, options: { protocols: identitySyncProtocols } });
+      } catch {
+        // Already registered from a previous session.
+      }
+      registeredIdentityForSync = true;
     }
   }
 
-  // Phase 2: pull profile data, protocol configurations, and records.
-  await userAgent.sync.sync('pull');
+  if (registeredIdentityForSync) {
+    // Phase 2: pull explicitly scoped protocol configurations and records.
+    await userAgent.sync.sync('pull');
+  }
 
   return userAgent.identity.list();
 }

@@ -37,7 +37,7 @@ describe('registerAgentDidForSync', () => {
 });
 
 describe('recoverIdentitiesFromRemote', () => {
-  test('returns recovered identities after two-phase pull', async () => {
+  test('returns recovered identities after explicitly scoped two-phase pull', async () => {
     const identity = createMockIdentity();
     let pullCount = 0;
     const syncCalls: any[] = [];
@@ -52,9 +52,10 @@ describe('recoverIdentitiesFromRemote', () => {
     });
 
     const result = await recoverIdentitiesFromRemote({
-      userAgent    : agent,
-      dwnEndpoints : ['https://dwn.example.com'],
-      storage      : new MemoryStorage(),
+      userAgent             : agent,
+      dwnEndpoints          : ['https://dwn.example.com'],
+      identitySyncProtocols : ['https://proto.example/profile'],
+      storage               : new MemoryStorage(),
     });
 
     expect(result).toHaveLength(1);
@@ -62,7 +63,31 @@ describe('recoverIdentitiesFromRemote', () => {
     expect(pullCount).toBe(2);
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].did).toBe('did:dht:testuser123');
-    expect(syncCalls[0].options.protocols).toBe('all');
+    expect(syncCalls[0].options.protocols).toEqual(['https://proto.example/profile']);
+  });
+
+  test('without explicit identity scope recovers identity metadata only', async () => {
+    const identity = createMockIdentity();
+    let pullCount = 0;
+    const syncCalls: any[] = [];
+
+    const agent = createMockAgent({
+      identityList: async () => {
+        return pullCount > 0 ? [identity] : [];
+      },
+      syncSync             : async () => { pullCount++; },
+      syncRegisterIdentity : async (params) => { syncCalls.push(params); },
+    });
+
+    const result = await recoverIdentitiesFromRemote({
+      userAgent    : agent,
+      dwnEndpoints : ['https://dwn.example.com'],
+      storage      : new MemoryStorage(),
+    });
+
+    expect(result).toHaveLength(1);
+    expect(pullCount).toBe(1);
+    expect(syncCalls).toHaveLength(0);
   });
 
   test('returns empty array when remote has no identities', async () => {
@@ -97,9 +122,10 @@ describe('recoverIdentitiesFromRemote', () => {
     });
 
     await recoverIdentitiesFromRemote({
-      userAgent    : agent,
-      dwnEndpoints : ['https://dwn.example.com'],
-      registration : {
+      userAgent             : agent,
+      dwnEndpoints          : ['https://dwn.example.com'],
+      identitySyncProtocols : ['https://proto.example/profile'],
+      registration          : {
         onSuccess : () => { registrationSucceeded = true; },
         onFailure : () => {},
       },
@@ -122,9 +148,10 @@ describe('recoverIdentitiesFromRemote', () => {
     });
 
     const result = await recoverIdentitiesFromRemote({
-      userAgent    : agent,
-      dwnEndpoints : ['https://dwn.example.com'],
-      registration : {
+      userAgent             : agent,
+      dwnEndpoints          : ['https://dwn.example.com'],
+      identitySyncProtocols : ['https://proto.example/profile'],
+      registration          : {
         onSuccess : () => {},
         onFailure : () => {},
       },
@@ -150,9 +177,10 @@ describe('recoverIdentitiesFromRemote', () => {
     });
 
     await recoverIdentitiesFromRemote({
-      userAgent    : agent,
-      dwnEndpoints : ['https://dwn.example.com'],
-      storage      : new MemoryStorage(),
+      userAgent             : agent,
+      dwnEndpoints          : ['https://dwn.example.com'],
+      identitySyncProtocols : ['https://proto.example/profile'],
+      storage               : new MemoryStorage(),
     });
 
     expect(syncCalls[0].did).toBe('did:dht:external');
@@ -169,9 +197,10 @@ describe('recoverIdentitiesFromRemote', () => {
     });
 
     const result = await recoverIdentitiesFromRemote({
-      userAgent    : agent,
-      dwnEndpoints : ['https://dwn.example.com'],
-      storage      : new MemoryStorage(),
+      userAgent             : agent,
+      dwnEndpoints          : ['https://dwn.example.com'],
+      identitySyncProtocols : ['https://proto.example/profile'],
+      storage               : new MemoryStorage(),
     });
 
     expect(result).toHaveLength(1);

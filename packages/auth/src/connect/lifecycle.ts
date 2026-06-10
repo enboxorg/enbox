@@ -19,7 +19,7 @@ import type { AgentSessionIdentity, BearerIdentity, DelegateContextKey, Delegate
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
-import type { RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
+import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { Convert } from '@enbox/common';
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
@@ -50,6 +50,7 @@ export interface FlowContext {
   defaultPassword?: string;
   passwordProvider?: PasswordProvider;
   defaultSync?: SyncOption;
+  defaultIdentitySyncProtocols?: IdentitySyncProtocols;
   defaultDwnEndpoints?: string[];
   registration?: RegistrationOptions;
 }
@@ -409,9 +410,9 @@ export function toSyncIdentityProtocols(
  *   "is not registered" error from unregister is silently tolerated;
  *   `"already registered"` from register falls back to `updateIdentityOptions`.
  *
- * - For a **local session** (no `delegateDid`): registers with
- *   `protocols: 'all'` (a local identity is a full replica of its own DWN).
- *   The `"already registered"` error falls back to `updateIdentityOptions`.
+ * - For a **local session** (no `delegateDid`): registers only when the
+ *   caller supplied an explicit protocol scope. If no scope is supplied, auth
+ *   leaves local identity sync registration to the application.
  *
  * @internal
  */
@@ -419,8 +420,9 @@ export async function registerSyncScopeForIdentity(params: {
   userAgent: EnboxUserAgent;
   connectedDid: string;
   delegateDid?: string;
+  identitySyncProtocols?: IdentitySyncProtocols;
 }): Promise<void> {
-  const { userAgent, connectedDid, delegateDid } = params;
+  const { userAgent, connectedDid, delegateDid, identitySyncProtocols } = params;
 
   if (delegateDid !== undefined) {
     const scope = await deriveActiveSyncScope(userAgent, delegateDid);
@@ -449,8 +451,11 @@ export async function registerSyncScopeForIdentity(params: {
     return;
   }
 
-  // Local session — register with full-replica scope.
-  const options = { protocols: 'all' as const };
+  if (identitySyncProtocols === undefined) {
+    return;
+  }
+
+  const options = { protocols: identitySyncProtocols };
   try {
     await userAgent.sync.registerIdentity({ did: connectedDid, options });
   } catch (error: unknown) {

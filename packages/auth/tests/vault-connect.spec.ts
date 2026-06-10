@@ -124,7 +124,7 @@ describe('vaultConnect', () => {
     expect(events).toEqual(['vault-unlocked', 'identity-added', 'session-start']);
   });
 
-  test('registers sync for new identities and agent DID when sync is not off', async () => {
+  test('registers explicit identity sync scope for new identities and agent DID when sync is not off', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const syncCalls: any[] = [];
@@ -137,7 +137,13 @@ describe('vaultConnect', () => {
     });
 
     await vaultConnect(
-      { userAgent: agent, emitter, storage, defaultSync: '15s' },
+      {
+        userAgent                    : agent,
+        emitter,
+        storage,
+        defaultSync                  : '15s',
+        defaultIdentitySyncProtocols : ['https://proto.example/profile'],
+      },
       { createIdentity: true },
     );
 
@@ -149,7 +155,7 @@ describe('vaultConnect', () => {
       'https://identity.foundation/protocols/web5/jwk-store',
     ]);
     expect(syncCalls[1].did).toBe('did:dht:testuser123');
-    expect(syncCalls[1].options.protocols).toBe('all');
+    expect(syncCalls[1].options.protocols).toEqual(['https://proto.example/profile']);
   });
 
   test('registers agent DID for sync even without identity creation', async () => {

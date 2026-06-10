@@ -25,6 +25,7 @@ export async function importFromPortable(
 ): Promise<AuthSession> {
   const { userAgent, emitter, storage } = ctx;
   const sync = options.sync ?? ctx.defaultSync;
+  const identitySyncProtocols = options.identitySyncProtocols ?? ctx.defaultIdentitySyncProtocols;
 
   const identity = await userAgent.identity.import({
     portableIdentity: options.portableIdentity,
@@ -53,7 +54,7 @@ export async function importFromPortable(
   if (delegateDid) {
     await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
   } else if (sync !== 'off') {
-    await registerSyncScopeForIdentity({ userAgent, connectedDid });
+    await registerSyncScopeForIdentity({ userAgent, connectedDid, identitySyncProtocols });
   }
 
   await startSyncIfEnabled(userAgent, sync);
