@@ -496,7 +496,7 @@ describe('sync-messages', () => {
       expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.MessagesRead })).callCount).toBe(1);
     });
 
-    it('should convert unexpected buffering failures into per-root retryable failures', async () => {
+    it('should convert deterministic local data size mismatches into terminal failures', async () => {
       const payload = new Uint8Array(1_048_577);
       const write = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1]) });
       const messageCid = await Message.getCid(write.message);
@@ -516,8 +516,9 @@ describe('sync-messages', () => {
       expect(result.succeeded).toEqual([]);
       expect(result.failed).toHaveLength(1);
       expect(result.failed[0].cid).toBe(messageCid);
-      expect(result.failed[0].terminal).toBeUndefined();
-      expect(result.failed[0].detail).toContain('unexpected large stream');
+      expect(result.failed[0].kind).toBe('Invalid');
+      expect(result.failed[0].terminal).toBe(true);
+      expect(result.failed[0].detail).toContain('local RecordsWrite data exceeded descriptor dataSize');
       expect(applyStub.called).toBe(false);
     });
 

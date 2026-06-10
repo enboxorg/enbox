@@ -169,8 +169,8 @@ function base64UrlDecodedLength(encodedData: string): number | undefined {
 
 function getBase64UrlLength(encodedData: string): number | undefined {
   for (let i = 0; i < encodedData.length; i++) {
-    const charCode = encodedData.charCodeAt(i);
-    if (!isBase64UrlCharCode(charCode)) {
+    const charCode = encodedData.codePointAt(i);
+    if (charCode === undefined || !isBase64UrlCharCode(charCode)) {
       return undefined;
     }
   }

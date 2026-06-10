@@ -70,6 +70,13 @@ export class SyncPullAbortedError extends Error {
   }
 }
 
+class LocalDataSizeMismatchError extends Error {
+  constructor(dataSize: number) {
+    super(`SyncEngineLevel: local RecordsWrite data exceeded descriptor dataSize ${dataSize} while buffering push data.`);
+    this.name = 'LocalDataSizeMismatchError';
+  }
+}
+
 function assertShouldContinue(shouldContinue: (() => boolean) | undefined): void {
   if (shouldContinue?.() === false) {
     throw new SyncPullAbortedError();
@@ -107,7 +114,7 @@ async function bufferSmallStreams(entries: SyncMessageEntry[], shouldContinue?: 
       continue;
     }
 
-    const buffer = await bufferDataStream(entry.dataStream!, shouldContinue);
+    const buffer = await bufferDataStream(entry, shouldContinue);
     entry.bufferedData = buffer;
     // Create a fresh ReadableStream from the buffer for the first processing attempt.
     entry.dataStream = dataStreamFromBytes(buffer);
@@ -121,10 +128,10 @@ function shouldReadStreamIntoBuffer(entry: SyncMessageEntry): boolean {
     shouldBufferDataStream(entry);
 }
 
-async function bufferDataStream(dataStream: ReadableStream<Uint8Array>, shouldContinue?: () => boolean): Promise<Uint8Array> {
+async function bufferDataStream(entry: SyncMessageEntry, shouldContinue?: () => boolean): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let totalSize = 0;
-  const reader = dataStream.getReader();
+  const reader = entry.dataStream!.getReader();
 
   try {
     for (;;) {
@@ -133,6 +140,9 @@ async function bufferDataStream(dataStream: ReadableStream<Uint8Array>, shouldCo
       assertShouldContinue(shouldContinue);
       totalSize += value.byteLength;
       if (totalSize > MAX_BUFFER_SIZE) {
+        if (isRecordsWriteMessage(entry.message)) {
+          throw new LocalDataSizeMismatchError((entry.message.descriptor as { dataSize: number }).dataSize);
+        }
         throw new Error('SyncEngineLevel: unexpected large stream while buffering push data.');
       }
       chunks.push(value);
@@ -392,6 +402,12 @@ class RemoteApplyPushContext {
     } catch (error: any) {
       const detail = error.message ?? String(error);
       console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
+      if (error instanceof LocalDataSizeMismatchError) {
+        return {
+          kind    : 'failed',
+          failure : this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }),
+        };
+      }
       return { kind: 'failed', failure: this.retryableFailure(rootCid, cid, detail) };
     }
 

@@ -414,7 +414,7 @@ function httpUrlForWsDwnUrl(dwnUrl: string): string {
 
 function estimatedJsonRpcPayloadBytes(request: ReturnType<typeof createJsonRpcRequest>, encodedData: string | undefined): number {
   if (encodedData === undefined) {
-    return JSON.stringify(request).length;
+    return utf8ByteLength(JSON.stringify(request));
   }
 
   const params = request.params as Record<string, unknown>;
@@ -425,7 +425,11 @@ function estimatedJsonRpcPayloadBytes(request: ReturnType<typeof createJsonRpcRe
       encodedData: '',
     },
   };
-  return JSON.stringify(requestWithoutData).length + encodedData.length;
+  return utf8ByteLength(JSON.stringify(requestWithoutData)) + encodedData.length;
+}
+
+function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
 }
 
 async function dataToBase64Url(data: DwnReplicationApplyRequest['data']): Promise<string> {

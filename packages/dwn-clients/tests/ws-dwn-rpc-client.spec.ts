@@ -9,7 +9,7 @@ import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
 import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '../src/json-rpc.js';
+import { createJsonRpcErrorResponse, createJsonRpcRequest, JsonRpcErrorCodes } from '../src/json-rpc.js';
 import { DwnInterfaceName, DwnMethodName, Encoder, Jws, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 /**
@@ -432,6 +432,35 @@ describe('WebSocketDwnRpcClient', () => {
           expect((error as DwnRpcError).terminal).toBe(true);
           expect((error as DwnRpcError).code).toBe(JsonRpcErrorCodes.InvalidParams);
         }
+      });
+
+      it('measures replicated apply WebSocket frames by UTF-8 byte length', async () => {
+        const encodedData = 'A'.repeat(16);
+        const request = createJsonRpcRequest('utf8-size-test', 'dwn.applyReplicatedMessage', {
+          encodedData,
+          message: {
+            descriptor: {
+              dataSize  : 12,
+              interface : 'Records',
+              method    : 'Write',
+              schema    : 'https://example.com/emoji/😀',
+            },
+          },
+          target: 'did:example:álîçé',
+        });
+        const exactPayloadBytes = new TextEncoder().encode(JSON.stringify(request)).byteLength;
+
+        expect(exactPayloadBytes).toBeGreaterThan(JSON.stringify(request).length);
+        expect(() => (WebSocketDwnRpcClient as any)['assertPayloadFitsFrame'](
+          request,
+          encodedData,
+          exactPayloadBytes,
+        )).not.toThrow();
+        expect(() => (WebSocketDwnRpcClient as any)['assertPayloadFitsFrame'](
+          request,
+          encodedData,
+          exactPayloadBytes - 1,
+        )).toThrow('replicated apply JSON-RPC payload is too large for WebSocket transport');
       });
 
       it('rejects malformed replicated apply results before returning to callers', async () => {
