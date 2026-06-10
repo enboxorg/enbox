@@ -310,7 +310,8 @@ export type ReplicationLinkState = {
 
 /**
  * Result of a batch push operation. Replaces the previous throw-on-first-failure
- * pattern so callers can advance the push replication checkpoint incrementally.
+ * pattern so callers can retry transient failures, dead-letter terminal
+ * failures, and mark links for later reconciliation.
  */
 /** A failed push root with diagnostic info from the latest attempt. */
 export type PushFailure = {
@@ -325,6 +326,14 @@ export type PushResult = {
   /** Requested root messageCids that failed and should be retried or reconciled. */
   failed: PushFailure[];
 };
+
+export function isTerminalPushStatus(statusCode: number | undefined): boolean {
+  return statusCode !== undefined && statusCode >= 400 && statusCode < 500;
+}
+
+export function isTerminalPushFailure(failure: PushFailure): boolean {
+  return isTerminalPushStatus(failure.statusCode);
+}
 
 /**
  * Parameters for {@link SyncEngine.startSync}.

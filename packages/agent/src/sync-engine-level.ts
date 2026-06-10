@@ -25,7 +25,7 @@ import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
-import { computeAuthorizationEpoch, computeProjectionId, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
+import { computeAuthorizationEpoch, computeProjectionId, isTerminalPushFailure, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getMessageCid, pushMessages, SyncPullAbortedError } from './sync-messages.js';
 import { partitionRemoteEntries, SyncLinkReconciler } from './sync-link-reconciler.js';
 import { permissionGrantIdsFromEntries, resolveMessagesSyncScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
@@ -2644,7 +2644,7 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<number> {
     let retryableFailures = 0;
     for (const failure of failures) {
-      if (!SyncEngineLevel.isTerminalPushFailure(failure)) {
+      if (!isTerminalPushFailure(failure)) {
         retryableFailures++;
         continue;
       }
@@ -2661,10 +2661,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return retryableFailures;
-  }
-
-  private static isTerminalPushFailure(failure: PushFailure): boolean {
-    return failure.statusCode !== undefined && failure.statusCode >= 400 && failure.statusCode < 500;
   }
 
   /**
@@ -2686,7 +2682,7 @@ export class SyncEngineLevel implements SyncEngine {
       // failures for this remote; transport/runtime failures just dirty the
       // link for later reconciliation.
       for (const entry of pending.entries) {
-        if (entry.lastFailure !== undefined && SyncEngineLevel.isTerminalPushFailure(entry.lastFailure)) {
+        if (entry.lastFailure !== undefined && isTerminalPushFailure(entry.lastFailure)) {
           void this.recordDeadLetter({
             messageCid     : entry.cid,
             tenantDid      : pending.did,
@@ -2763,10 +2759,6 @@ export class SyncEngineLevel implements SyncEngine {
       ),
       shouldContinue,
     });
-  }
-
-  private getReconcileProtocols(scope: SyncScope): (string | undefined)[] {
-    return protocolsForSyncScope(scope) ?? [undefined];
   }
 
   private getAuthorizationGrantIds(authorization: SyncAuthorization): NonEmptyStringArray | undefined {
@@ -3854,39 +3846,6 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
   // Dead letter tracking
   // ---------------------------------------------------------------------------
-
-  /**
-   * Clear dead letter entries scoped to a specific sync link. Matches on
-   * (tenantDid, remoteEndpoint, protocol) so that repairing protocol A
-   * does not erase still-valid failures for protocol B on the same remote.
-   * When `protocol` is undefined (full-tenant link), clears entries that
-   * also have no protocol.
-   */
-  private async clearDeadLettersForLink(
-    tenantDid: string,
-    remoteEndpoint: string,
-    protocol?: string,
-    options: { categories?: ReadonlySet<DeadLetterCategory> } = {},
-  ): Promise<void> {
-    const batch: { type: 'del'; key: string }[] = [];
-    try {
-      for await (const [key, value] of this._deadLetters.iterator()) {
-        const entry = JSON.parse(value) as DeadLetterEntry;
-        if (entry.tenantDid === tenantDid &&
-            entry.remoteEndpoint === remoteEndpoint &&
-            entry.protocol === protocol &&
-            (options.categories === undefined || options.categories.has(entry.category))) {
-          batch.push({ type: 'del', key });
-        }
-      }
-      if (batch.length > 0) {
-        await this._deadLetters.batch(batch);
-      }
-    } catch (error) {
-      const e = error as { code?: string };
-      if (e.code !== 'LEVEL_DATABASE_NOT_OPEN') { throw error; }
-    }
-  }
 
   /**
    * Build a compound dead letter key. Different tenants and remotes can fail
