@@ -3514,11 +3514,12 @@ export class SyncEngineLevel implements SyncEngine {
         continue;
       }
 
+      const messageWithInitialWrite: GenericMessage & { initialWrite?: GenericMessage } = entry.message;
       const {
         encodedData: messageEncodedData,
         initialWrite,
         ...message
-      } = entry.message as GenericMessage & { encodedData?: string; initialWrite?: GenericMessage };
+      } = messageWithInitialWrite;
       if (initialWrite !== undefined) {
         entries.push({ message: initialWrite });
       }
