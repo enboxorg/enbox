@@ -1,9 +1,9 @@
-import type { GenericMessage, MessagesReadReply, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesReadReply, MessagesSyncDiffEntry, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermanentPushFailure, PushResult } from './types/sync.js';
 
-import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
@@ -17,10 +17,15 @@ const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
 export type SyncMessageEntry = {
   message: GenericMessage;
   dataStream?: ReadableStream<Uint8Array>;
-  dataStreamFactory?: () => Promise<ReadableStream<Uint8Array> | undefined>;
   /** Buffered data bytes for retry — avoids re-fetching from remote when stream is consumed. */
   bufferedData?: Uint8Array;
 };
+
+/** Optional pre-apply gate for inbound sync entries. */
+export type PullMessageAcceptance = (
+  entry: SyncMessageEntry,
+  entries: SyncMessageEntry[],
+) => Promise<boolean>;
 
 /** Raised when an in-flight pull is cancelled before local apply can continue. */
 export class SyncPullAbortedError extends Error {
@@ -111,6 +116,107 @@ export async function getMessageCid(message: GenericMessage): Promise<string> {
   }
 }
 
+/**
+ * Fetches missing messages from the remote DWN and processes them on the local DWN
+ * in dependency order (topological sort).
+ *
+ * Small data payloads (≤ 1 MB) are buffered during the initial fetch so that
+ * retries can replay the data from memory instead of re-fetching from remote.
+ * Large payloads are re-fetched on retry since buffering them would consume
+ * too much memory.
+ */
+export async function pullMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, prefetched, acceptEntry, shouldContinue, agent }: {
+  did: string;
+  dwnUrl: string;
+  delegateDid?: string;
+  permissionGrantIds?: string[];
+  messageCids: string[];
+  /** Pre-fetched message entries from the batched diff response (already have message + data). */
+  prefetched?: MessagesSyncDiffEntry[];
+  acceptEntry?: PullMessageAcceptance;
+  shouldContinue?: () => boolean;
+  agent: EnboxPlatformAgent;
+}): Promise<string[]> {
+  assertShouldContinue(shouldContinue);
+
+  // Step 1: Fetch remaining messages (not prefetched) from the remote.
+  const fetched = messageCids.length > 0
+    ? await fetchRemoteMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent })
+    : [];
+  assertShouldContinue(shouldContinue);
+
+  // Merge prefetched entries with remotely fetched ones.
+  const allFetched = [...syncEntriesFromPrefetchedDiff(prefetched), ...fetched];
+
+  const { accepted, rejectedCids } = await applyPullAcceptanceGate(allFetched, acceptEntry, shouldContinue);
+  assertShouldContinue(shouldContinue);
+
+  // Step 2: Build dependency graph and topological sort.
+  const sorted = topologicalSort(accepted);
+
+  // Step 3: Buffer small data streams so they can be replayed on retry.
+  await bufferSmallStreams(sorted, shouldContinue);
+  assertShouldContinue(shouldContinue);
+
+  // Step 4: Process messages in dependency order with multi-pass retry.
+  const MAX_RETRY_PASSES = 3;
+  let pending = sorted;
+
+  for (let pass = 0; pass <= MAX_RETRY_PASSES && pending.length > 0; pass++) {
+    assertShouldContinue(shouldContinue);
+    const failed = await processPullPass({ did, entries: pending, shouldContinue, agent });
+    assertShouldContinue(shouldContinue);
+    pending = failed.length === 0
+      ? []
+      : await preparePullRetry({ did, dwnUrl, delegateDid, permissionGrantIds, failed, shouldContinue, agent });
+  }
+
+  // Return CIDs that permanently failed after all retry passes.
+  return [...rejectedCids, ...await getMessageCids(pending)];
+}
+
+async function applyPullAcceptanceGate(
+  entries: SyncMessageEntry[],
+  acceptEntry: PullMessageAcceptance | undefined,
+  shouldContinue?: () => boolean,
+): Promise<{ accepted: SyncMessageEntry[]; rejectedCids: string[] }> {
+  if (!acceptEntry) {
+    return { accepted: entries, rejectedCids: [] };
+  }
+
+  const accepted: SyncMessageEntry[] = [];
+  const rejectedCids: string[] = [];
+  for (const entry of entries) {
+    assertShouldContinue(shouldContinue);
+    if (await acceptEntry(entry, entries)) {
+      accepted.push(entry);
+    } else {
+      rejectedCids.push(await getMessageCid(entry.message));
+    }
+    assertShouldContinue(shouldContinue);
+  }
+
+  return { accepted, rejectedCids };
+}
+
+function syncEntriesFromPrefetchedDiff(prefetched?: MessagesSyncDiffEntry[]): SyncMessageEntry[] {
+  if (!prefetched) { return []; }
+
+  const entries: SyncMessageEntry[] = [];
+  for (const entry of prefetched) {
+    if (!entry.message) { continue; }
+
+    const syncEntry: SyncMessageEntry = { message: entry.message };
+    if (entry.encodedData) {
+      const bytes = Encoder.base64UrlToBytes(entry.encodedData);
+      syncEntry.bufferedData = bytes;
+      syncEntry.dataStream = dataStreamFromBytes(bytes);
+    }
+    entries.push(syncEntry);
+  }
+  return entries;
+}
+
 function dataStreamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     start(controller): void {
@@ -118,6 +224,77 @@ function dataStreamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
       controller.close();
     }
   });
+}
+
+function replayableDataStream(entry: SyncMessageEntry): ReadableStream<Uint8Array> | undefined {
+  return entry.bufferedData ? dataStreamFromBytes(entry.bufferedData) : entry.dataStream;
+}
+
+async function processPullPass({ did, entries, shouldContinue, agent }: {
+  did: string;
+  entries: SyncMessageEntry[];
+  shouldContinue?: () => boolean;
+  agent: EnboxPlatformAgent;
+}): Promise<SyncMessageEntry[]> {
+  const failed: SyncMessageEntry[] = [];
+
+  for (const entry of entries) {
+    assertShouldContinue(shouldContinue);
+    const pullReply = await agent.dwn.processRawMessage(did, entry.message, {
+      dataStream: replayableDataStream(entry),
+    });
+    assertShouldContinue(shouldContinue);
+
+    if (!syncMessageReplyIsSuccessful(pullReply)) {
+      failed.push(entry);
+    }
+  }
+
+  return failed;
+}
+
+async function preparePullRetry({ did, dwnUrl, delegateDid, permissionGrantIds, failed, shouldContinue, agent }: {
+  did: string;
+  dwnUrl: string;
+  delegateDid?: string;
+  permissionGrantIds?: string[];
+  failed: SyncMessageEntry[];
+  shouldContinue?: () => boolean;
+  agent: EnboxPlatformAgent;
+}): Promise<SyncMessageEntry[]> {
+  const canRetry: SyncMessageEntry[] = [];
+  const needsRefetch: string[] = [];
+
+  for (const entry of failed) {
+    if (entry.bufferedData || !entry.dataStream) {
+      canRetry.push(entry);
+    } else {
+      needsRefetch.push(await getMessageCid(entry.message));
+    }
+  }
+
+  if (needsRefetch.length > 0) {
+    assertShouldContinue(shouldContinue);
+    canRetry.push(...await fetchRemoteMessages({
+      did,
+      dwnUrl,
+      delegateDid,
+      permissionGrantIds,
+      messageCids: needsRefetch,
+      agent,
+    }));
+    assertShouldContinue(shouldContinue);
+  }
+
+  return topologicalSort(canRetry);
+}
+
+async function getMessageCids(entries: SyncMessageEntry[]): Promise<string[]> {
+  const cids: string[] = [];
+  for (const entry of entries) {
+    cids.push(await getMessageCid(entry.message));
+  }
+  return cids;
 }
 
 /**
