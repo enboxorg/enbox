@@ -10,12 +10,10 @@
  * @internal
  */
 
-import type { IdentitySyncProtocols } from '../types.js';
 import type { BearerIdentity, EnboxUserAgent } from '@enbox/agent';
+import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter } from '../types.js';
 
 import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
-
-import type { RegistrationOptions, StorageAdapter } from '../types.js';
 
 import { registerWithDwnEndpoints } from '../registration.js';
 

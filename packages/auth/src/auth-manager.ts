@@ -1193,6 +1193,15 @@ export class AuthManager {
     }
   }
 
+  private async _unregisterSyncIdentityIfRegistered(connectedDid: string): Promise<void> {
+    try {
+      await this._userAgent.sync.unregisterIdentity(connectedDid);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : '';
+      if (!msg.includes('is not registered')) { throw error; }
+    }
+  }
+
   /**
    * Repair the sync registration for a connected DID based on derived protocols.
    * - `'all'` or non-empty list → register or update
@@ -1204,28 +1213,24 @@ export class AuthManager {
     delegateDid: string | undefined,
     derivedProtocols: 'all' | string[] | undefined,
   ): Promise<void> {
-    if (delegateDid && derivedProtocols !== undefined) {
-      const narrowed = toSyncIdentityProtocols(derivedProtocols);
-      if (narrowed === undefined) {
-        try {
-          await this._userAgent.sync.unregisterIdentity(connectedDid);
-        } catch (error: unknown) {
-          const msg = error instanceof Error ? error.message : '';
-          if (!msg.includes('is not registered')) { throw error; }
-        }
-        return;
+    if (delegateDid === undefined) {
+      if (this._defaultIdentitySyncProtocols !== undefined) {
+        await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, this._defaultIdentitySyncProtocols);
       }
-      await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, narrowed);
       return;
     }
 
-    if (!delegateDid && this._defaultIdentitySyncProtocols !== undefined) {
-      await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, this._defaultIdentitySyncProtocols);
+    if (derivedProtocols === undefined) {
       return;
     }
 
-    // Local identity sync is app-owned unless the caller configured an
-    // explicit default scope for auth to manage.
+    const narrowed = toSyncIdentityProtocols(derivedProtocols);
+    if (narrowed === undefined) {
+      await this._unregisterSyncIdentityIfRegistered(connectedDid);
+      return;
+    }
+
+    await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, narrowed);
   }
 
   private _setState(state: AuthState): void {
