@@ -1,5 +1,19 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.0
+
+### Minor Changes
+
+- [#996](https://github.com/enboxorg/enbox/pull/996) [`fee3aa0`](https://github.com/enboxorg/enbox/commit/fee3aa0d7862380707fbd3fbe6c8bd85090543b5) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Remove the speculative records-projection MessagesSync path and dependency hints. Sync now uses only full and protocol-root StateIndex roots.
+
+  Removed the `recordsProjection` `SyncScope` variant, records-projection scope helpers, `RecordsProjection`, and the MessagesSync dependency-hint wire types/exports.
+
+### Patch Changes
+
+- [#998](https://github.com/enboxorg/enbox/pull/998) [`7c0f246`](https://github.com/enboxorg/enbox/commit/7c0f2462dc390683943d0266be5696ef1da1dbbd) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Retry sync pushes when a child record reaches a remote before its parent, while keeping malformed protocol-path failures permanent.
+
+- [#1001](https://github.com/enboxorg/enbox/pull/1001) [`8a5b999`](https://github.com/enboxorg/enbox/commit/8a5b999b75a49867b9460fa9eec83667a9953361) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Route sync pulls through structured replicated-message admission and remove the old closure-repair compensation layer.
+
 ## 0.3.9
 
 ### Patch Changes
