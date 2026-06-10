@@ -7,8 +7,8 @@
  * to the in-process DWN's processMessage with the appropriate options.
  */
 import type { EnboxRpc } from '@enbox/dwn-clients';
-import type { Dwn, GenericMessage, SubscriptionListener } from '@enbox/dwn-sdk-js';
-import type { DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
+import type { Dwn, GenericMessage, ReplicationApplyResult, SubscriptionListener } from '@enbox/dwn-sdk-js';
+import type { DwnReplicationApplyRequest, DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
 
 /**
  * Creates an EnboxRpc implementation that routes all requests to the given
@@ -24,20 +24,7 @@ export function createLocalDwnRpc(dwn: Dwn): EnboxRpc {
     async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
       const { targetDid, message, data, subscription } = request;
 
-      // Convert data to ReadableStream if needed.
-      let dataStream: ReadableStream<Uint8Array> | undefined;
-      if (data instanceof Blob) {
-        dataStream = data.stream() as ReadableStream<Uint8Array>;
-      } else if (data instanceof ReadableStream) {
-        dataStream = data;
-      } else if (data instanceof Uint8Array) {
-        dataStream = new ReadableStream({
-          start(controller): void {
-            controller.enqueue(data);
-            controller.close();
-          },
-        });
-      }
+      const dataStream = dataToReadableStream(data);
 
       // Extract subscription handler if present.
       // The DWN SDK's processMessage accepts subscriptionHandler as an option.
@@ -54,6 +41,14 @@ export function createLocalDwnRpc(dwn: Dwn): EnboxRpc {
       return reply as DwnRpcResponse;
     },
 
+    async applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
+      return dwn.applyReplicatedMessage(
+        request.targetDid,
+        request.message as GenericMessage,
+        { dataStream: dataToReadableStream(request.data) },
+      );
+    },
+
     // DidRpc — not used by the sync engine. Throws so accidental DID-RPC use
     // fails loudly instead of silently succeeding with a nonsense shape.
     async sendDidRequest(): Promise<never> {
@@ -68,4 +63,25 @@ export function createLocalDwnRpc(dwn: Dwn): EnboxRpc {
       };
     },
   } as EnboxRpc;
+}
+
+function dataToReadableStream(data: unknown): ReadableStream<Uint8Array> | undefined {
+  if (data instanceof Blob) {
+    return data.stream() as ReadableStream<Uint8Array>;
+  }
+
+  if (data instanceof ReadableStream) {
+    return data as ReadableStream<Uint8Array>;
+  }
+
+  if (data instanceof Uint8Array) {
+    return new ReadableStream({
+      start(controller): void {
+        controller.enqueue(data);
+        controller.close();
+      },
+    });
+  }
+
+  return undefined;
 }

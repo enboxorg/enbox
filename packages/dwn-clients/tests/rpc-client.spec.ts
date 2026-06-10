@@ -210,6 +210,40 @@ describe('RPC Clients', () => {
       });
     });
 
+    describe('applyReplicatedMessage', () => {
+      it('should send to the client depending on transport', async () => {
+        const stubHttpClient = sinon.createStubInstance(HttpEnboxRpcClient);
+        stubHttpClient.applyReplicatedMessage.resolves({ kind: 'Applied' });
+        const httpOnlyClient = new EnboxRpcClient([ stubHttpClient ]);
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+        const result = await httpOnlyClient.applyReplicatedMessage({
+          dwnUrl    : 'http://127.0.0.1',
+          targetDid : alice.did,
+          message,
+        });
+
+        expect(result).toEqual({ kind: 'Applied' });
+        expect(stubHttpClient.applyReplicatedMessage.callCount).toBe(1);
+      });
+
+      it('should throw if transport client is not found', async () => {
+        const client = new EnboxRpcClient();
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+        try {
+          await client.applyReplicatedMessage({
+            dwnUrl    : 'foo://127.0.0.1',
+            targetDid : alice.did,
+            message,
+          });
+          throw new Error('Expected error to be thrown');
+        } catch (error: any) {
+          expect(error.message).toBe('no foo: transport client available');
+        }
+      });
+    });
+
     describe('custom client overrides', () => {
       it('should allow custom client to override default protocol transport', async () => {
         const customResponse = {
@@ -220,9 +254,10 @@ describe('RPC Clients', () => {
         // Create a custom client that handles http: and returns a custom response
         const customClient: EnboxRpc = {
           get transportProtocols(): string[] { return ['http:', 'https:']; },
-          sendDwnRequest : sinon.stub().resolves(customResponse),
-          sendDidRequest : sinon.stub().resolves({ ok: true, status: { code: 200, message: 'OK' } }),
-          getServerInfo  : sinon.stub().resolves({ maxFileSize: 999 }),
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
+          sendDwnRequest         : sinon.stub().resolves(customResponse),
+          sendDidRequest         : sinon.stub().resolves({ ok: true, status: { code: 200, message: 'OK' } }),
+          getServerInfo          : sinon.stub().resolves({ maxFileSize: 999 }),
         };
 
         // Custom clients override the defaults since they're appended after defaults

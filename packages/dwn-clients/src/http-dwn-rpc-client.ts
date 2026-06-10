@@ -1,5 +1,6 @@
 import type { JsonRpcResponse } from './json-rpc.js';
-import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
+import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
 import { CryptoUtils } from '@enbox/crypto';
@@ -226,6 +227,63 @@ export class HttpDwnRpcClient implements DwnRpc {
     }
 
     return reply as DwnRpcResponse;
+  }
+
+  async applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
+    const requestId = CryptoUtils.randomUuid();
+    const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      target  : request.targetDid,
+      message : request.message
+    });
+
+    const requestHeaders: Record<string, string> = {
+      'dwn-request': JSON.stringify(jsonRpcRequest)
+    };
+
+    const fetchOpts: RequestInit = {
+      method  : 'POST',
+      headers : requestHeaders,
+      ...(request.signal ? { signal: request.signal } : {}),
+    };
+
+    if (request.data) {
+      requestHeaders['content-type'] = 'application/octet-stream';
+      let requestBody = request.data;
+
+      if (requestBody instanceof ReadableStream) {
+        if (HttpDwnRpcClient.isBunRuntime()) {
+          const bodyBytes = await DataStream.toBytes(requestBody as ReadableStream<Uint8Array>);
+          requestBody = new Blob([bodyBytes as BlobPart], { type: 'application/octet-stream' });
+        } else {
+          (fetchOpts as Record<string, unknown>).duplex = 'half';
+        }
+      }
+
+      fetchOpts.body = requestBody;
+    }
+
+    const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts);
+    if (resp.status === 429) {
+      const retryAfter = parseInt(resp.headers.get('retry-after') ?? '1', 10);
+      throw new RateLimitError(retryAfter);
+    }
+
+    const responseBody = await resp.text();
+    const jsonRpcResponse = parseJson(responseBody) as JsonRpcResponse;
+    if (jsonRpcResponse == null) {
+      throw new Error(`failed to parse json rpc response. dwn url: ${request.dwnUrl}, status: ${resp.status}`);
+    }
+
+    if (jsonRpcResponse.error) {
+      const { code, message } = jsonRpcResponse.error;
+      if (code === JsonRpcErrorCodes.TooManyRequests) {
+        const retryAfter = jsonRpcResponse.error.data?.retryAfterSec ?? 1;
+        throw new RateLimitError(retryAfter);
+      }
+      throw new Error(`(${code}) - ${message}`);
+    }
+
+    return jsonRpcResponse.result.result as ReplicationApplyResult;
   }
 
   async getServerInfo(dwnUrl: string): Promise<ServerInfo> {

@@ -251,7 +251,7 @@ export type DirectionCheckpoint = {
  * - `polling` — current link is reconciled by periodic SMT sync; live subscription is not supported for its scope.
  * - `repairing` — gap detected or pending overflow; running SMT reconciliation.
  * - `degraded_poll` — subscription failed; polling at reduced frequency.
- * - `terminal_incomplete` — closure failed with a terminal dependency error; requires a new scope/authorization epoch.
+ * - `terminal_incomplete` — admission failed with a terminal dependency error; requires a new scope/authorization epoch.
  * - `paused` — explicitly paused by the application.
  */
 export type LinkStatus = 'initializing' | 'live' | 'polling' | 'repairing' | 'degraded_poll' | 'terminal_incomplete' | 'paused';
@@ -398,7 +398,7 @@ export type SyncEventListener = (event: SyncEvent) => void;
 // ---------------------------------------------------------------------------
 
 /** Category of sync failure for dead letter entries. */
-export type DeadLetterCategory = 'push-permanent' | 'push-exhausted' | 'pull-processing' | 'pull-scope-rejected' | 'closure';
+export type DeadLetterCategory = 'push-permanent' | 'push-exhausted' | 'admit-failed';
 
 /** A message that permanently failed to sync. */
 export type DeadLetterEntry = {
@@ -412,7 +412,7 @@ export type DeadLetterEntry = {
   protocol?: string;
   /** What kind of failure occurred. */
   category: DeadLetterCategory;
-  /** Machine-readable error code (e.g., HTTP status or ClosureFailureCode). */
+  /** Machine-readable error code (for example, an HTTP status or admission reason). */
   errorCode?: string;
   /** Human-readable error detail. */
   errorDetail: string;
@@ -436,11 +436,11 @@ export type SyncHealthSummary = {
    */
   failedMessageCount: number;
   /**
-   * Number of current closure failures. A link can have matching sync roots
-   * while still being unusable because required dependencies are missing; this
-   * count keeps that state visible to callers.
+   * Number of current admission failures. A link can have matching sync roots
+   * while still rejecting specific roots; this count keeps that state visible
+   * to callers.
    */
-  closureFailureCount: number;
+  admissionFailureCount: number;
   /** Number of current sync links in 'repairing', 'degraded_poll', or terminal-incomplete status. */
   degradedLinkCount: number;
   /** True only when there are no failed messages and no degraded links. */

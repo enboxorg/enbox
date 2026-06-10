@@ -199,7 +199,7 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
  * Checks whether the tenant has exceeded their message count or storage quota.
  * Returns a JSON-RPC error response if the quota is exceeded, or `undefined` to proceed.
  */
-async function enforceQuota(
+export async function enforceQuota(
   target: string,
   message: GenericMessage,
   context: Parameters<JsonRpcHandler>[1],

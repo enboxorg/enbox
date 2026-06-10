@@ -1,17 +1,14 @@
 import sinon from 'sinon';
 
-import type { GenericMessage, ProtocolDefinition, ProtocolsConfigureMessage } from '@enbox/dwn-sdk-js';
-
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName, Message, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { Message, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { computeAuthorizationEpoch } from '../src/types/sync.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { ReplicationLedger } from '../src/sync-replication-ledger.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncPullAbortedError } from '../src/sync-messages.js';
-import { ClosureFailureCode, createClosureContext } from '../src/sync-closure-types.js';
 import { getMessagesPermissionGrantsForScope, resolveMessagesSyncScopes } from '../src/sync-permission-grants.js';
 
 describe('SyncEngineLevel — private methods', () => {
@@ -671,12 +668,12 @@ describe('SyncEngineLevel — private methods', () => {
         onlyLocal  : ['cid-local-1'],
         onlyRemote : [{ messageCid: 'cid-remote-1' }],
       });
-      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
       const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
 
       await engine.sync();
 
-      expect(pullStub.calledOnce).toBe(true);
+      expect(admitStub.calledOnce).toBe(true);
       expect(pushStub.calledOnce).toBe(true);
     });
 
@@ -693,12 +690,12 @@ describe('SyncEngineLevel — private methods', () => {
         onlyLocal  : ['cid-local-1'],
         onlyRemote : [{ messageCid: 'cid-remote-1' }],
       });
-      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
       const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
 
       await engine.sync('pull');
 
-      expect(pullStub.calledOnce).toBe(true);
+      expect(admitStub.calledOnce).toBe(true);
       expect(pushStub.called).toBe(false);
     });
 
@@ -715,12 +712,12 @@ describe('SyncEngineLevel — private methods', () => {
         onlyLocal  : ['cid-local-1'],
         onlyRemote : [{ messageCid: 'cid-remote-1' }],
       });
-      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
       const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
 
       await engine.sync('push');
 
-      expect(pullStub.called).toBe(false);
+      expect(admitStub.called).toBe(false);
       expect(pushStub.calledOnce).toBe(true);
     });
 
@@ -737,12 +734,12 @@ describe('SyncEngineLevel — private methods', () => {
         onlyLocal  : [],
         onlyRemote : [],
       });
-      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
       const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
 
       await engine.sync();
 
-      expect(pullStub.called).toBe(false);
+      expect(admitStub.called).toBe(false);
       expect(pushStub.called).toBe(false);
     });
 
@@ -1955,7 +1952,7 @@ describe('SyncEngineLevel — private methods', () => {
      * Helper: creates a mock agent that captures the subscription handler
      * from the rpc.sendDwnRequest call.
      */
-    function createCallbackMockAgent(processRawMessageStub?: sinon.SinonStub): {
+    function createCallbackMockAgent(applyReplicatedMessageStub?: sinon.SinonStub): {
       agent: any; getHandler: () => any;
     } {
       let capturedHandler: any;
@@ -1972,7 +1969,8 @@ describe('SyncEngineLevel — private methods', () => {
           agentDid : 'did:example:agent',
           dwn      : {
             processRequest,
-            processRawMessage: processRawMessageStub ?? sinon.stub().resolves({ status: { code: 202 } }),
+            applyReplicatedMessage : applyReplicatedMessageStub ?? sinon.stub().resolves({ kind: 'Applied' }),
+            processRawMessage      : sinon.stub().resolves({ status: { code: 202 } }),
           },
           rpc: { sendDwnRequest: rpcStub },
         } as any,
@@ -2013,7 +2011,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._liveSubscriptions = [];
     });
 
-    it('should process event messages by calling processRawMessage', async () => {
+    it('should process event messages through replicated admission', async () => {
       const processMessageStub = sinon.stub().resolves({ status: { code: 202 } });
       const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
       const engine = createEngine({ db, agent });
@@ -2035,12 +2033,13 @@ describe('SyncEngineLevel — private methods', () => {
 
       const handler = getHandler();
 
-      const eventCursor = { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' };
+      const eventMessage = { descriptor: { interface: 'Protocols', method: 'Configure' } };
+      const eventCursor = { streamId: 's1', epoch: 'e1', position: '1', messageCid: await Message.getCid(eventMessage) };
       await handler({
         type   : 'event',
         cursor : eventCursor,
         event  : {
-          message: { descriptor: { interface: 'Protocols', method: 'Configure' } },
+          message: eventMessage,
         },
       });
 
@@ -2063,18 +2062,27 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
-      sinon.stub(engine as any, 'ensureClosureComplete').resolves(true);
       (engine as any)._ledger = { saveLink: sinon.stub().resolves() };
 
       await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
 
-      const cursor = { streamId: 's1', epoch: 'e1', position: '2', messageCid: 'cid-delete' };
+      const deleteMessage = { descriptor: { interface: 'Records', method: 'Delete', recordId: 'record-1' } };
+      const cursor = { streamId: 's1', epoch: 'e1', position: '2', messageCid: await Message.getCid(deleteMessage) };
       await getHandler()({
         type  : 'event',
         cursor,
         event : {
-          message      : { descriptor: { interface: 'Records', method: 'Delete', recordId: 'record-1' } },
-          initialWrite : { descriptor: { interface: 'Records', method: 'Write', protocol: 'https://example.com/profile' } },
+          message      : deleteMessage,
+          initialWrite : {
+            recordId   : 'record-1',
+            descriptor : {
+              interface        : 'Records',
+              method           : 'Write',
+              protocol         : 'https://example.com/profile',
+              dateCreated      : '2026-01-01T00:00:00.000000Z',
+              messageTimestamp : '2026-01-01T00:00:00.000000Z',
+            }
+          },
         },
       });
 
@@ -2188,6 +2196,56 @@ describe('SyncEngineLevel — private methods', () => {
       expect(consoleStub.called).toBe(true);
       expect(link.pull.contiguousAppliedToken).toBeUndefined();
       expect(link.status).toBe('repairing');
+
+      (engine as any)._liveSubscriptions = [];
+    });
+
+    it('should checkpoint and dead-letter a structured live pull admission failure', async () => {
+      const processMessageStub = sinon.stub().resolves({ kind: 'Invalid', reason: 'invalid replicated message' });
+      const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
+      const engine = createEngine({ db, agent });
+
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = {
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : {}, connectivity       : 'online', needsReconcile     : false,
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+      (engine as any).getOrCreateRuntime(linkKey);
+      (engine as any)._ledger = { saveLink: sinon.stub().resolves() };
+      const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
+
+      await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
+
+      const eventMessage = {
+        descriptor: {
+          interface : 'Records',
+          method    : 'Write',
+          protocol  : 'https://example.com/profile',
+        },
+      };
+      const eventCursor = { streamId: 's1', epoch: 'e1', position: '6', messageCid: await Message.getCid(eventMessage) };
+
+      await getHandler()({
+        type   : 'event',
+        cursor : eventCursor,
+        event  : { message: eventMessage },
+      });
+
+      expect(deadLetterStub.calledOnce).toBe(true);
+      expect(deadLetterStub.firstCall.args[0]).toMatchObject({
+        messageCid     : eventCursor.messageCid,
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        protocol       : 'https://example.com/profile',
+        category       : 'admit-failed',
+        errorCode      : 'invalid',
+        errorDetail    : 'invalid replicated message',
+      });
+      expect(link.pull.contiguousAppliedToken).toEqual(eventCursor);
+      expect(link.status).toBe('live');
+      expect(link.needsReconcile).toBe(false);
 
       (engine as any)._liveSubscriptions = [];
     });
@@ -2535,7 +2593,7 @@ describe('SyncEngineLevel — private methods', () => {
         .callsFake(async ({ protocol }: { protocol: string }) => protocol === profileProtocol
           ? { onlyRemote: [profileEntry], onlyLocal: ['local-profile'] }
           : { onlyRemote: [socialEntry], onlyLocal: ['local-social'] });
-      const pullMessagesStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const admitRemoteMessagesStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
       const pushMessagesStub = sinon.stub(engine as any, 'pushMessages')
         .resolves({ succeeded: [], failed: [], permanentlyFailed: [] });
 
@@ -2551,14 +2609,14 @@ describe('SyncEngineLevel — private methods', () => {
       expect(diffWithRemote.callCount).toBe(2);
       expect(diffWithRemote.firstCall.args[0].protocol).toBe(profileProtocol);
       expect(diffWithRemote.secondCall.args[0].protocol).toBe(socialProtocol);
-      expect(pullMessagesStub.callCount).toBe(1);
+      expect(admitRemoteMessagesStub.callCount).toBe(1);
       expect(pushMessagesStub.callCount).toBe(1);
 
-      const pullArgs = pullMessagesStub.firstCall.args[0];
-      expect(pullArgs.protocol).toBeUndefined();
-      expect(pullArgs.scope).toEqual(scope);
-      expect(pullArgs.messageCids).toEqual([]);
-      expect(pullArgs.prefetched.map((entry: { messageCid: string }) => entry.messageCid))
+      const admitArgs = admitRemoteMessagesStub.firstCall.args[0];
+      expect(admitArgs.protocol).toBeUndefined();
+      expect(admitArgs.scope).toEqual(scope);
+      expect(admitArgs.messageCids).toEqual([]);
+      expect(admitArgs.prefetched.map((entry: { messageCid: string }) => entry.messageCid))
         .toEqual(['cid-profile', 'cid-social']);
 
       expect(pushMessagesStub.firstCall.args[0].protocol).toBeUndefined();
@@ -2566,21 +2624,22 @@ describe('SyncEngineLevel — private methods', () => {
     });
   });
 
-  describe('pullMessages / pushMessages delegate wrappers', () => {
+  describe('replicated pull admission / push delegate wrappers', () => {
     const profileProtocol = 'https://example.com/profile';
     const socialProtocol = 'https://example.com/social';
 
-    it('pullMessages should delegate to sync-messages pullMessages', async () => {
+    it('applies fetched roots through replicated admission', async () => {
+      const fetchedMessage = { descriptor: { interface: 'Protocols', method: 'Configure' } };
       const mockAgent = {
         agentDid          : 'did:example:agent',
         processDwnRequest : sinon.stub().resolves({ message: {} }),
         dwn               : {
-          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
+          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
         },
         rpc: {
           sendDwnRequest: sinon.stub().resolves({
             status : { code: 200 },
-            entry  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+            entry  : { message: fetchedMessage },
           }),
         },
       } as any;
@@ -2588,16 +2647,16 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
 
       // Should not throw
-      await (engine as any).pullMessages({
+      await (engine as any).admitRemoteMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
-        messageCids : ['cid-1'],
+        messageCids : [await Message.getCid(fetchedMessage)],
       });
 
-      expect(mockAgent.dwn.processRawMessage.called).toBe(true);
+      expect(mockAgent.dwn.applyReplicatedMessage.calledOnce).toBe(true);
     });
 
-    it('pullMessages should not record dead letters when the stale-target guard aborts', async () => {
+    it('does not record dead letters when the stale-target guard aborts', async () => {
       const shouldContinue = sinon.stub()
         .onFirstCall().returns(true)
         .onSecondCall().returns(false);
@@ -2605,7 +2664,7 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid          : 'did:example:agent',
         processDwnRequest : sinon.stub().resolves({ message: {} }),
         dwn               : {
-          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
+          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
         },
         rpc: {
           sendDwnRequest: sinon.stub().resolves({
@@ -2616,24 +2675,24 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
 
-      await expect((engine as any).pullMessages({
+      await expect((engine as any).admitRemoteMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
         messageCids : ['cid-1'],
         shouldContinue,
       })).rejects.toThrow(SyncPullAbortedError);
 
-      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+      expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
       expect(await engine.getFailedMessages()).toHaveLength(0);
     });
 
-    it('pullMessages should reject prefetched entries outside the requested protocol', async () => {
+    it('rejects prefetched entries outside the requested protocol', async () => {
       sinon.stub(console, 'warn');
       const mockAgent = {
         agentDid          : 'did:example:agent',
         processDwnRequest : sinon.stub().resolves({ message: {} }),
         dwn               : {
-          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
+          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
         },
         rpc: {
           sendDwnRequest: sinon.stub(),
@@ -2652,29 +2711,59 @@ describe('SyncEngineLevel — private methods', () => {
         recordId: 'record-1',
       } as any;
 
-      await (engine as any).pullMessages({
+      const messageCid = await Message.getCid(outOfScopeMessage);
+
+      await (engine as any).admitRemoteMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
         protocol    : 'https://example.com/profile',
         messageCids : [],
-        prefetched  : [{ messageCid: 'cid-1', message: outOfScopeMessage }],
+        prefetched  : [{ messageCid, message: outOfScopeMessage }],
       });
 
       const failedMessages = await engine.getFailedMessages();
-      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+      expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
       expect(failedMessages).toHaveLength(1);
-      expect(failedMessages[0].category).toBe('pull-scope-rejected');
-      expect(failedMessages[0].errorCode).toBe('out-of-scope');
+      expect(failedMessages[0].category).toBe('admit-failed');
+      expect(failedMessages[0].errorCode).toBe('terminal');
       expect(failedMessages[0].protocol).toBe('https://example.com/profile');
       expect(failedMessages[0].remoteEndpoint).toBe('https://dwn.example.com');
     });
 
-    it('pullMessages should classify a pulled delete from an in-scope batch initial write', async () => {
+    it('skips roots that already have an admission dead letter for the remote', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          isRemoteMode      : true,
-          processRawMessage : sinon.stub().resolves({ status: { code: 202 } }),
+          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const messageCid = 'bafy-admission-deadletter';
+
+      await engine.recordDeadLetter({
+        messageCid,
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        category       : 'admit-failed',
+        errorDetail    : 'terminal dependency',
+      });
+
+      await (engine as any).admitRemoteMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [messageCid],
+      });
+
+      expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
+      expect(await engine.getFailedMessages('did:example:alice')).toHaveLength(1);
+    });
+
+    it('classifies a pulled delete from an in-scope batch initial write', async () => {
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          isRemoteMode           : true,
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -2684,7 +2773,7 @@ describe('SyncEngineLevel — private methods', () => {
         recordId : recordsWrite.message.recordId,
       });
 
-      await (engine as any).pullMessages({
+      await (engine as any).admitRemoteMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
         protocol    : profileProtocol,
@@ -2695,18 +2784,18 @@ describe('SyncEngineLevel — private methods', () => {
         ],
       });
 
-      expect(mockAgent.dwn.processRawMessage.callCount).toBe(2);
-      expect(mockAgent.dwn.processRawMessage.secondCall.args[1]).toBe(recordsDelete.message);
+      expect(mockAgent.dwn.applyReplicatedMessage.callCount).toBe(2);
+      expect(mockAgent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(recordsDelete.message);
       expect(await engine.getFailedMessages()).toHaveLength(0);
     });
 
-    it('pullMessages should reject a pulled delete from an out-of-scope batch initial write', async () => {
+    it('rejects a pulled delete from an out-of-scope batch initial write', async () => {
       sinon.stub(console, 'warn');
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          isRemoteMode      : true,
-          processRawMessage : sinon.stub().resolves({ status: { code: 202 } }),
+          isRemoteMode           : true,
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -2717,7 +2806,7 @@ describe('SyncEngineLevel — private methods', () => {
       });
       const deleteCid = await Message.getCid(recordsDelete.message);
 
-      await (engine as any).pullMessages({
+      await (engine as any).admitRemoteMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
         protocol    : profileProtocol,
@@ -2730,18 +2819,18 @@ describe('SyncEngineLevel — private methods', () => {
 
       const failedMessages = await engine.getFailedMessages();
       const deleteFailure = failedMessages.find(entry => entry.messageCid === deleteCid);
-      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
-      expect(deleteFailure?.category).toBe('pull-scope-rejected');
-      expect(deleteFailure?.errorCode).toBe('out-of-scope');
+      expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
+      expect(deleteFailure?.category).toBe('admit-failed');
+      expect(deleteFailure?.errorCode).toBe('terminal');
     });
 
-    it('pullMessages should classify a pulled delete from the local initial write', async () => {
+    it('classifies a pulled delete from the local initial write', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          isRemoteMode      : false,
-          node              : { storage: { messageStore: {} } },
-          processRawMessage : sinon.stub().resolves({ status: { code: 202 } }),
+          isRemoteMode           : false,
+          node                   : { storage: { messageStore: {} } },
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -2752,7 +2841,7 @@ describe('SyncEngineLevel — private methods', () => {
       });
       const fetchInitialStub = sinon.stub(RecordsWrite, 'fetchInitialRecordsWriteMessage').resolves(recordsWrite.message);
 
-      await (engine as any).pullMessages({
+      await (engine as any).admitRemoteMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
         protocol    : profileProtocol,
@@ -2761,25 +2850,25 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       expect(fetchInitialStub.calledOnce).toBe(true);
-      expect(mockAgent.dwn.processRawMessage.calledOnce).toBe(true);
-      expect(mockAgent.dwn.processRawMessage.firstCall.args[1]).toBe(recordsDelete.message);
+      expect(mockAgent.dwn.applyReplicatedMessage.calledOnce).toBe(true);
+      expect(mockAgent.dwn.applyReplicatedMessage.firstCall.args[1]).toEqual(recordsDelete.message);
       expect(await engine.getFailedMessages()).toHaveLength(0);
     });
 
-    it('pullMessages should fail closed for an unknown pulled delete in remote mode', async () => {
+    it('fails closed for an unknown pulled delete in remote mode', async () => {
       sinon.stub(console, 'warn');
       const fetchInitialStub = sinon.stub(RecordsWrite, 'fetchInitialRecordsWriteMessage');
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          isRemoteMode      : true,
-          processRawMessage : sinon.stub().resolves({ status: { code: 202 } }),
+          isRemoteMode           : true,
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
       const recordsDelete = await TestDataGenerator.generateRecordsDelete();
 
-      await (engine as any).pullMessages({
+      await (engine as any).admitRemoteMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
         protocol    : profileProtocol,
@@ -2789,17 +2878,17 @@ describe('SyncEngineLevel — private methods', () => {
 
       const failedMessages = await engine.getFailedMessages();
       expect(fetchInitialStub.called).toBe(false);
-      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+      expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
       expect(failedMessages).toHaveLength(1);
-      expect(failedMessages[0].category).toBe('pull-scope-rejected');
-      expect(failedMessages[0].errorCode).toBe('unknown');
+      expect(failedMessages[0].category).toBe('admit-failed');
+      expect(failedMessages[0].errorCode).toBe('terminal');
 
       await (engine as any).clearRootConvergenceDeadLettersForScope(
         'did:example:alice',
         'https://dwn.example.com',
         { kind: 'protocolSet', protocols: [profileProtocol] },
       );
-      expect(await engine.getFailedMessages()).toHaveLength(0);
+      expect(await engine.getFailedMessages()).toHaveLength(1);
     });
 
     it('pushMessages should delegate to sync-messages pushMessages', async () => {
@@ -3451,7 +3540,7 @@ describe('SyncEngineLevel — private methods', () => {
         onlyRemote : [{ messageCid: 'remote-cid-1' }],
         onlyLocal  : [],
       });
-      const pullStub = sinon.stub(engine as any, 'pullMessages').callsFake(async (): Promise<void> => {
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').callsFake(async (): Promise<void> => {
         link.status = 'degraded_poll';
       });
       const openPullStub = sinon.stub(engine as any, 'openLivePullSubscription').resolves();
@@ -3463,7 +3552,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       await (engine as any).doRepairLink(linkKey);
 
-      expect(pullStub.calledOnce).toBe(true);
+      expect(admitStub.calledOnce).toBe(true);
       expect(openPullStub.calledOnce).toBe(true);
       expect(openPushStub.calledOnce).toBe(true);
       expect(link.status).toBe('live');
@@ -3735,482 +3824,6 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Live-pull protocol metadata repair
-  // ---------------------------------------------------------------------------
-
-  describe('live-pull protocol metadata repair', () => {
-    const profileProtocol = 'https://example.com/profile';
-
-    const protocolRecordMessage = (
-      protocolPath = 'profile/avatar',
-      protocol = profileProtocol,
-    ): GenericMessage => ({
-      contextId  : 'record-1',
-      recordId   : 'record-1',
-      descriptor : {
-        interface        : DwnInterfaceName.Records,
-        method           : DwnMethodName.Write,
-        protocol,
-        protocolPath,
-        dateCreated      : '2026-01-01T00:00:00.000000Z',
-        messageTimestamp : '2026-01-01T00:00:00.000000Z',
-      },
-    });
-
-    const protocolDefinition = (
-      protocol = profileProtocol,
-      uses?: Record<string, string>,
-    ): ProtocolDefinition => ({
-      protocol,
-      published : false,
-      types     : {
-        entry: {
-          dataFormats: ['application/json'],
-        },
-      },
-      structure: {
-        entry: {},
-      },
-      ...(uses === undefined ? {} : { uses }),
-    });
-
-    const createResolvingAgent = (
-      ...authors: Parameters<typeof TestDataGenerator.createDidResolutionResult>[0][]
-    ): { agentDid: string; did: { resolve: sinon.SinonStub } } => {
-      const resolve = sinon.stub();
-      for (const author of authors) {
-        resolve.withArgs(author.did).resolves(TestDataGenerator.createDidResolutionResult(author));
-      }
-      resolve.resolves({ didDocument: undefined, didDocumentMetadata: {}, didResolutionMetadata: { error: 'notFound' } });
-      return {
-        agentDid : 'did:example:agent',
-        did      : { resolve },
-      };
-    };
-
-    const protocolsConfigureMessage = async ({
-      author,
-      protocol = profileProtocol,
-      uses,
-      messageTimestamp = '2025-12-31T00:00:00.000000Z',
-    }: {
-      author: Parameters<typeof TestDataGenerator.createDidResolutionResult>[0];
-      protocol?: string;
-      uses?: Record<string, string>;
-      messageTimestamp?: string;
-    }): Promise<ProtocolsConfigureMessage> => {
-      const { message } = await TestDataGenerator.generateProtocolsConfigure({
-        author,
-        messageTimestamp,
-        protocolDefinition: protocolDefinition(protocol, uses),
-      });
-      return message;
-    };
-
-    const protocolMetadataFailure = (
-      protocol = profileProtocol,
-      code = ClosureFailureCode.ProtocolMetadataMissing,
-      label = 'protocolsConfigure',
-      dependencyClass: 1 | 5 | 6 = 1,
-    ): any => ({
-      complete       : false,
-      rootMessageCid : 'root-cid',
-      edges          : [],
-      depth          : 0,
-      failure        : {
-        code,
-        detail : `dependency '${label}' (${protocol}) not found locally`,
-        edge   : {
-          dependencyClass,
-          identifier     : protocol,
-          identifierType : 'protocol',
-          label,
-        },
-      },
-    });
-
-    it('fetches and applies composed protocol configs before retrying closure', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const socialProtocol = 'https://identity.foundation/protocols/social-graph';
-      const profileConfig = await protocolsConfigureMessage({
-        author   : tenant,
-        protocol : profileProtocol,
-        uses     : { social: socialProtocol },
-      });
-      const socialConfig = await protocolsConfigureMessage({
-        author   : tenant,
-        protocol : socialProtocol,
-      });
-      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
-        message: {
-          descriptor: {
-            filter: request.messageParams.filter,
-          },
-        },
-      }));
-      const sendDwnRequest = sinon.stub().callsFake(async ({ message }: { message: any }) => {
-        const protocol = message.descriptor.filter.protocol;
-        return {
-          status  : { code: 200, detail: 'OK' },
-          entries : protocol === profileProtocol
-            ? [profileConfig]
-            : protocol === socialProtocol
-              ? [socialConfig]
-              : [],
-        };
-      });
-      const agent = {
-        ...createResolvingAgent(tenant),
-        dwn : { processRawMessage },
-        processDwnRequest,
-        rpc : { sendDwnRequest },
-      };
-      const engine = createEngine({ db, agent: agent as any });
-      const closureCtx = createClosureContext(tenant.did);
-      closureCtx.missingDeps.add(
-        `protocolSet:${profileProtocol}:protocolsConfigure:protocol:${profileProtocol}`,
-      );
-
-      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
-        {
-          did     : tenant.did,
-          dwnUrl  : 'https://dwn.example',
-          linkKey : 'link-key',
-          isStale : (): boolean => false,
-        },
-        closureCtx,
-        protocolMetadataFailure(),
-      );
-
-      expect(repaired).toBe(true);
-      expect(processDwnRequest.getCalls().map(call => call.args[0])).toEqual([
-        {
-          author        : tenant.did,
-          messageParams : { filter: { protocol: profileProtocol } },
-          messageType   : DwnInterface.ProtocolsQuery,
-          store         : false,
-          target        : tenant.did,
-        },
-        {
-          author        : tenant.did,
-          messageParams : { filter: { protocol: socialProtocol } },
-          messageType   : DwnInterface.ProtocolsQuery,
-          store         : false,
-          target        : tenant.did,
-        },
-      ]);
-      expect(sendDwnRequest.getCalls().map(call => call.args[0].dwnUrl)).toEqual([
-        'https://dwn.example',
-        'https://dwn.example',
-      ]);
-      expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
-        socialConfig,
-        profileConfig,
-      ]);
-      expect(closureCtx.missingDeps.has(
-        `protocolSet:${profileProtocol}:protocolsConfigure:protocol:${profileProtocol}`,
-      )).toBe(false);
-    });
-
-    for (const repairCase of [
-      {
-        dependencyClass : 5 as const,
-        failureCode     : ClosureFailureCode.EncryptionDependencyMissing,
-        label           : 'keyDeliveryProtocol',
-      },
-      {
-        dependencyClass : 6 as const,
-        failureCode     : ClosureFailureCode.CrossProtocolReferenceMissing,
-        label           : 'crossProtocolConfig',
-      },
-    ]) {
-      it(`repairs ${repairCase.failureCode} protocol misses`, async () => {
-        const tenant = await TestDataGenerator.generatePersona();
-        const dependencyProtocol = `https://example.com/${repairCase.label}`;
-        const dependencyConfig = await protocolsConfigureMessage({
-          author   : tenant,
-          protocol : dependencyProtocol,
-        });
-        const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-        const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
-          message: {
-            descriptor: {
-              filter: request.messageParams.filter,
-            },
-          },
-        }));
-        const sendDwnRequest = sinon.stub().callsFake(async ({ message }: { message: any }) => ({
-          status  : { code: 200, detail: 'OK' },
-          entries : message.descriptor.filter.protocol === dependencyProtocol ? [dependencyConfig] : [],
-        }));
-        const agent = {
-          ...createResolvingAgent(tenant),
-          dwn : { processRawMessage },
-          processDwnRequest,
-          rpc : { sendDwnRequest },
-        };
-        const engine = createEngine({ db, agent: agent as any });
-        const closureCtx = createClosureContext(tenant.did);
-        const depKey = `protocolSet:${profileProtocol}:${repairCase.label}:protocol:${dependencyProtocol}`;
-        closureCtx.missingDeps.add(depKey);
-
-        const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
-          {
-            did     : tenant.did,
-            dwnUrl  : 'https://dwn.example',
-            linkKey : 'link-key',
-            isStale : (): boolean => false,
-          },
-          closureCtx,
-          protocolMetadataFailure(
-            dependencyProtocol,
-            repairCase.failureCode,
-            repairCase.label,
-            repairCase.dependencyClass,
-          ),
-        );
-
-        expect(repaired).toBe(true);
-        expect(processDwnRequest.firstCall.args[0].messageParams).toEqual({
-          filter: { protocol: dependencyProtocol },
-        });
-        expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
-          dependencyConfig,
-        ]);
-        expect(closureCtx.missingDeps.has(depKey)).toBe(false);
-      });
-    }
-
-    it('rejects non-tenant-authored protocol configs', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const attacker = await TestDataGenerator.generatePersona();
-      const forgedConfig = await protocolsConfigureMessage({
-        author   : attacker,
-        protocol : profileProtocol,
-      });
-      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
-        message: {
-          descriptor: {
-            filter: request.messageParams.filter,
-          },
-        },
-      }));
-      const sendDwnRequest = sinon.stub().resolves({
-        status  : { code: 200, detail: 'OK' },
-        entries : [forgedConfig],
-      });
-      const agent = {
-        ...createResolvingAgent(tenant, attacker),
-        dwn : { processRawMessage },
-        processDwnRequest,
-        rpc : { sendDwnRequest },
-      };
-      const engine = createEngine({ db, agent: agent as any });
-
-      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
-        {
-          did     : tenant.did,
-          dwnUrl  : 'https://dwn.example',
-          linkKey : 'link-key',
-          isStale : (): boolean => false,
-        },
-        createClosureContext(tenant.did),
-        protocolMetadataFailure(),
-      );
-
-      expect(repaired).toBe(false);
-      expect(processRawMessage.called).toBe(false);
-      expect(processDwnRequest.callCount).toBe(1);
-      expect(sendDwnRequest.callCount).toBe(1);
-    });
-
-    it('rejects unsigned protocol config lookalikes', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const unsignedConfig: GenericMessage = {
-        descriptor: {
-          interface        : DwnInterfaceName.Protocols,
-          method           : DwnMethodName.Configure,
-          messageTimestamp : '2025-12-31T00:00:00.000000Z',
-          definition       : protocolDefinition(profileProtocol),
-        },
-      };
-      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
-        message: {
-          descriptor: {
-            filter: request.messageParams.filter,
-          },
-        },
-      }));
-      const sendDwnRequest = sinon.stub().resolves({
-        status  : { code: 200, detail: 'OK' },
-        entries : [unsignedConfig],
-      });
-      const agent = {
-        ...createResolvingAgent(tenant),
-        dwn : { processRawMessage },
-        processDwnRequest,
-        rpc : { sendDwnRequest },
-      };
-      const engine = createEngine({ db, agent: agent as any });
-
-      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
-        {
-          did     : tenant.did,
-          dwnUrl  : 'https://dwn.example',
-          linkKey : 'link-key',
-          isStale : (): boolean => false,
-        },
-        createClosureContext(tenant.did),
-        protocolMetadataFailure(),
-      );
-
-      expect(repaired).toBe(false);
-      expect(processRawMessage.called).toBe(false);
-    });
-
-    it('attaches delegated ProtocolsQuery grants when available', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const delegate = await TestDataGenerator.generatePersona();
-      const profileConfig = await protocolsConfigureMessage({
-        author   : tenant,
-        protocol : profileProtocol,
-      });
-      const processRawMessage = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
-        message: {
-          descriptor: {
-            filter            : request.messageParams.filter,
-            permissionGrantId : request.messageParams.permissionGrantId,
-          },
-        },
-      }));
-      const sendDwnRequest = sinon.stub().resolves({
-        status  : { code: 200, detail: 'OK' },
-        entries : [profileConfig],
-      });
-      const getPermissionForRequest = sinon.stub().resolves({ grant: { id: 'protocol-query-grant' } });
-      const agent = {
-        ...createResolvingAgent(tenant, delegate),
-        dwn : { processRawMessage },
-        processDwnRequest,
-        rpc : { sendDwnRequest },
-      };
-      const engine = createEngine({ db, agent: agent as any });
-      (engine as any)._permissionsApi = {
-        clear: sinon.stub().resolves(),
-        getPermissionForRequest,
-      };
-
-      const repaired = await (engine as any).tryRepairMissingProtocolMetadata(
-        {
-          delegateDid : delegate.did,
-          did         : tenant.did,
-          dwnUrl      : 'https://dwn.example',
-          linkKey     : 'link-key',
-          isStale     : (): boolean => false,
-        },
-        createClosureContext(tenant.did),
-        protocolMetadataFailure(),
-      );
-
-      expect(repaired).toBe(true);
-      expect(getPermissionForRequest.firstCall.args[0]).toEqual({
-        connectedDid : tenant.did,
-        delegateDid  : delegate.did,
-        protocol     : profileProtocol,
-        cached       : true,
-        messageType  : DwnInterface.ProtocolsQuery,
-      });
-      expect(processDwnRequest.firstCall.args[0].author).toBe(delegate.did);
-      expect(processDwnRequest.firstCall.args[0].messageParams).toEqual({
-        filter            : { protocol: profileProtocol },
-        permissionGrantId : 'protocol-query-grant',
-      });
-    });
-
-    it('re-applies a live-pulled record after repairing missing protocol metadata', async () => {
-      const tenant = await TestDataGenerator.generatePersona();
-      const record = protocolRecordMessage('profile/avatar', profileProtocol);
-      const recordCid = await Message.getCid(record);
-      const profileConfig = await protocolsConfigureMessage({
-        author   : tenant,
-        protocol : profileProtocol,
-      });
-      let installedConfig: ProtocolsConfigureMessage | undefined;
-      const messageStore = {
-        query: sinon.stub().callsFake(async (_tenant: string, filters: any[]) => {
-          const filter = filters[0];
-          if (
-            filter.interface === DwnInterfaceName.Protocols &&
-            filter.method === DwnMethodName.Configure &&
-            filter.protocol === profileProtocol &&
-            installedConfig !== undefined
-          ) {
-            return { messages: [installedConfig] };
-          }
-          return { messages: [] };
-        }),
-      };
-      const recordStatuses = [
-        { code: 401, detail: 'ProtocolAuthorizationProtocolNotFound' },
-        { code: 202, detail: 'Accepted' },
-      ];
-      const processRawMessage = sinon.stub().callsFake(async (_did: string, message: GenericMessage) => {
-        if (message.descriptor.interface === DwnInterfaceName.Protocols) {
-          installedConfig = message as ProtocolsConfigureMessage;
-          return { status: { code: 202, detail: 'Accepted' } };
-        }
-        return { status: recordStatuses.shift() };
-      });
-      const processDwnRequest = sinon.stub().callsFake(async (request: any) => ({
-        message: {
-          descriptor: {
-            filter: request.messageParams.filter,
-          },
-        },
-      }));
-      const sendDwnRequest = sinon.stub().resolves({
-        status  : { code: 200, detail: 'OK' },
-        entries : [profileConfig],
-      });
-      const agent = {
-        ...createResolvingAgent(tenant),
-        dwn: {
-          node: {
-            storage: { messageStore },
-          },
-          processRawMessage,
-        },
-        processDwnRequest,
-        rpc: { sendDwnRequest },
-      };
-      const engine = createEngine({ db, agent: agent as any });
-
-      const cid = await (engine as any).processLivePullEvent(
-        {
-          did     : tenant.did,
-          dwnUrl  : 'https://dwn.example',
-          link    : { scope: { kind: 'protocolSet', protocols: [profileProtocol] } },
-          linkKey : 'link-key',
-          isStale : (): boolean => false,
-        },
-        { message: record },
-      );
-
-      expect(cid).toBe(recordCid);
-      expect(processRawMessage.getCalls().map(call => call.args[1])).toEqual([
-        record,
-        profileConfig,
-        record,
-      ]);
-      expect(recordStatuses).toEqual([]);
-    });
-  });
-
-  // ---------------------------------------------------------------------------
   // Per-link reconciliation (doReconcileLink, reconcileLink, scheduleReconcile)
   // ---------------------------------------------------------------------------
 
@@ -4246,7 +3859,7 @@ describe('SyncEngineLevel — private methods', () => {
         return rootCallCount <= 1 ? 'root-B' : 'root-converged';
       });
       sinon.stub(engine as any, 'diffWithRemote').resolves({ onlyRemote: [], onlyLocal: [] });
-      sinon.stub(engine as any, 'pullMessages').resolves();
+      sinon.stub(engine as any, 'admitRemoteMessages').resolves();
       sinon.stub(engine as any, 'pushMessages').resolves();
 
       const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
@@ -4262,173 +3875,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(events.some(e => e.type === 'reconcile:completed')).toBe(true);
     });
 
-    it('should preserve closure failures when roots converge after reconciliation', async () => {
-      const engine = createEngine({ db });
-      const linkKey = 'did:example:alice^https://dwn.example.com';
-      const protocol = 'https://example.com/protocol';
-      const link = makeLiveLink({
-        protocol,
-        scope: { kind: 'protocolSet', protocols: [protocol] },
-      });
-      (engine as any)._activeLinks.set(linkKey, link);
-
-      await engine.recordDeadLetter({
-        messageCid     : 'dl-closure',
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example.com',
-        protocol,
-        category       : 'closure',
-        errorCode      : 'ClosureProtocolMetadataMissing',
-        errorDetail    : 'dependency missing despite matching roots',
-      });
-      await engine.recordDeadLetter({
-        messageCid     : 'dl-pull',
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example.com',
-        protocol,
-        category       : 'pull-processing',
-        errorDetail    : 'pull failed before roots converged',
-      });
-
-      sinon.stub(engine as any, 'getLocalRoot').resolves('same-root');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('same-root');
-      sinon.stub(engine as any, 'diffWithRemote');
-
-      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      (engine as any)._ledger = {
-        clearNeedsReconcile : clearStub,
-        saveLink            : sinon.stub().resolves(),
-        getAllLinks         : sinon.stub().resolves([]),
-      };
-
-      await (engine as any).doReconcileLink(linkKey);
-
-      const remaining = await engine.getFailedMessages();
-      expect(remaining.length).toBe(1);
-      expect(remaining[0].messageCid).toBe('dl-closure');
-      expect(remaining[0].category).toBe('closure');
-
-      const health = await engine.getSyncHealth();
-      expect(health.failedMessageCount).toBe(1);
-      expect(health.closureFailureCount).toBe(1);
-      expect(health.syncHealthy).toBe(false);
-    });
-
-    for (const failureCode of [
-      ClosureFailureCode.DependencyForbidden,
-      ClosureFailureCode.GrantExpired,
-      ClosureFailureCode.GrantNotYetActive,
-      ClosureFailureCode.GrantRevocationMissing,
-    ]) {
-      it(`should mark terminal closure failure ${failureCode} without scheduling repair`, async () => {
-        const engine = createEngine({ db });
-        const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
-        const protocol = 'https://example.com/protocol';
-        const link = makeLiveLink({
-          scope: { kind: 'protocolSet', protocols: [protocol] },
-        });
-        (engine as any)._activeLinks.set(linkKey, link);
-        sinon.stub(engine as any, 'getCurrentDurableLinkIdentityKeys').resolves(
-          new Set([`${link.tenantDid}^${link.projectionId}^${link.authorizationEpoch}`])
-        );
-
-        const transitionToRepairingStub = sinon.stub(engine as any, 'transitionToRepairing').resolves();
-        const closePullStub = sinon.stub().resolves();
-        const closePushStub = sinon.stub().resolves();
-        const pushTimer = setTimeout(() => {}, 10_000);
-        const reconcileTimer = setTimeout(() => {}, 10_000);
-        (engine as any)._liveSubscriptions.push({
-          linkKey,
-          did    : link.tenantDid,
-          dwnUrl : link.remoteEndpoint,
-          close  : closePullStub,
-        });
-        (engine as any)._localSubscriptions.push({
-          linkKey,
-          did    : link.tenantDid,
-          dwnUrl : link.remoteEndpoint,
-          close  : closePushStub,
-        });
-        (engine as any)._pushRuntimes.set(linkKey, { timer: pushTimer, entries: [], retryCount: 0 });
-        (engine as any)._reconcileTimers.set(linkKey, reconcileTimer);
-
-        await (engine as any).recordClosureFailure(
-          {
-            did     : link.tenantDid,
-            dwnUrl  : link.remoteEndpoint,
-            linkKey,
-            link,
-            isStale : () => false,
-          },
-          {
-            message: {
-              descriptor: {
-                interface : 'Records',
-                method    : 'Write',
-                protocol,
-              },
-            },
-          },
-          failureCode,
-          'terminal closure failure',
-        );
-
-        expect(transitionToRepairingStub.called).toBe(false);
-        expect(link.status).toBe('terminal_incomplete');
-        expect(link.connectivity).toBe('offline');
-        expect(closePullStub.calledOnce).toBe(true);
-        expect(closePushStub.calledOnce).toBe(true);
-        expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
-        expect((engine as any)._reconcileTimers.has(linkKey)).toBe(false);
-
-        const failures = await engine.getFailedMessages();
-        expect(failures.length).toBe(1);
-        expect(failures[0].category).toBe('closure');
-        expect(failures[0].errorCode).toBe(failureCode);
-
-        const health = await engine.getSyncHealth();
-        expect(health.closureFailureCount).toBe(1);
-        expect(health.degradedLinkCount).toBe(1);
-        expect(health.syncHealthy).toBe(false);
-      });
-    }
-
-    it('should transition transient closure failures to repair', async () => {
-      const engine = createEngine({ db });
-      const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
-      const protocol = 'https://example.com/protocol';
-      const link = makeLiveLink({
-        scope: { kind: 'protocolSet', protocols: [protocol] },
-      });
-      (engine as any)._activeLinks.set(linkKey, link);
-
-      const transitionToRepairingStub = sinon.stub(engine as any, 'transitionToRepairing').resolves();
-
-      await (engine as any).recordClosureFailure(
-        {
-          did     : link.tenantDid,
-          dwnUrl  : link.remoteEndpoint,
-          linkKey,
-          link,
-          isStale : () => false,
-        },
-        {
-          message: {
-            descriptor: {
-              interface : 'Records',
-              method    : 'Write',
-              protocol,
-            },
-          },
-        },
-        ClosureFailureCode.ProtocolMetadataMissing,
-        'missing protocol config',
-      );
-
-      expect(transitionToRepairingStub.calledOnceWith(linkKey, link)).toBe(true);
-      expect(link.status).toBe('live');
-    });
-
     it('should NOT clear needsReconcile when roots still differ after reconciliation', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
@@ -4439,7 +3885,7 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getLocalRoot').resolves('root-local');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('root-remote');
       sinon.stub(engine as any, 'diffWithRemote').resolves({ onlyRemote: [], onlyLocal: ['cid-1'] });
-      sinon.stub(engine as any, 'pullMessages').resolves();
+      sinon.stub(engine as any, 'admitRemoteMessages').resolves();
       sinon.stub(engine as any, 'pushMessages').resolves();
 
       const clearStub = sinon.stub().resolves();
@@ -4621,7 +4067,7 @@ describe('SyncEngineLevel — private methods', () => {
         onlyRemote : [{ messageCid: 'remote-cid-1' }],
         onlyLocal  : ['local-cid-1'],
       });
-      const pullStub = sinon.stub(engine as any, 'pullMessages').resolves();
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
       const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
 
       const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
@@ -4630,7 +4076,7 @@ describe('SyncEngineLevel — private methods', () => {
       await (engine as any).doReconcileLink(linkKey);
 
       expect(diffStub.calledOnce).toBe(true);
-      expect(pullStub.calledOnce).toBe(true);
+      expect(admitStub.calledOnce).toBe(true);
       expect(pushStub.calledOnce).toBe(true);
 
       // Verify push was called with the onlyLocal CIDs.
@@ -4656,7 +4102,7 @@ describe('SyncEngineLevel — private methods', () => {
         onlyRemote : [{ messageCid: 'remote-cid-1' }],
         onlyLocal  : ['local-cid-1'],
       });
-      const pullStub = sinon.stub(engine as any, 'pullMessages').callsFake(async (params: any) => {
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').callsFake(async (params: any) => {
         expect(params.shouldContinue()).toBe(true);
         (engine as any)._activeLinks.delete(linkKey);
         expect(params.shouldContinue()).toBe(false);
@@ -4667,7 +4113,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       await (engine as any).doReconcileLink(linkKey);
 
-      expect(pullStub.calledOnce).toBe(true);
+      expect(admitStub.calledOnce).toBe(true);
       expect(pushStub.called).toBe(false);
       expect(clearStub.called).toBe(false);
       expect(link.needsReconcile).toBe(true);
@@ -5603,7 +5049,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db });
 
       await engine.recordDeadLetter({ messageCid: 'dl-1', tenantDid: 'did:a', category: 'push-permanent', errorDetail: 'x' });
-      await engine.recordDeadLetter({ messageCid: 'dl-2', tenantDid: 'did:b', category: 'closure', errorDetail: 'y' });
+      await engine.recordDeadLetter({ messageCid: 'dl-2', tenantDid: 'did:b', category: 'admit-failed', errorDetail: 'y' });
 
       await engine.clearAllFailedMessages();
       const entries = await engine.getFailedMessages();
@@ -5680,11 +5126,11 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db });
 
       await engine.recordDeadLetter({ messageCid: 'dl-health-1', tenantDid: 'did:x', category: 'push-permanent', errorDetail: 'x' });
-      await engine.recordDeadLetter({ messageCid: 'dl-health-2', tenantDid: 'did:y', category: 'closure', errorDetail: 'y' });
+      await engine.recordDeadLetter({ messageCid: 'dl-health-2', tenantDid: 'did:y', category: 'admit-failed', errorDetail: 'y' });
 
       const health = await engine.getSyncHealth();
       expect(health.failedMessageCount).toBe(2);
-      expect(health.closureFailureCount).toBe(1);
+      expect(health.admissionFailureCount).toBe(1);
       expect(health.connectivity).toBeDefined();
       expect(health.degradedLinkCount).toBe(0);
       expect(health.syncHealthy).toBe(false);
@@ -5699,9 +5145,9 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:multi-proto',
         remoteEndpoint : 'https://dwn.example.com',
         protocol       : 'https://example.com/proto-a',
-        category       : 'closure',
-        errorCode      : 'ClosureProtocolMetadataMissing',
-        errorDetail    : 'missing protocol config for proto-a',
+        category       : 'admit-failed',
+        errorCode      : 'terminal',
+        errorDetail    : 'admission failed for proto-a',
       });
       await engine.recordDeadLetter({
         messageCid     : 'dl-proto-b',
@@ -5728,51 +5174,51 @@ describe('SyncEngineLevel — private methods', () => {
       expect(remaining[0].protocol).toBe('https://example.com/proto-b');
     });
 
-    it('should not clear closure dead letters when only root-convergence-clearable categories are requested', async () => {
+    it('should not clear admission dead letters when only root-convergence-clearable categories are requested', async () => {
       const engine = createEngine({ db });
 
       await engine.recordDeadLetter({
-        messageCid     : 'dl-closure',
-        tenantDid      : 'did:example:closure-health',
+        messageCid     : 'dl-admit',
+        tenantDid      : 'did:example:admit-health',
         remoteEndpoint : 'https://dwn.example.com',
         protocol       : 'https://example.com/proto',
-        category       : 'closure',
-        errorCode      : 'ClosureProtocolMetadataMissing',
-        errorDetail    : 'missing dependency after root convergence',
+        category       : 'admit-failed',
+        errorCode      : 'terminal',
+        errorDetail    : 'admission failed after root convergence',
       });
       await engine.recordDeadLetter({
         messageCid     : 'dl-pull',
-        tenantDid      : 'did:example:closure-health',
+        tenantDid      : 'did:example:admit-health',
         remoteEndpoint : 'https://dwn.example.com',
         protocol       : 'https://example.com/proto',
-        category       : 'pull-processing',
+        category       : 'push-permanent',
         errorDetail    : 'transient pull failure before root convergence',
       });
       await engine.recordDeadLetter({
         messageCid     : 'dl-scope',
-        tenantDid      : 'did:example:closure-health',
+        tenantDid      : 'did:example:admit-health',
         remoteEndpoint : 'https://dwn.example.com',
         protocol       : 'https://example.com/proto',
-        category       : 'pull-scope-rejected',
+        category       : 'push-exhausted',
         errorCode      : 'unknown',
         errorDetail    : 'transient pull scope rejection before root convergence',
       });
 
       await (engine as any).clearDeadLettersForLink(
-        'did:example:closure-health',
+        'did:example:admit-health',
         'https://dwn.example.com',
         'https://example.com/proto',
-        { categories: new Set(['push-permanent', 'push-exhausted', 'pull-processing', 'pull-scope-rejected']) },
+        { categories: new Set(['push-permanent', 'push-exhausted']) },
       );
 
       const remaining = await engine.getFailedMessages();
       expect(remaining.length).toBe(1);
-      expect(remaining[0].messageCid).toBe('dl-closure');
-      expect(remaining[0].category).toBe('closure');
+      expect(remaining[0].messageCid).toBe('dl-admit');
+      expect(remaining[0].category).toBe('admit-failed');
 
       const health = await engine.getSyncHealth();
       expect(health.failedMessageCount).toBe(1);
-      expect(health.closureFailureCount).toBe(1);
+      expect(health.admissionFailureCount).toBe(1);
       expect(health.syncHealthy).toBe(false);
     });
 
@@ -5784,7 +5230,7 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid     : 'dl-full-tenant',
         tenantDid      : 'did:example:mixed',
         remoteEndpoint : 'https://dwn.example.com',
-        category       : 'pull-processing',
+        category       : 'admit-failed',
         errorDetail    : 'full-tenant pull failure',
       });
       // Protocol-scoped failure on the same remote.

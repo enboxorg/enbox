@@ -254,6 +254,48 @@ describe('AgentDwnApi', () => {
       expect(rpcCall.data).toBeInstanceOf(Blob);
     });
 
+    it('routes replicated apply through RPC in remote mode', async () => {
+      const rpcApplyStub = sinon.stub().resolves({ kind: 'Duplicate' });
+      const mockAgent: any = {
+        rpc: {
+          applyReplicatedMessage : rpcApplyStub,
+          getServerInfo          : sinon.stub().resolves({ server: '@enbox/dwn-server', webSocketSupport: false }),
+          sendDwnRequest         : sinon.stub(),
+        },
+      };
+
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        localDwnEndpoint : 'http://127.0.0.1:55557',
+      });
+
+      const fakeMessage = {
+        descriptor: { interface: 'Records', method: 'Write' },
+      } as any;
+      const dataStream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(new TextEncoder().encode('replicated data'));
+          controller.close();
+        },
+      });
+
+      const result = await dwnApi.applyReplicatedMessage(
+        'did:dht:testtenant',
+        fakeMessage,
+        { dataStream },
+      );
+
+      expect(result).toEqual({ kind: 'Duplicate' });
+      expect(rpcApplyStub.calledOnce).toBe(true);
+      expect(rpcApplyStub.firstCall.args[0]).toMatchObject({
+        dwnUrl    : 'http://127.0.0.1:55557',
+        message   : fakeMessage,
+        targetDid : 'did:dht:testtenant',
+      });
+      expect(rpcApplyStub.firstCall.args[0].data).toBeInstanceOf(Blob);
+      expect(mockAgent.rpc.sendDwnRequest.called).toBe(false);
+    });
+
     it('processRawMessage routes through in-process DWN in local mode', async () => {
       const processMessageStub = sinon.stub().resolves({
         status: { code: 202, detail: 'Accepted' },

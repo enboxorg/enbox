@@ -1,4 +1,12 @@
-import type { DwnRpc, DwnRpcRequest, DwnRpcResponse, DwnSubscriptionHandler, ResubscribeFactory } from './dwn-rpc-types.js';
+import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+import type {
+  DwnReplicationApplyRequest,
+  DwnRpc,
+  DwnRpcRequest,
+  DwnRpcResponse,
+  DwnSubscriptionHandler,
+  ResubscribeFactory,
+} from './dwn-rpc-types.js';
 import type { GenericMessage, MessageSubscription, ProgressToken, SubscriptionMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
@@ -87,6 +95,33 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     return WebSocketDwnRpcClient.processMessage(connection, targetDid, message);
   }
 
+  async applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
+    if (request.data !== undefined) {
+      throw new Error('RecordsWrite replicated apply with data is not supported via WebSocket transport');
+    }
+
+    const connection = await WebSocketDwnRpcClient.getConnection(request.dwnUrl);
+    return WebSocketDwnRpcClient.applyReplicatedMessage(connection, request.targetDid, request.message);
+  }
+
+  private static async getConnection(dwnUrl: string): Promise<SocketConnection> {
+    const url = new URL(dwnUrl);
+    if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
+      throw new Error(`Invalid websocket protocol ${url.protocol}`);
+    }
+
+    if (!WebSocketDwnRpcClient.connections.has(url.host)) {
+      try {
+        const connection = await WebSocketDwnRpcClient.createConnection(url);
+        WebSocketDwnRpcClient.connections.set(url.host, connection);
+      } catch (error) {
+        throw new Error(`Error connecting to ${url.host}: ${(error as Error).message}`);
+      }
+    }
+
+    return WebSocketDwnRpcClient.connections.get(url.host)!;
+  }
+
   /**
    * Creates a new `SocketConnection` with lifecycle wiring for reconnection.
    */
@@ -139,6 +174,23 @@ export class WebSocketDwnRpcClient implements DwnRpc {
     }
 
     return result.reply as DwnRpcResponse;
+  }
+
+  private static async applyReplicatedMessage(
+    connection: SocketConnection, target: string, message: GenericMessage
+  ): Promise<ReplicationApplyResult> {
+    const requestId = CryptoUtils.randomUuid();
+    const request = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', { target, message });
+
+    const { socket } = connection;
+    const response = await socket.request(request);
+
+    const { error, result } = response;
+    if (error !== undefined) {
+      throw new Error(`error applying replicated DWN message: ${error.message}`);
+    }
+
+    return result.result as ReplicationApplyResult;
   }
 
   private static async subscriptionRequest(
