@@ -7,7 +7,7 @@ import { DwnRpcError } from '../src/dwn-rpc-error.js';
 import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
 import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
-import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '../src/json-rpc.js';
 import { DwnInterfaceName, DwnMethodName, Encoder, Jws, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
@@ -56,6 +56,8 @@ describe('WebSocketDwnRpcClient', () => {
 
 
   beforeEach(async () => {
+    sinon.restore();
+
     // we set the client to a websocket url
     const dwnUrl = new URL(testDwnUrl);
     dwnUrl.protocol = dwnUrl.protocol === 'http:' ? 'ws:' : 'wss:';
@@ -69,7 +71,12 @@ describe('WebSocketDwnRpcClient', () => {
     alice = await TestDataGenerator.generateDidKeyPersona();
   });
 
+  afterEach(() => {
+    sinon.restore();
+  });
+
   afterAll(() => {
+    sinon.restore();
     mock.restore();
   });
 
