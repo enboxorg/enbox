@@ -22,7 +22,6 @@ type ProtocolsConfigureDescriptor = GenericMessage['descriptor'] & {
 export type MessageDependencyGraph<T> = {
   sorted: T[];
   dependencies: Map<T, T[]>;
-  dependents: Map<T, T[]>;
 };
 
 function isRecordsDescriptor(descriptor: GenericMessage['descriptor']): descriptor is RecordsDescriptor {
@@ -83,7 +82,7 @@ function getContextId(message: GenericMessage): string | undefined {
   return (message as GenericMessage & { contextId?: string }).contextId;
 }
 
-function getRoleContextPrefix(protocolPath: string, contextId?: string): string | undefined {
+export function getRoleContextPrefix(protocolPath: string, contextId?: string): string | undefined {
   const ancestorSegmentCount = protocolPath.split('/').length - 1;
   if (ancestorSegmentCount === 0 || contextId === undefined) {
     return undefined;
@@ -92,7 +91,7 @@ function getRoleContextPrefix(protocolPath: string, contextId?: string): string 
   return contextId.split('/').slice(0, ancestorSegmentCount).join('/');
 }
 
-function getRoleKey(protocol: string, protocolPath: string, recipient: string, contextPrefix?: string): string {
+export function getRoleKey(protocol: string, protocolPath: string, recipient: string, contextPrefix?: string): string {
   return `${protocol}|${protocolPath}|${recipient}|${contextPrefix ?? ''}`;
 }
 
@@ -110,7 +109,7 @@ function getRoleRecordKey(message: GenericMessage): string | undefined {
   return getRoleKey(protocol, protocolPath, recipient, getRoleContextPrefix(protocolPath, getContextId(message)));
 }
 
-function getSignaturePayload(message: GenericMessage): GenericSignaturePayload | undefined {
+export function getSignaturePayload(message: GenericMessage): GenericSignaturePayload | undefined {
   if (message.authorization === undefined) {
     return undefined;
   }
@@ -179,7 +178,6 @@ export function buildMessageDependencyGraph<T extends { message: GenericMessage 
     return {
       sorted       : messages,
       dependencies : new Map(messages.map(message => [message, []])),
-      dependents   : new Map(messages.map(message => [message, []])),
     };
   }
 
@@ -348,8 +346,7 @@ export function buildMessageDependencyGraph<T extends { message: GenericMessage 
 
   return {
     sorted,
-    dependencies : entriesByIndexDependencies(messages, dependenciesByIndex),
-    dependents   : entriesByIndexDependencies(messages, edges),
+    dependencies: entriesByIndexDependencies(messages, dependenciesByIndex),
   };
 }
 

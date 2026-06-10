@@ -1,6 +1,5 @@
 import type {
   GenericMessage,
-  GenericSignaturePayload,
   MessagesReadReply,
   ProtocolDefinition,
   ProtocolsConfigureMessage,
@@ -20,15 +19,19 @@ import {
   DwnMethodName,
   Encoder,
   isCrossProtocolRef,
-  Jws,
   Message,
   parseCrossProtocolRef,
 } from '@enbox/dwn-sdk-js';
 
-import { buildMessageDependencyGraph } from './sync-topological-sort.js';
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
-import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
+import {
+  buildMessageDependencyGraph,
+  getRoleContextPrefix,
+  getRoleKey,
+  getSignaturePayload,
+} from './sync-topological-sort.js';
+import { getInvokedPermissionGrantIds, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 
 /** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
 const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
@@ -40,6 +43,11 @@ export type SyncMessageEntry = {
   dataStreamFactory?: () => Promise<ReadableStream<Uint8Array> | undefined>;
   /** Buffered data bytes for retry — avoids re-fetching from remote when stream is consumed. */
   bufferedData?: Uint8Array;
+};
+
+type LocalPushClosure = {
+  cidByEntry: Map<SyncMessageEntry, string>;
+  entries: SyncMessageEntry[];
 };
 
 /** Raised when an in-flight pull is cancelled before local apply can continue. */
@@ -276,25 +284,25 @@ export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantId
     agent,
     permissionsApi,
   });
-  const dependencyGraph = buildMessageDependencyGraph(closure);
+  const dependencyGraph = buildMessageDependencyGraph(closure.entries);
   const sorted = dependencyGraph.sorted;
-  const dependencyCidsByCid = await dependencyCidsByMessageCid(dependencyGraph.dependencies);
+  const dependencyCidsByCid = dependencyCidsByMessageCid(dependencyGraph.dependencies, closure.cidByEntry);
 
   // ReadableStream is single-use — if sendDwnRequest's underlying fetch
   // retries the HTTP request, the original stream is already consumed.
   await bufferSmallStreams(sorted);
 
-  const dependencyFailure = await pushSortedEntries({
+  await pushSortedEntries({
     agent,
     did,
     dwnUrl,
     failedByRoot,
+    cidByEntry: closure.cidByEntry,
     dependencyCidsByCid,
     requestedRootCidSet,
     sorted,
     succeeded,
   });
-  recordDependencyFailureForUnfinishedRoots(requestedRootCids, succeeded, failedByRoot, dependencyFailure);
 
   return { succeeded, failed: [...failedByRoot.values()] };
 }
@@ -312,6 +320,7 @@ async function pushSortedEntries({
   requestedRootCidSet,
   succeeded,
   failedByRoot,
+  cidByEntry,
   dependencyCidsByCid,
   agent,
 }: {
@@ -321,55 +330,42 @@ async function pushSortedEntries({
   requestedRootCidSet: Set<string>;
   succeeded: string[];
   failedByRoot: Map<string, PushFailure>;
+  cidByEntry: Map<SyncMessageEntry, string>;
   dependencyCidsByCid: Map<string, string[]>;
   agent: EnboxPlatformAgent;
-}): Promise<PushFailure | undefined> {
+}): Promise<void> {
   const failedDependencyByCid = new Map<string, PushFailure>();
-  let dependencyFailure: PushFailure | undefined;
   for (const entry of sorted) {
-    const cid = await getMessageCid(entry.message);
+    const cid = cidByEntry.get(entry)!;
     const blockedFailure = firstFailedDependency(cid, dependencyCidsByCid, failedDependencyByCid);
     if (blockedFailure !== undefined) {
       const failure = dependencyBlockedFailure(cid, blockedFailure);
       failedDependencyByCid.set(cid, failure);
-      dependencyFailure ??= failure;
       if (requestedRootCidSet.has(cid)) {
         failedByRoot.set(cid, failure);
       }
       continue;
     }
 
-    const outcome = await pushSingleMessage({ did, dwnUrl, entry, agent });
+    const outcome = await pushSingleMessage({ did, dwnUrl, cid, entry, agent });
     if (outcome.status === 'succeeded') {
       markRootPushSucceeded(outcome.cid, requestedRootCidSet, succeeded, failedByRoot);
     } else if (requestedRootCidSet.has(outcome.failure.cid)) {
       failedByRoot.set(outcome.failure.cid, outcome.failure);
       failedDependencyByCid.set(outcome.failure.cid, outcome.failure);
     } else {
-      dependencyFailure ??= outcome.failure;
       failedDependencyByCid.set(outcome.failure.cid, outcome.failure);
     }
   }
-
-  return dependencyFailure;
 }
 
-async function dependencyCidsByMessageCid(
+function dependencyCidsByMessageCid(
   dependencies: Map<SyncMessageEntry, SyncMessageEntry[]>,
-): Promise<Map<string, string[]>> {
-  const cidByEntry = new Map<SyncMessageEntry, string>();
-  const cidForEntry = async (entry: SyncMessageEntry): Promise<string> => {
-    let cid = cidByEntry.get(entry);
-    if (cid === undefined) {
-      cid = await getMessageCid(entry.message);
-      cidByEntry.set(entry, cid);
-    }
-    return cid;
-  };
-
+  cidByEntry: Map<SyncMessageEntry, string>,
+): Map<string, string[]> {
   const result = new Map<string, string[]>();
   for (const [entry, dependencyEntries] of dependencies) {
-    result.set(await cidForEntry(entry), await Promise.all(dependencyEntries.map(cidForEntry)));
+    result.set(cidByEntry.get(entry)!, dependencyEntries.map(dependency => cidByEntry.get(dependency)!));
   }
   return result;
 }
@@ -389,10 +385,16 @@ function firstFailedDependency(
 }
 
 function dependencyBlockedFailure(cid: string, dependencyFailure: PushFailure): PushFailure {
+  const statusCode = isTerminalPushStatus(dependencyFailure.statusCode) ? dependencyFailure.statusCode : undefined;
   return {
     cid,
+    ...(statusCode === undefined ? {} : { statusCode }),
     detail: `dependency push failed before root push: ${dependencyFailure.detail ?? dependencyFailure.cid}`,
   };
+}
+
+function isTerminalPushStatus(statusCode: number | undefined): boolean {
+  return statusCode !== undefined && statusCode >= 400 && statusCode < 500;
 }
 
 function markRootPushSucceeded(
@@ -407,27 +409,6 @@ function markRootPushSucceeded(
 
   succeeded.push(cid);
   failedByRoot.delete(cid);
-}
-
-function recordDependencyFailureForUnfinishedRoots(
-  requestedRootCids: string[],
-  succeeded: string[],
-  failedByRoot: Map<string, PushFailure>,
-  dependencyFailure: PushFailure | undefined,
-): void {
-  if (dependencyFailure === undefined) {
-    return;
-  }
-
-  const succeededRootSet = new Set(succeeded);
-  for (const rootCid of requestedRootCids) {
-    if (!succeededRootSet.has(rootCid) && !failedByRoot.has(rootCid)) {
-      failedByRoot.set(rootCid, {
-        cid    : rootCid,
-        detail : `dependency push failed before root push: ${dependencyFailure.detail ?? dependencyFailure.cid}`,
-      });
-    }
-  }
 }
 
 async function fetchLocalMessagesForPush({ did, delegateDid, permissionGrantIds, messageCids, agent }: {
@@ -456,14 +437,13 @@ type PushSingleMessageOutcome =
   | { status: 'succeeded'; cid: string }
   | { status: 'failed'; failure: PushFailure };
 
-async function pushSingleMessage({ did, dwnUrl, entry, agent }: {
+async function pushSingleMessage({ did, dwnUrl, cid, entry, agent }: {
   did: string;
   dwnUrl: string;
+  cid: string;
   entry: SyncMessageEntry;
   agent: EnboxPlatformAgent;
 }): Promise<PushSingleMessageOutcome> {
-  const cid = await getMessageCid(entry.message);
-
   try {
     const reply = await agent.rpc.sendDwnRequest({
       dwnUrl,
@@ -536,7 +516,7 @@ async function expandLocalPushClosure({ did, delegateDid, permissionGrantIds, ro
   roots: SyncMessageEntry[];
   agent: EnboxPlatformAgent;
   permissionsApi?: PermissionsApi;
-}): Promise<SyncMessageEntry[]> {
+}): Promise<LocalPushClosure> {
   const builder = new LocalPushClosureBuilder({
     did,
     delegateDid,
@@ -544,7 +524,8 @@ async function expandLocalPushClosure({ did, delegateDid, permissionGrantIds, ro
     agent,
     permissionsApi,
   });
-  return builder.expand(roots);
+  const entries = await builder.expand(roots);
+  return { cidByEntry: builder.cidByEntry(), entries };
 }
 
 class LocalPushClosureBuilder {
@@ -579,6 +560,14 @@ class LocalPushClosureBuilder {
     }
 
     return [...this.entriesByCid.values()];
+  }
+
+  public cidByEntry(): Map<SyncMessageEntry, string> {
+    const cidByEntry = new Map<SyncMessageEntry, string>();
+    for (const [cid, entry] of this.entriesByCid) {
+      cidByEntry.set(entry, cid);
+    }
+    return cidByEntry;
   }
 
   private async fetchDependencies(message: GenericMessage): Promise<SyncMessageEntry[]> {
@@ -705,11 +694,8 @@ class LocalPushClosureBuilder {
       roleProtocolPath = parsed.protocolPath;
     }
 
-    const roleSegments = roleProtocolPath.split('/').length - 1;
-    const contextPrefix = roleSegments > 0 && message.contextId !== undefined
-      ? message.contextId.split('/').slice(0, roleSegments).join('/')
-      : undefined;
-    const key = `${roleProtocol}|${roleProtocolPath}|${recipient}|${contextPrefix ?? ''}`;
+    const contextPrefix = getRoleContextPrefix(roleProtocolPath, message.contextId);
+    const key = getRoleKey(roleProtocol, roleProtocolPath, recipient, contextPrefix);
     if (this.fetchedRoles.has(key)) {
       return [];
     }
@@ -836,31 +822,6 @@ function isProtocolsConfigureMessage(message: GenericMessage): message is Protoc
 
 function isInitialWrite(message: RecordsWriteMessage): boolean {
   return message.descriptor.dateCreated === message.descriptor.messageTimestamp;
-}
-
-function getInvokedPermissionGrantIds(message: GenericMessage): string[] {
-  if (message.authorization === undefined) {
-    return [];
-  }
-
-  try {
-    const signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature) as GenericSignaturePayload;
-    return Message.getPermissionGrantIds(signaturePayload);
-  } catch {
-    return [];
-  }
-}
-
-function getSignaturePayload(message: GenericMessage): Record<string, unknown> | undefined {
-  if (message.authorization === undefined) {
-    return undefined;
-  }
-
-  try {
-    return Jws.decodePlainObjectPayload(message.authorization.signature) as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
 }
 
 function isTenantProtocolConfig(tenantDid: string, protocol: string): (message: GenericMessage) => message is ProtocolsConfigureMessage {
