@@ -221,8 +221,12 @@ class AdmitClosureContext {
       }
     }
 
+    if (this.deps.agent.dwn.isRemoteMode) {
+      return undefined;
+    }
+
     const messageStore = this.deps.agent.dwn.node?.storage?.messageStore;
-    if (this.deps.agent.dwn.isRemoteMode || messageStore === undefined) {
+    if (messageStore === undefined) {
       return undefined;
     }
 

@@ -2865,6 +2865,11 @@ describe('SyncEngineLevel — private methods', () => {
           applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
         },
       } as any;
+      Object.defineProperty(mockAgent.dwn, 'node', {
+        get: (): never => {
+          throw new Error('remote mode node access should not happen');
+        },
+      });
       const engine = createEngine({ db, agent: mockAgent });
       const recordsDelete = await TestDataGenerator.generateRecordsDelete();
 
