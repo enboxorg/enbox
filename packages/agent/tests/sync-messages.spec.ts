@@ -425,7 +425,7 @@ describe('sync-messages', () => {
             reply: {
               status : { code: 200 },
               entry  : {
-                message : { descriptor: { interface: 'Records', method: 'Write' } },
+                message : { descriptor: { interface: 'Records', method: 'Write', dataSize: payload.byteLength }, recordId: 'record-1' },
                 data    : mockStream,
               },
             },
@@ -444,6 +444,54 @@ describe('sync-messages', () => {
       expect(sendStub.calledOnce).toBe(true);
       const callArgs = sendStub.firstCall.args[0];
       expect(callArgs.data).toBeInstanceOf(Blob);
+    });
+
+    it('should leave large RecordsWrite data streams intact while pushing', async () => {
+      const payload = new TextEncoder().encode('large-data');
+      const mockStream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(payload);
+          controller.close();
+        },
+      });
+      const sendStub = sinon.stub().callsFake(async ({ data }: { data?: ReadableStream<Uint8Array> }) => {
+        expect(data).toBe(mockStream);
+        const reader = data!.getReader();
+        const chunks: Uint8Array[] = [];
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) { break; }
+          chunks.push(value);
+        }
+        expect(chunks).toEqual([payload]);
+        return { status: { code: 202, detail: 'Accepted' } };
+      });
+      const mockAgent = {
+        dwn: {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status : { code: 200 },
+              entry  : {
+                message: {
+                  descriptor : { interface: 'Records', method: 'Write', dataSize: 1_048_577 },
+                  recordId   : 'record-1',
+                },
+                data: mockStream,
+              },
+            },
+          }),
+        },
+        rpc: { sendDwnRequest: sendStub },
+      } as any;
+
+      await pushMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
+      });
+
+      expect(sendStub.calledOnce).toBe(true);
     });
 
     it('should expand child pushes to a protocol-parent-child closure in dependency order', async () => {

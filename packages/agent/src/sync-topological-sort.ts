@@ -183,8 +183,11 @@ export function topologicalSort<T extends { message: GenericMessage }>(
     if (desc.interface === DwnInterfaceName.Protocols && desc.method === DwnMethodName.Configure) {
       const protocolUrl = getConfiguredProtocol(entry.message);
       if (protocolUrl) {
+        const protocolDefinition = getProtocolDefinition(entry.message);
         protocolConfigureIndex.set(protocolUrl, i);
-        protocolDefinitionsByProtocol.set(protocolUrl, getProtocolDefinition(entry.message)!);
+        if (protocolDefinition !== undefined) {
+          protocolDefinitionsByProtocol.set(protocolUrl, protocolDefinition);
+        }
       }
     }
 

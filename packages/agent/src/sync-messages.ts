@@ -119,11 +119,13 @@ async function bufferSmallStreams(entries: SyncMessageEntry[], shouldContinue?: 
       continue;
     }
 
-    // Read the stream into memory. If it exceeds the threshold, stop and
-    // leave the entry without a buffer (it will be re-fetched on retry).
+    if (!shouldBufferDataStream(entry)) {
+      continue;
+    }
+
+    // Read known-small streams into memory so transport retries can replay them.
     const chunks: Uint8Array[] = [];
     let totalSize = 0;
-    let exceededThreshold = false;
     const reader = entry.dataStream.getReader();
 
     try {
@@ -133,20 +135,12 @@ async function bufferSmallStreams(entries: SyncMessageEntry[], shouldContinue?: 
         assertShouldContinue(shouldContinue);
         totalSize += value.byteLength;
         if (totalSize > MAX_BUFFER_SIZE) {
-          exceededThreshold = true;
-          break;
+          throw new Error('SyncEngineLevel: unexpected large stream while buffering push data.');
         }
         chunks.push(value);
       }
     } finally {
       reader.releaseLock();
-    }
-
-    if (exceededThreshold) {
-      // Stream exceeded the buffer threshold. Leave dataStream consumed —
-      // the retry path will re-fetch from remote.
-      entry.dataStream = undefined;
-      continue;
     }
 
     // Combine chunks into a single Uint8Array buffer.
@@ -162,6 +156,15 @@ async function bufferSmallStreams(entries: SyncMessageEntry[], shouldContinue?: 
     entry.dataStream = dataStreamFromBytes(buffer);
     assertShouldContinue(shouldContinue);
   }
+}
+
+function shouldBufferDataStream(entry: SyncMessageEntry): boolean {
+  if (!isRecordsWriteMessage(entry.message)) {
+    return true;
+  }
+
+  const dataSize = (entry.message.descriptor as { dataSize?: unknown }).dataSize;
+  return typeof dataSize === 'number' && dataSize <= MAX_BUFFER_SIZE;
 }
 
 /**
@@ -263,9 +266,7 @@ export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantId
     agent,
   });
 
-  for (const failure of failed) {
-    failedByRoot.set(failure.cid, failure);
-  }
+  recordRootFailures(failedByRoot, failed);
 
   const closure = await expandLocalPushClosure({
     did,
@@ -281,38 +282,83 @@ export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantId
   // retries the HTTP request, the original stream is already consumed.
   await bufferSmallStreams(sorted);
 
+  const dependencyFailure = await pushSortedEntries({
+    agent,
+    did,
+    dwnUrl,
+    failedByRoot,
+    requestedRootCidSet,
+    sorted,
+    succeeded,
+  });
+  recordDependencyFailureForUnfinishedRoots(requestedRootCids, succeeded, failedByRoot, dependencyFailure);
+
+  return { succeeded, failed: [...failedByRoot.values()] };
+}
+
+function recordRootFailures(failedByRoot: Map<string, PushFailure>, failed: PushFailure[]): void {
+  for (const failure of failed) {
+    failedByRoot.set(failure.cid, failure);
+  }
+}
+
+async function pushSortedEntries({ did, dwnUrl, sorted, requestedRootCidSet, succeeded, failedByRoot, agent }: {
+  did: string;
+  dwnUrl: string;
+  sorted: SyncMessageEntry[];
+  requestedRootCidSet: Set<string>;
+  succeeded: string[];
+  failedByRoot: Map<string, PushFailure>;
+  agent: EnboxPlatformAgent;
+}): Promise<PushFailure | undefined> {
   let dependencyFailure: PushFailure | undefined;
   for (const entry of sorted) {
     const outcome = await pushSingleMessage({ did, dwnUrl, entry, agent });
     if (outcome.status === 'succeeded') {
-      if (requestedRootCidSet.has(outcome.cid)) {
-        succeeded.push(outcome.cid);
-        failedByRoot.delete(outcome.cid);
-      }
-      continue;
-    }
-
-    if (requestedRootCidSet.has(outcome.failure.cid)) {
+      markRootPushSucceeded(outcome.cid, requestedRootCidSet, succeeded, failedByRoot);
+    } else if (requestedRootCidSet.has(outcome.failure.cid)) {
       failedByRoot.set(outcome.failure.cid, outcome.failure);
-      continue;
+    } else {
+      dependencyFailure ??= outcome.failure;
     }
+  }
 
-    dependencyFailure ??= outcome.failure;
+  return dependencyFailure;
+}
+
+function markRootPushSucceeded(
+  cid: string,
+  requestedRootCidSet: Set<string>,
+  succeeded: string[],
+  failedByRoot: Map<string, PushFailure>,
+): void {
+  if (!requestedRootCidSet.has(cid)) {
+    return;
+  }
+
+  succeeded.push(cid);
+  failedByRoot.delete(cid);
+}
+
+function recordDependencyFailureForUnfinishedRoots(
+  requestedRootCids: string[],
+  succeeded: string[],
+  failedByRoot: Map<string, PushFailure>,
+  dependencyFailure: PushFailure | undefined,
+): void {
+  if (dependencyFailure === undefined) {
+    return;
   }
 
   const succeededRootSet = new Set(succeeded);
-  if (dependencyFailure !== undefined) {
-    for (const rootCid of requestedRootCids) {
-      if (!succeededRootSet.has(rootCid) && !failedByRoot.has(rootCid)) {
-        failedByRoot.set(rootCid, {
-          cid    : rootCid,
-          detail : `dependency push failed before root push: ${dependencyFailure.detail ?? dependencyFailure.cid}`,
-        });
-      }
+  for (const rootCid of requestedRootCids) {
+    if (!succeededRootSet.has(rootCid) && !failedByRoot.has(rootCid)) {
+      failedByRoot.set(rootCid, {
+        cid    : rootCid,
+        detail : `dependency push failed before root push: ${dependencyFailure.detail ?? dependencyFailure.cid}`,
+      });
     }
   }
-
-  return { succeeded, failed: [...failedByRoot.values()] };
 }
 
 async function fetchLocalMessagesForPush({ did, delegateDid, permissionGrantIds, messageCids, agent }: {
@@ -454,8 +500,8 @@ class LocalPushClosureBuilder {
       }
     }
 
-    for (let i = 0; i < queue.length; i++) {
-      const dependencies = await this.fetchDependencies(queue[i].message);
+    for (const entry of queue) {
+      const dependencies = await this.fetchDependencies(entry.message);
       for (const dependency of dependencies) {
         if (await this.rememberEntry(dependency)) {
           queue.push(dependency);
