@@ -580,6 +580,101 @@ describe('sync-messages', () => {
       expect(result).toEqual({ succeeded: [childCid], failed: [] });
       expect(pushedCids).toEqual([protocolCid, parentCid, childCid]);
     });
+
+    it('should skip a root when its dependency push fails', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocolDefinition: ProtocolDefinition = {
+        protocol  : 'https://example.com/sync-push-dependency-failure',
+        published : false,
+        types     : {
+          parent : {},
+          child  : {},
+        },
+        structure: {
+          parent: {
+            child: {},
+          },
+        },
+      };
+      const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+        author: alice,
+        protocolDefinition,
+      });
+      const parent = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'parent',
+      });
+      const child = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'parent/child',
+        parentContextId : parent.message.contextId,
+      });
+      const protocolCid = await Message.getCid(protocolsConfigure.message);
+      const parentCid = await Message.getCid(parent.message);
+      const childCid = await Message.getCid(child.message);
+
+      const processRequestStub = sinon.stub().callsFake(async ({ messageType, messageParams }: any) => {
+        if (messageType === DwnInterface.MessagesRead) {
+          const byCid = new Map([
+            [childCid, { message: child.message, data: child.dataStream }],
+          ]);
+          return {
+            reply: {
+              status : { code: 200 },
+              entry  : byCid.get(messageParams.messageCid),
+            },
+          };
+        }
+
+        if (messageType === DwnInterface.ProtocolsQuery) {
+          return {
+            reply: {
+              status  : { code: 200 },
+              entries : [protocolsConfigure.message],
+            },
+          };
+        }
+
+        if (messageType === DwnInterface.RecordsQuery) {
+          return {
+            reply: {
+              status  : { code: 200 },
+              entries : messageParams.filter.recordId === parent.message.recordId ? [parent.message] : [],
+            },
+          };
+        }
+
+        throw new Error(`unexpected message type ${messageType}`);
+      });
+      const sendStub = sinon.stub().callsFake(async ({ message }: any) => {
+        const cid = await Message.getCid(message);
+        return cid === parentCid
+          ? { status: { code: 500, detail: 'parent temporarily unavailable' } }
+          : { status: { code: 202, detail: 'Accepted' } };
+      });
+      const mockAgent = {
+        dwn : { processRequest: processRequestStub },
+        rpc : { sendDwnRequest: sendStub },
+      } as any;
+
+      const result = await pushMessages({
+        did         : alice.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [childCid],
+        agent       : mockAgent,
+      });
+
+      const pushedCids = await Promise.all(sendStub.getCalls().map(async (call): Promise<string> =>
+        Message.getCid(call.args[0].message)));
+      expect(pushedCids).toEqual([protocolCid, parentCid]);
+      expect(result.succeeded).toEqual([]);
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0].cid).toBe(childCid);
+      expect(result.failed[0].statusCode).toBeUndefined();
+      expect(result.failed[0].detail).toContain('parent temporarily unavailable');
+    });
   });
 
   // ---------------------------------------------------------------------------

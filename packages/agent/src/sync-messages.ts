@@ -25,10 +25,10 @@ import {
   parseCrossProtocolRef,
 } from '@enbox/dwn-sdk-js';
 
+import { buildMessageDependencyGraph } from './sync-topological-sort.js';
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
-import { topologicalSort } from './sync-topological-sort.js';
 
 /** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
 const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
@@ -276,7 +276,9 @@ export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantId
     agent,
     permissionsApi,
   });
-  const sorted = topologicalSort(closure);
+  const dependencyGraph = buildMessageDependencyGraph(closure);
+  const sorted = dependencyGraph.sorted;
+  const dependencyCidsByCid = await dependencyCidsByMessageCid(dependencyGraph.dependencies);
 
   // ReadableStream is single-use — if sendDwnRequest's underlying fetch
   // retries the HTTP request, the original stream is already consumed.
@@ -287,6 +289,7 @@ export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantId
     did,
     dwnUrl,
     failedByRoot,
+    dependencyCidsByCid,
     requestedRootCidSet,
     sorted,
     succeeded,
@@ -302,28 +305,94 @@ function recordRootFailures(failedByRoot: Map<string, PushFailure>, failed: Push
   }
 }
 
-async function pushSortedEntries({ did, dwnUrl, sorted, requestedRootCidSet, succeeded, failedByRoot, agent }: {
+async function pushSortedEntries({
+  did,
+  dwnUrl,
+  sorted,
+  requestedRootCidSet,
+  succeeded,
+  failedByRoot,
+  dependencyCidsByCid,
+  agent,
+}: {
   did: string;
   dwnUrl: string;
   sorted: SyncMessageEntry[];
   requestedRootCidSet: Set<string>;
   succeeded: string[];
   failedByRoot: Map<string, PushFailure>;
+  dependencyCidsByCid: Map<string, string[]>;
   agent: EnboxPlatformAgent;
 }): Promise<PushFailure | undefined> {
+  const failedDependencyByCid = new Map<string, PushFailure>();
   let dependencyFailure: PushFailure | undefined;
   for (const entry of sorted) {
+    const cid = await getMessageCid(entry.message);
+    const blockedFailure = firstFailedDependency(cid, dependencyCidsByCid, failedDependencyByCid);
+    if (blockedFailure !== undefined) {
+      const failure = dependencyBlockedFailure(cid, blockedFailure);
+      failedDependencyByCid.set(cid, failure);
+      dependencyFailure ??= failure;
+      if (requestedRootCidSet.has(cid)) {
+        failedByRoot.set(cid, failure);
+      }
+      continue;
+    }
+
     const outcome = await pushSingleMessage({ did, dwnUrl, entry, agent });
     if (outcome.status === 'succeeded') {
       markRootPushSucceeded(outcome.cid, requestedRootCidSet, succeeded, failedByRoot);
     } else if (requestedRootCidSet.has(outcome.failure.cid)) {
       failedByRoot.set(outcome.failure.cid, outcome.failure);
+      failedDependencyByCid.set(outcome.failure.cid, outcome.failure);
     } else {
       dependencyFailure ??= outcome.failure;
+      failedDependencyByCid.set(outcome.failure.cid, outcome.failure);
     }
   }
 
   return dependencyFailure;
+}
+
+async function dependencyCidsByMessageCid(
+  dependencies: Map<SyncMessageEntry, SyncMessageEntry[]>,
+): Promise<Map<string, string[]>> {
+  const cidByEntry = new Map<SyncMessageEntry, string>();
+  const cidForEntry = async (entry: SyncMessageEntry): Promise<string> => {
+    let cid = cidByEntry.get(entry);
+    if (cid === undefined) {
+      cid = await getMessageCid(entry.message);
+      cidByEntry.set(entry, cid);
+    }
+    return cid;
+  };
+
+  const result = new Map<string, string[]>();
+  for (const [entry, dependencyEntries] of dependencies) {
+    result.set(await cidForEntry(entry), await Promise.all(dependencyEntries.map(cidForEntry)));
+  }
+  return result;
+}
+
+function firstFailedDependency(
+  cid: string,
+  dependencyCidsByCid: Map<string, string[]>,
+  failedDependencyByCid: Map<string, PushFailure>,
+): PushFailure | undefined {
+  for (const dependencyCid of dependencyCidsByCid.get(cid) ?? []) {
+    const failure = failedDependencyByCid.get(dependencyCid);
+    if (failure !== undefined) {
+      return failure;
+    }
+  }
+  return undefined;
+}
+
+function dependencyBlockedFailure(cid: string, dependencyFailure: PushFailure): PushFailure {
+  return {
+    cid,
+    detail: `dependency push failed before root push: ${dependencyFailure.detail ?? dependencyFailure.cid}`,
+  };
 }
 
 function markRootPushSucceeded(

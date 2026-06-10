@@ -125,6 +125,7 @@ type SyncReconcileResult = {
   converged?: boolean;
   hasActionableDiffs?: boolean;
   ignoredLocalCids?: string[];
+  ignoredRemoteCids?: string[];
   pushFailures?: PushFailure[];
 };
 
@@ -133,6 +134,7 @@ type SingleProtocolReconcileAccumulator = {
   converged: boolean;
   hasActionableDiffs: boolean;
   ignoredLocalCids: string[];
+  ignoredRemoteCids: string[];
   pushFailures: PushFailure[];
 };
 
@@ -675,7 +677,10 @@ export class SyncEngineLevel implements SyncEngine {
           try {
             const result = await this.reconcileSyncTarget(target, { direction });
             if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
-              throw new Error(`SyncEngineLevel: reconciliation push failed for ${result.pushFailures.length} message(s).`);
+              const retryableFailures = await this.recordTerminalSyncPushFailures(target, result.pushFailures);
+              if (retryableFailures > 0) {
+                throw new Error(`SyncEngineLevel: reconciliation push failed for ${retryableFailures} retryable message(s).`);
+              }
             }
           } catch (error: any) {
             // Skip remaining targets for this DWN endpoint.
@@ -2633,6 +2638,35 @@ export class SyncEngineLevel implements SyncEngine {
   /** Push retry backoff schedule: immediate, 250ms, 1s, 2s, then give up. */
   private static readonly PUSH_RETRY_BACKOFF_MS = [0, 250, 1000, 2000];
 
+  private async recordTerminalSyncPushFailures(
+    target: SyncReconcileTarget,
+    failures: PushFailure[],
+  ): Promise<number> {
+    let retryableFailures = 0;
+    for (const failure of failures) {
+      if (!SyncEngineLevel.isTerminalPushFailure(failure)) {
+        retryableFailures++;
+        continue;
+      }
+
+      await this.recordDeadLetter({
+        messageCid     : failure.cid,
+        tenantDid      : target.did,
+        remoteEndpoint : target.dwnUrl,
+        protocol       : singleProtocolForSyncScope(target.scope),
+        category       : 'admit-failed',
+        errorCode      : String(failure.statusCode),
+        errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
+      });
+    }
+
+    return retryableFailures;
+  }
+
+  private static isTerminalPushFailure(failure: PushFailure): boolean {
+    return failure.statusCode !== undefined && failure.statusCode >= 400 && failure.statusCode < 500;
+  }
+
   /**
    * Re-queues a failed push batch for retry, or marks the link
    * `needsReconcile` if retries are exhausted. Bounded to prevent
@@ -2652,15 +2686,14 @@ export class SyncEngineLevel implements SyncEngine {
       // failures for this remote; transport/runtime failures just dirty the
       // link for later reconciliation.
       for (const entry of pending.entries) {
-        const statusCode = entry.lastFailure?.statusCode;
-        if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+        if (entry.lastFailure !== undefined && SyncEngineLevel.isTerminalPushFailure(entry.lastFailure)) {
           void this.recordDeadLetter({
             messageCid     : entry.cid,
             tenantDid      : pending.did,
             remoteEndpoint : pending.dwnUrl,
             protocol       : pending.protocol,
             category       : 'admit-failed',
-            errorCode      : String(statusCode),
+            errorCode      : String(entry.lastFailure.statusCode),
             errorDetail    : entry.lastFailure?.detail ?? `push rejected after ${maxRetries} attempts`,
           });
         }
@@ -2715,10 +2748,15 @@ export class SyncEngineLevel implements SyncEngine {
         this.getLocalRoot(did, delegateDid, protocol, permissionGrantIds),
       getRemoteRoot: async (did, dwnUrl, delegateDid, protocol, permissionGrantIds) =>
         this.getRemoteRoot(did, dwnUrl, delegateDid, protocol, permissionGrantIds),
-      diffWithRemote        : async (target) => this.diffWithRemote(target),
-      admitRemoteMessages   : async (params) => this.admitRemoteMessages(params),
-      pushMessages          : async (params) => this.pushMessages(params),
-      filterPushMessageCids : async (params) => this.filterPushableLocalCids(
+      diffWithRemote         : async (target) => this.diffWithRemote(target),
+      admitRemoteMessages    : async (params) => this.admitRemoteMessages(params),
+      pushMessages           : async (params) => this.pushMessages(params),
+      filterAdmitMessageCids : async (params) => this.filterAdmittableRemoteCids(
+        params.did,
+        params.dwnUrl,
+        params.messageCids,
+      ),
+      filterPushMessageCids: async (params) => this.filterPushableLocalCids(
         params.did,
         params.dwnUrl,
         params.messageCids,
@@ -2772,6 +2810,7 @@ export class SyncEngineLevel implements SyncEngine {
       converged          : true,
       hasActionableDiffs : false,
       ignoredLocalCids   : [],
+      ignoredRemoteCids  : [],
       pushFailures       : [],
     };
   }
@@ -2785,6 +2824,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     accumulator.admittedCids.push(...(outcome.admittedCids ?? []));
     accumulator.ignoredLocalCids.push(...(outcome.ignoredLocalCids ?? []));
+    accumulator.ignoredRemoteCids.push(...(outcome.ignoredRemoteCids ?? []));
     accumulator.pushFailures.push(...pushFailures);
     accumulator.hasActionableDiffs ||= outcome.hasActionableDiffs === true;
 
@@ -2801,6 +2841,7 @@ export class SyncEngineLevel implements SyncEngine {
       admittedCids       : accumulator.admittedCids,
       hasActionableDiffs : accumulator.hasActionableDiffs,
       ignoredLocalCids   : accumulator.ignoredLocalCids,
+      ignoredRemoteCids  : accumulator.ignoredRemoteCids,
       pushFailures       : accumulator.pushFailures,
     };
 
@@ -2834,10 +2875,11 @@ export class SyncEngineLevel implements SyncEngine {
     const admittedCids = pullResult?.admittedCids ?? [];
     const pushFailures = pushResult?.pushFailures ?? [];
     const ignoredLocalCids = pushResult?.ignoredLocalCids ?? [];
+    const ignoredRemoteCids = pullResult?.ignoredRemoteCids ?? [];
     const hasActionableDiffs = pullResult?.hasActionableDiffs === true || pushResult?.hasActionableDiffs === true;
 
     if (options?.verifyConvergence !== true) {
-      return { admittedCids, hasActionableDiffs, ignoredLocalCids, pushFailures };
+      return { admittedCids, hasActionableDiffs, ignoredLocalCids, ignoredRemoteCids, pushFailures };
     }
 
     const convergence = await this.verifyProtocolSetConvergence(context);
@@ -2847,6 +2889,7 @@ export class SyncEngineLevel implements SyncEngine {
       converged: pushFailures.length > 0 ? false : convergence.converged,
       hasActionableDiffs,
       ignoredLocalCids,
+      ignoredRemoteCids,
       pushFailures,
     };
   }
@@ -2926,7 +2969,18 @@ export class SyncEngineLevel implements SyncEngine {
       return undefined;
     }
 
-    const { prefetched, needsFetchCids } = partitionRemoteEntries(onlyRemote);
+    const { ignoredCids: ignoredRemoteCids, entries } = await this.filterAdmittableRemoteEntries(
+      context.did,
+      context.dwnUrl,
+      onlyRemote,
+    );
+    if (entries.length === 0) {
+      return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
+        ? { aborted: true }
+        : { admittedCids: [], hasActionableDiffs: false, ignoredRemoteCids };
+    }
+
+    const { prefetched, needsFetchCids } = partitionRemoteEntries(entries);
     let admittedCids: string[];
     try {
       admittedCids = await this.admitRemoteMessages({
@@ -2948,7 +3002,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
       ? { aborted: true }
-      : { admittedCids, hasActionableDiffs: true };
+      : { admittedCids, hasActionableDiffs: true, ignoredRemoteCids };
   }
 
   private async applyProtocolSetLocalDiffs(
@@ -3736,18 +3790,51 @@ export class SyncEngineLevel implements SyncEngine {
     remoteEndpoint: string,
     messageCids: string[],
   ): Promise<{ ignoredCids: string[]; messageCids: string[] }> {
+    return this.filterDeadLetteredMessageCids(tenantDid, remoteEndpoint, messageCids);
+  }
+
+  private async filterAdmittableRemoteCids(
+    tenantDid: string,
+    remoteEndpoint: string,
+    messageCids: string[],
+  ): Promise<{ ignoredCids: string[]; messageCids: string[] }> {
+    return this.filterDeadLetteredMessageCids(tenantDid, remoteEndpoint, messageCids);
+  }
+
+  private async filterAdmittableRemoteEntries(
+    tenantDid: string,
+    remoteEndpoint: string,
+    entries: MessagesSyncDiffEntry[],
+  ): Promise<{ ignoredCids: string[]; entries: MessagesSyncDiffEntry[] }> {
+    const { ignoredCids, messageCids } = await this.filterAdmittableRemoteCids(
+      tenantDid,
+      remoteEndpoint,
+      entries.map(entry => entry.messageCid),
+    );
+    const messageCidSet = new Set(messageCids);
+    return {
+      entries: entries.filter(entry => messageCidSet.has(entry.messageCid)),
+      ignoredCids,
+    };
+  }
+
+  private async filterDeadLetteredMessageCids(
+    tenantDid: string,
+    remoteEndpoint: string,
+    messageCids: string[],
+  ): Promise<{ ignoredCids: string[]; messageCids: string[] }> {
     const ignoredCids: string[] = [];
-    const pushableCids: string[] = [];
+    const remainingCids: string[] = [];
 
     for (const messageCid of messageCids) {
       if (await this.hasAdmissionDeadLetter(tenantDid, remoteEndpoint, messageCid)) {
         ignoredCids.push(messageCid);
       } else {
-        pushableCids.push(messageCid);
+        remainingCids.push(messageCid);
       }
     }
 
-    return { ignoredCids, messageCids: pushableCids };
+    return { ignoredCids, messageCids: remainingCids };
   }
 
   // ---------------------------------------------------------------------------
@@ -3810,10 +3897,12 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private static isReconcileSettledByDeadLetters(result: SyncReconcileResult): boolean {
+    const ignoredLocalCount = result.ignoredLocalCids?.length ?? 0;
+    const ignoredRemoteCount = result.ignoredRemoteCids?.length ?? 0;
+
     return result.converged !== true &&
       result.hasActionableDiffs !== true &&
-      result.ignoredLocalCids !== undefined &&
-      result.ignoredLocalCids.length > 0 &&
+      ignoredLocalCount + ignoredRemoteCount > 0 &&
       (result.pushFailures === undefined || result.pushFailures.length === 0);
   }
 

@@ -19,6 +19,12 @@ type ProtocolsConfigureDescriptor = GenericMessage['descriptor'] & {
   definition?: Partial<ProtocolDefinition>;
 };
 
+export type MessageDependencyGraph<T> = {
+  sorted: T[];
+  dependencies: Map<T, T[]>;
+  dependents: Map<T, T[]>;
+};
+
 function isRecordsDescriptor(descriptor: GenericMessage['descriptor']): descriptor is RecordsDescriptor {
   return descriptor.interface === DwnInterfaceName.Records;
 }
@@ -163,8 +169,18 @@ function getInvokedRoleKey(
 export function topologicalSort<T extends { message: GenericMessage }>(
   messages: T[]
 ): T[] {
+  return buildMessageDependencyGraph(messages).sorted;
+}
+
+export function buildMessageDependencyGraph<T extends { message: GenericMessage }>(
+  messages: T[]
+): MessageDependencyGraph<T> {
   if (messages.length <= 1) {
-    return messages;
+    return {
+      sorted       : messages,
+      dependencies : new Map(messages.map(message => [message, []])),
+      dependents   : new Map(messages.map(message => [message, []])),
+    };
   }
 
   // Index messages by various keys for dependency resolution.
@@ -216,6 +232,7 @@ export function topologicalSort<T extends { message: GenericMessage }>(
 
   // Build adjacency list (edges: dependency -> dependent).
   const edges = new Map<number, Set<number>>();
+  const dependenciesByIndex = new Map<number, Set<number>>();
   const inDegree = new Array(messages.length).fill(0) as number[];
 
   const addEdge = (from: number, to: number): void => {
@@ -228,6 +245,10 @@ export function topologicalSort<T extends { message: GenericMessage }>(
     const edgeSet = edges.get(from)!;
     if (!edgeSet.has(to)) {
       edgeSet.add(to);
+      if (!dependenciesByIndex.has(to)) {
+        dependenciesByIndex.set(to, new Set());
+      }
+      dependenciesByIndex.get(to)!.add(from);
       inDegree[to]++;
     }
   };
@@ -325,5 +346,21 @@ export function topologicalSort<T extends { message: GenericMessage }>(
     }
   }
 
-  return sorted;
+  return {
+    sorted,
+    dependencies : entriesByIndexDependencies(messages, dependenciesByIndex),
+    dependents   : entriesByIndexDependencies(messages, edges),
+  };
+}
+
+function entriesByIndexDependencies<T>(
+  messages: T[],
+  dependenciesByIndex: Map<number, Set<number>>,
+): Map<T, T[]> {
+  const dependencies = new Map<T, T[]>();
+  for (let i = 0; i < messages.length; i++) {
+    const indexDependencies = dependenciesByIndex.get(i) ?? new Set();
+    dependencies.set(messages[i], [...indexDependencies].map(index => messages[index]));
+  }
+  return dependencies;
 }

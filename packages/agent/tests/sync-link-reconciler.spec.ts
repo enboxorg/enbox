@@ -110,6 +110,23 @@ describe('SyncLinkReconciler', () => {
       expect(outcome.admittedCids).toEqual(['cidR1', 'cidR1-dependency']);
     });
 
+    it('should skip remote roots filtered as already terminal', async () => {
+      const deps = makeDeps({
+        getLocalRoot           : sinon.stub().resolves('rootA'),
+        getRemoteRoot          : sinon.stub().resolves('rootB'),
+        diffWithRemote         : sinon.stub().resolves({ onlyRemote: [{ messageCid: 'cidR1' }], onlyLocal: [] }),
+        filterAdmitMessageCids : sinon.stub().resolves({ ignoredCids: ['cidR1'], messageCids: [] }),
+      });
+      const reconciler = new SyncLinkReconciler(deps);
+
+      const outcome = await reconciler.reconcile(target, { direction: 'pull' });
+
+      expect(deps.admitRemoteMessages.called).toBe(false);
+      expect(outcome.didPull).toBe(false);
+      expect(outcome.hasActionableDiffs).toBe(false);
+      expect(outcome.ignoredRemoteCids).toEqual(['cidR1']);
+    });
+
     it('should only push when direction is push', async () => {
       const deps = diffDeps();
       const reconciler = new SyncLinkReconciler(deps);
