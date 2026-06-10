@@ -1,5 +1,5 @@
 ---
-"@enbox/agent": major
+"@enbox/agent": patch
 "@enbox/dwn-clients": patch
 "@enbox/dwn-server": patch
 ---
