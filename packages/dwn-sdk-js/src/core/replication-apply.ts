@@ -223,11 +223,12 @@ function roleDependencyFromMessage(message: GenericMessage, context: Replication
     }
   }
 
-  const contextId = typeof descriptor.contextId === 'string'
-    ? descriptor.contextId
-    : typeof filter?.contextId === 'string'
-      ? filter.contextId
-      : undefined;
+  let contextId: string | undefined;
+  if (typeof descriptor.contextId === 'string') {
+    contextId = descriptor.contextId;
+  } else if (typeof filter?.contextId === 'string') {
+    contextId = filter.contextId;
+  }
   const roleSegments = roleProtocolPath.split('/').length - 1;
   const contextPrefix = roleSegments > 0 && contextId !== undefined
     ? contextId.split('/').slice(0, roleSegments).join('/')

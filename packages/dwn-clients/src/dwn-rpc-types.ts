@@ -157,7 +157,7 @@ export type DwnReplicationApplyRequest = {
   dwnUrl: string;
 
   /** The replicated message to apply. */
-  message: SerializableDwnMessage | any;
+  message: GenericMessage | SerializableDwnMessage;
 
   /** The DID of the target tenant to which the message is addressed. */
   targetDid: string;

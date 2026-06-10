@@ -2012,8 +2012,8 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should process event messages through replicated admission', async () => {
-      const processMessageStub = sinon.stub().resolves({ status: { code: 202 } });
-      const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
+      const applyReplicatedMessageStub = sinon.stub().resolves({ kind: 'Applied' });
+      const { agent, getHandler } = createCallbackMockAgent(applyReplicatedMessageStub);
       const engine = createEngine({ db, agent });
 
       // Set up a link so the event handler uses the link path.
@@ -2043,14 +2043,14 @@ describe('SyncEngineLevel — private methods', () => {
         },
       });
 
-      expect(processMessageStub.calledOnce).toBe(true);
+      expect(applyReplicatedMessageStub.calledOnce).toBe(true);
 
       (engine as any)._liveSubscriptions = [];
     });
 
     it('should process an in-scope RecordsDelete using its initial write protocol', async () => {
-      const processMessageStub = sinon.stub().resolves({ status: { code: 202 } });
-      const { agent, getHandler } = createCallbackMockAgent(processMessageStub);
+      const applyReplicatedMessageStub = sinon.stub().resolves({ kind: 'Applied' });
+      const { agent, getHandler } = createCallbackMockAgent(applyReplicatedMessageStub);
       const engine = createEngine({ db, agent });
 
       const linkKey = 'did:example:alice^https://dwn.example.com';
@@ -2086,7 +2086,7 @@ describe('SyncEngineLevel — private methods', () => {
         },
       });
 
-      expect(processMessageStub.calledOnce).toBe(true);
+      expect(applyReplicatedMessageStub.calledOnce).toBe(true);
       expect(link.pull.contiguousAppliedToken).toEqual(cursor);
       (engine as any)._liveSubscriptions = [];
     });

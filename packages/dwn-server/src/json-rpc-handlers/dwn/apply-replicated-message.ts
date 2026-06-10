@@ -1,5 +1,5 @@
+import type { JsonRpcHandler } from '../../lib/json-rpc-router.js';
 import type { GenericMessage, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
-import type { HandlerResponse, JsonRpcHandler } from '../../lib/json-rpc-router.js';
 
 import log from 'loglevel';
 
@@ -42,7 +42,7 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
         JsonRpcErrorCodes.InternalError,
         'an unexpected error occurred while applying the replicated message',
       ),
-    } as HandlerResponse;
+    };
   }
 };
 

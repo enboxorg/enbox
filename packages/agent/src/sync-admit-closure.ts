@@ -38,6 +38,15 @@ export type AdmitClosureDeps = {
   shouldContinue?: () => boolean;
 };
 
+type AdmissionPassResult =
+  | { kind: 'continue'; appliedCids: string[]; retry: SyncMessageEntry[] }
+  | { kind: 'done'; outcome: AdmitOutcome };
+
+type AdmissionEntryResult =
+  | { kind: 'applied'; cid: string }
+  | { kind: 'retry'; entries: SyncMessageEntry[] }
+  | { kind: 'done'; outcome: AdmitOutcome };
+
 // Replication handlers currently report one missing dependency per rejected apply.
 // Keep a high safety cap so deep but valid closures can converge while still
 // bounding work against malformed or adversarial remotes.
@@ -74,54 +83,92 @@ class AdmitClosureContext {
 
     for (let pass = 0; pass < MAX_ADMISSION_PASSES && pending.length > 0; pass++) {
       this.assertShouldContinue();
-      pending = topologicalSort(pending);
-
-      const retry: SyncMessageEntry[] = [];
-      for (const entry of pending) {
-        this.assertShouldContinue();
-        const cid = await this.rememberEntry(entry);
-        if (cid === rootCid && !await this.rootIsInScope(entry)) {
-          return { kind: 'failed', rootCid, reason: 'terminal', detail: 'root message is outside the sync scope' };
-        }
-
-        const result = await this.applyEntry(entry);
-        if (
-          result.kind === 'Applied' ||
-          result.kind === 'Duplicate' ||
-          result.kind === 'Superseded'
-        ) {
-          appliedCids.push(cid);
-          continue;
-        }
-
-        if (result.kind === 'Deferred') {
-          return { kind: 'deferred', rootCid, detail: result.reason };
-        }
-
-        if (result.kind === 'Invalid') {
-          return { kind: 'failed', rootCid, reason: 'invalid', detail: result.reason };
-        }
-
-        if (result.kind === 'Incomplete') {
-          if (hasTerminalDependency(result.missing)) {
-            return { kind: 'failed', rootCid, reason: 'terminal', detail: missingDependencyDetail(result.missing) };
-          }
-
-          const dependencies = await this.fetchMissingDependencies(result.missing);
-          if (dependencies.length === 0) {
-            return { kind: 'deferred', rootCid, detail: missingDependencyDetail(result.missing) };
-          }
-
-          retry.push(...dependencies, entry);
-        }
+      const passResult = await this.admitPass(rootCid, pending);
+      if (passResult.kind === 'done') {
+        return passResult.outcome;
       }
 
-      pending = await dedupeEntries(retry);
+      appliedCids.push(...passResult.appliedCids);
+      pending = await dedupeEntries(passResult.retry);
     }
 
     return pending.length === 0
       ? { kind: 'admitted', appliedCids }
       : { kind: 'deferred', rootCid, detail: 'dependency admission pass budget exhausted' };
+  }
+
+  private async admitPass(rootCid: string, pending: SyncMessageEntry[]): Promise<AdmissionPassResult> {
+    const retry: SyncMessageEntry[] = [];
+    const appliedCids: string[] = [];
+
+    for (const entry of topologicalSort(pending)) {
+      this.assertShouldContinue();
+      const result = await this.admitEntry(rootCid, entry);
+      switch (result.kind) {
+        case 'applied':
+          appliedCids.push(result.cid);
+          break;
+        case 'retry':
+          retry.push(...result.entries);
+          break;
+        case 'done':
+          return { kind: 'done', outcome: result.outcome };
+      }
+    }
+
+    return { kind: 'continue', appliedCids, retry };
+  }
+
+  private async admitEntry(rootCid: string, entry: SyncMessageEntry): Promise<AdmissionEntryResult> {
+    const cid = await this.rememberEntry(entry);
+    if (cid === rootCid && !await this.rootIsInScope(entry)) {
+      return {
+        kind    : 'done',
+        outcome : { kind: 'failed', rootCid, reason: 'terminal', detail: 'root message is outside the sync scope' },
+      };
+    }
+
+    return this.admissionResultFromApply(rootCid, entry, cid, await this.applyEntry(entry));
+  }
+
+  private async admissionResultFromApply(
+    rootCid: string,
+    entry: SyncMessageEntry,
+    cid: string,
+    result: ReplicationApplyResult,
+  ): Promise<AdmissionEntryResult> {
+    switch (result.kind) {
+      case 'Applied':
+      case 'Duplicate':
+      case 'Superseded':
+        return { kind: 'applied', cid };
+      case 'Deferred':
+        return { kind: 'done', outcome: { kind: 'deferred', rootCid, detail: result.reason } };
+      case 'Invalid':
+        return { kind: 'done', outcome: { kind: 'failed', rootCid, reason: 'invalid', detail: result.reason } };
+      case 'Incomplete':
+        return this.admissionResultFromMissingDependencies(rootCid, entry, result.missing);
+    }
+  }
+
+  private async admissionResultFromMissingDependencies(
+    rootCid: string,
+    entry: SyncMessageEntry,
+    missing: DependencyRef[],
+  ): Promise<AdmissionEntryResult> {
+    if (hasTerminalDependency(missing)) {
+      return {
+        kind    : 'done',
+        outcome : { kind: 'failed', rootCid, reason: 'terminal', detail: missingDependencyDetail(missing) },
+      };
+    }
+
+    const dependencies = await this.fetchMissingDependencies(missing);
+    if (dependencies.length === 0) {
+      return { kind: 'done', outcome: { kind: 'deferred', rootCid, detail: missingDependencyDetail(missing) } };
+    }
+
+    return { kind: 'retry', entries: [...dependencies, entry] };
   }
 
   private async initialPending(rootCid: string): Promise<SyncMessageEntry[]> {

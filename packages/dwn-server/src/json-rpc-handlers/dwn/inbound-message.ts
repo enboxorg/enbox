@@ -18,7 +18,7 @@ export function validateInboundDwnMessageTransport(params: InboundDwnMessagePara
   const { context, message, requestId } = params;
 
   // RecordsWrite is only supported on 'http' to support data stream for large data
-  // TODO: https://github.com/enboxorg/enbox/issues/108
+  // Issue #108 tracks RecordsWrite support for WebSocket transports.
   if (
     context.transport !== 'http' &&
     message.descriptor.interface === DwnInterfaceName.Records &&

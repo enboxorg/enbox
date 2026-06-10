@@ -1,4 +1,3 @@
-import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type {
   DwnReplicationApplyRequest,
   DwnRpc,
@@ -7,7 +6,14 @@ import type {
   DwnSubscriptionHandler,
   ResubscribeFactory,
 } from './dwn-rpc-types.js';
-import type { GenericMessage, MessageSubscription, ProgressToken, SubscriptionMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type {
+  GenericMessage,
+  MessageSubscription,
+  ProgressToken,
+  ReplicationApplyResult,
+  SubscriptionMessage,
+  UnionMessageReply,
+} from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { JsonRpcSocket } from './json-rpc-socket.js';
@@ -177,7 +183,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   private static async applyReplicatedMessage(
-    connection: SocketConnection, target: string, message: GenericMessage
+    connection: SocketConnection, target: string, message: DwnReplicationApplyRequest['message']
   ): Promise<ReplicationApplyResult> {
     const requestId = CryptoUtils.randomUuid();
     const request = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', { target, message });

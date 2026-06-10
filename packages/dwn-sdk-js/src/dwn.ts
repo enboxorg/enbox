@@ -1,13 +1,12 @@
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
 import type { KeyValues } from './types/query-types.js';
-import type { MessageEvent } from './types/subscriptions.js';
 import type { MessageStore } from './types/message-store.js';
 import type { ResumableTaskStore } from './types/resumable-task-store.js';
 import type { StateIndex } from './types/state-index.js';
 import type { TenantGate } from './core/tenant-gate.js';
 import type { UnionMessageReply } from './core/message-reply.js';
-import type { EventLog, SubscriptionListener } from './types/subscriptions.js';
+import type { EventLog, MessageEvent, SubscriptionListener } from './types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from './types/method-handler.js';
 import type { MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
@@ -299,11 +298,12 @@ export class Dwn {
 
   private static getMessageProtocolForReplicationApply(message: GenericMessage): string | undefined {
     const descriptor = message.descriptor as { protocol?: unknown; filter?: { protocol?: unknown } };
-    return typeof descriptor.protocol === 'string'
-      ? descriptor.protocol
-      : typeof descriptor.filter?.protocol === 'string'
-        ? descriptor.filter.protocol
-        : undefined;
+    if (typeof descriptor.protocol === 'string') {
+      return descriptor.protocol;
+    }
+    if (typeof descriptor.filter?.protocol === 'string') {
+      return descriptor.filter.protocol;
+    }
   }
 
   private async replicatedMessageAlreadyStored(

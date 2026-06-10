@@ -264,7 +264,7 @@ export class HttpDwnRpcClient implements DwnRpc {
 
     const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts);
     if (resp.status === 429) {
-      const retryAfter = parseInt(resp.headers.get('retry-after') ?? '1', 10);
+      const retryAfter = Number.parseInt(resp.headers.get('retry-after') ?? '1', 10);
       throw new RateLimitError(retryAfter);
     }
 

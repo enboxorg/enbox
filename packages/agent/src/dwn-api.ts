@@ -627,7 +627,7 @@ export class AgentDwnApi {
     return this.agent.rpc.applyReplicatedMessage({
       targetDid : tenant,
       dwnUrl    : this._localDwnEndpoint!,
-      message   : message as DwnMessage[DwnInterface],
+      message,
       data,
     });
   }
