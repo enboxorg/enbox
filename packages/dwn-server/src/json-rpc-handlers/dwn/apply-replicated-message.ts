@@ -2,61 +2,29 @@ import type { GenericMessage, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { HandlerResponse, JsonRpcHandler } from '../../lib/json-rpc-router.js';
 
 import log from 'loglevel';
-import { v4 as uuidv4 } from 'uuid';
 
-import { enforceQuota } from './process-message.js';
 import { requestDataBytesTotal } from '../../metrics.js';
+import { v4 as uuidv4 } from 'uuid';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+import { enforceInboundDwnMessageLimits, validateInboundDwnMessageTransport } from './inbound-message.js';
 
 export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   dwnRequest,
   context,
 ) => {
-  const { dwn, dataStream, transport } = context;
+  const { dwn, dataStream } = context;
   const { target, message } = dwnRequest.params as { target: string, message: GenericMessage };
   const requestId = dwnRequest.id ?? uuidv4();
 
   try {
-    if (
-      transport !== 'http' &&
-      message.descriptor.interface === DwnInterfaceName.Records &&
-      message.descriptor.method === DwnMethodName.Write
-    ) {
-      return {
-        jsonRpcResponse: createJsonRpcErrorResponse(
-          requestId,
-          JsonRpcErrorCodes.InvalidParams,
-          `RecordsWrite is not supported via ${context.transport}`
-        ),
-      };
+    const transportResult = validateInboundDwnMessageTransport({ context, message, requestId, target });
+    if (transportResult !== undefined) {
+      return transportResult;
     }
 
-    if (context.tenantRateLimiter) {
-      const result = context.tenantRateLimiter.consume(target);
-      if (result.allowed === false) {
-        const retryAfterSec = Math.ceil(result.retryAfterMs / 1000);
-        return {
-          jsonRpcResponse: createJsonRpcErrorResponse(
-            requestId,
-            JsonRpcErrorCodes.TooManyRequests,
-            `tenant rate limit exceeded, retry after ${retryAfterSec}s`,
-            { retryAfterSec },
-          ),
-        };
-      }
-    }
-
-    if (
-      context.config &&
-      context.adminStore &&
-      message.descriptor.interface === DwnInterfaceName.Records &&
-      message.descriptor.method === DwnMethodName.Write
-    ) {
-      const quotaResult = await enforceQuota(target, message, context);
-      if (quotaResult !== undefined) {
-        return quotaResult;
-      }
+    const limitsResult = await enforceInboundDwnMessageLimits({ context, message, requestId, target });
+    if (limitsResult !== undefined) {
+      return limitsResult;
     }
 
     const result = await dwn.applyReplicatedMessage(target, message, { dataStream });
