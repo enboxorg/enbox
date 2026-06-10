@@ -248,10 +248,11 @@ describe('admitClosure', () => {
       .onFirstCall().resolves({
         kind    : 'Incomplete',
         missing : [{
-          type         : 'Role',
+          type          : 'Role',
+          contextPrefix : 'thread-context',
           protocol,
-          protocolPath : 'thread/member',
-          recipient    : 'did:example:bob',
+          protocolPath  : 'thread/member',
+          recipient     : 'did:example:bob',
         }],
       })
       .onSecondCall().resolves({ kind: 'Applied' })
@@ -280,6 +281,7 @@ describe('admitClosure', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
+          contextId    : 'thread-context',
           protocol,
           protocolPath : 'thread/member',
           recipient    : 'did:example:bob',
@@ -287,6 +289,58 @@ describe('admitClosure', () => {
         permissionGrantId: 'records-query-grant',
       },
     });
+  });
+
+  it('admits dependency chains deeper than the historical eight-pass budget', async () => {
+    const chain = await Promise.all(
+      Array.from({ length: 10 }, () => TestDataGenerator.generateRecordsWrite())
+    );
+    const cids = await Promise.all(chain.map(entry => Message.getCid(entry.message)));
+    const rootIndex = chain.length - 1;
+    const rootCid = cids[rootIndex];
+    const agent = createMockAgent();
+    const appliedCids = new Set<string>();
+
+    agent.rpc.sendDwnRequest.callsFake(async () => {
+      const messageCid = agent.processDwnRequest.lastCall.args[0].messageParams.messageCid;
+      const index = cids.indexOf(messageCid);
+      return {
+        status : { code: 200 },
+        entry  : { message: chain[index].message },
+      };
+    });
+
+    agent.dwn.applyReplicatedMessage.callsFake(async (_tenant: string, message: any) => {
+      const cid = await Message.getCid(message);
+      const index = cids.indexOf(cid);
+      if (appliedCids.has(cid)) {
+        return { kind: 'Duplicate' };
+      }
+
+      if (index > 0 && !appliedCids.has(cids[index - 1])) {
+        return {
+          kind    : 'Incomplete',
+          missing : [{
+            type              : 'Grant',
+            messageCid        : cids[index - 1],
+            permissionGrantId : `grant-${index - 1}`,
+          }],
+        };
+      }
+
+      appliedCids.add(cid);
+      return { kind: 'Applied' };
+    });
+
+    const outcome = await admitClosure(rootCid, {
+      did        : 'did:example:alice',
+      dwnUrl     : 'https://dwn.example.com',
+      agent,
+      prefetched : [{ message: chain[rootIndex].message }],
+    });
+
+    expect(outcome.kind).toBe('admitted');
+    expect(appliedCids).toEqual(new Set(cids));
   });
 
   it('fetches cross-protocol record references by record ID and protocol', async () => {

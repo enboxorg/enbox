@@ -38,7 +38,10 @@ export type AdmitClosureDeps = {
   shouldContinue?: () => boolean;
 };
 
-const MAX_ADMISSION_PASSES = 8;
+// Replication handlers currently report one missing dependency per rejected apply.
+// Keep a high safety cap so deep but valid closures can converge while still
+// bounding work against malformed or adversarial remotes.
+const MAX_ADMISSION_PASSES = 128;
 
 /**
  * Applies a sync root and any dependencies it discovers through the DWN's
@@ -53,6 +56,7 @@ export async function admitClosure(rootCid: string, deps: AdmitClosureDeps): Pro
 
 class AdmitClosureContext {
   private readonly entriesByCid = new Map<string, SyncMessageEntry>();
+  private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
   private readonly fetchedRefs = new Set<string>();
   private readonly prefetchedEntries: SyncMessageEntry[];
 
@@ -193,10 +197,13 @@ class AdmitClosureContext {
     for (const ref of refs) {
       const key = dependencyKey(ref);
       if (this.fetchedRefs.has(key)) {
+        fetched.push(...(this.fetchedDependencyEntries.get(key) ?? []));
         continue;
       }
       this.fetchedRefs.add(key);
-      fetched.push(...await this.fetchDependency(ref));
+      const entries = await this.fetchDependency(ref);
+      this.fetchedDependencyEntries.set(key, entries);
+      fetched.push(...entries);
     }
     return fetched;
   }
@@ -292,6 +299,7 @@ class AdmitClosureContext {
           protocol     : ref.protocol,
           protocolPath : ref.protocolPath,
           recipient    : ref.recipient,
+          ...(ref.contextPrefix === undefined ? {} : { contextId: ref.contextPrefix }),
         },
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },

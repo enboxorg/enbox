@@ -11,18 +11,20 @@ import type { EventLog, SubscriptionListener } from './types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from './types/method-handler.js';
 import type { MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
-import type { ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
+import type { ProtocolDefinition, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
 import type { RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
 import type { ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
 import { CoreProtocolRegistry } from './core/core-protocol.js';
+import { DwnErrorCode } from './core/dwn-error.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesReadHandler } from './handlers/messages-read.js';
 import { MessagesSubscribeHandler } from './handlers/messages-subscribe.js';
 import { MessagesSyncHandler } from './handlers/messages-sync.js';
 import { PermissionsProtocol } from './protocols/permissions.js';
+import { ProtocolAuthorization } from './core/protocol-authorization.js';
 import { ProtocolsConfigure } from './interfaces/protocols-configure.js';
 import { ProtocolsConfigureHandler } from './handlers/protocols-configure.js';
 import { ProtocolsQueryHandler } from './handlers/protocols-query.js';
@@ -263,7 +265,45 @@ export class Dwn {
     }
 
     const reply = await this.processMessage(tenant, rawMessage, options);
-    return replicationApplyResultFromReply(rawMessage, reply);
+    const protocolDefinition = await this.getReplicationApplyProtocolDefinition(tenant, rawMessage, reply);
+    return replicationApplyResultFromReply(rawMessage, reply, { protocolDefinition });
+  }
+
+  private async getReplicationApplyProtocolDefinition(
+    tenant: string,
+    message: GenericMessage,
+    reply: { status: { detail?: string } },
+  ): Promise<ProtocolDefinition | undefined> {
+    const detail = reply.status.detail ?? '';
+    if (!detail.startsWith(`${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}:`)) {
+      return undefined;
+    }
+
+    const protocol = Dwn.getMessageProtocolForReplicationApply(message);
+    if (protocol === undefined) {
+      return undefined;
+    }
+
+    try {
+      return await ProtocolAuthorization.fetchProtocolDefinition(
+        tenant,
+        protocol,
+        this.messageStore,
+        message.descriptor.messageTimestamp,
+        this._coreProtocols,
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  private static getMessageProtocolForReplicationApply(message: GenericMessage): string | undefined {
+    const descriptor = message.descriptor as { protocol?: unknown; filter?: { protocol?: unknown } };
+    return typeof descriptor.protocol === 'string'
+      ? descriptor.protocol
+      : typeof descriptor.filter?.protocol === 'string'
+        ? descriptor.filter.protocol
+        : undefined;
   }
 
   private async replicatedMessageAlreadyStored(
@@ -363,7 +403,8 @@ export class Dwn {
     messageCid: string,
   ): Promise<void> {
     const leaves = await this.stateIndex.getLeaves(tenant, []);
-    if (leaves.includes(messageCid)) {
+    const stateIndexHasMessage = leaves.includes(messageCid);
+    if (stateIndexHasMessage && this.eventLog === undefined) {
       return;
     }
 
@@ -372,10 +413,26 @@ export class Dwn {
       return;
     }
 
-    await this.stateIndex.insert(tenant, messageCid, repair.indexes);
-    if (repair.emitEvent) {
+    if (!stateIndexHasMessage) {
+      await this.stateIndex.insert(tenant, messageCid, repair.indexes);
+    }
+    if (repair.emitEvent && !await this.eventLogHasMessage(tenant, messageCid, repair.indexes)) {
       await this.eventLog?.emit(tenant, repair.event, repair.indexes, messageCid);
     }
+  }
+
+  private async eventLogHasMessage(tenant: string, messageCid: string, indexes: KeyValues): Promise<boolean> {
+    if (this.eventLog === undefined) {
+      return true;
+    }
+
+    const { events } = await this.eventLog.read(tenant, { filters: [indexes] });
+    for (const event of events) {
+      if (event.messageCid === messageCid || await Message.getCid(event.event.message) === messageCid) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private async constructReplicationIndexRepair(
@@ -387,13 +444,14 @@ export class Dwn {
 
     if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Write) {
       const isLatest = await Dwn.isNewestStoredMessage(message, existingMessages);
-      const recordsWrite = await RecordsWrite.parse(message as RecordsWriteMessage);
+      const eventMessage = await Dwn.getStoredMessageForCid(existingMessages, await Message.getCid(message)) ?? message;
+      const recordsWrite = await RecordsWrite.parse(eventMessage as RecordsWriteMessage);
       const indexes = await recordsWrite.constructIndexes(isLatest);
-      const initialWrite = await this.getInitialWriteForReplicationEvent(tenant, message as RecordsWriteMessage);
+      const initialWrite = await this.getInitialWriteForReplicationEvent(tenant, eventMessage as RecordsWriteMessage);
       return {
         indexes,
-        event     : { message, initialWrite },
-        emitEvent : isLatest && Dwn.replicatedWriteHasQueryableData(message),
+        event     : { message: eventMessage, initialWrite },
+        emitEvent : isLatest && Dwn.replicatedWriteHasQueryableData(eventMessage),
       };
     }
 
@@ -435,6 +493,14 @@ export class Dwn {
   ): Promise<boolean> {
     const newestMessage = await Message.getNewestMessage(existingMessages);
     return newestMessage !== undefined && await Message.getCid(newestMessage) === await Message.getCid(message);
+  }
+
+  private static async getStoredMessageForCid(existingMessages: GenericMessage[], messageCid: string): Promise<GenericMessage | undefined> {
+    for (const existingMessage of existingMessages) {
+      if (await Message.getCid(existingMessage) === messageCid) {
+        return existingMessage;
+      }
+    }
   }
 
   private async getInitialWriteForReplicationEvent(

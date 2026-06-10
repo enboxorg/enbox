@@ -1,9 +1,11 @@
 import type { GenericMessage } from '../types/message-types.js';
+import type { ProtocolDefinition } from '../types/protocols-types.js';
 
 import { DwnErrorCode } from './dwn-error.js';
 import { Encoder } from '../utils/encoder.js';
 import { Message } from './message.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 
 export type ReplicationApplyOptions = {
   dataStream?: ReadableStream<Uint8Array>;
@@ -16,6 +18,10 @@ export type ReplicationApplyResult =
   | { kind: 'Incomplete'; missing: DependencyRef[] }
   | { kind: 'Invalid'; reason: string }
   | { kind: 'Deferred'; reason: 'tenant-inactive' | 'resolver-unavailable' | 'storage' };
+
+export type ReplicationApplyResultContext = {
+  protocolDefinition?: ProtocolDefinition;
+};
 
 export type DependencyRef =
   | { type: 'Protocol'; protocol: string; messageCid?: string; terminal?: boolean }
@@ -37,6 +43,7 @@ export type DependencyRef =
 export function replicationApplyResultFromReply(
   message: GenericMessage,
   reply: { status: { code: number; detail?: string } },
+  context: ReplicationApplyResultContext = {},
 ): ReplicationApplyResult {
   const { code, detail = '' } = reply.status;
 
@@ -56,7 +63,7 @@ export function replicationApplyResultFromReply(
     return { kind: 'Deferred', reason: 'resolver-unavailable' };
   }
 
-  const missing = dependencyRefFromStatus(message, code, detail);
+  const missing = dependencyRefFromStatus(message, code, detail, context);
   if (missing !== undefined) {
     return { kind: 'Incomplete', missing: [missing] };
   }
@@ -72,6 +79,7 @@ function dependencyRefFromStatus(
   message: GenericMessage,
   code: number,
   detail: string,
+  context: ReplicationApplyResultContext,
 ): DependencyRef | undefined {
   const errorCode = getDwnErrorCode(detail);
   switch (errorCode) {
@@ -88,7 +96,7 @@ function dependencyRefFromStatus(
   case DwnErrorCode.GrantAuthorizationGrantMissing:
     return grantDependencyFromMessage(message);
   case DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound:
-    return roleDependencyFromMessage(message);
+    return roleDependencyFromMessage(message, context);
   case DwnErrorCode.RecordsWriteMissingDataInPrevious:
   case DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious:
     return recordDataDependencyFromMessage(message);
@@ -193,9 +201,10 @@ function recordDataDependencyFromMessage(message: GenericMessage): DependencyRef
     : undefined;
 }
 
-function roleDependencyFromMessage(message: GenericMessage): DependencyRef | undefined {
+function roleDependencyFromMessage(message: GenericMessage, context: ReplicationApplyResultContext): DependencyRef | undefined {
   const descriptor = message.descriptor as Record<string, unknown>;
-  const protocol = descriptor.protocol;
+  const filter = descriptor.filter as Record<string, unknown> | undefined;
+  const protocol = descriptor.protocol ?? filter?.protocol;
   const protocolRole = getSignaturePayload(message)?.protocolRole;
   const recipient = Message.getAuthor(message);
 
@@ -203,16 +212,31 @@ function roleDependencyFromMessage(message: GenericMessage): DependencyRef | und
     return undefined;
   }
 
-  const contextId = typeof descriptor.contextId === 'string' ? descriptor.contextId : undefined;
-  const roleSegments = protocolRole.split('/').length - 1;
+  let roleProtocol = protocol;
+  let roleProtocolPath = protocolRole;
+  if (isCrossProtocolRef(protocolRole)) {
+    const parsed = parseCrossProtocolRef(protocolRole);
+    const referencedProtocol = parsed === undefined ? undefined : context.protocolDefinition?.uses?.[parsed.alias];
+    if (parsed !== undefined && referencedProtocol !== undefined) {
+      roleProtocol = referencedProtocol;
+      roleProtocolPath = parsed.protocolPath;
+    }
+  }
+
+  const contextId = typeof descriptor.contextId === 'string'
+    ? descriptor.contextId
+    : typeof filter?.contextId === 'string'
+      ? filter.contextId
+      : undefined;
+  const roleSegments = roleProtocolPath.split('/').length - 1;
   const contextPrefix = roleSegments > 0 && contextId !== undefined
     ? contextId.split('/').slice(0, roleSegments).join('/')
     : undefined;
 
   return {
     type         : 'Role',
-    protocol,
-    protocolPath : protocolRole,
+    protocol     : roleProtocol,
+    protocolPath : roleProtocolPath,
     recipient,
     ...(contextPrefix === undefined ? {} : { contextPrefix }),
   };

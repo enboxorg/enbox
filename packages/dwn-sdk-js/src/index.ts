@@ -2,7 +2,7 @@
 export type { DwnConfig } from './dwn.js';
 export type { EventListener, EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, MessageEvent, ProgressGapInfo, ProgressGapReason, ProgressToken, SubscriptionEose, SubscriptionError, SubscriptionEvent, SubscriptionListener, SubscriptionMessage, SubscriptionReply } from './types/subscriptions.js';
 export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSort, MessageSubscription, Pagination, QueryResultEntry, Status } from './types/message-types.js';
-export type { DependencyRef, ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
+export type { DependencyRef, ReplicationApplyOptions, ReplicationApplyResult, ReplicationApplyResultContext } from './core/replication-apply.js';
 export { replicationApplyResultFromReply } from './core/replication-apply.js';
 export type { MessagesFilter, MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessagesSubscribeMessageOptions, MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
 export type { GT, LT, Filter, FilterValue, KeyValues, EqualFilter, OneOfFilter, RangeFilter, RangeCriterion, PaginationCursor, QueryOptions, RangeValue, StartsWithFilter } from './types/query-types.js';

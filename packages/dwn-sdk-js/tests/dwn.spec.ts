@@ -184,6 +184,97 @@ export function testDwnClass(): void {
         expect(await stateIndex.getLeaves(alice.did, [])).toContain(messageCid);
       });
 
+      it('returns Duplicate and repairs the event log for an exact replay already in the message store and state index', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+        const initialReply = await dwn.processMessage(alice.did, message, { dataStream });
+        expect(initialReply.status.code).toBe(202);
+
+        const messageCid = await Message.getCid(message);
+        expect(await stateIndex.getLeaves(alice.did, [])).toContain(messageCid);
+
+        await eventLog.close();
+        await eventLog.open();
+        expect((await eventLog.read(alice.did)).events).toEqual([]);
+
+        const result = await dwn.applyReplicatedMessage(alice.did, message);
+
+        expect(result).toEqual({ kind: 'Duplicate' });
+        const { events } = await eventLog.read(alice.did);
+        expect(events.map(event => event.messageCid)).toContain(messageCid);
+      });
+
+      it('returns resolved cross-protocol role dependencies for replicated role-authorized queries', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const threadsProtocol: ProtocolDefinition = {
+          protocol  : 'https://threads.example.com',
+          published : true,
+          types     : {
+            participant : {},
+            thread      : {},
+          },
+          structure: {
+            thread: {
+              participant: {
+                $role: true,
+              },
+            },
+          },
+        };
+        const commentsProtocol: ProtocolDefinition = {
+          protocol  : 'https://comments.example.com',
+          published : true,
+          uses      : {
+            threads: threadsProtocol.protocol,
+          },
+          types: {
+            comment: {},
+          },
+          structure: {
+            thread: {
+              $ref    : 'threads:thread',
+              comment : {},
+            },
+          },
+        };
+        const threadsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : threadsProtocol,
+        });
+        expect((await dwn.processMessage(alice.did, threadsConfigure.message)).status.code).toBe(202);
+        const commentsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : commentsProtocol,
+        });
+        expect((await dwn.processMessage(alice.did, commentsConfigure.message)).status.code).toBe(202);
+
+        const query = await TestDataGenerator.generateRecordsQuery({
+          author       : bob,
+          protocolRole : 'threads:thread/participant',
+          filter       : {
+            contextId    : 'thread-context/comment-context',
+            protocol     : commentsProtocol.protocol,
+            protocolPath : 'thread/comment',
+          },
+        });
+
+        const result = await dwn.applyReplicatedMessage(alice.did, query.message);
+
+        expect(result).toEqual({
+          kind    : 'Incomplete',
+          missing : [{
+            type          : 'Role',
+            contextPrefix : 'thread-context',
+            protocol      : threadsProtocol.protocol,
+            protocolPath  : 'thread/participant',
+            recipient     : bob.did,
+          }],
+        });
+      });
+
       it('classifies exact child replay as Duplicate before checking that the parent is still active', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const nestedProtocol: ProtocolDefinition = {

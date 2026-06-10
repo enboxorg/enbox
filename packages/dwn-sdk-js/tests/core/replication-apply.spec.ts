@@ -1,3 +1,5 @@
+import type { ProtocolDefinition } from '../../src/index.js';
+
 import { describe, expect, it } from 'bun:test';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -170,6 +172,47 @@ describe('replicationApplyResultFromReply', () => {
         contextPrefix : 'thread-context',
         protocol,
         protocolPath  : protocolRole,
+        recipient     : author.did,
+      }],
+    });
+  });
+
+  it('resolves cross-protocol role dependencies through the composing protocol uses map', async () => {
+    const protocol = 'https://example.com/composing-protocol';
+    const roleProtocol = 'https://example.com/roles-protocol';
+    const protocolRole = 'roles:thread/member';
+    const protocolDefinition: ProtocolDefinition = {
+      protocol,
+      published : false,
+      uses      : {
+        roles: roleProtocol,
+      },
+      types: {
+        message: {},
+      },
+      structure: {
+        message: {},
+      },
+    };
+    const { author, message } = await TestDataGenerator.generateRecordsWrite({
+      protocol,
+      protocolPath: 'message',
+      protocolRole,
+    });
+    (message.descriptor as Record<string, unknown>).contextId = 'thread-context/member-context';
+
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 401,
+        detail : `${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}: matching role record was not found`,
+      },
+    }, { protocolDefinition })).toEqual({
+      kind    : 'Incomplete',
+      missing : [{
+        type          : 'Role',
+        contextPrefix : 'thread-context',
+        protocol      : roleProtocol,
+        protocolPath  : 'thread/member',
         recipient     : author.did,
       }],
     });
