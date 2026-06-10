@@ -3,14 +3,16 @@ import type { UnionMessageReply } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
 
 import {
   fetchRemoteMessages,
   getLocalMessage,
   getMessageCid,
+  pullMessages,
   pushMessages,
   syncMessageReplyIsSuccessful,
+  SyncPullAbortedError,
 } from '../src/sync-messages.js';
 
 describe('sync-messages', () => {
@@ -308,6 +310,269 @@ describe('sync-messages', () => {
       });
 
       expect(result).toHaveLength(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // pullMessages
+  // ---------------------------------------------------------------------------
+
+  describe('pullMessages', () => {
+    it('should fetch, sort, and process messages locally', async () => {
+      const mockAgent = {
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: {} } }),
+        rpc               : {
+          sendDwnRequest: sinon.stub().resolves({
+            status : { code: 200 },
+            entry  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+          }),
+        },
+        dwn: {
+          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+
+      await pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
+      });
+
+      expect(mockAgent.dwn.processRawMessage.calledOnce).toBe(true);
+    });
+
+    it('should retry failed messages', async () => {
+      const processMessageStub = sinon.stub()
+        .onFirstCall().resolves({ status: { code: 500, detail: 'Error' } })
+        .onSecondCall().resolves({ status: { code: 202, detail: 'Accepted' } });
+
+      const sendDwnRequestStub = sinon.stub().resolves({
+        status : { code: 200 },
+        entry  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+      });
+
+      const mockAgent = {
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: {} } }),
+        rpc               : { sendDwnRequest: sendDwnRequestStub },
+        dwn               : { processRawMessage: processMessageStub },
+      } as any;
+
+      await pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
+      });
+
+      // Called at least twice (initial + retry)
+      expect(processMessageStub.callCount).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should handle empty messageCids gracefully', async () => {
+      const mockAgent = {
+        processDwnRequest : sinon.stub(),
+        rpc               : { sendDwnRequest: sinon.stub() },
+        dwn               : { processRawMessage: sinon.stub() },
+      } as any;
+
+      await pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [],
+        agent       : mockAgent,
+      });
+
+      // No messages to process
+      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+    });
+
+    it('should abort after remote fetch when shouldContinue turns false', async () => {
+      const shouldContinue = sinon.stub()
+        .onFirstCall().returns(true)
+        .onSecondCall().returns(false);
+      const mockAgent = {
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: {} } }),
+        rpc               : {
+          sendDwnRequest: sinon.stub().resolves({
+            status : { code: 200 },
+            entry  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+          }),
+        },
+        dwn: {
+          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+
+      await expect(pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        shouldContinue,
+        agent       : mockAgent,
+      })).rejects.toThrow(SyncPullAbortedError);
+
+      expect(mockAgent.rpc.sendDwnRequest.calledOnce).toBe(true);
+      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+    });
+
+    it('should not apply later messages after shouldContinue turns false after local apply', async () => {
+      let shouldAbort = false;
+      const firstMessage = {
+        descriptor: {
+          interface  : DwnInterfaceName.Protocols,
+          method     : DwnMethodName.Configure,
+          definition : { protocol: 'https://example.com/first' },
+        },
+      } as any;
+      const secondMessage = {
+        descriptor: {
+          interface  : DwnInterfaceName.Protocols,
+          method     : DwnMethodName.Configure,
+          definition : { protocol: 'https://example.com/second' },
+        },
+      } as any;
+      const processRawMessage = sinon.stub().callsFake(async () => {
+        shouldAbort = true;
+        return { status: { code: 202 } };
+      });
+      const shouldContinue = (): boolean => !shouldAbort;
+      const mockAgent = {
+        processDwnRequest : sinon.stub(),
+        rpc               : { sendDwnRequest: sinon.stub() },
+        dwn               : { processRawMessage },
+      } as any;
+
+      await expect(pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [],
+        agent       : mockAgent,
+        prefetched  : [
+          { messageCid: 'cid-1', message: firstMessage },
+          { messageCid: 'cid-2', message: secondMessage },
+        ],
+        shouldContinue,
+      })).rejects.toThrow(SyncPullAbortedError);
+
+      expect(processRawMessage.callCount).toBe(1);
+      expect(processRawMessage.firstCall.args[1]).toBe(firstMessage);
+    });
+
+    it('should release data stream reader lock when aborting during buffering', async () => {
+      let shouldAbort = false;
+      const recordsWriteMessage = {
+        recordId   : 'record-1',
+        descriptor : {
+          interface        : DwnInterfaceName.Records,
+          method           : DwnMethodName.Write,
+          dateCreated      : '2026-01-01T00:00:00.000000Z',
+          messageTimestamp : '2026-01-01T00:00:00.000000Z',
+        },
+      } as any;
+      const dataStream = new ReadableStream<Uint8Array>({
+        pull(controller): void {
+          shouldAbort = true;
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      });
+      const mockAgent = {
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: {} } }),
+        rpc               : {
+          sendDwnRequest: sinon.stub().resolves({
+            status : { code: 200 },
+            entry  : { message: recordsWriteMessage, data: dataStream },
+          }),
+        },
+        dwn: {
+          processRawMessage: sinon.stub().resolves({ status: { code: 202 } }),
+        },
+      } as any;
+
+      await expect(pullMessages({
+        did            : 'did:example:alice',
+        dwnUrl         : 'https://dwn.example.com',
+        messageCids    : ['cid-1'],
+        shouldContinue : () => !shouldAbort,
+        agent          : mockAgent,
+      })).rejects.toThrow(SyncPullAbortedError);
+
+      expect(dataStream.locked).toBe(false);
+      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+    });
+
+    it('should reject prefetched messages before local apply when the acceptance gate fails', async () => {
+      const message = {
+        descriptor: {
+          interface  : DwnInterfaceName.Protocols,
+          method     : DwnMethodName.Configure,
+          definition : { protocol: 'https://example.com/blocked' },
+        },
+      } as any;
+      const expectedCid = await Message.getCid(message);
+      const mockAgent = {
+        processDwnRequest : sinon.stub(),
+        rpc               : { sendDwnRequest: sinon.stub() },
+        dwn               : { processRawMessage: sinon.stub() },
+      } as any;
+
+      const failedCids = await pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [],
+        prefetched  : [{ messageCid: expectedCid, message }],
+        acceptEntry : sinon.stub().resolves(false),
+        agent       : mockAgent,
+      });
+
+      expect(failedCids).toEqual([expectedCid]);
+      expect(mockAgent.dwn.processRawMessage.called).toBe(false);
+    });
+
+    it('should apply only accepted prefetched messages', async () => {
+      const acceptedMessage = {
+        descriptor: {
+          interface  : DwnInterfaceName.Protocols,
+          method     : DwnMethodName.Configure,
+          definition : { protocol: 'https://example.com/accepted' },
+        },
+      } as any;
+      const rejectedMessage = {
+        descriptor: {
+          interface  : DwnInterfaceName.Protocols,
+          method     : DwnMethodName.Configure,
+          definition : { protocol: 'https://example.com/rejected' },
+        },
+      } as any;
+      const acceptedCid = await Message.getCid(acceptedMessage);
+      const rejectedCid = await Message.getCid(rejectedMessage);
+      const acceptEntry = sinon.stub()
+        .onFirstCall().resolves(true)
+        .onSecondCall().resolves(false);
+      const mockAgent = {
+        processDwnRequest : sinon.stub(),
+        rpc               : { sendDwnRequest: sinon.stub() },
+        dwn               : { processRawMessage: sinon.stub().resolves({ status: { code: 202 } }) },
+      } as any;
+
+      const failedCids = await pullMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [],
+        prefetched  : [
+          { messageCid: acceptedCid, message: acceptedMessage },
+          { messageCid: rejectedCid, message: rejectedMessage },
+        ],
+        acceptEntry,
+        agent: mockAgent,
+      });
+
+      expect(failedCids).toEqual([rejectedCid]);
+      expect(acceptEntry.calledTwice).toBe(true);
+      expect(acceptEntry.firstCall.args[1]).toHaveLength(2);
+      expect(mockAgent.dwn.processRawMessage.calledOnce).toBe(true);
+      expect(mockAgent.dwn.processRawMessage.firstCall.args[1]).toBe(acceptedMessage);
     });
   });
 

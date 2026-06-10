@@ -15,11 +15,11 @@ const target: ReconcileTarget = {
 
 function makeDeps(overrides: Record<string, any> = {}): any {
   return {
-    getLocalRoot        : sinon.stub().resolves('rootA'),
-    getRemoteRoot       : sinon.stub().resolves('rootA'),
-    diffWithRemote      : sinon.stub().resolves({ onlyRemote: [], onlyLocal: [] }),
-    admitRemoteMessages : sinon.stub().resolves(),
-    pushMessages        : sinon.stub().resolves({ succeeded: [], failed: [], permanentlyFailed: [] }),
+    getLocalRoot   : sinon.stub().resolves('rootA'),
+    getRemoteRoot  : sinon.stub().resolves('rootA'),
+    diffWithRemote : sinon.stub().resolves({ onlyRemote: [], onlyLocal: [] }),
+    pullMessages   : sinon.stub().resolves(),
+    pushMessages   : sinon.stub().resolves({ succeeded: [], failed: [], permanentlyFailed: [] }),
     ...overrides,
   };
 }
@@ -42,7 +42,7 @@ describe('SyncLinkReconciler', () => {
       expect(outcome.didPull).toBe(false);
       expect(outcome.didPush).toBe(false);
       expect(deps.diffWithRemote.called).toBe(false);
-      expect(deps.admitRemoteMessages.called).toBe(false);
+      expect(deps.pullMessages.called).toBe(false);
       expect(deps.pushMessages.called).toBe(false);
     });
 
@@ -80,7 +80,7 @@ describe('SyncLinkReconciler', () => {
 
       await reconciler.reconcile(target);
 
-      expect(deps.admitRemoteMessages.calledOnce).toBe(true);
+      expect(deps.pullMessages.calledOnce).toBe(true);
       expect(deps.pushMessages.calledOnce).toBe(true);
     });
 
@@ -92,7 +92,7 @@ describe('SyncLinkReconciler', () => {
 
       expect(outcome.didPull).toBe(true);
       expect(outcome.didPush).toBe(false);
-      expect(deps.admitRemoteMessages.calledOnce).toBe(true);
+      expect(deps.pullMessages.calledOnce).toBe(true);
       expect(deps.pushMessages.called).toBe(false);
     });
 
@@ -104,7 +104,7 @@ describe('SyncLinkReconciler', () => {
 
       expect(outcome.didPull).toBe(false);
       expect(outcome.didPush).toBe(true);
-      expect(deps.admitRemoteMessages.called).toBe(false);
+      expect(deps.pullMessages.called).toBe(false);
       expect(deps.pushMessages.calledOnce).toBe(true);
     });
   });
@@ -129,11 +129,11 @@ describe('SyncLinkReconciler', () => {
 
       await reconciler.reconcile(target);
 
-      // admitRemoteMessages is called with the prefetched entry, not as a CID to fetch.
-      const admitArgs = deps.admitRemoteMessages.firstCall.args[0];
-      expect(admitArgs.prefetched).toHaveLength(1);
-      expect(admitArgs.prefetched[0].messageCid).toBe('cidR1');
-      expect(admitArgs.messageCids).toHaveLength(0);
+      // pullMessages is called with the prefetched entry, not as a CID to fetch.
+      const pullArgs = deps.pullMessages.firstCall.args[0];
+      expect(pullArgs.prefetched).toHaveLength(1);
+      expect(pullArgs.prefetched[0].messageCid).toBe('cidR1');
+      expect(pullArgs.messageCids).toHaveLength(0);
     });
 
     it('should classify RecordsWrite with dataCid but no encodedData as needs-fetch', async () => {
@@ -158,10 +158,10 @@ describe('SyncLinkReconciler', () => {
 
       await reconciler.reconcile(target);
 
-      const admitArgs = deps.admitRemoteMessages.firstCall.args[0];
-      expect(admitArgs.prefetched).toHaveLength(0);
-      expect(admitArgs.messageCids).toHaveLength(1);
-      expect(admitArgs.messageCids[0]).toBe('cidR2');
+      const pullArgs = deps.pullMessages.firstCall.args[0];
+      expect(pullArgs.prefetched).toHaveLength(0);
+      expect(pullArgs.messageCids).toHaveLength(1);
+      expect(pullArgs.messageCids[0]).toBe('cidR2');
     });
 
     it('should classify entries with no message as needs-fetch', async () => {
@@ -175,9 +175,9 @@ describe('SyncLinkReconciler', () => {
 
       await reconciler.reconcile(target);
 
-      const admitArgs = deps.admitRemoteMessages.firstCall.args[0];
-      expect(admitArgs.prefetched).toHaveLength(0);
-      expect(admitArgs.messageCids).toContain('cidR3');
+      const pullArgs = deps.pullMessages.firstCall.args[0];
+      expect(pullArgs.prefetched).toHaveLength(0);
+      expect(pullArgs.messageCids).toContain('cidR3');
     });
   });
 
@@ -285,15 +285,15 @@ describe('SyncLinkReconciler', () => {
       expect(outcome.aborted).toBe(true);
       expect(outcome.localRoot).toBe('rootA');
       expect(outcome.remoteRoot).toBe('rootB');
-      expect(deps.admitRemoteMessages.called).toBe(false);
+      expect(deps.pullMessages.called).toBe(false);
     });
 
-    it('should abort when admitRemoteMessages detects a stale target before apply', async () => {
+    it('should abort when pullMessages detects a stale target before apply', async () => {
       const deps = makeDeps({
-        getLocalRoot        : sinon.stub().resolves('rootA'),
-        getRemoteRoot       : sinon.stub().resolves('rootB'),
-        diffWithRemote      : sinon.stub().resolves({ onlyRemote: [{ messageCid: 'cid-1' }], onlyLocal: ['cid-2'] }),
-        admitRemoteMessages : sinon.stub().rejects(new SyncPullAbortedError()),
+        getLocalRoot   : sinon.stub().resolves('rootA'),
+        getRemoteRoot  : sinon.stub().resolves('rootB'),
+        diffWithRemote : sinon.stub().resolves({ onlyRemote: [{ messageCid: 'cid-1' }], onlyLocal: ['cid-2'] }),
+        pullMessages   : sinon.stub().rejects(new SyncPullAbortedError()),
       });
       const reconciler = new SyncLinkReconciler(deps);
 
@@ -353,8 +353,8 @@ describe('SyncLinkReconciler', () => {
       expect(deps.getLocalRoot.firstCall.args).toEqual(['did:example:alice', 'did:example:device', 'https://protocol.xyz/notes']);
       expect(deps.getRemoteRoot.firstCall.args).toEqual(['did:example:alice', 'https://dwn.example.com', 'did:example:device', 'https://protocol.xyz/notes']);
       expect(deps.diffWithRemote.firstCall.args[0]).toEqual(scopedTarget);
-      expect(deps.admitRemoteMessages.firstCall.args[0].delegateDid).toBe('did:example:device');
-      expect(deps.admitRemoteMessages.firstCall.args[0].protocol).toBe('https://protocol.xyz/notes');
+      expect(deps.pullMessages.firstCall.args[0].delegateDid).toBe('did:example:device');
+      expect(deps.pullMessages.firstCall.args[0].protocol).toBe('https://protocol.xyz/notes');
       expect(deps.pushMessages.firstCall.args[0].delegateDid).toBe('did:example:device');
       expect(deps.pushMessages.firstCall.args[0].protocol).toBe('https://protocol.xyz/notes');
     });

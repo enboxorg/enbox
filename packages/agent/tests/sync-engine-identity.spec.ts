@@ -656,6 +656,20 @@ describe('SyncEngineLevel — identity management', () => {
       clearTimeout(bobReconcileTimer);
     });
 
+    it('removeIdentityFromLiveSync should clear the closure evaluation context for the target DID', async () => {
+      const engine = new SyncEngineLevel({ db });
+      (engine as any)._liveSubscriptions = [];
+      (engine as any)._localSubscriptions = [];
+
+      (engine as any)._closureContexts.set('did:example:alice', { someState: true });
+      (engine as any)._closureContexts.set('did:example:bob', { someState: true });
+
+      await (engine as any).removeIdentityFromLiveSync('did:example:alice');
+
+      expect((engine as any)._closureContexts.has('did:example:alice')).toBe(false);
+      expect((engine as any)._closureContexts.has('did:example:bob')).toBe(true);
+    });
+
     it('removeIdentityFromLiveSync should be a safe no-op for a DID with no subscriptions or state', async () => {
       const engine = new SyncEngineLevel({ db });
 

@@ -321,7 +321,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     // When the protocol definition declares `encryptionRequired: true`, always
     // request decryption — even if `initialize()` has not been called for this
     // tenant yet. This covers delegate sessions where key records arrive via
-    // replicated sync rather than `set()`, leaving the per-tenant
+    // sync (`processRawMessage`) rather than `set()`, leaving the per-tenant
     // `_tenantEncryptionActive` cache cold after an agent restart.
     const encryptionActive = this.encryptionRequired || this.isEncryptionActive(tenantDid);
     const { reply: readReply } = await agent.dwn.processRequest({
@@ -380,8 +380,8 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     }
 
     // When the protocol has encrypted types, install the KeyDeliveryProtocol
-    // proactively. Replication admission requires it to be present before
-    // encrypted records can be committed (pull) or pushed.
+    // proactively. The sync engine's closure resolver requires it to be
+    // present before encrypted records can be committed (pull) or pushed.
     // Without this, there's a race: postWriteKeyDelivery installs it lazily
     // after the first encrypted write, but the DWN event fires before that
     // completes and the sync engine sees a missing dependency.
