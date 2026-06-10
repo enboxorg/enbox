@@ -165,6 +165,27 @@ describe('websocket api', function () {
     expect(readBytes).toEqual(dataBytes);
   });
 
+  it('rejects data-bearing replicated RecordsWrite messages without data over WebSocket', async function () {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const { recordsWrite } = await createRecordsWriteMessage(alice);
+    const requestId = uuidv4();
+    const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+
+    const connection = await JsonRpcSocket.connect(wsUrl);
+    const response = await connection.request(dwnRequest);
+
+    expect(response.id).toBe(requestId);
+    expect(response.error).toBeDefined();
+    expect(response.error?.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(response.error?.message).toContain('RecordsWrite is not supported via ws');
+    connection.close();
+  });
+
   it('subscribes to records and receives updates', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);

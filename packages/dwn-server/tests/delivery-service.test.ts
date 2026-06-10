@@ -14,6 +14,7 @@ import { createRecordsWriteMessage } from './utils.js';
 import { DeliveryService } from '../src/delivery-service.js';
 import { DwnServer } from '../src/dwn-server.js';
 import { getTestDwn } from './test-dwn.js';
+import { handleDwnApplyReplicatedMessage } from '../src/json-rpc-handlers/dwn/apply-replicated-message.js';
 import { handleDwnProcessMessage } from '../src/json-rpc-handlers/dwn/process-message.js';
 
 describe('DeliveryService', () => {
@@ -237,6 +238,44 @@ describe('DeliveryService', () => {
       expect(jsonRpcResponse.error).toBeUndefined();
       expect(jsonRpcResponse.result.reply.status.code).toBe(202);
       // No assertion needed — the test passes if no error is thrown
+
+      await testDwn.close();
+    });
+
+    it('should invoke DeliveryService hook for replicated apply Applied outcomes', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+
+      const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
+      const requestId = uuidv4();
+      const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+        message : recordsWrite.toJSON(),
+        target  : alice.did,
+      });
+
+      const { dwn: testDwn } = await getTestDwn();
+      const testConfig: DwnServerConfig = {
+        ...config,
+        forwardingEnabled : true,
+        deliveryEnabled   : true,
+      };
+      const didResolver = new UniversalResolver({ didResolvers: [DidKey] });
+      const deliveryService = DeliveryService.create(testDwn, didResolver, testConfig);
+      const hookSpy = sinon.spy(deliveryService, 'onMessageProcessed');
+      sinon.stub(testDwn, 'applyReplicatedMessage').resolves({ kind: 'Applied' });
+
+      const context: RequestContext = {
+        dwn                   : testDwn,
+        transport             : 'http',
+        dataStream,
+        messageProcessedHooks : [deliveryService],
+      };
+
+      const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, context);
+      expect(jsonRpcResponse.error).toBeUndefined();
+
+      expect(hookSpy.calledOnce).toBe(true);
+      expect(hookSpy.firstCall.args[0].tenant).toBe(alice.did);
+      expect(hookSpy.firstCall.args[0].status.code).toBe(202);
 
       await testDwn.close();
     });

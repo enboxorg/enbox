@@ -22,6 +22,7 @@ import {
 } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
+import { DwnRpcError } from '@enbox/dwn-clients';
 import { isRecordsWrite } from './utils.js';
 import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import { getRoleKey, topologicalSort } from './sync-topological-sort.js';
@@ -394,6 +395,9 @@ class RemoteApplyPushContext {
     } catch (error: any) {
       const detail = error.message ?? String(error);
       console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
+      if (error instanceof DwnRpcError && error.terminal) {
+        return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }) };
+      }
       return { kind: 'failed', failure: this.retryableFailure(rootCid, cid, detail) };
     }
 

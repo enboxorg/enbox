@@ -3,6 +3,7 @@ import type { ProtocolDefinition, ReplicationApplyResult } from '@enbox/dwn-sdk-
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
+import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
@@ -796,6 +797,78 @@ describe('sync-messages', () => {
       }]);
     });
 
+    it('should surface terminal JSON-RPC transport rejections without retrying forever', async () => {
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      const { agent } = createLocalAgentFixture({
+        messagesByCid : new Map([[messageCid, { message }]]),
+        applyResults  : [],
+      });
+      agent.rpc.applyReplicatedMessage.rejects(new DwnRpcError(JsonRpcErrorCodes.InvalidParams, 'unsupported replicated apply payload'));
+
+      const result = await pushMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'wss://dwn.example.com',
+        messageCids : [messageCid],
+        agent,
+      });
+
+      expect(result.failed).toEqual([{
+        cid      : messageCid,
+        detail   : `(${JsonRpcErrorCodes.InvalidParams}) - unsupported replicated apply payload`,
+        kind     : 'Invalid',
+        terminal : true,
+      }]);
+      expect(agent.rpc.applyReplicatedMessage.calledOnce).toBe(true);
+    });
+
+    it('should treat quota JSON-RPC rejections as terminal push failures', async () => {
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      const { agent } = createLocalAgentFixture({
+        messagesByCid : new Map([[messageCid, { message }]]),
+        applyResults  : [],
+      });
+      agent.rpc.applyReplicatedMessage.rejects(new DwnRpcError(
+        JsonRpcErrorCodes.InvalidRequest,
+        'TenantStorageQuotaExceeded: tenant would exceed storage limit',
+      ));
+
+      const result = await pushMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [messageCid],
+        agent,
+      });
+
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0].cid).toBe(messageCid);
+      expect(result.failed[0].terminal).toBe(true);
+      expect(result.failed[0].detail).toContain('TenantStorageQuotaExceeded');
+    });
+
+    it('should keep internal transport failures retryable', async () => {
+      const { message } = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(message);
+      const { agent } = createLocalAgentFixture({
+        messagesByCid : new Map([[messageCid, { message }]]),
+        applyResults  : [],
+      });
+      agent.rpc.applyReplicatedMessage.rejects(new DwnRpcError(JsonRpcErrorCodes.InternalError, 'malformed apply result'));
+
+      const result = await pushMessages({
+        did         : 'did:example:alice',
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [messageCid],
+        agent,
+      });
+
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0].cid).toBe(messageCid);
+      expect(result.failed[0].terminal).toBeUndefined();
+      expect(result.failed[0].detail).toContain('malformed apply result');
+    });
+
     it('should treat non-200 local dependency queries as retryable root failures', async () => {
       const { message } = await TestDataGenerator.generateRecordsWrite({ protocol: 'https://example.com/missing-protocol' });
       const messageCid = await Message.getCid(message);
@@ -847,6 +920,49 @@ describe('sync-messages', () => {
       expect(result.failed).toHaveLength(1);
       expect(result.failed[0].cid).toBe(messageCid);
       expect(applyStub.calledOnce).toBe(true);
+      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsQuery })).calledOnce).toBe(true);
+    });
+
+    it('should exhaust the pass budget for repeated non-empty dependency loops', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocol = 'https://example.com/repeated-non-empty-incomplete';
+      const protocolDefinition: ProtocolDefinition = {
+        protocol,
+        published : false,
+        types     : { note: {} },
+        structure : { note: {} },
+      };
+      const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+      const root = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol,
+        protocolPath : 'note',
+      });
+      const rootCid = await Message.getCid(root.message);
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid : new Map([[rootCid, { message: root.message }]]),
+        protocols     : [protocolsConfigure.message],
+        applyResults  : async (message: any): Promise<ReplicationApplyResult> => {
+          const cid = await Message.getCid(message);
+          return cid === rootCid
+            ? { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol }] }
+            : { kind: 'Applied' };
+        },
+      });
+
+      const result = await pushMessages({
+        did         : root.author.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [rootCid],
+        agent,
+      });
+
+      expect(result.succeeded).toEqual([]);
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0].cid).toBe(rootCid);
+      expect(result.failed[0].terminal).toBeUndefined();
+      expect(result.failed[0].detail).toBe('remote dependency apply pass budget exhausted');
+      expect(applyStub.callCount).toBe(255);
       expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsQuery })).calledOnce).toBe(true);
     });
   });

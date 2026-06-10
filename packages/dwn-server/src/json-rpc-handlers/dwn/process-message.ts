@@ -8,6 +8,7 @@ import type {
 import log from 'loglevel';
 
 import { DwnMethodName } from '@enbox/dwn-sdk-js';
+import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -103,23 +104,8 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
       responsePayload.dataStream = recordDataStream;
     }
 
-    // --- Fire-and-forget: post-processing hooks ---
     const statusCode = reply.status?.code ?? 0;
-    if (context.messageProcessedHooks) {
-      const hookContext = { tenant: target, message, status: reply.status, transport };
-      for (const hook of context.messageProcessedHooks) {
-        try {
-          const result = hook.onMessageProcessed(hookContext);
-          if (result instanceof Promise) {
-            result.catch((err: unknown): void => {
-              log.error('MessageProcessedHook error', err);
-            });
-          }
-        } catch (err) {
-          log.error('MessageProcessedHook error', err);
-        }
-      }
-    }
+    invokeMessageProcessedHooks(context, target, message, reply.status);
 
     // Capture activity event and per-request metrics.
     const dwnInterface = message.descriptor.interface as string;

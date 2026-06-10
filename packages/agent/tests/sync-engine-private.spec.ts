@@ -866,6 +866,77 @@ describe('SyncEngineLevel — private methods', () => {
       expect(appliedEvent.messageCids).toEqual(['cid-protocol', 'cid-profile']);
     });
 
+    it('should emit reconcile:applied for CIDs admitted by the real one-shot admission path', async () => {
+      const profileProtocol = 'https://example.com/profile-real-admission';
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const write = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : profileProtocol,
+        protocolPath : 'profile',
+      });
+      const writeCid = await Message.getCid(write.message);
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: {} }),
+        dwn               : {
+          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status : { code: 200 },
+            entry  : { message: write.message },
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        syncTarget(alice.did, 'https://dwn.example.com', {
+          scope: { kind: 'protocolSet', protocols: [profileProtocol] },
+        }),
+      ]);
+      sinon.stub(engine as any, 'getLocalRoot').resolves('local-root');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('remote-root');
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
+        onlyLocal  : [],
+        onlyRemote : [{ messageCid: writeCid, message: write.message }],
+      });
+
+      await engine.sync('pull');
+
+      const appliedEvent = events.find(e => e.type === 'reconcile:applied');
+      expect(appliedEvent).toBeDefined();
+      expect(appliedEvent.tenantDid).toBe(alice.did);
+      expect(appliedEvent.remoteEndpoint).toBe('https://dwn.example.com');
+      expect(appliedEvent.protocol).toBe(profileProtocol);
+      expect(appliedEvent.messageCids).toEqual([writeCid]);
+      expect(mockAgent.dwn.applyReplicatedMessage.calledOnce).toBe(true);
+    });
+
+    it('should not dead-letter Deferred push failures during one-shot sync', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      (engine as any)._connectivityState = 'online';
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        syncTarget('did:example:1', 'https://dwn.example.com'),
+      ]);
+      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({
+        admittedCids : [],
+        pushFailures : [{ cid: 'cid-deferred', kind: 'Deferred', reason: 'storage', detail: 'storage unavailable' }],
+      });
+      sinon.stub(console, 'error');
+
+      await engine.sync();
+
+      const failedMessages = await engine.getFailedMessages('did:example:1');
+      expect(failedMessages).toHaveLength(0);
+      expect(engine.connectivityState).toBe('offline');
+    });
+
     it('should reconcile different dwnUrl groups concurrently', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });

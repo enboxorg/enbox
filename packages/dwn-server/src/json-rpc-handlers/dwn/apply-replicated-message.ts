@@ -3,10 +3,11 @@ import type { GenericMessage, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 import log from 'loglevel';
 
+import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
 import { v4 as uuidv4 } from 'uuid';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnInterfaceName, DwnMethodName, Encoder } from '@enbox/dwn-sdk-js';
 import { enforceInboundDwnMessageLimits, validateInboundDwnMessageTransport } from './inbound-message.js';
 
 export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
@@ -35,10 +36,19 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       return limitsResult;
     }
 
+    const encodedDataResult = validateEncodedData({ context, encodedData, message, requestId });
+    if (encodedDataResult !== undefined) {
+      return encodedDataResult;
+    }
+
+    const dataStreamForApply = encodedData === undefined ? dataStream : DataStream.fromBytes(Encoder.base64UrlToBytes(encodedData));
     const result = await dwn.applyReplicatedMessage(target, message, {
-      dataStream: encodedData === undefined ? dataStream : DataStream.fromBytes(Encoder.base64UrlToBytes(encodedData)),
+      dataStream: dataStreamForApply,
     });
     recordApplyActivity(target, message, result, context);
+    if (result.kind === 'Applied') {
+      invokeMessageProcessedHooks(context, target, message, appliedHookStatus(message, dataStreamForApply !== undefined));
+    }
 
     return {
       jsonRpcResponse: createJsonRpcSuccessResponse(requestId, { result }),
@@ -94,4 +104,80 @@ function replicationApplyStatusCode(result: ReplicationApplyResult): number {
     case 'Deferred':
       return 503;
   }
+}
+
+function validateEncodedData({
+  context,
+  encodedData,
+  message,
+  requestId,
+}: {
+  context: Parameters<JsonRpcHandler>[1];
+  encodedData?: string;
+  message: GenericMessage;
+  requestId: Parameters<typeof createJsonRpcErrorResponse>[0];
+}): ReturnType<typeof validateInboundDwnMessageTransport> {
+  if (encodedData === undefined) {
+    return undefined;
+  }
+
+  const decodedLength = base64UrlDecodedLength(encodedData);
+  if (decodedLength === undefined) {
+    return {
+      jsonRpcResponse: createJsonRpcErrorResponse(
+        requestId,
+        JsonRpcErrorCodes.InvalidParams,
+        'encodedData must be valid base64url data',
+      ),
+    };
+  }
+
+  const descriptor = message.descriptor as { dataSize?: unknown };
+  if (typeof descriptor.dataSize === 'number' && decodedLength !== descriptor.dataSize) {
+    return {
+      jsonRpcResponse: createJsonRpcErrorResponse(
+        requestId,
+        JsonRpcErrorCodes.InvalidParams,
+        `encodedData length ${decodedLength} does not match descriptor dataSize ${descriptor.dataSize}`,
+      ),
+    };
+  }
+
+  const maxRecordDataSize = context.config?.maxRecordDataSize;
+  if (maxRecordDataSize !== undefined && decodedLength > maxRecordDataSize) {
+    return {
+      jsonRpcResponse: createJsonRpcErrorResponse(
+        requestId,
+        JsonRpcErrorCodes.InvalidParams,
+        `encodedData length ${decodedLength} exceeds max record data size ${maxRecordDataSize}`,
+      ),
+    };
+  }
+}
+
+function base64UrlDecodedLength(encodedData: string): number | undefined {
+  if (!/^[A-Za-z0-9_-]*={0,2}$/.test(encodedData)) {
+    return undefined;
+  }
+
+  const unpaddedLength = encodedData.replace(/=+$/, '').length;
+  if (unpaddedLength % 4 === 1) {
+    return undefined;
+  }
+
+  return Math.floor((unpaddedLength * 3) / 4);
+}
+
+function appliedHookStatus(message: GenericMessage, hasDataStream: boolean): { code: number; detail: string } {
+  const descriptor = message.descriptor as { interface?: string; method?: string; dateCreated?: string; messageTimestamp?: string };
+  if (
+    descriptor.interface === DwnInterfaceName.Records &&
+    descriptor.method === DwnMethodName.Write &&
+    descriptor.dateCreated === descriptor.messageTimestamp &&
+    !hasDataStream
+  ) {
+    return { code: 204, detail: 'No Content' };
+  }
+
+  return { code: 202, detail: 'Accepted' };
 }

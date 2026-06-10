@@ -93,6 +93,123 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
+  it('rejects encoded data whose decoded length does not match descriptor dataSize', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const dataBytes = new Uint8Array([1, 2, 3, 4]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data: dataBytes });
+    const requestId = uuidv4();
+    const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      encodedData : Encoder.bytesToBase64Url(dataBytes.slice(0, 2)),
+      message     : recordsWrite.toJSON(),
+      target      : alice.did,
+    });
+
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => ({ kind: 'Applied' }));
+    const context: RequestContext = { dwn, transport: 'ws' };
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      context,
+    );
+
+    expect(jsonRpcResponse.error).toBeDefined();
+    expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(jsonRpcResponse.error.message).toContain('does not match descriptor dataSize');
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
+  it('rejects encoded data that exceeds the configured max record data size before decoding', async () => {
+    const requestId = uuidv4();
+    const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      encodedData : Encoder.bytesToBase64Url(new Uint8Array([1, 2, 3, 4])),
+      message     : {
+        descriptor: {
+          dataSize  : 4,
+          interface : 'Records',
+          method    : 'Write',
+        },
+      },
+      target: 'did:key:abc1234',
+    });
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => ({ kind: 'Applied' }));
+    const context: RequestContext = {
+      dwn,
+      transport : 'ws',
+      config    : { maxRecordDataSize: 3 } as any,
+    };
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      context,
+    );
+
+    expect(jsonRpcResponse.error).toBeDefined();
+    expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(jsonRpcResponse.error.message).toContain('exceeds max record data size');
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
+  it('invokes message processed hooks only when replicated apply returns Applied', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
+    const requestId = uuidv4();
+    const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => ({ kind: 'Applied' }));
+    const hook = { onMessageProcessed: spyOn({ onMessageProcessed: (): void => {} }, 'onMessageProcessed') };
+    const context: RequestContext = {
+      dwn,
+      transport             : 'http',
+      dataStream,
+      messageProcessedHooks : [hook],
+    };
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      context,
+    );
+
+    expect(jsonRpcResponse.error).toBeUndefined();
+    expect(hook.onMessageProcessed).toHaveBeenCalledTimes(1);
+    expect(hook.onMessageProcessed.mock.calls[0][0].tenant).toBe(alice.did);
+    expect(hook.onMessageProcessed.mock.calls[0][0].status.code).toBe(202);
+    await dwn.close();
+  });
+
+  it('does not invoke message processed hooks for non-Applied replication outcomes', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const { recordsWrite } = await createRecordsWriteMessage(alice);
+    const requestId = uuidv4();
+    const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => ({ kind: 'Duplicate' }));
+    const hook = { onMessageProcessed: spyOn({ onMessageProcessed: (): void => {} }, 'onMessageProcessed') };
+    const context: RequestContext = {
+      dwn,
+      transport             : 'http',
+      messageProcessedHooks : [hook],
+    };
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      context,
+    );
+
+    expect(jsonRpcResponse.error).toBeUndefined();
+    expect(hook.onMessageProcessed).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
   it('should reject when per-tenant rate limit is exceeded', async () => {
     const rateLimiter = new RateLimiter({ refillRate: 10, maxTokens: 1 });
     try {

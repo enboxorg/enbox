@@ -5,8 +5,10 @@ import sinon from 'sinon';
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { Jws, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
+import { DwnRpcError } from '../src/dwn-rpc-error.js';
 import { DwnServerInfoCacheMemory } from '../src/dwn-server-info-cache-memory.js';
 import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
+import { JsonRpcErrorCodes } from '../src/json-rpc.js';
 
 /**
  * Matches the defaults used by `TestDataGenerator.generateRecordsWrite()`.
@@ -291,6 +293,86 @@ describe('HttpDwnRpcClient', () => {
       const sentBlob = fetchOpts.body as Blob;
       const sentBytes = new Uint8Array(await sentBlob.arrayBuffer());
       expect(sentBytes).toEqual(payload);
+    });
+
+    it('uses a longer default timeout for large replicated apply data', async () => {
+      const payload = new Uint8Array(1_048_577);
+      const dataStream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(payload);
+          controller.close();
+        },
+      });
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { result: { kind: 'Applied' } },
+      };
+      sinon.stub(globalThis, 'fetch').resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+      const timeoutStub = sinon.stub(AbortSignal, 'timeout').callsFake((_ms: number): AbortSignal => new AbortController().signal);
+      const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: payload });
+
+      await client.applyReplicatedMessage({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+        data      : dataStream,
+      });
+
+      expect(timeoutStub.calledWith(300_000)).toBe(true);
+    });
+
+    it('throws a typed terminal RPC error for permanent JSON-RPC rejections', async () => {
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        error   : {
+          code    : JsonRpcErrorCodes.InvalidParams,
+          message : 'RecordsWrite is not supported via ws',
+        },
+      };
+      sinon.stub(globalThis, 'fetch').resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+      const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+      try {
+        await client.applyReplicatedMessage({
+          dwnUrl    : testDwnUrl,
+          targetDid : alice.did,
+          message,
+        });
+        throw new Error('expected terminal RPC error');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DwnRpcError);
+        expect((error as DwnRpcError).terminal).toBe(true);
+      }
+    });
+
+    it('rejects malformed replicated apply results before returning to callers', async () => {
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { result: { kind: 'Deferred', reason: 'not-a-valid-reason' } },
+      };
+      sinon.stub(globalThis, 'fetch').resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+      const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+      await expect(client.applyReplicatedMessage({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      })).rejects.toThrow('malformed dwn.applyReplicatedMessage result');
     });
 
     it('sends RecordsRead and populates reply.entry.data when dwn-response header is present', async () => {

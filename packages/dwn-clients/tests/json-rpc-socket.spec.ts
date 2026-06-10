@@ -57,6 +57,19 @@ describe('JsonRpcSocket', () => {
     expect(response.id).toBe(request.id);
   });
 
+  it('clears the response timeout when a request resolves', async () => {
+    const client = await JsonRpcSocket.connect(socketDwnUrl);
+    const clearTimeoutSpy = spyOn(globalThis, 'clearTimeout');
+    const requestId = CryptoUtils.randomUuid();
+    const request = createJsonRpcRequest(requestId, 'dwn.processMessage', { param1: 'test-param1', param2: 'test-param2' });
+
+    const response = await client.request(request);
+
+    expect(response.id).toBe(request.id);
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    client.close();
+  });
+
   it('request times out', async () => {
     const client = await JsonRpcSocket.connect(socketDwnUrl, { responseTimeout: 1 });
     const requestId = CryptoUtils.randomUuid();

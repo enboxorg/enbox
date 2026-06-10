@@ -1,4 +1,5 @@
 export * from './dwn-registrar.js';
+export * from './dwn-rpc-error.js';
 export * from './dwn-rpc-types.js';
 export * from './dwn-server-info-cache-memory.js';
 export * from './http-dwn-rpc-client.js';

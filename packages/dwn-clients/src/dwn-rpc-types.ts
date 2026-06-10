@@ -127,6 +127,13 @@ export type DwnRpcRequest = {
   signal?: AbortSignal;
 
   /**
+   * Optional HTTP per-attempt timeout in milliseconds. When supplied, this
+   * replaces the transport default timeout; use this for legitimate large
+   * uploads that need more than the default budget.
+   */
+  timeoutMs?: number;
+
+  /**
    * Subscription options — only set for subscribe requests.
    * Groups the handler, resubscribe factory, and any future subscription
    * options into a single coherent object.
@@ -164,6 +171,13 @@ export type DwnReplicationApplyRequest = {
 
   /** Optional caller-provided abort signal. Honoured by the HTTP transport. */
   signal?: AbortSignal;
+
+  /**
+   * Optional HTTP per-attempt timeout in milliseconds. When omitted, HTTP
+   * replicated apply uses a larger default for data-bearing RecordsWrite
+   * messages so large sync uploads are not aborted by the normal short budget.
+   */
+  timeoutMs?: number;
 };
 
 /**

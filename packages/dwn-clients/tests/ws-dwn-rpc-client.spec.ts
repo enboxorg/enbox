@@ -3,6 +3,7 @@ import type { GenericMessage, Persona, ProgressToken, ProtocolDefinition, Record
 
 import sinon from 'sinon';
 
+import { DwnRpcError } from '../src/dwn-rpc-error.js';
 import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
 import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
@@ -62,6 +63,7 @@ describe('WebSocketDwnRpcClient', () => {
 
     // clear cached connections so each test gets a fresh socket
     (WebSocketDwnRpcClient as any)['connections'].clear();
+    (WebSocketDwnRpcClient as any)['pendingConnections'].clear();
 
     mock.restore();
     alice = await TestDataGenerator.generateDidKeyPersona();
@@ -344,6 +346,102 @@ describe('WebSocketDwnRpcClient', () => {
         expect(requests[0].params.message).toEqual(message);
         expect(requests[0].params.encodedData).toBe(Encoder.bytesToBase64Url(payload));
       });
+
+      it('rejects data-bearing RecordsWrite replicated apply over WebSocket when data is missing', async () => {
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+        try {
+          await client.applyReplicatedMessage({
+            dwnUrl    : socketDwnUrl,
+            targetDid : alice.did,
+            message,
+          });
+          throw new Error('expected terminal RPC error');
+        } catch (error) {
+          expect(error).toBeInstanceOf(DwnRpcError);
+          expect((error as DwnRpcError).terminal).toBe(true);
+          expect((error as DwnRpcError).code).toBe(JsonRpcErrorCodes.InvalidParams);
+        }
+      });
+
+      it('rejects replicated apply data that cannot fit in the WebSocket JSON-RPC frame', async () => {
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const oversizedMessage = {
+          ...message,
+          descriptor: {
+            ...message.descriptor,
+            dataSize: 80 * 1024 * 1024,
+          },
+        };
+
+        try {
+          await client.applyReplicatedMessage({
+            dwnUrl    : socketDwnUrl,
+            targetDid : alice.did,
+            message   : oversizedMessage,
+            data      : new Uint8Array(),
+          });
+          throw new Error('expected terminal RPC error');
+        } catch (error) {
+          expect(error).toBeInstanceOf(DwnRpcError);
+          expect((error as DwnRpcError).terminal).toBe(true);
+          expect((error as DwnRpcError).code).toBe(JsonRpcErrorCodes.InvalidParams);
+        }
+      });
+
+      it('rejects malformed replicated apply results before returning to callers', async () => {
+        const socket = {
+          request: async (request: any): Promise<any> => ({
+            jsonrpc : '2.0',
+            id      : request.id,
+            result  : { result: { kind: 'Incomplete', missing: [{ type: 'Parent', recordId: 'parent-without-protocol' }] } },
+          }),
+        };
+        const host = new URL(socketDwnUrl).host;
+        (WebSocketDwnRpcClient as any)['connections'].set(host, {
+          socket,
+          subscriptions : new Map(),
+          url           : socketDwnUrl,
+        });
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: undefined });
+
+        await expect(client.applyReplicatedMessage({
+          dwnUrl    : socketDwnUrl,
+          targetDid : alice.did,
+          message,
+          data      : new Uint8Array(),
+        })).rejects.toThrow('malformed dwn.applyReplicatedMessage result');
+      });
+    });
+
+    it('deduplicates concurrent first-use WebSocket connections', async () => {
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' },
+      });
+      const socket = {
+        request: async (request: any): Promise<any> => ({
+          jsonrpc : '2.0',
+          id      : request.id,
+          result  : {
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+            },
+          },
+        }),
+      };
+      const createConnectionStub = sinon.stub(WebSocketDwnRpcClient as any, 'createConnection').callsFake(async (url: URL): Promise<any> => {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return { socket, subscriptions: new Map(), url: url.toString() };
+      });
+
+      await Promise.all([
+        client.sendDwnRequest({ dwnUrl: socketDwnUrl, targetDid: alice.did, message }),
+        client.sendDwnRequest({ dwnUrl: socketDwnUrl, targetDid: alice.did, message }),
+      ]);
+
+      expect(createConnectionStub.calledOnce).toBe(true);
     });
 
     describe('subscriptionRequest', () => {
