@@ -34,6 +34,7 @@ const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
 export type SyncMessageEntry = {
   message: GenericMessage;
   dataStream?: ReadableStream<Uint8Array>;
+  dataStreamConsumed?: boolean;
   dataStreamFactory?: () => Promise<ReadableStream<Uint8Array> | undefined>;
   /** Buffered data bytes for retry — avoids re-fetching from remote when stream is consumed. */
   bufferedData?: Uint8Array;
@@ -386,7 +387,13 @@ class RemoteApplyPushContext {
 
   private async pushEntry(rootCid: string, entry: SyncMessageEntry): Promise<PushEntryResult> {
     const cid = await this.rememberEntry(entry);
-    await bufferSmallStreams([entry]);
+    try {
+      await bufferSmallStreams([entry]);
+    } catch (error: any) {
+      const detail = error.message ?? String(error);
+      console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
+      return { kind: 'failed', failure: this.retryableFailure(rootCid, cid, detail) };
+    }
 
     let result: ReplicationApplyResult;
     try {
@@ -686,7 +693,14 @@ class RemoteApplyPushContext {
       return { kind: 'fetched', entries: [] };
     }
 
-    const entry: SyncMessageEntry = { message: recordsWrite, dataStream: recordsReply.entry.data };
+    const entry: SyncMessageEntry = {
+      message           : recordsWrite,
+      dataStream        : recordsReply.entry.data,
+      dataStreamFactory : async (): Promise<ReadableStream<Uint8Array> | undefined> => {
+        const refreshed = await this.fetchRecordData(ref);
+        return refreshed.kind === 'fetched' ? refreshed.entries[0]?.dataStream : undefined;
+      },
+    };
     await this.rememberEntry(entry);
     return { kind: 'fetched', entries: [entry] };
   }
@@ -766,6 +780,11 @@ class RemoteApplyPushContext {
 async function pushData(entry: SyncMessageEntry): Promise<Blob | ReadableStream<Uint8Array> | undefined> {
   if (entry.bufferedData !== undefined) {
     return new Blob([entry.bufferedData] as BlobPart[], { type: 'application/octet-stream' });
+  }
+
+  if (entry.dataStream !== undefined && entry.dataStreamConsumed !== true) {
+    entry.dataStreamConsumed = true;
+    return entry.dataStream;
   }
 
   if (entry.dataStreamFactory !== undefined) {

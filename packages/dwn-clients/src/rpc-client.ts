@@ -168,8 +168,4 @@ export class WebSocketEnboxRpcClient extends WebSocketDwnRpcClient implements En
   async sendDidRequest(_request: DidRpcRequest): Promise<DidRpcResponse> {
     throw new Error(`not implemented for transports [${this.transportProtocols.join(', ')}]`);
   }
-
-  async getServerInfo(_dwnUrl: string): Promise<ServerInfo> {
-    throw new Error(`not implemented for transports [${this.transportProtocols.join(', ')}]`);
-  }
 }

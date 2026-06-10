@@ -2646,6 +2646,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Push retry backoff schedule: immediate, 250ms, 1s, 2s, then give up. */
   private static readonly PUSH_RETRY_BACKOFF_MS = [0, 250, 1000, 2000];
+  private static readonly TENANT_INACTIVE_RECONCILE_DELAY_MS = 30_000;
 
   private async recordTerminalSyncPushFailures(
     target: SyncReconcileTarget,
@@ -2686,15 +2687,28 @@ export class SyncEngineLevel implements SyncEngine {
     const maxRetries = SyncEngineLevel.PUSH_RETRY_BACKOFF_MS.length;
     const pushRuntime = this.getOrCreatePushRuntime(targetKey, pending);
     const link = this._activeLinks.get(targetKey);
+    pending = {
+      ...pending,
+      entries: await this.recordImmediateTerminalPushFailures(pending),
+    };
+    if (pending.entries.length === 0) {
+      this.stopPushRuntime(targetKey, pushRuntime);
+      this.markLinkNeedsReconcileIfActive(targetKey, link, 'push-terminal');
+      return;
+    }
 
     if (pending.entries.some(entry => entry.lastFailure !== undefined && isTenantInactivePushFailure(entry.lastFailure))) {
       this.stopPushRuntime(targetKey, pushRuntime);
-      this.markLinkNeedsReconcileIfActive(targetKey, link, 'push-tenant-inactive');
+      this.markLinkNeedsReconcileIfActive(
+        targetKey,
+        link,
+        'push-tenant-inactive',
+        SyncEngineLevel.TENANT_INACTIVE_RECONCILE_DELAY_MS,
+      );
       return;
     }
 
     if (pending.retryCount >= maxRetries) {
-      await this.recordTerminalFailuresAfterRetryExhaustion(pending, maxRetries);
       this.stopPushRuntime(targetKey, pushRuntime);
       this.markLinkNeedsReconcileIfActive(targetKey, link, 'push-retry-exhausted');
       return;
@@ -2703,21 +2717,17 @@ export class SyncEngineLevel implements SyncEngine {
     this.schedulePushRetry(targetKey, pushRuntime, pending);
   }
 
-  private async recordTerminalFailuresAfterRetryExhaustion(
-    pending: {
-      did: string;
-      dwnUrl: string;
-      protocol?: string;
-      entries: PushRuntimeEntry[];
-    },
-    maxRetries: number,
-  ): Promise<void> {
-    // Retry budget exhausted. Only structured remote Invalid/terminal
-    // dependency outcomes become dead letters; transport/runtime/deferred
-    // failures dirty the link for later reconciliation.
+  private async recordImmediateTerminalPushFailures(pending: {
+    did: string;
+    dwnUrl: string;
+    protocol?: string;
+    entries: PushRuntimeEntry[];
+  }): Promise<PushRuntimeEntry[]> {
+    const retryableEntries: PushRuntimeEntry[] = [];
     for (const entry of pending.entries) {
       const failure = entry.lastFailure;
       if (failure === undefined || !isTerminalPushFailure(failure)) {
+        retryableEntries.push(entry);
         continue;
       }
 
@@ -2728,9 +2738,10 @@ export class SyncEngineLevel implements SyncEngine {
         protocol       : pending.protocol,
         category       : 'admit-failed',
         errorCode      : failure.kind ?? 'Invalid',
-        errorDetail    : failure.detail ?? `push rejected after ${maxRetries} attempts`,
+        errorDetail    : failure.detail ?? 'terminal push failure',
       });
     }
+    return retryableEntries;
   }
 
   private stopPushRuntime(targetKey: string, pushRuntime: PushRuntimeState): void {
@@ -2740,12 +2751,17 @@ export class SyncEngineLevel implements SyncEngine {
     this._pushRuntimes.delete(targetKey);
   }
 
-  private markLinkNeedsReconcileIfActive(linkKey: string, link: ReplicationLinkState | undefined, reason: string): void {
+  private markLinkNeedsReconcileIfActive(
+    linkKey: string,
+    link: ReplicationLinkState | undefined,
+    reason: string,
+    delayMs?: number,
+  ): void {
     if (link === undefined) {
       return;
     }
 
-    this.markLinkNeedsReconcile(linkKey, link, reason);
+    this.markLinkNeedsReconcile(linkKey, link, reason, delayMs);
   }
 
   private schedulePushRetry(targetKey: string, pushRuntime: PushRuntimeState, pending: {
@@ -2764,9 +2780,9 @@ export class SyncEngineLevel implements SyncEngine {
     }, delayMs);
   }
 
-  private markLinkNeedsReconcile(linkKey: string, link: ReplicationLinkState, reason: string): void {
+  private markLinkNeedsReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void {
     if (link.needsReconcile) {
-      this.scheduleReconcile(linkKey);
+      this.scheduleReconcile(linkKey, delayMs);
       return;
     }
 
@@ -2779,7 +2795,7 @@ export class SyncEngineLevel implements SyncEngine {
         ...syncEventScope(link.scope),
         reason,
       });
-      this.scheduleReconcile(linkKey);
+      this.scheduleReconcile(linkKey, delayMs);
     }).catch((error: unknown) => {
       console.error(`SyncEngineLevel: Failed to mark link for reconciliation ${link.tenantDid} -> ${link.remoteEndpoint}`, error);
     });

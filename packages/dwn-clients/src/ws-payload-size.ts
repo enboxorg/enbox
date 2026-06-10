@@ -1,5 +1,5 @@
 export const DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES = 100 * 1024 * 1024;
-export const WS_JSON_RPC_ENVELOPE_BYTES = 4096;
+export const WS_JSON_RPC_ENVELOPE_BYTES = 64 * 1024;
 
 export function base64UrlEncodedLength(byteLength: number): number {
   return Math.ceil(byteLength / 3) * 4;

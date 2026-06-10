@@ -29,6 +29,30 @@ function streamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
   });
 }
 
+async function readStreamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalLength = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) { break; }
+      chunks.push(value);
+      totalLength += value.length;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
+}
+
 function filterKey(filter: Record<string, unknown>): string {
   return JSON.stringify(filter);
 }
@@ -431,7 +455,7 @@ describe('sync-messages', () => {
       expect(new Uint8Array(await callArgs.data.arrayBuffer())).toEqual(payload);
     });
 
-    it('should re-fetch large RecordsWrite data streams for remote apply', async () => {
+    it('should use the first large RecordsWrite data stream before re-fetching for retry', async () => {
       const payload = new Uint8Array(1_048_577);
       payload[0] = 1;
       payload[payload.length - 1] = 2;
@@ -469,7 +493,32 @@ describe('sync-messages', () => {
       });
 
       expect(applyStub.calledOnce).toBe(true);
-      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.MessagesRead })).callCount).toBe(2);
+      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.MessagesRead })).callCount).toBe(1);
+    });
+
+    it('should convert unexpected buffering failures into per-root retryable failures', async () => {
+      const payload = new Uint8Array(1_048_577);
+      const write = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1]) });
+      const messageCid = await Message.getCid(write.message);
+      const { agent, applyStub } = createLocalAgentFixture({
+        messagesByCid : new Map([[messageCid, { message: write.message, data: streamFromBytes(payload) }]]),
+        applyResults  : [{ kind: 'Applied' }],
+      });
+      sinon.stub(console, 'error');
+
+      const result = await pushMessages({
+        did         : write.author.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [messageCid],
+        agent,
+      });
+
+      expect(result.succeeded).toEqual([]);
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0].cid).toBe(messageCid);
+      expect(result.failed[0].terminal).toBeUndefined();
+      expect(result.failed[0].detail).toContain('unexpected large stream');
+      expect(applyStub.called).toBe(false);
     });
 
     it('should fetch dependencies requested by remote Incomplete refs until the root applies', async () => {
@@ -746,6 +795,87 @@ describe('sync-messages', () => {
         Message.getCid(call.args[0].message)))).toEqual([rootCid, dependencyCid, rootCid]);
       const dependencyData = applyStub.secondCall.args[0].data as Blob;
       expect(new Uint8Array(await dependencyData.arrayBuffer())).toEqual(dataBytes);
+    });
+
+    it('should re-fetch large RecordData dependency streams when a remote repeats the dependency ref', async () => {
+      const root = await TestDataGenerator.generateRecordsWrite();
+      const dataBytes = new Uint8Array(1_048_577);
+      dataBytes[0] = 1;
+      dataBytes[dataBytes.length - 1] = 2;
+      const dependency = await TestDataGenerator.generateRecordsWrite({
+        author : root.author,
+        data   : dataBytes,
+      });
+      const rootCid = await Message.getCid(root.message);
+      const dependencyCid = await Message.getCid(dependency.message);
+      const recordDataRef = {
+        type     : 'RecordData' as const,
+        recordId : dependency.message.recordId,
+        dataCid  : dependency.message.descriptor.dataCid!,
+      };
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid : new Map([[rootCid, { message: root.message }]]),
+        applyResults  : [],
+      });
+      let recordReadCount = 0;
+      processRequestStub.callsFake(async ({ messageType, messageParams }: any): Promise<any> => {
+        if (messageType === DwnInterface.MessagesRead) {
+          return {
+            reply: {
+              status : { code: 200 },
+              entry  : { message: root.message },
+            },
+          };
+        }
+
+        if (messageType === DwnInterface.RecordsRead) {
+          recordReadCount++;
+          expect(messageParams.filter.recordId).toBe(dependency.message.recordId);
+          return {
+            reply: {
+              status : { code: 200 },
+              entry  : { recordsWrite: dependency.message, data: streamFromBytes(dataBytes) },
+            },
+          };
+        }
+
+        throw new Error(`unexpected message type ${messageType}`);
+      });
+
+      let dependencyCalls = 0;
+      applyStub.callsFake(async ({ message, data }: { message: any; data?: ReadableStream<Uint8Array> }): Promise<ReplicationApplyResult> => {
+        const cid = await Message.getCid(message);
+        if (cid === dependencyCid) {
+          dependencyCalls++;
+          expect(data).toBeInstanceOf(ReadableStream);
+          const bytes = await readStreamBytes(data!);
+          expect(bytes.length).toBe(dataBytes.length);
+          expect(bytes[0]).toBe(1);
+          expect(bytes[bytes.length - 1]).toBe(2);
+          return dependencyCalls === 1
+            ? { kind: 'Incomplete', missing: [recordDataRef] }
+            : { kind: 'Applied' };
+        }
+
+        if (cid === rootCid) {
+          return dependencyCalls < 2
+            ? { kind: 'Incomplete', missing: [recordDataRef] }
+            : { kind: 'Applied' };
+        }
+
+        throw new Error(`unexpected message ${cid}`);
+      });
+
+      const result = await pushMessages({
+        did         : root.author.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [rootCid],
+        agent,
+      });
+
+      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(dependencyCalls).toBe(2);
+      expect(recordReadCount).toBe(2);
     });
 
     it('should surface Deferred as retryable and tenant-inactive as reconcile-only', async () => {

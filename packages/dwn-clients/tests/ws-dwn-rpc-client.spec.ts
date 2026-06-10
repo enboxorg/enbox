@@ -1,3 +1,4 @@
+import type { ServerInfo } from '../src/server-info-types.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '../src/dwn-rpc-types.js';
 import type { GenericMessage, Persona, ProgressToken, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
@@ -26,6 +27,18 @@ const defaultTestProtocolDefinition: ProtocolDefinition = {
 };
 
 const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
+
+function testServerInfo(maxFileSize = 100 * 1024 * 1024): ServerInfo {
+  return {
+    maxFileSize,
+    registrationRequirements : [],
+    server                   : '@enbox/dwn-server',
+    sdkVersion               : '0.0.0-test',
+    url                      : testDwnUrl,
+    version                  : '0.0.0-test',
+    webSocketSupport         : true,
+  };
+}
 
 /** Installs the default test protocol on the remote DWN for the given persona. */
 async function installDefaultTestProtocolViaHttp(httpClient: HttpDwnRpcClient, dwnUrl: string, persona: Persona): Promise<void> {
@@ -69,6 +82,7 @@ describe('WebSocketDwnRpcClient', () => {
 
     mock.restore();
     alice = await TestDataGenerator.generateDidKeyPersona();
+    sinon.stub(client, 'getServerInfo').resolves(testServerInfo());
   });
 
   afterEach(() => {
@@ -356,6 +370,7 @@ describe('WebSocketDwnRpcClient', () => {
 
       it('rejects data-bearing RecordsWrite replicated apply over WebSocket when data is missing', async () => {
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        (client.getServerInfo as sinon.SinonStub).resetHistory();
 
         try {
           await client.applyReplicatedMessage({
@@ -368,6 +383,29 @@ describe('WebSocketDwnRpcClient', () => {
           expect(error).toBeInstanceOf(DwnRpcError);
           expect((error as DwnRpcError).terminal).toBe(true);
           expect((error as DwnRpcError).code).toBe(JsonRpcErrorCodes.InvalidParams);
+          expect((client.getServerInfo as sinon.SinonStub).called).toBe(false);
+        }
+      });
+
+      it('uses the server advertised raw record limit for replicated apply WebSocket framing', async () => {
+        (client.getServerInfo as sinon.SinonStub).resolves(testServerInfo(2));
+        const data = new Uint8Array([1, 2, 3, 4, 5]);
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
+
+        try {
+          await client.applyReplicatedMessage({
+            dwnUrl    : socketDwnUrl,
+            targetDid : alice.did,
+            message,
+            data,
+          });
+          throw new Error('expected terminal RPC error');
+        } catch (error) {
+          expect(error).toBeInstanceOf(DwnRpcError);
+          expect((error as DwnRpcError).terminal).toBe(true);
+          expect((error as DwnRpcError).code).toBe(JsonRpcErrorCodes.InvalidParams);
+          expect((client.getServerInfo as sinon.SinonStub).calledOnceWith(socketDwnUrl)).toBe(true);
+          expect((WebSocketDwnRpcClient as any)['connections'].size).toBe(0);
         }
       });
 

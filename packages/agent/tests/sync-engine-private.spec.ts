@@ -4019,7 +4019,7 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('opportunistic push + needsReconcile', () => {
-    it('should mark link needsReconcile when push retries are exhausted', async () => {
+    it('should dead-letter terminal push failures immediately and mark link needsReconcile', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
@@ -4036,7 +4036,6 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._ledger = { saveLink: saveStub };
       const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
 
-      // Call requeueOrReconcile with retryCount >= max retries (4).
       await (engine as any).requeueOrReconcile(linkKey, {
         did     : 'did:example:alice',
         dwnUrl  : 'https://dwn.example.com',
@@ -4044,16 +4043,14 @@ describe('SyncEngineLevel — private methods', () => {
           cid         : 'cid-1',
           lastFailure : { cid: 'cid-1', kind: 'Invalid', terminal: true, detail: 'invalid push' },
         }],
-        retryCount: 4, // exceeds PUSH_RETRY_BACKOFF_MS.length (4)
+        retryCount: 0,
       });
 
-      // Link should be marked as needing reconciliation.
       expect(link.needsReconcile).toBe(true);
       expect(deadLetterStub.calledOnce).toBe(true);
       expect(deadLetterStub.firstCall.args[0].category).toBe('admit-failed');
       expect(deadLetterStub.firstCall.args[0].errorCode).toBe('Invalid');
 
-      // Should NOT have remained in per-link push runtime state.
       expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
     });
 
@@ -4089,6 +4086,7 @@ describe('SyncEngineLevel — private methods', () => {
       const saveStub = sinon.stub().resolves();
       (engine as any)._ledger = { saveLink: saveStub };
       const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
 
       await (engine as any).requeueOrReconcile(linkKey, {
         did     : 'did:example:alice',
@@ -4110,6 +4108,8 @@ describe('SyncEngineLevel — private methods', () => {
       expect(saveStub.calledOnce).toBe(true);
       expect(deadLetterStub.called).toBe(false);
       expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
+      await Promise.resolve();
+      expect(scheduleStub.calledOnceWith(linkKey, 30_000)).toBe(true);
     });
 
     it('should not have push checkpoint on ReplicationLinkState', () => {
@@ -4423,7 +4423,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(pushArgs.messageCids).toEqual(['local-cid-1']);
     });
 
-    it('doReconcileLink should requeue failed reconcile pushes', async () => {
+    it('doReconcileLink should dead-letter terminal reconcile push failures immediately', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
@@ -4443,14 +4443,15 @@ describe('SyncEngineLevel — private methods', () => {
 
       const clearStub = sinon.stub().resolves();
       (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+      const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
 
       await (engine as any).doReconcileLink(linkKey);
 
-      const pushRuntime = (engine as any)._pushRuntimes.get(linkKey);
       expect(clearStub.called).toBe(false);
-      expect(pushRuntime.entries).toHaveLength(1);
-      expect(pushRuntime.entries[0].cid).toBe('local-cid-1');
-      expect(pushRuntime.entries[0].lastFailure.kind).toBe('Invalid');
+      expect(deadLetterStub.calledOnce).toBe(true);
+      expect(deadLetterStub.firstCall.args[0].messageCid).toBe('local-cid-1');
+      expect(deadLetterStub.firstCall.args[0].errorCode).toBe('Invalid');
+      expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
     });
 
     it('doReconcileLink should clear needsReconcile when only dead-lettered local roots differ', async () => {

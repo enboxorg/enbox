@@ -156,12 +156,8 @@ function validateEncodedData({
 }
 
 function base64UrlDecodedLength(encodedData: string): number | undefined {
-  const lengths = getBase64UrlLengths(encodedData);
-  if (lengths === undefined) {
-    return undefined;
-  }
-  const { paddingLength, unpaddedLength } = lengths;
-  if (paddingLength > 0 && (encodedData.length % 4 !== 0 || unpaddedLength === 0)) {
+  const unpaddedLength = getBase64UrlLength(encodedData);
+  if (unpaddedLength === undefined) {
     return undefined;
   }
   if (unpaddedLength % 4 === 1) {
@@ -171,30 +167,15 @@ function base64UrlDecodedLength(encodedData: string): number | undefined {
   return Math.floor((unpaddedLength * 3) / 4);
 }
 
-function getBase64UrlLengths(encodedData: string): { paddingLength: number; unpaddedLength: number } | undefined {
-  let paddingLength = 0;
-  let paddingStarted = false;
-
+function getBase64UrlLength(encodedData: string): number | undefined {
   for (let i = 0; i < encodedData.length; i++) {
     const charCode = encodedData.charCodeAt(i);
-    if (charCode === 61) {
-      paddingStarted = true;
-      paddingLength++;
-      if (paddingLength > 2) {
-        return undefined;
-      }
-      continue;
-    }
-
-    if (paddingStarted || !isBase64UrlCharCode(charCode)) {
+    if (!isBase64UrlCharCode(charCode)) {
       return undefined;
     }
   }
 
-  return {
-    paddingLength,
-    unpaddedLength: encodedData.length - paddingLength,
-  };
+  return encodedData.length;
 }
 
 function isBase64UrlCharCode(charCode: number): boolean {
