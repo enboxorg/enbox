@@ -107,6 +107,7 @@ export async function enforceQuota(
           requestId,
           JsonRpcErrorCodes.InvalidRequest,
           `${DwnServerErrorCode.TenantMessageQuotaExceeded}: tenant has reached the message limit of ${maxMessages}`,
+          { code: DwnServerErrorCode.TenantMessageQuotaExceeded },
         ),
       };
     }
@@ -122,6 +123,7 @@ export async function enforceQuota(
           requestId,
           JsonRpcErrorCodes.InvalidRequest,
           `${DwnServerErrorCode.TenantStorageQuotaExceeded}: tenant would exceed storage limit of ${maxStorageBytes} bytes`,
+          { code: DwnServerErrorCode.TenantStorageQuotaExceeded },
         ),
       };
     }

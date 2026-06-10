@@ -24,7 +24,7 @@ import log from 'loglevel';
 import { Convert } from '@enbox/common';
 import { register } from 'prom-client';
 import { v4 as uuidv4 } from 'uuid';
-import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { createJsonRpcErrorResponse, JsonRpcErrorCodes, maxWsJsonRpcPayloadBytes } from '@enbox/dwn-clients';
 import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
 import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
@@ -149,6 +149,14 @@ export class HttpApi {
     return this.#server;
   }
 
+  get adminStore(): AdminStore | undefined {
+    return this.#adminStore;
+  }
+
+  get config(): DwnServerConfig {
+    return this.#config;
+  }
+
   get ipRateLimiter(): RateLimiter | undefined {
     return this.#ipRateLimiter;
   }
@@ -159,6 +167,10 @@ export class HttpApi {
 
   get messageProcessedHooks(): MessageProcessedHook[] {
     return this.#messageProcessedHooks;
+  }
+
+  get registrationStore(): RegistrationStore | undefined {
+    return this.#registrationStore;
   }
 
   // ---------------------------------------------------------------------------
@@ -245,7 +257,7 @@ export class HttpApi {
       },
 
       websocket: {
-        maxPayloadLength: self.#config.maxRecordDataSize,
+        maxPayloadLength: maxWsJsonRpcPayloadBytes(self.#config.maxRecordDataSize),
         open(ws: ServerWebSocket<WsData>): void {
           if (self.onWebSocketConnection) {
             self.onWebSocketConnection(ws);

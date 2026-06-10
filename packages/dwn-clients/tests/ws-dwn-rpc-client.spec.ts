@@ -371,13 +371,13 @@ describe('WebSocketDwnRpcClient', () => {
         }
       });
 
-      it('rejects replicated apply data that cannot fit in the WebSocket JSON-RPC frame', async () => {
+      it('rejects replicated apply data above the WebSocket raw record budget', async () => {
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const oversizedMessage = {
           ...message,
           descriptor: {
             ...message.descriptor,
-            dataSize: 80 * 1024 * 1024,
+            dataSize: 101 * 1024 * 1024,
           },
         };
 

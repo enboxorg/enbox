@@ -21,9 +21,9 @@ import { JsonRpcSocket } from './json-rpc-socket.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from './json-rpc.js';
 import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
+import { DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES, maxWsJsonRpcPayloadBytes } from './ws-payload-size.js';
 
-const DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES = 100 * 1024 * 1024;
-const ESTIMATED_JSON_RPC_ENVELOPE_BYTES = 4096;
+const DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES = maxWsJsonRpcPayloadBytes(DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES);
 
 /**
  * Metadata for a tracked subscription, including everything needed to
@@ -355,7 +355,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       );
     }
 
-    if (dataSize !== undefined && estimatedEncodedPayloadSize(dataSize) > DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES) {
+    if (dataSize !== undefined && maxWsJsonRpcPayloadBytes(dataSize) > DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES) {
       throw new DwnRpcError(
         JsonRpcErrorCodes.InvalidParams,
         `RecordsWrite replicated apply data is too large for WebSocket JSON-RPC framing`,
@@ -397,8 +397,4 @@ function recordsWriteDataSize(message: DwnReplicationApplyRequest['message']): n
     typeof descriptor.dataSize === 'number'
     ? descriptor.dataSize
     : undefined;
-}
-
-function estimatedEncodedPayloadSize(dataSize: number): number {
-  return Math.ceil(dataSize / 3) * 4 + ESTIMATED_JSON_RPC_ENVELOPE_BYTES;
 }

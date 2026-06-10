@@ -822,7 +822,7 @@ describe('sync-messages', () => {
       expect(agent.rpc.applyReplicatedMessage.calledOnce).toBe(true);
     });
 
-    it('should treat quota JSON-RPC rejections as terminal push failures', async () => {
+    it('should keep quota JSON-RPC rejections retryable', async () => {
       const { message } = await TestDataGenerator.generateRecordsWrite();
       const messageCid = await Message.getCid(message);
       const { agent } = createLocalAgentFixture({
@@ -832,6 +832,7 @@ describe('sync-messages', () => {
       agent.rpc.applyReplicatedMessage.rejects(new DwnRpcError(
         JsonRpcErrorCodes.InvalidRequest,
         'TenantStorageQuotaExceeded: tenant would exceed storage limit',
+        { code: 'TenantStorageQuotaExceeded' },
       ));
 
       const result = await pushMessages({
@@ -843,7 +844,7 @@ describe('sync-messages', () => {
 
       expect(result.failed).toHaveLength(1);
       expect(result.failed[0].cid).toBe(messageCid);
-      expect(result.failed[0].terminal).toBe(true);
+      expect(result.failed[0].terminal).toBeUndefined();
       expect(result.failed[0].detail).toContain('TenantStorageQuotaExceeded');
     });
 

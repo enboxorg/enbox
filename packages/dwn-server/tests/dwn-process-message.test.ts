@@ -314,6 +314,7 @@ describe('handleDwnProcessMessage', () => {
 
     expect(jsonRpcResponse.error).toBeDefined();
     expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
+    expect(jsonRpcResponse.error.data).toEqual({ code: DwnServerErrorCode.TenantMessageQuotaExceeded });
     await dwn.close();
   });
 
@@ -350,6 +351,7 @@ describe('handleDwnProcessMessage', () => {
 
     expect(jsonRpcResponse.error).toBeDefined();
     expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantStorageQuotaExceeded);
+    expect(jsonRpcResponse.error.data).toEqual({ code: DwnServerErrorCode.TenantStorageQuotaExceeded });
     await dwn.close();
   });
 

@@ -186,6 +186,47 @@ describe('websocket api', function () {
     connection.close();
   });
 
+  it('returns a typed error for encoded replicated apply data over the raw record limit', async function () {
+    await wsApi.close();
+    await httpApi.close();
+
+    const originalMaxRecordDataSize = config.maxRecordDataSize;
+    config.maxRecordDataSize = 8;
+    httpApi = await HttpApi.create(config, dwn, undefined, undefined, undefined, { ttlCacheDialect: dialect });
+    await httpApi.start(0);
+    wsUrl = `ws://127.0.0.1:${httpApi.server.port}`;
+    httpUrl = `http://localhost:${httpApi.server.port}`;
+    wsApi = new WsApi(httpApi, dwn);
+    wsApi.start();
+
+    let connection: JsonRpcSocket | undefined;
+    try {
+      const requestId = uuidv4();
+      const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+        encodedData : base64url.baseEncode(new Uint8Array(9)),
+        message     : {
+          descriptor: {
+            dataSize  : 9,
+            interface : 'Records',
+            method    : 'Write',
+          },
+        },
+        target: 'did:example:alice',
+      });
+
+      connection = await JsonRpcSocket.connect(wsUrl);
+      const response = await connection.request(dwnRequest);
+
+      expect(response.id).toBe(requestId);
+      expect(response.error).toBeDefined();
+      expect(response.error?.code).toBe(JsonRpcErrorCodes.InvalidParams);
+      expect(response.error?.message).toContain('exceeds max record data size');
+    } finally {
+      config.maxRecordDataSize = originalMaxRecordDataSize;
+      connection?.close();
+    }
+  });
+
   it('subscribes to records and receives updates', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
@@ -563,7 +604,7 @@ describe('websocket backpressure (rpc.ack)', function () {
     const port = httpApi.server.port;
     wsUrl = `ws://127.0.0.1:${port}`;
     httpUrl = `http://localhost:${port}`;
-    wsApi = new WsApi(httpApi, dwn, undefined, maxInFlight);
+    wsApi = new WsApi(httpApi, dwn, { maxInFlight });
     wsApi.start();
   }
 

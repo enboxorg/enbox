@@ -14,7 +14,7 @@ export class DwnRpcError extends Error {
     this.name = 'DwnRpcError';
     this.code = code;
     this.data = data;
-    this.terminal = isTerminalJsonRpcErrorCode(code);
+    this.terminal = isTerminalJsonRpcErrorCode(code, message, data);
   }
 }
 
@@ -23,7 +23,11 @@ export class DwnRpcError extends Error {
  * replicated admission can run. Internal/server/transport/rate-limit errors
  * remain retryable.
  */
-export function isTerminalJsonRpcErrorCode(code: JsonRpcErrorCodes): boolean {
+export function isTerminalJsonRpcErrorCode(code: JsonRpcErrorCodes, message = '', data?: unknown): boolean {
+  if (isQuotaExceededError(message, data)) {
+    return false;
+  }
+
   switch (code) {
     case JsonRpcErrorCodes.InvalidRequest:
     case JsonRpcErrorCodes.InvalidParams:
@@ -35,4 +39,14 @@ export function isTerminalJsonRpcErrorCode(code: JsonRpcErrorCodes): boolean {
     default:
       return false;
   }
+}
+
+function isQuotaExceededError(message: string, data: unknown): boolean {
+  const code = typeof data === 'object' && data !== null && 'code' in data
+    ? (data as { code?: unknown }).code
+    : undefined;
+  return code === 'TenantMessageQuotaExceeded' ||
+    code === 'TenantStorageQuotaExceeded' ||
+    message.includes('TenantMessageQuotaExceeded') ||
+    message.includes('TenantStorageQuotaExceeded');
 }

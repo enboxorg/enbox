@@ -156,16 +156,53 @@ function validateEncodedData({
 }
 
 function base64UrlDecodedLength(encodedData: string): number | undefined {
-  if (!/^[A-Za-z0-9_-]*={0,2}$/.test(encodedData)) {
+  const lengths = getBase64UrlLengths(encodedData);
+  if (lengths === undefined) {
     return undefined;
   }
-
-  const unpaddedLength = encodedData.replace(/=+$/, '').length;
+  const { paddingLength, unpaddedLength } = lengths;
+  if (paddingLength > 0 && (encodedData.length % 4 !== 0 || unpaddedLength === 0)) {
+    return undefined;
+  }
   if (unpaddedLength % 4 === 1) {
     return undefined;
   }
 
   return Math.floor((unpaddedLength * 3) / 4);
+}
+
+function getBase64UrlLengths(encodedData: string): { paddingLength: number; unpaddedLength: number } | undefined {
+  let paddingLength = 0;
+  let paddingStarted = false;
+
+  for (let i = 0; i < encodedData.length; i++) {
+    const charCode = encodedData.charCodeAt(i);
+    if (charCode === 61) {
+      paddingStarted = true;
+      paddingLength++;
+      if (paddingLength > 2) {
+        return undefined;
+      }
+      continue;
+    }
+
+    if (paddingStarted || !isBase64UrlCharCode(charCode)) {
+      return undefined;
+    }
+  }
+
+  return {
+    paddingLength,
+    unpaddedLength: encodedData.length - paddingLength,
+  };
+}
+
+function isBase64UrlCharCode(charCode: number): boolean {
+  return (charCode >= 65 && charCode <= 90) ||
+    (charCode >= 97 && charCode <= 122) ||
+    (charCode >= 48 && charCode <= 57) ||
+    charCode === 45 ||
+    charCode === 95;
 }
 
 function appliedHookStatus(message: GenericMessage, hasDataStream: boolean): { code: number; detail: string } {

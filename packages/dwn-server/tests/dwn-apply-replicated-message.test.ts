@@ -120,6 +120,35 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
+  it('rejects encoded data with invalid base64url characters', async () => {
+    const requestId = uuidv4();
+    const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      encodedData : 'abc+',
+      message     : {
+        descriptor: {
+          dataSize  : 3,
+          interface : 'Records',
+          method    : 'Write',
+        },
+      },
+      target: 'did:key:abc1234',
+    });
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => ({ kind: 'Applied' }));
+    const context: RequestContext = { dwn, transport: 'ws' };
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      context,
+    );
+
+    expect(jsonRpcResponse.error).toBeDefined();
+    expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
+    expect(jsonRpcResponse.error.message).toContain('encodedData must be valid base64url data');
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
   it('rejects encoded data that exceeds the configured max record data size before decoding', async () => {
     const requestId = uuidv4();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {

@@ -24,7 +24,7 @@ describe('InMemoryConnectionManager', () => {
     httpApi = await HttpApi.create(config, dwn, undefined, undefined, undefined, { ttlCacheDialect: dialect });
     await httpApi.start(0);
     wsUrl = `ws://127.0.0.1:${httpApi.server.port}`;
-    wsApi = new WsApi(httpApi, dwn, connectionManager);
+    wsApi = new WsApi(httpApi, dwn, { connectionManager });
     wsApi.start();
   });
 
