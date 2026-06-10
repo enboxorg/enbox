@@ -1,5 +1,6 @@
 import type { JsonRpcResponse } from './json-rpc.js';
-import type { DwnRpc, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
+import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoRpc, ServerInfo } from './server-info-types.js';
 
 import { createJsonRpcRequest } from './json-rpc.js';
@@ -92,6 +93,20 @@ export class EnboxRpcClient implements EnboxRpc {
     }
 
     return transportClient.sendDwnRequest(request);
+  }
+
+  applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
+    const url = new URL(request.dwnUrl);
+
+    const transportClient = this.transportClients.get(url.protocol);
+    if (!transportClient) {
+      const error = new Error(`no ${url.protocol} transport client available`);
+      error.name = 'NO_TRANSPORT_CLIENT';
+
+      throw error;
+    }
+
+    return transportClient.applyReplicatedMessage(request);
   }
 
   async getServerInfo(dwnUrl: string): Promise<ServerInfo> {

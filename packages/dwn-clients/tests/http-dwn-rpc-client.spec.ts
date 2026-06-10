@@ -219,6 +219,36 @@ describe('HttpDwnRpcClient', () => {
       }
     });
 
+    it('sends replicated apply requests to the replication JSON-RPC method', async () => {
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { result: { kind: 'Duplicate' } },
+      };
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+      const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+      const result = await client.applyReplicatedMessage({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      });
+
+      expect(result).toEqual({ kind: 'Duplicate' });
+      expect(fetchStub.calledOnce).toBe(true);
+
+      const fetchOpts = fetchStub.firstCall.args[1] as RequestInit;
+      const headers = fetchOpts.headers as Record<string, string>;
+      const dwnRequest = JSON.parse(headers['dwn-request']);
+      expect(dwnRequest.method).toBe('dwn.applyReplicatedMessage');
+      expect(dwnRequest.params.target).toBe(alice.did);
+      expect(dwnRequest.params.message).toEqual(message);
+    });
+
     it('sends RecordsRead and populates reply.entry.data when dwn-response header is present', async () => {
       // Simulate a server response where the JSON-RPC envelope is in the
       // dwn-response header and the body is raw data (reply.entry branch).

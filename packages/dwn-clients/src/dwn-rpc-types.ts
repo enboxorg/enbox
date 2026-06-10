@@ -1,4 +1,11 @@
-import type { GenericMessage, ProgressToken, RecordsReadReply, SubscriptionMessage, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type {
+  GenericMessage,
+  ProgressToken,
+  RecordsReadReply,
+  ReplicationApplyResult,
+  SubscriptionMessage,
+  UnionMessageReply,
+} from '@enbox/dwn-sdk-js';
 
 export interface SerializableDwnMessage {
   toJSON(): string;
@@ -74,6 +81,15 @@ export interface DwnRpc {
    * @returns A promise that resolves to the response from the DWN server.
    */
   sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse>
+
+  /**
+   * Applies a replicated message through the DWN server's replication entry point.
+   *
+   * This differs from `sendDwnRequest()` in duplicate replay handling: the server
+   * calls `Dwn.applyReplicatedMessage()`, which repairs missing replication index
+   * entries when the message store already contains the exact message.
+   */
+  applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult>
 }
 
 
@@ -127,6 +143,27 @@ export type DwnRpcRequest = {
      */
     resubscribeFactory?: ResubscribeFactory;
   };
+};
+
+/**
+ * Represents a JSON RPC request to apply a replicated DWN message through the
+ * server-side replication entry point.
+ */
+export type DwnReplicationApplyRequest = {
+  /** Optional data to be sent with the request. */
+  data?: any;
+
+  /** The URL of the DWN server to which the request is sent. */
+  dwnUrl: string;
+
+  /** The replicated message to apply. */
+  message: GenericMessage | SerializableDwnMessage;
+
+  /** The DID of the target tenant to which the message is addressed. */
+  targetDid: string;
+
+  /** Optional caller-provided abort signal. Honoured by the HTTP transport. */
+  signal?: AbortSignal;
 };
 
 /**

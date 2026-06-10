@@ -9,6 +9,7 @@ import type {
   ProtocolDefinition,
   RecordsWrite,
   RecordsWriteMessage,
+  ReplicationApplyResult,
 } from '@enbox/dwn-sdk-js';
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
@@ -597,6 +598,36 @@ export class AgentDwnApi {
       targetDid       : tenant,
       dwnEndpointUrls : [this._localDwnEndpoint!],
       message         : message as DwnMessage[DwnInterface],
+      data,
+    });
+  }
+
+  /**
+   * Applies a replicated message to the local DWN and returns a structured sync
+   * outcome. In-process DWNs call the native entry point directly. Local DWN
+   * server mode calls the server's matching replication RPC so duplicate replay
+   * and replication-index repair stay server-side instead of falling back to the
+   * normal authoring path.
+   */
+  public async applyReplicatedMessage(
+    tenant: string,
+    message: GenericMessage,
+    options?: { dataStream?: ReadableStream<Uint8Array> },
+  ): Promise<ReplicationApplyResult> {
+    if (this._dwn) {
+      return this._dwn.applyReplicatedMessage(tenant, message, options);
+    }
+
+    let data: Blob | undefined;
+    if (options?.dataStream) {
+      const bytes = await DataStream.toBytes(options.dataStream);
+      data = new Blob([bytes as BlobPart]);
+    }
+
+    return this.agent.rpc.applyReplicatedMessage({
+      targetDid : tenant,
+      dwnUrl    : this._localDwnEndpoint!,
+      message,
       data,
     });
   }
