@@ -2688,43 +2688,70 @@ export class SyncEngineLevel implements SyncEngine {
     const link = this._activeLinks.get(targetKey);
 
     if (pending.entries.some(entry => entry.lastFailure !== undefined && isTenantInactivePushFailure(entry.lastFailure))) {
-      if (pushRuntime.timer) {
-        clearTimeout(pushRuntime.timer);
-      }
-      this._pushRuntimes.delete(targetKey);
-      if (link) {
-        this.markLinkNeedsReconcile(targetKey, link, 'push-tenant-inactive');
-      }
+      this.stopPushRuntime(targetKey, pushRuntime);
+      this.markLinkNeedsReconcileIfActive(targetKey, link, 'push-tenant-inactive');
       return;
     }
 
     if (pending.retryCount >= maxRetries) {
-      // Retry budget exhausted. Only structured remote Invalid/terminal
-      // dependency outcomes become dead letters; transport/runtime/deferred
-      // failures dirty the link for later reconciliation.
-      for (const entry of pending.entries) {
-        if (entry.lastFailure !== undefined && isTerminalPushFailure(entry.lastFailure)) {
-          await this.recordDeadLetter({
-            messageCid     : entry.cid,
-            tenantDid      : pending.did,
-            remoteEndpoint : pending.dwnUrl,
-            protocol       : pending.protocol,
-            category       : 'admit-failed',
-            errorCode      : entry.lastFailure.kind ?? 'Invalid',
-            errorDetail    : entry.lastFailure?.detail ?? `push rejected after ${maxRetries} attempts`,
-          });
-        }
-      }
-      if (pushRuntime.timer) {
-        clearTimeout(pushRuntime.timer);
-      }
-      this._pushRuntimes.delete(targetKey);
-      if (link) {
-        this.markLinkNeedsReconcile(targetKey, link, 'push-retry-exhausted');
-      }
+      await this.recordTerminalFailuresAfterRetryExhaustion(pending, maxRetries);
+      this.stopPushRuntime(targetKey, pushRuntime);
+      this.markLinkNeedsReconcileIfActive(targetKey, link, 'push-retry-exhausted');
       return;
     }
 
+    this.schedulePushRetry(targetKey, pushRuntime, pending);
+  }
+
+  private async recordTerminalFailuresAfterRetryExhaustion(
+    pending: {
+      did: string;
+      dwnUrl: string;
+      protocol?: string;
+      entries: PushRuntimeEntry[];
+    },
+    maxRetries: number,
+  ): Promise<void> {
+    // Retry budget exhausted. Only structured remote Invalid/terminal
+    // dependency outcomes become dead letters; transport/runtime/deferred
+    // failures dirty the link for later reconciliation.
+    for (const entry of pending.entries) {
+      const failure = entry.lastFailure;
+      if (failure === undefined || !isTerminalPushFailure(failure)) {
+        continue;
+      }
+
+      await this.recordDeadLetter({
+        messageCid     : entry.cid,
+        tenantDid      : pending.did,
+        remoteEndpoint : pending.dwnUrl,
+        protocol       : pending.protocol,
+        category       : 'admit-failed',
+        errorCode      : failure.kind ?? 'Invalid',
+        errorDetail    : failure.detail ?? `push rejected after ${maxRetries} attempts`,
+      });
+    }
+  }
+
+  private stopPushRuntime(targetKey: string, pushRuntime: PushRuntimeState): void {
+    if (pushRuntime.timer) {
+      clearTimeout(pushRuntime.timer);
+    }
+    this._pushRuntimes.delete(targetKey);
+  }
+
+  private markLinkNeedsReconcileIfActive(linkKey: string, link: ReplicationLinkState | undefined, reason: string): void {
+    if (link === undefined) {
+      return;
+    }
+
+    this.markLinkNeedsReconcile(linkKey, link, reason);
+  }
+
+  private schedulePushRetry(targetKey: string, pushRuntime: PushRuntimeState, pending: {
+    entries: PushRuntimeEntry[];
+    retryCount: number;
+  }): void {
     pushRuntime.entries.push(...pending.entries);
     pushRuntime.retryCount = pending.retryCount;
     const delayMs = SyncEngineLevel.PUSH_RETRY_BACKOFF_MS[pending.retryCount] ?? 2000;

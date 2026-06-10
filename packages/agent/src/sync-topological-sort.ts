@@ -24,6 +24,23 @@ type MessageDependencyGraph<T> = {
   dependencies: Map<T, T[]>;
 };
 
+type DependencyIndexes<T> = {
+  byIndex: Map<number, T>;
+  protocolConfigureIndex: Map<string, number>;
+  protocolDefinitionsByProtocol: Map<string, Partial<ProtocolDefinition>>;
+  initialWriteIndex: Map<string, number>;
+  grantIndex: Map<string, number>;
+  roleIndex: Map<string, number>;
+};
+
+type DependencyEdges = {
+  edges: Map<number, Set<number>>;
+  dependenciesByIndex: Map<number, Set<number>>;
+  inDegree: number[];
+};
+
+type AddDependencyEdge = (from: number, to: number) => void;
+
 function isRecordsDescriptor(descriptor: GenericMessage['descriptor']): descriptor is RecordsDescriptor {
   return descriptor.interface === DwnInterfaceName.Records;
 }
@@ -181,173 +198,309 @@ function buildMessageDependencyGraph<T extends { message: GenericMessage }>(
     };
   }
 
-  // Index messages by various keys for dependency resolution.
-  const byIndex = new Map<number, T>();
-  const protocolConfigureIndex = new Map<string, number>(); // protocol URL -> index
-  const protocolDefinitionsByProtocol = new Map<string, Partial<ProtocolDefinition>>();
-  const initialWriteIndex = new Map<string, number>(); // recordId -> index of initial write
-  const grantIndex = new Map<string, number>(); // grant recordId -> index
-  const roleIndex = new Map<string, number>(); // protocol|protocolPath|recipient|contextPrefix -> index
+  const indexes = buildDependencyIndexes(messages);
+  const dependencyEdges = buildDependencyEdges(messages, indexes);
+  const sorted = sortDependencyGraph(messages, indexes.byIndex, dependencyEdges.edges, dependencyEdges.inDegree);
 
-  for (let i = 0; i < messages.length; i++) {
-    const entry = messages[i];
-    byIndex.set(i, entry);
-    const desc = entry.message.descriptor;
+  return {
+    sorted,
+    dependencies: entriesByIndexDependencies(messages, dependencyEdges.dependenciesByIndex),
+  };
+}
 
-    if (desc.interface === DwnInterfaceName.Protocols && desc.method === DwnMethodName.Configure) {
-      const protocolUrl = getConfiguredProtocol(entry.message);
-      if (protocolUrl) {
-        const protocolDefinition = getProtocolDefinition(entry.message);
-        protocolConfigureIndex.set(protocolUrl, i);
-        if (protocolDefinition !== undefined) {
-          protocolDefinitionsByProtocol.set(protocolUrl, protocolDefinition);
-        }
-      }
-    }
-
-    if (isRecordsWriteDescriptor(desc)) {
-      const recordId = getRecordId(entry.message);
-      const initial = isInitialWrite(entry.message);
-      if (initial && recordId) {
-        initialWriteIndex.set(recordId, i);
-      }
-
-      // Index permission grants by recordId so dependents can reference them.
-      if (
-        desc.protocol === PermissionsProtocol.uri &&
-        desc.protocolPath === PermissionsProtocol.grantPath &&
-        recordId
-      ) {
-        grantIndex.set(recordId, i);
-      }
-
-      const roleKey = getRoleRecordKey(entry.message);
-      if (roleKey !== undefined) {
-        roleIndex.set(roleKey, i);
-      }
-    }
-  }
-
-  // Build adjacency list (edges: dependency -> dependent).
-  const edges = new Map<number, Set<number>>();
-  const dependenciesByIndex = new Map<number, Set<number>>();
-  const inDegree = new Array(messages.length).fill(0) as number[];
-
-  const addEdge = (from: number, to: number): void => {
-    if (from === to) {
-      return;
-    }
-    if (!edges.has(from)) {
-      edges.set(from, new Set());
-    }
-    const edgeSet = edges.get(from)!;
-    if (!edgeSet.has(to)) {
-      edgeSet.add(to);
-      if (!dependenciesByIndex.has(to)) {
-        dependenciesByIndex.set(to, new Set());
-      }
-      dependenciesByIndex.get(to)!.add(from);
-      inDegree[to]++;
-    }
+function buildDependencyIndexes<T extends { message: GenericMessage }>(messages: T[]): DependencyIndexes<T> {
+  const indexes: DependencyIndexes<T> = {
+    byIndex                       : new Map(),
+    protocolConfigureIndex        : new Map(),
+    protocolDefinitionsByProtocol : new Map(),
+    initialWriteIndex             : new Map(),
+    grantIndex                    : new Map(),
+    roleIndex                     : new Map(),
   };
 
   for (let i = 0; i < messages.length; i++) {
-    const desc = messages[i].message.descriptor;
-
-    // Composition dependency: a composed protocol depends on its referenced protocol definitions.
-    if (isProtocolsConfigureDescriptor(desc)) {
-      for (const protocol of getComposedProtocolDependencies(messages[i].message)) {
-        if (protocolConfigureIndex.has(protocol)) {
-          addEdge(protocolConfigureIndex.get(protocol)!, i);
-        }
-      }
-    }
-
-    // Protocol dependency: RecordsWrite depends on ProtocolsConfigure for its protocol.
-    if (isRecordsDescriptor(desc)) {
-      const protocol = desc.protocol;
-      if (protocol && protocolConfigureIndex.has(protocol)) {
-        addEdge(protocolConfigureIndex.get(protocol)!, i);
-      }
-    }
-
-    // Parent dependency: child record depends on parent record.
-    if (isRecordsDescriptor(desc) && desc.parentId) {
-      const parentId = desc.parentId;
-      if (initialWriteIndex.has(parentId)) {
-        addEdge(initialWriteIndex.get(parentId)!, i);
-      }
-    }
-
-    // Initial write dependency: update depends on initial write.
-    if (isRecordsWriteDescriptor(desc)) {
-      const recordId = getRecordId(messages[i].message);
-      if (recordId && !isInitialWrite(messages[i].message) && initialWriteIndex.has(recordId)) {
-        addEdge(initialWriteIndex.get(recordId)!, i);
-      }
-    }
-
-    // Delete depends on initial write.
-    if (isRecordsDeleteDescriptor(desc)) {
-      const recordId = desc.recordId;
-      if (recordId && initialWriteIndex.has(recordId)) {
-        addEdge(initialWriteIndex.get(recordId)!, i);
-      }
-    }
-
-    // Permission grant dependency: message depends on each grant it references.
-    for (const permissionGrantId of getInvokedPermissionGrantIds(messages[i].message)) {
-      if (grantIndex.has(permissionGrantId)) {
-        addEdge(grantIndex.get(permissionGrantId)!, i);
-      }
-    }
-
-    // Role dependency: message invoking a protocol role depends on the matching role record.
-    const roleKey = getInvokedRoleKey(messages[i].message, protocolDefinitionsByProtocol);
-    if (roleKey !== undefined && roleIndex.has(roleKey)) {
-      addEdge(roleIndex.get(roleKey)!, i);
-    }
+    const entry = messages[i];
+    indexes.byIndex.set(i, entry);
+    indexProtocolConfigure(entry.message, i, indexes);
+    indexRecordsWrite(entry.message, i, indexes);
   }
 
-  // Kahn's algorithm for topological sort.
-  const queue: number[] = [];
+  return indexes;
+}
+
+function indexProtocolConfigure<T>(message: GenericMessage, index: number, indexes: DependencyIndexes<T>): void {
+  const protocolUrl = getConfiguredProtocol(message);
+  if (protocolUrl === undefined) {
+    return;
+  }
+
+  const protocolDefinition = getProtocolDefinition(message);
+  indexes.protocolConfigureIndex.set(protocolUrl, index);
+  if (protocolDefinition !== undefined) {
+    indexes.protocolDefinitionsByProtocol.set(protocolUrl, protocolDefinition);
+  }
+}
+
+function indexRecordsWrite<T>(message: GenericMessage, index: number, indexes: DependencyIndexes<T>): void {
+  const desc = message.descriptor;
+  if (!isRecordsWriteDescriptor(desc)) {
+    return;
+  }
+
+  const recordId = getRecordId(message);
+  if (recordId === undefined) {
+    return;
+  }
+
+  if (isInitialWrite(message)) {
+    indexes.initialWriteIndex.set(recordId, index);
+  }
+  if (desc.protocol === PermissionsProtocol.uri && desc.protocolPath === PermissionsProtocol.grantPath) {
+    indexes.grantIndex.set(recordId, index);
+  }
+
+  const roleKey = getRoleRecordKey(message);
+  if (roleKey !== undefined) {
+    indexes.roleIndex.set(roleKey, index);
+  }
+}
+
+function buildDependencyEdges<T extends { message: GenericMessage }>(
+  messages: T[],
+  indexes: DependencyIndexes<T>,
+): DependencyEdges {
+  const dependencyEdges: DependencyEdges = {
+    edges               : new Map(),
+    dependenciesByIndex : new Map(),
+    inDegree            : new Array(messages.length).fill(0) as number[],
+  };
+  const addEdge: AddDependencyEdge = (from, to): void => {
+    addDependencyEdge(dependencyEdges, from, to);
+  };
+
   for (let i = 0; i < messages.length; i++) {
+    addDependencyEdgesForMessage(i, messages[i].message, indexes, addEdge);
+  }
+
+  return dependencyEdges;
+}
+
+function addDependencyEdge(dependencyEdges: DependencyEdges, from: number, to: number): void {
+  if (from === to) {
+    return;
+  }
+
+  let edgeSet = dependencyEdges.edges.get(from);
+  if (edgeSet === undefined) {
+    edgeSet = new Set();
+    dependencyEdges.edges.set(from, edgeSet);
+  }
+  if (edgeSet.has(to)) {
+    return;
+  }
+
+  edgeSet.add(to);
+  addIndexDependency(dependencyEdges, from, to);
+}
+
+function addIndexDependency(dependencyEdges: DependencyEdges, from: number, to: number): void {
+  let dependencies = dependencyEdges.dependenciesByIndex.get(to);
+  if (dependencies === undefined) {
+    dependencies = new Set();
+    dependencyEdges.dependenciesByIndex.set(to, dependencies);
+  }
+  dependencies.add(from);
+  dependencyEdges.inDegree[to]++;
+}
+
+function addDependencyEdgesForMessage<T>(
+  index: number,
+  message: GenericMessage,
+  indexes: DependencyIndexes<T>,
+  addEdge: AddDependencyEdge,
+): void {
+  const desc = message.descriptor;
+  addComposedProtocolEdges(index, message, desc, indexes, addEdge);
+  addRecordProtocolEdge(index, desc, indexes, addEdge);
+  addParentRecordEdge(index, desc, indexes, addEdge);
+  addInitialWriteEdge(index, message, desc, indexes, addEdge);
+  addDeleteEdge(index, desc, indexes, addEdge);
+  addPermissionGrantEdges(index, message, indexes, addEdge);
+  addRoleEdge(index, message, indexes, addEdge);
+}
+
+function addComposedProtocolEdges<T>(
+  index: number,
+  message: GenericMessage,
+  desc: GenericMessage['descriptor'],
+  indexes: DependencyIndexes<T>,
+  addEdge: AddDependencyEdge,
+): void {
+  if (!isProtocolsConfigureDescriptor(desc)) {
+    return;
+  }
+
+  for (const protocol of getComposedProtocolDependencies(message)) {
+    const protocolIndex = indexes.protocolConfigureIndex.get(protocol);
+    if (protocolIndex !== undefined) {
+      addEdge(protocolIndex, index);
+    }
+  }
+}
+
+function addRecordProtocolEdge<T>(
+  index: number,
+  desc: GenericMessage['descriptor'],
+  indexes: DependencyIndexes<T>,
+  addEdge: AddDependencyEdge,
+): void {
+  if (!isRecordsDescriptor(desc) || desc.protocol === undefined) {
+    return;
+  }
+
+  const protocolIndex = indexes.protocolConfigureIndex.get(desc.protocol);
+  if (protocolIndex !== undefined) {
+    addEdge(protocolIndex, index);
+  }
+}
+
+function addParentRecordEdge<T>(
+  index: number,
+  desc: GenericMessage['descriptor'],
+  indexes: DependencyIndexes<T>,
+  addEdge: AddDependencyEdge,
+): void {
+  if (!isRecordsDescriptor(desc) || desc.parentId === undefined) {
+    return;
+  }
+
+  const parentIndex = indexes.initialWriteIndex.get(desc.parentId);
+  if (parentIndex !== undefined) {
+    addEdge(parentIndex, index);
+  }
+}
+
+function addInitialWriteEdge<T>(
+  index: number,
+  message: GenericMessage,
+  desc: GenericMessage['descriptor'],
+  indexes: DependencyIndexes<T>,
+  addEdge: AddDependencyEdge,
+): void {
+  if (!isRecordsWriteDescriptor(desc) || isInitialWrite(message)) {
+    return;
+  }
+
+  const recordId = getRecordId(message);
+  const initialIndex = recordId === undefined ? undefined : indexes.initialWriteIndex.get(recordId);
+  if (initialIndex !== undefined) {
+    addEdge(initialIndex, index);
+  }
+}
+
+function addDeleteEdge<T>(
+  index: number,
+  desc: GenericMessage['descriptor'],
+  indexes: DependencyIndexes<T>,
+  addEdge: AddDependencyEdge,
+): void {
+  if (!isRecordsDeleteDescriptor(desc) || desc.recordId === undefined) {
+    return;
+  }
+
+  const initialIndex = indexes.initialWriteIndex.get(desc.recordId);
+  if (initialIndex !== undefined) {
+    addEdge(initialIndex, index);
+  }
+}
+
+function addPermissionGrantEdges<T>(
+  index: number,
+  message: GenericMessage,
+  indexes: DependencyIndexes<T>,
+  addEdge: AddDependencyEdge,
+): void {
+  for (const permissionGrantId of getInvokedPermissionGrantIds(message)) {
+    const grantIndex = indexes.grantIndex.get(permissionGrantId);
+    if (grantIndex !== undefined) {
+      addEdge(grantIndex, index);
+    }
+  }
+}
+
+function addRoleEdge<T>(
+  index: number,
+  message: GenericMessage,
+  indexes: DependencyIndexes<T>,
+  addEdge: AddDependencyEdge,
+): void {
+  const roleKey = getInvokedRoleKey(message, indexes.protocolDefinitionsByProtocol);
+  const roleIndex = roleKey === undefined ? undefined : indexes.roleIndex.get(roleKey);
+  if (roleIndex !== undefined) {
+    addEdge(roleIndex, index);
+  }
+}
+
+function sortDependencyGraph<T>(
+  messages: T[],
+  byIndex: Map<number, T>,
+  edges: Map<number, Set<number>>,
+  inDegree: number[],
+): T[] {
+  const queue = zeroInDegreeQueue(inDegree);
+  const sorted: T[] = [];
+
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    sorted.push(byIndex.get(node)!);
+    decrementNeighborDegrees(node, edges, inDegree, queue);
+  }
+
+  appendCyclicEntries(messages, byIndex, sorted);
+  return sorted;
+}
+
+function zeroInDegreeQueue(inDegree: number[]): number[] {
+  const queue: number[] = [];
+  for (let i = 0; i < inDegree.length; i++) {
     if (inDegree[i] === 0) {
       queue.push(i);
     }
   }
+  return queue;
+}
 
-  const sorted: T[] = [];
-  while (queue.length > 0) {
-    const node = queue.shift()!;
-    sorted.push(byIndex.get(node)!);
-
-    const neighbors = edges.get(node);
-    if (neighbors) {
-      for (const neighbor of neighbors) {
-        inDegree[neighbor]--;
-        if (inDegree[neighbor] === 0) {
-          queue.push(neighbor);
-        }
-      }
-    }
+function decrementNeighborDegrees(
+  node: number,
+  edges: Map<number, Set<number>>,
+  inDegree: number[],
+  queue: number[],
+): void {
+  const neighbors = edges.get(node);
+  if (neighbors === undefined) {
+    return;
   }
 
-  // If there are nodes not in sorted (cycle), append them at the end.
-  if (sorted.length < messages.length) {
-    const sortedSet = new Set(sorted);
-    for (let i = 0; i < messages.length; i++) {
-      const entry = byIndex.get(i)!;
-      if (!sortedSet.has(entry)) {
-        sorted.push(entry);
-      }
+  for (const neighbor of neighbors) {
+    inDegree[neighbor]--;
+    if (inDegree[neighbor] === 0) {
+      queue.push(neighbor);
     }
   }
+}
 
-  return {
-    sorted,
-    dependencies: entriesByIndexDependencies(messages, dependenciesByIndex),
-  };
+function appendCyclicEntries<T>(messages: T[], byIndex: Map<number, T>, sorted: T[]): void {
+  if (sorted.length >= messages.length) {
+    return;
+  }
+
+  const sortedSet = new Set(sorted);
+  for (let i = 0; i < messages.length; i++) {
+    const entry = byIndex.get(i)!;
+    if (!sortedSet.has(entry)) {
+      sorted.push(entry);
+    }
+  }
 }
 
 function entriesByIndexDependencies<T>(

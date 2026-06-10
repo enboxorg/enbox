@@ -102,51 +102,55 @@ function dataStreamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
 async function bufferSmallStreams(entries: SyncMessageEntry[], shouldContinue?: () => boolean): Promise<void> {
   for (const entry of entries) {
     assertShouldContinue(shouldContinue);
-    if (!entry.dataStream) {
+    if (!shouldReadStreamIntoBuffer(entry)) {
       continue;
     }
 
-    if (entry.bufferedData !== undefined) {
-      continue;
-    }
-
-    if (!shouldBufferDataStream(entry)) {
-      continue;
-    }
-
-    // Read known-small streams into memory so transport retries can replay them.
-    const chunks: Uint8Array[] = [];
-    let totalSize = 0;
-    const reader = entry.dataStream.getReader();
-
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) { break; }
-        assertShouldContinue(shouldContinue);
-        totalSize += value.byteLength;
-        if (totalSize > MAX_BUFFER_SIZE) {
-          throw new Error('SyncEngineLevel: unexpected large stream while buffering push data.');
-        }
-        chunks.push(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-
-    // Combine chunks into a single Uint8Array buffer.
-    const buffer = new Uint8Array(totalSize);
-    let offset = 0;
-    for (const chunk of chunks) {
-      buffer.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-
+    const buffer = await bufferDataStream(entry.dataStream!, shouldContinue);
     entry.bufferedData = buffer;
     // Create a fresh ReadableStream from the buffer for the first processing attempt.
     entry.dataStream = dataStreamFromBytes(buffer);
     assertShouldContinue(shouldContinue);
   }
+}
+
+function shouldReadStreamIntoBuffer(entry: SyncMessageEntry): boolean {
+  return entry.dataStream !== undefined &&
+    entry.bufferedData === undefined &&
+    shouldBufferDataStream(entry);
+}
+
+async function bufferDataStream(dataStream: ReadableStream<Uint8Array>, shouldContinue?: () => boolean): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let totalSize = 0;
+  const reader = dataStream.getReader();
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) { break; }
+      assertShouldContinue(shouldContinue);
+      totalSize += value.byteLength;
+      if (totalSize > MAX_BUFFER_SIZE) {
+        throw new Error('SyncEngineLevel: unexpected large stream while buffering push data.');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return concatChunks(chunks, totalSize);
+}
+
+function concatChunks(chunks: Uint8Array[], totalSize: number): Uint8Array {
+  const buffer = new Uint8Array(totalSize);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return buffer;
 }
 
 function shouldBufferDataStream(entry: SyncMessageEntry): boolean {
