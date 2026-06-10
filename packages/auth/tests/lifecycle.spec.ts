@@ -930,10 +930,31 @@ describe('registerSyncScopeForIdentity', () => {
     ).rejects.toThrow('database unavailable');
   });
 
-  test('local (no delegateDid): calls registerIdentity with protocols: all', async () => {
+  test('local with explicit protocols: calls registerIdentity with that scope', async () => {
     const syncCalls: any[] = [];
     const agent = createMockAgent({
       syncRegisterIdentity: async (params) => { syncCalls.push(params); },
+    });
+
+    await registerSyncScopeForIdentity({
+      userAgent             : agent,
+      connectedDid          : 'did:dht:connected1',
+      identitySyncProtocols : ['https://proto.example/profile'],
+    });
+
+    expect(syncCalls).toHaveLength(1);
+    expect(syncCalls[0].did).toBe('did:dht:connected1');
+    expect(syncCalls[0].options.protocols).toEqual(['https://proto.example/profile']);
+    // Local session — delegateDid should not be present in the options payload.
+    expect(syncCalls[0].options.delegateDid).toBeUndefined();
+  });
+
+  test('local without explicit protocols: leaves sync registration to the application', async () => {
+    const registerCalls: any[] = [];
+    const unregisterCalls: string[] = [];
+    const agent = createMockAgent({
+      syncRegisterIdentity   : async (params) => { registerCalls.push(params); },
+      syncUnregisterIdentity : async (did) => { unregisterCalls.push(did); },
     });
 
     await registerSyncScopeForIdentity({
@@ -941,11 +962,8 @@ describe('registerSyncScopeForIdentity', () => {
       connectedDid : 'did:dht:connected1',
     });
 
-    expect(syncCalls).toHaveLength(1);
-    expect(syncCalls[0].did).toBe('did:dht:connected1');
-    expect(syncCalls[0].options.protocols).toBe('all');
-    // Local session — delegateDid should not be present in the options payload.
-    expect(syncCalls[0].options.delegateDid).toBeUndefined();
+    expect(registerCalls).toHaveLength(0);
+    expect(unregisterCalls).toHaveLength(0);
   });
 
   test('local already-registered: falls back to updateIdentityOptions', async () => {
@@ -956,13 +974,14 @@ describe('registerSyncScopeForIdentity', () => {
     });
 
     await registerSyncScopeForIdentity({
-      userAgent    : agent,
-      connectedDid : 'did:dht:connected1',
+      userAgent             : agent,
+      connectedDid          : 'did:dht:connected1',
+      identitySyncProtocols : ['https://proto.example/profile'],
     });
 
     expect(updateCalls).toHaveLength(1);
     expect(updateCalls[0].did).toBe('did:dht:connected1');
-    expect(updateCalls[0].options.protocols).toBe('all');
+    expect(updateCalls[0].options.protocols).toEqual(['https://proto.example/profile']);
   });
 
   test('local: rethrows non-"already registered" errors from registerIdentity', async () => {
@@ -972,8 +991,9 @@ describe('registerSyncScopeForIdentity', () => {
 
     await expect(
       registerSyncScopeForIdentity({
-        userAgent    : agent,
-        connectedDid : 'did:dht:connected1',
+        userAgent             : agent,
+        connectedDid          : 'did:dht:connected1',
+        identitySyncProtocols : ['https://proto.example/profile'],
       })
     ).rejects.toThrow('database unavailable');
   });

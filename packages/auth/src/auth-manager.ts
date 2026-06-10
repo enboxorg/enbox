@@ -29,6 +29,7 @@ import type {
   DisconnectOptions,
   HandlerConnectOptions,
   HeadlessConnectOptions,
+  IdentitySyncProtocols,
   ImportFromPortableOptions,
   RegistrationOptions,
   RestoreFromPhraseOptions,
@@ -102,6 +103,7 @@ export class AuthManager {
   private readonly _defaultPassword?: string;
   private readonly _passwordProvider?: PasswordProvider;
   private readonly _defaultSync?: SyncOption;
+  private readonly _defaultIdentitySyncProtocols?: IdentitySyncProtocols;
   private readonly _defaultDwnEndpoints?: string[];
   private readonly _registration?: RegistrationOptions;
   private readonly _connectHandler?: ConnectHandler;
@@ -121,6 +123,7 @@ export class AuthManager {
     defaultPassword?: string;
     passwordProvider?: PasswordProvider;
     defaultSync?: SyncOption;
+    defaultIdentitySyncProtocols?: IdentitySyncProtocols;
     defaultDwnEndpoints?: string[];
     registration?: RegistrationOptions;
     localDwnEndpoint?: string;
@@ -132,6 +135,7 @@ export class AuthManager {
     this._defaultPassword = params.defaultPassword;
     this._passwordProvider = params.passwordProvider;
     this._defaultSync = params.defaultSync;
+    this._defaultIdentitySyncProtocols = params.defaultIdentitySyncProtocols;
     this._defaultDwnEndpoints = params.defaultDwnEndpoints;
     this._registration = params.registration;
     this._localDwnEndpoint = params.localDwnEndpoint;
@@ -179,13 +183,14 @@ export class AuthManager {
       userAgent,
       emitter,
       storage,
-      defaultPassword     : options.password,
-      passwordProvider    : options.passwordProvider,
-      defaultSync         : options.sync,
-      defaultDwnEndpoints : options.dwnEndpoints,
-      registration        : options.registration,
+      defaultPassword              : options.password,
+      passwordProvider             : options.passwordProvider,
+      defaultSync                  : options.sync,
+      defaultIdentitySyncProtocols : options.identitySyncProtocols,
+      defaultDwnEndpoints          : options.dwnEndpoints,
+      registration                 : options.registration,
       localDwnEndpoint,
-      connectHandler      : options.connectHandler,
+      connectHandler               : options.connectHandler,
     });
 
     // Determine initial state.
@@ -1097,14 +1102,15 @@ export class AuthManager {
    */
   private _flowContext(): FlowContext {
     return {
-      userAgent           : this._userAgent,
-      emitter             : this._emitter,
-      storage             : this._storage,
-      defaultPassword     : this._defaultPassword,
-      passwordProvider    : this._passwordProvider,
-      defaultSync         : this._defaultSync,
-      defaultDwnEndpoints : this._defaultDwnEndpoints,
-      registration        : this._registration,
+      userAgent                    : this._userAgent,
+      emitter                      : this._emitter,
+      storage                      : this._storage,
+      defaultPassword              : this._defaultPassword,
+      passwordProvider             : this._passwordProvider,
+      defaultSync                  : this._defaultSync,
+      defaultIdentitySyncProtocols : this._defaultIdentitySyncProtocols,
+      defaultDwnEndpoints          : this._defaultDwnEndpoints,
+      registration                 : this._registration,
     };
   }
 
@@ -1191,16 +1197,13 @@ export class AuthManager {
    * Repair the sync registration for a connected DID based on derived protocols.
    * - `'all'` or non-empty list → register or update
    * - Empty list (zero grants) for a delegate → unregister stale registration
-   * - Non-delegate with no derived protocols → register with `'all'`
+   * - Non-delegate with no explicit local sync scope → leave app-owned registration unchanged
    */
   private async _repairSyncRegistration(
     connectedDid: string,
     delegateDid: string | undefined,
     derivedProtocols: 'all' | string[] | undefined,
   ): Promise<void> {
-    // Only delegates with an explicit zero-grant derivation should be
-    // unregistered. A non-delegate identity defaults to `'all'` when no
-    // derivation was performed.
     if (delegateDid && derivedProtocols !== undefined) {
       const narrowed = toSyncIdentityProtocols(derivedProtocols);
       if (narrowed === undefined) {
@@ -1216,8 +1219,13 @@ export class AuthManager {
       return;
     }
 
-    // Non-delegate identity: register with `'all'` (full-replica sync).
-    await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, 'all');
+    if (!delegateDid && this._defaultIdentitySyncProtocols !== undefined) {
+      await this._registerOrUpdateSyncIdentity(connectedDid, delegateDid, this._defaultIdentitySyncProtocols);
+      return;
+    }
+
+    // Local identity sync is app-owned unless the caller configured an
+    // explicit default scope for auth to manage.
   }
 
   private _setState(state: AuthState): void {
