@@ -1,5 +1,11 @@
 # @enbox/auth
 
+## 0.6.45
+
+### Patch Changes
+
+- [#1003](https://github.com/enboxorg/enbox/pull/1003) [`817e816`](https://github.com/enboxorg/enbox/commit/817e8162ed0393402d05ad903a3fd976f84fa8fc) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Stop registering local and recovered identities for full-DWN sync unless an explicit identity sync protocol scope is provided.
+
 ## 0.6.44
 
 ### Patch Changes
