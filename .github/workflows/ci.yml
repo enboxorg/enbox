@@ -460,7 +460,7 @@ jobs:
 
       - name: Start Pkarr relay
         run: |
-          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr pkarr-relay --testnet
+          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr-relay pkarr-relay --testnet
           echo "Waiting for Pkarr relay..."
           for i in $(seq 1 20); do
             if curl -sf http://localhost:7527/ >/dev/null 2>&1 || [ $? -eq 22 ]; then
@@ -591,7 +591,7 @@ jobs:
 
       - name: Start Pkarr relay
         run: |
-          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr pkarr-relay --testnet
+          docker run -d --name pkarr-relay -p 7527:15411 synonymsoft/pkarr-relay pkarr-relay --testnet
           echo "Waiting for Pkarr relay..."
           for i in $(seq 1 20); do
             if curl -sf http://localhost:7527/ >/dev/null 2>&1 || [ $? -eq 22 ]; then
