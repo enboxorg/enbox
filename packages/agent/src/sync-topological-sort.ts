@@ -1,7 +1,7 @@
-import type { GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, GenericSignaturePayload, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
-import { DwnInterfaceName, DwnMethodName, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, isCrossProtocolRef, Jws, Message, parseCrossProtocolRef, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 type DescriptorWithRecordId = GenericMessage['descriptor'] & {
   recordId?: string;
@@ -12,6 +12,7 @@ type RecordsDescriptor = GenericMessage['descriptor'] & {
   parentId?: string;
   protocol?: string;
   protocolPath?: string;
+  recipient?: string;
 };
 
 type ProtocolsConfigureDescriptor = GenericMessage['descriptor'] & {
@@ -72,6 +73,82 @@ function isInitialWrite(message: GenericMessage): boolean {
   return desc.dateCreated === desc.messageTimestamp;
 }
 
+function getContextId(message: GenericMessage): string | undefined {
+  return (message as GenericMessage & { contextId?: string }).contextId;
+}
+
+function getRoleContextPrefix(protocolPath: string, contextId?: string): string | undefined {
+  const ancestorSegmentCount = protocolPath.split('/').length - 1;
+  if (ancestorSegmentCount === 0 || contextId === undefined) {
+    return undefined;
+  }
+
+  return contextId.split('/').slice(0, ancestorSegmentCount).join('/');
+}
+
+function getRoleKey(protocol: string, protocolPath: string, recipient: string, contextPrefix?: string): string {
+  return `${protocol}|${protocolPath}|${recipient}|${contextPrefix ?? ''}`;
+}
+
+function getRoleRecordKey(message: GenericMessage): string | undefined {
+  const { descriptor } = message;
+  if (!isRecordsWriteDescriptor(descriptor)) {
+    return undefined;
+  }
+
+  const { protocol, protocolPath, recipient } = descriptor;
+  if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
+    return undefined;
+  }
+
+  return getRoleKey(protocol, protocolPath, recipient, getRoleContextPrefix(protocolPath, getContextId(message)));
+}
+
+function getSignaturePayload(message: GenericMessage): GenericSignaturePayload | undefined {
+  if (message.authorization === undefined) {
+    return undefined;
+  }
+
+  try {
+    return Jws.decodePlainObjectPayload(message.authorization.signature) as GenericSignaturePayload;
+  } catch {
+    return undefined;
+  }
+}
+
+function getInvokedRoleKey(
+  message: GenericMessage,
+  protocolDefinitionsByProtocol: Map<string, Partial<ProtocolDefinition>>,
+): string | undefined {
+  const { descriptor } = message;
+  if (!isRecordsDescriptor(descriptor) || descriptor.protocol === undefined) {
+    return undefined;
+  }
+
+  const protocolRole = getSignaturePayload(message)?.protocolRole;
+  const recipient = Message.getAuthor(message);
+  if (typeof protocolRole !== 'string' || recipient === undefined) {
+    return undefined;
+  }
+
+  let roleProtocol = descriptor.protocol;
+  let roleProtocolPath = protocolRole;
+  if (isCrossProtocolRef(protocolRole)) {
+    const parsed = parseCrossProtocolRef(protocolRole);
+    const referencedProtocol = parsed === undefined
+      ? undefined
+      : protocolDefinitionsByProtocol.get(descriptor.protocol)?.uses?.[parsed.alias];
+    if (parsed === undefined || referencedProtocol === undefined) {
+      return undefined;
+    }
+
+    roleProtocol = referencedProtocol;
+    roleProtocolPath = parsed.protocolPath;
+  }
+
+  return getRoleKey(roleProtocol, roleProtocolPath, recipient, getRoleContextPrefix(roleProtocolPath, getContextId(message)));
+}
+
 /**
  * Builds a dependency graph from the fetched messages and returns them in
  * topological order so that dependencies are processed before dependents.
@@ -93,8 +170,10 @@ export function topologicalSort<T extends { message: GenericMessage }>(
   // Index messages by various keys for dependency resolution.
   const byIndex = new Map<number, T>();
   const protocolConfigureIndex = new Map<string, number>(); // protocol URL -> index
+  const protocolDefinitionsByProtocol = new Map<string, Partial<ProtocolDefinition>>();
   const initialWriteIndex = new Map<string, number>(); // recordId -> index of initial write
   const grantIndex = new Map<string, number>(); // grant recordId -> index
+  const roleIndex = new Map<string, number>(); // protocol|protocolPath|recipient|contextPrefix -> index
 
   for (let i = 0; i < messages.length; i++) {
     const entry = messages[i];
@@ -105,6 +184,7 @@ export function topologicalSort<T extends { message: GenericMessage }>(
       const protocolUrl = getConfiguredProtocol(entry.message);
       if (protocolUrl) {
         protocolConfigureIndex.set(protocolUrl, i);
+        protocolDefinitionsByProtocol.set(protocolUrl, getProtocolDefinition(entry.message)!);
       }
     }
 
@@ -122,6 +202,11 @@ export function topologicalSort<T extends { message: GenericMessage }>(
         recordId
       ) {
         grantIndex.set(recordId, i);
+      }
+
+      const roleKey = getRoleRecordKey(entry.message);
+      if (roleKey !== undefined) {
+        roleIndex.set(roleKey, i);
       }
     }
   }
@@ -193,6 +278,12 @@ export function topologicalSort<T extends { message: GenericMessage }>(
       if (grantIndex.has(permissionGrantId)) {
         addEdge(grantIndex.get(permissionGrantId)!, i);
       }
+    }
+
+    // Role dependency: message invoking a protocol role depends on the matching role record.
+    const roleKey = getInvokedRoleKey(messages[i].message, protocolDefinitionsByProtocol);
+    if (roleKey !== undefined && roleIndex.has(roleKey)) {
+      addEdge(roleIndex.get(roleKey)!, i);
     }
   }
 

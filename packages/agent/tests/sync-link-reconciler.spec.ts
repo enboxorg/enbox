@@ -18,8 +18,8 @@ function makeDeps(overrides: Record<string, any> = {}): any {
     getLocalRoot        : sinon.stub().resolves('rootA'),
     getRemoteRoot       : sinon.stub().resolves('rootA'),
     diffWithRemote      : sinon.stub().resolves({ onlyRemote: [], onlyLocal: [] }),
-    admitRemoteMessages : sinon.stub().resolves(),
-    pushMessages        : sinon.stub().resolves({ succeeded: [], failed: [], permanentlyFailed: [] }),
+    admitRemoteMessages : sinon.stub().resolves([]),
+    pushMessages        : sinon.stub().resolves({ succeeded: [], failed: [] }),
     ...overrides,
   };
 }
@@ -94,6 +94,20 @@ describe('SyncLinkReconciler', () => {
       expect(outcome.didPush).toBe(false);
       expect(deps.admitRemoteMessages.calledOnce).toBe(true);
       expect(deps.pushMessages.called).toBe(false);
+    });
+
+    it('should include admitted CIDs from pull reconciliation', async () => {
+      const deps = makeDeps({
+        getLocalRoot        : sinon.stub().resolves('rootA'),
+        getRemoteRoot       : sinon.stub().resolves('rootB'),
+        diffWithRemote      : sinon.stub().resolves({ onlyRemote: [{ messageCid: 'cidR1' }], onlyLocal: [] }),
+        admitRemoteMessages : sinon.stub().resolves(['cidR1', 'cidR1-dependency']),
+      });
+      const reconciler = new SyncLinkReconciler(deps);
+
+      const outcome = await reconciler.reconcile(target, { direction: 'pull' });
+
+      expect(outcome.admittedCids).toEqual(['cidR1', 'cidR1-dependency']);
     });
 
     it('should only push when direction is push', async () => {
@@ -311,7 +325,7 @@ describe('SyncLinkReconciler', () => {
 
   describe('push result propagation', () => {
     it('should include pushResult in the outcome', async () => {
-      const pushResult = { succeeded: ['cid1'], failed: ['cid2'], permanentlyFailed: [] };
+      const pushResult = { succeeded: ['cid1'], failed: [{ cid: 'cid2' }] };
       const deps = makeDeps({
         getLocalRoot   : sinon.stub().resolves('rootA'),
         getRemoteRoot  : sinon.stub().resolves('rootB'),

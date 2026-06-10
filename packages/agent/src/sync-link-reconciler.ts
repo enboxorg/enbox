@@ -24,6 +24,7 @@ export type ReconcileOutcome = {
   postLocalRoot?: string;
   postRemoteRoot?: string;
   converged?: boolean;
+  admittedCids?: string[];
   pushResult?: PushResult;
 };
 
@@ -51,7 +52,7 @@ type ReconcileDeps = {
     messageCids: string[];
     prefetched: (MessagesSyncDiffEntry & { message: GenericMessage })[];
     shouldContinue?: () => boolean;
-  }) => Promise<void>;
+  }) => Promise<string[]>;
   pushMessages: (params: {
     did: string;
     dwnUrl: string;
@@ -107,6 +108,7 @@ export class SyncLinkReconciler {
 
     let didPull = false;
     let didPush = false;
+    const admittedCids: string[] = [];
     let pushResult: PushResult | undefined;
 
     if (localRoot !== remoteRoot) {
@@ -116,7 +118,7 @@ export class SyncLinkReconciler {
       if ((!direction || direction === 'pull') && diff.onlyRemote.length > 0) {
         const { prefetched, needsFetchCids } = partitionRemoteEntries(diff.onlyRemote);
         try {
-          await this._deps.admitRemoteMessages({
+          admittedCids.push(...await this._deps.admitRemoteMessages({
             did,
             dwnUrl,
             delegateDid,
@@ -125,7 +127,7 @@ export class SyncLinkReconciler {
             messageCids: needsFetchCids,
             prefetched,
             shouldContinue,
-          });
+          }));
         } catch (error) {
           if (error instanceof SyncPullAbortedError) {
             return { aborted: true, changed: true, didPull: false, didPush: false, localRoot, remoteRoot };
@@ -154,6 +156,7 @@ export class SyncLinkReconciler {
         didPush,
         localRoot,
         remoteRoot,
+        admittedCids,
         pushResult,
       };
     }
@@ -177,6 +180,7 @@ export class SyncLinkReconciler {
       postLocalRoot,
       postRemoteRoot,
       converged : postLocalRoot === postRemoteRoot,
+      admittedCids,
       pushResult,
     };
   }

@@ -13,7 +13,7 @@ import type { DwnMessageParams } from './types/dwn.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncMessageEntry } from './sync-messages.js';
-import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
+import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushFailure, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 
@@ -120,6 +120,7 @@ type SyncReconcileOptions = {
 
 type SyncReconcileResult = {
   aborted?: boolean;
+  admittedCids?: string[];
   converged?: boolean;
 };
 
@@ -174,7 +175,7 @@ type LinkRuntimeState = {
   inflight: Map<number, InFlightCommit>;
 };
 
-type PushRuntimeEntry = { cid: string };
+type PushRuntimeEntry = { cid: string; lastFailure?: PushFailure };
 
 type PushRuntimeState = {
   did: string;
@@ -1138,6 +1139,16 @@ export class SyncEngineLevel implements SyncEngine {
         authorization,
       }, undefined, () => this._engineGeneration === generation && !isStaleLink());
       if (reconcileOutcome.aborted) { return; }
+      if (this._engineGeneration !== generation || isStaleLink()) { return; }
+      if (reconcileOutcome.admittedCids !== undefined && reconcileOutcome.admittedCids.length > 0) {
+        this.emitEvent({
+          type           : 'reconcile:applied',
+          tenantDid      : did,
+          remoteEndpoint : dwnUrl,
+          ...eventScope,
+          messageCids    : reconcileOutcome.admittedCids,
+        });
+      }
 
       // Step 4: Determine the post-repair pull resume token.
       // - If repair was triggered by ProgressGap, use the stored resumeToken
@@ -1211,10 +1222,6 @@ export class SyncEngineLevel implements SyncEngine {
       link.connectivity = 'online';
       await this.ledger.setStatus(link, 'live');
 
-      // Root convergence proves primary CID membership matches, but it does
-      // not prove a failed root can be admitted. Keep admission failures until
-      // that specific CID later applies successfully.
-      await this.clearRootConvergenceDeadLettersForScope(did, dwnUrl, scope);
       this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
       if (prevRepairConnectivity !== 'online') {
         this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: prevRepairConnectivity, to: 'online' });
@@ -2456,8 +2463,9 @@ export class SyncEngineLevel implements SyncEngine {
         dwnUrl,
         delegateDid,
         permissionGrantIds,
-        messageCids : pushEntries.map((entry) => entry.cid),
-        agent       : this.agent,
+        messageCids    : pushEntries.map((entry) => entry.cid),
+        agent          : this.agent,
+        permissionsApi : this._permissionsApi,
       });
 
       await this.handlePushBatchResult(linkKey, batch, result);
@@ -2525,7 +2533,6 @@ export class SyncEngineLevel implements SyncEngine {
     if (batch.isStale()) { return; }
 
     this.clearSucceededPushFailures(result.succeeded, batch.pushRuntime.dwnUrl);
-    await this.recordPermanentPushFailures(batch.pushRuntime, result.permanentlyFailed);
 
     if (result.failed.length > 0) {
       this.requeueFailedPushes(linkKey, batch, result.failed);
@@ -2541,29 +2548,14 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async recordPermanentPushFailures(
-    pushRuntime: PushRuntimeState,
-    permanentlyFailed: PushResult['permanentlyFailed'],
-  ): Promise<void> {
-    for (const entry of permanentlyFailed) {
-      await this.recordDeadLetter({
-        messageCid     : entry.cid,
-        tenantDid      : pushRuntime.did,
-        remoteEndpoint : pushRuntime.dwnUrl,
-        protocol       : pushRuntime.protocol,
-        category       : 'push-permanent',
-        errorCode      : String(entry.statusCode ?? ''),
-        errorDetail    : entry.detail ?? 'permanent push failure',
-      });
-    }
-  }
-
-  private requeueFailedPushes(linkKey: string, batch: PushFlushBatch, failedCids: string[]): void {
+  private requeueFailedPushes(linkKey: string, batch: PushFlushBatch, failed: PushFailure[]): void {
     if (batch.isStale()) { return; }
 
     const { did, dwnUrl, delegateDid, protocol, permissionGrantIds, retryCount } = batch.pushRuntime;
-    const failedSet = new Set(failedCids);
-    const failedEntries = batch.pushEntries.filter((entry) => failedSet.has(entry.cid));
+    const failedEntries = failed.map((failure) => ({
+      cid         : failure.cid,
+      lastFailure : failure,
+    }));
     this.requeueOrReconcile(linkKey, {
       did,
       dwnUrl,
@@ -2601,8 +2593,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Push retry backoff schedule: immediate, 250ms, 1s, 2s, then give up. */
   private static readonly PUSH_RETRY_BACKOFF_MS = [0, 250, 1000, 2000];
-  private static readonly ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES: ReadonlySet<DeadLetterCategory> =
-    new Set(['push-permanent', 'push-exhausted']);
 
   /**
    * Re-queues a failed push batch for retry, or marks the link
@@ -2619,17 +2609,22 @@ export class SyncEngineLevel implements SyncEngine {
     const pushRuntime = this.getOrCreatePushRuntime(targetKey, pending);
 
     if (pending.retryCount >= maxRetries) {
-      // Retry budget exhausted — record each CID as a dead letter and mark
-      // the link dirty for reconciliation.
+      // Retry budget exhausted. Client-error replies are terminal admission
+      // failures for this remote; transport/runtime failures just dirty the
+      // link for later reconciliation.
       for (const entry of pending.entries) {
-        void this.recordDeadLetter({
-          messageCid     : entry.cid,
-          tenantDid      : pending.did,
-          remoteEndpoint : pending.dwnUrl,
-          protocol       : pending.protocol,
-          category       : 'push-exhausted',
-          errorDetail    : `push retries exhausted after ${maxRetries} attempts`,
-        });
+        const statusCode = entry.lastFailure?.statusCode;
+        if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+          void this.recordDeadLetter({
+            messageCid     : entry.cid,
+            tenantDid      : pending.did,
+            remoteEndpoint : pending.dwnUrl,
+            protocol       : pending.protocol,
+            category       : 'admit-failed',
+            errorCode      : String(statusCode),
+            errorDetail    : entry.lastFailure?.detail ?? `push rejected after ${maxRetries} attempts`,
+          });
+        }
       }
       if (pushRuntime.timer) {
         clearTimeout(pushRuntime.timer);
@@ -2706,6 +2701,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     let converged = true;
+    const admittedCids: string[] = [];
     const permissionGrantIds = this.getAuthorizationGrantIds(target.authorization);
     const reconciler = this.createLinkReconciler(shouldContinue);
 
@@ -2723,9 +2719,12 @@ export class SyncEngineLevel implements SyncEngine {
       if (options?.verifyConvergence === true && outcome.converged !== true) {
         converged = false;
       }
+      if (outcome.admittedCids !== undefined) {
+        admittedCids.push(...outcome.admittedCids);
+      }
     }
 
-    return options?.verifyConvergence === true ? { converged } : {};
+    return options?.verifyConvergence === true ? { admittedCids, converged } : { admittedCids };
   }
 
   private async reconcileProtocolSetSyncTarget(
@@ -2741,7 +2740,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const pullResult = await this.applyProtocolSetRemoteDiffs(context, diffResult.diffs, options);
-    if (pullResult) {
+    if (pullResult?.aborted) {
       return pullResult;
     }
 
@@ -2751,10 +2750,14 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     if (options?.verifyConvergence !== true) {
-      return {};
+      return { admittedCids: pullResult?.admittedCids ?? [] };
     }
 
-    return this.verifyProtocolSetConvergence(context);
+    const convergence = await this.verifyProtocolSetConvergence(context);
+    return {
+      ...convergence,
+      admittedCids: pullResult?.admittedCids ?? [],
+    };
   }
 
   private createProtocolSetReconcileContext(
@@ -2833,8 +2836,9 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const { prefetched, needsFetchCids } = partitionRemoteEntries(onlyRemote);
+    let admittedCids: string[];
     try {
-      await this.admitRemoteMessages({
+      admittedCids = await this.admitRemoteMessages({
         did                : context.did,
         dwnUrl             : context.dwnUrl,
         delegateDid        : context.delegateDid,
@@ -2853,7 +2857,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
       ? { aborted: true }
-      : undefined;
+      : { admittedCids };
   }
 
   private async applyProtocolSetLocalDiffs(
@@ -2909,22 +2913,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return { converged: true };
-  }
-
-  private async clearRootConvergenceDeadLettersForScope(
-    tenantDid: string,
-    remoteEndpoint: string,
-    scope: SyncScope,
-  ): Promise<void> {
-    for (const protocol of this.getReconcileProtocols(scope)) {
-      await this.clearRootConvergenceDeadLetters(tenantDid, remoteEndpoint, protocol);
-    }
-    if (scope.kind === 'protocolSet' && scope.protocols.length > 1) {
-      // Multi-protocol reconciliation applies one combined dependency-sorted
-      // batch, so operational dead letters from that batch are stored without a
-      // single protocol label.
-      await this.clearRootConvergenceDeadLetters(tenantDid, remoteEndpoint);
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -3019,17 +3007,23 @@ export class SyncEngineLevel implements SyncEngine {
         authorization,
       }, { verifyConvergence: true }, shouldContinue);
       if (reconcileOutcome.aborted || isStaleLink()) { return; }
+      if (reconcileOutcome.admittedCids !== undefined && reconcileOutcome.admittedCids.length > 0) {
+        this.emitEvent({
+          type           : 'reconcile:applied',
+          tenantDid      : did,
+          remoteEndpoint : dwnUrl,
+          ...eventScope,
+          messageCids    : reconcileOutcome.admittedCids,
+        });
+      }
 
       if (reconcileOutcome.converged) {
         await this.ledger.clearNeedsReconcile(link);
-        // SMT roots match, so transport/apply failures for this link may no
-        // longer be current. Closure failures are not cleared by root equality.
-        await this.clearRootConvergenceDeadLettersForScope(did, dwnUrl, scope);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
       } else {
         // Roots still differ — retry after a delay. This can happen when
-        // pushMessages() had permanent failures, remote admission partially
-        // failed, or new writes arrived during reconciliation.
+        // push retries were exhausted, remote admission partially failed, or
+        // new writes arrived during reconciliation.
         if (!isStaleLink()) { this.scheduleReconcile(linkKey, 5000); }
       }
     } catch (error: any) {
@@ -3437,7 +3431,7 @@ export class SyncEngineLevel implements SyncEngine {
     messageCids: string[];
     prefetched?: MessagesSyncDiffEntry[];
     shouldContinue?: () => boolean;
-  }): Promise<void> {
+  }): Promise<string[]> {
     const admissionScope: SyncScope = scope ?? (protocol === undefined
       ? { kind: 'full' }
       : { kind: 'protocolSet', protocols: [protocol] });
@@ -3467,6 +3461,7 @@ export class SyncEngineLevel implements SyncEngine {
       }),
     ];
     const rootCids = await SyncEngineLevel.orderedRootCids(prefetchedEntries, rootCidsToAdmit);
+    const admittedCids: string[] = [];
 
     for (const rootCid of rootCids) {
       if (await this.hasAdmissionDeadLetter(did, dwnUrl, rootCid)) {
@@ -3499,8 +3494,12 @@ export class SyncEngineLevel implements SyncEngine {
           errorCode      : outcome.reason,
           errorDetail    : outcome.detail ?? 'replicated message admission failed',
         });
+      } else if (outcome.kind === 'admitted') {
+        admittedCids.push(...outcome.appliedCids);
       }
     }
+
+    return admittedCids;
   }
 
   private static syncEntriesFromPrefetchedDiff(prefetched?: MessagesSyncDiffEntry[]): SyncMessageEntry[] {
@@ -3619,7 +3618,8 @@ export class SyncEngineLevel implements SyncEngine {
   }): Promise<PushResult> {
     return pushMessages({
       did, dwnUrl, delegateDid, permissionGrantIds, messageCids,
-      agent: this.agent,
+      agent          : this.agent,
+      permissionsApi : this._permissionsApi,
     });
   }
 
@@ -3671,20 +3671,6 @@ export class SyncEngineLevel implements SyncEngine {
     } catch (error) {
       const e = error as { code?: string };
       if (e.code !== 'LEVEL_DATABASE_NOT_OPEN') { throw error; }
-    }
-  }
-
-  private async clearRootConvergenceDeadLetters(
-    tenantDid: string,
-    remoteEndpoint: string,
-    protocol?: string,
-  ): Promise<void> {
-    try {
-      await this.clearDeadLettersForLink(tenantDid, remoteEndpoint, protocol, {
-        categories: SyncEngineLevel.ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES,
-      });
-    } catch (error) {
-      console.warn(`SyncEngineLevel: Failed to clear root-convergence dead letters for ${tenantDid} -> ${remoteEndpoint}`, error);
     }
   }
 

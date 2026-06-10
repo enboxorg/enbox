@@ -1,9 +1,29 @@
-import type { GenericMessage, MessagesReadReply, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type {
+  GenericMessage,
+  GenericSignaturePayload,
+  MessagesReadReply,
+  ProtocolDefinition,
+  ProtocolsConfigureMessage,
+  ProtocolsQueryReply,
+  RecordsDeleteMessage,
+  RecordsQueryReply,
+  RecordsWriteMessage,
+  UnionMessageReply,
+} from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
-import type { PermanentPushFailure, PushResult } from './types/sync.js';
+import type { PermissionsApi } from './types/permissions.js';
+import type { PushFailure, PushResult } from './types/sync.js';
 
-import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
+import {
+  DwnInterfaceName,
+  DwnMethodName,
+  Encoder,
+  isCrossProtocolRef,
+  Jws,
+  Message,
+  parseCrossProtocolRef,
+} from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
@@ -63,38 +83,6 @@ export function syncMessageReplyIsSuccessful(reply: UnionMessageReply, pushedMes
         reply.entry?.message.descriptor.method === DwnMethodName.Delete) {
       return true;
     }
-  }
-
-  return false;
-}
-
-/**
- * 400 error codes that indicate a dependency has not arrived on the remote yet.
- * These resolve on retry once the missing dependency is pushed, so they must not
- * be treated as permanent.
- */
-const TRANSIENT_DEPENDENCY_ERROR_CODES = [
-  DwnErrorCode.ProtocolsConfigureComposedProtocolNotInstalled,
-  DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound,
-  DwnErrorCode.ProtocolAuthorizationParentRecordNotFound,
-  DwnErrorCode.ProtocolAuthorizationProtocolNotFound,
-];
-
-/**
- * Classifies a failed push reply as permanent (dead-letter) or
- * transient (retry with backoff).
- *
- * Permanent: 401/403 auth errors, most 400 validation errors.
- * Transient: 5xx, network errors, and 400 protocol-dependency errors
- * that self-heal once the dependency arrives on the remote.
- */
-export function isPermanentPushFailure(reply: UnionMessageReply): boolean {
-  const { code, detail } = reply.status;
-
-  if (code === 401 || code === 403) { return true; }
-
-  if (code === 400) {
-    return !TRANSIENT_DEPENDENCY_ERROR_CODES.some(errorCode => detail?.startsWith(`${errorCode}:`));
   }
 
   return false;
@@ -254,45 +242,77 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permission
  * on the first failure. Callers use this to advance the push checkpoint
  * incrementally — only up to the highest contiguous success.
  */
-export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent }: {
+export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent, permissionsApi }: {
   did: string;
   dwnUrl: string;
   delegateDid?: string;
   permissionGrantIds?: string[];
   messageCids: string[];
   agent: EnboxPlatformAgent;
+  permissionsApi?: PermissionsApi;
 }): Promise<PushResult> {
+  const requestedRootCids = [...new Set(messageCids)];
+  const requestedRootCidSet = new Set(requestedRootCids);
   const succeeded: string[] = [];
-  const permanentlyFailed: PermanentPushFailure[] = [];
+  const failedByRoot = new Map<string, PushFailure>();
   const { fetched, failed } = await fetchLocalMessagesForPush({
     did,
     delegateDid,
     permissionGrantIds,
-    messageCids,
+    messageCids: requestedRootCids,
     agent,
   });
 
-  // Step 2: Sort in dependency order using topological sort.
-  const sorted = topologicalSort(fetched);
+  for (const failure of failed) {
+    failedByRoot.set(failure.cid, failure);
+  }
 
-  // Step 3: Buffer data streams so they survive fetch retries.
+  const closure = await expandLocalPushClosure({
+    did,
+    delegateDid,
+    permissionGrantIds,
+    roots: fetched,
+    agent,
+    permissionsApi,
+  });
+  const sorted = topologicalSort(closure);
+
   // ReadableStream is single-use — if sendDwnRequest's underlying fetch
   // retries the HTTP request, the original stream is already consumed.
   await bufferSmallStreams(sorted);
 
-  // Step 4: Push messages in dependency order.
+  let dependencyFailure: PushFailure | undefined;
   for (const entry of sorted) {
     const outcome = await pushSingleMessage({ did, dwnUrl, entry, agent });
     if (outcome.status === 'succeeded') {
-      succeeded.push(outcome.cid);
-    } else if (outcome.status === 'permanent') {
-      permanentlyFailed.push(outcome.failure);
-    } else {
-      failed.push(outcome.cid);
+      if (requestedRootCidSet.has(outcome.cid)) {
+        succeeded.push(outcome.cid);
+        failedByRoot.delete(outcome.cid);
+      }
+      continue;
+    }
+
+    if (requestedRootCidSet.has(outcome.failure.cid)) {
+      failedByRoot.set(outcome.failure.cid, outcome.failure);
+      continue;
+    }
+
+    dependencyFailure ??= outcome.failure;
+  }
+
+  const succeededRootSet = new Set(succeeded);
+  if (dependencyFailure !== undefined) {
+    for (const rootCid of requestedRootCids) {
+      if (!succeededRootSet.has(rootCid) && !failedByRoot.has(rootCid)) {
+        failedByRoot.set(rootCid, {
+          cid    : rootCid,
+          detail : `dependency push failed before root push: ${dependencyFailure.detail ?? dependencyFailure.cid}`,
+        });
+      }
     }
   }
 
-  return { succeeded, failed, permanentlyFailed };
+  return { succeeded, failed: [...failedByRoot.values()] };
 }
 
 async function fetchLocalMessagesForPush({ did, delegateDid, permissionGrantIds, messageCids, agent }: {
@@ -301,16 +321,16 @@ async function fetchLocalMessagesForPush({ did, delegateDid, permissionGrantIds,
   permissionGrantIds?: string[];
   messageCids: string[];
   agent: EnboxPlatformAgent;
-}): Promise<{ fetched: SyncMessageEntry[]; failed: string[] }> {
+}): Promise<{ fetched: SyncMessageEntry[]; failed: PushFailure[] }> {
   const fetched: SyncMessageEntry[] = [];
-  const failed: string[] = [];
+  const failed: PushFailure[] = [];
 
   for (const messageCid of messageCids) {
     const dwnMessage = await getLocalMessage({ author: did, messageCid, delegateDid, permissionGrantIds, agent });
     if (dwnMessage) {
       fetched.push(dwnMessage);
     } else {
-      failed.push(messageCid);
+      failed.push({ cid: messageCid, detail: 'local message not found' });
     }
   }
 
@@ -319,8 +339,7 @@ async function fetchLocalMessagesForPush({ did, delegateDid, permissionGrantIds,
 
 type PushSingleMessageOutcome =
   | { status: 'succeeded'; cid: string }
-  | { status: 'failed'; cid: string }
-  | { status: 'permanent'; cid: string; failure: PermanentPushFailure };
+  | { status: 'failed'; failure: PushFailure };
 
 async function pushSingleMessage({ did, dwnUrl, entry, agent }: {
   did: string;
@@ -342,20 +361,14 @@ async function pushSingleMessage({ did, dwnUrl, entry, agent }: {
       return { status: 'succeeded', cid };
     }
 
-    if (isPermanentPushFailure(reply)) {
-      logPermanentPushFailure(cid, reply);
-      return {
-        status  : 'permanent',
-        cid,
-        failure : { cid, statusCode: reply.status.code, detail: reply.status.detail ?? '' },
-      };
-    }
-
     console.error(`SyncEngineLevel: push failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
-    return { status: 'failed', cid };
+    return {
+      status  : 'failed',
+      failure : { cid, statusCode: reply.status.code, detail: reply.status.detail ?? '' },
+    };
   } catch (error: any) {
     console.error(`SyncEngineLevel: push error for ${cid}: ${error.message ?? error}`);
-    return { status: 'failed', cid };
+    return { status: 'failed', failure: { cid, detail: error.message ?? String(error) } };
   }
 }
 
@@ -365,18 +378,6 @@ function pushData(entry: SyncMessageEntry): Blob | ReadableStream<Uint8Array> | 
   return entry.bufferedData
     ? new Blob([entry.bufferedData] as BlobPart[], { type: 'application/octet-stream' })
     : entry.dataStream;
-}
-
-function logPermanentPushFailure(cid: string, reply: UnionMessageReply): void {
-  if (reply.status.code === 400 && reply.status.detail?.includes('record limit')) {
-    // Expected for singleton convergence in multi-device scenarios: one device
-    // created a singleton record, this device has another, and the remote
-    // rejects the duplicate.
-    console.debug(`SyncEngineLevel: singleton already exists on remote, skipping push for ${cid}`);
-    return;
-  }
-
-  console.warn(`SyncEngineLevel: push permanently failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
 }
 
 /**
@@ -411,4 +412,358 @@ export async function getLocalMessage({ author, delegateDid, permissionGrantIds,
   }
 
   return result;
+}
+
+async function expandLocalPushClosure({ did, delegateDid, permissionGrantIds, roots, agent, permissionsApi }: {
+  did: string;
+  delegateDid?: string;
+  permissionGrantIds?: string[];
+  roots: SyncMessageEntry[];
+  agent: EnboxPlatformAgent;
+  permissionsApi?: PermissionsApi;
+}): Promise<SyncMessageEntry[]> {
+  const builder = new LocalPushClosureBuilder({
+    did,
+    delegateDid,
+    permissionGrantIds,
+    agent,
+    permissionsApi,
+  });
+  return builder.expand(roots);
+}
+
+class LocalPushClosureBuilder {
+  private readonly entriesByCid = new Map<string, SyncMessageEntry>();
+  private readonly fetchedProtocols = new Set<string>();
+  private readonly fetchedRecordIds = new Set<string>();
+  private readonly fetchedRoles = new Set<string>();
+
+  public constructor(private readonly deps: {
+    did: string;
+    delegateDid?: string;
+    permissionGrantIds?: string[];
+    agent: EnboxPlatformAgent;
+    permissionsApi?: PermissionsApi;
+  }) { }
+
+  public async expand(roots: SyncMessageEntry[]): Promise<SyncMessageEntry[]> {
+    const queue: SyncMessageEntry[] = [];
+    for (const root of roots) {
+      if (await this.rememberEntry(root)) {
+        queue.push(root);
+      }
+    }
+
+    for (let i = 0; i < queue.length; i++) {
+      const dependencies = await this.fetchDependencies(queue[i].message);
+      for (const dependency of dependencies) {
+        if (await this.rememberEntry(dependency)) {
+          queue.push(dependency);
+        }
+      }
+    }
+
+    return [...this.entriesByCid.values()];
+  }
+
+  private async fetchDependencies(message: GenericMessage): Promise<SyncMessageEntry[]> {
+    if (isProtocolsConfigureMessage(message)) {
+      return this.fetchComposedProtocolConfigs(message.descriptor.definition);
+    }
+
+    if (isRecordsDeleteMessage(message)) {
+      return this.fetchRecordsByRecordId(message.descriptor.recordId);
+    }
+
+    if (!isRecordsWriteMessage(message)) {
+      return [];
+    }
+
+    const dependencies: SyncMessageEntry[] = [];
+    const { protocol, parentId } = message.descriptor;
+    if (protocol !== undefined) {
+      dependencies.push(...await this.fetchProtocolConfig(protocol));
+    }
+
+    if (!isInitialWrite(message)) {
+      dependencies.push(...await this.fetchRecordsByRecordId(message.recordId, protocol));
+    }
+
+    if (parentId !== undefined) {
+      dependencies.push(...await this.fetchRecordsByRecordId(parentId, protocol));
+    }
+
+    for (const permissionGrantId of getInvokedPermissionGrantIds(message)) {
+      dependencies.push(...await this.fetchRecordsByRecordId(permissionGrantId));
+    }
+
+    dependencies.push(...await this.fetchRoleRecord(message));
+    return dependencies;
+  }
+
+  private async fetchComposedProtocolConfigs(definition: ProtocolDefinition): Promise<SyncMessageEntry[]> {
+    const protocols = Object.values(definition.uses ?? {}).filter((protocol): protocol is string => typeof protocol === 'string');
+    const entries: SyncMessageEntry[] = [];
+    for (const protocol of protocols) {
+      entries.push(...await this.fetchProtocolConfig(protocol));
+    }
+    return entries;
+  }
+
+  private async fetchProtocolConfig(protocol: string): Promise<SyncMessageEntry[]> {
+    if (this.fetchedProtocols.has(protocol)) {
+      return [];
+    }
+    this.fetchedProtocols.add(protocol);
+
+    const config = await this.fetchProtocol(protocol);
+    return config === undefined ? [] : [{ message: config }];
+  }
+
+  private async fetchProtocol(protocol: string): Promise<ProtocolsConfigureMessage | undefined> {
+    const permissionGrantId = await this.getPermissionGrantId(DwnInterface.ProtocolsQuery, protocol);
+    const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
+    const { reply } = await this.deps.agent.dwn.processRequest({
+      author        : this.deps.delegateDid ?? this.deps.did,
+      granteeDid,
+      messageParams : {
+        filter: { protocol },
+        ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
+      },
+      messageType : DwnInterface.ProtocolsQuery,
+      store       : false,
+      target      : this.deps.did,
+    });
+
+    const protocolsReply = reply as ProtocolsQueryReply;
+    if (protocolsReply.status.code !== 200 || protocolsReply.entries === undefined) {
+      return undefined;
+    }
+
+    return newestProtocolConfig(protocolsReply.entries.filter(isTenantProtocolConfig(this.deps.did, protocol)));
+  }
+
+  private async fetchRecordsByRecordId(recordId: string, protocol?: string): Promise<SyncMessageEntry[]> {
+    const key = `${protocol ?? ''}|${recordId}`;
+    if (this.fetchedRecordIds.has(key)) {
+      return [];
+    }
+    this.fetchedRecordIds.add(key);
+
+    const permissionGrantId = protocol === undefined
+      ? undefined
+      : await this.getPermissionGrantId(DwnInterface.RecordsQuery, protocol);
+    const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
+    const { reply } = await this.deps.agent.dwn.processRequest({
+      author        : this.deps.delegateDid ?? this.deps.did,
+      granteeDid,
+      messageParams : {
+        filter: { recordId, ...(protocol === undefined ? {} : { protocol }) },
+        ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
+      },
+      messageType : DwnInterface.RecordsQuery,
+      store       : false,
+      target      : this.deps.did,
+    });
+
+    return this.entriesFromRecordsQueryReply(reply as RecordsQueryReply);
+  }
+
+  private async fetchRoleRecord(message: RecordsWriteMessage): Promise<SyncMessageEntry[]> {
+    const protocol = message.descriptor.protocol;
+    const protocolRole = getSignaturePayload(message)?.protocolRole;
+    const recipient = Message.getAuthor(message);
+    if (protocol === undefined || typeof protocolRole !== 'string' || recipient === undefined) {
+      return [];
+    }
+
+    let roleProtocol = protocol;
+    let roleProtocolPath = protocolRole;
+    if (isCrossProtocolRef(protocolRole)) {
+      const parsed = parseCrossProtocolRef(protocolRole);
+      const config = await this.fetchProtocol(protocol);
+      const referencedProtocol = parsed === undefined ? undefined : config?.descriptor.definition.uses?.[parsed.alias];
+      if (parsed === undefined || referencedProtocol === undefined) {
+        return [];
+      }
+      roleProtocol = referencedProtocol;
+      roleProtocolPath = parsed.protocolPath;
+    }
+
+    const roleSegments = roleProtocolPath.split('/').length - 1;
+    const contextPrefix = roleSegments > 0 && message.contextId !== undefined
+      ? message.contextId.split('/').slice(0, roleSegments).join('/')
+      : undefined;
+    const key = `${roleProtocol}|${roleProtocolPath}|${recipient}|${contextPrefix ?? ''}`;
+    if (this.fetchedRoles.has(key)) {
+      return [];
+    }
+    this.fetchedRoles.add(key);
+
+    const permissionGrantId = await this.getPermissionGrantId(DwnInterface.RecordsQuery, roleProtocol);
+    const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
+    const { reply } = await this.deps.agent.dwn.processRequest({
+      author        : this.deps.delegateDid ?? this.deps.did,
+      granteeDid,
+      messageParams : {
+        filter: {
+          protocol     : roleProtocol,
+          protocolPath : roleProtocolPath,
+          recipient,
+          ...(contextPrefix === undefined ? {} : { contextId: contextPrefix }),
+        },
+        ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
+      },
+      messageType : DwnInterface.RecordsQuery,
+      store       : false,
+      target      : this.deps.did,
+    });
+
+    return this.entriesFromRecordsQueryReply(reply as RecordsQueryReply);
+  }
+
+  private async entriesFromRecordsQueryReply(reply: RecordsQueryReply): Promise<SyncMessageEntry[]> {
+    if (reply.status.code !== 200 || reply.entries === undefined) {
+      return [];
+    }
+
+    const entries: SyncMessageEntry[] = [];
+    for (const entry of reply.entries) {
+      const { encodedData, initialWrite, ...message } = entry;
+      if (initialWrite !== undefined) {
+        entries.push(await this.entryForRecordsQueryMessage(initialWrite));
+      }
+
+      entries.push(await this.entryForRecordsQueryMessage(message, encodedData));
+    }
+
+    return dedupeEntries(entries);
+  }
+
+  private async entryForRecordsQueryMessage(message: GenericMessage, encodedData?: string): Promise<SyncMessageEntry> {
+    const entry: SyncMessageEntry = { message };
+    if (encodedData !== undefined) {
+      entry.bufferedData = Encoder.base64UrlToBytes(encodedData);
+      return entry;
+    }
+
+    if (isRecordsWriteMessage(message) && message.descriptor.dataCid !== undefined) {
+      const messageCid = await getMessageCid(message);
+      const hydrated = await getLocalMessage({
+        author             : this.deps.did,
+        delegateDid        : this.deps.delegateDid,
+        permissionGrantIds : this.deps.permissionGrantIds,
+        messageCid,
+        agent              : this.deps.agent,
+      });
+      if (hydrated !== undefined) {
+        return hydrated;
+      }
+    }
+
+    return entry;
+  }
+
+  private async getPermissionGrantId(messageType: DwnInterface, protocol: string): Promise<string | undefined> {
+    if (this.deps.delegateDid === undefined || this.deps.permissionsApi === undefined) {
+      return undefined;
+    }
+
+    try {
+      const { grant } = await this.deps.permissionsApi.getPermissionForRequest({
+        connectedDid : this.deps.did,
+        delegateDid  : this.deps.delegateDid,
+        protocol,
+        cached       : true,
+        messageType,
+      });
+      return grant.id;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async rememberEntry(entry: SyncMessageEntry): Promise<boolean> {
+    const cid = await getMessageCid(entry.message);
+    if (this.entriesByCid.has(cid)) {
+      return false;
+    }
+    this.entriesByCid.set(cid, entry);
+    return true;
+  }
+}
+
+async function dedupeEntries(entries: SyncMessageEntry[]): Promise<SyncMessageEntry[]> {
+  const byCid = new Map<string, SyncMessageEntry>();
+  for (const entry of entries) {
+    byCid.set(await getMessageCid(entry.message), entry);
+  }
+  return [...byCid.values()];
+}
+
+function isRecordsWriteMessage(message: GenericMessage): message is RecordsWriteMessage {
+  return message.descriptor.interface === DwnInterfaceName.Records &&
+    message.descriptor.method === DwnMethodName.Write &&
+    typeof (message as { recordId?: unknown }).recordId === 'string';
+}
+
+function isRecordsDeleteMessage(message: GenericMessage): message is RecordsDeleteMessage {
+  return message.descriptor.interface === DwnInterfaceName.Records &&
+    message.descriptor.method === DwnMethodName.Delete &&
+    typeof (message.descriptor as { recordId?: unknown }).recordId === 'string';
+}
+
+function isProtocolsConfigureMessage(message: GenericMessage): message is ProtocolsConfigureMessage {
+  return message.descriptor.interface === DwnInterfaceName.Protocols &&
+    message.descriptor.method === DwnMethodName.Configure &&
+    (message.descriptor as { definition?: unknown }).definition !== undefined;
+}
+
+function isInitialWrite(message: RecordsWriteMessage): boolean {
+  return message.descriptor.dateCreated === message.descriptor.messageTimestamp;
+}
+
+function getInvokedPermissionGrantIds(message: GenericMessage): string[] {
+  if (message.authorization === undefined) {
+    return [];
+  }
+
+  try {
+    const signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature) as GenericSignaturePayload;
+    return Message.getPermissionGrantIds(signaturePayload);
+  } catch {
+    return [];
+  }
+}
+
+function getSignaturePayload(message: GenericMessage): Record<string, unknown> | undefined {
+  if (message.authorization === undefined) {
+    return undefined;
+  }
+
+  try {
+    return Jws.decodePlainObjectPayload(message.authorization.signature) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+function isTenantProtocolConfig(tenantDid: string, protocol: string): (message: GenericMessage) => message is ProtocolsConfigureMessage {
+  return (message: GenericMessage): message is ProtocolsConfigureMessage => {
+    if (!isProtocolsConfigureMessage(message)) {
+      return false;
+    }
+
+    return message.descriptor.definition.protocol === protocol && Message.getAuthor(message) === tenantDid;
+  };
+}
+
+function newestProtocolConfig(configs: ProtocolsConfigureMessage[]): ProtocolsConfigureMessage | undefined {
+  let newest: ProtocolsConfigureMessage | undefined;
+  for (const config of configs) {
+    if (newest === undefined || config.descriptor.messageTimestamp > newest.descriptor.messageTimestamp) {
+      newest = config;
+    }
+  }
+  return newest;
 }

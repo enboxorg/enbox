@@ -21,14 +21,16 @@ function makeMessage(overrides: Record<string, unknown> = {}): GenericMessage {
 function makeAuthorizedMessage(
   descriptorOverrides: Record<string, unknown>,
   signaturePayload: Record<string, unknown>,
+  author = 'did:example:alice',
 ): GenericMessage {
   const payload = Buffer.from(JSON.stringify(signaturePayload)).toString('base64url');
+  const protectedHeader = Buffer.from(JSON.stringify({ alg: 'EdDSA', kid: `${author}#key-1` })).toString('base64url');
   return {
     ...makeMessage(descriptorOverrides),
     authorization: {
       signature: {
         payload,
-        signatures: [{ protected: payload, signature: 'fake' }],
+        signatures: [{ protected: protectedHeader, signature: 'fake' }],
       },
     },
   } as unknown as GenericMessage;
@@ -232,6 +234,95 @@ describe('topologicalSort', () => {
     const result = topologicalSort([dependentMsg, grantMsg]);
     expect(result[0]).toBe(grantMsg);
     expect(result[1]).toBe(dependentMsg);
+  });
+
+  it('should place invoked role records before role-authorized writes', () => {
+    const protocol = 'https://example.com/role-sort';
+    const roleMsg: SortEntry = {
+      message: {
+        ...makeMessage({
+          dateCreated      : '2024-01-01T00:00:00.000000Z',
+          messageTimestamp : '2024-01-01T00:00:00.000000Z',
+          protocol,
+          protocolPath     : 'friend',
+          recipient        : 'did:example:bob',
+        }),
+        recordId  : 'friend-role',
+        contextId : 'friend-role',
+      } as unknown as GenericMessage,
+    };
+    const dependentMsg: SortEntry = {
+      message: {
+        ...makeAuthorizedMessage(
+          {
+            dateCreated      : '2024-01-01T00:00:00.000000Z',
+            messageTimestamp : '2024-01-01T00:00:00.000000Z',
+            protocol,
+            protocolPath     : 'chat',
+          },
+          { protocolRole: 'friend' },
+          'did:example:bob',
+        ),
+        recordId: 'chat-record',
+      } as unknown as GenericMessage,
+    };
+
+    const result = topologicalSort([dependentMsg, roleMsg]);
+    expect(result[0]).toBe(roleMsg);
+    expect(result[1]).toBe(dependentMsg);
+  });
+
+  it('should match invoked context roles by ancestor context prefix', () => {
+    const protocol = 'https://example.com/context-role-sort';
+    const matchingRole: SortEntry = {
+      message: {
+        ...makeMessage({
+          dateCreated      : '2024-01-01T00:00:00.000000Z',
+          messageTimestamp : '2024-01-01T00:00:00.000000Z',
+          parentId         : 'thread-1',
+          protocol,
+          protocolPath     : 'thread/participant',
+          recipient        : 'did:example:bob',
+        }),
+        recordId  : 'thread-1-role',
+        contextId : 'thread-1/thread-1-role',
+      } as unknown as GenericMessage,
+    };
+    const otherRole: SortEntry = {
+      message: {
+        ...makeMessage({
+          dateCreated      : '2024-01-01T00:00:00.000000Z',
+          messageTimestamp : '2024-01-01T00:00:00.000000Z',
+          parentId         : 'thread-2',
+          protocol,
+          protocolPath     : 'thread/participant',
+          recipient        : 'did:example:bob',
+        }),
+        recordId  : 'thread-2-role',
+        contextId : 'thread-2/thread-2-role',
+      } as unknown as GenericMessage,
+    };
+    const dependentMsg: SortEntry = {
+      message: {
+        ...makeAuthorizedMessage(
+          {
+            dateCreated      : '2024-01-01T00:00:00.000000Z',
+            messageTimestamp : '2024-01-01T00:00:00.000000Z',
+            parentId         : 'thread-1',
+            protocol,
+            protocolPath     : 'thread/chat',
+          },
+          { protocolRole: 'thread/participant' },
+          'did:example:bob',
+        ),
+        recordId  : 'thread-1-chat',
+        contextId : 'thread-1/thread-1-chat',
+      } as unknown as GenericMessage,
+    };
+
+    const result = topologicalSort([dependentMsg, otherRole, matchingRole]);
+    expect(result.indexOf(matchingRole)).toBeLessThan(result.indexOf(dependentMsg));
+    expect(result.includes(otherRole)).toBe(true);
   });
 
   it('should handle self-referencing edge (from === to) without infinite loop', () => {

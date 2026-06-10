@@ -312,20 +312,18 @@ export type ReplicationLinkState = {
  * Result of a batch push operation. Replaces the previous throw-on-first-failure
  * pattern so callers can advance the push replication checkpoint incrementally.
  */
-/** A permanently failed push entry with diagnostic info. */
-export type PermanentPushFailure = {
+/** A failed push root with diagnostic info from the latest attempt. */
+export type PushFailure = {
   cid : string;
-  statusCode : number;
-  detail : string;
+  statusCode? : number;
+  detail? : string;
 };
 
 export type PushResult = {
   /** messageCids that were accepted (202/204/409 — idempotent success). */
   succeeded: string[];
-  /** messageCids that failed with a transient error (5xx, network) — worth retrying. */
-  failed: string[];
-  /** Messages that failed permanently (400/401/403) — will never succeed, do NOT retry. */
-  permanentlyFailed: PermanentPushFailure[];
+  /** Requested root messageCids that failed and should be retried or reconciled. */
+  failed: PushFailure[];
 };
 
 /**
@@ -383,6 +381,7 @@ export type SyncEvent =
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
   | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid: string }
+  | SyncEventBase & { type: 'reconcile:applied'; messageCids: string[] }
   | SyncEventBase & { type: 'reconcile:needed'; reason: string }
   | SyncEventBase & { type: 'reconcile:completed' }
   | SyncEventBase & { type: 'repair:started'; attempt: number }
@@ -398,7 +397,7 @@ export type SyncEventListener = (event: SyncEvent) => void;
 // ---------------------------------------------------------------------------
 
 /** Category of sync failure for dead letter entries. */
-export type DeadLetterCategory = 'push-permanent' | 'push-exhausted' | 'admit-failed';
+export type DeadLetterCategory = 'admit-failed';
 
 /** A message that permanently failed to sync. */
 export type DeadLetterEntry = {
