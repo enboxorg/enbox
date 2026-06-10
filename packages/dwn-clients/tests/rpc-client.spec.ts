@@ -347,22 +347,24 @@ describe('RPC Clients', () => {
         }
       });
 
-      it('should throw if transport is sockets', async () => {
-        const socketClientSpy = sinon.spy(WebSocketEnboxRpcClient.prototype, 'getServerInfo');
+      it('should resolve socket server info through the matching HTTP info endpoint', async () => {
+        const serverInfo = {
+          maxFileSize              : 123,
+          registrationRequirements : [],
+          server                   : '@enbox/dwn-server',
+          sdkVersion               : '0.0.0-test',
+          url                      : 'http://127.0.0.1/dwn',
+          version                  : '0.0.0-test',
+          webSocketSupport         : true,
+        };
+        const serverInfoStub = sinon.stub(HttpDwnRpcClient.prototype, 'getServerInfo').resolves(serverInfo);
         const client = new EnboxRpcClient();
 
-        for (const transport of ['ws:', 'wss:']) {
-        // request with ws transport
-          try {
-            await client.getServerInfo(`${transport}//127.0.0.1`);
-            throw new Error('Expected error to be thrown');
-          } catch (error: any) {
-            expect(error.message).toBe('not implemented for transports [ws:, wss:]');
-          }
-        }
+        expect(await client.getServerInfo('ws://127.0.0.1/dwn')).toBe(serverInfo);
+        expect(await client.getServerInfo('wss://127.0.0.1/dwn')).toBe(serverInfo);
 
-        // confirm it was called once per each transport
-        expect(socketClientSpy.callCount).toBe(2);
+        expect(serverInfoStub.firstCall.args[0]).toBe('http://127.0.0.1/dwn');
+        expect(serverInfoStub.secondCall.args[0]).toBe('https://127.0.0.1/dwn');
       });
     });
   });
@@ -512,13 +514,21 @@ describe('RPC Clients', () => {
     });
 
     describe('getServerInfo', () => {
-      it('server info requests are not supported over sockets', async () => {
-        try {
-          await client.getServerInfo(socketDwnUrl);
-          throw new Error('Expected error to be thrown');
-        } catch (error: any) {
-          expect(error.message).toBe('not implemented for transports [ws:, wss:]');
-        }
+      it('resolves server info through the matching HTTP info endpoint', async () => {
+        const serverInfo = {
+          maxFileSize              : 123,
+          registrationRequirements : [],
+          server                   : '@enbox/dwn-server',
+          sdkVersion               : '0.0.0-test',
+          url                      : testDwnUrl,
+          version                  : '0.0.0-test',
+          webSocketSupport         : true,
+        };
+        const serverInfoStub = sinon.stub(HttpDwnRpcClient.prototype, 'getServerInfo').resolves(serverInfo);
+
+        expect(await client.getServerInfo(socketDwnUrl)).toBe(serverInfo);
+        expect(serverInfoStub.calledOnce).toBe(true);
+        expect(serverInfoStub.firstCall.args[0]).toBe(new URL(testDwnUrl).toString());
       });
     });
   });

@@ -12,27 +12,33 @@ import type { HttpApi, WsData } from './http-api.js';
 
 import { InMemoryConnectionManager } from './connection/connection-manager.js';
 
+export type WsApiOptions = {
+  activityLog? : ActivityLog;
+  adminStore? : AdminStore;
+  config? : DwnServerConfig;
+  connectionManager? : ConnectionManager;
+  maxInFlight? : number;
+  messageProcessedHooks? : MessageProcessedHook[];
+  registrationStore? : RegistrationStore;
+  tenantRateLimiter? : RateLimiter;
+};
+
 export class WsApi {
   dwn: Dwn;
   readonly #connectionManager: ConnectionManager;
 
-  constructor(
-    httpApi: HttpApi, dwn: Dwn, connectionManager?: ConnectionManager,
-    maxInFlight?: number, activityLog?: ActivityLog,
-    options?: {
-      adminStore? : AdminStore;
-      registrationStore? : RegistrationStore;
-      config? : DwnServerConfig;
-      tenantRateLimiter? : RateLimiter;
-      messageProcessedHooks? : MessageProcessedHook[];
-    },
-  ) {
+  constructor(httpApi: HttpApi, dwn: Dwn, options: WsApiOptions = {}) {
+    const config = options.config ?? httpApi.config;
+
     this.dwn = dwn;
-    this.#connectionManager = connectionManager ||
+    this.#connectionManager = options.connectionManager ||
       new InMemoryConnectionManager(
-        dwn, new Map(), maxInFlight, activityLog,
-        options?.adminStore, options?.registrationStore, options?.config, options?.tenantRateLimiter,
-        options?.messageProcessedHooks,
+        dwn, new Map(), options.maxInFlight ?? config.maxInFlight, options.activityLog,
+        options.adminStore ?? httpApi.adminStore,
+        options.registrationStore ?? httpApi.registrationStore,
+        config,
+        options.tenantRateLimiter ?? httpApi.tenantRateLimiter,
+        options.messageProcessedHooks ?? httpApi.messageProcessedHooks,
       );
 
     // Wire up the WebSocket open event from Bun.serve() to the connection manager.

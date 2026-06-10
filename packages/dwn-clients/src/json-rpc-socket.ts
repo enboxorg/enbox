@@ -177,12 +177,17 @@ export class JsonRpcSocket {
   public async request(request: JsonRpcRequest): Promise<JsonRpcResponse> {
     return new Promise((resolve, reject) => {
       request.id ??= CryptoUtils.randomUuid();
+      const timeout = setTimeout(() => {
+        this.messageHandlers.delete(request.id!);
+        reject(new Error('request timed out'));
+      }, this.responseTimeout);
 
       const handleResponse = (event: { data: any }):void => {
         const jsonRpsResponse = parseJson(toText(event.data)) as JsonRpcResponse;
         if (jsonRpsResponse.id === request.id) {
           // if the incoming response id matches the request id, we will remove the listener and resolve the response
           this.messageHandlers.delete(request.id);
+          clearTimeout(timeout);
           return resolve(jsonRpsResponse);
         }
       };
@@ -190,12 +195,6 @@ export class JsonRpcSocket {
       // add the listener to the map of message handlers
       this.messageHandlers.set(request.id!, handleResponse);
       this.send(request);
-
-      // reject this promise if we don't receive any response back within the timeout period
-      setTimeout(() => {
-        this.messageHandlers.delete(request.id!);
-        reject(new Error('request timed out'));
-      }, this.responseTimeout);
     });
   }
 

@@ -5,7 +5,9 @@ import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { DataStream } from '@enbox/dwn-sdk-js';
+import { DwnRpcError } from './dwn-rpc-error.js';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
+import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
 import { sleep } from '@enbox/common';
 import { createJsonRpcRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
@@ -25,6 +27,9 @@ const DEFAULT_MAX_DELAY_MS = 10_000;
 
 /** Per-request timeout in milliseconds (prevents hung connections / SSRF). */
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+/** Larger per-attempt timeout for data-bearing replicated apply uploads. */
+const DEFAULT_LARGE_REPLICATED_APPLY_TIMEOUT_MS = 300_000;
 
 /** HTTP status codes that are considered retryable. */
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
@@ -164,7 +169,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       fetchOpts.body = requestBody;
     }
 
-    const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts);
+    const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts, { requestTimeoutMs: request.timeoutMs });
 
     // After retries are exhausted, a 429 means we're still rate-limited.
     // Per-IP 429s return plain JSON (not a JSON-RPC envelope), so we must
@@ -206,7 +211,7 @@ export class HttpDwnRpcClient implements DwnRpc {
         const retryAfter = dwnRpcResponse.error.data?.retryAfterSec ?? 1;
         throw new RateLimitError(retryAfter);
       }
-      throw new Error(`(${code}) - ${message}`);
+      throw new DwnRpcError(code, message, dwnRpcResponse.error.data);
     }
 
     // Materialise the response body before attaching to the reply.
@@ -262,7 +267,9 @@ export class HttpDwnRpcClient implements DwnRpc {
       fetchOpts.body = requestBody;
     }
 
-    const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts);
+    const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts, {
+      requestTimeoutMs: request.timeoutMs ?? defaultReplicationApplyTimeoutMs(request.message),
+    });
     if (resp.status === 429) {
       const retryAfter = Number.parseInt(resp.headers.get('retry-after') ?? '1', 10);
       throw new RateLimitError(retryAfter);
@@ -280,10 +287,10 @@ export class HttpDwnRpcClient implements DwnRpc {
         const retryAfter = jsonRpcResponse.error.data?.retryAfterSec ?? 1;
         throw new RateLimitError(retryAfter);
       }
-      throw new Error(`(${code}) - ${message}`);
+      throw new DwnRpcError(code, message, jsonRpcResponse.error.data);
     }
 
-    return jsonRpcResponse.result.result as ReplicationApplyResult;
+    return parseReplicationApplyResult(jsonRpcResponse.result.result);
   }
 
   async getServerInfo(dwnUrl: string): Promise<ServerInfo> {
@@ -337,8 +344,9 @@ export class HttpDwnRpcClient implements DwnRpc {
    * retryable HTTP status codes with exponential backoff and jitter.
    * Honours the `Retry-After` response header when present.
    */
-  private async fetchWithRetry(url: string, init?: RequestInit): Promise<Response> {
+  private async fetchWithRetry(url: string, init?: RequestInit, options: { requestTimeoutMs?: number } = {}): Promise<Response> {
     const { maxRetries, baseDelayMs, maxDelayMs } = this._retryOptions;
+    const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
     let lastError: unknown;
     let lastResponse: Response | undefined;
@@ -348,7 +356,7 @@ export class HttpDwnRpcClient implements DwnRpc {
         // Apply a per-attempt timeout to prevent hung connections / SSRF.
         // If the caller already supplied a signal, combine it with the timeout
         // via AbortSignal.any(); otherwise create a fresh timeout signal.
-        const timeoutSignal = AbortSignal.timeout(DEFAULT_REQUEST_TIMEOUT_MS);
+        const timeoutSignal = AbortSignal.timeout(requestTimeoutMs);
         const attemptInit: RequestInit = {
           ...init,
           signal: init?.signal
@@ -385,4 +393,11 @@ export class HttpDwnRpcClient implements DwnRpc {
     }
     throw lastError;
   }
+}
+
+function defaultReplicationApplyTimeoutMs(message: DwnReplicationApplyRequest['message']): number | undefined {
+  const dataSize = (message as { descriptor?: { dataSize?: unknown } }).descriptor?.dataSize;
+  return typeof dataSize === 'number' && dataSize > 1_048_576
+    ? DEFAULT_LARGE_REPLICATED_APPLY_TIMEOUT_MS
+    : undefined;
 }

@@ -3032,7 +3032,7 @@ describe('SyncEngineLevel', () => {
 
           // Try to flush — the guard in flushPendingPushesForLink should bail.
           const pushStub = sinon.stub(syncEngine as any, 'pushMessages');
-          pushStub.resolves({ succeeded: [], failed: [], permanentlyFailed: [] });
+          pushStub.resolves({ succeeded: [], failed: [] });
 
           await syncEngine['flushPendingPushesForLink'](linkKey);
 
@@ -3289,9 +3289,11 @@ describe('SyncEngineLevel', () => {
 
     function withAuthorizationPayload(
       entry: { message: GenericMessage },
-      payloadProperties: Record<string, unknown>
+      payloadProperties: Record<string, unknown>,
+      author = 'did:example:alice'
     ): { message: GenericMessage } {
       const payload = Buffer.from(JSON.stringify(payloadProperties)).toString('base64url');
+      const protectedHeader = Buffer.from(JSON.stringify({ alg: 'EdDSA', kid: `${author}#key-1` })).toString('base64url');
       return {
         ...entry,
         message: {
@@ -3299,7 +3301,7 @@ describe('SyncEngineLevel', () => {
           authorization: {
             signature: {
               payload,
-              signatures: [{ protected: payload, signature: 'fake' }],
+              signatures: [{ protected: protectedHeader, signature: 'fake' }],
             },
           },
         } as unknown as GenericMessage,

@@ -668,8 +668,8 @@ describe('SyncEngineLevel — private methods', () => {
         onlyLocal  : ['cid-local-1'],
         onlyRemote : [{ messageCid: 'cid-remote-1' }],
       });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
 
       await engine.sync();
 
@@ -690,8 +690,8 @@ describe('SyncEngineLevel — private methods', () => {
         onlyLocal  : ['cid-local-1'],
         onlyRemote : [{ messageCid: 'cid-remote-1' }],
       });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
 
       await engine.sync('pull');
 
@@ -712,8 +712,8 @@ describe('SyncEngineLevel — private methods', () => {
         onlyLocal  : ['cid-local-1'],
         onlyRemote : [{ messageCid: 'cid-remote-1' }],
       });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
 
       await engine.sync('push');
 
@@ -734,8 +734,8 @@ describe('SyncEngineLevel — private methods', () => {
         onlyLocal  : [],
         onlyRemote : [],
       });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
 
       await engine.sync();
 
@@ -792,6 +792,148 @@ describe('SyncEngineLevel — private methods', () => {
       await engine.sync();
 
       expect((engine as any)._consecutiveFailures).toBe(1);
+      expect(engine.connectivityState).toBe('offline');
+    });
+
+    it('should count retryable reconcile push failures as sync endpoint failures', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      (engine as any)._connectivityState = 'online';
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        syncTarget('did:example:1', 'https://dwn.example.com'),
+      ]);
+      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({
+        admittedCids : [],
+        pushFailures : [{ cid: 'cid-1', detail: 'network unavailable' }],
+      });
+      sinon.stub(console, 'error');
+
+      await engine.sync();
+
+      expect((engine as any)._consecutiveFailures).toBe(1);
+      expect(engine.connectivityState).toBe('offline');
+    });
+
+    it('should dead-letter terminal reconcile push failures without marking the endpoint offline', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      (engine as any)._connectivityState = 'online';
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        syncTarget('did:example:1', 'https://dwn.example.com'),
+      ]);
+      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({
+        admittedCids : [],
+        pushFailures : [{ cid: 'cid-terminal', kind: 'Invalid', terminal: true, detail: 'bad request' }],
+      });
+
+      await engine.sync();
+
+      const failedMessages = await engine.getFailedMessages('did:example:1');
+      expect((engine as any)._consecutiveFailures).toBe(0);
+      expect(engine.connectivityState).toBe('online');
+      expect(failedMessages).toHaveLength(1);
+      expect(failedMessages[0].messageCid).toBe('cid-terminal');
+      expect(failedMessages[0].remoteEndpoint).toBe('https://dwn.example.com');
+      expect(failedMessages[0].errorCode).toBe('Invalid');
+    });
+
+    it('should emit reconcile:applied for CIDs admitted during one-shot sync', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const profileProtocol = 'https://example.com/profile';
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        syncTarget('did:example:1', 'https://dwn.example.com', {
+          scope: { kind: 'protocolSet', protocols: [profileProtocol] },
+        }),
+      ]);
+      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({
+        admittedCids : ['cid-protocol', 'cid-profile'],
+        pushFailures : [],
+      });
+
+      await engine.sync();
+
+      const appliedEvent = events.find(e => e.type === 'reconcile:applied');
+      expect(appliedEvent).toBeDefined();
+      expect(appliedEvent.tenantDid).toBe('did:example:1');
+      expect(appliedEvent.remoteEndpoint).toBe('https://dwn.example.com');
+      expect(appliedEvent.protocol).toBe(profileProtocol);
+      expect(appliedEvent.messageCids).toEqual(['cid-protocol', 'cid-profile']);
+    });
+
+    it('should emit reconcile:applied for CIDs admitted by the real one-shot admission path', async () => {
+      const profileProtocol = 'https://example.com/profile-real-admission';
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const write = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : profileProtocol,
+        protocolPath : 'profile',
+      });
+      const writeCid = await Message.getCid(write.message);
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: {} }),
+        dwn               : {
+          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status : { code: 200 },
+            entry  : { message: write.message },
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        syncTarget(alice.did, 'https://dwn.example.com', {
+          scope: { kind: 'protocolSet', protocols: [profileProtocol] },
+        }),
+      ]);
+      sinon.stub(engine as any, 'getLocalRoot').resolves('local-root');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('remote-root');
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
+        onlyLocal  : [],
+        onlyRemote : [{ messageCid: writeCid, message: write.message }],
+      });
+
+      await engine.sync('pull');
+
+      const appliedEvent = events.find(e => e.type === 'reconcile:applied');
+      expect(appliedEvent).toBeDefined();
+      expect(appliedEvent.tenantDid).toBe(alice.did);
+      expect(appliedEvent.remoteEndpoint).toBe('https://dwn.example.com');
+      expect(appliedEvent.protocol).toBe(profileProtocol);
+      expect(appliedEvent.messageCids).toEqual([writeCid]);
+      expect(mockAgent.dwn.applyReplicatedMessage.calledOnce).toBe(true);
+    });
+
+    it('should not dead-letter Deferred push failures during one-shot sync', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      (engine as any)._connectivityState = 'online';
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        syncTarget('did:example:1', 'https://dwn.example.com'),
+      ]);
+      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({
+        admittedCids : [],
+        pushFailures : [{ cid: 'cid-deferred', kind: 'Deferred', reason: 'storage', detail: 'storage unavailable' }],
+      });
+      sinon.stub(console, 'error');
+
+      await engine.sync();
+
+      const failedMessages = await engine.getFailedMessages('did:example:1');
+      expect(failedMessages).toHaveLength(0);
       expect(engine.connectivityState).toBe('offline');
     });
 
@@ -1402,8 +1544,8 @@ describe('SyncEngineLevel — private methods', () => {
     });
 
     it('should reset retryCount to 0 after a successful push', async () => {
-      // processRequest returns a RecordsRead-like response so pushMessages
-      // can read local messages and send them via rpc.
+      // processRequest returns a MessagesRead-like response so pushMessages
+      // can read local messages and apply them via replicated admission.
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
@@ -1415,7 +1557,7 @@ describe('SyncEngineLevel — private methods', () => {
           }),
         },
         rpc: {
-          sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
+          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -1438,6 +1580,26 @@ describe('SyncEngineLevel — private methods', () => {
       expect((engine as any)._pushRuntimes.has('key1')).toBe(false);
     });
 
+    it('should schedule reconcile after a successful retry on a dirty live link', () => {
+      const engine = createEngine({ db });
+      const linkKey = 'key1';
+      const pushRuntime = (engine as any).getOrCreatePushRuntime(linkKey, {
+        did    : 'did:example:alice',
+        dwnUrl : 'https://dwn.example.com',
+      });
+      (engine as any)._activeLinks.set(linkKey, {
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        status         : 'live',
+        needsReconcile : true,
+      });
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
+
+      (engine as any).cleanupSuccessfulPushRuntime(linkKey, pushRuntime);
+
+      expect(scheduleStub.calledOnceWith(linkKey, 500)).toBe(true);
+    });
+
     it('should not let stale retryCount leak to subsequent batches', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
@@ -1450,7 +1612,7 @@ describe('SyncEngineLevel — private methods', () => {
           }),
         },
         rpc: {
-          sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
+          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -1470,9 +1632,9 @@ describe('SyncEngineLevel — private methods', () => {
 
       // Simulate batch B arriving after entries are snapshotted but before
       // the flush completes: add entries directly to the runtime.
-      mockAgent.rpc.sendDwnRequest.callsFake(async () => {
+      mockAgent.rpc.applyReplicatedMessage.callsFake(async () => {
         pushRuntime.entries.push({ cid: 'cid-batch-b' });
-        return { status: { code: 202 } };
+        return { kind: 'Applied' };
       });
 
       await (engine as any).flushPendingPushesForLink('key1');
@@ -1497,7 +1659,7 @@ describe('SyncEngineLevel — private methods', () => {
             },
           }),
         },
-        rpc: { sendDwnRequest: sinon.stub().rejects(new Error('network error')) },
+        rpc: { applyReplicatedMessage: sinon.stub().rejects(new Error('network error')) },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
       (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
@@ -2506,7 +2668,7 @@ describe('SyncEngineLevel — private methods', () => {
           }),
         },
         rpc: {
-          sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
+          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -2593,9 +2755,9 @@ describe('SyncEngineLevel — private methods', () => {
         .callsFake(async ({ protocol }: { protocol: string }) => protocol === profileProtocol
           ? { onlyRemote: [profileEntry], onlyLocal: ['local-profile'] }
           : { onlyRemote: [socialEntry], onlyLocal: ['local-social'] });
-      const admitRemoteMessagesStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
+      const admitRemoteMessagesStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
       const pushMessagesStub = sinon.stub(engine as any, 'pushMessages')
-        .resolves({ succeeded: [], failed: [], permanentlyFailed: [] });
+        .resolves({ succeeded: [], failed: [] });
 
       await (engine as any).reconcileSyncTarget({
         did           : 'did:example:alice',
@@ -2621,6 +2783,102 @@ describe('SyncEngineLevel — private methods', () => {
 
       expect(pushMessagesStub.firstCall.args[0].protocol).toBeUndefined();
       expect(pushMessagesStub.firstCall.args[0].messageCids).toEqual(['local-profile', 'local-social']);
+    });
+
+    it('returns protocol-set push failures from reconciliation', async () => {
+      const profileProtocol = 'https://example.com/profile';
+      const socialProtocol = 'https://example.com/social';
+      const scope = { kind: 'protocolSet', protocols: [profileProtocol, socialProtocol] };
+      const pushFailure = { cid: 'local-profile', kind: 'Invalid', terminal: true, detail: 'bad request' };
+      const engine = createEngine({ db, agent: {} as any });
+      sinon.stub(engine as any, 'getLocalRoot')
+        .callsFake(async (_did: string, _delegateDid: string | undefined, protocol: string) => `local-${protocol}`);
+      sinon.stub(engine as any, 'getRemoteRoot')
+        .callsFake(async (_did: string, _dwnUrl: string, _delegateDid: string | undefined, protocol: string) => `remote-${protocol}`);
+      sinon.stub(engine as any, 'diffWithRemote')
+        .callsFake(async ({ protocol }: { protocol: string }) => protocol === profileProtocol
+          ? { onlyRemote: [], onlyLocal: ['local-profile'] }
+          : { onlyRemote: [], onlyLocal: [] });
+      const pushMessagesStub = sinon.stub(engine as any, 'pushMessages')
+        .resolves({ succeeded: [], failed: [pushFailure] });
+
+      const result = await (engine as any).reconcileSyncTarget({
+        did           : 'did:example:alice',
+        dwnUrl        : 'https://dwn.example.com',
+        scope,
+        authorization : { kind: 'owner' },
+      });
+
+      expect(pushMessagesStub.calledOnce).toBe(true);
+      expect(result.pushFailures).toEqual([pushFailure]);
+    });
+
+    it('skips dead-lettered local protocol-set roots during reconciliation', async () => {
+      const profileProtocol = 'https://example.com/profile';
+      const socialProtocol = 'https://example.com/social';
+      const scope = { kind: 'protocolSet', protocols: [profileProtocol, socialProtocol] };
+      const engine = createEngine({ db, agent: {} as any });
+      await engine.recordDeadLetter({
+        messageCid     : 'local-dead',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        category       : 'admit-failed',
+        errorDetail    : 'terminal push failure',
+      });
+      sinon.stub(engine as any, 'getLocalRoot')
+        .callsFake(async (_did: string, _delegateDid: string | undefined, protocol: string) => `local-${protocol}`);
+      sinon.stub(engine as any, 'getRemoteRoot')
+        .callsFake(async (_did: string, _dwnUrl: string, _delegateDid: string | undefined, protocol: string) => `remote-${protocol}`);
+      sinon.stub(engine as any, 'diffWithRemote')
+        .callsFake(async ({ protocol }: { protocol: string }) => protocol === profileProtocol
+          ? { onlyRemote: [], onlyLocal: ['local-dead'] }
+          : { onlyRemote: [], onlyLocal: [] });
+      const pushMessagesStub = sinon.stub(engine as any, 'pushMessages')
+        .resolves({ succeeded: [], failed: [] });
+
+      const result = await (engine as any).reconcileSyncTarget({
+        did           : 'did:example:alice',
+        dwnUrl        : 'https://dwn.example.com',
+        scope,
+        authorization : { kind: 'owner' },
+      });
+
+      expect(pushMessagesStub.called).toBe(false);
+      expect(result.ignoredLocalCids).toEqual(['local-dead']);
+    });
+
+    it('skips dead-lettered remote protocol-set roots during reconciliation', async () => {
+      const profileProtocol = 'https://example.com/profile';
+      const socialProtocol = 'https://example.com/social';
+      const scope = { kind: 'protocolSet', protocols: [profileProtocol, socialProtocol] };
+      const engine = createEngine({ db, agent: {} as any });
+      await engine.recordDeadLetter({
+        messageCid     : 'remote-dead',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        category       : 'admit-failed',
+        errorDetail    : 'terminal pull failure',
+      });
+      sinon.stub(engine as any, 'getLocalRoot')
+        .callsFake(async (_did: string, _delegateDid: string | undefined, protocol: string) => `local-${protocol}`);
+      sinon.stub(engine as any, 'getRemoteRoot')
+        .callsFake(async (_did: string, _dwnUrl: string, _delegateDid: string | undefined, protocol: string) => `remote-${protocol}`);
+      sinon.stub(engine as any, 'diffWithRemote')
+        .callsFake(async ({ protocol }: { protocol: string }) => protocol === profileProtocol
+          ? { onlyRemote: [{ messageCid: 'remote-dead' }], onlyLocal: [] }
+          : { onlyRemote: [], onlyLocal: [] });
+      const admitRemoteMessagesStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
+
+      const result = await (engine as any).reconcileSyncTarget({
+        did           : 'did:example:alice',
+        dwnUrl        : 'https://dwn.example.com',
+        scope,
+        authorization : { kind: 'owner' },
+      });
+
+      expect(admitRemoteMessagesStub.called).toBe(false);
+      expect(result.ignoredRemoteCids).toEqual(['remote-dead']);
+      expect(result.hasActionableDiffs).toBe(false);
     });
   });
 
@@ -2888,12 +3146,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(failedMessages[0].category).toBe('admit-failed');
       expect(failedMessages[0].errorCode).toBe('terminal');
 
-      await (engine as any).clearRootConvergenceDeadLettersForScope(
-        'did:example:alice',
-        'https://dwn.example.com',
-        { kind: 'protocolSet', protocols: [profileProtocol] },
-      );
-      expect(await engine.getFailedMessages()).toHaveLength(1);
     });
 
     it('pushMessages should delegate to sync-messages pushMessages', async () => {
@@ -2908,7 +3160,7 @@ describe('SyncEngineLevel — private methods', () => {
           }),
         },
         rpc: {
-          sendDwnRequest: sinon.stub().resolves({ status: { code: 202 } }),
+          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -2920,7 +3172,7 @@ describe('SyncEngineLevel — private methods', () => {
         messageCids : ['cid-1'],
       });
 
-      expect(mockAgent.rpc.sendDwnRequest.called).toBe(true);
+      expect(mockAgent.rpc.applyReplicatedMessage.called).toBe(true);
     });
   });
 
@@ -3545,8 +3797,9 @@ describe('SyncEngineLevel — private methods', () => {
         onlyRemote : [{ messageCid: 'remote-cid-1' }],
         onlyLocal  : [],
       });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').callsFake(async (): Promise<void> => {
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').callsFake(async (): Promise<string[]> => {
         link.status = 'degraded_poll';
+        return [];
       });
       const openPullStub = sinon.stub(engine as any, 'openLivePullSubscription').resolves();
       const openPushStub = sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
@@ -3766,7 +4019,7 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('opportunistic push + needsReconcile', () => {
-    it('should mark link needsReconcile when push retries are exhausted', () => {
+    it('should dead-letter terminal push failures immediately and mark link needsReconcile', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
@@ -3781,27 +4034,31 @@ describe('SyncEngineLevel — private methods', () => {
 
       const saveStub = sinon.stub().resolves();
       (engine as any)._ledger = { saveLink: saveStub };
+      const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
 
-      // Call requeueOrReconcile with retryCount >= max retries (4).
-      (engine as any).requeueOrReconcile(linkKey, {
-        did        : 'did:example:alice',
-        dwnUrl     : 'https://dwn.example.com',
-        entries    : [{ cid: 'cid-1' }],
-        retryCount : 4, // exceeds PUSH_RETRY_BACKOFF_MS.length (4)
+      await (engine as any).requeueOrReconcile(linkKey, {
+        did     : 'did:example:alice',
+        dwnUrl  : 'https://dwn.example.com',
+        entries : [{
+          cid         : 'cid-1',
+          lastFailure : { cid: 'cid-1', kind: 'Invalid', terminal: true, detail: 'invalid push' },
+        }],
+        retryCount: 0,
       });
 
-      // Link should be marked as needing reconciliation.
       expect(link.needsReconcile).toBe(true);
+      expect(deadLetterStub.calledOnce).toBe(true);
+      expect(deadLetterStub.firstCall.args[0].category).toBe('admit-failed');
+      expect(deadLetterStub.firstCall.args[0].errorCode).toBe('Invalid');
 
-      // Should NOT have remained in per-link push runtime state.
       expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
     });
 
-    it('should re-queue push entries when retries remain', () => {
+    it('should re-queue push entries when retries remain', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
-      (engine as any).requeueOrReconcile(linkKey, {
+      await (engine as any).requeueOrReconcile(linkKey, {
         did        : 'did:example:alice',
         dwnUrl     : 'https://dwn.example.com',
         entries    : [{ cid: 'cid-1' }],
@@ -3812,6 +4069,47 @@ describe('SyncEngineLevel — private methods', () => {
       expect((engine as any)._pushRuntimes.has(linkKey)).toBe(true);
       const requeued = (engine as any)._pushRuntimes.get(linkKey);
       expect(requeued.retryCount).toBe(1);
+    });
+
+    it('should mark tenant-inactive push failures for reconcile without retrying the message', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = {
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        status         : 'live',
+        pull           : {},
+        needsReconcile : false,
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      const saveStub = sinon.stub().resolves();
+      (engine as any)._ledger = { saveLink: saveStub };
+      const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
+
+      await (engine as any).requeueOrReconcile(linkKey, {
+        did     : 'did:example:alice',
+        dwnUrl  : 'https://dwn.example.com',
+        entries : [{
+          cid         : 'cid-tenant-inactive',
+          lastFailure : {
+            cid            : 'cid-tenant-inactive',
+            detail         : 'tenant inactive',
+            kind           : 'Deferred',
+            reason         : 'tenant-inactive',
+            tenantInactive : true,
+          },
+        }],
+        retryCount: 0,
+      });
+
+      expect(link.needsReconcile).toBe(true);
+      expect(saveStub.calledOnce).toBe(true);
+      expect(deadLetterStub.called).toBe(false);
+      expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
+      await Promise.resolve();
+      expect(scheduleStub.calledOnceWith(linkKey, 30_000)).toBe(true);
     });
 
     it('should not have push checkpoint on ReplicationLinkState', () => {
@@ -3864,8 +4162,8 @@ describe('SyncEngineLevel — private methods', () => {
         return rootCallCount <= 1 ? 'root-B' : 'root-converged';
       });
       sinon.stub(engine as any, 'diffWithRemote').resolves({ onlyRemote: [], onlyLocal: [] });
-      sinon.stub(engine as any, 'admitRemoteMessages').resolves();
-      sinon.stub(engine as any, 'pushMessages').resolves();
+      sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
+      sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
 
       const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
       (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
@@ -3880,18 +4178,54 @@ describe('SyncEngineLevel — private methods', () => {
       expect(events.some(e => e.type === 'reconcile:completed')).toBe(true);
     });
 
+    it('should emit reconcile:applied for CIDs admitted during reconciliation', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink({
+        scope: { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
+      });
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      let localRootCalls = 0;
+      let remoteRootCalls = 0;
+      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
+        localRootCalls++;
+        return localRootCalls === 1 ? 'local-before' : 'root-converged';
+      });
+      sinon.stub(engine as any, 'getRemoteRoot').callsFake(async () => {
+        remoteRootCalls++;
+        return remoteRootCalls === 1 ? 'remote-before' : 'root-converged';
+      });
+      sinon.stub(engine as any, 'diffWithRemote').resolves({ onlyRemote: [{ messageCid: 'cid-profile' }], onlyLocal: [] });
+      sinon.stub(engine as any, 'admitRemoteMessages').resolves(['cid-protocol', 'cid-profile']);
+      sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
+
+      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
+      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      const appliedEvent = events.find(e => e.type === 'reconcile:applied');
+      expect(appliedEvent).toBeDefined();
+      expect(appliedEvent.messageCids).toEqual(['cid-protocol', 'cid-profile']);
+      expect(appliedEvent.protocol).toBe('https://example.com/profile');
+    });
+
     it('should NOT clear needsReconcile when roots still differ after reconciliation', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
 
-      // Roots always differ — simulates permanent push failures.
+      // Roots always differ — simulates push retry exhaustion.
       sinon.stub(engine as any, 'getLocalRoot').resolves('root-local');
       sinon.stub(engine as any, 'getRemoteRoot').resolves('root-remote');
       sinon.stub(engine as any, 'diffWithRemote').resolves({ onlyRemote: [], onlyLocal: ['cid-1'] });
-      sinon.stub(engine as any, 'admitRemoteMessages').resolves();
-      sinon.stub(engine as any, 'pushMessages').resolves();
+      sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
+      sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
 
       const clearStub = sinon.stub().resolves();
       (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
@@ -4072,8 +4406,8 @@ describe('SyncEngineLevel — private methods', () => {
         onlyRemote : [{ messageCid: 'remote-cid-1' }],
         onlyLocal  : ['local-cid-1'],
       });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves();
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
 
       const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
       (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
@@ -4087,6 +4421,116 @@ describe('SyncEngineLevel — private methods', () => {
       // Verify push was called with the onlyLocal CIDs.
       const pushArgs = pushStub.firstCall.args[0];
       expect(pushArgs.messageCids).toEqual(['local-cid-1']);
+    });
+
+    it('doReconcileLink should dead-letter terminal reconcile push failures immediately', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      sinon.stub(engine as any, 'getLocalRoot').resolves('root-local');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-remote');
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
+        onlyRemote : [],
+        onlyLocal  : ['local-cid-1'],
+      });
+      sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
+      sinon.stub(engine as any, 'pushMessages').resolves({
+        succeeded : [],
+        failed    : [{ cid: 'local-cid-1', kind: 'Invalid', terminal: true, detail: 'bad request' }],
+      });
+
+      const clearStub = sinon.stub().resolves();
+      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+      const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      expect(clearStub.called).toBe(false);
+      expect(deadLetterStub.calledOnce).toBe(true);
+      expect(deadLetterStub.firstCall.args[0].messageCid).toBe('local-cid-1');
+      expect(deadLetterStub.firstCall.args[0].errorCode).toBe('Invalid');
+      expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
+    });
+
+    it('doReconcileLink should clear needsReconcile when only dead-lettered local roots differ', async () => {
+      const engine = createEngine({ db });
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+      await engine.recordDeadLetter({
+        messageCid     : 'local-dead',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        category       : 'admit-failed',
+        errorDetail    : 'terminal push failure',
+      });
+
+      sinon.stub(engine as any, 'getLocalRoot').resolves('root-local');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-remote');
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
+        onlyRemote : [],
+        onlyLocal  : ['local-dead'],
+      });
+      sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
+
+      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
+      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      expect(pushStub.called).toBe(false);
+      expect(clearStub.calledOnce).toBe(true);
+      expect(link.needsReconcile).toBe(false);
+      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(false);
+      expect(events.some(event => event.type === 'reconcile:completed')).toBe(false);
+      const settledEvent = events.find(event => event.type === 'reconcile:settled-with-failures');
+      expect(settledEvent).toBeDefined();
+      expect(settledEvent.failedMessageCount).toBe(1);
+    });
+
+    it('doReconcileLink should clear needsReconcile when only dead-lettered remote roots differ', async () => {
+      const engine = createEngine({ db });
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+      await engine.recordDeadLetter({
+        messageCid     : 'remote-dead',
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        category       : 'admit-failed',
+        errorDetail    : 'terminal pull failure',
+      });
+
+      sinon.stub(engine as any, 'getLocalRoot').resolves('root-local');
+      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-remote');
+      sinon.stub(engine as any, 'diffWithRemote').resolves({
+        onlyRemote : [{ messageCid: 'remote-dead' }],
+        onlyLocal  : [],
+      });
+      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
+
+      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
+      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+
+      await (engine as any).doReconcileLink(linkKey);
+
+      expect(admitStub.called).toBe(false);
+      expect(pushStub.called).toBe(false);
+      expect(clearStub.calledOnce).toBe(true);
+      expect(link.needsReconcile).toBe(false);
+      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(false);
+      expect(events.some(event => event.type === 'reconcile:completed')).toBe(false);
+      const settledEvent = events.find(event => event.type === 'reconcile:settled-with-failures');
+      expect(settledEvent).toBeDefined();
+      expect(settledEvent.failedMessageCount).toBe(1);
     });
 
     it('doReconcileLink should abort if the active link epoch changes during pull', async () => {
@@ -4112,7 +4556,7 @@ describe('SyncEngineLevel — private methods', () => {
         (engine as any)._activeLinks.delete(linkKey);
         expect(params.shouldContinue()).toBe(false);
       });
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves();
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
       const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
       (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
 
@@ -4992,7 +5436,7 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid      : 'did:example:tenant1',
         remoteEndpoint : 'https://dwn.example.com',
         protocol       : 'https://example.com/protocol',
-        category       : 'push-permanent',
+        category       : 'admit-failed',
         errorCode      : '400',
         errorDetail    : 'ProtocolAuthorizationProtocolNotFound',
       });
@@ -5001,7 +5445,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(entries.length).toBe(1);
       expect(entries[0].messageCid).toBe('bafyrei-dead-1');
       expect(entries[0].tenantDid).toBe('did:example:tenant1');
-      expect(entries[0].category).toBe('push-permanent');
+      expect(entries[0].category).toBe('admit-failed');
       expect(entries[0].failedAt).toBeDefined();
     });
 
@@ -5011,13 +5455,13 @@ describe('SyncEngineLevel — private methods', () => {
       await engine.recordDeadLetter({
         messageCid  : 'bafyrei-dead-a',
         tenantDid   : 'did:example:alice',
-        category    : 'push-permanent',
+        category    : 'admit-failed',
         errorDetail : 'test',
       });
       await engine.recordDeadLetter({
         messageCid  : 'bafyrei-dead-b',
         tenantDid   : 'did:example:bob',
-        category    : 'push-permanent',
+        category    : 'admit-failed',
         errorDetail : 'test',
       });
 
@@ -5035,7 +5479,7 @@ describe('SyncEngineLevel — private methods', () => {
       await engine.recordDeadLetter({
         messageCid  : 'bafyrei-dead-clear',
         tenantDid   : 'did:example:x',
-        category    : 'push-permanent',
+        category    : 'admit-failed',
         errorDetail : 'test',
       });
 
@@ -5053,7 +5497,7 @@ describe('SyncEngineLevel — private methods', () => {
     it('should clear all dead letter entries', async () => {
       const engine = createEngine({ db });
 
-      await engine.recordDeadLetter({ messageCid: 'dl-1', tenantDid: 'did:a', category: 'push-permanent', errorDetail: 'x' });
+      await engine.recordDeadLetter({ messageCid: 'dl-1', tenantDid: 'did:a', category: 'admit-failed', errorDetail: 'x' });
       await engine.recordDeadLetter({ messageCid: 'dl-2', tenantDid: 'did:b', category: 'admit-failed', errorDetail: 'y' });
 
       await engine.clearAllFailedMessages();
@@ -5064,8 +5508,8 @@ describe('SyncEngineLevel — private methods', () => {
     it('should clear dead letters scoped to a tenant', async () => {
       const engine = createEngine({ db });
 
-      await engine.recordDeadLetter({ messageCid: 'dl-scoped-1', tenantDid: 'did:keep', category: 'push-permanent', errorDetail: 'x' });
-      await engine.recordDeadLetter({ messageCid: 'dl-scoped-2', tenantDid: 'did:remove', category: 'push-permanent', errorDetail: 'y' });
+      await engine.recordDeadLetter({ messageCid: 'dl-scoped-1', tenantDid: 'did:keep', category: 'admit-failed', errorDetail: 'x' });
+      await engine.recordDeadLetter({ messageCid: 'dl-scoped-2', tenantDid: 'did:remove', category: 'admit-failed', errorDetail: 'y' });
 
       await engine.clearAllFailedMessages('did:remove');
 
@@ -5081,7 +5525,7 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid     : 'dl-multi',
         tenantDid      : 'did:x',
         remoteEndpoint : 'https://a.com',
-        category       : 'push-permanent',
+        category       : 'admit-failed',
         errorCode      : '400',
         errorDetail    : 'ProtocolNotFound on A',
       });
@@ -5089,7 +5533,7 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid     : 'dl-multi',
         tenantDid      : 'did:x',
         remoteEndpoint : 'https://b.com',
-        category       : 'push-permanent',
+        category       : 'admit-failed',
         errorCode      : '401',
         errorDetail    : 'Unauthorized on B',
       });
@@ -5102,8 +5546,8 @@ describe('SyncEngineLevel — private methods', () => {
     it('should clear a specific CID+remote pair without affecting other remotes', async () => {
       const engine = createEngine({ db });
 
-      await engine.recordDeadLetter({ messageCid: 'dl-pair', tenantDid: 'did:x', remoteEndpoint: 'https://a.com', category: 'push-permanent', errorDetail: 'a' });
-      await engine.recordDeadLetter({ messageCid: 'dl-pair', tenantDid: 'did:x', remoteEndpoint: 'https://b.com', category: 'push-permanent', errorDetail: 'b' });
+      await engine.recordDeadLetter({ messageCid: 'dl-pair', tenantDid: 'did:x', remoteEndpoint: 'https://a.com', category: 'admit-failed', errorDetail: 'a' });
+      await engine.recordDeadLetter({ messageCid: 'dl-pair', tenantDid: 'did:x', remoteEndpoint: 'https://b.com', category: 'admit-failed', errorDetail: 'b' });
 
       // Clear only the A entry.
       const removed = await engine.clearFailedMessage('dl-pair', 'https://a.com');
@@ -5117,8 +5561,8 @@ describe('SyncEngineLevel — private methods', () => {
     it('should clear all entries for a CID across remotes when no remote is specified', async () => {
       const engine = createEngine({ db });
 
-      await engine.recordDeadLetter({ messageCid: 'dl-all-remotes', tenantDid: 'did:x', remoteEndpoint: 'https://a.com', category: 'push-permanent', errorDetail: 'a' });
-      await engine.recordDeadLetter({ messageCid: 'dl-all-remotes', tenantDid: 'did:x', remoteEndpoint: 'https://b.com', category: 'push-permanent', errorDetail: 'b' });
+      await engine.recordDeadLetter({ messageCid: 'dl-all-remotes', tenantDid: 'did:x', remoteEndpoint: 'https://a.com', category: 'admit-failed', errorDetail: 'a' });
+      await engine.recordDeadLetter({ messageCid: 'dl-all-remotes', tenantDid: 'did:x', remoteEndpoint: 'https://b.com', category: 'admit-failed', errorDetail: 'b' });
 
       const removed = await engine.clearFailedMessage('dl-all-remotes');
       expect(removed).toBe(true);
@@ -5130,137 +5574,42 @@ describe('SyncEngineLevel — private methods', () => {
     it('should return sync health summary', async () => {
       const engine = createEngine({ db });
 
-      await engine.recordDeadLetter({ messageCid: 'dl-health-1', tenantDid: 'did:x', category: 'push-permanent', errorDetail: 'x' });
+      await engine.recordDeadLetter({ messageCid: 'dl-health-1', tenantDid: 'did:x', category: 'admit-failed', errorDetail: 'x' });
       await engine.recordDeadLetter({ messageCid: 'dl-health-2', tenantDid: 'did:y', category: 'admit-failed', errorDetail: 'y' });
 
       const health = await engine.getSyncHealth();
       expect(health.failedMessageCount).toBe(2);
-      expect(health.admissionFailureCount).toBe(1);
+      expect(health.admissionFailureCount).toBe(2);
       expect(health.connectivity).toBeDefined();
       expect(health.degradedLinkCount).toBe(0);
       expect(health.syncHealthy).toBe(false);
     });
 
-    it('should clear dead letters scoped to protocol — sibling protocol failures survive', async () => {
+    it('should surface links needing reconcile in sync health', async () => {
       const engine = createEngine({ db });
-
-      // Two failures for the same (tenantDid, remoteEndpoint) but different protocols.
-      await engine.recordDeadLetter({
-        messageCid     : 'dl-proto-a',
-        tenantDid      : 'did:example:multi-proto',
-        remoteEndpoint : 'https://dwn.example.com',
-        protocol       : 'https://example.com/proto-a',
-        category       : 'admit-failed',
-        errorCode      : 'terminal',
-        errorDetail    : 'admission failed for proto-a',
+      const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
+      await engine.registerIdentity({
+        did     : 'did:needs-reconcile-health',
+        options : { protocols: 'all' },
       });
-      await engine.recordDeadLetter({
-        messageCid     : 'dl-proto-b',
-        tenantDid      : 'did:example:multi-proto',
-        remoteEndpoint : 'https://dwn.example.com',
-        protocol       : 'https://example.com/proto-b',
-        category       : 'push-exhausted',
-        errorDetail    : 'push retries exhausted for proto-b',
+      const target = syncTarget('did:needs-reconcile-health', 'https://dwn.example.com', {
+        authorizationEpoch: ownerEpoch,
       });
 
-      expect((await engine.getFailedMessages()).length).toBe(2);
-
-      // Simulate repair succeeding for proto-a only.
-      await (engine as any).clearDeadLettersForLink(
-        'did:example:multi-proto',
-        'https://dwn.example.com',
-        'https://example.com/proto-a',
-      );
-
-      // Proto-a's failure should be cleared; proto-b's should survive.
-      const remaining = await engine.getFailedMessages();
-      expect(remaining.length).toBe(1);
-      expect(remaining[0].messageCid).toBe('dl-proto-b');
-      expect(remaining[0].protocol).toBe('https://example.com/proto-b');
-    });
-
-    it('should not clear admission dead letters when only root-convergence-clearable categories are requested', async () => {
-      const engine = createEngine({ db });
-
-      await engine.recordDeadLetter({
-        messageCid     : 'dl-admit',
-        tenantDid      : 'did:example:admit-health',
-        remoteEndpoint : 'https://dwn.example.com',
-        protocol       : 'https://example.com/proto',
-        category       : 'admit-failed',
-        errorCode      : 'terminal',
-        errorDetail    : 'admission failed after root convergence',
+      const ledger = (engine as any).ledger;
+      const link = await ledger.getOrCreateLink({
+        tenantDid          : target.did,
+        remoteEndpoint     : target.dwnUrl,
+        scope              : target.scope,
+        authorization      : target.authorization,
+        authorizationEpoch : target.authorizationEpoch,
       });
-      await engine.recordDeadLetter({
-        messageCid     : 'dl-pull',
-        tenantDid      : 'did:example:admit-health',
-        remoteEndpoint : 'https://dwn.example.com',
-        protocol       : 'https://example.com/proto',
-        category       : 'push-permanent',
-        errorDetail    : 'transient pull failure before root convergence',
-      });
-      await engine.recordDeadLetter({
-        messageCid     : 'dl-scope',
-        tenantDid      : 'did:example:admit-health',
-        remoteEndpoint : 'https://dwn.example.com',
-        protocol       : 'https://example.com/proto',
-        category       : 'push-exhausted',
-        errorCode      : 'unknown',
-        errorDetail    : 'transient pull scope rejection before root convergence',
-      });
-
-      await (engine as any).clearDeadLettersForLink(
-        'did:example:admit-health',
-        'https://dwn.example.com',
-        'https://example.com/proto',
-        { categories: new Set(['push-permanent', 'push-exhausted']) },
-      );
-
-      const remaining = await engine.getFailedMessages();
-      expect(remaining.length).toBe(1);
-      expect(remaining[0].messageCid).toBe('dl-admit');
-      expect(remaining[0].category).toBe('admit-failed');
+      link.needsReconcile = true;
+      await ledger.saveLink(link);
 
       const health = await engine.getSyncHealth();
-      expect(health.failedMessageCount).toBe(1);
-      expect(health.admissionFailureCount).toBe(1);
+      expect(health.reconcileNeededCount).toBe(1);
       expect(health.syncHealthy).toBe(false);
-    });
-
-    it('should clear dead letters for full-tenant link without affecting protocol-scoped entries', async () => {
-      const engine = createEngine({ db });
-
-      // Full-tenant failure (no protocol).
-      await engine.recordDeadLetter({
-        messageCid     : 'dl-full-tenant',
-        tenantDid      : 'did:example:mixed',
-        remoteEndpoint : 'https://dwn.example.com',
-        category       : 'admit-failed',
-        errorDetail    : 'full-tenant pull failure',
-      });
-      // Protocol-scoped failure on the same remote.
-      await engine.recordDeadLetter({
-        messageCid     : 'dl-scoped',
-        tenantDid      : 'did:example:mixed',
-        remoteEndpoint : 'https://dwn.example.com',
-        protocol       : 'https://example.com/proto',
-        category       : 'push-permanent',
-        errorCode      : '400',
-        errorDetail    : 'protocol-scoped push failure',
-      });
-
-      expect((await engine.getFailedMessages()).length).toBe(2);
-
-      // Clear only the full-tenant link (protocol = undefined).
-      await (engine as any).clearDeadLettersForLink(
-        'did:example:mixed',
-        'https://dwn.example.com',
-        undefined,
-      );
-
-      const remaining = await engine.getFailedMessages();
-      expect(remaining.length).toBe(1);
-      expect(remaining[0].protocol).toBe('https://example.com/proto');
     });
 
     it('should auto-clear dead letter when same CID later succeeds on push', async () => {
@@ -5270,7 +5619,7 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid     : 'dl-auto-push',
         tenantDid      : 'did:example:auto',
         remoteEndpoint : 'https://dwn.example.com',
-        category       : 'push-exhausted',
+        category       : 'admit-failed',
         errorDetail    : 'retries exhausted',
       });
 
@@ -5301,7 +5650,7 @@ describe('SyncEngineLevel — private methods', () => {
         engine.recordDeadLetter({
           messageCid  : 'dl-io-error',
           tenantDid   : 'did:x',
-          category    : 'push-permanent',
+          category    : 'admit-failed',
           errorDetail : 'test',
         })
       ).rejects.toThrow('disk full');

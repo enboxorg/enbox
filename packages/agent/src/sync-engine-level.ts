@@ -12,8 +12,9 @@ import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-j
 import type { DwnMessageParams } from './types/dwn.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
+import type { ReconcileOutcome } from './sync-link-reconciler.js';
 import type { SyncMessageEntry } from './sync-messages.js';
-import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
+import type { DeadLetterCategory, DeadLetterEntry, NonEmptyStringArray, PushFailure, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 
@@ -24,7 +25,7 @@ import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
-import { computeAuthorizationEpoch, computeProjectionId, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
+import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getMessageCid, pushMessages, SyncPullAbortedError } from './sync-messages.js';
 import { partitionRemoteEntries, SyncLinkReconciler } from './sync-link-reconciler.js';
 import { permissionGrantIdsFromEntries, resolveMessagesSyncScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
@@ -120,7 +121,21 @@ type SyncReconcileOptions = {
 
 type SyncReconcileResult = {
   aborted?: boolean;
+  admittedCids?: string[];
   converged?: boolean;
+  hasActionableDiffs?: boolean;
+  ignoredLocalCids?: string[];
+  ignoredRemoteCids?: string[];
+  pushFailures?: PushFailure[];
+};
+
+type SingleProtocolReconcileAccumulator = {
+  admittedCids: string[];
+  converged: boolean;
+  hasActionableDiffs: boolean;
+  ignoredLocalCids: string[];
+  ignoredRemoteCids: string[];
+  pushFailures: PushFailure[];
 };
 
 type SyncDiffResult = {
@@ -174,7 +189,7 @@ type LinkRuntimeState = {
   inflight: Map<number, InFlightCommit>;
 };
 
-type PushRuntimeEntry = { cid: string };
+type PushRuntimeEntry = { cid: string; lastFailure?: PushFailure };
 
 type PushRuntimeState = {
   did: string;
@@ -660,7 +675,22 @@ export class SyncEngineLevel implements SyncEngine {
       const results = await Promise.allSettled([...byUrl.entries()].map(async ([dwnUrl, targets]) => {
         for (const target of targets) {
           try {
-            await this.reconcileSyncTarget(target, { direction });
+            const result = await this.reconcileSyncTarget(target, { direction });
+            if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
+              this.emitEvent({
+                type           : 'reconcile:applied',
+                tenantDid      : target.did,
+                remoteEndpoint : target.dwnUrl,
+                ...syncEventScope(target.scope),
+                messageCids    : result.admittedCids,
+              });
+            }
+            if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
+              const retryableFailures = await this.recordTerminalSyncPushFailures(target, result.pushFailures);
+              if (retryableFailures > 0) {
+                throw new Error(`SyncEngineLevel: reconciliation push failed for ${retryableFailures} retryable message(s).`);
+              }
+            }
           } catch (error: any) {
             // Skip remaining targets for this DWN endpoint.
             groupsFailed++;
@@ -1138,6 +1168,17 @@ export class SyncEngineLevel implements SyncEngine {
         authorization,
       }, undefined, () => this._engineGeneration === generation && !isStaleLink());
       if (reconcileOutcome.aborted) { return; }
+      if (this._engineGeneration !== generation || isStaleLink()) { return; }
+      const reconcilePushFailures = reconcileOutcome.pushFailures ?? [];
+      if (reconcileOutcome.admittedCids !== undefined && reconcileOutcome.admittedCids.length > 0) {
+        this.emitEvent({
+          type           : 'reconcile:applied',
+          tenantDid      : did,
+          remoteEndpoint : dwnUrl,
+          ...eventScope,
+          messageCids    : reconcileOutcome.admittedCids,
+        });
+      }
 
       // Step 4: Determine the post-repair pull resume token.
       // - If repair was triggered by ProgressGap, use the stored resumeToken
@@ -1210,11 +1251,10 @@ export class SyncEngineLevel implements SyncEngine {
       const prevRepairConnectivity = link.connectivity;
       link.connectivity = 'online';
       await this.ledger.setStatus(link, 'live');
+      if (reconcilePushFailures.length > 0) {
+        await this.handleReconcilePushFailures(linkKey, link, reconcilePushFailures);
+      }
 
-      // Root convergence proves primary CID membership matches, but it does
-      // not prove a failed root can be admitted. Keep admission failures until
-      // that specific CID later applies successfully.
-      await this.clearRootConvergenceDeadLettersForScope(did, dwnUrl, scope);
       this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
       if (prevRepairConnectivity !== 'online') {
         this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: prevRepairConnectivity, to: 'online' });
@@ -2456,15 +2496,16 @@ export class SyncEngineLevel implements SyncEngine {
         dwnUrl,
         delegateDid,
         permissionGrantIds,
-        messageCids : pushEntries.map((entry) => entry.cid),
-        agent       : this.agent,
+        messageCids    : pushEntries.map((entry) => entry.cid),
+        agent          : this.agent,
+        permissionsApi : this._permissionsApi,
       });
 
       await this.handlePushBatchResult(linkKey, batch, result);
     } catch (error: any) {
       if (isStale()) { return; }
       console.error(`SyncEngineLevel: Push batch failed for ${did} -> ${dwnUrl}`, error);
-      this.requeueOrReconcile(linkKey, {
+      await this.requeueOrReconcile(linkKey, {
         did,
         dwnUrl,
         delegateDid,
@@ -2525,10 +2566,9 @@ export class SyncEngineLevel implements SyncEngine {
     if (batch.isStale()) { return; }
 
     this.clearSucceededPushFailures(result.succeeded, batch.pushRuntime.dwnUrl);
-    await this.recordPermanentPushFailures(batch.pushRuntime, result.permanentlyFailed);
 
     if (result.failed.length > 0) {
-      this.requeueFailedPushes(linkKey, batch, result.failed);
+      await this.requeueFailedPushes(linkKey, batch, result.failed);
       return;
     }
 
@@ -2541,30 +2581,15 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private async recordPermanentPushFailures(
-    pushRuntime: PushRuntimeState,
-    permanentlyFailed: PushResult['permanentlyFailed'],
-  ): Promise<void> {
-    for (const entry of permanentlyFailed) {
-      await this.recordDeadLetter({
-        messageCid     : entry.cid,
-        tenantDid      : pushRuntime.did,
-        remoteEndpoint : pushRuntime.dwnUrl,
-        protocol       : pushRuntime.protocol,
-        category       : 'push-permanent',
-        errorCode      : String(entry.statusCode ?? ''),
-        errorDetail    : entry.detail ?? 'permanent push failure',
-      });
-    }
-  }
-
-  private requeueFailedPushes(linkKey: string, batch: PushFlushBatch, failedCids: string[]): void {
+  private async requeueFailedPushes(linkKey: string, batch: PushFlushBatch, failed: PushFailure[]): Promise<void> {
     if (batch.isStale()) { return; }
 
     const { did, dwnUrl, delegateDid, protocol, permissionGrantIds, retryCount } = batch.pushRuntime;
-    const failedSet = new Set(failedCids);
-    const failedEntries = batch.pushEntries.filter((entry) => failedSet.has(entry.cid));
-    this.requeueOrReconcile(linkKey, {
+    const failedEntries = failed.map((failure) => ({
+      cid         : failure.cid,
+      lastFailure : failure,
+    }));
+    await this.requeueOrReconcile(linkKey, {
       did,
       dwnUrl,
       delegateDid,
@@ -2575,12 +2600,32 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
+  private async handleReconcilePushFailures(linkKey: string, link: ReplicationLinkState, failed: PushFailure[]): Promise<void> {
+    await this.requeueOrReconcile(linkKey, {
+      did                : link.tenantDid,
+      dwnUrl             : link.remoteEndpoint,
+      delegateDid        : link.delegateDid,
+      protocol           : singleProtocolForSyncScope(link.scope),
+      permissionGrantIds : this.getAuthorizationGrantIds(link.authorization),
+      entries            : failed.map((failure) => ({
+        cid         : failure.cid,
+        lastFailure : failure,
+      })),
+      retryCount: 1,
+    });
+  }
+
   private cleanupSuccessfulPushRuntime(linkKey: string, pushRuntime: PushRuntimeState): void {
     // Successful push — reset retry count so subsequent unrelated batches on
     // this link start with a fresh budget.
     pushRuntime.retryCount = 0;
     if (!pushRuntime.timer && pushRuntime.entries.length === 0) {
       this._pushRuntimes.delete(linkKey);
+    }
+
+    const link = this._activeLinks.get(linkKey);
+    if (link?.status === 'live' && link.needsReconcile) {
+      this.scheduleReconcile(linkKey, 500);
     }
   }
 
@@ -2601,47 +2646,128 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Push retry backoff schedule: immediate, 250ms, 1s, 2s, then give up. */
   private static readonly PUSH_RETRY_BACKOFF_MS = [0, 250, 1000, 2000];
-  private static readonly ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES: ReadonlySet<DeadLetterCategory> =
-    new Set(['push-permanent', 'push-exhausted']);
+  private static readonly TENANT_INACTIVE_RECONCILE_DELAY_MS = 30_000;
+
+  private async recordTerminalSyncPushFailures(
+    target: SyncReconcileTarget,
+    failures: PushFailure[],
+  ): Promise<number> {
+    let retryableFailures = 0;
+    for (const failure of failures) {
+      if (!isTerminalPushFailure(failure)) {
+        retryableFailures++;
+        continue;
+      }
+
+      await this.recordDeadLetter({
+        messageCid     : failure.cid,
+        tenantDid      : target.did,
+        remoteEndpoint : target.dwnUrl,
+        protocol       : singleProtocolForSyncScope(target.scope),
+        category       : 'admit-failed',
+        errorCode      : failure.kind ?? 'Invalid',
+        errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
+      });
+    }
+
+    return retryableFailures;
+  }
 
   /**
    * Re-queues a failed push batch for retry, or marks the link
    * `needsReconcile` if retries are exhausted. Bounded to prevent
    * infinite retry loops.
    */
-  private requeueOrReconcile(targetKey: string, pending: {
+  private async requeueOrReconcile(targetKey: string, pending: {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
     permissionGrantIds?: NonEmptyStringArray;
     entries: PushRuntimeEntry[];
     retryCount: number;
-  }): void {
+  }): Promise<void> {
     const maxRetries = SyncEngineLevel.PUSH_RETRY_BACKOFF_MS.length;
     const pushRuntime = this.getOrCreatePushRuntime(targetKey, pending);
-
-    if (pending.retryCount >= maxRetries) {
-      // Retry budget exhausted — record each CID as a dead letter and mark
-      // the link dirty for reconciliation.
-      for (const entry of pending.entries) {
-        void this.recordDeadLetter({
-          messageCid     : entry.cid,
-          tenantDid      : pending.did,
-          remoteEndpoint : pending.dwnUrl,
-          protocol       : pending.protocol,
-          category       : 'push-exhausted',
-          errorDetail    : `push retries exhausted after ${maxRetries} attempts`,
-        });
-      }
-      if (pushRuntime.timer) {
-        clearTimeout(pushRuntime.timer);
-      }
-      this._pushRuntimes.delete(targetKey);
-      const link = this._activeLinks.get(targetKey);
-      if (link) {
-        this.markLinkNeedsReconcile(targetKey, link, 'push-retry-exhausted');
-      }
+    const link = this._activeLinks.get(targetKey);
+    pending = {
+      ...pending,
+      entries: await this.recordImmediateTerminalPushFailures(pending),
+    };
+    if (pending.entries.length === 0) {
+      this.stopPushRuntime(targetKey, pushRuntime);
+      this.markLinkNeedsReconcileIfActive(targetKey, link, 'push-terminal');
       return;
     }
 
+    if (pending.entries.some(entry => entry.lastFailure !== undefined && isTenantInactivePushFailure(entry.lastFailure))) {
+      this.stopPushRuntime(targetKey, pushRuntime);
+      this.markLinkNeedsReconcileIfActive(
+        targetKey,
+        link,
+        'push-tenant-inactive',
+        SyncEngineLevel.TENANT_INACTIVE_RECONCILE_DELAY_MS,
+      );
+      return;
+    }
+
+    if (pending.retryCount >= maxRetries) {
+      this.stopPushRuntime(targetKey, pushRuntime);
+      this.markLinkNeedsReconcileIfActive(targetKey, link, 'push-retry-exhausted');
+      return;
+    }
+
+    this.schedulePushRetry(targetKey, pushRuntime, pending);
+  }
+
+  private async recordImmediateTerminalPushFailures(pending: {
+    did: string;
+    dwnUrl: string;
+    protocol?: string;
+    entries: PushRuntimeEntry[];
+  }): Promise<PushRuntimeEntry[]> {
+    const retryableEntries: PushRuntimeEntry[] = [];
+    for (const entry of pending.entries) {
+      const failure = entry.lastFailure;
+      if (failure === undefined || !isTerminalPushFailure(failure)) {
+        retryableEntries.push(entry);
+        continue;
+      }
+
+      await this.recordDeadLetter({
+        messageCid     : entry.cid,
+        tenantDid      : pending.did,
+        remoteEndpoint : pending.dwnUrl,
+        protocol       : pending.protocol,
+        category       : 'admit-failed',
+        errorCode      : failure.kind ?? 'Invalid',
+        errorDetail    : failure.detail ?? 'terminal push failure',
+      });
+    }
+    return retryableEntries;
+  }
+
+  private stopPushRuntime(targetKey: string, pushRuntime: PushRuntimeState): void {
+    if (pushRuntime.timer) {
+      clearTimeout(pushRuntime.timer);
+    }
+    this._pushRuntimes.delete(targetKey);
+  }
+
+  private markLinkNeedsReconcileIfActive(
+    linkKey: string,
+    link: ReplicationLinkState | undefined,
+    reason: string,
+    delayMs?: number,
+  ): void {
+    if (link === undefined) {
+      return;
+    }
+
+    this.markLinkNeedsReconcile(linkKey, link, reason, delayMs);
+  }
+
+  private schedulePushRetry(targetKey: string, pushRuntime: PushRuntimeState, pending: {
+    entries: PushRuntimeEntry[];
+    retryCount: number;
+  }): void {
     pushRuntime.entries.push(...pending.entries);
     pushRuntime.retryCount = pending.retryCount;
     const delayMs = SyncEngineLevel.PUSH_RETRY_BACKOFF_MS[pending.retryCount] ?? 2000;
@@ -2654,9 +2780,9 @@ export class SyncEngineLevel implements SyncEngine {
     }, delayMs);
   }
 
-  private markLinkNeedsReconcile(linkKey: string, link: ReplicationLinkState, reason: string): void {
+  private markLinkNeedsReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void {
     if (link.needsReconcile) {
-      this.scheduleReconcile(linkKey);
+      this.scheduleReconcile(linkKey, delayMs);
       return;
     }
 
@@ -2669,7 +2795,7 @@ export class SyncEngineLevel implements SyncEngine {
         ...syncEventScope(link.scope),
         reason,
       });
-      this.scheduleReconcile(linkKey);
+      this.scheduleReconcile(linkKey, delayMs);
     }).catch((error: unknown) => {
       console.error(`SyncEngineLevel: Failed to mark link for reconciliation ${link.tenantDid} -> ${link.remoteEndpoint}`, error);
     });
@@ -2677,18 +2803,25 @@ export class SyncEngineLevel implements SyncEngine {
 
   private createLinkReconciler(shouldContinue?: () => boolean): SyncLinkReconciler {
     return new SyncLinkReconciler({
-      getLocalRoot  : async (did, delegateDid, protocol, permissionGrantIds) => this.getLocalRoot(did, delegateDid, protocol, permissionGrantIds),
-      getRemoteRoot : async (did, dwnUrl, delegateDid, protocol, permissionGrantIds) =>
+      getLocalRoot: async (did, delegateDid, protocol, permissionGrantIds) =>
+        this.getLocalRoot(did, delegateDid, protocol, permissionGrantIds),
+      getRemoteRoot: async (did, dwnUrl, delegateDid, protocol, permissionGrantIds) =>
         this.getRemoteRoot(did, dwnUrl, delegateDid, protocol, permissionGrantIds),
-      diffWithRemote      : async (target) => this.diffWithRemote(target),
-      admitRemoteMessages : async (params) => this.admitRemoteMessages(params),
-      pushMessages        : async (params) => this.pushMessages(params),
+      diffWithRemote         : async (target) => this.diffWithRemote(target),
+      admitRemoteMessages    : async (params) => this.admitRemoteMessages(params),
+      pushMessages           : async (params) => this.pushMessages(params),
+      filterAdmitMessageCids : async (params) => this.filterAdmittableRemoteCids(
+        params.did,
+        params.dwnUrl,
+        params.messageCids,
+      ),
+      filterPushMessageCids: async (params) => this.filterPushableLocalCids(
+        params.did,
+        params.dwnUrl,
+        params.messageCids,
+      ),
       shouldContinue,
     });
-  }
-
-  private getReconcileProtocols(scope: SyncScope): (string | undefined)[] {
-    return protocolsForSyncScope(scope) ?? [undefined];
   }
 
   private getAuthorizationGrantIds(authorization: SyncAuthorization): NonEmptyStringArray | undefined {
@@ -2705,7 +2838,7 @@ export class SyncEngineLevel implements SyncEngine {
       return this.reconcileProtocolSetSyncTarget(target, protocols, options, shouldContinue);
     }
 
-    let converged = true;
+    const accumulator = SyncEngineLevel.createSingleProtocolReconcileAccumulator();
     const permissionGrantIds = this.getAuthorizationGrantIds(target.authorization);
     const reconciler = this.createLinkReconciler(shouldContinue);
 
@@ -2720,12 +2853,56 @@ export class SyncEngineLevel implements SyncEngine {
       if (outcome.aborted) {
         return { aborted: true };
       }
-      if (options?.verifyConvergence === true && outcome.converged !== true) {
-        converged = false;
-      }
+      SyncEngineLevel.recordSingleProtocolReconcileOutcome(accumulator, outcome, options);
     }
 
-    return options?.verifyConvergence === true ? { converged } : {};
+    return SyncEngineLevel.singleProtocolReconcileResultFromAccumulator(accumulator, options);
+  }
+
+  private static createSingleProtocolReconcileAccumulator(): SingleProtocolReconcileAccumulator {
+    return {
+      admittedCids       : [],
+      converged          : true,
+      hasActionableDiffs : false,
+      ignoredLocalCids   : [],
+      ignoredRemoteCids  : [],
+      pushFailures       : [],
+    };
+  }
+
+  private static recordSingleProtocolReconcileOutcome(
+    accumulator: SingleProtocolReconcileAccumulator,
+    outcome: ReconcileOutcome,
+    options?: SyncReconcileOptions,
+  ): void {
+    const pushFailures = outcome.pushResult?.failed ?? [];
+
+    accumulator.admittedCids.push(...(outcome.admittedCids ?? []));
+    accumulator.ignoredLocalCids.push(...(outcome.ignoredLocalCids ?? []));
+    accumulator.ignoredRemoteCids.push(...(outcome.ignoredRemoteCids ?? []));
+    accumulator.pushFailures.push(...pushFailures);
+    accumulator.hasActionableDiffs ||= outcome.hasActionableDiffs === true;
+
+    if ((options?.verifyConvergence === true && outcome.converged !== true) || pushFailures.length > 0) {
+      accumulator.converged = false;
+    }
+  }
+
+  private static singleProtocolReconcileResultFromAccumulator(
+    accumulator: SingleProtocolReconcileAccumulator,
+    options?: SyncReconcileOptions,
+  ): SyncReconcileResult {
+    const result = {
+      admittedCids       : accumulator.admittedCids,
+      hasActionableDiffs : accumulator.hasActionableDiffs,
+      ignoredLocalCids   : accumulator.ignoredLocalCids,
+      ignoredRemoteCids  : accumulator.ignoredRemoteCids,
+      pushFailures       : accumulator.pushFailures,
+    };
+
+    return options?.verifyConvergence === true
+      ? { ...result, converged: accumulator.converged }
+      : result;
   }
 
   private async reconcileProtocolSetSyncTarget(
@@ -2741,20 +2918,35 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     const pullResult = await this.applyProtocolSetRemoteDiffs(context, diffResult.diffs, options);
-    if (pullResult) {
+    if (pullResult?.aborted) {
       return pullResult;
     }
 
     const pushResult = await this.applyProtocolSetLocalDiffs(context, diffResult.diffs, options);
-    if (pushResult) {
+    if (pushResult?.aborted) {
       return pushResult;
     }
 
+    const admittedCids = pullResult?.admittedCids ?? [];
+    const pushFailures = pushResult?.pushFailures ?? [];
+    const ignoredLocalCids = pushResult?.ignoredLocalCids ?? [];
+    const ignoredRemoteCids = pullResult?.ignoredRemoteCids ?? [];
+    const hasActionableDiffs = pullResult?.hasActionableDiffs === true || pushResult?.hasActionableDiffs === true;
+
     if (options?.verifyConvergence !== true) {
-      return {};
+      return { admittedCids, hasActionableDiffs, ignoredLocalCids, ignoredRemoteCids, pushFailures };
     }
 
-    return this.verifyProtocolSetConvergence(context);
+    const convergence = await this.verifyProtocolSetConvergence(context);
+    return {
+      ...convergence,
+      admittedCids,
+      converged: pushFailures.length > 0 ? false : convergence.converged,
+      hasActionableDiffs,
+      ignoredLocalCids,
+      ignoredRemoteCids,
+      pushFailures,
+    };
   }
 
   private createProtocolSetReconcileContext(
@@ -2832,9 +3024,21 @@ export class SyncEngineLevel implements SyncEngine {
       return undefined;
     }
 
-    const { prefetched, needsFetchCids } = partitionRemoteEntries(onlyRemote);
+    const { ignoredCids: ignoredRemoteCids, entries } = await this.filterAdmittableRemoteEntries(
+      context.did,
+      context.dwnUrl,
+      onlyRemote,
+    );
+    if (entries.length === 0) {
+      return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
+        ? { aborted: true }
+        : { admittedCids: [], hasActionableDiffs: false, ignoredRemoteCids };
+    }
+
+    const { prefetched, needsFetchCids } = partitionRemoteEntries(entries);
+    let admittedCids: string[];
     try {
-      await this.admitRemoteMessages({
+      admittedCids = await this.admitRemoteMessages({
         did                : context.did,
         dwnUrl             : context.dwnUrl,
         delegateDid        : context.delegateDid,
@@ -2853,7 +3057,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
       ? { aborted: true }
-      : undefined;
+      : { admittedCids, hasActionableDiffs: true, ignoredRemoteCids };
   }
 
   private async applyProtocolSetLocalDiffs(
@@ -2866,17 +3070,28 @@ export class SyncEngineLevel implements SyncEngine {
       return undefined;
     }
 
-    await this.pushMessages({
+    const { ignoredCids: ignoredLocalCids, messageCids } = await this.filterPushableLocalCids(
+      context.did,
+      context.dwnUrl,
+      onlyLocal,
+    );
+    if (messageCids.length === 0) {
+      return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
+        ? { aborted: true }
+        : { hasActionableDiffs: false, ignoredLocalCids, pushFailures: [] };
+    }
+
+    const pushResult = await this.pushMessages({
       did                : context.did,
       dwnUrl             : context.dwnUrl,
       delegateDid        : context.delegateDid,
       permissionGrantIds : context.permissionGrantIds,
-      messageCids        : onlyLocal,
+      messageCids,
     });
 
     return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
       ? { aborted: true }
-      : undefined;
+      : { hasActionableDiffs: true, ignoredLocalCids, pushFailures: pushResult.failed };
   }
 
   private async verifyProtocolSetConvergence(
@@ -2909,22 +3124,6 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return { converged: true };
-  }
-
-  private async clearRootConvergenceDeadLettersForScope(
-    tenantDid: string,
-    remoteEndpoint: string,
-    scope: SyncScope,
-  ): Promise<void> {
-    for (const protocol of this.getReconcileProtocols(scope)) {
-      await this.clearRootConvergenceDeadLetters(tenantDid, remoteEndpoint, protocol);
-    }
-    if (scope.kind === 'protocolSet' && scope.protocols.length > 1) {
-      // Multi-protocol reconciliation applies one combined dependency-sorted
-      // batch, so operational dead letters from that batch are stored without a
-      // single protocol label.
-      await this.clearRootConvergenceDeadLetters(tenantDid, remoteEndpoint);
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -3019,17 +3218,38 @@ export class SyncEngineLevel implements SyncEngine {
         authorization,
       }, { verifyConvergence: true }, shouldContinue);
       if (reconcileOutcome.aborted || isStaleLink()) { return; }
+      if (reconcileOutcome.admittedCids !== undefined && reconcileOutcome.admittedCids.length > 0) {
+        this.emitEvent({
+          type           : 'reconcile:applied',
+          tenantDid      : did,
+          remoteEndpoint : dwnUrl,
+          ...eventScope,
+          messageCids    : reconcileOutcome.admittedCids,
+        });
+      }
+
+      const pushFailures = reconcileOutcome.pushFailures ?? [];
+      if (pushFailures.length > 0) {
+        await this.handleReconcilePushFailures(linkKey, link, pushFailures);
+        return;
+      }
 
       if (reconcileOutcome.converged) {
         await this.ledger.clearNeedsReconcile(link);
-        // SMT roots match, so transport/apply failures for this link may no
-        // longer be current. Closure failures are not cleared by root equality.
-        await this.clearRootConvergenceDeadLettersForScope(did, dwnUrl, scope);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
+      } else if (SyncEngineLevel.isReconcileSettledByDeadLetters(reconcileOutcome)) {
+        await this.ledger.clearNeedsReconcile(link);
+        this.emitEvent({
+          type               : 'reconcile:settled-with-failures',
+          tenantDid          : did,
+          remoteEndpoint     : dwnUrl,
+          ...eventScope,
+          failedMessageCount : (reconcileOutcome.ignoredLocalCids?.length ?? 0) + (reconcileOutcome.ignoredRemoteCids?.length ?? 0),
+        });
       } else {
         // Roots still differ — retry after a delay. This can happen when
-        // pushMessages() had permanent failures, remote admission partially
-        // failed, or new writes arrived during reconciliation.
+        // push retries were exhausted, remote admission partially failed, or
+        // new writes arrived during reconciliation.
         if (!isStaleLink()) { this.scheduleReconcile(linkKey, 5000); }
       }
     } catch (error: any) {
@@ -3437,7 +3657,7 @@ export class SyncEngineLevel implements SyncEngine {
     messageCids: string[];
     prefetched?: MessagesSyncDiffEntry[];
     shouldContinue?: () => boolean;
-  }): Promise<void> {
+  }): Promise<string[]> {
     const admissionScope: SyncScope = scope ?? (protocol === undefined
       ? { kind: 'full' }
       : { kind: 'protocolSet', protocols: [protocol] });
@@ -3467,6 +3687,7 @@ export class SyncEngineLevel implements SyncEngine {
       }),
     ];
     const rootCids = await SyncEngineLevel.orderedRootCids(prefetchedEntries, rootCidsToAdmit);
+    const admittedCids: string[] = [];
 
     for (const rootCid of rootCids) {
       if (await this.hasAdmissionDeadLetter(did, dwnUrl, rootCid)) {
@@ -3499,8 +3720,12 @@ export class SyncEngineLevel implements SyncEngine {
           errorCode      : outcome.reason,
           errorDetail    : outcome.detail ?? 'replicated message admission failed',
         });
+      } else if (outcome.kind === 'admitted') {
+        admittedCids.push(...outcome.appliedCids);
       }
     }
+
+    return admittedCids;
   }
 
   private static syncEntriesFromPrefetchedDiff(prefetched?: MessagesSyncDiffEntry[]): SyncMessageEntry[] {
@@ -3619,8 +3844,61 @@ export class SyncEngineLevel implements SyncEngine {
   }): Promise<PushResult> {
     return pushMessages({
       did, dwnUrl, delegateDid, permissionGrantIds, messageCids,
-      agent: this.agent,
+      agent          : this.agent,
+      permissionsApi : this._permissionsApi,
     });
+  }
+
+  private async filterPushableLocalCids(
+    tenantDid: string,
+    remoteEndpoint: string,
+    messageCids: string[],
+  ): Promise<{ ignoredCids: string[]; messageCids: string[] }> {
+    return this.filterDeadLetteredMessageCids(tenantDid, remoteEndpoint, messageCids);
+  }
+
+  private async filterAdmittableRemoteCids(
+    tenantDid: string,
+    remoteEndpoint: string,
+    messageCids: string[],
+  ): Promise<{ ignoredCids: string[]; messageCids: string[] }> {
+    return this.filterDeadLetteredMessageCids(tenantDid, remoteEndpoint, messageCids);
+  }
+
+  private async filterAdmittableRemoteEntries(
+    tenantDid: string,
+    remoteEndpoint: string,
+    entries: MessagesSyncDiffEntry[],
+  ): Promise<{ ignoredCids: string[]; entries: MessagesSyncDiffEntry[] }> {
+    const { ignoredCids, messageCids } = await this.filterAdmittableRemoteCids(
+      tenantDid,
+      remoteEndpoint,
+      entries.map(entry => entry.messageCid),
+    );
+    const messageCidSet = new Set(messageCids);
+    return {
+      entries: entries.filter(entry => messageCidSet.has(entry.messageCid)),
+      ignoredCids,
+    };
+  }
+
+  private async filterDeadLetteredMessageCids(
+    tenantDid: string,
+    remoteEndpoint: string,
+    messageCids: string[],
+  ): Promise<{ ignoredCids: string[]; messageCids: string[] }> {
+    const ignoredCids: string[] = [];
+    const remainingCids: string[] = [];
+
+    for (const messageCid of messageCids) {
+      if (await this.hasAdmissionDeadLetter(tenantDid, remoteEndpoint, messageCid)) {
+        ignoredCids.push(messageCid);
+      } else {
+        remainingCids.push(messageCid);
+      }
+    }
+
+    return { ignoredCids, messageCids: remainingCids };
   }
 
   // ---------------------------------------------------------------------------
@@ -3642,58 +3920,21 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   /**
-   * Clear dead letter entries scoped to a specific sync link. Matches on
-   * (tenantDid, remoteEndpoint, protocol) so that repairing protocol A
-   * does not erase still-valid failures for protocol B on the same remote.
-   * When `protocol` is undefined (full-tenant link), clears entries that
-   * also have no protocol.
-   */
-  private async clearDeadLettersForLink(
-    tenantDid: string,
-    remoteEndpoint: string,
-    protocol?: string,
-    options: { categories?: ReadonlySet<DeadLetterCategory> } = {},
-  ): Promise<void> {
-    const batch: { type: 'del'; key: string }[] = [];
-    try {
-      for await (const [key, value] of this._deadLetters.iterator()) {
-        const entry = JSON.parse(value) as DeadLetterEntry;
-        if (entry.tenantDid === tenantDid &&
-            entry.remoteEndpoint === remoteEndpoint &&
-            entry.protocol === protocol &&
-            (options.categories === undefined || options.categories.has(entry.category))) {
-          batch.push({ type: 'del', key });
-        }
-      }
-      if (batch.length > 0) {
-        await this._deadLetters.batch(batch);
-      }
-    } catch (error) {
-      const e = error as { code?: string };
-      if (e.code !== 'LEVEL_DATABASE_NOT_OPEN') { throw error; }
-    }
-  }
-
-  private async clearRootConvergenceDeadLetters(
-    tenantDid: string,
-    remoteEndpoint: string,
-    protocol?: string,
-  ): Promise<void> {
-    try {
-      await this.clearDeadLettersForLink(tenantDid, remoteEndpoint, protocol, {
-        categories: SyncEngineLevel.ROOT_CONVERGENCE_CLEARABLE_DEAD_LETTER_CATEGORIES,
-      });
-    } catch (error) {
-      console.warn(`SyncEngineLevel: Failed to clear root-convergence dead letters for ${tenantDid} -> ${remoteEndpoint}`, error);
-    }
-  }
-
-  /**
    * Build a compound dead letter key. Different tenants and remotes can fail
    * the same CID for different reasons, so the durable key includes both.
    */
   private static deadLetterKey(tenantDid: string, messageCid: string, remoteEndpoint?: string): string {
     return `${tenantDid}|${messageCid}|${remoteEndpoint ?? ''}`;
+  }
+
+  private static isReconcileSettledByDeadLetters(result: SyncReconcileResult): boolean {
+    const ignoredLocalCount = result.ignoredLocalCids?.length ?? 0;
+    const ignoredRemoteCount = result.ignoredRemoteCids?.length ?? 0;
+
+    return result.converged !== true &&
+      result.hasActionableDiffs !== true &&
+      ignoredLocalCount + ignoredRemoteCount > 0 &&
+      (result.pushFailures === undefined || result.pushFailures.length === 0);
   }
 
   public async recordDeadLetter(params: {
@@ -3804,11 +4045,15 @@ export class SyncEngineLevel implements SyncEngine {
     // affect health. Endpoint-level orphan cleanup is a separate GC concern.
     const currentLinkIdentityKeys = await this.getCurrentDurableLinkIdentityKeys();
     let degradedLinkCount = 0;
+    let reconcileNeededCount = 0;
     const allLinks = await this.ledger.getAllLinks();
     for (const link of allLinks) {
       const isCurrentLink = currentLinkIdentityKeys === undefined || currentLinkIdentityKeys.has(this.getDurableLinkIdentityKey(link));
       if (isCurrentLink && SyncEngineLevel.isUnhealthyLinkStatus(link.status)) {
         degradedLinkCount++;
+      }
+      if (isCurrentLink && link.needsReconcile) {
+        reconcileNeededCount++;
       }
     }
 
@@ -3817,7 +4062,8 @@ export class SyncEngineLevel implements SyncEngine {
       failedMessageCount    : failedMessageCount,
       admissionFailureCount : admissionFailureCount,
       degradedLinkCount     : degradedLinkCount,
-      syncHealthy           : failedMessageCount === 0 && degradedLinkCount === 0,
+      reconcileNeededCount  : reconcileNeededCount,
+      syncHealthy           : failedMessageCount === 0 && degradedLinkCount === 0 && reconcileNeededCount === 0,
     };
   }
 

@@ -6,6 +6,7 @@ import type {
   DwnSubscriptionHandler,
   ResubscribeFactory,
 } from './dwn-rpc-types.js';
+import type { DwnServerInfoRpc, ServerInfo } from './server-info-types.js';
 import type {
   GenericMessage,
   MessageSubscription,
@@ -16,8 +17,15 @@ import type {
 } from '@enbox/dwn-sdk-js';
 
 import { CryptoUtils } from '@enbox/crypto';
+import { DwnRpcError } from './dwn-rpc-error.js';
+import { HttpDwnRpcClient } from './http-dwn-rpc-client.js';
 import { JsonRpcSocket } from './json-rpc-socket.js';
-import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest } from './json-rpc.js';
+import { parseReplicationApplyResult } from './replication-apply-result.js';
+import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes } from './json-rpc.js';
+import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
+import { DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES, maxWsJsonRpcPayloadBytes } from './ws-payload-size.js';
+
+const DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES = maxWsJsonRpcPayloadBytes(DEFAULT_MAX_WS_RAW_RECORD_DATA_BYTES);
 
 /**
  * Metadata for a tracked subscription, including everything needed to
@@ -69,6 +77,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   public get transportProtocols(): string[] { return ['ws:', 'wss:']; }
   // a map of dwn host to WebSocket connection
   private static readonly connections = new Map<string, SocketConnection>();
+  private static readonly pendingConnections = new Map<string, Promise<SocketConnection>>();
+
+  public constructor(private readonly serverInfoRpc: DwnServerInfoRpc = new HttpDwnRpcClient()) {}
 
   async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
 
@@ -78,18 +89,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       throw new Error(`Invalid websocket protocol ${url.protocol}`);
     }
 
-    // check if there is already a connection to this host, if it does not exist, initiate a new connection
-    const hasConnection = WebSocketDwnRpcClient.connections.has(url.host);
-    if (!hasConnection) {
-      try {
-        const connection = await WebSocketDwnRpcClient.createConnection(url);
-        WebSocketDwnRpcClient.connections.set(url.host, connection);
-      } catch (error) {
-        throw new Error(`Error connecting to ${url.host}: ${(error as Error).message}`);
-      }
-    }
-
-    const connection = WebSocketDwnRpcClient.connections.get(url.host)!;
+    const connection = await WebSocketDwnRpcClient.getConnection(request.dwnUrl);
     const { targetDid, message, subscription } = request;
 
     if (subscription) {
@@ -102,12 +102,26 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   async applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
-    if (request.data !== undefined) {
-      throw new Error('RecordsWrite replicated apply with data is not supported via WebSocket transport');
+    WebSocketDwnRpcClient.assertReplicatedApplyDataIsPresent(request);
+    const maxPayloadBytes = await this.maxPayloadBytesForReplicatedApply(request);
+    WebSocketDwnRpcClient.assertReplicatedApplyDataSizeIsSupported(request, maxPayloadBytes);
+    const connection = await WebSocketDwnRpcClient.getConnection(request.dwnUrl);
+    const encodedData = request.data === undefined ? undefined : await dataToBase64Url(request.data);
+    return WebSocketDwnRpcClient.applyReplicatedMessage(connection, request.targetDid, request.message, encodedData, maxPayloadBytes);
+  }
+
+  async getServerInfo(dwnUrl: string): Promise<ServerInfo> {
+    return this.serverInfoRpc.getServerInfo(httpUrlForWsDwnUrl(dwnUrl));
+  }
+
+  private async maxPayloadBytesForReplicatedApply(request: DwnReplicationApplyRequest): Promise<number> {
+    const dataSize = recordsWriteDataSize(request.message);
+    if (dataSize === undefined) {
+      return DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES;
     }
 
-    const connection = await WebSocketDwnRpcClient.getConnection(request.dwnUrl);
-    return WebSocketDwnRpcClient.applyReplicatedMessage(connection, request.targetDid, request.message);
+    const serverInfo = await this.getServerInfo(request.dwnUrl);
+    return maxWsJsonRpcPayloadBytes(serverInfo.maxFileSize);
   }
 
   private static async getConnection(dwnUrl: string): Promise<SocketConnection> {
@@ -116,16 +130,28 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       throw new Error(`Invalid websocket protocol ${url.protocol}`);
     }
 
-    if (!WebSocketDwnRpcClient.connections.has(url.host)) {
-      try {
-        const connection = await WebSocketDwnRpcClient.createConnection(url);
-        WebSocketDwnRpcClient.connections.set(url.host, connection);
-      } catch (error) {
-        throw new Error(`Error connecting to ${url.host}: ${(error as Error).message}`);
-      }
+    const existing = WebSocketDwnRpcClient.connections.get(url.host);
+    if (existing !== undefined) {
+      return existing;
     }
 
-    return WebSocketDwnRpcClient.connections.get(url.host)!;
+    let pending = WebSocketDwnRpcClient.pendingConnections.get(url.host);
+    if (pending === undefined) {
+      pending = WebSocketDwnRpcClient.createConnection(url)
+        .then((connection) => {
+          WebSocketDwnRpcClient.connections.set(url.host, connection);
+          return connection;
+        })
+        .catch((error: unknown) => {
+          throw new Error(`Error connecting to ${url.host}: ${(error as Error).message}`);
+        })
+        .finally(() => {
+          WebSocketDwnRpcClient.pendingConnections.delete(url.host);
+        });
+      WebSocketDwnRpcClient.pendingConnections.set(url.host, pending);
+    }
+
+    return pending;
   }
 
   /**
@@ -183,20 +209,29 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   private static async applyReplicatedMessage(
-    connection: SocketConnection, target: string, message: DwnReplicationApplyRequest['message']
+    connection: SocketConnection,
+    target: string,
+    message: DwnReplicationApplyRequest['message'],
+    encodedData?: string,
+    maxPayloadBytes: number = DEFAULT_MAX_WS_JSON_RPC_PAYLOAD_BYTES,
   ): Promise<ReplicationApplyResult> {
     const requestId = CryptoUtils.randomUuid();
-    const request = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', { target, message });
+    const request = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      target,
+      message,
+      ...(encodedData === undefined ? {} : { encodedData }),
+    });
+    WebSocketDwnRpcClient.assertPayloadFitsFrame(request, encodedData, maxPayloadBytes);
 
     const { socket } = connection;
     const response = await socket.request(request);
 
     const { error, result } = response;
     if (error !== undefined) {
-      throw new Error(`error applying replicated DWN message: ${error.message}`);
+      throw new DwnRpcError(error.code, error.message, error.data);
     }
 
-    return result.result as ReplicationApplyResult;
+    return parseReplicationApplyResult(result.result);
   }
 
   private static async subscriptionRequest(
@@ -331,4 +366,93 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       }
     }
   }
+
+  private static assertReplicatedApplyDataIsPresent(request: DwnReplicationApplyRequest): void {
+    const dataSize = recordsWriteDataSize(request.message);
+    if (dataSize !== undefined && dataSize > 0 && request.data === undefined) {
+      throw new DwnRpcError(
+        JsonRpcErrorCodes.InvalidParams,
+        'data-bearing RecordsWrite replicated apply over WebSocket requires encoded data',
+      );
+    }
+  }
+
+  private static assertReplicatedApplyDataSizeIsSupported(request: DwnReplicationApplyRequest, maxPayloadBytes: number): void {
+    const dataSize = recordsWriteDataSize(request.message);
+    if (dataSize !== undefined && maxWsJsonRpcPayloadBytes(dataSize) > maxPayloadBytes) {
+      throw new DwnRpcError(
+        JsonRpcErrorCodes.InvalidParams,
+        `RecordsWrite replicated apply data is too large for WebSocket JSON-RPC framing`,
+      );
+    }
+  }
+
+  private static assertPayloadFitsFrame(
+    request: ReturnType<typeof createJsonRpcRequest>,
+    encodedData: string | undefined,
+    maxPayloadBytes: number,
+  ): void {
+    const payloadBytes = estimatedJsonRpcPayloadBytes(request, encodedData);
+    if (payloadBytes > maxPayloadBytes) {
+      throw new DwnRpcError(
+        JsonRpcErrorCodes.InvalidParams,
+        `replicated apply JSON-RPC payload is too large for WebSocket transport`,
+      );
+    }
+  }
+}
+
+function httpUrlForWsDwnUrl(dwnUrl: string): string {
+  const url = new URL(dwnUrl);
+  if (url.protocol === 'ws:') {
+    url.protocol = 'http:';
+  } else if (url.protocol === 'wss:') {
+    url.protocol = 'https:';
+  }
+  return url.toString();
+}
+
+function estimatedJsonRpcPayloadBytes(request: ReturnType<typeof createJsonRpcRequest>, encodedData: string | undefined): number {
+  if (encodedData === undefined) {
+    return utf8ByteLength(JSON.stringify(request));
+  }
+
+  const params = request.params as Record<string, unknown>;
+  const requestWithoutData = {
+    ...request,
+    params: {
+      ...params,
+      encodedData: '',
+    },
+  };
+  return utf8ByteLength(JSON.stringify(requestWithoutData)) + encodedData.length;
+}
+
+function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
+async function dataToBase64Url(data: DwnReplicationApplyRequest['data']): Promise<string> {
+  if (data instanceof Blob) {
+    return Encoder.bytesToBase64Url(new Uint8Array(await data.arrayBuffer()));
+  }
+
+  if (data instanceof ReadableStream) {
+    return Encoder.bytesToBase64Url(await DataStream.toBytes(data as ReadableStream<Uint8Array>));
+  }
+
+  if (data instanceof Uint8Array) {
+    return Encoder.bytesToBase64Url(data);
+  }
+
+  return Encoder.bytesToBase64Url(new Uint8Array(await new Blob([data] as BlobPart[]).arrayBuffer()));
+}
+
+function recordsWriteDataSize(message: DwnReplicationApplyRequest['message']): number | undefined {
+  const descriptor = (message as { descriptor?: { interface?: unknown; method?: unknown; dataSize?: unknown } }).descriptor;
+  return descriptor?.interface === 'Records' &&
+    descriptor.method === 'Write' &&
+    typeof descriptor.dataSize === 'number'
+    ? descriptor.dataSize
+    : undefined;
 }

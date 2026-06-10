@@ -344,10 +344,7 @@ export class DwnServer {
     log.info(`HttpServer listening on port ${this.config.port}`);
 
     if (this.config.webSocketSupport) {
-      this.#wsApi = new WsApi(
-        this.#httpApi, this.dwn, undefined, this.config.maxInFlight, activityLog,
-        { adminStore, registrationStore, config: this.config, tenantRateLimiter, messageProcessedHooks },
-      );
+      this.#wsApi = new WsApi(this.#httpApi, this.dwn, { activityLog });
       this.#wsApi.start();
       log.info('WebSocketServer ready...');
 

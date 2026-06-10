@@ -19,12 +19,21 @@ export type ReconcileOutcome = {
   changed: boolean;
   didPull: boolean;
   didPush: boolean;
+  hasActionableDiffs?: boolean;
+  ignoredLocalCids?: string[];
+  ignoredRemoteCids?: string[];
   localRoot?: string;
   remoteRoot?: string;
   postLocalRoot?: string;
   postRemoteRoot?: string;
   converged?: boolean;
+  admittedCids?: string[];
   pushResult?: PushResult;
+};
+
+type PushMessageFilterResult = {
+  ignoredCids: string[];
+  messageCids: string[];
 };
 
 type ReconcileDeps = {
@@ -51,7 +60,12 @@ type ReconcileDeps = {
     messageCids: string[];
     prefetched: (MessagesSyncDiffEntry & { message: GenericMessage })[];
     shouldContinue?: () => boolean;
-  }) => Promise<void>;
+  }) => Promise<string[]>;
+  filterAdmitMessageCids?: (params: {
+    did: string;
+    dwnUrl: string;
+    messageCids: string[];
+  }) => Promise<PushMessageFilterResult>;
   pushMessages: (params: {
     did: string;
     dwnUrl: string;
@@ -60,6 +74,11 @@ type ReconcileDeps = {
     permissionGrantIds?: string[];
     messageCids: string[];
   }) => Promise<PushResult>;
+  filterPushMessageCids?: (params: {
+    did: string;
+    dwnUrl: string;
+    messageCids: string[];
+  }) => Promise<PushMessageFilterResult>;
   shouldContinue?: () => boolean;
 };
 
@@ -107,6 +126,10 @@ export class SyncLinkReconciler {
 
     let didPull = false;
     let didPush = false;
+    let hasActionableDiffs = false;
+    const ignoredLocalCids: string[] = [];
+    const ignoredRemoteCids: string[] = [];
+    const admittedCids: string[] = [];
     let pushResult: PushResult | undefined;
 
     if (localRoot !== remoteRoot) {
@@ -114,36 +137,71 @@ export class SyncLinkReconciler {
       if (shouldContinue && !shouldContinue()) { return { aborted: true, changed: true, didPull: false, didPush: false, localRoot, remoteRoot }; }
 
       if ((!direction || direction === 'pull') && diff.onlyRemote.length > 0) {
-        const { prefetched, needsFetchCids } = partitionRemoteEntries(diff.onlyRemote);
-        try {
-          await this._deps.admitRemoteMessages({
-            did,
-            dwnUrl,
-            delegateDid,
-            protocol,
-            permissionGrantIds,
-            messageCids: needsFetchCids,
-            prefetched,
-            shouldContinue,
-          });
-        } catch (error) {
-          if (error instanceof SyncPullAbortedError) {
-            return { aborted: true, changed: true, didPull: false, didPush: false, localRoot, remoteRoot };
+        const { entries, ignoredCids } = await this.filterAdmitRemoteEntries(did, dwnUrl, diff.onlyRemote);
+        ignoredRemoteCids.push(...ignoredCids);
+        if (entries.length > 0) {
+          hasActionableDiffs = true;
+          const { prefetched, needsFetchCids } = partitionRemoteEntries(entries);
+          try {
+            admittedCids.push(...await this._deps.admitRemoteMessages({
+              did,
+              dwnUrl,
+              delegateDid,
+              protocol,
+              permissionGrantIds,
+              messageCids: needsFetchCids,
+              prefetched,
+              shouldContinue,
+            }));
+          } catch (error) {
+            if (error instanceof SyncPullAbortedError) {
+              return { aborted: true, changed: true, didPull: false, didPush: false, localRoot, remoteRoot };
+            }
+            throw error;
           }
-          throw error;
+          if (shouldContinue && !shouldContinue()) { return { aborted: true, changed: true, didPull: true, didPush: false, localRoot, remoteRoot }; }
+          didPull = true;
         }
-        if (shouldContinue && !shouldContinue()) { return { aborted: true, changed: true, didPull: true, didPush: false, localRoot, remoteRoot }; }
-        didPull = true;
       }
 
       if ((!direction || direction === 'push') && diff.onlyLocal.length > 0) {
-        pushResult = await this._deps.pushMessages({
-          did, dwnUrl, delegateDid, protocol, permissionGrantIds, messageCids: diff.onlyLocal,
-        });
-        if (shouldContinue && !shouldContinue()) {
-          return { aborted: true, changed: true, didPull, didPush: true, localRoot, remoteRoot, pushResult };
+        const filterResult = await this.filterPushMessageCids(did, dwnUrl, diff.onlyLocal);
+        ignoredLocalCids.push(...filterResult.ignoredCids);
+        if (filterResult.messageCids.length === 0) {
+          if (shouldContinue && !shouldContinue()) {
+            return {
+              aborted : true,
+              changed : true,
+              didPull,
+              didPush : false,
+              hasActionableDiffs,
+              ignoredLocalCids,
+              ignoredRemoteCids,
+              localRoot,
+              remoteRoot,
+            };
+          }
+        } else {
+          hasActionableDiffs = true;
+          pushResult = await this._deps.pushMessages({
+            did, dwnUrl, delegateDid, protocol, permissionGrantIds, messageCids: filterResult.messageCids,
+          });
+          if (shouldContinue && !shouldContinue()) {
+            return {
+              aborted : true,
+              changed : true,
+              didPull,
+              didPush : true,
+              hasActionableDiffs,
+              ignoredLocalCids,
+              ignoredRemoteCids,
+              localRoot,
+              remoteRoot,
+              pushResult,
+            };
+          }
+          didPush = true;
         }
-        didPush = true;
       }
     }
 
@@ -152,32 +210,90 @@ export class SyncLinkReconciler {
         changed: localRoot !== remoteRoot,
         didPull,
         didPush,
+        hasActionableDiffs,
+        ignoredLocalCids,
+        ignoredRemoteCids,
         localRoot,
         remoteRoot,
+        admittedCids,
         pushResult,
       };
     }
 
     const postLocalRoot = await this._deps.getLocalRoot(did, delegateDid, protocol, permissionGrantIds);
     if (shouldContinue && !shouldContinue()) {
-      return { aborted: true, changed: localRoot !== remoteRoot, didPull, didPush, localRoot, remoteRoot, pushResult };
+      return {
+        aborted : true,
+        changed : localRoot !== remoteRoot,
+        didPull,
+        didPush,
+        hasActionableDiffs,
+        ignoredLocalCids,
+        ignoredRemoteCids,
+        localRoot,
+        remoteRoot,
+        pushResult,
+      };
     }
 
     const postRemoteRoot = await this._deps.getRemoteRoot(did, dwnUrl, delegateDid, protocol, permissionGrantIds);
     if (shouldContinue && !shouldContinue()) {
-      return { aborted: true, changed: localRoot !== remoteRoot, didPull, didPush, localRoot, remoteRoot, pushResult };
+      return {
+        aborted : true,
+        changed : localRoot !== remoteRoot,
+        didPull,
+        didPush,
+        hasActionableDiffs,
+        ignoredLocalCids,
+        ignoredRemoteCids,
+        localRoot,
+        remoteRoot,
+        pushResult,
+      };
     }
 
     return {
       changed   : localRoot !== remoteRoot,
       didPull,
       didPush,
+      hasActionableDiffs,
+      ignoredLocalCids,
+      ignoredRemoteCids,
       localRoot,
       remoteRoot,
       postLocalRoot,
       postRemoteRoot,
       converged : postLocalRoot === postRemoteRoot,
+      admittedCids,
       pushResult,
+    };
+  }
+
+  private async filterPushMessageCids(did: string, dwnUrl: string, messageCids: string[]): Promise<PushMessageFilterResult> {
+    if (this._deps.filterPushMessageCids === undefined) {
+      return { ignoredCids: [], messageCids };
+    }
+
+    return this._deps.filterPushMessageCids({ did, dwnUrl, messageCids });
+  }
+
+  private async filterAdmitRemoteEntries(did: string, dwnUrl: string, entries: MessagesSyncDiffEntry[]): Promise<{
+    entries: MessagesSyncDiffEntry[];
+    ignoredCids: string[];
+  }> {
+    if (this._deps.filterAdmitMessageCids === undefined) {
+      return { entries, ignoredCids: [] };
+    }
+
+    const { ignoredCids, messageCids } = await this._deps.filterAdmitMessageCids({
+      did,
+      dwnUrl,
+      messageCids: entries.map(entry => entry.messageCid),
+    });
+    const messageCidSet = new Set(messageCids);
+    return {
+      entries: entries.filter(entry => messageCidSet.has(entry.messageCid)),
+      ignoredCids,
     };
   }
 }
