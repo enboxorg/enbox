@@ -63,6 +63,9 @@ class AdmitClosureContext {
     await this.rememberEntries(this.prefetchedEntries);
     let pending = await this.initialPending(rootCid);
     const appliedCids: string[] = [];
+    if (pending.length === 0) {
+      return { kind: 'deferred', rootCid, detail: 'root message not available' };
+    }
 
     for (let pass = 0; pass < MAX_ADMISSION_PASSES && pending.length > 0; pass++) {
       this.assertShouldContinue();
@@ -207,11 +210,12 @@ class AdmitClosureContext {
         return this.fetchProtocolConfig(ref.protocol);
       case 'Parent':
       case 'Ancestor':
-        return this.fetchRecordsByRecordId(ref.recordId, ref.type === 'Parent' ? ref.protocol : undefined);
       case 'InitialWrite':
-        return this.fetchRecordsByRecordId(ref.recordId);
+        return this.fetchInitialWriteDependency(ref);
+      case 'Role':
+        return this.fetchRoleRecord(ref);
       case 'Grant':
-        return this.fetchRecordsByRecordId(ref.permissionGrantId);
+        return this.fetchGrantRecord(ref.permissionGrantId);
       case 'RecordData':
         return this.fetchRecordData(ref);
       default:
@@ -232,13 +236,29 @@ class AdmitClosureContext {
     return entries;
   }
 
+  private async fetchInitialWriteDependency(
+    ref: Extract<DependencyRef, { type: 'Parent' | 'Ancestor' | 'InitialWrite' }>,
+  ): Promise<SyncMessageEntry[]> {
+    const existing = this.findInitialWriteEntry(ref.recordId);
+    if (existing !== undefined) {
+      return [existing];
+    }
+
+    return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
+  }
+
+  private async fetchGrantRecord(permissionGrantId: string): Promise<SyncMessageEntry[]> {
+    return this.fetchRecordsByRecordId(permissionGrantId);
+  }
+
   private async fetchRecordsByRecordId(recordId: string, protocol?: string): Promise<SyncMessageEntry[]> {
     const permissionGrantId = protocol === undefined
       ? undefined
       : await this.getPermissionGrantId(DwnInterface.RecordsQuery, protocol);
+    const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { message } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
-      granteeDid    : this.deps.delegateDid,
+      granteeDid,
       messageParams : {
         filter: { recordId, ...(protocol === undefined ? {} : { protocol }) },
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
@@ -253,29 +273,68 @@ class AdmitClosureContext {
       message,
       targetDid : this.deps.did,
     }) as RecordsQueryReply;
+    return this.entriesFromRecordsQueryReply(reply);
+  }
+
+  private async fetchRoleRecord(ref: Extract<DependencyRef, { type: 'Role' }>): Promise<SyncMessageEntry[]> {
+    const permissionGrantId = await this.getPermissionGrantId(DwnInterface.RecordsQuery, ref.protocol);
+    const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
+    const { message } = await this.deps.agent.dwn.processRequest({
+      author        : this.deps.delegateDid ?? this.deps.did,
+      granteeDid,
+      messageParams : {
+        filter: {
+          protocol     : ref.protocol,
+          protocolPath : ref.protocolPath,
+          recipient    : ref.recipient,
+        },
+        ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
+      },
+      messageType : DwnInterface.RecordsQuery,
+      store       : false,
+      target      : this.deps.did,
+    });
+
+    const reply = await this.deps.agent.rpc.sendDwnRequest({
+      dwnUrl    : this.deps.dwnUrl,
+      message,
+      targetDid : this.deps.did,
+    }) as RecordsQueryReply;
+    return this.entriesFromRecordsQueryReply(reply);
+  }
+
+  private async entriesFromRecordsQueryReply(reply: RecordsQueryReply): Promise<SyncMessageEntry[]> {
     if (reply.status.code !== 200 || reply.entries === undefined) {
       return [];
     }
 
-    const entries = reply.entries.map((entry): SyncMessageEntry => {
-      const { encodedData, ...message } = entry;
+    const entries = reply.entries.flatMap((entry): SyncMessageEntry[] => {
+      const { encodedData, initialWrite, ...message } = entry;
+      const syncEntries: SyncMessageEntry[] = [];
+      if (initialWrite !== undefined) {
+        syncEntries.push({ message: initialWrite });
+      }
+
       const syncEntry: SyncMessageEntry = { message };
       if (encodedData !== undefined) {
         syncEntry.bufferedData = Encoder.base64UrlToBytes(encodedData);
       }
-      return syncEntry;
+      syncEntries.push(syncEntry);
+      return syncEntries;
     });
-    await this.rememberEntries(entries);
-    return entries;
+    const dedupedEntries = await dedupeEntries(entries);
+    await this.rememberEntries(dedupedEntries);
+    return dedupedEntries;
   }
 
   private async fetchRecordData(ref: Extract<DependencyRef, { type: 'RecordData' }>): Promise<SyncMessageEntry[]> {
     const permissionGrantId = ref.protocol === undefined
       ? undefined
       : await this.getPermissionGrantId(DwnInterface.RecordsRead, ref.protocol);
+    const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { message } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
-      granteeDid    : this.deps.delegateDid,
+      granteeDid,
       messageParams : {
         filter: { recordId: ref.recordId },
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
@@ -313,9 +372,10 @@ class AdmitClosureContext {
 
   private async fetchProtocol(protocol: string): Promise<ProtocolsConfigureMessage | undefined> {
     const permissionGrantId = await this.getPermissionGrantId(DwnInterface.ProtocolsQuery, protocol);
+    const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { message } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
-      granteeDid    : this.deps.delegateDid,
+      granteeDid,
       messageParams : {
         filter: { protocol },
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
@@ -372,6 +432,14 @@ class AdmitClosureContext {
   private assertShouldContinue(): void {
     if (this.deps.shouldContinue?.() === false) {
       throw new SyncPullAbortedError();
+    }
+  }
+
+  private findInitialWriteEntry(recordId: string): SyncMessageEntry | undefined {
+    for (const entry of this.entriesByCid.values()) {
+      if (isInitialWriteForRecord(entry.message, recordId)) {
+        return entry;
+      }
     }
   }
 }

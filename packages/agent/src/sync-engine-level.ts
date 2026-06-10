@@ -25,7 +25,7 @@ import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { computeAuthorizationEpoch, computeProjectionId, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
-import { fetchRemoteMessages, pushMessages, SyncPullAbortedError } from './sync-messages.js';
+import { fetchRemoteMessages, getMessageCid, pushMessages, SyncPullAbortedError } from './sync-messages.js';
 import { partitionRemoteEntries, SyncLinkReconciler } from './sync-link-reconciler.js';
 import { permissionGrantIdsFromEntries, resolveMessagesSyncScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
@@ -2061,7 +2061,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
       await this.commitPullDelivery(context, subMessage.cursor, delivery);
     } catch (error: any) {
-      await this.handleLivePullProcessingError(context, event, error);
+      await this.handleLivePullProcessingError(context, error);
     }
   }
 
@@ -2161,7 +2161,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (context.link !== undefined) {
       this.markLinkNeedsReconcile(context.linkKey, context.link, `pull-${outcome.kind}`);
     }
-    return undefined;
+    return { messageCid: rootCid, admitted: false };
   }
 
   private async recordAdmissionFailure(
@@ -2308,40 +2308,21 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async handleLivePullProcessingError(
-    { did, dwnUrl, linkKey, link, isStale }: LivePullContext,
-    event: MessageEvent,
+    { did, linkKey, link, isStale }: LivePullContext,
     error: any,
   ): Promise<void> {
-    console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
-    await this.recordPullAdmissionError({ did, dwnUrl, event, error });
-
-    // A failed replicated admission means local state is incomplete. Transition
-    // to repairing immediately — do NOT advance the checkpoint past this
-    // failure or let later ordinals commit past it. SMT reconciliation will
-    // discover and fill the gap.
-    if (link && !isStale()) {
-      await this.transitionToRepairing(linkKey, link);
+    if (error instanceof SyncPullAbortedError) {
+      return;
     }
-  }
 
-  private async recordPullAdmissionError({ did, dwnUrl, event, error }: {
-    did: string;
-    dwnUrl: string;
-    event: MessageEvent;
-    error: any;
-  }): Promise<void> {
-    try {
-      const failedCid = await Message.getCid(event.message);
-      void this.recordDeadLetter({
-        messageCid     : failedCid,
-        tenantDid      : did,
-        remoteEndpoint : dwnUrl,
-        protocol       : (event.message.descriptor as Record<string, unknown>).protocol as string | undefined,
-        category       : 'admit-failed',
-        errorDetail    : error.message ?? String(error),
-      });
-    } catch {
-      // Best effort — don't let dead letter recording block repair.
+    console.error(`SyncEngineLevel: Error processing live-pull event for ${did}`, error);
+
+    // Unexpected exceptions are treated as transient transport/runtime failures,
+    // not admission failures. Recording them as `admit-failed` would suppress
+    // the root permanently during reconcile.
+    if (link && !isStale()) {
+      this.markLinkNeedsReconcile(linkKey, link, 'pull-error');
+      await this.transitionToRepairing(linkKey, link);
     }
   }
 
@@ -3432,9 +3413,9 @@ export class SyncEngineLevel implements SyncEngine {
    * Fetches missing messages from the remote DWN and processes them locally
    * in dependency order (topological sort).
    *
-   * When prefetched entries are provided (from the batched diff response),
-   * they are processed directly without additional HTTP round-trips.
-   * Only `messageCids` that were NOT prefetched are fetched individually.
+   * Prefetched diff entries and fetched CID entries are merged before choosing
+   * roots so updates, deletes, and their initial writes can be admitted in one
+   * cross-root dependency order.
    */
   private async admitRemoteMessages({
     did,
@@ -3460,13 +3441,34 @@ export class SyncEngineLevel implements SyncEngine {
     const admissionScope: SyncScope = scope ?? (protocol === undefined
       ? { kind: 'full' }
       : { kind: 'protocolSet', protocols: [protocol] });
-    const prefetchedEntries = SyncEngineLevel.syncEntriesFromPrefetchedDiff(prefetched);
-    const rootCids = [
+    const requestedRootCids = [
       ...(prefetched ?? []).map(entry => entry.messageCid),
       ...messageCids,
     ];
+    const rootCidsToAdmit: string[] = [];
+    const rootCidSet = new Set<string>();
+    for (const rootCid of requestedRootCids) {
+      if (rootCidSet.has(rootCid) || await this.hasAdmissionDeadLetter(did, dwnUrl, rootCid)) {
+        continue;
+      }
+      rootCidSet.add(rootCid);
+      rootCidsToAdmit.push(rootCid);
+    }
 
-    for (const rootCid of [...new Set(rootCids)]) {
+    const prefetchedEntries = [
+      ...SyncEngineLevel.syncEntriesFromPrefetchedDiff(prefetched),
+      ...await fetchRemoteMessages({
+        did,
+        dwnUrl,
+        delegateDid,
+        permissionGrantIds,
+        messageCids : messageCids.filter(cid => rootCidSet.has(cid)),
+        agent       : this.agent,
+      }),
+    ];
+    const rootCids = await SyncEngineLevel.orderedRootCids(prefetchedEntries, rootCidsToAdmit);
+
+    for (const rootCid of rootCids) {
       if (await this.hasAdmissionDeadLetter(did, dwnUrl, rootCid)) {
         continue;
       }
@@ -3512,7 +3514,15 @@ export class SyncEngineLevel implements SyncEngine {
         continue;
       }
 
-      const { encodedData: messageEncodedData, ...message } = entry.message;
+      const {
+        encodedData: messageEncodedData,
+        initialWrite,
+        ...message
+      } = entry.message as GenericMessage & { encodedData?: string; initialWrite?: GenericMessage };
+      if (initialWrite !== undefined) {
+        entries.push({ message: initialWrite });
+      }
+
       const syncEntry: SyncMessageEntry = { message };
       if (entry.encodedData !== undefined) {
         syncEntry.bufferedData = Encoder.base64UrlToBytes(entry.encodedData);
@@ -3522,6 +3532,31 @@ export class SyncEngineLevel implements SyncEngine {
       entries.push(syncEntry);
     }
     return entries;
+  }
+
+  private static async orderedRootCids(entries: SyncMessageEntry[], requestedCids: string[]): Promise<string[]> {
+    const requested = new Set(requestedCids);
+    const ordered: string[] = [];
+    const orderedSet = new Set<string>();
+    const pushOrdered = (cid: string): void => {
+      if (!orderedSet.has(cid)) {
+        orderedSet.add(cid);
+        ordered.push(cid);
+      }
+    };
+
+    for (const entry of topologicalSort(entries)) {
+      const cid = await getMessageCid(entry.message);
+      if (requested.has(cid)) {
+        pushOrdered(cid);
+      }
+    }
+
+    for (const cid of requestedCids) {
+      pushOrdered(cid);
+    }
+
+    return ordered;
   }
 
   // ---------------------------------------------------------------------------
@@ -3653,11 +3688,11 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Build a compound dead letter key. Different remotes can fail the same CID
-   * for different reasons, so the key includes the remote endpoint.
+   * Build a compound dead letter key. Different tenants and remotes can fail
+   * the same CID for different reasons, so the durable key includes both.
    */
-  private static deadLetterKey(messageCid: string, remoteEndpoint?: string): string {
-    return remoteEndpoint ? `${messageCid}|${remoteEndpoint}` : messageCid;
+  private static deadLetterKey(tenantDid: string, messageCid: string, remoteEndpoint?: string): string {
+    return `${tenantDid}|${messageCid}|${remoteEndpoint ?? ''}`;
   }
 
   public async recordDeadLetter(params: {
@@ -3673,7 +3708,7 @@ export class SyncEngineLevel implements SyncEngine {
       ...params,
       failedAt: new Date().toISOString(),
     };
-    const key = SyncEngineLevel.deadLetterKey(params.messageCid, params.remoteEndpoint);
+    const key = SyncEngineLevel.deadLetterKey(params.tenantDid, params.messageCid, params.remoteEndpoint);
     try {
       await this._deadLetters.put(key, JSON.stringify(entry));
     } catch (error) {
@@ -3690,7 +3725,7 @@ export class SyncEngineLevel implements SyncEngine {
     remoteEndpoint: string,
     messageCid: string,
   ): Promise<boolean> {
-    const key = SyncEngineLevel.deadLetterKey(messageCid, remoteEndpoint);
+    const key = SyncEngineLevel.deadLetterKey(tenantDid, messageCid, remoteEndpoint);
     try {
       const value = await this._deadLetters.get(key);
       const entry = JSON.parse(value) as DeadLetterEntry;
@@ -3716,26 +3751,14 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async clearFailedMessage(messageCid: string, remoteEndpoint?: string): Promise<boolean> {
-    if (remoteEndpoint) {
-      // Clear a specific CID + remote pair.
-      const key = SyncEngineLevel.deadLetterKey(messageCid, remoteEndpoint);
-      try {
-        await this._deadLetters.get(key);
-        await this._deadLetters.del(key);
-        return true;
-      } catch (error) {
-        const e = error as { code?: string };
-        if (e.code === 'LEVEL_NOT_FOUND') { return false; }
-        throw error;
-      }
-    }
-
-    // No remote specified — clear ALL entries for this CID (any remote).
+    // Clear all matching entries. The durable key includes tenant, but this
+    // API intentionally clears by message CID and optional remote regardless
+    // of tenant, matching the previous public contract.
     let found = false;
     const batch: { type: 'del'; key: string }[] = [];
     for await (const [key, value] of this._deadLetters.iterator()) {
       const entry = JSON.parse(value) as DeadLetterEntry;
-      if (entry.messageCid === messageCid) {
+      if (entry.messageCid === messageCid && (remoteEndpoint === undefined || entry.remoteEndpoint === remoteEndpoint)) {
         batch.push({ type: 'del', key });
         found = true;
       }

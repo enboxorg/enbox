@@ -2,6 +2,7 @@ import type { GenericMessage } from '../types/message-types.js';
 
 import { DwnErrorCode } from './dwn-error.js';
 import { Encoder } from '../utils/encoder.js';
+import { Message } from './message.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export type ReplicationApplyOptions = {
@@ -18,9 +19,9 @@ export type ReplicationApplyResult =
 
 export type DependencyRef =
   | { type: 'Protocol'; protocol: string; messageCid?: string; terminal?: boolean }
-  | { type: 'InitialWrite'; recordId: string; messageCid?: string; terminal?: boolean }
+  | { type: 'InitialWrite'; recordId: string; protocol?: string; messageCid?: string; terminal?: boolean }
   | { type: 'Parent'; recordId: string; protocol: string; messageCid?: string; terminal?: boolean }
-  | { type: 'Ancestor'; recordId: string; messageCid?: string; terminal?: boolean }
+  | { type: 'Ancestor'; recordId: string; protocol?: string; messageCid?: string; terminal?: boolean }
   | { type: 'Role'; protocol: string; protocolPath: string; recipient: string; contextPrefix?: string; messageCid?: string; terminal?: boolean }
   | { type: 'Grant'; permissionGrantId: string; messageCid?: string; terminal?: boolean }
   | { type: 'KeyDelivery'; protocol: string; contextId: string; messageCid?: string; terminal?: boolean }
@@ -44,6 +45,10 @@ export function replicationApplyResultFromReply(
   }
 
   if (code === 409) {
+    return { kind: 'Superseded' };
+  }
+
+  if (getDwnErrorCode(detail) === DwnErrorCode.RecordsWriteNotAllowedAfterDelete) {
     return { kind: 'Superseded' };
   }
 
@@ -77,9 +82,13 @@ function dependencyRefFromStatus(
   case DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound:
     return parentDependencyFromMessage(message, detail);
   case DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain:
-    return ancestorDependencyFromDetail(detail);
+    return ancestorDependencyFromMessage(message, detail);
+  case DwnErrorCode.RecordsWriteGetInitialWriteNotFound:
+    return initialWriteDependencyFromMessage(message);
   case DwnErrorCode.GrantAuthorizationGrantMissing:
     return grantDependencyFromMessage(message);
+  case DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound:
+    return roleDependencyFromMessage(message);
   case DwnErrorCode.RecordsWriteMissingDataInPrevious:
   case DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious:
     return recordDataDependencyFromMessage(message);
@@ -127,9 +136,31 @@ function parentDependencyFromMessage(message: GenericMessage, detail: string): D
   return { type: 'Parent', recordId: parentId, protocol };
 }
 
-function ancestorDependencyFromDetail(detail: string): DependencyRef | undefined {
+function ancestorDependencyFromMessage(message: GenericMessage, detail: string): DependencyRef | undefined {
   const recordId = /ID ([^ ]+)/.exec(detail)?.[1];
-  return recordId === undefined ? undefined : { type: 'Ancestor', recordId };
+  if (recordId === undefined) {
+    return undefined;
+  }
+
+  const protocol = (message.descriptor as Record<string, unknown>).protocol;
+  return {
+    type: 'Ancestor',
+    recordId,
+    ...(typeof protocol === 'string' ? { protocol } : {}),
+  };
+}
+
+function initialWriteDependencyFromMessage(message: GenericMessage): DependencyRef | undefined {
+  if (!isRecordsWrite(message)) {
+    return undefined;
+  }
+
+  const protocol = (message.descriptor as Record<string, unknown>).protocol;
+  return {
+    type     : 'InitialWrite',
+    recordId : message.recordId,
+    ...(typeof protocol === 'string' ? { protocol } : {}),
+  };
 }
 
 function grantDependencyFromMessage(message: GenericMessage): DependencyRef | undefined {
@@ -160,6 +191,31 @@ function recordDataDependencyFromMessage(message: GenericMessage): DependencyRef
       ...(typeof protocol === 'string' ? { protocol } : {}),
     }
     : undefined;
+}
+
+function roleDependencyFromMessage(message: GenericMessage): DependencyRef | undefined {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  const protocol = descriptor.protocol;
+  const protocolRole = getSignaturePayload(message)?.protocolRole;
+  const recipient = Message.getAuthor(message);
+
+  if (typeof protocol !== 'string' || typeof protocolRole !== 'string' || recipient === undefined) {
+    return undefined;
+  }
+
+  const contextId = typeof descriptor.contextId === 'string' ? descriptor.contextId : undefined;
+  const roleSegments = protocolRole.split('/').length - 1;
+  const contextPrefix = roleSegments > 0 && contextId !== undefined
+    ? contextId.split('/').slice(0, roleSegments).join('/')
+    : undefined;
+
+  return {
+    type         : 'Role',
+    protocol,
+    protocolPath : protocolRole,
+    recipient,
+    ...(contextPrefix === undefined ? {} : { contextPrefix }),
+  };
 }
 
 function isRecordsWrite(message: GenericMessage): message is GenericMessage & { recordId: string } {
