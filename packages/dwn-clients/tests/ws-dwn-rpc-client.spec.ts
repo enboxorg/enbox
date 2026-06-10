@@ -8,7 +8,7 @@ import { JsonRpcSocket } from '../src/json-rpc-socket.js';
 import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '../src/json-rpc.js';
-import { DwnInterfaceName, DwnMethodName, Jws, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Encoder, Jws, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 /**
  * Matches the defaults used by `TestDataGenerator.generateRecordsWrite()`.
@@ -295,6 +295,54 @@ describe('WebSocketDwnRpcClient', () => {
         } catch (error: any) {
           expect(error.message).toBe('error sending DWN request: some error');
         }
+      });
+    });
+
+    describe('applyReplicatedMessage', () => {
+      it('sends large replicated apply data as encoded JSON-RPC params', async () => {
+        const payload = new Uint8Array(1_048_577);
+        payload.fill(3);
+        payload[0] = 42;
+        payload[payload.length - 1] = 99;
+        const dataStream = new ReadableStream<Uint8Array>({
+          start(controller): void {
+            controller.enqueue(payload);
+            controller.close();
+          },
+        });
+
+        const requests: any[] = [];
+        const socket = {
+          request: async (request: any): Promise<any> => {
+            requests.push(request);
+            return {
+              jsonrpc : '2.0',
+              id      : request.id,
+              result  : { result: { kind: 'Applied' } },
+            };
+          },
+        };
+        const host = new URL(socketDwnUrl).host;
+        (WebSocketDwnRpcClient as any)['connections'].set(host, {
+          socket,
+          subscriptions : new Map(),
+          url           : socketDwnUrl,
+        });
+        const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+        const result = await client.applyReplicatedMessage({
+          dwnUrl    : socketDwnUrl,
+          targetDid : alice.did,
+          message,
+          data      : dataStream,
+        });
+
+        expect(result).toEqual({ kind: 'Applied' });
+        expect(requests).toHaveLength(1);
+        expect(requests[0].method).toBe('dwn.applyReplicatedMessage');
+        expect(requests[0].params.target).toBe(alice.did);
+        expect(requests[0].params.message).toEqual(message);
+        expect(requests[0].params.encodedData).toBe(Encoder.bytesToBase64Url(payload));
       });
     });
 

@@ -249,6 +249,50 @@ describe('HttpDwnRpcClient', () => {
       expect(dwnRequest.params.message).toEqual(message);
     });
 
+    it('sends large replicated apply data in the HTTP request body', async () => {
+      const payload = new Uint8Array(1_048_577);
+      payload.fill(7);
+      payload[0] = 1;
+      payload[payload.length - 1] = 255;
+      const dataStream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(payload);
+          controller.close();
+        },
+      });
+
+      const jsonRpcResponse = {
+        id      : 'test',
+        jsonrpc : '2.0',
+        result  : { result: { kind: 'Applied' } },
+      };
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves({
+        status  : 200,
+        headers : new Headers(),
+        text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
+      } as any);
+      const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
+
+      const result = await client.applyReplicatedMessage({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+        data      : dataStream,
+      });
+
+      expect(result).toEqual({ kind: 'Applied' });
+      expect(fetchStub.calledOnce).toBe(true);
+
+      const fetchOpts = fetchStub.firstCall.args[1] as RequestInit;
+      const headers = fetchOpts.headers as Record<string, string>;
+      expect(headers['content-type']).toBe('application/octet-stream');
+      expect(fetchOpts.body instanceof Blob).toBe(true);
+
+      const sentBlob = fetchOpts.body as Blob;
+      const sentBytes = new Uint8Array(await sentBlob.arrayBuffer());
+      expect(sentBytes).toEqual(payload);
+    });
+
     it('sends RecordsRead and populates reply.entry.data when dwn-response header is present', async () => {
       // Simulate a server response where the JSON-RPC envelope is in the
       // dwn-response header and the body is raw data (reply.entry branch).

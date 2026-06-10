@@ -314,25 +314,38 @@ export type ReplicationLinkState = {
  * failures, and mark links for later reconciliation.
  */
 /** A failed push root with diagnostic info from the latest attempt. */
+export type PushFailureKind = 'Invalid' | 'Deferred' | 'Incomplete';
+
 export type PushFailure = {
-  cid : string;
-  statusCode? : number;
-  detail? : string;
+  /** Requested root CID whose push did not converge. */
+  cid: string;
+  /** Non-root dependency CID that caused this root to fail, when applicable. */
+  dependencyCid?: string;
+  /** Structured remote apply result kind that produced the failure. */
+  kind?: PushFailureKind;
+  /** Remote `Deferred.reason`, when `kind` is `Deferred`. */
+  reason?: 'tenant-inactive' | 'resolver-unavailable' | 'storage';
+  /** True only for Invalid or terminal dependency outcomes. */
+  terminal?: boolean;
+  /** True when the remote tenant is inactive and retrying the same message would hot-loop. */
+  tenantInactive?: boolean;
+  /** Human-readable diagnostic detail. */
+  detail?: string;
 };
 
 export type PushResult = {
-  /** messageCids that were accepted (202/204/409 — idempotent success). */
+  /** Requested root messageCids that reached Applied, Duplicate, or Superseded. */
   succeeded: string[];
   /** Requested root messageCids that failed and should be retried or reconciled. */
   failed: PushFailure[];
 };
 
-export function isTerminalPushStatus(statusCode: number | undefined): boolean {
-  return statusCode !== undefined && statusCode >= 400 && statusCode < 500;
+export function isTerminalPushFailure(failure: PushFailure): boolean {
+  return failure.terminal === true;
 }
 
-export function isTerminalPushFailure(failure: PushFailure): boolean {
-  return isTerminalPushStatus(failure.statusCode);
+export function isTenantInactivePushFailure(failure: PushFailure): boolean {
+  return failure.tenantInactive === true;
 }
 
 /**
@@ -390,9 +403,11 @@ export type SyncEvent =
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
   | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid: string }
+  /** Emitted when reconciliation admits remote messages; this is the D6 equivalent of pull checkpoint advancement. */
   | SyncEventBase & { type: 'reconcile:applied'; messageCids: string[] }
   | SyncEventBase & { type: 'reconcile:needed'; reason: string }
   | SyncEventBase & { type: 'reconcile:completed' }
+  | SyncEventBase & { type: 'reconcile:settled-with-failures'; failedMessageCount: number }
   | SyncEventBase & { type: 'repair:started'; attempt: number }
   | SyncEventBase & { type: 'repair:completed' }
   | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
@@ -451,7 +466,9 @@ export type SyncHealthSummary = {
   admissionFailureCount: number;
   /** Number of current sync links in 'repairing', 'degraded_poll', or terminal-incomplete status. */
   degradedLinkCount: number;
-  /** True only when there are no failed messages and no degraded links. */
+  /** Number of current sync links waiting for reconciliation. */
+  reconcileNeededCount: number;
+  /** True only when there are no failed messages, degraded links, or pending reconciliations. */
   syncHealthy: boolean;
 };
 

@@ -1,13 +1,13 @@
 import type {
+  DependencyRef,
   GenericMessage,
   MessagesReadReply,
-  ProtocolDefinition,
   ProtocolsConfigureMessage,
   ProtocolsQueryReply,
-  RecordsDeleteMessage,
   RecordsQueryReply,
+  RecordsReadReply,
   RecordsWriteMessage,
-  UnionMessageReply,
+  ReplicationApplyResult,
 } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -18,21 +18,13 @@ import {
   DwnInterfaceName,
   DwnMethodName,
   Encoder,
-  isCrossProtocolRef,
   Message,
-  parseCrossProtocolRef,
 } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
-import { isTerminalPushStatus } from './types/sync.js';
-import {
-  buildMessageDependencyGraph,
-  getRoleContextPrefix,
-  getRoleKey,
-  getSignaturePayload,
-} from './sync-topological-sort.js';
-import { getInvokedPermissionGrantIds, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
+import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
+import { getRoleKey, topologicalSort } from './sync-topological-sort.js';
 
 /** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
 const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
@@ -46,10 +38,27 @@ export type SyncMessageEntry = {
   bufferedData?: Uint8Array;
 };
 
-type LocalPushClosure = {
-  cidByEntry: Map<SyncMessageEntry, string>;
-  entries: SyncMessageEntry[];
-};
+type FetchLocalMessageResult =
+  | { kind: 'found'; entry: SyncMessageEntry }
+  | { kind: 'missing'; localStatusCode?: number; detail?: string };
+
+type FetchDependencyResult =
+  | { kind: 'fetched'; entries: SyncMessageEntry[] }
+  | { kind: 'failed'; detail: string };
+
+type PushEntryResult =
+  | { kind: 'applied'; cid: string }
+  | { kind: 'retry'; entries: SyncMessageEntry[] }
+  | { kind: 'failed'; failure: PushFailure };
+
+type PushRootOutcome =
+  | { kind: 'succeeded'; cid: string }
+  | { kind: 'failed'; failure: PushFailure };
+
+// Match the pull-side admission budget. Replication apply reports bounded,
+// structured missing dependencies, while this cap prevents remote cycles from
+// turning into unbounded local query/apply loops.
+const MAX_PUSH_ADMISSION_PASSES = 128;
 
 /** Raised when an in-flight pull is cancelled before local apply can continue. */
 export class SyncPullAbortedError extends Error {
@@ -63,38 +72,6 @@ function assertShouldContinue(shouldContinue: (() => boolean) | undefined): void
   if (shouldContinue?.() === false) {
     throw new SyncPullAbortedError();
   }
-}
-
-/**
- * 202: message was successfully written to the remote DWN
- * 204: an initial write message was written without any data
- * 409: message was already present on the remote DWN
- *
- * When the *pushed* message is known (e.g. during push-sync), pass it as the
- * second argument so that RecordsDelete + 404 ("initial write was not found or
- * already deleted") can be detected.  The DWN's 404 reply omits `entry`, so
- * checking `reply.entry` alone is insufficient.
- */
-export function syncMessageReplyIsSuccessful(reply: UnionMessageReply, pushedMessage?: GenericMessage): boolean {
-  if (reply.status.code === 202 || reply.status.code === 204 || reply.status.code === 409) {
-    return true;
-  }
-
-  if (reply.status.code === 404) {
-    // Check the pushed message first (always available during push-sync).
-    if (pushedMessage?.descriptor.interface === DwnInterfaceName.Records &&
-        pushedMessage?.descriptor.method === DwnMethodName.Delete) {
-      return true;
-    }
-
-    // Fallback: check the reply entry (for callers that don't pass the pushed message).
-    if (reply.entry?.message.descriptor.interface === DwnInterfaceName.Records &&
-        reply.entry?.message.descriptor.method === DwnMethodName.Delete) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 /**
@@ -125,6 +102,10 @@ async function bufferSmallStreams(entries: SyncMessageEntry[], shouldContinue?: 
   for (const entry of entries) {
     assertShouldContinue(shouldContinue);
     if (!entry.dataStream) {
+      continue;
+    }
+
+    if (entry.bufferedData !== undefined) {
       continue;
     }
 
@@ -245,14 +226,13 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permission
 }
 
 /**
- * Reads missing messages from the local DWN and pushes them to the remote DWN.
- * Messages are fetched first, then sorted in dependency order (topological sort)
- * so that initial writes come before updates, and ProtocolsConfigures come before
- * records that reference those protocols.
+ * Reads local roots and pushes them through the remote DWN replication entry.
+ * The remote DWN is the dependency authority: `Incomplete` results request the
+ * exact local dependency refs to fetch and retry.
  *
  * Returns a {@link PushResult} with per-CID outcome tracking instead of throwing
  * on the first failure. Callers use failures to retry transient push problems,
- * dead-letter terminal remote rejections, or mark links for reconciliation.
+ * dead-letter `Invalid` remote rejections, or mark links for reconciliation.
  */
 export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids, agent, permissionsApi }: {
   did: string;
@@ -263,213 +243,15 @@ export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantId
   agent: EnboxPlatformAgent;
   permissionsApi?: PermissionsApi;
 }): Promise<PushResult> {
-  const requestedRootCids = [...new Set(messageCids)];
-  const requestedRootCidSet = new Set(requestedRootCids);
-  const succeeded: string[] = [];
-  const failedByRoot = new Map<string, PushFailure>();
-  const { fetched, failed } = await fetchLocalMessagesForPush({
+  const context = new RemoteApplyPushContext({
     did,
+    dwnUrl,
     delegateDid,
     permissionGrantIds,
-    messageCids: requestedRootCids,
-    agent,
-  });
-
-  recordRootFailures(failedByRoot, failed);
-
-  const closure = await expandLocalPushClosure({
-    did,
-    delegateDid,
-    permissionGrantIds,
-    roots: fetched,
     agent,
     permissionsApi,
   });
-  const dependencyGraph = buildMessageDependencyGraph(closure.entries);
-  const sorted = dependencyGraph.sorted;
-  const dependencyCidsByCid = dependencyCidsByMessageCid(dependencyGraph.dependencies, closure.cidByEntry);
-
-  // ReadableStream is single-use — if sendDwnRequest's underlying fetch
-  // retries the HTTP request, the original stream is already consumed.
-  await bufferSmallStreams(sorted);
-
-  await pushSortedEntries({
-    agent,
-    did,
-    dwnUrl,
-    failedByRoot,
-    cidByEntry: closure.cidByEntry,
-    dependencyCidsByCid,
-    requestedRootCidSet,
-    sorted,
-    succeeded,
-  });
-
-  return { succeeded, failed: [...failedByRoot.values()] };
-}
-
-function recordRootFailures(failedByRoot: Map<string, PushFailure>, failed: PushFailure[]): void {
-  for (const failure of failed) {
-    failedByRoot.set(failure.cid, failure);
-  }
-}
-
-async function pushSortedEntries({
-  did,
-  dwnUrl,
-  sorted,
-  requestedRootCidSet,
-  succeeded,
-  failedByRoot,
-  cidByEntry,
-  dependencyCidsByCid,
-  agent,
-}: {
-  did: string;
-  dwnUrl: string;
-  sorted: SyncMessageEntry[];
-  requestedRootCidSet: Set<string>;
-  succeeded: string[];
-  failedByRoot: Map<string, PushFailure>;
-  cidByEntry: Map<SyncMessageEntry, string>;
-  dependencyCidsByCid: Map<string, string[]>;
-  agent: EnboxPlatformAgent;
-}): Promise<void> {
-  const failedDependencyByCid = new Map<string, PushFailure>();
-  for (const entry of sorted) {
-    const cid = cidByEntry.get(entry)!;
-    const blockedFailure = firstFailedDependency(cid, dependencyCidsByCid, failedDependencyByCid);
-    if (blockedFailure !== undefined) {
-      const failure = dependencyBlockedFailure(cid, blockedFailure);
-      failedDependencyByCid.set(cid, failure);
-      if (requestedRootCidSet.has(cid)) {
-        failedByRoot.set(cid, failure);
-      }
-      continue;
-    }
-
-    const outcome = await pushSingleMessage({ did, dwnUrl, cid, entry, agent });
-    if (outcome.status === 'succeeded') {
-      markRootPushSucceeded(outcome.cid, requestedRootCidSet, succeeded, failedByRoot);
-    } else if (requestedRootCidSet.has(outcome.failure.cid)) {
-      failedByRoot.set(outcome.failure.cid, outcome.failure);
-      failedDependencyByCid.set(outcome.failure.cid, outcome.failure);
-    } else {
-      failedDependencyByCid.set(outcome.failure.cid, outcome.failure);
-    }
-  }
-}
-
-function dependencyCidsByMessageCid(
-  dependencies: Map<SyncMessageEntry, SyncMessageEntry[]>,
-  cidByEntry: Map<SyncMessageEntry, string>,
-): Map<string, string[]> {
-  const result = new Map<string, string[]>();
-  for (const [entry, dependencyEntries] of dependencies) {
-    result.set(cidByEntry.get(entry)!, dependencyEntries.map(dependency => cidByEntry.get(dependency)!));
-  }
-  return result;
-}
-
-function firstFailedDependency(
-  cid: string,
-  dependencyCidsByCid: Map<string, string[]>,
-  failedDependencyByCid: Map<string, PushFailure>,
-): PushFailure | undefined {
-  for (const dependencyCid of dependencyCidsByCid.get(cid) ?? []) {
-    const failure = failedDependencyByCid.get(dependencyCid);
-    if (failure !== undefined) {
-      return failure;
-    }
-  }
-  return undefined;
-}
-
-function dependencyBlockedFailure(cid: string, dependencyFailure: PushFailure): PushFailure {
-  const statusCode = isTerminalPushStatus(dependencyFailure.statusCode) ? dependencyFailure.statusCode : undefined;
-  return {
-    cid,
-    ...(statusCode === undefined ? {} : { statusCode }),
-    detail: `dependency push failed before root push: ${dependencyFailure.detail ?? dependencyFailure.cid}`,
-  };
-}
-
-function markRootPushSucceeded(
-  cid: string,
-  requestedRootCidSet: Set<string>,
-  succeeded: string[],
-  failedByRoot: Map<string, PushFailure>,
-): void {
-  if (!requestedRootCidSet.has(cid)) {
-    return;
-  }
-
-  succeeded.push(cid);
-  failedByRoot.delete(cid);
-}
-
-async function fetchLocalMessagesForPush({ did, delegateDid, permissionGrantIds, messageCids, agent }: {
-  did: string;
-  delegateDid?: string;
-  permissionGrantIds?: string[];
-  messageCids: string[];
-  agent: EnboxPlatformAgent;
-}): Promise<{ fetched: SyncMessageEntry[]; failed: PushFailure[] }> {
-  const fetched: SyncMessageEntry[] = [];
-  const failed: PushFailure[] = [];
-
-  for (const messageCid of messageCids) {
-    const dwnMessage = await getLocalMessage({ author: did, messageCid, delegateDid, permissionGrantIds, agent });
-    if (dwnMessage) {
-      fetched.push(dwnMessage);
-    } else {
-      failed.push({ cid: messageCid, detail: 'local message not found' });
-    }
-  }
-
-  return { fetched, failed };
-}
-
-type PushSingleMessageOutcome =
-  | { status: 'succeeded'; cid: string }
-  | { status: 'failed'; failure: PushFailure };
-
-async function pushSingleMessage({ did, dwnUrl, cid, entry, agent }: {
-  did: string;
-  dwnUrl: string;
-  cid: string;
-  entry: SyncMessageEntry;
-  agent: EnboxPlatformAgent;
-}): Promise<PushSingleMessageOutcome> {
-  try {
-    const reply = await agent.rpc.sendDwnRequest({
-      dwnUrl,
-      targetDid : did,
-      data      : pushData(entry),
-      message   : entry.message
-    });
-
-    if (syncMessageReplyIsSuccessful(reply, entry.message)) {
-      return { status: 'succeeded', cid };
-    }
-
-    console.error(`SyncEngineLevel: push failed for ${cid}: ${reply.status.code} ${reply.status.detail}`);
-    return {
-      status  : 'failed',
-      failure : { cid, statusCode: reply.status.code, detail: reply.status.detail ?? '' },
-    };
-  } catch (error: any) {
-    console.error(`SyncEngineLevel: push error for ${cid}: ${error.message ?? error}`);
-    return { status: 'failed', failure: { cid, detail: error.message ?? String(error) } };
-  }
-}
-
-function pushData(entry: SyncMessageEntry): Blob | ReadableStream<Uint8Array> | undefined {
-  // Use a Blob for buffered data: unlike ReadableStream, Blob is replayable,
-  // so fetchWithRetry can retry the HTTP request after a transport failure.
-  return entry.bufferedData
-    ? new Blob([entry.bufferedData] as BlobPart[], { type: 'application/octet-stream' })
-    : entry.dataStream;
+  return context.push([...new Set(messageCids)]);
 }
 
 /**
@@ -482,6 +264,17 @@ export async function getLocalMessage({ author, delegateDid, permissionGrantIds,
   messageCid: string;
   agent: EnboxPlatformAgent;
 }): Promise<SyncMessageEntry | undefined> {
+  const result = await readLocalMessage({ author, delegateDid, permissionGrantIds, messageCid, agent });
+  return result.kind === 'found' ? result.entry : undefined;
+}
+
+async function readLocalMessage({ author, delegateDid, permissionGrantIds, messageCid, agent }: {
+  author: string;
+  delegateDid?: string;
+  permissionGrantIds?: string[];
+  messageCid: string;
+  agent: EnboxPlatformAgent;
+}): Promise<FetchLocalMessageResult> {
   const { reply } = await agent.dwn.processRequest({
     author,
     target        : author,
@@ -491,7 +284,7 @@ export async function getLocalMessage({ author, delegateDid, permissionGrantIds,
   });
 
   if (reply.status.code !== 200 || !reply.entry) {
-    return undefined;
+    return { kind: 'missing', localStatusCode: reply.status.code, detail: reply.status.detail };
   }
   const messageEntry = reply.entry!;
 
@@ -501,127 +294,272 @@ export async function getLocalMessage({ author, delegateDid, permissionGrantIds,
 
   if (isRecordsWrite(messageEntry) && messageEntry.data) {
     result.dataStream = messageEntry.data;
+    result.dataStreamFactory = async (): Promise<ReadableStream<Uint8Array> | undefined> => {
+      const refreshed = await readLocalMessage({ author, delegateDid, permissionGrantIds, messageCid, agent });
+      return refreshed.kind === 'found' ? refreshed.entry.dataStream : undefined;
+    };
   }
 
-  return result;
+  return { kind: 'found', entry: result };
 }
 
-async function expandLocalPushClosure({ did, delegateDid, permissionGrantIds, roots, agent, permissionsApi }: {
-  did: string;
-  delegateDid?: string;
-  permissionGrantIds?: string[];
-  roots: SyncMessageEntry[];
-  agent: EnboxPlatformAgent;
-  permissionsApi?: PermissionsApi;
-}): Promise<LocalPushClosure> {
-  const builder = new LocalPushClosureBuilder({
-    did,
-    delegateDid,
-    permissionGrantIds,
-    agent,
-    permissionsApi,
-  });
-  const entries = await builder.expand(roots);
-  return { cidByEntry: builder.cidByEntry(), entries };
-}
-
-class LocalPushClosureBuilder {
+class RemoteApplyPushContext {
   private readonly entriesByCid = new Map<string, SyncMessageEntry>();
-  private readonly fetchedProtocols = new Set<string>();
-  private readonly fetchedRecordIds = new Set<string>();
-  private readonly fetchedRoles = new Set<string>();
+  private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
+  private readonly fetchedRefs = new Set<string>();
 
   public constructor(private readonly deps: {
     did: string;
+    dwnUrl: string;
     delegateDid?: string;
     permissionGrantIds?: string[];
     agent: EnboxPlatformAgent;
     permissionsApi?: PermissionsApi;
-  }) { }
+  }) {}
 
-  public async expand(roots: SyncMessageEntry[]): Promise<SyncMessageEntry[]> {
-    const queue: SyncMessageEntry[] = [];
-    for (const root of roots) {
-      if (await this.rememberEntry(root)) {
-        queue.push(root);
+  public async push(rootCids: string[]): Promise<PushResult> {
+    const succeeded: string[] = [];
+    const failedByRoot = new Map<string, PushFailure>();
+    const rootEntries: SyncMessageEntry[] = [];
+
+    for (const rootCid of rootCids) {
+      const root = await this.fetchMessageCid(rootCid);
+      if (root.kind === 'failed') {
+        failedByRoot.set(rootCid, {
+          cid    : rootCid,
+          detail : root.detail,
+        });
+        continue;
+      }
+      rootEntries.push(...root.entries);
+    }
+
+    for (const rootEntry of topologicalSort(rootEntries)) {
+      const rootCid = await this.rememberEntry(rootEntry);
+      if (failedByRoot.has(rootCid)) {
+        continue;
+      }
+
+      const outcome = await this.pushRoot(rootCid, rootEntry);
+      if (outcome.kind === 'succeeded') {
+        succeeded.push(outcome.cid);
+        failedByRoot.delete(outcome.cid);
+      } else {
+        failedByRoot.set(outcome.failure.cid, outcome.failure);
       }
     }
 
-    for (const entry of queue) {
-      const dependencies = await this.fetchDependencies(entry.message);
-      for (const dependency of dependencies) {
-        if (await this.rememberEntry(dependency)) {
-          queue.push(dependency);
+    return { succeeded, failed: [...failedByRoot.values()] };
+  }
+
+  private async pushRoot(rootCid: string, rootEntry: SyncMessageEntry): Promise<PushRootOutcome> {
+    let pending = [rootEntry];
+    for (let pass = 0; pass < MAX_PUSH_ADMISSION_PASSES && pending.length > 0; pass++) {
+      const retry: SyncMessageEntry[] = [];
+      for (const entry of topologicalSort(pending)) {
+        const result = await this.pushEntry(rootCid, entry);
+        switch (result.kind) {
+          case 'applied':
+            break;
+          case 'retry':
+            retry.push(...result.entries);
+            break;
+          case 'failed':
+            return { kind: 'failed', failure: result.failure };
         }
       }
+      pending = await dedupeEntries(retry);
     }
 
-    return [...this.entriesByCid.values()];
+    return pending.length === 0
+      ? { kind: 'succeeded', cid: rootCid }
+      : {
+        kind    : 'failed',
+        failure : { cid: rootCid, detail: 'remote dependency apply pass budget exhausted' },
+      };
   }
 
-  public cidByEntry(): Map<SyncMessageEntry, string> {
-    const cidByEntry = new Map<SyncMessageEntry, string>();
-    for (const [cid, entry] of this.entriesByCid) {
-      cidByEntry.set(entry, cid);
+  private async pushEntry(rootCid: string, entry: SyncMessageEntry): Promise<PushEntryResult> {
+    const cid = await this.rememberEntry(entry);
+    await bufferSmallStreams([entry]);
+
+    let result: ReplicationApplyResult;
+    try {
+      result = await this.deps.agent.rpc.applyReplicatedMessage({
+        dwnUrl    : this.deps.dwnUrl,
+        targetDid : this.deps.did,
+        data      : await pushData(entry),
+        message   : entry.message,
+      });
+    } catch (error: any) {
+      const detail = error.message ?? String(error);
+      console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
+      return { kind: 'failed', failure: this.retryableFailure(rootCid, cid, detail) };
     }
-    return cidByEntry;
+
+    return this.pushResultFromApply(rootCid, cid, entry, result);
   }
 
-  private async fetchDependencies(message: GenericMessage): Promise<SyncMessageEntry[]> {
-    if (isProtocolsConfigureMessage(message)) {
-      return this.fetchComposedProtocolConfigs(message.descriptor.definition);
+  private async pushResultFromApply(
+    rootCid: string,
+    cid: string,
+    entry: SyncMessageEntry,
+    result: ReplicationApplyResult,
+  ): Promise<PushEntryResult> {
+    switch (result.kind) {
+      case 'Applied':
+      case 'Duplicate':
+      case 'Superseded':
+        return { kind: 'applied', cid };
+      case 'Deferred':
+        return {
+          kind    : 'failed',
+          failure : this.retryableFailure(rootCid, cid, result.reason, result),
+        };
+      case 'Invalid':
+        return {
+          kind    : 'failed',
+          failure : this.terminalFailure(rootCid, cid, result.reason, result),
+        };
+      case 'Incomplete':
+        return this.pushResultFromMissingDependencies(rootCid, cid, entry, result.missing);
+      default:
+        return unreachable(result);
     }
-
-    if (isRecordsDeleteMessage(message)) {
-      return this.fetchRecordsByRecordId(message.descriptor.recordId);
-    }
-
-    if (!isRecordsWriteMessage(message)) {
-      return [];
-    }
-
-    const dependencies: SyncMessageEntry[] = [];
-    const { protocol, parentId } = message.descriptor;
-    if (protocol !== undefined) {
-      dependencies.push(...await this.fetchProtocolConfig(protocol));
-    }
-
-    if (!isInitialWrite(message)) {
-      dependencies.push(...await this.fetchRecordsByRecordId(message.recordId, protocol));
-    }
-
-    if (parentId !== undefined) {
-      dependencies.push(...await this.fetchRecordsByRecordId(parentId, protocol));
-    }
-
-    for (const permissionGrantId of getInvokedPermissionGrantIds(message)) {
-      dependencies.push(...await this.fetchRecordsByRecordId(permissionGrantId));
-    }
-
-    dependencies.push(...await this.fetchRoleRecord(message));
-    return dependencies;
   }
 
-  private async fetchComposedProtocolConfigs(definition: ProtocolDefinition): Promise<SyncMessageEntry[]> {
-    const protocols = Object.values(definition.uses ?? {}).filter((protocol): protocol is string => typeof protocol === 'string');
-    const entries: SyncMessageEntry[] = [];
-    for (const protocol of protocols) {
-      entries.push(...await this.fetchProtocolConfig(protocol));
+  private async pushResultFromMissingDependencies(
+    rootCid: string,
+    cid: string,
+    entry: SyncMessageEntry,
+    missing: DependencyRef[],
+  ): Promise<PushEntryResult> {
+    if (hasTerminalDependency(missing)) {
+      return {
+        kind    : 'failed',
+        failure : this.terminalFailure(rootCid, cid, missingDependencyDetail(missing), { kind: 'Incomplete', missing }),
+      };
     }
-    return entries;
+
+    const dependencies = await this.fetchMissingDependencies(missing);
+    if (dependencies.kind === 'failed') {
+      return {
+        kind    : 'failed',
+        failure : this.retryableFailure(rootCid, cid, dependencies.detail),
+      };
+    }
+
+    if (dependencies.entries.length === 0) {
+      return {
+        kind    : 'failed',
+        failure : this.retryableFailure(rootCid, cid, missingDependencyDetail(missing)),
+      };
+    }
+
+    return { kind: 'retry', entries: [...dependencies.entries, entry] };
   }
 
-  private async fetchProtocolConfig(protocol: string): Promise<SyncMessageEntry[]> {
-    if (this.fetchedProtocols.has(protocol)) {
-      return [];
-    }
-    this.fetchedProtocols.add(protocol);
-
-    const config = await this.fetchProtocol(protocol);
-    return config === undefined ? [] : [{ message: config }];
+  private terminalFailure(
+    rootCid: string,
+    cid: string,
+    detail: string,
+    result: Extract<ReplicationApplyResult, { kind: 'Invalid' | 'Incomplete' }>,
+  ): PushFailure {
+    return {
+      cid      : rootCid,
+      kind     : result.kind,
+      terminal : true,
+      detail   : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
+    };
   }
 
-  private async fetchProtocol(protocol: string): Promise<ProtocolsConfigureMessage | undefined> {
+  private retryableFailure(
+    rootCid: string,
+    cid: string,
+    detail: string,
+    result?: Extract<ReplicationApplyResult, { kind: 'Deferred' }>,
+  ): PushFailure {
+    return {
+      cid    : rootCid,
+      ...(cid === rootCid ? {} : { dependencyCid: cid }),
+      ...(result === undefined ? {} : { kind: result.kind, reason: result.reason }),
+      ...(result?.reason === 'tenant-inactive' ? { tenantInactive: true } : {}),
+      detail : cid === rootCid ? detail : `dependency ${cid} failed before root push: ${detail}`,
+    };
+  }
+
+  private async fetchMissingDependencies(refs: DependencyRef[]): Promise<FetchDependencyResult> {
+    const fetched: SyncMessageEntry[] = [];
+    for (const ref of refs) {
+      const key = dependencyKey(ref);
+      if (this.fetchedRefs.has(key)) {
+        fetched.push(...(this.fetchedDependencyEntries.get(key) ?? []));
+        continue;
+      }
+
+      const result = await this.fetchDependency(ref);
+      if (result.kind === 'failed') {
+        return result;
+      }
+
+      this.fetchedRefs.add(key);
+      this.fetchedDependencyEntries.set(key, result.entries);
+      fetched.push(...result.entries);
+    }
+    return { kind: 'fetched', entries: fetched };
+  }
+
+  private async fetchDependency(ref: DependencyRef): Promise<FetchDependencyResult> {
+    if (ref.messageCid !== undefined) {
+      return this.fetchMessageCid(ref.messageCid);
+    }
+
+    switch (ref.type) {
+      case 'Protocol':
+        return this.fetchProtocolConfig(ref.protocol);
+      case 'InitialWrite':
+        return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
+      case 'Parent':
+        return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
+      case 'Ancestor':
+      case 'CrossProtocolRef':
+        return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
+      case 'Role':
+        return this.fetchRoleRecord(ref);
+      case 'Grant':
+        return this.fetchRecordsByRecordId(ref.permissionGrantId);
+      case 'RecordData':
+        return this.fetchRecordData(ref);
+      case 'KeyDelivery':
+        // dependencyRefFromStatus() does not currently emit KeyDelivery for push.
+        // Key delivery is installed proactively with encrypted protocols, so keep
+        // this documented no-op instead of building an unexercised fetch path.
+        return { kind: 'fetched', entries: [] };
+      default:
+        return unreachable(ref);
+    }
+  }
+
+  private async fetchMessageCid(messageCid: string): Promise<FetchDependencyResult> {
+    const result = await readLocalMessage({
+      author             : this.deps.did,
+      delegateDid        : this.deps.delegateDid,
+      permissionGrantIds : this.deps.permissionGrantIds,
+      messageCid,
+      agent              : this.deps.agent,
+    });
+    if (result.kind === 'missing') {
+      return {
+        kind   : 'failed',
+        detail : `local dependency message ${messageCid} not found (${result.localStatusCode ?? 'unknown'} ${result.detail ?? ''})`,
+      };
+    }
+
+    await this.rememberEntry(result.entry);
+    return { kind: 'fetched', entries: [result.entry] };
+  }
+
+  private async fetchProtocolConfig(protocol: string): Promise<FetchDependencyResult> {
     const permissionGrantId = await this.getPermissionGrantId(DwnInterface.ProtocolsQuery, protocol);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { reply } = await this.deps.agent.dwn.processRequest({
@@ -638,19 +576,19 @@ class LocalPushClosureBuilder {
 
     const protocolsReply = reply as ProtocolsQueryReply;
     if (protocolsReply.status.code !== 200 || protocolsReply.entries === undefined) {
-      return undefined;
+      return {
+        kind   : 'failed',
+        detail : `local protocol query failed for ${protocol}: ${protocolsReply.status.code} ${protocolsReply.status.detail ?? ''}`,
+      };
     }
 
-    return newestProtocolConfig(protocolsReply.entries.filter(isTenantProtocolConfig(this.deps.did, protocol)));
+    const config = newestProtocolConfig(protocolsReply.entries.filter(isTenantProtocolConfig(this.deps.did, protocol)));
+    const entries = config === undefined ? [] : [{ message: config }];
+    await this.rememberEntries(entries);
+    return { kind: 'fetched', entries };
   }
 
-  private async fetchRecordsByRecordId(recordId: string, protocol?: string): Promise<SyncMessageEntry[]> {
-    const key = `${protocol ?? ''}|${recordId}`;
-    if (this.fetchedRecordIds.has(key)) {
-      return [];
-    }
-    this.fetchedRecordIds.add(key);
-
+  private async fetchRecordsByRecordId(recordId: string, protocol?: string): Promise<FetchDependencyResult> {
     const permissionGrantId = protocol === undefined
       ? undefined
       : await this.getPermissionGrantId(DwnInterface.RecordsQuery, protocol);
@@ -667,48 +605,30 @@ class LocalPushClosureBuilder {
       target      : this.deps.did,
     });
 
-    return this.entriesFromRecordsQueryReply(reply as RecordsQueryReply);
+    const recordsReply = reply as RecordsQueryReply;
+    if (recordsReply.status.code !== 200 || recordsReply.entries === undefined) {
+      return {
+        kind   : 'failed',
+        detail : `local records query failed for ${recordId}: ${recordsReply.status.code} ${recordsReply.status.detail ?? ''}`,
+      };
+    }
+
+    return { kind: 'fetched', entries: await this.entriesFromRecordsQueryEntries(recordsReply.entries) };
   }
 
-  private async fetchRoleRecord(message: RecordsWriteMessage): Promise<SyncMessageEntry[]> {
-    const protocol = message.descriptor.protocol;
-    const protocolRole = getSignaturePayload(message)?.protocolRole;
-    const recipient = Message.getAuthor(message);
-    if (protocol === undefined || typeof protocolRole !== 'string' || recipient === undefined) {
-      return [];
-    }
-
-    let roleProtocol = protocol;
-    let roleProtocolPath = protocolRole;
-    if (isCrossProtocolRef(protocolRole)) {
-      const parsed = parseCrossProtocolRef(protocolRole);
-      const config = await this.fetchProtocol(protocol);
-      const referencedProtocol = parsed === undefined ? undefined : config?.descriptor.definition.uses?.[parsed.alias];
-      if (parsed === undefined || referencedProtocol === undefined) {
-        return [];
-      }
-      roleProtocol = referencedProtocol;
-      roleProtocolPath = parsed.protocolPath;
-    }
-
-    const contextPrefix = getRoleContextPrefix(roleProtocolPath, message.contextId);
-    const key = getRoleKey(roleProtocol, roleProtocolPath, recipient, contextPrefix);
-    if (this.fetchedRoles.has(key)) {
-      return [];
-    }
-    this.fetchedRoles.add(key);
-
-    const permissionGrantId = await this.getPermissionGrantId(DwnInterface.RecordsQuery, roleProtocol);
+  private async fetchRoleRecord(ref: Extract<DependencyRef, { type: 'Role' }>): Promise<FetchDependencyResult> {
+    const permissionGrantId = await this.getPermissionGrantId(DwnInterface.RecordsQuery, ref.protocol);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
+    const key = getRoleKey(ref.protocol, ref.protocolPath, ref.recipient, ref.contextPrefix);
     const { reply } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
       granteeDid,
       messageParams : {
         filter: {
-          protocol     : roleProtocol,
-          protocolPath : roleProtocolPath,
-          recipient,
-          ...(contextPrefix === undefined ? {} : { contextId: contextPrefix }),
+          protocol     : ref.protocol,
+          protocolPath : ref.protocolPath,
+          recipient    : ref.recipient,
+          ...(ref.contextPrefix === undefined ? {} : { contextId: ref.contextPrefix }),
         },
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
@@ -717,17 +637,56 @@ class LocalPushClosureBuilder {
       target      : this.deps.did,
     });
 
-    return this.entriesFromRecordsQueryReply(reply as RecordsQueryReply);
-  }
-
-  private async entriesFromRecordsQueryReply(reply: RecordsQueryReply): Promise<SyncMessageEntry[]> {
-    if (reply.status.code !== 200 || reply.entries === undefined) {
-      return [];
+    const recordsReply = reply as RecordsQueryReply;
+    if (recordsReply.status.code !== 200 || recordsReply.entries === undefined) {
+      return {
+        kind   : 'failed',
+        detail : `local role query failed for ${key}: ${recordsReply.status.code} ${recordsReply.status.detail ?? ''}`,
+      };
     }
 
+    return { kind: 'fetched', entries: await this.entriesFromRecordsQueryEntries(recordsReply.entries) };
+  }
+
+  private async fetchRecordData(ref: Extract<DependencyRef, { type: 'RecordData' }>): Promise<FetchDependencyResult> {
+    const permissionGrantId = ref.protocol === undefined
+      ? undefined
+      : await this.getPermissionGrantId(DwnInterface.RecordsRead, ref.protocol);
+    const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
+    const { reply } = await this.deps.agent.dwn.processRequest({
+      author        : this.deps.delegateDid ?? this.deps.did,
+      granteeDid,
+      messageParams : {
+        filter: { recordId: ref.recordId },
+        ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
+      },
+      messageType : DwnInterface.RecordsRead,
+      store       : false,
+      target      : this.deps.did,
+    });
+
+    const recordsReply = reply as RecordsReadReply;
+    if (recordsReply.status.code !== 200 || recordsReply.entry?.recordsWrite === undefined || recordsReply.entry.data === undefined) {
+      return {
+        kind   : 'failed',
+        detail : `local record data read failed for ${ref.recordId}: ${recordsReply.status.code} ${recordsReply.status.detail ?? ''}`,
+      };
+    }
+
+    const recordsWrite = recordsReply.entry.recordsWrite;
+    if (recordsWrite.descriptor.dataCid !== ref.dataCid) {
+      return { kind: 'fetched', entries: [] };
+    }
+
+    const entry: SyncMessageEntry = { message: recordsWrite, dataStream: recordsReply.entry.data };
+    await this.rememberEntry(entry);
+    return { kind: 'fetched', entries: [entry] };
+  }
+
+  private async entriesFromRecordsQueryEntries(recordsQueryEntries: NonNullable<RecordsQueryReply['entries']>): Promise<SyncMessageEntry[]> {
     const entries: SyncMessageEntry[] = [];
-    for (const entry of reply.entries) {
-      const { encodedData, initialWrite, ...message } = entry;
+    for (const recordEntry of recordsQueryEntries) {
+      const { encodedData, initialWrite, ...message } = recordEntry;
       if (initialWrite !== undefined) {
         entries.push(await this.entryForRecordsQueryMessage(initialWrite));
       }
@@ -735,7 +694,9 @@ class LocalPushClosureBuilder {
       entries.push(await this.entryForRecordsQueryMessage(message, encodedData));
     }
 
-    return dedupeEntries(entries);
+    const dedupedEntries = await dedupeEntries(entries);
+    await this.rememberEntries(dedupedEntries);
+    return dedupedEntries;
   }
 
   private async entryForRecordsQueryMessage(message: GenericMessage, encodedData?: string): Promise<SyncMessageEntry> {
@@ -781,14 +742,29 @@ class LocalPushClosureBuilder {
     }
   }
 
-  private async rememberEntry(entry: SyncMessageEntry): Promise<boolean> {
-    const cid = await getMessageCid(entry.message);
-    if (this.entriesByCid.has(cid)) {
-      return false;
+  private async rememberEntries(entries: SyncMessageEntry[]): Promise<void> {
+    for (const entry of entries) {
+      await this.rememberEntry(entry);
     }
-    this.entriesByCid.set(cid, entry);
-    return true;
   }
+
+  private async rememberEntry(entry: SyncMessageEntry): Promise<string> {
+    const cid = await Message.getCid(entry.message);
+    this.entriesByCid.set(cid, entry);
+    return cid;
+  }
+}
+
+async function pushData(entry: SyncMessageEntry): Promise<Blob | ReadableStream<Uint8Array> | undefined> {
+  if (entry.bufferedData !== undefined) {
+    return new Blob([entry.bufferedData] as BlobPart[], { type: 'application/octet-stream' });
+  }
+
+  if (entry.dataStreamFactory !== undefined) {
+    return entry.dataStreamFactory();
+  }
+
+  return entry.dataStream;
 }
 
 async function dedupeEntries(entries: SyncMessageEntry[]): Promise<SyncMessageEntry[]> {
@@ -805,20 +781,10 @@ function isRecordsWriteMessage(message: GenericMessage): message is RecordsWrite
     typeof (message as { recordId?: unknown }).recordId === 'string';
 }
 
-function isRecordsDeleteMessage(message: GenericMessage): message is RecordsDeleteMessage {
-  return message.descriptor.interface === DwnInterfaceName.Records &&
-    message.descriptor.method === DwnMethodName.Delete &&
-    typeof (message.descriptor as { recordId?: unknown }).recordId === 'string';
-}
-
 function isProtocolsConfigureMessage(message: GenericMessage): message is ProtocolsConfigureMessage {
   return message.descriptor.interface === DwnInterfaceName.Protocols &&
     message.descriptor.method === DwnMethodName.Configure &&
     (message.descriptor as { definition?: unknown }).definition !== undefined;
-}
-
-function isInitialWrite(message: RecordsWriteMessage): boolean {
-  return message.descriptor.dateCreated === message.descriptor.messageTimestamp;
 }
 
 function isTenantProtocolConfig(tenantDid: string, protocol: string): (message: GenericMessage) => message is ProtocolsConfigureMessage {
@@ -839,4 +805,20 @@ function newestProtocolConfig(configs: ProtocolsConfigureMessage[]): ProtocolsCo
     }
   }
   return newest;
+}
+
+function hasTerminalDependency(refs: DependencyRef[]): boolean {
+  return refs.some(ref => ref.terminal === true);
+}
+
+function missingDependencyDetail(refs: DependencyRef[]): string {
+  return refs.map(dependencyKey).join(', ');
+}
+
+function dependencyKey(ref: DependencyRef): string {
+  return JSON.stringify(ref);
+}
+
+function unreachable(value: never): never {
+  throw new Error(`SyncEngineLevel: unreachable sync push branch ${JSON.stringify(value)}`);
 }

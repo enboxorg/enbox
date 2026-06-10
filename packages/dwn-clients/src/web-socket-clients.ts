@@ -18,6 +18,7 @@ import type {
 import { CryptoUtils } from '@enbox/crypto';
 import { JsonRpcSocket } from './json-rpc-socket.js';
 import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest } from './json-rpc.js';
+import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
 
 /**
  * Metadata for a tracked subscription, including everything needed to
@@ -102,12 +103,9 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   async applyReplicatedMessage(request: DwnReplicationApplyRequest): Promise<ReplicationApplyResult> {
-    if (request.data !== undefined) {
-      throw new Error('RecordsWrite replicated apply with data is not supported via WebSocket transport');
-    }
-
     const connection = await WebSocketDwnRpcClient.getConnection(request.dwnUrl);
-    return WebSocketDwnRpcClient.applyReplicatedMessage(connection, request.targetDid, request.message);
+    const encodedData = request.data === undefined ? undefined : await dataToBase64Url(request.data);
+    return WebSocketDwnRpcClient.applyReplicatedMessage(connection, request.targetDid, request.message, encodedData);
   }
 
   private static async getConnection(dwnUrl: string): Promise<SocketConnection> {
@@ -183,10 +181,17 @@ export class WebSocketDwnRpcClient implements DwnRpc {
   }
 
   private static async applyReplicatedMessage(
-    connection: SocketConnection, target: string, message: DwnReplicationApplyRequest['message']
+    connection: SocketConnection,
+    target: string,
+    message: DwnReplicationApplyRequest['message'],
+    encodedData?: string,
   ): Promise<ReplicationApplyResult> {
     const requestId = CryptoUtils.randomUuid();
-    const request = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', { target, message });
+    const request = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      target,
+      message,
+      ...(encodedData === undefined ? {} : { encodedData }),
+    });
 
     const { socket } = connection;
     const response = await socket.request(request);
@@ -331,4 +336,20 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       }
     }
   }
+}
+
+async function dataToBase64Url(data: DwnReplicationApplyRequest['data']): Promise<string> {
+  if (data instanceof Blob) {
+    return Encoder.bytesToBase64Url(new Uint8Array(await data.arrayBuffer()));
+  }
+
+  if (data instanceof ReadableStream) {
+    return Encoder.bytesToBase64Url(await DataStream.toBytes(data as ReadableStream<Uint8Array>));
+  }
+
+  if (data instanceof Uint8Array) {
+    return Encoder.bytesToBase64Url(data);
+  }
+
+  return Encoder.bytesToBase64Url(new Uint8Array(await new Blob([data] as BlobPart[]).arrayBuffer()));
 }

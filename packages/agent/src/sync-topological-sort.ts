@@ -19,7 +19,7 @@ type ProtocolsConfigureDescriptor = GenericMessage['descriptor'] & {
   definition?: Partial<ProtocolDefinition>;
 };
 
-export type MessageDependencyGraph<T> = {
+type MessageDependencyGraph<T> = {
   sorted: T[];
   dependencies: Map<T, T[]>;
 };
@@ -171,7 +171,7 @@ export function topologicalSort<T extends { message: GenericMessage }>(
   return buildMessageDependencyGraph(messages).sorted;
 }
 
-export function buildMessageDependencyGraph<T extends { message: GenericMessage }>(
+function buildMessageDependencyGraph<T extends { message: GenericMessage }>(
   messages: T[]
 ): MessageDependencyGraph<T> {
   if (messages.length <= 1) {

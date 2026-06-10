@@ -6,6 +6,7 @@ import log from 'loglevel';
 import { requestDataBytesTotal } from '../../metrics.js';
 import { v4 as uuidv4 } from 'uuid';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { DataStream, Encoder } from '@enbox/dwn-sdk-js';
 import { enforceInboundDwnMessageLimits, validateInboundDwnMessageTransport } from './inbound-message.js';
 
 export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
@@ -13,11 +14,18 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   context,
 ) => {
   const { dwn, dataStream } = context;
-  const { target, message } = dwnRequest.params as { target: string, message: GenericMessage };
+  const { encodedData, target, message } = dwnRequest.params as { encodedData?: string, target: string, message: GenericMessage };
   const requestId = dwnRequest.id ?? uuidv4();
 
   try {
-    const transportResult = validateInboundDwnMessageTransport({ context, message, requestId, target });
+    const transportResult = validateInboundDwnMessageTransport({
+      allowRecordsWriteOverNonHttp : true,
+      context,
+      hasEncodedData               : encodedData !== undefined,
+      message,
+      requestId,
+      target,
+    });
     if (transportResult !== undefined) {
       return transportResult;
     }
@@ -27,7 +35,9 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       return limitsResult;
     }
 
-    const result = await dwn.applyReplicatedMessage(target, message, { dataStream });
+    const result = await dwn.applyReplicatedMessage(target, message, {
+      dataStream: encodedData === undefined ? dataStream : DataStream.fromBytes(Encoder.base64UrlToBytes(encodedData)),
+    });
     recordApplyActivity(target, message, result, context);
 
     return {

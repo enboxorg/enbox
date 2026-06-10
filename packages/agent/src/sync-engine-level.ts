@@ -25,7 +25,7 @@ import { DwnInterface } from './types/dwn.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
-import { computeAuthorizationEpoch, computeProjectionId, isTerminalPushFailure, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
+import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getMessageCid, pushMessages, SyncPullAbortedError } from './sync-messages.js';
 import { partitionRemoteEntries, SyncLinkReconciler } from './sync-link-reconciler.js';
 import { permissionGrantIdsFromEntries, resolveMessagesSyncScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
@@ -1243,7 +1243,7 @@ export class SyncEngineLevel implements SyncEngine {
       link.connectivity = 'online';
       await this.ledger.setStatus(link, 'live');
       if (reconcilePushFailures.length > 0) {
-        this.handleReconcilePushFailures(linkKey, link, reconcilePushFailures);
+        await this.handleReconcilePushFailures(linkKey, link, reconcilePushFailures);
       }
 
       this.emitEvent({ type: 'repair:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
@@ -2496,7 +2496,7 @@ export class SyncEngineLevel implements SyncEngine {
     } catch (error: any) {
       if (isStale()) { return; }
       console.error(`SyncEngineLevel: Push batch failed for ${did} -> ${dwnUrl}`, error);
-      this.requeueOrReconcile(linkKey, {
+      await this.requeueOrReconcile(linkKey, {
         did,
         dwnUrl,
         delegateDid,
@@ -2559,7 +2559,7 @@ export class SyncEngineLevel implements SyncEngine {
     this.clearSucceededPushFailures(result.succeeded, batch.pushRuntime.dwnUrl);
 
     if (result.failed.length > 0) {
-      this.requeueFailedPushes(linkKey, batch, result.failed);
+      await this.requeueFailedPushes(linkKey, batch, result.failed);
       return;
     }
 
@@ -2572,7 +2572,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
-  private requeueFailedPushes(linkKey: string, batch: PushFlushBatch, failed: PushFailure[]): void {
+  private async requeueFailedPushes(linkKey: string, batch: PushFlushBatch, failed: PushFailure[]): Promise<void> {
     if (batch.isStale()) { return; }
 
     const { did, dwnUrl, delegateDid, protocol, permissionGrantIds, retryCount } = batch.pushRuntime;
@@ -2580,7 +2580,7 @@ export class SyncEngineLevel implements SyncEngine {
       cid         : failure.cid,
       lastFailure : failure,
     }));
-    this.requeueOrReconcile(linkKey, {
+    await this.requeueOrReconcile(linkKey, {
       did,
       dwnUrl,
       delegateDid,
@@ -2591,8 +2591,8 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  private handleReconcilePushFailures(linkKey: string, link: ReplicationLinkState, failed: PushFailure[]): void {
-    this.requeueOrReconcile(linkKey, {
+  private async handleReconcilePushFailures(linkKey: string, link: ReplicationLinkState, failed: PushFailure[]): Promise<void> {
+    await this.requeueOrReconcile(linkKey, {
       did                : link.tenantDid,
       dwnUrl             : link.remoteEndpoint,
       delegateDid        : link.delegateDid,
@@ -2655,7 +2655,7 @@ export class SyncEngineLevel implements SyncEngine {
         remoteEndpoint : target.dwnUrl,
         protocol       : singleProtocolForSyncScope(target.scope),
         category       : 'admit-failed',
-        errorCode      : String(failure.statusCode),
+        errorCode      : failure.kind ?? 'Invalid',
         errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
       });
     }
@@ -2668,28 +2668,40 @@ export class SyncEngineLevel implements SyncEngine {
    * `needsReconcile` if retries are exhausted. Bounded to prevent
    * infinite retry loops.
    */
-  private requeueOrReconcile(targetKey: string, pending: {
+  private async requeueOrReconcile(targetKey: string, pending: {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
     permissionGrantIds?: NonEmptyStringArray;
     entries: PushRuntimeEntry[];
     retryCount: number;
-  }): void {
+  }): Promise<void> {
     const maxRetries = SyncEngineLevel.PUSH_RETRY_BACKOFF_MS.length;
     const pushRuntime = this.getOrCreatePushRuntime(targetKey, pending);
+    const link = this._activeLinks.get(targetKey);
+
+    if (pending.entries.some(entry => entry.lastFailure !== undefined && isTenantInactivePushFailure(entry.lastFailure))) {
+      if (pushRuntime.timer) {
+        clearTimeout(pushRuntime.timer);
+      }
+      this._pushRuntimes.delete(targetKey);
+      if (link) {
+        this.markLinkNeedsReconcile(targetKey, link, 'push-tenant-inactive');
+      }
+      return;
+    }
 
     if (pending.retryCount >= maxRetries) {
-      // Retry budget exhausted. Client-error replies are terminal admission
-      // failures for this remote; transport/runtime failures just dirty the
-      // link for later reconciliation.
+      // Retry budget exhausted. Only structured remote Invalid/terminal
+      // dependency outcomes become dead letters; transport/runtime/deferred
+      // failures dirty the link for later reconciliation.
       for (const entry of pending.entries) {
         if (entry.lastFailure !== undefined && isTerminalPushFailure(entry.lastFailure)) {
-          void this.recordDeadLetter({
+          await this.recordDeadLetter({
             messageCid     : entry.cid,
             tenantDid      : pending.did,
             remoteEndpoint : pending.dwnUrl,
             protocol       : pending.protocol,
             category       : 'admit-failed',
-            errorCode      : String(entry.lastFailure.statusCode),
+            errorCode      : entry.lastFailure.kind ?? 'Invalid',
             errorDetail    : entry.lastFailure?.detail ?? `push rejected after ${maxRetries} attempts`,
           });
         }
@@ -2698,7 +2710,6 @@ export class SyncEngineLevel implements SyncEngine {
         clearTimeout(pushRuntime.timer);
       }
       this._pushRuntimes.delete(targetKey);
-      const link = this._activeLinks.get(targetKey);
       if (link) {
         this.markLinkNeedsReconcile(targetKey, link, 'push-retry-exhausted');
       }
@@ -3167,13 +3178,22 @@ export class SyncEngineLevel implements SyncEngine {
 
       const pushFailures = reconcileOutcome.pushFailures ?? [];
       if (pushFailures.length > 0) {
-        this.handleReconcilePushFailures(linkKey, link, pushFailures);
+        await this.handleReconcilePushFailures(linkKey, link, pushFailures);
         return;
       }
 
-      if (reconcileOutcome.converged || SyncEngineLevel.isReconcileSettledByDeadLetters(reconcileOutcome)) {
+      if (reconcileOutcome.converged) {
         await this.ledger.clearNeedsReconcile(link);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
+      } else if (SyncEngineLevel.isReconcileSettledByDeadLetters(reconcileOutcome)) {
+        await this.ledger.clearNeedsReconcile(link);
+        this.emitEvent({
+          type               : 'reconcile:settled-with-failures',
+          tenantDid          : did,
+          remoteEndpoint     : dwnUrl,
+          ...eventScope,
+          failedMessageCount : (reconcileOutcome.ignoredLocalCids?.length ?? 0) + (reconcileOutcome.ignoredRemoteCids?.length ?? 0),
+        });
       } else {
         // Roots still differ — retry after a delay. This can happen when
         // push retries were exhausted, remote admission partially failed, or
@@ -3973,11 +3993,15 @@ export class SyncEngineLevel implements SyncEngine {
     // affect health. Endpoint-level orphan cleanup is a separate GC concern.
     const currentLinkIdentityKeys = await this.getCurrentDurableLinkIdentityKeys();
     let degradedLinkCount = 0;
+    let reconcileNeededCount = 0;
     const allLinks = await this.ledger.getAllLinks();
     for (const link of allLinks) {
       const isCurrentLink = currentLinkIdentityKeys === undefined || currentLinkIdentityKeys.has(this.getDurableLinkIdentityKey(link));
       if (isCurrentLink && SyncEngineLevel.isUnhealthyLinkStatus(link.status)) {
         degradedLinkCount++;
+      }
+      if (isCurrentLink && link.needsReconcile) {
+        reconcileNeededCount++;
       }
     }
 
@@ -3986,7 +4010,8 @@ export class SyncEngineLevel implements SyncEngine {
       failedMessageCount    : failedMessageCount,
       admissionFailureCount : admissionFailureCount,
       degradedLinkCount     : degradedLinkCount,
-      syncHealthy           : failedMessageCount === 0 && degradedLinkCount === 0,
+      reconcileNeededCount  : reconcileNeededCount,
+      syncHealthy           : failedMessageCount === 0 && degradedLinkCount === 0 && reconcileNeededCount === 0,
     };
   }
 

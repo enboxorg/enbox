@@ -7,13 +7,13 @@ import { useFakeTimers } from 'sinon';
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DataStream, Message, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { config } from '../src/config.js';
 import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
 import { WsApi } from '../src/ws-api.js';
-import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, JsonRpcErrorCodes, JsonRpcSocket } from '@enbox/dwn-clients';
+import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, HttpDwnRpcClient, JsonRpcErrorCodes, JsonRpcSocket, WebSocketDwnRpcClient } from '@enbox/dwn-clients';
 import { createRecordsWriteMessage, sendHttpMessage, sendWsMessage, waitUntil } from './utils.js';
 
 
@@ -101,6 +101,68 @@ describe('websocket api', function () {
     expect(response.error).toBeDefined();
     expect(response.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
     expect(response.error.message).toContain('RecordsWrite is not supported via ws');
+  });
+
+  it('applies replicated RecordsWrite messages with large data over HTTP', async function () {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const dataBytes = new Uint8Array(1_048_577);
+    dataBytes.fill(17);
+    dataBytes[0] = 1;
+    dataBytes[dataBytes.length - 1] = 254;
+    const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data: dataBytes });
+
+    const result = await new HttpDwnRpcClient().applyReplicatedMessage({
+      dwnUrl    : httpUrl,
+      targetDid : alice.did,
+      message   : recordsWrite.toJSON(),
+      data      : dataStream,
+    });
+
+    expect(result).toEqual({ kind: 'Applied' });
+
+    const recordsRead = await RecordsRead.create({
+      signer : alice.signer,
+      filter : { recordId: recordsWrite.message.recordId },
+    });
+    const readReply = await dwn.processMessage(alice.did, recordsRead.toJSON());
+
+    expect(readReply.status.code).toBe(200);
+    expect(readReply.entry?.data).toBeDefined();
+    const readBytes = await DataStream.toBytes(readReply.entry!.data!);
+    expect(readBytes).toEqual(dataBytes);
+  });
+
+  it('applies replicated RecordsWrite messages with large data over WebSocket', async function () {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const dataBytes = new Uint8Array(1_048_577);
+    dataBytes.fill(23);
+    dataBytes[0] = 1;
+    dataBytes[dataBytes.length - 1] = 255;
+    const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data: dataBytes });
+
+    const result = await new WebSocketDwnRpcClient().applyReplicatedMessage({
+      dwnUrl    : wsUrl,
+      targetDid : alice.did,
+      message   : recordsWrite.toJSON(),
+      data      : dataStream,
+    });
+
+    expect(result).toEqual({ kind: 'Applied' });
+
+    const recordsRead = await RecordsRead.create({
+      signer : alice.signer,
+      filter : { recordId: recordsWrite.message.recordId },
+    });
+    const readReply = await dwn.processMessage(alice.did, recordsRead.toJSON());
+
+    expect(readReply.status.code).toBe(200);
+    expect(readReply.entry?.data).toBeDefined();
+    const readBytes = await DataStream.toBytes(readReply.entry!.data!);
+    expect(readBytes).toEqual(dataBytes);
   });
 
   it('subscribes to records and receives updates', async () => {

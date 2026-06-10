@@ -87,6 +87,7 @@ Merging the PR is the final step of the task, not opening it.
 Code style in this repo is **strictly enforced** and routinely corrects drift. Always:
 
 - Run `bun run lint` locally before pushing; run `bun run lint:fix` to auto-fix the fixable subset. The shared flat config (`eslint.config.cjs`) is the source of truth for every package except `apps/docs` (Biome).
+- When ESLint reports auto-fixable formatting/import/key-spacing issues, run the appropriate autofix command first (`bun run lint:fix` from the root, or the matching package-scoped lint fix if you are intentionally narrowing scope). Inspect the resulting diff, then manually edit only the remaining non-fixable issues.
 - Follow the conventions in [Coding Style](#coding-style) and [Test Style](#test-style) below: type-import grouping, colon alignment in multi-key object literals, explicit return types and visibility modifiers, `.js` extensions on relative imports, kebab-case files, `.spec.ts` tests, etc.
 - Read the diff you're producing. Style drift in a PR (inconsistent quote style, stray `any`, unsorted imports, missing return types) is the single most common reason PRs get bounced. ESLint catches most of it; a careful human review catches the rest.
 

@@ -1,7 +1,3 @@
-import { TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { v4 as uuidv4 } from 'uuid';
-import { describe, expect, it, spyOn } from 'bun:test';
-
 import type { RequestContext } from '../src/lib/json-rpc-router.js';
 
 import { createRecordsWriteMessage } from './utils.js';
@@ -9,7 +5,10 @@ import { DwnServerErrorCode } from '../src/dwn-error.js';
 import { getTestDwn } from './test-dwn.js';
 import { handleDwnApplyReplicatedMessage } from '../src/json-rpc-handlers/dwn/apply-replicated-message.js';
 import { RateLimiter } from '../src/rate-limiter.js';
+import { v4 as uuidv4 } from 'uuid';
 import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { DataStream, Encoder, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { describe, expect, it, spyOn } from 'bun:test';
 
 describe('handleDwnApplyReplicatedMessage', () => {
   it('returns a structured replication result from the DWN apply path', async () => {
@@ -40,6 +39,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       message: {
         descriptor: {
+          dataSize  : 1,
           interface : 'Records',
           method    : 'Write',
         },
@@ -57,6 +57,39 @@ describe('handleDwnApplyReplicatedMessage', () => {
     expect(jsonRpcResponse.error).toBeDefined();
     expect(jsonRpcResponse.error.code).toBe(JsonRpcErrorCodes.InvalidParams);
     expect(jsonRpcResponse.error.message).toBe('RecordsWrite is not supported via ws');
+    await dwn.close();
+  });
+
+  it('decodes encoded RecordsWrite data over non-HTTP transports', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const dataBytes = new Uint8Array(1_048_577);
+    dataBytes.fill(11);
+    dataBytes[0] = 1;
+    dataBytes[dataBytes.length - 1] = 2;
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data: dataBytes });
+    const requestId = uuidv4();
+    const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      encodedData : Encoder.bytesToBase64Url(dataBytes),
+      message     : recordsWrite.toJSON(),
+      target      : alice.did,
+    });
+
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async (_target, _message, options) => {
+      const receivedBytes = await DataStream.toBytes(options!.dataStream!);
+      expect(receivedBytes).toEqual(dataBytes);
+      return { kind: 'Applied' };
+    });
+    const context: RequestContext = { dwn, transport: 'ws' };
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      context,
+    );
+
+    expect(jsonRpcResponse.error).toBeUndefined();
+    expect(jsonRpcResponse.result.result).toEqual({ kind: 'Applied' });
+    expect(applySpy).toHaveBeenCalledTimes(1);
     await dwn.close();
   });
 

@@ -9,21 +9,30 @@ import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 type InboundDwnMessageParams = {
   context: Parameters<JsonRpcHandler>[1];
+  hasEncodedData?: boolean;
   message: GenericMessage;
   requestId: JsonRpcId;
   target: string;
+  allowRecordsWriteOverNonHttp?: boolean;
 };
 
 export function validateInboundDwnMessageTransport(params: InboundDwnMessageParams): HandlerResponse | undefined {
-  const { context, message, requestId } = params;
+  const { allowRecordsWriteOverNonHttp, context, hasEncodedData, message, requestId } = params;
 
-  // RecordsWrite is only supported on 'http' to support data stream for large data
-  // Issue #108 tracks RecordsWrite support for WebSocket transports.
+  // Normal RecordsWrite is HTTP-only because its data stream lives in the
+  // request body. Replicated apply may opt in to non-HTTP when it carries the
+  // record data in JSON-RPC params.
   if (
     context.transport !== 'http' &&
     message.descriptor.interface === DwnInterfaceName.Records &&
     message.descriptor.method === DwnMethodName.Write
   ) {
+    const dataSize = (message.descriptor as { dataSize?: unknown }).dataSize;
+    const needsData = typeof dataSize === 'number' && dataSize > 0;
+    if (allowRecordsWriteOverNonHttp === true && (!needsData || hasEncodedData === true)) {
+      return undefined;
+    }
+
     const jsonRpcResponse = createJsonRpcErrorResponse(
       requestId,
       JsonRpcErrorCodes.InvalidParams,
