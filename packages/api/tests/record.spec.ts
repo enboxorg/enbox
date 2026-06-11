@@ -342,9 +342,9 @@ describe('Record', () => {
       expect(queryResult.status.code).toBe(200);
       expect(queryResult.records.length).toBe(0);
 
-      // attempt to delete again, record should return not found
+      // attempting to delete again is beaten by the standing tombstone: 409 Conflict
       const deleteResult2 = await deletedRecord.delete();
-      expect(deleteResult2.status.code).toBe(404);
+      expect(deleteResult2.status.code).toBe(409);
     });
 
     it('should import a record with a delegated grant', async () => {
@@ -3791,7 +3791,7 @@ describe('Record', () => {
       }
     });
 
-    it('duplicate delete with store should return not found', async () => {
+    it('duplicate delete with store should return conflict', async () => {
       // create a record
       const { status: writeStatus, record } = await dwnAlice.records.write({
         data         : 'Hello, world!',
@@ -3817,9 +3817,9 @@ describe('Record', () => {
       expect(deleteStatus.code).toBe(202);
       expect(deletedRecord.deleted).toBe(true);
 
-      // attempt to delete the record again
+      // attempting to delete again is beaten by the standing tombstone: 409 Conflict
       const { status: deleteStatus2 } = await deletedRecord.delete();
-      expect(deleteStatus2.code).toBe(404);
+      expect(deleteStatus2.code).toBe(409);
     });
 
     it('a record in a deleted state returns undefined for data related fields', async () => {

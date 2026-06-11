@@ -80,7 +80,7 @@ export function testRecordsDeleteHandler(): void {
         await dwn.close();
       });
 
-      it('should handle RecordsDelete successfully and return 404 if deleting a deleted record', async () => {
+      it('should handle RecordsDelete successfully and accept a newer tombstone over a deleted record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
