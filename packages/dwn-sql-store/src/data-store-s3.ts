@@ -15,7 +15,8 @@ import {
 } from '@aws-sdk/client-s3';
 import { Kysely, sql } from 'kysely';
 
-const DEFAULT_PART_SIZE = 5 * 1024 * 1024;
+const MIN_PART_SIZE = 5 * 1024 * 1024;
+const DEFAULT_PART_SIZE = MIN_PART_SIZE;
 const DEFAULT_QUEUE_SIZE = 4;
 
 /**
@@ -45,8 +46,12 @@ export class DataStoreS3 implements DataStore {
     this.#partSize = config.partSize ?? DEFAULT_PART_SIZE;
     this.#queueSize = config.queueSize ?? DEFAULT_QUEUE_SIZE;
 
-    if (!Number.isFinite(this.#partSize) || this.#partSize <= 0) {
-      throw new Error('DataStoreS3: partSize must be greater than 0.');
+    if (!Number.isInteger(this.#partSize) || this.#partSize < MIN_PART_SIZE) {
+      throw new Error('DataStoreS3: partSize must be at least 5 MiB.');
+    }
+
+    if (!Number.isInteger(this.#queueSize) || this.#queueSize <= 0) {
+      throw new Error('DataStoreS3: queueSize must be a positive integer.');
     }
 
     this.#s3 = config.s3Client ?? new S3Client({
@@ -310,9 +315,9 @@ export type DataStoreS3Config = {
   /** AWS credentials. When omitted, the SDK uses the default credential chain (IAM role, env vars, etc.). */
   credentials?: { accessKeyId: string; secretAccessKey: string };
 
-  /** Multipart upload part size in bytes. Default: `5 * 1024 * 1024` (5 MB). */
+  /** Multipart upload part size in bytes. Minimum and default: `5 * 1024 * 1024` (5 MiB). */
   partSize?: number;
 
-  /** Number of concurrent multipart upload parts. Default: `4`. */
+  /** Number of concurrent multipart upload parts. Must be a positive integer. Default: `4`. */
   queueSize?: number;
 };
