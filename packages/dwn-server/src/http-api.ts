@@ -25,7 +25,7 @@ import { Convert } from '@enbox/common';
 import { register } from 'prom-client';
 import { v4 as uuidv4 } from 'uuid';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes, maxWsJsonRpcPayloadBytes } from '@enbox/dwn-clients';
-import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
+import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
 import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 
@@ -38,6 +38,47 @@ import { requestCounter, responseHistogram } from './metrics.js';
 
 /** Property names that must never be used as keys when building objects from user input. */
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+type ReadableStreamReader = {
+  cancel?: (reason?: unknown) => Promise<void>;
+  read(): Promise<{ done: boolean; value?: Uint8Array }>;
+  releaseLock?: () => void;
+};
+
+function normalizeReadableStream(readableStream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const reader = readableStream.getReader() as ReadableStreamReader;
+  let readerReleased = false;
+
+  const releaseReader = (): void => {
+    if (readerReleased) {
+      return;
+    }
+
+    reader.releaseLock?.();
+    readerReleased = true;
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller): Promise<void> {
+      const { done, value } = await reader.read();
+      if (done) {
+        releaseReader();
+        controller.close();
+        return;
+      }
+
+      controller.enqueue(value!);
+    },
+
+    async cancel(reason): Promise<void> {
+      try {
+        await reader.cancel?.(reason);
+      } finally {
+        releaseReader();
+      }
+    },
+  });
+}
 
 // Resolve admin UI dist path at module load time. Gracefully handle the case
 // where the admin UI package is not installed.
@@ -574,19 +615,14 @@ export class HttpApi {
       return Response.json(reply, { status: 400 });
     }
 
-    // Materialise the request body before passing to DWN.
-    // Bun's Bun.serve() returns a ReadableStream for req.body that is
-    // incompatible with the ReadableStream consumer code in dwn-sdk-js,
-    // causing DataStream.toBytes() to crash with "undefined is not a
-    // function" at reader.releaseLock().  Buffering via arrayBuffer()
-    // converts it into a well-behaved stream that dwn-sdk-js can consume.
-    // TODO: https://github.com/enboxorg/enbox/issues/90 — remove once Bun ships fix
     const contentLength = req.headers.get('content-length');
     const transferEncoding = req.headers.get('transfer-encoding');
     let requestDataStream: ReadableStream<Uint8Array> | undefined;
     if (parseInt(contentLength ?? '0') > 0 || transferEncoding !== null) {
-      const bodyBytes = new Uint8Array(await req.arrayBuffer());
-      requestDataStream = DataStream.fromBytes(bodyBytes);
+      if (req.body === null) {
+        throw new Error('HTTP request advertised a body but no request body stream was available.');
+      }
+      requestDataStream = normalizeReadableStream(req.body);
     }
 
     const requestContext: RequestContext = {

@@ -205,6 +205,39 @@ describe('http api', function () {
   });
 
   describe('RecordsWrite', function () {
+    it('streams RecordsWrite request bodies into the DWN', async function () {
+      const dataBytes = new Uint8Array(1_048_577);
+      dataBytes.fill(7);
+      dataBytes[0] = 1;
+      dataBytes[dataBytes.length - 1] = 255;
+
+      const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data: dataBytes });
+
+      const requestId = uuidv4();
+      const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
+        message : recordsWrite.toJSON(),
+        target  : alice.did,
+      });
+
+      const response = await fetch(baseUrl, {
+        method  : 'POST',
+        headers : {
+          'dwn-request': JSON.stringify(dwnRequest),
+        },
+        body   : dataStream,
+        duplex : 'half',
+      } as RequestInit & { duplex: 'half' });
+
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as JsonRpcResponse;
+      expect(body.error).toBeUndefined();
+      expect(body.id).toBe(requestId);
+
+      const { reply } = body.result;
+      expect(reply.status.code).toBe(202);
+    });
+
     it('handles RecordsWrite overwrite that does not mutate data', async function () {
       // First RecordsWrite that creates the record.
       const { recordsWrite: initialWrite, dataStream } =

@@ -33,6 +33,6 @@
     "syntax-highlight-element": "1.2.0"
   },
   "devDependencies": {
-    "@types/bun": "1.3.10"
+    "@types/bun": "1.3.14"
   }
 }
