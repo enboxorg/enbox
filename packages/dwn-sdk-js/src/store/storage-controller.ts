@@ -58,14 +58,14 @@ export class StorageController {
     // find which message is the newest, and if the incoming message is the newest
     const newestExistingMessage = await Message.getNewestMessage(existingMessages);
 
-    if (!Records.canPerformDeleteAgainstRecord(message, newestExistingMessage)) {
+    if (newestExistingMessage === undefined) {
       return;
     }
 
-    // Same freshness gate as the RecordsDelete handler: state can advance between acceptance and
-    // task replay, and a stale prune accepted earlier must not displace a tombstone that has since
-    // become the record's newest message.
-    if (await Records.isDeleteBeatenByNewerTombstone(message, newestExistingMessage!)) {
+    // Same tombstone-lattice gate as the RecordsDelete handler: state can advance between
+    // acceptance and task replay, and a beaten delete accepted earlier must not displace the
+    // tombstone that has since become the record's canonical winner.
+    if (await Records.isDeleteBeatenByExistingTombstone(message, newestExistingMessage)) {
       return;
     }
 

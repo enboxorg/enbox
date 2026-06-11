@@ -113,14 +113,14 @@ export function testRecordsDeleteHandler(): void {
         expect(reply2.status.code).toBe(200);
         expect(reply2.entries?.length).toBe(0);
 
-        // testing deleting a deleted record
+        // a newer tombstone displaces the older one — one canonical winner per record
         const recordsDelete2 = await RecordsDelete.create({
           recordId : message.recordId,
           signer   : Jws.createSigner(alice)
         });
 
         const recordsDelete2Reply = await dwn.processMessage(alice.did, recordsDelete2.message);
-        expect(recordsDelete2Reply.status.code).toBe(404);
+        expect(recordsDelete2Reply.status.code).toBe(202);
       });
 
       it('should not affect other records or tenants with the same data', async () => {
@@ -252,7 +252,7 @@ export function testRecordsDeleteHandler(): void {
         expect(reply.entries?.length).toBe(0);
       });
 
-      it('should return 409 for a stale prune against the record\'s newest tombstone', async () => {
+      it('should apply a stale prune over the record\'s newest plain tombstone (prune dominates)', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -274,9 +274,35 @@ export function testRecordsDeleteHandler(): void {
         const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
         expect(deleteReply.status.code).toBe(202);
 
-        // the prune upgrade is older than the newest tombstone: Conflict, the tombstone stands
+        // prune dominates plain regardless of timestamp — the cascade must run on every replica
         const stalePruneReply = await dwn.processMessage(alice.did, stalePrune.message);
-        expect(stalePruneReply.status.code).toBe(409);
+        expect(stalePruneReply.status.code).toBe(202);
+      });
+
+      it('should return 409 for a plain delete beaten by the record\'s newest tombstone', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const initialWriteReply = await dwn.processMessage(alice.did, initialWriteData.message, { dataStream: initialWriteData.dataStream });
+        expect(initialWriteReply.status.code).toBe(202);
+
+        // generate the losing delete first so its timestamp is older than the winner's
+        const staleDelete = await RecordsDelete.create({
+          recordId : initialWriteData.message.recordId,
+          signer   : Jws.createSigner(alice)
+        });
+        await Time.minimalSleep();
+        const recordsDelete = await RecordsDelete.create({
+          recordId : initialWriteData.message.recordId,
+          signer   : Jws.createSigner(alice)
+        });
+        const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
+        expect(deleteReply.status.code).toBe(202);
+
+        // same class, older timestamp: Conflict no-op, the canonical winner stands
+        const staleDeleteReply = await dwn.processMessage(alice.did, staleDelete.message);
+        expect(staleDeleteReply.status.code).toBe(409);
       });
 
       it('should be able to delete then rewrite the same data', async () => {

@@ -6,6 +6,8 @@ import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '..
 
 import sinon from 'sinon';
 
+import nestedProtocol from './vectors/protocol-definitions/nested.json' with { type: 'json' };
+
 import { Dwn } from '../src/dwn.js';
 import { StorageController } from '../src/store/storage-controller.js';
 import { TestEventLog } from './test-event-stream.js';
@@ -473,10 +475,9 @@ export function testDwnClass(): void {
         const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect((await dwn.processMessage(alice.did, initialWrite.message, { dataStream: initialWrite.dataStream })).status.code).toBe(202);
 
-        // generate the prune first so it is older than the tombstone admitted below
-        const stalePrune = await RecordsDelete.create({
+        // generate the losing delete first so it is older than the tombstone admitted below
+        const staleDelete = await RecordsDelete.create({
           recordId : initialWrite.message.recordId,
-          prune    : true,
           signer   : Jws.createSigner(alice),
         });
         await Time.minimalSleep();
@@ -486,15 +487,176 @@ export function testDwnClass(): void {
         });
         expect((await dwn.processMessage(alice.did, recordsDelete.message)).status.code).toBe(202);
 
-        // replaying the stale prune through the task path must be a no-op — the same freshness
-        // gate as admission — leaving the newer tombstone as the record's newest message
+        // replaying the beaten delete through the task path must be a no-op — the same lattice
+        // gate as admission — leaving the canonical tombstone as the record's newest message
         const storageController = new StorageController({ messageStore, dataStore, stateIndex, eventLog });
-        await storageController.performRecordsDelete({ tenant: alice.did, message: stalePrune.message });
+        await storageController.performRecordsDelete({ tenant: alice.did, message: staleDelete.message });
 
         const tombstoneCid = await Message.getCid(recordsDelete.message);
-        const stalePruneCid = await Message.getCid(stalePrune.message);
+        const staleDeleteCid = await Message.getCid(staleDelete.message);
         expect(await messageStore.get(alice.did, tombstoneCid)).toBeDefined();
-        expect(await messageStore.get(alice.did, stalePruneCid)).toBeUndefined();
+        expect(await messageStore.get(alice.did, staleDeleteCid)).toBeUndefined();
+      });
+
+      it('converges competing plain tombstones to one canonical winner in either order', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : defaultTestProtocolDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+
+        // two independently authored plain tombstones for the same record, d1 older than d2
+        const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        const d1 = await RecordsDelete.create({
+          recordId : initialWrite.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
+        await Time.minimalSleep();
+        const d2 = await RecordsDelete.create({
+          recordId : initialWrite.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
+
+        // replica A: d1 lands first, then d2 displaces it
+        expect(await dwn.applyReplicatedMessage(
+          alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
+        )).toEqual({ kind: 'Applied' });
+        expect(await dwn.applyReplicatedMessage(alice.did, d1.message)).toEqual({ kind: 'Applied' });
+        expect(await dwn.applyReplicatedMessage(alice.did, d2.message)).toEqual({ kind: 'Applied' });
+
+        // replica B: d2 lands first; the beaten d1 converges as a Superseded no-op
+        const messageStoreB = new MessageStoreLevel({
+          blockstoreLocation : 'TEST-MESSAGESTORE-DELETEWINS',
+          indexLocation      : 'TEST-INDEX-DELETEWINS',
+        });
+        const dataStoreB = new DataStoreLevel({ blockstoreLocation: 'TEST-DATASTORE-DELETEWINS' });
+        const stateIndexB = new StateIndexLevel({ location: 'TEST-STATEINDEX-DELETEWINS' });
+        const resumableTaskStoreB = new ResumableTaskStoreLevel({ location: 'TEST-RESUMABLE-TASK-STORE-DELETEWINS' });
+        const dwnB = await Dwn.create({
+          didResolver,
+          messageStore       : messageStoreB,
+          dataStore          : dataStoreB,
+          stateIndex         : stateIndexB,
+          eventLog           : new EventEmitterEventLog(),
+          resumableTaskStore : resumableTaskStoreB,
+        });
+
+        try {
+          await messageStoreB.clear();
+          await dataStoreB.clear();
+          await stateIndexB.clear();
+          await resumableTaskStoreB.clear();
+
+          expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+          expect(await dwnB.applyReplicatedMessage(
+            alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
+          )).toEqual({ kind: 'Applied' });
+          expect(await dwnB.applyReplicatedMessage(alice.did, d2.message)).toEqual({ kind: 'Applied' });
+          expect(await dwnB.applyReplicatedMessage(alice.did, d1.message)).toEqual({ kind: 'Superseded' });
+
+          // both replicas hold d2 as the canonical tombstone and identical state roots
+          const d1Cid = await Message.getCid(d1.message);
+          const d2Cid = await Message.getCid(d2.message);
+          expect(await messageStore.get(alice.did, d2Cid)).toBeDefined();
+          expect(await messageStore.get(alice.did, d1Cid)).toBeUndefined();
+          expect(await messageStoreB.get(alice.did, d2Cid)).toBeDefined();
+          expect(await messageStoreB.get(alice.did, d1Cid)).toBeUndefined();
+          expect(await stateIndexB.getRoot(alice.did)).toEqual(await stateIndex.getRoot(alice.did));
+        } finally {
+          await dwnB.close();
+        }
+      });
+
+      it('a prune beats a newer plain delete in either order and purges descendants on both replicas', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const nestedProtocolDefinition = nestedProtocol as ProtocolDefinition;
+        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : nestedProtocolDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+
+        // parent foo with child bar, then a prune of foo and a NEWER plain delete of foo
+        const foo = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : nestedProtocolDefinition.protocol,
+          protocolPath : 'foo',
+          schema       : nestedProtocolDefinition.types.foo.schema,
+          dataFormat   : nestedProtocolDefinition.types.foo.dataFormats![0],
+        });
+        const bar = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : nestedProtocolDefinition.protocol,
+          protocolPath    : 'foo/bar',
+          parentContextId : foo.message.contextId,
+          schema          : nestedProtocolDefinition.types.bar.schema,
+          dataFormat      : nestedProtocolDefinition.types.bar.dataFormats![0],
+        });
+        const prune = await RecordsDelete.create({
+          recordId : foo.message.recordId,
+          prune    : true,
+          signer   : Jws.createSigner(alice),
+        });
+        await Time.minimalSleep();
+        const plainDelete = await RecordsDelete.create({
+          recordId : foo.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
+
+        // replica A: prune first, then the newer plain delete loses on class
+        expect(await dwn.applyReplicatedMessage(
+          alice.did, foo.message, { dataStream: DataStream.fromBytes(foo.dataBytes!) },
+        )).toEqual({ kind: 'Applied' });
+        expect(await dwn.applyReplicatedMessage(
+          alice.did, bar.message, { dataStream: DataStream.fromBytes(bar.dataBytes!) },
+        )).toEqual({ kind: 'Applied' });
+        expect(await dwn.applyReplicatedMessage(alice.did, prune.message)).toEqual({ kind: 'Applied' });
+        expect(await dwn.applyReplicatedMessage(alice.did, plainDelete.message)).toEqual({ kind: 'Superseded' });
+
+        // replica B: the newer plain delete lands first; the prune still wins and cascades
+        const messageStoreB = new MessageStoreLevel({
+          blockstoreLocation : 'TEST-MESSAGESTORE-DELETEWINS',
+          indexLocation      : 'TEST-INDEX-DELETEWINS',
+        });
+        const dataStoreB = new DataStoreLevel({ blockstoreLocation: 'TEST-DATASTORE-DELETEWINS' });
+        const stateIndexB = new StateIndexLevel({ location: 'TEST-STATEINDEX-DELETEWINS' });
+        const resumableTaskStoreB = new ResumableTaskStoreLevel({ location: 'TEST-RESUMABLE-TASK-STORE-DELETEWINS' });
+        const dwnB = await Dwn.create({
+          didResolver,
+          messageStore       : messageStoreB,
+          dataStore          : dataStoreB,
+          stateIndex         : stateIndexB,
+          eventLog           : new EventEmitterEventLog(),
+          resumableTaskStore : resumableTaskStoreB,
+        });
+
+        try {
+          await messageStoreB.clear();
+          await dataStoreB.clear();
+          await stateIndexB.clear();
+          await resumableTaskStoreB.clear();
+
+          expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+          expect(await dwnB.applyReplicatedMessage(
+            alice.did, foo.message, { dataStream: DataStream.fromBytes(foo.dataBytes!) },
+          )).toEqual({ kind: 'Applied' });
+          expect(await dwnB.applyReplicatedMessage(
+            alice.did, bar.message, { dataStream: DataStream.fromBytes(bar.dataBytes!) },
+          )).toEqual({ kind: 'Applied' });
+          expect(await dwnB.applyReplicatedMessage(alice.did, plainDelete.message)).toEqual({ kind: 'Applied' });
+          expect(await dwnB.applyReplicatedMessage(alice.did, prune.message)).toEqual({ kind: 'Applied' });
+
+          // the child is purged on both replicas and the state roots agree
+          const barCid = await Message.getCid(bar.message);
+          expect(await messageStore.get(alice.did, barCid)).toBeUndefined();
+          expect(await messageStoreB.get(alice.did, barCid)).toBeUndefined();
+          expect(await stateIndexB.getRoot(alice.did)).toEqual(await stateIndex.getRoot(alice.did));
+        } finally {
+          await dwnB.close();
+        }
       });
     });
   });
