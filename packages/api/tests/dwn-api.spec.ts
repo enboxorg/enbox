@@ -1381,9 +1381,9 @@ describe('DwnApi', () => {
         const { status: deleteStoreStatus } = await initialWriteRecord.delete();
         expect(deleteStoreStatus.code).toBe(202);
 
-        // try deleting it again
+        // attempting to delete again is beaten by the standing tombstone: 409 Conflict
         const { status: deleteStatus2 } = await initialWriteRecord.delete();
-        expect(deleteStatus2.code).toBe(404);
+        expect(deleteStatus2.code).toBe(409);
       });
     });
 

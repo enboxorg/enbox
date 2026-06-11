@@ -1,5 +1,5 @@
 import type { BearerDid, PortableDid } from '@enbox/dids';
-import type { DwnMessageParams, DwnProtocolDefinition, DwnPublicKeyJwk, DwnSigner, ProcessDwnRequest } from '@enbox/agent';
+import type { DwnMessage, DwnMessageParams, DwnProtocolDefinition, DwnPublicKeyJwk, DwnSigner, ProcessDwnRequest } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -12,7 +12,7 @@ import {
   dwnMessageConstructors, EnboxConnectProtocol, EnboxUserAgent, getRecordAuthor,
   getRecordProtocolRole, PlatformAgentTestHarness,
 } from '@enbox/agent';
-import { Jws, Message, Poller } from '@enbox/dwn-sdk-js';
+import { Jws, Message, Poller, Time } from '@enbox/dwn-sdk-js';
 
 import { WalletConnect } from '@enbox/auth';
 
@@ -342,9 +342,9 @@ describe('Record', () => {
       expect(queryResult.status.code).toBe(200);
       expect(queryResult.records.length).toBe(0);
 
-      // attempt to delete again, record should return not found
+      // attempting to delete again is beaten by the standing tombstone: 409 Conflict
       const deleteResult2 = await deletedRecord.delete();
-      expect(deleteResult2.status.code).toBe(404);
+      expect(deleteResult2.status.code).toBe(409);
     });
 
     it('should import a record with a delegated grant', async () => {
@@ -3791,7 +3791,7 @@ describe('Record', () => {
       }
     });
 
-    it('duplicate delete with store should return not found', async () => {
+    it('duplicate delete with store should return conflict', async () => {
       // create a record
       const { status: writeStatus, record } = await dwnAlice.records.write({
         data         : 'Hello, world!',
@@ -3817,9 +3817,64 @@ describe('Record', () => {
       expect(deleteStatus.code).toBe(202);
       expect(deletedRecord.deleted).toBe(true);
 
-      // attempt to delete the record again
+      // attempting to delete again is beaten by the standing tombstone: 409 Conflict
       const { status: deleteStatus2 } = await deletedRecord.delete();
-      expect(deleteStatus2.code).toBe(404);
+      expect(deleteStatus2.code).toBe(409);
+    });
+
+    it('escalates a deleted record to a prune instead of resending the cached tombstone', async () => {
+      // create a record
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
+      });
+      expect(writeStatus.code).toBe(202);
+
+      // plain delete first
+      const { status: deleteStatus, record: deletedRecord } = await record.delete();
+      expect(deleteStatus.code).toBe(202);
+      expect(deletedRecord.deleted).toBe(true);
+
+      // requesting a prune constructs a new tombstone that beats the standing plain delete
+      // (prune dominates plain in the tombstone lattice), rather than resending the cached
+      // message and failing with a 409
+      const { status: pruneStatus, record: prunedRecord } = await deletedRecord.delete({ prune: true });
+      expect(pruneStatus.code).toBe(202);
+      expect(prunedRecord.deleted).toBe(true);
+
+      // a repeated prune request reuses the cached prune tombstone and is beaten: 409
+      const { status: pruneStatus2 } = await prunedRecord.delete({ prune: true });
+      expect(pruneStatus2.code).toBe(409);
+    });
+
+    it('re-stamps a pruned record without downgrading its tombstone class', async () => {
+      // create and prune a record
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
+      });
+      expect(writeStatus.code).toBe(202);
+      const { status: pruneStatus, record: prunedRecord } = await record.delete({ prune: true });
+      expect(pruneStatus.code).toBe(202);
+
+      // a timestamp-only re-stamp inherits the cached tombstone's prune class — constructing a
+      // plain delete here would be beaten by the standing prune as a 409
+      const newerTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
+      const { status: restampStatus, record: restampedRecord } = await prunedRecord.delete({ timestamp: newerTimestamp });
+      expect(restampStatus.code).toBe(202);
+      expect(restampedRecord.deleted).toBe(true);
+      expect((restampedRecord.rawMessage as DwnMessage[DwnInterface.RecordsDelete]).descriptor.prune).toBe(true);
+
+      // an explicitly OLDER timestamp constructs a tombstone that is beaten: 409
+      const olderTimestamp = Time.createOffsetTimestamp({ seconds: -60 });
+      const { status: olderStatus } = await restampedRecord.delete({ timestamp: olderTimestamp });
+      expect(olderStatus.code).toBe(409);
     });
 
     it('a record in a deleted state returns undefined for data related fields', async () => {

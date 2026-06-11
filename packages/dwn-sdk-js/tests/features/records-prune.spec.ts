@@ -17,7 +17,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, Dwn, DwnConstant, DwnErrorCode, Jws, ProtocolsConfigure, RecordsDelete, RecordsQuery, RecordsWrite, SortDirection } from '../../src/index.js';
+import { DataStream, Dwn, DwnConstant, DwnErrorCode, Jws, ProtocolsConfigure, RecordsDelete, RecordsQuery, RecordsWrite, SortDirection, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 
@@ -334,11 +334,12 @@ export function testRecordsPrune(): void {
       expect(recordsQueryAfterPruneReply.entries?.length).toBe(0);
     });
 
-    it('should return 404 when attempting to prune against a record that is already pruned', async () => {
+    it('should resolve competing prunes to the newest as the canonical winner', async () => {
       // Scenario:
       // 1. Alice has a record `foo` with a descendent chain
       // 2. Alice prunes the record `foo`
-      // 3. Verify that Alice is unable to perform a prune on `foo` again
+      // 3. Verify that a newer prune displaces the existing one (same class: newest wins),
+      //    while an older prune is a Conflict no-op
 
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
@@ -424,7 +425,8 @@ export function testRecordsPrune(): void {
       const prune1Reply = await dwn.processMessage(alice.did, fooPrune1.message);
       expect(prune1Reply.status.code).toBe(202);
 
-      // 3. Verify that Alice is unable to perform a prune on `foo` again
+      // 3a. a newer prune displaces the existing tombstone (idempotent cascade)
+      await Time.minimalSleep();
       const fooPrune2 = await RecordsDelete.create({
         recordId : foo.message.recordId,
         prune    : true,
@@ -432,7 +434,11 @@ export function testRecordsPrune(): void {
       });
 
       const prune2Reply = await dwn.processMessage(alice.did, fooPrune2.message);
-      expect(prune2Reply.status.code).toBe(404);
+      expect(prune2Reply.status.code).toBe(202);
+
+      // 3b. the displaced (older) prune is now a Conflict no-op
+      const prune1RetryReply = await dwn.processMessage(alice.did, fooPrune1.message);
+      expect(prune1RetryReply.status.code).toBe(409);
     });
 
     describe('prune and co-prune protocol action', () => {

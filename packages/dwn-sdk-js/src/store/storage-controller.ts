@@ -58,7 +58,14 @@ export class StorageController {
     // find which message is the newest, and if the incoming message is the newest
     const newestExistingMessage = await Message.getNewestMessage(existingMessages);
 
-    if (!Records.canPerformDeleteAgainstRecord(message, newestExistingMessage)) {
+    if (newestExistingMessage === undefined) {
+      return;
+    }
+
+    // Same tombstone-lattice gate as the RecordsDelete handler: state can advance between
+    // acceptance and task replay, and a beaten delete accepted earlier must not displace the
+    // tombstone that has since become the record's canonical winner.
+    if (await Records.isDeleteBeatenByExistingTombstone(message, newestExistingMessage)) {
       return;
     }
 
@@ -88,8 +95,8 @@ export class StorageController {
       );
     }
 
-    // delete all existing messages that are not newest, except for the initial write
-    await StorageController.deleteAllOlderMessagesButKeepInitialWrite(
+    // displace every other message for this record, except the initial write which is kept unmarked
+    await StorageController.deleteDisplacedMessagesButKeepInitialWrite(
       tenant, existingMessages, message, this.messageStore, this.dataStore, this.stateIndex
     );
   }
@@ -284,29 +291,34 @@ export class StorageController {
   }
 
   /**
-   * Deletes all messages in `existingMessages` that are older than the `newestMessage` in the given tenant,
-   * but keep the initial write write for future processing by ensuring its `isLatestBaseState` index is "false".
+   * Deletes all messages in `existingMessages` that the `retainedMessage` displaces (every other
+   * message for the record), but keeps the initial write for future processing by ensuring its
+   * `isLatestBaseState` index is "false". Displacement is deliberately NOT a timestamp
+   * comparison: a RecordsDelete displaces even a newer RecordsWrite (delete-wins convergence),
+   * and on resumable-task replay the retained message itself is back in `existingMessages` and
+   * must survive — so membership is decided by CID.
    */
-  public static async deleteAllOlderMessagesButKeepInitialWrite(
+  public static async deleteDisplacedMessagesButKeepInitialWrite(
     tenant: string,
     existingMessages: GenericMessage[],
-    newestMessage: GenericMessage,
+    retainedMessage: GenericMessage,
     messageStore: MessageStore,
     dataStore: DataStore,
     stateIndex: StateIndex
   ): Promise<void> {
     const deletedMessageCids: string[] = [];
+    const retainedMessageCid = await Message.getCid(retainedMessage);
 
     // NOTE: under normal operation, there should only be at most two existing records per `recordId` (initial + a potential subsequent write/delete),
     // but the DWN may crash before `delete()` is called below, so we use a loop as a tactic to clean up lingering data as needed
     for (const message of existingMessages) {
-      const messageIsOld = await Message.isOlder(message, newestMessage);
-      if (messageIsOld) {
+      const messageIsDisplaced = await Message.getCid(message) !== retainedMessageCid;
+      if (messageIsDisplaced) {
         // the easiest implementation here is delete each old messages
         // and re-create it with the right index (isLatestBaseState = 'false') if the message is the initial write,
         // but there is room for better/more efficient implementation here
 
-        await StorageController.deleteFromDataStoreIfNeeded(dataStore, tenant, message, newestMessage);
+        await StorageController.deleteFromDataStoreIfNeeded(dataStore, tenant, message, retainedMessage);
 
         // delete message from message store
         const messageCid = await Message.getCid(message);

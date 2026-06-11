@@ -48,15 +48,20 @@ export class RecordsDeleteHandler implements MethodHandler {
     // find which message is the newest, and if the incoming message is the newest
     const newestExistingMessage = await Message.getNewestMessage(existingMessages);
 
-    if (!Records.canPerformDeleteAgainstRecord(message, newestExistingMessage)) {
+    if (newestExistingMessage === undefined) {
       return {
         status: { code: 404, detail: 'Not Found' }
       };
     }
 
-    // if the incoming message is not the newest, return Conflict
-    const incomingDeleteIsNewest = await Message.isNewer(message, newestExistingMessage!);
-    if (!incomingDeleteIsNewest) {
+    // Tombstone lattice: an incoming tombstone displaces ANY RecordsWrite, even a newer one — the
+    // write handler already rejects writes-after-delete regardless of timestamp, so this is the
+    // only rule that makes both arrival orders reach the same terminal state. Among competing
+    // tombstones one canonical winner stands on every replica: a prune beats a plain delete
+    // regardless of timestamp (the cascade is a side effect that must run everywhere), and within
+    // the same class the newest (messageTimestamp, then CID) wins. A beaten delete is a Conflict
+    // no-op; replication classifies the 409 as Superseded.
+    if (await Records.isDeleteBeatenByExistingTombstone(message, newestExistingMessage)) {
       return {
         status: { code: 409, detail: 'Conflict' }
       };

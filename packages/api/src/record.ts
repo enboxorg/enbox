@@ -640,7 +640,7 @@ export class Record implements RecordModel {
    * @returns the status and a new Record instance reflecting the deleted state
    */
   async delete(deleteParams?: RecordDeleteParams): Promise<RecordDeleteResult> {
-    const { store = true, signAsOwner, timestamp, prune = false } = deleteParams || {};
+    const { store = true, signAsOwner, timestamp } = deleteParams || {};
 
     const signAsOwnerValue = signAsOwner && this._delegateDid === undefined;
     const signAsOwnerDelegate = signAsOwner && this._delegateDid !== undefined;
@@ -670,10 +670,22 @@ export class Record implements RecordModel {
 
     // Check to see if the provided protocolRole within the deleteParams is different from the current protocolRole.
     const differentRole = deleteParams?.protocolRole ? getRecordProtocolRole(this.rawMessage) !== deleteParams.protocolRole : false;
-    // If the record is already in a deleted state but the protocolRole is different, we need to construct a delete message with the new protocolRole
-    // otherwise we can just use the existing delete message.
-    if (this.deleted && !differentRole) {
-      deleteOptions.rawMessage = this.rawMessage as DwnMessage[DwnInterface.RecordsDelete];
+    // A request that escalates a plain tombstone to a prune, or explicitly re-stamps the
+    // tombstone's timestamp, must construct a new RecordsDelete: resending the cached message
+    // would silently ignore the request and lose to the standing tombstone as a 409 Conflict.
+    // Under the tombstone lattice a fresh prune beats the standing plain delete regardless of
+    // timestamp and purges descendants on every replica.
+    const cachedDelete = this.deleted ? this.rawMessage as DwnMessage[DwnInterface.RecordsDelete] : undefined;
+    // When `prune` is omitted on an already-deleted record, inherit the cached tombstone's class:
+    // a timestamp-only re-stamp must not downgrade a prune to a plain delete, which the standing
+    // prune would beat as a 409 under the tombstone lattice.
+    const prune = deleteParams?.prune ?? cachedDelete?.descriptor.prune ?? false;
+    const pruneEscalation = prune && cachedDelete?.descriptor.prune !== true;
+    const explicitTimestamp = timestamp !== undefined && timestamp !== cachedDelete?.descriptor.messageTimestamp;
+    // If the record is already in a deleted state and nothing about the requested tombstone
+    // differs (role, prune escalation, explicit timestamp), reuse the existing delete message.
+    if (this.deleted && !differentRole && !pruneEscalation && !explicitTimestamp) {
+      deleteOptions.rawMessage = cachedDelete;
     } else {
       // otherwise we construct a delete message given the `RecordDeleteParams`
       deleteOptions.messageParams = {

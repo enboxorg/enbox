@@ -530,25 +530,32 @@ export class Records {
   }
 
   /**
-   * Checks if the given RecordsDelete message can be performed against a record with the given newest existing state.
+   * Checks whether the given `RecordsDelete` is beaten by an existing tombstone for the record,
+   * per the tombstone lattice. A tombstone displaces any `RecordsWrite` regardless of timestamp
+   * (delete-wins). Among competing tombstones one canonical winner stands on every replica:
+   * a prune beats a plain delete regardless of timestamp — the cascade is a side effect, and a
+   * plain-newer winner would leave replicas that ran the cascade diverged from those that never
+   * would — and within the same class the newest tombstone wins, with `Message.isNewer`'s
+   * (messageTimestamp, CID) total order picking the same winner everywhere. Admission and
+   * resumable-task replay must share this predicate: state can advance between acceptance and
+   * replay, and replay must never admit a delete that admission would now reject.
    */
-  public static canPerformDeleteAgainstRecord(deleteToBePerformed: RecordsDeleteMessage, newestExistingMessage: GenericMessage | undefined): boolean {
-    if (newestExistingMessage === undefined) {
+  public static async isDeleteBeatenByExistingTombstone(
+    deleteToBePerformed: RecordsDeleteMessage,
+    newestExistingMessage: GenericMessage
+  ): Promise<boolean> {
+    if (newestExistingMessage.descriptor.method !== DwnMethodName.Delete) {
       return false;
     }
 
-    // can't perform delete if:
-    // attempting to delete on an already deleted record; or
-    // attempting to prune on an already pruned record;
-    if (newestExistingMessage.descriptor.method === DwnMethodName.Delete) {
-      if (deleteToBePerformed.descriptor.prune !== true) {
-        return false;
-      } else if ((newestExistingMessage as RecordsDeleteMessage).descriptor.prune === true) {
-        return false;
-      }
+    const incomingIsPrune = deleteToBePerformed.descriptor.prune === true;
+    const existingIsPrune = (newestExistingMessage as RecordsDeleteMessage).descriptor.prune === true;
+    if (incomingIsPrune !== existingIsPrune) {
+      return existingIsPrune;
     }
 
-    return true;
+    const incomingDeleteIsNewest = await Message.isNewer(deleteToBePerformed, newestExistingMessage);
+    return !incomingDeleteIsNewest;
   }
 
   /**
