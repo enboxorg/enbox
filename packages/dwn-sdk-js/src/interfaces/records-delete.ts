@@ -1,3 +1,4 @@
+import type { GenericMessage } from '../types/message-types.js';
 import type { KeyValues } from '../types/query-types.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types//message-store.js';
@@ -87,9 +88,24 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
 
   /**
    * Indexed properties needed for MessageStore indexing.
+   *
+   * Immutable record facts (`protocol`, `protocolPath`, `recipient`, `schema`, `parentId`,
+   * `dateCreated`, `contextId`) come from the initial `RecordsWrite`. Mutable query-visibility
+   * facts (flattened `tag.*` and `published`) come from the newest message that existed
+   * immediately before this delete, because tombstone visibility must reflect the record state
+   * being deleted: without them, tombstones of tagged records never match tag filters (e.g. the
+   * permission shadow filters on `tag.protocol`) and tombstones of published records never match
+   * `published: true` queries and subscriptions.
+   *
+   * When `newestPreDeleteMessage` is an existing `RecordsDelete` (pruning an already-deleted
+   * record, or a tombstone displaced under the delete-wins lattice), the existing tombstone's
+   * visibility facts carry forward: a tombstone's descriptor carries neither tags nor
+   * `published`, so they are reconstructed from the newest retained `RecordsWrite` — the initial
+   * write — which is the same source the existing tombstone derived its own facts from.
    */
   public constructIndexes(
     initialWrite: RecordsWriteMessage,
+    newestPreDeleteMessage: GenericMessage,
   ): KeyValues {
     const message = this.message;
     const descriptor = { ...message.descriptor };
@@ -97,14 +113,26 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
     // we add the immutable properties from the initial RecordsWrite message in order to use them when querying relevant deletes.
     const { protocol, protocolPath, recipient, schema, parentId, dateCreated } = initialWrite.descriptor;
 
+    // mutable visibility facts come from the message that held them immediately before deletion;
+    // an existing tombstone carries its facts forward via the initial write it derived them from
+    const visibilitySource = Records.isRecordsWrite(newestPreDeleteMessage) ? newestPreDeleteMessage : initialWrite;
+    const { tags, published } = visibilitySource.descriptor;
+
     const indexes: { [key:string]: string | boolean | undefined } = {
       isLatestBaseState : true,
+      published         : !!published,
       protocol, protocolPath, recipient, schema, parentId, dateCreated,
       contextId         : initialWrite.contextId,
       author            : this.author!,
       ...descriptor
     };
     removeUndefinedProperties(indexes);
+
+    // tags are flattened into `tag.<property>` keys to avoid name clashes with first-class index
+    // keys, matching the flattening the RecordsWrite indexing path performs.
+    if (tags !== undefined) {
+      return { ...indexes, ...Records.buildTagIndexes({ ...tags }) } as KeyValues;
+    }
 
     return indexes as KeyValues;
   }

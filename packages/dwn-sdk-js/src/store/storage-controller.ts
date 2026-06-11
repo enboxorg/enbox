@@ -75,7 +75,14 @@ export class StorageController {
 
     const recordsDelete = await RecordsDelete.parse(message);
     const initialWrite = await RecordsWrite.getInitialWrite(existingMessages);
-    const indexes = recordsDelete.constructIndexes(initialWrite);
+
+    // `newestExistingMessage` is the newest message that exists immediately before this delete
+    // applies — the tombstone's mutable query-visibility facts (`tag.*`, `published`) come from
+    // it, while immutable record facts keep coming from the initial write. The tombstone-lattice
+    // gate above guarantees it is never a tombstone that beats this delete (including this very
+    // delete on resumable-task replay), so by this point it is either the latest `RecordsWrite`
+    // being deleted or an existing tombstone this delete displaces, whose facts carry forward.
+    const indexes = recordsDelete.constructIndexes(initialWrite, newestExistingMessage);
     const messageCid = await Message.getCid(message);
     await this.messageStore.put(tenant, message, indexes);
     await this.stateIndex.insert(tenant, messageCid, indexes);

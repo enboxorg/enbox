@@ -467,8 +467,21 @@ export class Dwn {
 
       const recordsDelete = await RecordsDelete.parse(message as RecordsDeleteMessage);
       const isLatest = await Dwn.isNewestStoredMessage(message, existingMessages);
+
+      // the duplicate delete is already stored, so the pre-delete newest message — the source of
+      // the tombstone's mutable `tag.*`/`published` visibility facts — is the newest among the
+      // OTHER stored messages for the record, falling back to the initial write.
+      const deleteCid = await Message.getCid(message);
+      const preDeleteMessages: GenericMessage[] = [];
+      for (const existingMessage of existingMessages) {
+        if (await Message.getCid(existingMessage) !== deleteCid) {
+          preDeleteMessages.push(existingMessage);
+        }
+      }
+      const newestPreDeleteMessage = await Message.getNewestMessage(preDeleteMessages) ?? initialWrite;
+
       return {
-        indexes   : recordsDelete.constructIndexes(initialWrite),
+        indexes   : recordsDelete.constructIndexes(initialWrite, newestPreDeleteMessage),
         event     : { message, initialWrite },
         emitEvent : isLatest,
       };
