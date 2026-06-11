@@ -7,6 +7,7 @@ import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '..
 import sinon from 'sinon';
 
 import { Dwn } from '../src/dwn.js';
+import { StorageController } from '../src/store/storage-controller.js';
 import { TestEventLog } from './test-event-stream.js';
 import { TestStores } from './test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -463,6 +464,37 @@ export function testDwnClass(): void {
         } finally {
           await dwnB.close();
         }
+      });
+
+      it('applies the handler stale-tombstone gate on resumable-task replay', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        expect((await dwn.processMessage(alice.did, initialWrite.message, { dataStream: initialWrite.dataStream })).status.code).toBe(202);
+
+        // generate the prune first so it is older than the tombstone admitted below
+        const stalePrune = await RecordsDelete.create({
+          recordId : initialWrite.message.recordId,
+          prune    : true,
+          signer   : Jws.createSigner(alice),
+        });
+        await Time.minimalSleep();
+        const recordsDelete = await RecordsDelete.create({
+          recordId : initialWrite.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
+        expect((await dwn.processMessage(alice.did, recordsDelete.message)).status.code).toBe(202);
+
+        // replaying the stale prune through the task path must be a no-op — the same freshness
+        // gate as admission — leaving the newer tombstone as the record's newest message
+        const storageController = new StorageController({ messageStore, dataStore, stateIndex, eventLog });
+        await storageController.performRecordsDelete({ tenant: alice.did, message: stalePrune.message });
+
+        const tombstoneCid = await Message.getCid(recordsDelete.message);
+        const stalePruneCid = await Message.getCid(stalePrune.message);
+        expect(await messageStore.get(alice.did, tombstoneCid)).toBeDefined();
+        expect(await messageStore.get(alice.did, stalePruneCid)).toBeUndefined();
       });
     });
   });

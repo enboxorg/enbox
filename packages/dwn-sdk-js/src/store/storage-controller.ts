@@ -62,6 +62,13 @@ export class StorageController {
       return;
     }
 
+    // Same freshness gate as the RecordsDelete handler: state can advance between acceptance and
+    // task replay, and a stale prune accepted earlier must not displace a tombstone that has since
+    // become the record's newest message.
+    if (await Records.isDeleteBeatenByNewerTombstone(message, newestExistingMessage!)) {
+      return;
+    }
+
     // NOTE: code above is duplicated from `RecordsDeleteHandler` and is already performed if this was invoked by the `RecordsDeleteHandler`,
     // But we repeat the logic for the code path when the ResumableTaskManager resumes the task.
     // We make the two different code paths to share this same method to reduce code duplication, there might be a better way to refactor this.

@@ -552,6 +552,25 @@ export class Records {
   }
 
   /**
+   * Checks whether the given `RecordsDelete` is beaten by an existing newer tombstone for the record.
+   * A tombstone displaces any `RecordsWrite` regardless of timestamp (delete-wins), so the only
+   * message that beats an incoming delete is a newer `RecordsDelete`. Admission and resumable-task
+   * replay must share this predicate: state can advance between acceptance and replay, and replay
+   * must never admit a delete that admission would now reject.
+   */
+  public static async isDeleteBeatenByNewerTombstone(
+    deleteToBePerformed: RecordsDeleteMessage,
+    newestExistingMessage: GenericMessage
+  ): Promise<boolean> {
+    if (newestExistingMessage.descriptor.method !== DwnMethodName.Delete) {
+      return false;
+    }
+
+    const incomingDeleteIsNewest = await Message.isNewer(deleteToBePerformed, newestExistingMessage);
+    return !incomingDeleteIsNewest;
+  }
+
+  /**
    * Checks whether or not the incoming records query filter should build an unpublished recipient MessageStore filter.
    *
    * @param filter The incoming RecordsFilter to evaluate against.
