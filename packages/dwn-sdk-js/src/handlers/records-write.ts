@@ -233,8 +233,8 @@ export class RecordsWriteHandler implements MethodHandler {
         { code: 202, detail: 'Accepted' }
     };
 
-    // delete all existing messages of the same record that are not newest, except for the initial write
-    await StorageController.deleteAllOlderMessagesButKeepInitialWrite(
+    // displace every other message for this record, except the initial write which is kept unmarked
+    await StorageController.deleteDisplacedMessagesButKeepInitialWrite(
       tenant, existingMessages, newestMessage, this.deps.messageStore, this.deps.dataStore!, this.deps.stateIndex!
     );
 

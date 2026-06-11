@@ -7,11 +7,11 @@ import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '..
 import sinon from 'sinon';
 
 import { Dwn } from '../src/dwn.js';
-import { TestDataGenerator } from './utils/test-data-generator.js';
 import { TestEventLog } from './test-event-stream.js';
 import { TestStores } from './test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStoreLevel, EventEmitterEventLog, Message, MessageStoreLevel, ResumableTaskStoreLevel, StateIndexLevel } from '../src/index.js';
+import { DataStoreLevel, DataStream, EventEmitterEventLog, Jws, Message, MessageStoreLevel, RecordsDelete, RecordsRead, ResumableTaskStoreLevel, StateIndexLevel, Time } from '../src/index.js';
+import { defaultTestProtocolDefinition, TestDataGenerator } from './utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 export function testDwnClass(): void {
@@ -320,6 +320,149 @@ export function testDwnClass(): void {
         const result = await dwn.applyReplicatedMessage(alice.did, child.message);
 
         expect(result).toEqual({ kind: 'Duplicate' });
+      });
+
+      it('classifies a replicated write older than the squash floor as Superseded', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const squashProtocol: ProtocolDefinition = {
+          protocol  : 'https://example.com/replicated-squash',
+          published : true,
+          types     : {
+            document : {},
+            patch    : {},
+          },
+          structure: {
+            document: {
+              patch: {
+                $immutable : true,
+                $squash    : true,
+              },
+            },
+          },
+        };
+        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : squashProtocol,
+        });
+        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+
+        const document = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : squashProtocol.protocol,
+          protocolPath : 'document',
+        });
+        expect((await dwn.processMessage(alice.did, document.message, { dataStream: document.dataStream })).status.code).toBe(202);
+
+        const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
+        const squashRecord = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol         : squashProtocol.protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : document.message.contextId,
+          dateCreated      : squashTimestamp,
+          messageTimestamp : squashTimestamp,
+          squash           : true,
+        });
+        expect((await dwn.processMessage(alice.did, squashRecord.message, { dataStream: squashRecord.dataStream })).status.code).toBe(202);
+
+        // A replica replaying a pre-squash write is a normal multi-replica race: it must
+        // converge as a no-op, never surface as a terminal failure.
+        const olderTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
+        const olderPatch = await TestDataGenerator.generateRecordsWrite({
+          author           : alice,
+          protocol         : squashProtocol.protocol,
+          protocolPath     : 'document/patch',
+          parentContextId  : document.message.contextId,
+          dateCreated      : olderTimestamp,
+          messageTimestamp : olderTimestamp,
+        });
+
+        const result = await dwn.applyReplicatedMessage(alice.did, olderPatch.message, { dataStream: olderPatch.dataStream });
+
+        expect(result).toEqual({ kind: 'Superseded' });
+      });
+
+      it('converges to the same deleted state when a write and an older tombstone apply in either order', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        // one shared ProtocolsConfigure message, processed on BOTH replicas so their
+        // state roots remain directly comparable
+        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : defaultTestProtocolDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+
+        // initial write -> tombstone -> newer update, with strictly increasing timestamps
+        const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        await Time.minimalSleep();
+        const recordsDelete = await RecordsDelete.create({
+          recordId : initialWrite.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
+        await Time.minimalSleep();
+        const update = await TestDataGenerator.generateFromRecordsWrite({
+          author        : alice,
+          existingWrite : initialWrite.recordsWrite,
+        });
+
+        // replica A: initial write and the newer update land first, the older tombstone last
+        expect(await dwn.applyReplicatedMessage(
+          alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
+        )).toEqual({ kind: 'Applied' });
+        expect(await dwn.applyReplicatedMessage(
+          alice.did, update.message, { dataStream: DataStream.fromBytes(update.dataBytes) },
+        )).toEqual({ kind: 'Applied' });
+        expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+
+        // replica B: the tombstone lands before the newer update
+        const messageStoreB = new MessageStoreLevel({
+          blockstoreLocation : 'TEST-MESSAGESTORE-DELETEWINS',
+          indexLocation      : 'TEST-INDEX-DELETEWINS',
+        });
+        const dataStoreB = new DataStoreLevel({ blockstoreLocation: 'TEST-DATASTORE-DELETEWINS' });
+        const stateIndexB = new StateIndexLevel({ location: 'TEST-STATEINDEX-DELETEWINS' });
+        const resumableTaskStoreB = new ResumableTaskStoreLevel({ location: 'TEST-RESUMABLE-TASK-STORE-DELETEWINS' });
+        const dwnB = await Dwn.create({
+          didResolver,
+          messageStore       : messageStoreB,
+          dataStore          : dataStoreB,
+          stateIndex         : stateIndexB,
+          eventLog           : new EventEmitterEventLog(),
+          resumableTaskStore : resumableTaskStoreB,
+        });
+
+        try {
+          await messageStoreB.clear();
+          await dataStoreB.clear();
+          await stateIndexB.clear();
+          await resumableTaskStoreB.clear();
+
+          expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+          expect(await dwnB.applyReplicatedMessage(
+            alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
+          )).toEqual({ kind: 'Applied' });
+          expect(await dwnB.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+          expect(await dwnB.applyReplicatedMessage(
+            alice.did, update.message, { dataStream: DataStream.fromBytes(update.dataBytes) },
+          )).toEqual({ kind: 'Superseded' });
+
+          // both replicas read the record as deleted and report identical state roots
+          const readA = await RecordsRead.create({
+            signer : Jws.createSigner(alice),
+            filter : { recordId: initialWrite.message.recordId },
+          });
+          expect((await dwn.processMessage(alice.did, readA.message)).status.code).toBe(404);
+          const readB = await RecordsRead.create({
+            signer : Jws.createSigner(alice),
+            filter : { recordId: initialWrite.message.recordId },
+          });
+          expect((await dwnB.processMessage(alice.did, readB.message)).status.code).toBe(404);
+
+          expect(await stateIndexB.getRoot(alice.did)).toEqual(await stateIndex.getRoot(alice.did));
+        } finally {
+          await dwnB.close();
+        }
       });
     });
   });

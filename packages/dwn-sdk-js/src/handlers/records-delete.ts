@@ -5,7 +5,6 @@ import type { RecordsDeleteMessage } from '../types/records-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 
 import { authenticate } from '../core/auth.js';
-import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
@@ -15,6 +14,7 @@ import { RecordsDelete } from '../interfaces/records-delete.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { ResumableTaskName } from '../core/resumable-task-manager.js';
+import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export class RecordsDeleteHandler implements MethodHandler {
 
@@ -54,9 +54,13 @@ export class RecordsDeleteHandler implements MethodHandler {
       };
     }
 
-    // if the incoming message is not the newest, return Conflict
+    // A tombstone displaces a RecordsWrite regardless of timestamp so that replicas converge on
+    // the same terminal state no matter the arrival order — the write handler already rejects
+    // writes after a delete regardless of timestamp, so this is the only convergent counterpart.
+    // Only an existing newer RecordsDelete wins: a stale delete against the record's newest
+    // tombstone is a Conflict no-op.
     const incomingDeleteIsNewest = await Message.isNewer(message, newestExistingMessage!);
-    if (!incomingDeleteIsNewest) {
+    if (!incomingDeleteIsNewest && newestExistingMessage!.descriptor.method === DwnMethodName.Delete) {
       return {
         status: { code: 409, detail: 'Conflict' }
       };

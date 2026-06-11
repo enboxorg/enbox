@@ -212,7 +212,7 @@ export function testRecordsDeleteHandler(): void {
         expect(deleteReply.status.code).toBe(404);
       });
 
-      it('should be disallowed if there is a newer RecordsWrite already in the DWN ', async () => {
+      it('should apply a tombstone over a newer RecordsWrite (delete-wins)', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
@@ -237,20 +237,19 @@ export function testRecordsDeleteHandler(): void {
         const subsequentWriteReply = await dwn.processMessage(alice.did, subsequentWriteData.message, { dataStream: subsequentWriteData.dataStream });
         expect(subsequentWriteReply.status.code).toBe(202);
 
-        // test that a delete with an earlier `messageTimestamp` results in a 409
+        // the tombstone displaces the newer write regardless of timestamp (delete-wins) so
+        // that replicas converge on the same terminal state no matter the arrival order
         const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
-        expect(deleteReply.status.code).toBe(409);
+        expect(deleteReply.status.code).toBe(202);
 
-        // ensure data still exists
+        // the record reads as deleted and the displaced write is gone
         const queryData = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : { recordId: initialWriteData.message.recordId }
         });
-        const expectedEncodedData = Encoder.bytesToBase64Url(subsequentWriteData.dataBytes);
         const reply = await dwn.processMessage(alice.did, queryData.message);
         expect(reply.status.code).toBe(200);
-        expect(reply.entries?.length).toBe(1);
-        expect(reply.entries![0].encodedData).toBe(expectedEncodedData);
+        expect(reply.entries?.length).toBe(0);
       });
 
       it('should be able to delete then rewrite the same data', async () => {
