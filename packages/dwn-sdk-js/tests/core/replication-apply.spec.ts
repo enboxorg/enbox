@@ -87,6 +87,59 @@ describe('replicationApplyResultFromReply', () => {
     });
   });
 
+  it('emits Ancestor refs above a batched missing parent in a single Incomplete', async () => {
+    const protocol = 'https://example.com/protocol';
+    const { message } = await TestDataGenerator.generateRecordsWrite({ protocol });
+
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 400,
+        detail : `${DwnErrorCode.ProtocolAuthorizationParentRecordNotFound}: Could not find parent record 'baz-record'.`,
+      },
+    }, { missingAncestorRecordIds: ['foo-record', 'bar-record', 'baz-record'] })).toEqual({
+      kind    : 'Incomplete',
+      missing : [
+        { type: 'Ancestor', recordId: 'foo-record', protocol },
+        { type: 'Ancestor', recordId: 'bar-record', protocol },
+        { type: 'Parent', recordId: 'baz-record', protocol },
+      ],
+    });
+  });
+
+  it('emits one Ancestor ref per batched missing ancestor in a single Incomplete', async () => {
+    const protocol = 'https://example.com/protocol';
+    const { message } = await TestDataGenerator.generateRecordsWrite({ protocol });
+
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 401,
+        detail : `${DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain}: parent with ID baz-record was not found`,
+      },
+    }, { missingAncestorRecordIds: ['foo-record', 'bar-record', 'baz-record'] })).toEqual({
+      kind    : 'Incomplete',
+      missing : [
+        { type: 'Ancestor', recordId: 'foo-record', protocol },
+        { type: 'Ancestor', recordId: 'bar-record', protocol },
+        { type: 'Ancestor', recordId: 'baz-record', protocol },
+      ],
+    });
+  });
+
+  it('falls back to the failure-named ancestor when the batched missing-ancestor set is empty', async () => {
+    const protocol = 'https://example.com/protocol';
+    const { message } = await TestDataGenerator.generateRecordsWrite({ protocol });
+
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 401,
+        detail : `${DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain}: parent with ID parent-record was not found`,
+      },
+    }, { missingAncestorRecordIds: [] })).toEqual({
+      kind    : 'Incomplete',
+      missing : [{ type: 'Ancestor', recordId: 'parent-record', protocol }],
+    });
+  });
+
   it('classifies grant, record data, and delete initial-write dependencies', async () => {
     const protocol = 'https://example.com/protocol';
     const permissionGrantId = 'grant-1';

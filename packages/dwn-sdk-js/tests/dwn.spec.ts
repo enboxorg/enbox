@@ -1,8 +1,9 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../src/types/subscriptions.js';
-import type { ProtocolDefinition } from '../src/index.js';
+import type { Persona } from './utils/test-data-generator.js';
 import type { ActiveTenantCheckResult, TenantGate } from '../src/index.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../src/index.js';
+import type { ProtocolDefinition, ReplicationApplyResult } from '../src/index.js';
 
 import sinon from 'sinon';
 
@@ -657,6 +658,150 @@ export function testDwnClass(): void {
         } finally {
           await dwnB.close();
         }
+      });
+
+      const deepNestedProtocol: ProtocolDefinition = {
+        protocol  : 'https://example.com/deep-nested',
+        published : false,
+        types     : {
+          foo : {},
+          bar : {},
+          baz : {},
+          qux : {},
+        },
+        structure: {
+          foo: {
+            bar: {
+              baz: {
+                qux: {},
+              },
+            },
+          },
+        },
+      };
+
+      type GeneratedWrite = Awaited<ReturnType<typeof TestDataGenerator.generateRecordsWrite>>;
+
+      // Installs `deepNestedProtocol` on the local DWN and builds a foo -> bar -> baz -> qux
+      // record chain under it. None of the generated records are stored; each test applies the
+      // subset it needs to shape local ancestor presence.
+      async function generateDeepNestedChain(
+        alice: Persona,
+      ): Promise<{ foo: GeneratedWrite; bar: GeneratedWrite; baz: GeneratedWrite; qux: GeneratedWrite }> {
+        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : deepNestedProtocol,
+        });
+        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+
+        const foo = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : deepNestedProtocol.protocol,
+          protocolPath : 'foo',
+        });
+        const bar = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : deepNestedProtocol.protocol,
+          protocolPath    : 'foo/bar',
+          parentContextId : foo.message.contextId,
+        });
+        const baz = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : deepNestedProtocol.protocol,
+          protocolPath    : 'foo/bar/baz',
+          parentContextId : bar.message.contextId,
+        });
+        const qux = await TestDataGenerator.generateRecordsWrite({
+          author          : alice,
+          protocol        : deepNestedProtocol.protocol,
+          protocolPath    : 'foo/bar/baz/qux',
+          parentContextId : baz.message.contextId,
+        });
+
+        return { foo, bar, baz, qux };
+      }
+
+      it('emits one ref per missing contextId segment in a single Incomplete', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const { foo, bar, baz, qux } = await generateDeepNestedChain(alice);
+
+        // no ancestors are present locally: a single apply names every missing segment,
+        // root-first, with the immediate parent keeping its existing Parent ref shape
+        const result = await dwn.applyReplicatedMessage(
+          alice.did, qux.message, { dataStream: DataStream.fromBytes(qux.dataBytes!) },
+        );
+
+        expect(result).toEqual({
+          kind    : 'Incomplete',
+          missing : [
+            { type: 'Ancestor', recordId: foo.message.recordId, protocol: deepNestedProtocol.protocol },
+            { type: 'Ancestor', recordId: bar.message.recordId, protocol: deepNestedProtocol.protocol },
+            { type: 'Parent', recordId: baz.message.recordId, protocol: deepNestedProtocol.protocol },
+          ],
+        });
+      });
+
+      it('lists only the locally-missing ancestor segments when part of the chain is present', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const { foo, bar, baz, qux } = await generateDeepNestedChain(alice);
+
+        // the root of the chain is already present locally
+        expect(await dwn.applyReplicatedMessage(
+          alice.did, foo.message, { dataStream: DataStream.fromBytes(foo.dataBytes!) },
+        )).toEqual({ kind: 'Applied' });
+
+        const result = await dwn.applyReplicatedMessage(
+          alice.did, qux.message, { dataStream: DataStream.fromBytes(qux.dataBytes!) },
+        );
+
+        expect(result).toEqual({
+          kind    : 'Incomplete',
+          missing : [
+            { type: 'Ancestor', recordId: bar.message.recordId, protocol: deepNestedProtocol.protocol },
+            { type: 'Parent', recordId: baz.message.recordId, protocol: deepNestedProtocol.protocol },
+          ],
+        });
+      });
+
+      it('resolves a deep ancestor chain in a bounded number of fetch-and-retry passes', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const { foo, bar, baz, qux } = await generateDeepNestedChain(alice);
+
+        const chainWritesByRecordId = new Map([
+          [foo.message.recordId, foo],
+          [bar.message.recordId, bar],
+          [baz.message.recordId, baz],
+        ]);
+
+        // engine loop: apply the deepest record, fetch whatever the Incomplete names, retry
+        let applyAttempts = 0;
+        let result: ReplicationApplyResult;
+        do {
+          applyAttempts += 1;
+          result = await dwn.applyReplicatedMessage(
+            alice.did, qux.message, { dataStream: DataStream.fromBytes(qux.dataBytes!) },
+          );
+
+          if (result.kind === 'Incomplete') {
+            for (const ref of result.missing) {
+              if (ref.type !== 'Ancestor' && ref.type !== 'Parent') {
+                throw new Error(`Incomplete named an unexpected dependency ref type: ${ref.type}`);
+              }
+              const ancestor = chainWritesByRecordId.get(ref.recordId);
+              if (ancestor === undefined) {
+                throw new Error(`Incomplete named an unexpected ancestor: ${ref.recordId}`);
+              }
+              expect(await dwn.applyReplicatedMessage(
+                alice.did, ancestor.message, { dataStream: DataStream.fromBytes(ancestor.dataBytes!) },
+              )).toEqual({ kind: 'Applied' });
+            }
+          }
+        } while (result.kind === 'Incomplete' && applyAttempts < 4);
+
+        // the full 4-level chain resolves in two passes — one Incomplete naming all three
+        // ancestors, then a clean apply — never one round trip per ancestry level
+        expect(result).toEqual({ kind: 'Applied' });
+        expect(applyAttempts).toBe(2);
       });
     });
   });
