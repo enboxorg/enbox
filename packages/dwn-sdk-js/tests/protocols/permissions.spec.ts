@@ -1,4 +1,4 @@
-import type { MessageStore } from '../../src/index.js';
+import type { MessageStore, ProtocolRuleSet } from '../../src/index.js';
 
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { Jws } from '../../src/utils/jws.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
-import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, PermissionGrant, PermissionRequest, PermissionsProtocol, Time } from '../../src/index.js';
+import { DwnConstant, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, PermissionGrant, PermissionRequest, PermissionsProtocol, ProtocolsConfigure, Time } from '../../src/index.js';
 
 describe('PermissionsProtocol', () => {
   let messageStore: MessageStore;
@@ -30,6 +30,52 @@ describe('PermissionsProtocol', () => {
 
   afterAll(async () => {
     await messageStore.close();
+  });
+
+  describe('protocol definition', () => {
+    it('should cap permission record sizes strictly below the inline-encoding threshold', () => {
+      // This relationship is load-bearing for grant replay during sync: a record whose data size
+      // is at most `DwnConstant.maxDataSizeAllowedToBeEncoded` is stored with `encodedData` inline
+      // in the message store, so a replayed permission record re-admits as latest-with-data and
+      // `PermissionGrant.parse()` (which requires `encodedData`) keeps working. If a `$size` max
+      // ever reached the threshold, permission record data could be stored out-of-line in the data
+      // store instead, and grant validation on replay would break.
+      const { structure } = PermissionsProtocol.definition;
+      const revocation = structure.grant.revocation as ProtocolRuleSet;
+
+      expect(structure.request.$size!.max!).toBeLessThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
+      expect(structure.grant.$size!.max!).toBeLessThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
+      expect(revocation.$size!.max!).toBeLessThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
+    });
+
+    it('should mark the request, grant, and revocation paths as $immutable', () => {
+      // Permission records are write-once: immutability locks their initial-write facts
+      // (notably the `protocol` tag) which replication fingerprint domains and
+      // protocol-scoped shadow filters are computed from.
+      const { structure } = PermissionsProtocol.definition;
+      const revocation = structure.grant.revocation as ProtocolRuleSet;
+
+      expect(structure.request.$immutable).toBe(true);
+      expect(structure.grant.$immutable).toBe(true);
+      expect(revocation.$immutable).toBe(true);
+    });
+
+    it('should pass ProtocolsConfigure validation without $immutable warnings', async () => {
+      // `$immutable: true` combined with `update`/`co-update` actions triggers a `console.warn`
+      // during ProtocolsConfigure rule-set validation. No permission record path grants update
+      // actions (permission records are never updated semantically), so validating the live
+      // definition must be warning-free.
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const warnSpy = sinon.spy(console, 'warn');
+
+      const protocolsConfigure = await ProtocolsConfigure.create({
+        definition : PermissionsProtocol.definition,
+        signer     : Jws.createSigner(alice),
+      });
+
+      expect(protocolsConfigure.message).toBeDefined();
+      expect(warnSpy.called).toBe(false);
+    });
   });
 
   describe('getScopeFromPermissionRecord', () => {

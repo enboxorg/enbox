@@ -131,8 +131,15 @@ export class PermissionsProtocol implements CoreProtocol {
       }
     },
     structure: {
+      // All permission record paths are `$immutable`: requests, grants, and revocations are
+      // write-once by design (a grant is never amended — it is revoked and re-issued).
+      // Immutability locks each record's initial-write facts (notably the `protocol` tag),
+      // which replication fingerprint domains and protocol-scoped shadow filters depend on —
+      // a tag-mutated permission record would otherwise drift between the shadow-filter
+      // stream (current tags) and its fingerprint domain (initial tags).
       request: {
-        $size: {
+        $immutable : true,
+        $size      : {
           max: 10000
         },
         $actions: [
@@ -143,7 +150,8 @@ export class PermissionsProtocol implements CoreProtocol {
         ]
       },
       grant: {
-        $size: {
+        $immutable : true,
+        $size      : {
           max: 10000
         },
         $actions: [
@@ -154,7 +162,8 @@ export class PermissionsProtocol implements CoreProtocol {
           }
         ],
         revocation: {
-          $size: {
+          $immutable : true,
+          $size      : {
             max: 10000
           },
           $actions: [

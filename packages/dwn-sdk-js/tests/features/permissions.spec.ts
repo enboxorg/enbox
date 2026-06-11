@@ -1458,5 +1458,239 @@ export function testPermissions(): void {
         expect(queryAfterReply.entries![0].recordId).toBe(write1.recordsWrite.message.recordId);
       });
     });
+
+    describe('permission record immutability', () => {
+      // Permission records (requests, grants, and revocations) are `$immutable`: a grant is
+      // never amended — it is revoked and re-issued. Immutability also locks each record's
+      // initial-write facts (notably the `protocol` tag), which replication fingerprint
+      // domains and protocol-scoped shadow filters are computed from.
+
+      it('should reject an update to an existing permission grant record', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // Alice creates a permission grant for Bob — the initial write is allowed.
+        const grantWrite = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+          description : 'Allow Bob to write',
+          grantedTo   : bob.did,
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : 'https://example.com/protocol/test'
+          }
+        });
+
+        const grantWriteReply = await dwn.processMessage(
+          alice.did,
+          grantWrite.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(grantWrite.permissionGrantBytes) }
+        );
+        expect(grantWriteReply.status.code).toBe(202);
+
+        // A non-initial RecordsWrite to the same grant record is rejected by `$immutable`.
+        const grantUpdate = await RecordsWrite.createFrom({
+          recordsWriteMessage : grantWrite.recordsWrite.message,
+          data                : grantWrite.permissionGrantBytes,
+          signer              : Jws.createSigner(alice),
+        });
+
+        const grantUpdateReply = await dwn.processMessage(
+          alice.did,
+          grantUpdate.message,
+          { dataStream: DataStream.fromBytes(grantWrite.permissionGrantBytes) }
+        );
+        expect(grantUpdateReply.status.code).toBe(400);
+        expect(grantUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+      });
+
+      it('should reject a tags-only mutation of an existing permission grant record', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // Alice creates a protocol-scoped grant; the scoped protocol is carried in `tags.protocol`.
+        const grantWrite = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+          description : 'Allow Bob to write',
+          grantedTo   : bob.did,
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : 'https://example.com/protocol/test'
+          }
+        });
+
+        const grantWriteReply = await dwn.processMessage(
+          alice.did,
+          grantWrite.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(grantWrite.permissionGrantBytes) }
+        );
+        expect(grantWriteReply.status.code).toBe(202);
+
+        // A tags-only mutation (no data change) is still a non-initial RecordsWrite and must be
+        // rejected — a retagged grant would drift between the protocol shadow-filter stream
+        // (current tags) and its replication fingerprint domain (initial-write tags).
+        const grantUpdate = await RecordsWrite.createFrom({
+          recordsWriteMessage : grantWrite.recordsWrite.message,
+          tags                : { protocol: 'https://example.com/protocol/other' },
+          signer              : Jws.createSigner(alice),
+        });
+
+        const grantUpdateReply = await dwn.processMessage(alice.did, grantUpdate.message);
+        expect(grantUpdateReply.status.code).toBe(400);
+        expect(grantUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+      });
+
+      it('should reject an update to an existing permission request record', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // Bob creates a permission request in Alice's DWN — the initial write is allowed.
+        const requestWrite = await PermissionsProtocol.createRequest({
+          signer      : Jws.createSigner(bob),
+          description : 'Requesting to write',
+          delegated   : false,
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : 'https://example.com/protocol/test'
+          }
+        });
+
+        const requestWriteReply = await dwn.processMessage(
+          alice.did,
+          requestWrite.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(requestWrite.permissionRequestBytes) }
+        );
+        expect(requestWriteReply.status.code).toBe(202);
+
+        // Even the original author cannot update the request record.
+        const requestUpdate = await RecordsWrite.createFrom({
+          recordsWriteMessage : requestWrite.recordsWrite.message,
+          data                : requestWrite.permissionRequestBytes,
+          signer              : Jws.createSigner(bob),
+        });
+
+        const requestUpdateReply = await dwn.processMessage(
+          alice.did,
+          requestUpdate.message,
+          { dataStream: DataStream.fromBytes(requestWrite.permissionRequestBytes) }
+        );
+        expect(requestUpdateReply.status.code).toBe(400);
+        expect(requestUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+      });
+
+      it('should still allow revoking a grant but reject updates to the revocation record', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // Alice creates a permission grant for Bob.
+        const grantWrite = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+          description : 'Allow Bob to write',
+          grantedTo   : bob.did,
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : 'https://example.com/protocol/test'
+          }
+        });
+
+        const grantWriteReply = await dwn.processMessage(
+          alice.did,
+          grantWrite.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(grantWrite.permissionGrantBytes) }
+        );
+        expect(grantWriteReply.status.code).toBe(202);
+
+        // Revoking the grant still works: the revocation is a new record (an initial write
+        // under the grant), so `$immutable` on the grant path does not block it.
+        const revocationWrite = await PermissionsProtocol.createRevocation({
+          signer : Jws.createSigner(alice),
+          grant  : PermissionGrant.parse(grantWrite.dataEncodedMessage),
+        });
+
+        const revocationWriteReply = await dwn.processMessage(
+          alice.did,
+          revocationWrite.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(revocationWrite.permissionRevocationBytes) }
+        );
+        expect(revocationWriteReply.status.code).toBe(202);
+
+        // The revocation record itself is immutable as well.
+        const revocationUpdate = await RecordsWrite.createFrom({
+          recordsWriteMessage : revocationWrite.recordsWrite.message,
+          data                : revocationWrite.permissionRevocationBytes,
+          signer              : Jws.createSigner(alice),
+        });
+
+        const revocationUpdateReply = await dwn.processMessage(
+          alice.did,
+          revocationUpdate.message,
+          { dataStream: DataStream.fromBytes(revocationWrite.permissionRevocationBytes) }
+        );
+        expect(revocationUpdateReply.status.code).toBe(400);
+        expect(revocationUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+      });
+
+      it('should reject replicated updates to permission records in applyReplicatedMessage', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // A replicated initial grant write is admitted.
+        const grantWrite = await PermissionsProtocol.createGrant({
+          signer      : Jws.createSigner(alice),
+          dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+          description : 'Allow Bob to write',
+          grantedTo   : bob.did,
+          scope       : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Write,
+            protocol  : 'https://example.com/protocol/test'
+          }
+        });
+
+        const applyInitialResult = await dwn.applyReplicatedMessage(
+          alice.did,
+          grantWrite.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(grantWrite.permissionGrantBytes) }
+        );
+        expect(applyInitialResult).toEqual({ kind: 'Applied' });
+
+        // A replicated non-initial write to the same grant record is terminally invalid,
+        // not a missing-dependency retry.
+        const grantUpdate = await RecordsWrite.createFrom({
+          recordsWriteMessage : grantWrite.recordsWrite.message,
+          data                : grantWrite.permissionGrantBytes,
+          signer              : Jws.createSigner(alice),
+        });
+
+        const applyUpdateResult = await dwn.applyReplicatedMessage(
+          alice.did,
+          grantUpdate.message,
+          { dataStream: DataStream.fromBytes(grantWrite.permissionGrantBytes) }
+        );
+        expect(applyUpdateResult.kind).toBe('Invalid');
+        if (applyUpdateResult.kind === 'Invalid') {
+          expect(applyUpdateResult.reason).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+        }
+
+        // A replicated tags-only mutation is rejected the same way.
+        const grantTagsUpdate = await RecordsWrite.createFrom({
+          recordsWriteMessage : grantWrite.recordsWrite.message,
+          tags                : { protocol: 'https://example.com/protocol/other' },
+          signer              : Jws.createSigner(alice),
+        });
+
+        const applyTagsUpdateResult = await dwn.applyReplicatedMessage(alice.did, grantTagsUpdate.message);
+        expect(applyTagsUpdateResult.kind).toBe('Invalid');
+        if (applyTagsUpdateResult.kind === 'Invalid') {
+          expect(applyTagsUpdateResult.reason).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+        }
+      });
+    });
   });
 }
