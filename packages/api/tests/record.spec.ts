@@ -3822,6 +3822,34 @@ describe('Record', () => {
       expect(deleteStatus2.code).toBe(409);
     });
 
+    it('escalates a deleted record to a prune instead of resending the cached tombstone', async () => {
+      // create a record
+      const { status: writeStatus, record } = await dwnAlice.records.write({
+        data         : 'Hello, world!',
+        protocol     : 'http://free-for-all.xyz',
+        protocolPath : 'post',
+        schema       : 'foo/bar',
+        dataFormat   : 'text/plain'
+      });
+      expect(writeStatus.code).toBe(202);
+
+      // plain delete first
+      const { status: deleteStatus, record: deletedRecord } = await record.delete();
+      expect(deleteStatus.code).toBe(202);
+      expect(deletedRecord.deleted).toBe(true);
+
+      // requesting a prune constructs a new tombstone that beats the standing plain delete
+      // (prune dominates plain in the tombstone lattice), rather than resending the cached
+      // message and failing with a 409
+      const { status: pruneStatus, record: prunedRecord } = await deletedRecord.delete({ prune: true });
+      expect(pruneStatus.code).toBe(202);
+      expect(prunedRecord.deleted).toBe(true);
+
+      // a repeated prune request reuses the cached prune tombstone and is beaten: 409
+      const { status: pruneStatus2 } = await prunedRecord.delete({ prune: true });
+      expect(pruneStatus2.code).toBe(409);
+    });
+
     it('a record in a deleted state returns undefined for data related fields', async () => {
       // create a record
       const { status: writeStatus, record } = await dwnAlice.records.write({
