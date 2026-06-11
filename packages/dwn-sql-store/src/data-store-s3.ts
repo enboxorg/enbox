@@ -11,10 +11,12 @@ import {
   DeleteObjectsCommand,
   GetObjectCommand,
   ListObjectsV2Command,
-  PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { Kysely, sql } from 'kysely';
+
+const DEFAULT_PART_SIZE = 5 * 1024 * 1024;
+const DEFAULT_QUEUE_SIZE = 4;
 
 /**
  * S3-backed implementation of {@link DataStore} with SQL-based reference
@@ -25,9 +27,9 @@ import { Kysely, sql } from 'kysely';
  * reference it. A `dataRefs` SQL table tracks references; blocks are
  * garbage-collected from S3 when the last ref is deleted.
  *
- * For files over `partSize` (default 5MB), the AWS SDK Upload helper
- * automatically uses multipart upload with bounded memory
- * (`queueSize * partSize`).
+ * The AWS SDK Upload helper accepts unknown-length stream bodies, using a
+ * single PUT for small payloads and multipart upload for larger payloads with
+ * bounded memory (`queueSize * partSize`).
  */
 export class DataStoreS3 implements DataStore {
   readonly #dialect: Dialect;
@@ -40,8 +42,12 @@ export class DataStoreS3 implements DataStore {
   constructor(config: DataStoreS3Config) {
     this.#dialect = config.dialect;
     this.#bucket = config.bucket;
-    this.#partSize = config.partSize ?? 5 * 1024 * 1024; // 5 MB
-    this.#queueSize = config.queueSize ?? 4;
+    this.#partSize = config.partSize ?? DEFAULT_PART_SIZE;
+    this.#queueSize = config.queueSize ?? DEFAULT_QUEUE_SIZE;
+
+    if (!Number.isFinite(this.#partSize) || this.#partSize <= 0) {
+      throw new Error('DataStoreS3: partSize must be greater than 0.');
+    }
 
     this.#s3 = config.s3Client ?? new S3Client({
       region         : config.region ?? 'us-east-1',
@@ -247,29 +253,18 @@ export class DataStoreS3 implements DataStore {
       },
     });
 
-    // For small files, a simple PutObject suffices. For large files,
-    // Upload handles multipart automatically with bounded memory.
-    if (this.#partSize > 0) {
-      const upload = new Upload({
-        client : this.#s3,
-        params : {
-          Bucket : this.#bucket,
-          Key    : dataCid,
-          Body   : nodeStream,
-        },
-        queueSize : this.#queueSize,
-        partSize  : this.#partSize,
-      });
-
-      await upload.done();
-    } else {
-      // Single-part upload still streams from the caller; it does not buffer the body in-process.
-      await this.#s3.send(new PutObjectCommand({
+    const upload = new Upload({
+      client : this.#s3,
+      params : {
         Bucket : this.#bucket,
         Key    : dataCid,
         Body   : nodeStream,
-      }));
-    }
+      },
+      queueSize : this.#queueSize,
+      partSize  : this.#partSize,
+    });
+
+    await upload.done();
 
     return dataSize;
   }

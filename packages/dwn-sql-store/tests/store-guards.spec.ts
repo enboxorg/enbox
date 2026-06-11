@@ -193,6 +193,22 @@ describe('Store guards — db not open', () => {
       s3Client : {} as any,
     });
 
+    it('should reject non-positive partSize values', () => {
+      expect(() => new DataStoreS3({
+        dialect  : dialect,
+        bucket   : 'test-bucket',
+        partSize : 0,
+        s3Client : {} as any,
+      })).toThrow('DataStoreS3: partSize must be greater than 0.');
+
+      expect(() => new DataStoreS3({
+        dialect  : dialect,
+        bucket   : 'test-bucket',
+        partSize : -1,
+        s3Client : {} as any,
+      })).toThrow('DataStoreS3: partSize must be greater than 0.');
+    });
+
     it('should throw on get() without open()', async () => {
       await expect(store.get('tenant', 'record-1', 'cid-1')).rejects.toThrow(
         'Connection to database not open'
