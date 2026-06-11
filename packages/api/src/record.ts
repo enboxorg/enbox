@@ -640,7 +640,7 @@ export class Record implements RecordModel {
    * @returns the status and a new Record instance reflecting the deleted state
    */
   async delete(deleteParams?: RecordDeleteParams): Promise<RecordDeleteResult> {
-    const { store = true, signAsOwner, timestamp, prune = false } = deleteParams || {};
+    const { store = true, signAsOwner, timestamp } = deleteParams || {};
 
     const signAsOwnerValue = signAsOwner && this._delegateDid === undefined;
     const signAsOwnerDelegate = signAsOwner && this._delegateDid !== undefined;
@@ -676,6 +676,10 @@ export class Record implements RecordModel {
     // Under the tombstone lattice a fresh prune beats the standing plain delete regardless of
     // timestamp and purges descendants on every replica.
     const cachedDelete = this.deleted ? this.rawMessage as DwnMessage[DwnInterface.RecordsDelete] : undefined;
+    // When `prune` is omitted on an already-deleted record, inherit the cached tombstone's class:
+    // a timestamp-only re-stamp must not downgrade a prune to a plain delete, which the standing
+    // prune would beat as a 409 under the tombstone lattice.
+    const prune = deleteParams?.prune ?? cachedDelete?.descriptor.prune ?? false;
     const pruneEscalation = prune && cachedDelete?.descriptor.prune !== true;
     const explicitTimestamp = timestamp !== undefined && timestamp !== cachedDelete?.descriptor.messageTimestamp;
     // If the record is already in a deleted state and nothing about the requested tombstone
