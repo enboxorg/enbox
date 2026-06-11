@@ -1104,10 +1104,9 @@ class IdentityRuntimeController implements IdentityRuntime {
       return;
     }
 
-    const normalizedFile = await this._materializeBlob(file);
-    const dataFormat = normalizedFile.type || existingRecord?.dataFormat || undefined;
+    const dataFormat = file.type || existingRecord?.dataFormat || undefined;
     if (existingRecord) {
-      const updateResult = await existingRecord.update({ data: normalizedFile, dataFormat });
+      const updateResult = await existingRecord.update({ data: file, dataFormat });
       if (updateResult.status.code >= 300) {
         throw new Error(updateResult.status.detail || `Failed to update ${path} image (${updateResult.status.code}).`);
       }
@@ -1115,18 +1114,13 @@ class IdentityRuntimeController implements IdentityRuntime {
     }
 
     const createResult = await typed.records.create(path, {
-      data: normalizedFile,
+      data: file,
       parentContextId,
       dataFormat,
     });
     if (createResult.status.code >= 300) {
       throw new Error(createResult.status.detail || `Failed to create ${path} image (${createResult.status.code}).`);
     }
-  }
-
-  private async _materializeBlob(blob: Blob): Promise<Blob> {
-    const bytes = await blob.arrayBuffer();
-    return new Blob([bytes], { type: blob.type });
   }
 
   private async _ensureConnected(password?: string): Promise<void> {

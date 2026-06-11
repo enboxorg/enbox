@@ -43,7 +43,8 @@ export default {
     exitOnLastWindowClosed: false,
   },
   build: {
-    views: {
+    bunVersion : '1.3.14',
+    views      : {
       mainview: {
         entrypoint : 'src/mainview/index.ts',
         conditions : ['browser'],

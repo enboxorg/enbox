@@ -214,7 +214,7 @@ describe('AgentDwnApi', () => {
       expect(rpcSendStub.firstCall.args[0].dwnUrl).toBe('http://127.0.0.1:55557');
     });
 
-    it('processRawMessage converts data stream to Blob for RPC', async () => {
+    it('processRawMessage streams data through RPC in remote mode', async () => {
       const rpcSendStub = sinon.stub().resolves({
         status: { code: 202, detail: 'Accepted' },
       });
@@ -249,9 +249,8 @@ describe('AgentDwnApi', () => {
       );
 
       expect(result.status.code).toBe(202);
-      // Verify data was converted to Blob for RPC
       const rpcCall = rpcSendStub.firstCall.args[0];
-      expect(rpcCall.data).toBeInstanceOf(Blob);
+      expect(rpcCall.data).toBe(dataStream);
     });
 
     it('routes replicated apply through RPC in remote mode', async () => {
@@ -292,7 +291,90 @@ describe('AgentDwnApi', () => {
         message   : fakeMessage,
         targetDid : 'did:dht:testtenant',
       });
-      expect(rpcApplyStub.firstCall.args[0].data).toBeInstanceOf(Blob);
+      expect(rpcApplyStub.firstCall.args[0].data).toBe(dataStream);
+      expect(mockAgent.rpc.sendDwnRequest.called).toBe(false);
+    });
+
+    it('sendRequest streams constructed data through RPC in remote mode', async () => {
+      const mockAgent: any = {
+        rpc: {
+          getServerInfo  : sinon.stub().resolves({ server: '@enbox/dwn-server', webSocketSupport: false }),
+          sendDwnRequest : sinon.stub(),
+        },
+      };
+
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        localDwnEndpoint : 'http://127.0.0.1:55557',
+      });
+      const dataStream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(new TextEncoder().encode('external write'));
+          controller.close();
+        },
+      });
+      const fakeMessage = {
+        descriptor: { interface: 'Records', method: 'Write' },
+      } as any;
+      const sendDwnRpcRequestStub = sinon.stub(dwnApi as any, 'sendDwnRpcRequest').resolves({
+        status: { code: 202, detail: 'Accepted' },
+      });
+      sinon.stub(dwnApi as any, 'constructDwnMessage').resolves({ message: fakeMessage, dataStream });
+      sinon.stub(dwnApi as any, 'getDwnEndpointUrlsForTarget').resolves(['https://dwn.example']);
+      sinon.stub(Message, 'getCid').resolves('bafytestmessagecid');
+
+      const result = await dwnApi.sendRequest({
+        author        : 'did:dht:testagent',
+        target        : 'did:dht:testtenant',
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {},
+        dataStream,
+      } as any);
+
+      expect(result.messageCid).toBe('bafytestmessagecid');
+      expect(sendDwnRpcRequestStub.calledOnce).toBe(true);
+      expect(sendDwnRpcRequestStub.firstCall.args[0].data).toBe(dataStream);
+      expect(mockAgent.rpc.sendDwnRequest.called).toBe(false);
+    });
+
+    it('sendRequest streams existing message data through RPC when using messageCid', async () => {
+      const mockAgent: any = {
+        rpc: {
+          getServerInfo  : sinon.stub().resolves({ server: '@enbox/dwn-server', webSocketSupport: false }),
+          sendDwnRequest : sinon.stub(),
+        },
+      };
+
+      const dwnApi = new AgentDwnApi({
+        agent            : mockAgent,
+        localDwnEndpoint : 'http://127.0.0.1:55557',
+      });
+      const dataStream = new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(new TextEncoder().encode('existing write'));
+          controller.close();
+        },
+      });
+      const fakeMessage = {
+        descriptor: { interface: 'Records', method: 'Write' },
+      } as any;
+      const sendDwnRpcRequestStub = sinon.stub(dwnApi as any, 'sendDwnRpcRequest').resolves({
+        status: { code: 202, detail: 'Accepted' },
+      });
+      sinon.stub(dwnApi as any, 'getDwnMessage').resolves({ message: fakeMessage, data: dataStream });
+      sinon.stub(dwnApi as any, 'getDwnEndpointUrlsForTarget').resolves(['https://dwn.example']);
+      sinon.stub(Message, 'getCid').resolves('bafytestmessagecid');
+
+      const result = await dwnApi.sendRequest({
+        author      : 'did:dht:testagent',
+        target      : 'did:dht:testtenant',
+        messageType : DwnInterface.RecordsWrite,
+        messageCid  : 'bafyexistingmessagecid',
+      } as any);
+
+      expect(result.messageCid).toBe('bafyexistingmessagecid');
+      expect(sendDwnRpcRequestStub.calledOnce).toBe(true);
+      expect(sendDwnRpcRequestStub.firstCall.args[0].data).toBe(dataStream);
       expect(mockAgent.rpc.sendDwnRequest.called).toBe(false);
     });
 
@@ -3951,8 +4033,8 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       expect(rpcCallArgs.targetDid).toBe(alice.did.uri);
       expect(rpcCallArgs.dwnUrl).toBe('https://dwn.example.com');
       expect(rpcCallArgs.message).toHaveProperty('recordId', recordId);
-      // Verify data blob is included (the encrypted contextKey payload)
-      expect(rpcCallArgs.data).toBeInstanceOf(Blob);
+      // Verify data stream is included (the encrypted contextKey payload).
+      expect(rpcCallArgs.data).toBeInstanceOf(ReadableStream);
     }, 10000);
 
     it('should not fail when eager send encounters an error', async () => {

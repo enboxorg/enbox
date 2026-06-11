@@ -25,6 +25,8 @@ import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 
 import { buildEncryptionInput, encryptAndComputeCid, getEncryptionKeyDeriver, ivLength } from './dwn-encryption.js';
 
+type DwnRpcData = Blob | ReadableStream<Uint8Array>;
+
 /**
  * Parameters for writeContextKeyRecord.
  */
@@ -229,8 +231,8 @@ export async function eagerSendContextKeyRecord(
   agent: EnboxPlatformAgent,
   tenantDid: string,
   contextKeyMessage: DwnMessage[DwnInterface.RecordsWrite],
-  getDwnMessage: (params: { author: string; messageType: DwnInterface; messageCid: string }) => Promise<{ message: any; data?: Blob }>,
-  sendDwnRpcRequest: (params: { targetDid: string; dwnEndpointUrls: string[]; message: any; data?: Blob }) => Promise<any>,
+  getDwnMessage: (params: { author: string; messageType: DwnInterface; messageCid: string }) => Promise<{ message: any; data?: DwnRpcData }>,
+  sendDwnRpcRequest: (params: { targetDid: string; dwnEndpointUrls: string[]; message: any; data?: DwnRpcData }) => Promise<any>,
   getDwnEndpointUrlsForTarget: (targetDid: string) => Promise<string[]>,
 ): Promise<void> {
   let dwnEndpointUrls: string[];
@@ -245,7 +247,7 @@ export async function eagerSendContextKeyRecord(
     return;
   }
 
-  // Read the full message (including data blob) from the local DWN
+  // Read the full message (including data) from the local DWN.
   const { data } = await getDwnMessage({
     author      : tenantDid,
     messageType : DwnInterface.RecordsWrite,

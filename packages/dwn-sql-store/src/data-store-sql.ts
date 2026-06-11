@@ -7,6 +7,7 @@ import * as DataRefs from './utils/data-refs.js';
 import { BlockstoreSql } from './blockstore-sql.js';
 import { CID } from 'multiformats';
 import { DataStream } from '@enbox/dwn-sdk-js';
+import { drainReadableStream } from './utils/stream.js';
 import { exporter } from 'ipfs-unixfs-exporter';
 import { importer } from 'ipfs-unixfs-importer';
 import { Kysely, sql } from 'kysely';
@@ -93,7 +94,7 @@ export class DataStoreSql implements DataStore {
     const existingDataSize = await DataRefs.getDataRefSize(db, { tenant, recordId, dataCid });
     if (existingDataSize !== undefined) {
       // Drain the stream — caller expects it to be consumed.
-      await DataStream.toBytes(dataStream);
+      await drainReadableStream(dataStream);
       return { dataSize: existingDataSize };
     }
 
@@ -115,7 +116,7 @@ export class DataStoreSql implements DataStore {
       } else {
         dataSize = otherDataSize;
         // Drain the stream — caller expects it to be consumed.
-        await DataStream.toBytes(dataStream);
+        await drainReadableStream(dataStream);
       }
     } else {
       // New data — clean up any partial blocks from interrupted imports,
@@ -201,13 +202,19 @@ export class DataStoreSql implements DataStore {
   static async #countStreamBytes(stream: ReadableStream<Uint8Array>): Promise<number> {
     const reader = stream.getReader();
     let size = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        size += value.byteLength;
       }
-      size += value.byteLength;
+    } finally {
+      reader.releaseLock();
     }
+
     return size;
   }
 }

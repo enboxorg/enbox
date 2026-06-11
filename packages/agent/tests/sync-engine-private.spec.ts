@@ -177,13 +177,13 @@ describe('SyncEngineLevel — private methods', () => {
       expect(await factory()).toBeUndefined();
     });
 
-    it('should return data stream for RecordsWrite with data', async () => {
+    it('should ignore non-contract RecordsWrite event data', async () => {
       const event = {
         message : { descriptor: { interface: 'Records', method: 'Write' } },
         data    : textStream('hello from event'),
       };
       const factory = await (syncEngine as any).createLivePullDataStreamFactory(livePullContext, event);
-      expect(await readStreamText(await factory())).toBe('hello from event');
+      expect(await factory()).toBeUndefined();
     });
 
     it('should return undefined for RecordsWrite without data', async () => {

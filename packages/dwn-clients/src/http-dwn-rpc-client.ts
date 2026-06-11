@@ -4,9 +4,9 @@ import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcRequest, DwnRpcResponse 
 import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
 import { CryptoUtils } from '@enbox/crypto';
-import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnRpcError } from './dwn-rpc-error.js';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
+import { normalizeReadableStream } from './readable-stream.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
 import { sleep } from '@enbox/common';
@@ -99,6 +99,48 @@ function parseRetryAfterMs(response: Response): number | undefined {
   return undefined;
 }
 
+function createAttemptInit(init: RequestInit | undefined, requestTimeoutMs: number): RequestInit {
+  const timeoutSignal = AbortSignal.timeout(requestTimeoutMs);
+  if (init?.signal === undefined || init.signal === null) {
+    return { ...init, signal: timeoutSignal };
+  }
+
+  return { ...init, signal: AbortSignal.any([init.signal, timeoutSignal]) };
+}
+
+function shouldReturnResponse(response: Response, attempt: number, maxRetriesForRequest: number): boolean {
+  return !RETRYABLE_STATUS_CODES.has(response.status) || attempt === maxRetriesForRequest;
+}
+
+function shouldRethrowFetchError(error: unknown, attempt: number, maxRetriesForRequest: number): boolean {
+  return !isRetryable(error) || attempt === maxRetriesForRequest;
+}
+
+function getRetryDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: number, lastResponse?: Response): number {
+  const retryAfterMs = lastResponse !== undefined ? parseRetryAfterMs(lastResponse) : undefined;
+  const backoffMs = computeBackoffDelay(attempt, baseDelayMs, maxDelayMs);
+
+  return retryAfterMs === undefined ? backoffMs : Math.max(retryAfterMs, backoffMs);
+}
+
+/**
+ * Mutates the request options and headers with an octet-stream body.
+ * Returns whether the body is replayable for transport-level retries.
+ */
+function attachDataRequestBody(fetchOpts: RequestInit, requestHeaders: Record<string, string>, requestBody: BodyInit): boolean {
+  requestHeaders['content-type'] = 'application/octet-stream';
+  fetchOpts.body = requestBody;
+
+  if (requestBody instanceof ReadableStream) {
+    // Required by the Fetch standard for streaming request bodies. The stream is one-shot,
+    // so transport-level retries must not replay the same body after a failed attempt.
+    (fetchOpts as RequestInit & { duplex: 'half' }).duplex = 'half';
+    return false;
+  }
+
+  return true;
+}
+
 /**
  * HTTP client that can be used to communicate with Dwn Servers.
  *
@@ -117,11 +159,6 @@ export class HttpDwnRpcClient implements DwnRpc {
       baseDelayMs : retryOptions?.baseDelayMs ?? DEFAULT_BASE_DELAY_MS,
       maxDelayMs  : retryOptions?.maxDelayMs ?? DEFAULT_MAX_DELAY_MS,
     };
-  }
-
-  /** Detects whether the current runtime is Bun (vs a browser). */
-  static isBunRuntime(): boolean {
-    return typeof (globalThis as Record<string, unknown>).Bun !== 'undefined';
   }
 
   get transportProtocols(): string[] { return ['http:', 'https:']; }
@@ -147,29 +184,15 @@ export class HttpDwnRpcClient implements DwnRpc {
       ...(request.signal ? { signal: request.signal } : {}),
     };
 
-    if (request.data) {
-      requestHeaders['content-type'] = 'application/octet-stream';
-      let requestBody = request.data;
-
-      if (requestBody instanceof ReadableStream) {
-        // Bun's fetch currently fails on some ReadableStream uploads in the sync push path.
-        // Buffer to a Blob in Bun to avoid the broken path. In browsers, keep the stream
-        // and set `duplex: 'half'` which the Fetch spec requires for streaming request bodies.
-        // See: https://developer.chrome.com/docs/capabilities/web-apis/fetch-streaming-requests
-        if (HttpDwnRpcClient.isBunRuntime()) {
-          const bodyBytes = await DataStream.toBytes(requestBody as ReadableStream<Uint8Array>);
-          requestBody = new Blob([bodyBytes as BlobPart], { type: 'application/octet-stream' });
-        } else {
-          // Browsers require `duplex: 'half'` when the fetch body is a ReadableStream.
-          // TypeScript's built-in RequestInit does not include `duplex` yet.
-          (fetchOpts as Record<string, unknown>).duplex = 'half';
-        }
-      }
-
-      fetchOpts.body = requestBody;
+    let isRequestBodyReplayable = true;
+    if (request.data !== undefined) {
+      isRequestBodyReplayable = attachDataRequestBody(fetchOpts, requestHeaders, request.data as BodyInit);
     }
 
-    const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts, { requestTimeoutMs: request.timeoutMs });
+    const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts, {
+      requestTimeoutMs     : request.timeoutMs,
+      retryableRequestBody : isRequestBodyReplayable,
+    });
 
     // After retries are exhausted, a 429 means we're still rate-limited.
     // Per-IP 429s return plain JSON (not a JSON-RPC envelope), so we must
@@ -214,20 +237,16 @@ export class HttpDwnRpcClient implements DwnRpc {
       throw new DwnRpcError(code, message, dwnRpcResponse.error.data);
     }
 
-    // Materialise the response body before attaching to the reply.
-    // Bun has a bug where ReadableStream from fetch resp.body crashes in
-    // DataStream.toBytes() (reader.releaseLock() is undefined) when the
-    // stream is later consumed by the local DWN node (e.g. during sync).
-    // Buffering via arrayBuffer() avoids the broken getReader() path.
-    // TODO: https://github.com/enboxorg/enbox/issues/90 — remove once Bun ships fix
     const { reply } = dwnRpcResponse.result;
     if (hasDataStream) {
-      const bodyBytes = new Uint8Array(await resp.arrayBuffer());
-      const dataStream = DataStream.fromBytes(bodyBytes);
+      const dataStream = resp.body;
+      if (dataStream === null) {
+        throw new Error(`missing data stream in json rpc response. dwn url: ${request.dwnUrl}`);
+      }
       if (reply.record) {
-        reply.record.data = dataStream;
+        reply.record.data = normalizeReadableStream(dataStream);
       } else if (reply.entry) {
-        reply.entry.data = dataStream;
+        reply.entry.data = normalizeReadableStream(dataStream);
       }
     }
 
@@ -251,24 +270,14 @@ export class HttpDwnRpcClient implements DwnRpc {
       ...(request.signal ? { signal: request.signal } : {}),
     };
 
-    if (request.data) {
-      requestHeaders['content-type'] = 'application/octet-stream';
-      let requestBody = request.data;
-
-      if (requestBody instanceof ReadableStream) {
-        if (HttpDwnRpcClient.isBunRuntime()) {
-          const bodyBytes = await DataStream.toBytes(requestBody as ReadableStream<Uint8Array>);
-          requestBody = new Blob([bodyBytes as BlobPart], { type: 'application/octet-stream' });
-        } else {
-          (fetchOpts as Record<string, unknown>).duplex = 'half';
-        }
-      }
-
-      fetchOpts.body = requestBody;
+    let isRequestBodyReplayable = true;
+    if (request.data !== undefined) {
+      isRequestBodyReplayable = attachDataRequestBody(fetchOpts, requestHeaders, request.data as BodyInit);
     }
 
     const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts, {
-      requestTimeoutMs: request.timeoutMs ?? defaultReplicationApplyTimeoutMs(request.message),
+      requestTimeoutMs     : request.timeoutMs ?? defaultReplicationApplyTimeoutMs(request.message),
+      retryableRequestBody : isRequestBodyReplayable,
     });
     if (resp.status === 429) {
       const retryAfter = Number.parseInt(resp.headers.get('retry-after') ?? '1', 10);
@@ -344,47 +353,39 @@ export class HttpDwnRpcClient implements DwnRpc {
    * retryable HTTP status codes with exponential backoff and jitter.
    * Honours the `Retry-After` response header when present.
    */
-  private async fetchWithRetry(url: string, init?: RequestInit, options: { requestTimeoutMs?: number } = {}): Promise<Response> {
+  private async fetchWithRetry(
+    url: string,
+    init?: RequestInit,
+    options: { requestTimeoutMs?: number; retryableRequestBody?: boolean } = {},
+  ): Promise<Response> {
     const { maxRetries, baseDelayMs, maxDelayMs } = this._retryOptions;
     const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    const maxRetriesForRequest = options.retryableRequestBody === false ? 0 : maxRetries;
 
     let lastError: unknown;
     let lastResponse: Response | undefined;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    for (let attempt = 0; attempt <= maxRetriesForRequest; attempt++) {
       try {
         // Apply a per-attempt timeout to prevent hung connections / SSRF.
         // If the caller already supplied a signal, combine it with the timeout
         // via AbortSignal.any(); otherwise create a fresh timeout signal.
-        const timeoutSignal = AbortSignal.timeout(requestTimeoutMs);
-        const attemptInit: RequestInit = {
-          ...init,
-          signal: init?.signal
-            ? AbortSignal.any([init.signal, timeoutSignal])
-            : timeoutSignal,
-        };
-
-        const response = await fetch(url, attemptInit);
-
-        if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt === maxRetries) {
+        const response = await fetch(url, createAttemptInit(init, requestTimeoutMs));
+        if (shouldReturnResponse(response, attempt, maxRetriesForRequest)) {
           return response;
         }
 
         // Retryable status — back off and try again.
         lastResponse = response;
       } catch (error: unknown) {
-        if (!isRetryable(error) || attempt === maxRetries) {
+        if (shouldRethrowFetchError(error, attempt, maxRetriesForRequest)) {
           throw error;
         }
         lastError = error;
       }
 
       // Compute the delay, preferring Retry-After when available.
-      const retryAfterMs = lastResponse ? parseRetryAfterMs(lastResponse) : undefined;
-      const backoffMs = computeBackoffDelay(attempt, baseDelayMs, maxDelayMs);
-      const delayMs = retryAfterMs === undefined ? backoffMs : Math.max(retryAfterMs, backoffMs);
-
-      await sleep(delayMs);
+      await sleep(getRetryDelayMs(attempt, baseDelayMs, maxDelayMs, lastResponse));
     }
 
     // Should not reach here, but satisfy the compiler.

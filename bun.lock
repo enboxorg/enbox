@@ -73,7 +73,7 @@
         "@typescript-eslint/parser": "8.32.1",
         "@vitest/browser-playwright": "4.0.18",
         "@vitest/coverage-istanbul": "4.0.18",
-        "bun-types": "1.3.10",
+        "bun-types": "1.3.14",
         "eslint": "9.7.0",
         "sinon": "18.0.0",
         "typescript": "5.9.3",
@@ -99,7 +99,7 @@
         "@typescript-eslint/parser": "8.32.1",
         "@vitest/browser-playwright": "4.0.18",
         "@vitest/coverage-istanbul": "4.0.18",
-        "bun-types": "1.3.10",
+        "bun-types": "1.3.14",
         "eslint": "9.7.0",
         "sinon": "18.0.0",
         "typescript": "5.9.3",
@@ -121,7 +121,7 @@
       "devDependencies": {
         "@types/node": "22.19.15",
         "@types/sinon": "17.0.3",
-        "bun-types": "1.3.10",
+        "bun-types": "1.3.14",
         "sinon": "18.0.0",
         "typescript": "5.9.3",
       },
@@ -209,7 +209,7 @@
         "@typescript-eslint/parser": "8.32.1",
         "@vitest/browser-playwright": "4.0.18",
         "@vitest/coverage-istanbul": "4.0.18",
-        "bun-types": "1.3.10",
+        "bun-types": "1.3.14",
         "eslint": "9.7.0",
         "typescript": "5.9.3",
         "vitest": "4.0.18",
@@ -230,7 +230,7 @@
         "@types/sinon": "17.0.3",
         "@typescript-eslint/eslint-plugin": "8.32.1",
         "@typescript-eslint/parser": "8.32.1",
-        "bun-types": "1.3.10",
+        "bun-types": "1.3.14",
         "eslint": "9.7.0",
         "sinon": "18.0.0",
         "typescript": "5.9.3",
@@ -274,7 +274,7 @@
         "@vitest/browser-playwright": "4.0.18",
         "@vitest/coverage-istanbul": "4.0.18",
         "blockstore-core": "4.2.0",
-        "bun-types": "1.3.10",
+        "bun-types": "1.3.14",
         "dependency-cruiser": "16.3.7",
         "eslint": "9.7.0",
         "eslint-plugin-todo-plz": "1.3.0",
@@ -319,14 +319,14 @@
         "ws": "8.18.0",
       },
       "devDependencies": {
-        "@types/bun": "1.3.10",
+        "@types/bun": "1.3.14",
         "@types/bytes": "3.1.1",
         "@types/node": "22.19.15",
         "@types/sinon": "17.0.3",
         "@types/ws": "8.5.10",
         "@typescript-eslint/eslint-plugin": "8.32.1",
         "@typescript-eslint/parser": "8.32.1",
-        "bun-types": "1.3.10",
+        "bun-types": "1.3.14",
         "eslint": "9.7.0",
         "eslint-plugin-todo-plz": "1.3.0",
         "multiformats": "11.0.2",
@@ -365,7 +365,7 @@
         "multiformats": "11.0.2",
       },
       "devDependencies": {
-        "@types/bun": "1.3.10",
+        "@types/bun": "1.3.14",
         "@types/express": "4.17.17",
         "@types/node": "22.19.15",
         "@types/pg": "8.10.2",
@@ -373,7 +373,7 @@
         "@types/supertest": "2.0.12",
         "@typescript-eslint/eslint-plugin": "8.32.1",
         "@typescript-eslint/parser": "8.32.1",
-        "bun-types": "1.3.10",
+        "bun-types": "1.3.14",
         "esbuild": "0.23.0",
         "eslint": "9.7.0",
         "mysql2": "3.9.8",
@@ -404,7 +404,7 @@
         "syntax-highlight-element": "1.2.0",
       },
       "devDependencies": {
-        "@types/bun": "1.3.10",
+        "@types/bun": "1.3.14",
       },
     },
     "packages/protocol-codegen": {
@@ -422,7 +422,7 @@
         "@types/yargs": "17.0.35",
         "@typescript-eslint/eslint-plugin": "8.32.1",
         "@typescript-eslint/parser": "8.32.1",
-        "bun-types": "1.3.10",
+        "bun-types": "1.3.14",
         "eslint": "9.7.0",
         "typescript": "5.9.3",
       },
@@ -437,7 +437,7 @@
       "devDependencies": {
         "@typescript-eslint/eslint-plugin": "8.32.1",
         "@typescript-eslint/parser": "8.32.1",
-        "bun-types": "1.3.10",
+        "bun-types": "1.3.14",
         "eslint": "9.7.0",
         "typescript": "5.9.3",
       },
@@ -1220,7 +1220,7 @@
 
     "@types/body-parser": ["@types/body-parser@1.19.6", "", { "dependencies": { "@types/connect": "*", "@types/node": "*" } }, "sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g=="],
 
-    "@types/bun": ["@types/bun@1.3.10", "", { "dependencies": { "bun-types": "1.3.10" } }, "sha512-0+rlrUrOrTSskibryHbvQkDOWRJwJZqZlxrUs1u4oOoTln8+WIXBPmAuCF35SWB2z4Zl3E84Nl/D0P7803nigQ=="],
+    "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 
     "@types/bytes": ["@types/bytes@3.1.1", "", {}, "sha512-lOGyCnw+2JVPKU3wIV0srU0NyALwTBJlVSx5DfMQOFuuohA8y9S8orImpuIQikZ0uIQ8gehrRjxgQC1rLRi11w=="],
 
@@ -1436,7 +1436,7 @@
 
     "buffer-writer": ["buffer-writer@2.0.0", "", {}, "sha512-a7ZpuTZU1TRtnwyCNW3I5dc0wWNC3VR9S++Ewyk2HHZdrO3CQJqSpd+95Us590V6AL7JqUAH2IwZ/398PmNFgw=="],
 
-    "bun-types": ["bun-types@1.3.10", "", { "dependencies": { "@types/node": "*" } }, "sha512-tcpfCCl6XWo6nCVnpcVrxQ+9AYN1iqMIzgrSKYMB/fjLtV2eyAVEg7AxQJuCq/26R6HpKWykQXuSOq/21RYcbg=="],
+    "bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
 
     "bytes": ["bytes@3.1.2", "", {}, "sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg=="],
 
@@ -3068,6 +3068,8 @@
 
     "ed25519-keygen/@noble/hashes": ["@noble/hashes@1.3.3", "", {}, "sha512-V7/fPHgl+jsVPXqqeOzT8egNj2iBIVt+ECeMMG8TdcnTikP3oaBtUVqpT/gYCR68aEBJSF+XbYUxStjbFMqIIA=="],
 
+    "electrobun/@types/bun": ["@types/bun@1.3.10", "", { "dependencies": { "bun-types": "1.3.10" } }, "sha512-0+rlrUrOrTSskibryHbvQkDOWRJwJZqZlxrUs1u4oOoTln8+WIXBPmAuCF35SWB2z4Zl3E84Nl/D0P7803nigQ=="],
+
     "esast-util-from-js/acorn": ["acorn@8.16.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-UVJyE9MttOsBQIDKw1skb9nAwQuR5wuGD3+82K6JgJlm/Y+KI92oNsMNGZCYdDsVtRHSak0pcV5Dno5+4jh9sw=="],
 
     "eslint/@eslint/js": ["@eslint/js@9.7.0", "", {}, "sha512-ChuWDQenef8OSFnvuxv0TCVxEwmu3+hPNKvM9B34qpM0rDRbjL8t5QkQeHHeAfsKQjuH9wS82WeCi1J/owatng=="],
@@ -3240,6 +3242,8 @@
 
     "compression/debug/ms": ["ms@2.0.0", "", {}, "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A=="],
 
+    "electrobun/@types/bun/bun-types": ["bun-types@1.3.10", "", { "dependencies": { "@types/node": "*" } }, "sha512-tcpfCCl6XWo6nCVnpcVrxQ+9AYN1iqMIzgrSKYMB/fjLtV2eyAVEg7AxQJuCq/26R6HpKWykQXuSOq/21RYcbg=="],
+
     "eslint-plugin-mocha/globals/type-fest": ["type-fest@0.20.2", "", {}, "sha512-Ne+eE4r0/iWnpAxD852z3A+N0Bt5RN//NjJwRd2VFHEmrywxf5vsZlh4R6lixl6B+wz/8d+maTSAkN1FIkI3LQ=="],
 
     "eslint/ajv/json-schema-traverse": ["json-schema-traverse@0.4.1", "", {}, "sha512-xbbCH5dCYU5T8LcEhhuh7HJ88HXuW3qsI3Y0zOZFKfZEHcpWiHU/Jxzk629Brsab/mMiHQti9wMP+845RPe3Vg=="],
@@ -3376,8 +3380,12 @@
 
     "boxen/string-width/strip-ansi/ansi-regex": ["ansi-regex@6.2.2", "", {}, "sha512-Bq3SmSpyFHaWjPk8If9yc6svM8c56dB5BAtW4Qbw5jHTwwXXcTLoRMkpDJp6VL0XzlWaCHTXrkFURMYmD0sLqg=="],
 
+    "electrobun/@types/bun/bun-types/@types/node": ["@types/node@25.3.5", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-oX8xrhvpiyRCQkG1MFchB09f+cXftgIXb3a7UUa4Y3wpmZPw5tyZGTLWhlESOLq1Rq6oDlc8npVU2/9xiCuXMA=="],
+
     "widest-line/string-width/strip-ansi/ansi-regex": ["ansi-regex@6.2.2", "", {}, "sha512-Bq3SmSpyFHaWjPk8If9yc6svM8c56dB5BAtW4Qbw5jHTwwXXcTLoRMkpDJp6VL0XzlWaCHTXrkFURMYmD0sLqg=="],
 
     "@typescript-eslint/utils/@typescript-eslint/typescript-estree/minimatch/brace-expansion/balanced-match": ["balanced-match@4.0.4", "", {}, "sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA=="],
+
+    "electrobun/@types/bun/bun-types/@types/node/undici-types": ["undici-types@7.18.2", "", {}, "sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w=="],
   }
 }

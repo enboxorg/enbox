@@ -24,8 +24,13 @@ import log from 'loglevel';
 import { Convert } from '@enbox/common';
 import { register } from 'prom-client';
 import { v4 as uuidv4 } from 'uuid';
-import { createJsonRpcErrorResponse, JsonRpcErrorCodes, maxWsJsonRpcPayloadBytes } from '@enbox/dwn-clients';
-import { DataStream, DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
+import {
+  createJsonRpcErrorResponse,
+  JsonRpcErrorCodes,
+  maxWsJsonRpcPayloadBytes,
+  normalizeReadableStream,
+} from '@enbox/dwn-clients';
+import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
 import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 
@@ -574,19 +579,17 @@ export class HttpApi {
       return Response.json(reply, { status: 400 });
     }
 
-    // Materialise the request body before passing to DWN.
-    // Bun's Bun.serve() returns a ReadableStream for req.body that is
-    // incompatible with the ReadableStream consumer code in dwn-sdk-js,
-    // causing DataStream.toBytes() to crash with "undefined is not a
-    // function" at reader.releaseLock().  Buffering via arrayBuffer()
-    // converts it into a well-behaved stream that dwn-sdk-js can consume.
-    // TODO: https://github.com/enboxorg/enbox/issues/90 — remove once Bun ships fix
     const contentLength = req.headers.get('content-length');
     const transferEncoding = req.headers.get('transfer-encoding');
     let requestDataStream: ReadableStream<Uint8Array> | undefined;
     if (parseInt(contentLength ?? '0') > 0 || transferEncoding !== null) {
-      const bodyBytes = new Uint8Array(await req.arrayBuffer());
-      requestDataStream = DataStream.fromBytes(bodyBytes);
+      if (req.body === null) {
+        const reply = createJsonRpcErrorResponse(
+          dwnRpcRequest.id, JsonRpcErrorCodes.BadRequest, 'request advertised a body but none was provided.'
+        );
+        return Response.json(reply, { status: 400 });
+      }
+      requestDataStream = normalizeReadableStream(req.body);
     }
 
     const requestContext: RequestContext = {
