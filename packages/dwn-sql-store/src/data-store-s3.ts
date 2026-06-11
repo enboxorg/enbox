@@ -3,7 +3,7 @@ import type { DwnDatabaseType } from './types.js';
 import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 
 import * as DataRefs from './utils/data-refs.js';
-import { DataStream } from '@enbox/dwn-sdk-js';
+import { drainReadableStream } from './utils/stream.js';
 import { Readable } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import {
@@ -106,7 +106,7 @@ export class DataStoreS3 implements DataStore {
 
     const existingDataSize = await DataRefs.getDataRefSize(db, { tenant, recordId, dataCid });
     if (existingDataSize !== undefined) {
-      await DataStream.toBytes(dataStream);
+      await drainReadableStream(dataStream);
       return { dataSize: existingDataSize };
     }
 
@@ -120,7 +120,7 @@ export class DataStoreS3 implements DataStore {
       dataSize = await this.#uploadToS3(dataCid, dataStream);
     } else {
       // S3 object already exists — skip upload.
-      await DataStream.toBytes(dataStream);
+      await drainReadableStream(dataStream);
       dataSize = otherDataSize;
     }
 
@@ -196,15 +196,54 @@ export class DataStoreS3 implements DataStore {
 
     // Create a Node Readable from the web ReadableStream, counting bytes.
     const reader = dataStream.getReader();
+    let readerReleased = false;
+    const releaseReader = (): void => {
+      if (!readerReleased) {
+        reader.releaseLock();
+        readerReleased = true;
+      }
+    };
+    const cancelReader = async (reason?: unknown): Promise<void> => {
+      if (readerReleased) {
+        return;
+      }
+
+      try {
+        await reader.cancel(reason);
+      } finally {
+        releaseReader();
+      }
+    };
+
     const nodeStream = new Readable({
       async read(): Promise<void> {
-        const { done, value } = await reader.read();
-        if (done) {
-          this.push(null);
-        } else {
-          dataSize += value.byteLength;
-          this.push(Buffer.from(value));
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            releaseReader();
+            this.push(null);
+          } else {
+            dataSize += value.byteLength;
+            this.push(Buffer.from(value));
+          }
+        } catch (error: unknown) {
+          try {
+            await cancelReader(error);
+          } catch {
+            // Preserve the original stream read error.
+          }
+          this.destroy(error as Error);
         }
+      },
+      destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+        void (async (): Promise<void> => {
+          try {
+            await cancelReader(error ?? undefined);
+            callback(error);
+          } catch (cancelError: unknown) {
+            callback((error ?? cancelError) as Error);
+          }
+        })();
       },
     });
 
@@ -224,19 +263,11 @@ export class DataStoreS3 implements DataStore {
 
       await upload.done();
     } else {
-      // Fallback: buffer entire stream (only for tiny test payloads).
-      const chunks: Uint8Array[] = [];
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) { break; }
-        dataSize += value.byteLength;
-        chunks.push(value);
-      }
-      const body = Buffer.concat(chunks);
+      // Single-part upload still streams from the caller; it does not buffer the body in-process.
       await this.#s3.send(new PutObjectCommand({
         Bucket : this.#bucket,
         Key    : dataCid,
-        Body   : body,
+        Body   : nodeStream,
       }));
     }
 

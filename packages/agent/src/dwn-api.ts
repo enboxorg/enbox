@@ -100,9 +100,11 @@ import {
   getProtocolDefinition as getProtocolDefinitionFn,
 } from './dwn-protocol-cache.js';
 
-type DwnMessageWithBlob<T extends DwnInterface> = {
+type DwnRpcData = Blob | ReadableStream<Uint8Array>;
+
+type DwnMessageWithRpcData<T extends DwnInterface> = {
   message: DwnMessage[T];
-  data?: Blob;
+  data?: DwnRpcData;
 };
 
 type DwnApiParams = {
@@ -529,20 +531,11 @@ export class AgentDwnApi {
       );
     } else {
       // Remote mode: route through RPC to the local DWN server.
-      // TODO(#713): This buffers the entire stream into memory before
-      // re-streaming it over HTTP. The RPC transport should accept a
-      // ReadableStream directly to avoid the extra copy.
-      let data: Blob | undefined;
-      if (dataStream) {
-        const bytes = await DataStream.toBytes(dataStream);
-        data = new Blob([bytes as BlobPart]);
-      }
-
       reply = await this.sendDwnRpcRequest({
         targetDid       : request.target,
         dwnEndpointUrls : [this._localDwnEndpoint!],
         message,
-        data,
+        data            : dataStream,
         subscriptionHandler,
       });
     }
@@ -585,20 +578,11 @@ export class AgentDwnApi {
       return this._dwn.processMessage(tenant, message, { dataStream: options?.dataStream });
     }
 
-    // TODO(#713): This buffers the entire stream into memory before
-    // re-streaming it over HTTP. The RPC transport should accept a
-    // ReadableStream directly to avoid the extra copy.
-    let data: Blob | undefined;
-    if (options?.dataStream) {
-      const bytes = await DataStream.toBytes(options.dataStream);
-      data = new Blob([bytes as BlobPart]);
-    }
-
     return this.sendDwnRpcRequest({
       targetDid       : tenant,
       dwnEndpointUrls : [this._localDwnEndpoint!],
       message         : message as DwnMessage[DwnInterface],
-      data,
+      data            : options?.dataStream,
     });
   }
 
@@ -618,17 +602,11 @@ export class AgentDwnApi {
       return this._dwn.applyReplicatedMessage(tenant, message, options);
     }
 
-    let data: Blob | undefined;
-    if (options?.dataStream) {
-      const bytes = await DataStream.toBytes(options.dataStream);
-      data = new Blob([bytes as BlobPart]);
-    }
-
     return this.agent.rpc.applyReplicatedMessage({
       targetDid : tenant,
       dwnUrl    : this._localDwnEndpoint!,
       message,
-      data,
+      data      : options?.dataStream,
     });
   }
 
@@ -643,7 +621,7 @@ export class AgentDwnApi {
 
     let messageCid: string | undefined;
     let message: DwnMessage[T];
-    let data: Blob | undefined;
+    let data: DwnRpcData | undefined;
     let subscriptionHandler: MessageHandler[T] | undefined;
 
     // If `messageCid` is given, retrieve message and data, if any.
@@ -657,11 +635,7 @@ export class AgentDwnApi {
 
     } else {
       // Otherwise, construct a new message.
-      ({ message } = await this.constructDwnMessage({ request }));
-      if (request.dataStream && !(request.dataStream instanceof Blob)) {
-        throw new Error('AgentDwnApi: DataStream must be provided as a Blob');
-      }
-      data = request.dataStream;
+      ({ message, dataStream: data } = await this.constructDwnMessage({ request }));
       subscriptionHandler = request.subscriptionHandler;
     }
 
@@ -893,7 +867,7 @@ export class AgentDwnApi {
       targetDid: string;
       dwnEndpointUrls: string[];
       message: DwnMessage[T];
-      data?: Blob;
+      data?: DwnRpcData;
       subscriptionHandler?: MessageHandler[T];
       resubscribeFactory?: ResubscribeFactory;
     }
@@ -959,7 +933,6 @@ export class AgentDwnApi {
 
     const rawMessage = request.rawMessage;
     let readableStream: ReadableStream<Uint8Array> | undefined;
-    // TODO: Consider refactoring to move data transformations imposed by fetch() limitations to the HTTP transport-related methods.
     // if the request is a RecordsWrite message, we need to handle the data stream and update the messageParams accordingly
     if (isDwnRequest(request, DwnInterface.RecordsWrite)) {
       const messageParams = request.messageParams;
@@ -1575,7 +1548,7 @@ export class AgentDwnApi {
     author: string;
     messageType: T;
     messageCid: string;
-  }): Promise<DwnMessageWithBlob<T>> {
+  }): Promise<DwnMessageWithRpcData<T>> {
     const signer = await this.getSigner(author);
 
     // Construct a MessagesRead message to fetch the message.
@@ -1605,7 +1578,7 @@ export class AgentDwnApi {
     const messageEntry = result.entry!;
     const message = messageEntry.message as DwnMessage[T];
 
-    const dwnMessageWithBlob: DwnMessageWithBlob<T> = { message };
+    const dwnMessageWithData: DwnMessageWithRpcData<T> = { message };
     // If the message is a RecordsWrite, data will be present in the form of a stream
 
     if (isRecordsWrite(messageEntry)) {
@@ -1615,12 +1588,11 @@ export class AgentDwnApi {
       // `Record<string, unknown>` (which loses the value type entirely).
       const entryData = (messageEntry as { data?: ReadableStream<Uint8Array> }).data;
       if (entryData) {
-        const dataBytes = await DataStream.toBytes(entryData);
-        dwnMessageWithBlob.data = new Blob([ dataBytes as BlobPart ], { type: messageEntry.message.descriptor.dataFormat });
+        dwnMessageWithData.data = entryData;
       }
     }
 
-    return dwnMessageWithBlob;
+    return dwnMessageWithData;
   }
 
   // ---------------------------------------------------------------------------

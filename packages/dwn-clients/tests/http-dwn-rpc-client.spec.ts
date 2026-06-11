@@ -9,6 +9,7 @@ import { DwnRpcError } from '../src/dwn-rpc-error.js';
 import { DwnServerInfoCacheMemory } from '../src/dwn-server-info-cache-memory.js';
 import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
 import { JsonRpcErrorCodes } from '../src/json-rpc.js';
+import { normalizeReadableStream } from '../src/readable-stream.js';
 
 /**
  * Matches the defaults used by `TestDataGenerator.generateRecordsWrite()`.
@@ -409,6 +410,26 @@ describe('HttpDwnRpcClient', () => {
       expect(response.entry!.data).toBeDefined();
       expect(response.entry!.data).not.toBe(responseStream);
       expect(await DataStream.toBytes(response.entry!.data as ReadableStream<Uint8Array>)).toEqual(bodyBytes);
+    });
+
+    it('cancels and releases the source reader when a normalized stream read rejects', async () => {
+      const readError = new Error('network stream failed');
+      const cancelSpy = sinon.spy(async (): Promise<void> => {});
+      const releaseLockSpy = sinon.spy();
+      const sourceReader = {
+        cancel      : cancelSpy,
+        read        : async (): Promise<{ done: boolean; value?: Uint8Array }> => { throw readError; },
+        releaseLock : releaseLockSpy,
+      };
+      const sourceStream = {
+        getReader(): typeof sourceReader {
+          return sourceReader;
+        },
+      } as unknown as ReadableStream<Uint8Array>;
+
+      await expect(DataStream.toBytes(normalizeReadableStream(sourceStream))).rejects.toThrow('network stream failed');
+      expect(cancelSpy.calledOnceWith(readError)).toBe(true);
+      expect(releaseLockSpy.calledOnce).toBe(true);
     });
 
     it('throws error if response body is not valid JSON', async () => {

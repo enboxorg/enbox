@@ -234,7 +234,6 @@ type LivePullProcessResult = {
 type LivePullDataStreamFactory = () => Promise<ReadableStream<Uint8Array> | undefined>;
 
 type LivePullRecordsWriteEvent = MessageEvent & {
-  data?: ReadableStream<Uint8Array>;
   message: GenericMessage & {
     descriptor: GenericMessage['descriptor'] & { dataCid?: string };
   };
@@ -2237,12 +2236,6 @@ export class SyncEngineLevel implements SyncEngine {
       return async () => SyncEngineLevel.dataStreamFromBytes(bytes);
     }
 
-    const eventData = recordsWriteEvent.data;
-    if (eventData) {
-      const bytes = await SyncEngineLevel.readStreamBytes(eventData);
-      return async () => SyncEngineLevel.dataStreamFromBytes(bytes);
-    }
-
     if (recordsWriteEvent.message.descriptor.dataCid === undefined) {
       return async () => undefined;
     }
@@ -2272,31 +2265,6 @@ export class SyncEngineLevel implements SyncEngine {
         controller.close();
       }
     });
-  }
-
-  private static async readStreamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
-    const reader = stream.getReader();
-    const chunks: Uint8Array[] = [];
-    let totalSize = 0;
-
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) { break; }
-        chunks.push(value);
-        totalSize += value.byteLength;
-      }
-    } finally {
-      reader.releaseLock();
-    }
-
-    const bytes = new Uint8Array(totalSize);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return bytes;
   }
 
   private trackRecentlyPulledMessage(messageCid: string, dwnUrl: string): void {

@@ -433,7 +433,7 @@ export class Record implements RecordModel {
         messageType : DwnInterface.RecordsWrite,
         author      : this._connectedDid,
         target      : target,
-        dataStream  : this._encodedData ?? await this.data.blob(),
+        dataStream  : this._encodedData ?? await this.data.stream(),
         rawMessage  : { ...this.rawMessage }
       };
     }
@@ -784,7 +784,7 @@ export class Record implements RecordModel {
         rawMessage  : this.rawMessage,
         author      : this._connectedDid,
         target      : this._connectedDid,
-        dataStream  : await this.data.blob(),
+        dataStream  : this._encodedData ?? await this.data.stream(),
         signAsOwner : signAsOwnerValue,
         signAsOwnerDelegate,
         store,

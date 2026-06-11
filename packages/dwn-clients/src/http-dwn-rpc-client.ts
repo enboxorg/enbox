@@ -6,6 +6,7 @@ import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { DwnRpcError } from './dwn-rpc-error.js';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
+import { normalizeReadableStream } from './readable-stream.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
 import { sleep } from '@enbox/common';
@@ -98,6 +99,34 @@ function parseRetryAfterMs(response: Response): number | undefined {
   return undefined;
 }
 
+function createAttemptInit(init: RequestInit | undefined, requestTimeoutMs: number): RequestInit {
+  const timeoutSignal = AbortSignal.timeout(requestTimeoutMs);
+  if (init?.signal === undefined || init.signal === null) {
+    return { ...init, signal: timeoutSignal };
+  }
+
+  return { ...init, signal: AbortSignal.any([init.signal, timeoutSignal]) };
+}
+
+function shouldReturnResponse(response: Response, attempt: number, maxRetriesForRequest: number): boolean {
+  return !RETRYABLE_STATUS_CODES.has(response.status) || attempt === maxRetriesForRequest;
+}
+
+function shouldRethrowFetchError(error: unknown, attempt: number, maxRetriesForRequest: number): boolean {
+  return !isRetryable(error) || attempt === maxRetriesForRequest;
+}
+
+function getRetryDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: number, lastResponse?: Response): number {
+  const retryAfterMs = lastResponse !== undefined ? parseRetryAfterMs(lastResponse) : undefined;
+  const backoffMs = computeBackoffDelay(attempt, baseDelayMs, maxDelayMs);
+
+  return retryAfterMs === undefined ? backoffMs : Math.max(retryAfterMs, backoffMs);
+}
+
+/**
+ * Mutates the request options and headers with an octet-stream body.
+ * Returns whether the body is replayable for transport-level retries.
+ */
 function attachDataRequestBody(fetchOpts: RequestInit, requestHeaders: Record<string, string>, requestBody: BodyInit): boolean {
   requestHeaders['content-type'] = 'application/octet-stream';
   fetchOpts.body = requestBody;
@@ -110,47 +139,6 @@ function attachDataRequestBody(fetchOpts: RequestInit, requestHeaders: Record<st
   }
 
   return true;
-}
-
-type ReadableStreamReader = {
-  cancel?: (reason?: unknown) => Promise<void>;
-  read(): Promise<{ done: boolean; value?: Uint8Array }>;
-  releaseLock?: () => void;
-};
-
-function normalizeReadableStream(readableStream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
-  const reader = readableStream.getReader() as ReadableStreamReader;
-  let readerReleased = false;
-
-  const releaseReader = (): void => {
-    if (readerReleased) {
-      return;
-    }
-
-    reader.releaseLock?.();
-    readerReleased = true;
-  };
-
-  return new ReadableStream<Uint8Array>({
-    async pull(controller): Promise<void> {
-      const { done, value } = await reader.read();
-      if (done) {
-        releaseReader();
-        controller.close();
-        return;
-      }
-
-      controller.enqueue(value!);
-    },
-
-    async cancel(reason): Promise<void> {
-      try {
-        await reader.cancel?.(reason);
-      } finally {
-        releaseReader();
-      }
-    },
-  });
 }
 
 /**
@@ -171,11 +159,6 @@ export class HttpDwnRpcClient implements DwnRpc {
       baseDelayMs : retryOptions?.baseDelayMs ?? DEFAULT_BASE_DELAY_MS,
       maxDelayMs  : retryOptions?.maxDelayMs ?? DEFAULT_MAX_DELAY_MS,
     };
-  }
-
-  /** Detects whether the current runtime is Bun (vs a browser). */
-  static isBunRuntime(): boolean {
-    return typeof (globalThis as Record<string, unknown>).Bun !== 'undefined';
   }
 
   get transportProtocols(): string[] { return ['http:', 'https:']; }
@@ -387,35 +370,22 @@ export class HttpDwnRpcClient implements DwnRpc {
         // Apply a per-attempt timeout to prevent hung connections / SSRF.
         // If the caller already supplied a signal, combine it with the timeout
         // via AbortSignal.any(); otherwise create a fresh timeout signal.
-        const timeoutSignal = AbortSignal.timeout(requestTimeoutMs);
-        const attemptInit: RequestInit = {
-          ...init,
-          signal: init?.signal
-            ? AbortSignal.any([init.signal, timeoutSignal])
-            : timeoutSignal,
-        };
-
-        const response = await fetch(url, attemptInit);
-
-        if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt === maxRetriesForRequest) {
+        const response = await fetch(url, createAttemptInit(init, requestTimeoutMs));
+        if (shouldReturnResponse(response, attempt, maxRetriesForRequest)) {
           return response;
         }
 
         // Retryable status — back off and try again.
         lastResponse = response;
       } catch (error: unknown) {
-        if (!isRetryable(error) || attempt === maxRetriesForRequest) {
+        if (shouldRethrowFetchError(error, attempt, maxRetriesForRequest)) {
           throw error;
         }
         lastError = error;
       }
 
       // Compute the delay, preferring Retry-After when available.
-      const retryAfterMs = lastResponse ? parseRetryAfterMs(lastResponse) : undefined;
-      const backoffMs = computeBackoffDelay(attempt, baseDelayMs, maxDelayMs);
-      const delayMs = retryAfterMs === undefined ? backoffMs : Math.max(retryAfterMs, backoffMs);
-
-      await sleep(delayMs);
+      await sleep(getRetryDelayMs(attempt, baseDelayMs, maxDelayMs, lastResponse));
     }
 
     // Should not reach here, but satisfy the compiler.

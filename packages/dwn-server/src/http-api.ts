@@ -24,7 +24,12 @@ import log from 'loglevel';
 import { Convert } from '@enbox/common';
 import { register } from 'prom-client';
 import { v4 as uuidv4 } from 'uuid';
-import { createJsonRpcErrorResponse, JsonRpcErrorCodes, maxWsJsonRpcPayloadBytes } from '@enbox/dwn-clients';
+import {
+  createJsonRpcErrorResponse,
+  JsonRpcErrorCodes,
+  maxWsJsonRpcPayloadBytes,
+  normalizeReadableStream,
+} from '@enbox/dwn-clients';
 import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead } from '@enbox/dwn-sdk-js';
 import { existsSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
@@ -38,47 +43,6 @@ import { requestCounter, responseHistogram } from './metrics.js';
 
 /** Property names that must never be used as keys when building objects from user input. */
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
-type ReadableStreamReader = {
-  cancel?: (reason?: unknown) => Promise<void>;
-  read(): Promise<{ done: boolean; value?: Uint8Array }>;
-  releaseLock?: () => void;
-};
-
-function normalizeReadableStream(readableStream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
-  const reader = readableStream.getReader() as ReadableStreamReader;
-  let readerReleased = false;
-
-  const releaseReader = (): void => {
-    if (readerReleased) {
-      return;
-    }
-
-    reader.releaseLock?.();
-    readerReleased = true;
-  };
-
-  return new ReadableStream<Uint8Array>({
-    async pull(controller): Promise<void> {
-      const { done, value } = await reader.read();
-      if (done) {
-        releaseReader();
-        controller.close();
-        return;
-      }
-
-      controller.enqueue(value!);
-    },
-
-    async cancel(reason): Promise<void> {
-      try {
-        await reader.cancel?.(reason);
-      } finally {
-        releaseReader();
-      }
-    },
-  });
-}
 
 // Resolve admin UI dist path at module load time. Gracefully handle the case
 // where the admin UI package is not installed.
@@ -620,7 +584,10 @@ export class HttpApi {
     let requestDataStream: ReadableStream<Uint8Array> | undefined;
     if (parseInt(contentLength ?? '0') > 0 || transferEncoding !== null) {
       if (req.body === null) {
-        throw new Error('HTTP request advertised a body but no request body stream was available.');
+        const reply = createJsonRpcErrorResponse(
+          dwnRpcRequest.id, JsonRpcErrorCodes.BadRequest, 'request advertised a body but none was provided.'
+        );
+        return Response.json(reply, { status: 400 });
       }
       requestDataStream = normalizeReadableStream(req.body);
     }

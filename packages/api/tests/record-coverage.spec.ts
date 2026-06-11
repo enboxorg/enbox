@@ -80,6 +80,15 @@ function createDeleteDescriptor(recordId: string): any {
   };
 }
 
+function createDataStream(bytes: Uint8Array = new Uint8Array([1, 2, 3])): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller): void {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -189,6 +198,23 @@ describe('Record — coverage gaps (stubbed)', () => {
       const call = agentStub.sendDwnRequest.firstCall;
       expect(call.args[0].target).toBe('did:example:myDid');
     });
+
+    it('should pass record data as a stream when encoded data is not already available', async () => {
+      const dataStream = createDataStream();
+      const options = createRecordOptions({ encodedData: undefined, data: dataStream });
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
+
+      agentStub.sendDwnRequest.resolves({
+        messageCid : 'cid-1',
+        message    : {},
+        reply      : { status: { code: 202, detail: 'Accepted' } },
+      } as any);
+
+      await record.send();
+
+      const call = agentStub.sendDwnRequest.firstCall;
+      expect(call.args[0].dataStream).toBe(dataStream);
+    });
   });
 
   describe('processRecord() — signAsOwner updates authorization', () => {
@@ -208,6 +234,24 @@ describe('Record — coverage gaps (stubbed)', () => {
 
       // The authorization should have been updated to the response message's authorization.
       expect(record.authorization).toEqual(newAuth);
+    });
+
+    it('should pass record data as a stream when storing without encoded data', async () => {
+      const dataStream = createDataStream();
+      const options = createRecordOptions({ encodedData: undefined, data: dataStream });
+      const record = new Record(agentStub as unknown as EnboxAgent, options);
+
+      agentStub.processDwnRequest.resolves({
+        messageCid : 'cid-1',
+        message    : {},
+        reply      : { status: { code: 202, detail: 'Accepted' } },
+      } as any);
+
+      const result = await record.store();
+      expect(result.status.code).toBe(202);
+
+      const call = agentStub.processDwnRequest.firstCall;
+      expect(call.args[0].dataStream).toBe(dataStream);
     });
   });
 
