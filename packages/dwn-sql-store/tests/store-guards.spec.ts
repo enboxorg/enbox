@@ -186,11 +186,34 @@ describe('Store guards — db not open', () => {
   // ─── DataStoreS3 ──────────────────────────────────────────────────────
 
   describe('DataStoreS3', () => {
-    // Construct with a stub S3Client — the guard fires before any S3 call.
-    const store = new DataStoreS3({
+    const createStore = (config: { partSize?: number; queueSize?: number } = {}): DataStoreS3 => new DataStoreS3({
       dialect  : dialect,
       bucket   : 'test-bucket',
       s3Client : {} as any,
+      ...config,
+    });
+
+    // Construct with a stub S3Client — the guard fires before any S3 call.
+    const store = createStore();
+
+    it('should reject partSize values below the multipart minimum', () => {
+      const invalidPartSizes = [0, -1, 1, 5 * 1024 * 1024 - 1, 5 * 1024 * 1024 + 0.5];
+
+      for (const partSize of invalidPartSizes) {
+        expect(() => createStore({ partSize })).toThrow('DataStoreS3: partSize must be at least 5 MiB.');
+      }
+
+      expect(() => createStore({ partSize: 5 * 1024 * 1024 })).not.toThrow();
+    });
+
+    it('should reject invalid queueSize values', () => {
+      const invalidQueueSizes = [0, -1, 1.5, Number.NaN];
+
+      for (const queueSize of invalidQueueSizes) {
+        expect(() => createStore({ queueSize })).toThrow('DataStoreS3: queueSize must be a positive integer.');
+      }
+
+      expect(() => createStore({ queueSize: 1 })).not.toThrow();
     });
 
     it('should throw on get() without open()', async () => {
