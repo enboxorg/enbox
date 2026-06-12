@@ -256,12 +256,12 @@ describe('replicated validation divergences', () => {
   });
 
   describe('row 6 — protocol definition history', () => {
-    it('should apply a replicated initial write authored before the earliest retained config (oldest-config fallback)', async () => {
+    it('should apply a replicated initial write authored before the earliest retained config', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      // the record is AUTHORED before the protocol is configured — admission order, not
-      // timestamp order, governed the source, so replay must not classify the installed
-      // protocol as a missing dependency
+      // the record is authored before the retained protocol config timestamp — admission order,
+      // not timestamp order, governed the source, so replay must not classify the installed
+      // protocol as missing
       const recordsWrite = await TestDataGenerator.generateRecordsWrite({
         author       : alice,
         protocol     : nestedProtocolDefinition.protocol,

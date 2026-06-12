@@ -291,12 +291,11 @@ export class StoreValidationStateReader implements ValidationStateReader {
     );
 
     if (protocols.length === 0 && messageTimestamp !== undefined) {
-      // A record can be authored (messageTimestamp) before the protocol's earliest retained
-      // config yet still have been admitted under it — admission order, not timestamp order,
-      // governed the source (in-scope dependencies are ordered by construction). When no config
-      // predates the record, fall back to the OLDEST retained config: deterministic on every
-      // replica, and the closest approximation to what governed the earliest admissions. A
-      // protocol that is genuinely not installed still has zero configs and fails below.
+      // A record can be authored before the protocol's earliest retained config yet still have
+      // been admitted under that config: admission order, not timestamp order, governed the
+      // source. When no config predates the record, reconstruct the historical answer from the
+      // earliest retained config. A protocol that is genuinely not installed still has zero
+      // configs and fails below.
       ({ messages: protocols } = await this.messageStore.query(
         tenant,
         [{
