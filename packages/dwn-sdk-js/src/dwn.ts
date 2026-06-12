@@ -1,3 +1,4 @@
+import type { CoreProtocol } from './core/core-protocol.js';
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
 import type { KeyValues } from './types/query-types.js';
@@ -9,14 +10,38 @@ import type { UnionMessageReply } from './core/message-reply.js';
 import type { EventLog, MessageEvent, SubscriptionListener } from './types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from './types/method-handler.js';
-import type { MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
+import type {
+  MessagesReadMessage,
+  MessagesReadReply,
+  MessagesSubscribeMessage,
+  MessagesSubscribeMessageOptions,
+  MessagesSubscribeReply,
+  MessagesSyncMessage,
+  MessagesSyncReply
+} from './types/messages-types.js';
 import type { ProtocolDefinition, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
-import type { RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
+import type {
+  RecordsCountMessage,
+  RecordsCountReply,
+  RecordsDeleteMessage,
+  RecordsQueryMessage,
+  RecordsQueryReply,
+  RecordsQueryReplyEntry,
+  RecordsReadMessage,
+  RecordsReadReply,
+  RecordsSubscribeMessage,
+  RecordsSubscribeMessageOptions,
+  RecordsSubscribeReply,
+  RecordsWriteMessage,
+  RecordsWriteMessageOptions
+} from './types/records-types.js';
 import type { ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
+import { Cid } from './utils/cid.js';
 import { CoreProtocolRegistry } from './core/core-protocol.js';
-import { DwnErrorCode } from './core/dwn-error.js';
+import { DataStream } from './utils/data-stream.js';
+import { DwnConstant } from './core/dwn-constant.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesReadHandler } from './handlers/messages-read.js';
@@ -27,6 +52,7 @@ import { ProtocolAuthorization } from './core/protocol-authorization.js';
 import { ProtocolsConfigure } from './interfaces/protocols-configure.js';
 import { ProtocolsConfigureHandler } from './handlers/protocols-configure.js';
 import { ProtocolsQueryHandler } from './handlers/protocols-query.js';
+import { Records } from './utils/records.js';
 import { RecordsCountHandler } from './handlers/records-count.js';
 import { RecordsDelete } from './interfaces/records-delete.js';
 import { RecordsDeleteHandler } from './handlers/records-delete.js';
@@ -38,6 +64,7 @@ import { RecordsWriteHandler } from './handlers/records-write.js';
 import { ResumableTaskManager } from './core/resumable-task-manager.js';
 import { StorageController } from './store/storage-controller.js';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
+import { DwnError, DwnErrorCode } from './core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
 import { missingAncestorRecordIdsFromReply, replicationApplyResultFromReply } from './core/replication-apply.js';
 
@@ -264,6 +291,11 @@ export class Dwn {
     }
 
     const reply = await this.processMessage(tenant, rawMessage, options);
+    const replicatedWriteBeatenByDeleteResult = await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply, options);
+    if (replicatedWriteBeatenByDeleteResult !== undefined) {
+      return replicatedWriteBeatenByDeleteResult;
+    }
+
     const protocolDefinition = await this.getReplicationApplyProtocolDefinition(tenant, rawMessage, reply);
     const missingAncestorRecordIds = await this.getReplicationApplyMissingAncestors(tenant, rawMessage, reply);
     return replicationApplyResultFromReply(rawMessage, reply, { protocolDefinition, missingAncestorRecordIds });
@@ -285,6 +317,167 @@ export class Dwn {
     } catch {
       return undefined;
     }
+  }
+
+  private async storeReplicatedWriteBeatenByDelete(
+    tenant: string,
+    message: GenericMessage,
+    reply: { status: { detail?: string } },
+    options: ReplicationApplyOptions,
+  ): Promise<ReplicationApplyResult | undefined> {
+    const detail = reply.status.detail ?? '';
+    if (!detail.startsWith(`${DwnErrorCode.RecordsWriteNotAllowedAfterDelete}:`) || !Records.isRecordsWrite(message)) {
+      return undefined;
+    }
+
+    const query = {
+      interface : DwnInterfaceName.Records,
+      recordId  : message.recordId,
+    };
+    const { messages: existingMessages } = await this.messageStore.query(tenant, [query]);
+    const initialWrite = await RecordsWrite.getInitialWrite(existingMessages);
+    const existingDelete = await Records.getNewestRecordsDelete(existingMessages);
+    if (existingDelete === undefined) {
+      return undefined;
+    }
+
+    const validationReply = await this.validateReplicatedWriteBeatenByDelete(tenant, message, existingMessages, options);
+    if (validationReply !== undefined) {
+      return replicationApplyResultFromReply(message, validationReply);
+    }
+
+    const recordsWrite = await RecordsWrite.parse(message);
+    const storedWriteMessage: RecordsWriteMessage & { encodedData?: string } = { ...message };
+    delete storedWriteMessage.encodedData;
+    const recordsWriteCid = await Message.getCid(storedWriteMessage);
+    const recordsWriteIndexes = await recordsWrite.constructIndexes(false);
+    await this.messageStore.put(tenant, storedWriteMessage, recordsWriteIndexes);
+    await this.stateIndex.insert(tenant, recordsWriteCid, recordsWriteIndexes);
+
+    const recordsDelete = await RecordsDelete.parse(existingDelete);
+    const visibilitySourceWrite = await Records.getNewestRecordsWrite([...existingMessages, storedWriteMessage]) ?? initialWrite;
+    const recordsDeleteIndexes = recordsDelete.constructIndexes(initialWrite, visibilitySourceWrite);
+    const recordsDeleteCid = await Message.getCid(existingDelete);
+    await this.messageStore.delete(tenant, recordsDeleteCid);
+    await this.messageStore.put(tenant, existingDelete, recordsDeleteIndexes);
+    await this.stateIndex.delete(tenant, [recordsDeleteCid]);
+    await this.stateIndex.insert(tenant, recordsDeleteCid, recordsDeleteIndexes);
+
+    return { kind: 'Superseded' };
+  }
+
+  private async validateReplicatedWriteBeatenByDelete(
+    tenant: string,
+    message: RecordsWriteMessage,
+    existingMessages: GenericMessage[],
+    options: ReplicationApplyOptions,
+  ): Promise<GenericMessageReply | undefined> {
+    try {
+      await this.validateReplicatedWriteBeatenByDeleteOrThrow(tenant, message, existingMessages, options);
+      return undefined;
+    } catch (error) {
+      const statusCode = error instanceof DwnError
+        ? this._coreProtocols.mapErrorToStatusCode(error.code) ?? 400
+        : 400;
+      return messageReplyFromError(error, statusCode);
+    }
+  }
+
+  private async validateReplicatedWriteBeatenByDeleteOrThrow(
+    tenant: string,
+    message: RecordsWriteMessage,
+    existingMessages: GenericMessage[],
+    options: ReplicationApplyOptions,
+  ): Promise<void> {
+    const coreProtocol = message.descriptor.protocol === undefined
+      ? undefined
+      : this._coreProtocols.get(message.descriptor.protocol);
+
+    if (coreProtocol?.preProcessWrite !== undefined) {
+      await coreProtocol.preProcessWrite(tenant, message, this.messageStore);
+    }
+
+    if (options.dataStream !== undefined) {
+      await Dwn.validateReplicatedWriteBeatenByDeleteDataStream(message, options.dataStream, coreProtocol);
+      return;
+    }
+
+    if (await RecordsWrite.isInitialWrite(message)) {
+      return;
+    }
+
+    await this.validateReplicatedWriteBeatenByDeleteExistingData(tenant, message, existingMessages);
+  }
+
+  private static async validateReplicatedWriteBeatenByDeleteDataStream(
+    message: RecordsWriteMessage,
+    dataStream: ReadableStream<Uint8Array>,
+    coreProtocol: CoreProtocol | undefined,
+  ): Promise<void> {
+    if (message.descriptor.dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {
+      const dataBytes = await DataStream.toBytes(dataStream);
+      const dataCid = await Cid.computeDagPbCidFromBytes(dataBytes);
+      RecordsWrite.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataBytes.length);
+
+      if (coreProtocol?.validateRecord !== undefined) {
+        coreProtocol.validateRecord(message, dataBytes);
+      }
+
+      return;
+    }
+
+    const [dataCidStream, dataSizeStream] = DataStream.duplicateDataStream(dataStream, 2);
+    const [dataCid, dataSize] = await Promise.all([
+      Cid.computeDagPbCidFromStream(dataCidStream),
+      Dwn.getDataStreamByteLength(dataSizeStream),
+    ]);
+    RecordsWrite.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataSize);
+  }
+
+  private async validateReplicatedWriteBeatenByDeleteExistingData(
+    tenant: string,
+    message: RecordsWriteMessage,
+    existingMessages: GenericMessage[],
+  ): Promise<void> {
+    const newestExistingWrite = await Records.getNewestRecordsWrite(existingMessages);
+    if (newestExistingWrite === undefined) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteGetInitialWriteNotFound,
+        `initial write is missing for record ${message.recordId}`
+      );
+    }
+
+    const { dataCid, dataSize } = message.descriptor;
+    RecordsWrite.validateDataIntegrity(dataCid, dataSize, newestExistingWrite.descriptor.dataCid, newestExistingWrite.descriptor.dataSize);
+
+    if (dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {
+      const newestExistingWriteWithData = newestExistingWrite as RecordsQueryReplyEntry;
+      if (newestExistingWriteWithData.encodedData === undefined) {
+        throw new DwnError(
+          DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious,
+          `No dataStream was provided and unable to get data from previous message`
+        );
+      }
+
+      return;
+    }
+
+    const dataStoreGetResult = await this.dataStore.get(tenant, newestExistingWrite.recordId, dataCid);
+    if (dataStoreGetResult === undefined) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteMissingDataInPrevious,
+        `No dataStream was provided and unable to get data from previous message`
+      );
+    }
+  }
+
+  private static async getDataStreamByteLength(dataStream: ReadableStream<Uint8Array>): Promise<number> {
+    let byteLength = 0;
+    for await (const chunk of DataStream.asAsyncIterable(dataStream)) {
+      byteLength += chunk.length;
+    }
+
+    return byteLength;
   }
 
   private async getReplicationApplyProtocolDefinition(
@@ -462,7 +655,8 @@ export class Dwn {
     const { descriptor } = message;
 
     if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Write) {
-      const isLatest = await Dwn.isNewestStoredMessage(message, existingMessages);
+      const isLatest = await Records.getNewestRecordsDelete(existingMessages) === undefined &&
+        await Dwn.isNewestStoredMessage(message, existingMessages);
       const eventMessage = await Dwn.getStoredMessageForCid(existingMessages, await Message.getCid(message)) ?? message;
       const recordsWrite = await RecordsWrite.parse(eventMessage as RecordsWriteMessage);
       const indexes = await recordsWrite.constructIndexes(isLatest);
@@ -486,8 +680,21 @@ export class Dwn {
 
       const recordsDelete = await RecordsDelete.parse(message as RecordsDeleteMessage);
       const isLatest = await Dwn.isNewestStoredMessage(message, existingMessages);
+
+      // the duplicate delete is already stored, so the tombstone's mutable `tag.*`/`published`/
+      // `datePublished` visibility facts come from the newest retained RecordsWrite among the
+      // OTHER stored messages for the record, falling back to the initial write.
+      const deleteCid = await Message.getCid(message);
+      const preDeleteMessages: GenericMessage[] = [];
+      for (const existingMessage of existingMessages) {
+        if (await Message.getCid(existingMessage) !== deleteCid) {
+          preDeleteMessages.push(existingMessage);
+        }
+      }
+      const newestPreDeleteWrite = await Records.getNewestRecordsWrite(preDeleteMessages) ?? initialWrite;
+
       return {
-        indexes   : recordsDelete.constructIndexes(initialWrite),
+        indexes   : recordsDelete.constructIndexes(initialWrite, newestPreDeleteWrite),
         event     : { message, initialWrite },
         emitEvent : isLatest,
       };

@@ -75,7 +75,13 @@ export class StorageController {
 
     const recordsDelete = await RecordsDelete.parse(message);
     const initialWrite = await RecordsWrite.getInitialWrite(existingMessages);
-    const indexes = recordsDelete.constructIndexes(initialWrite);
+    const newestPreDeleteWrite = await Records.getNewestRecordsWrite(existingMessages) ?? initialWrite;
+
+    // Tombstone mutable query-visibility facts (`tag.*`, `published`, `datePublished`) come from
+    // the newest retained RecordsWrite. This remains true when replacing an existing tombstone:
+    // tombstones carry no visibility facts in their descriptors, so the retained write is the
+    // durable source of truth for later prune/replay/replication index reconstruction.
+    const indexes = recordsDelete.constructIndexes(initialWrite, newestPreDeleteWrite);
     const messageCid = await Message.getCid(message);
     await this.messageStore.put(tenant, message, indexes);
     await this.stateIndex.insert(tenant, messageCid, indexes);
@@ -95,9 +101,9 @@ export class StorageController {
       );
     }
 
-    // displace every other message for this record, except the initial write which is kept unmarked
-    await StorageController.deleteDisplacedMessagesButKeepInitialWrite(
-      tenant, existingMessages, message, this.messageStore, this.dataStore, this.stateIndex
+    // displace every other message for this record, retaining the writes needed for replay and future tombstone visibility
+    await StorageController.deleteDisplacedMessagesAndRetainWrites(
+      tenant, existingMessages, message, this.messageStore, this.dataStore, this.stateIndex, [newestPreDeleteWrite]
     );
   }
 
@@ -291,43 +297,50 @@ export class StorageController {
   }
 
   /**
-   * Deletes all messages in `existingMessages` that the `retainedMessage` displaces (every other
-   * message for the record), but keeps the initial write for future processing by ensuring its
-   * `isLatestBaseState` index is "false". Displacement is deliberately NOT a timestamp
-   * comparison: a RecordsDelete displaces even a newer RecordsWrite (delete-wins convergence),
-   * and on resumable-task replay the retained message itself is back in `existingMessages` and
-   * must survive — so membership is decided by CID.
+   * Deletes all messages in `existingMessages` that the `retainedMessage` displaces, while keeping
+   * the initial write and the caller-supplied writes as non-latest state for future replay and
+   * tombstone visibility reconstruction. Displacement is deliberately NOT a timestamp comparison:
+   * a RecordsDelete displaces even a newer RecordsWrite (delete-wins convergence), and on
+   * resumable-task replay the retained message itself is back in `existingMessages` and must
+   * survive — so membership is decided by CID.
    */
-  public static async deleteDisplacedMessagesButKeepInitialWrite(
+  public static async deleteDisplacedMessagesAndRetainWrites(
     tenant: string,
     existingMessages: GenericMessage[],
     retainedMessage: GenericMessage,
     messageStore: MessageStore,
     dataStore: DataStore,
-    stateIndex: StateIndex
+    stateIndex: StateIndex,
+    additionalRetainedRecordsWrites: RecordsWriteMessage[],
   ): Promise<void> {
     const deletedMessageCids: string[] = [];
     const retainedMessageCid = await Message.getCid(retainedMessage);
+    const additionalRetainedRecordsWriteCids = new Set<string>();
+    for (const retainedRecordsWrite of additionalRetainedRecordsWrites) {
+      additionalRetainedRecordsWriteCids.add(await Message.getCid(retainedRecordsWrite));
+    }
 
     // NOTE: under normal operation, there should only be at most two existing records per `recordId` (initial + a potential subsequent write/delete),
     // but the DWN may crash before `delete()` is called below, so we use a loop as a tactic to clean up lingering data as needed
     for (const message of existingMessages) {
-      const messageIsDisplaced = await Message.getCid(message) !== retainedMessageCid;
+      const messageCid = await Message.getCid(message);
+      const messageIsDisplaced = messageCid !== retainedMessageCid;
       if (messageIsDisplaced) {
         // the easiest implementation here is delete each old messages
-        // and re-create it with the right index (isLatestBaseState = 'false') if the message is the initial write,
+        // and re-create it with the right index (isLatestBaseState = 'false') if the message is a retained write,
         // but there is room for better/more efficient implementation here
 
         await StorageController.deleteFromDataStoreIfNeeded(dataStore, tenant, message, retainedMessage);
 
         // delete message from message store
-        const messageCid = await Message.getCid(message);
         await messageStore.delete(tenant, messageCid);
 
-        // if the existing message is the initial write
-        // we actually need to keep it BUT, need to ensure the message is no longer marked as the latest state
-        const existingMessageIsInitialWrite = await RecordsWrite.isInitialWrite(message);
-        if (existingMessageIsInitialWrite) {
+        // Retained writes must stay in the message store and state index so future deletes and
+        // replicas can reconstruct tombstone visibility, but they must no longer be latest state.
+        const shouldKeepAsNonLatestWrite =
+          await RecordsWrite.isInitialWrite(message) ||
+          additionalRetainedRecordsWriteCids.has(messageCid);
+        if (shouldKeepAsNonLatestWrite) {
           const existingRecordsWrite = await RecordsWrite.parse(message as RecordsWriteMessage);
           const isLatestBaseState = false;
           const indexes = await existingRecordsWrite.constructIndexes(isLatestBaseState);
@@ -335,12 +348,11 @@ export class StorageController {
           delete writeMessage.encodedData;
           await messageStore.put(tenant, writeMessage, indexes);
         } else {
-          const messageCid = await Message.getCid(message);
           deletedMessageCids.push(messageCid);
         }
       }
-
-      await stateIndex.delete(tenant, deletedMessageCids);
     }
+
+    await stateIndex.delete(tenant, deletedMessageCids);
   }
 }

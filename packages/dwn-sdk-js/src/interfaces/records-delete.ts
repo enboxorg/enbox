@@ -1,6 +1,6 @@
 import type { KeyValues } from '../types/query-types.js';
 import type { MessageSigner } from '../types/signer.js';
-import type { MessageStore } from '../types//message-store.js';
+import type { MessageStore } from '../types/message-store.js';
 import type { DataEncodedRecordsWriteMessage, RecordsDeleteDescriptor, RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -87,9 +87,18 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
 
   /**
    * Indexed properties needed for MessageStore indexing.
+   *
+   * Immutable record facts (`protocol`, `protocolPath`, `recipient`, `schema`, `parentId`,
+   * `dateCreated`, `contextId`) come from the initial `RecordsWrite`. Mutable query-visibility
+   * facts (flattened `tag.*`, `published`, and `datePublished`) come from the newest retained
+   * `RecordsWrite` that existed immediately before this delete, because tombstone visibility must
+   * reflect the record state being deleted: without them, tombstones of tagged records never match
+   * tag filters (e.g. the permission shadow filters on `tag.protocol`) and tombstones of published
+   * records never match `published: true` or `datePublished` queries and subscriptions.
    */
   public constructIndexes(
     initialWrite: RecordsWriteMessage,
+    visibilitySourceWrite: RecordsWriteMessage,
   ): KeyValues {
     const message = this.message;
     const descriptor = { ...message.descriptor };
@@ -97,14 +106,25 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
     // we add the immutable properties from the initial RecordsWrite message in order to use them when querying relevant deletes.
     const { protocol, protocolPath, recipient, schema, parentId, dateCreated } = initialWrite.descriptor;
 
-    const indexes: { [key:string]: string | boolean | undefined } = {
+    // Mutable visibility facts come from the newest retained RecordsWrite that held them before deletion.
+    const { tags, published, datePublished } = visibilitySourceWrite.descriptor;
+
+    const indexes: { [key:string]: string | number | boolean | string[] | number[] | undefined } = {
       isLatestBaseState : true,
+      published         : !!published,
+      datePublished,
       protocol, protocolPath, recipient, schema, parentId, dateCreated,
       contextId         : initialWrite.contextId,
       author            : this.author!,
       ...descriptor
     };
     removeUndefinedProperties(indexes);
+
+    // tags are flattened into `tag.<property>` keys to avoid name clashes with first-class index
+    // keys, matching the flattening the RecordsWrite indexing path performs.
+    if (tags !== undefined) {
+      return { ...indexes, ...Records.buildTagIndexes({ ...tags }) } as KeyValues;
+    }
 
     return indexes as KeyValues;
   }

@@ -37,6 +37,26 @@ export class Records {
   }
 
   /**
+   * Gets the newest `RecordsWrite` from the given message set.
+   */
+  public static async getNewestRecordsWrite(messages: GenericMessage[]): Promise<RecordsWriteMessage | undefined> {
+    const recordsWriteMessages = messages.filter(Records.isRecordsWrite);
+    const newestRecordsWrite = await Message.getNewestMessage(recordsWriteMessages);
+    return newestRecordsWrite as RecordsWriteMessage | undefined;
+  }
+
+  /**
+   * Gets the newest `RecordsDelete` from the given message set.
+   */
+  public static async getNewestRecordsDelete(messages: GenericMessage[]): Promise<RecordsDeleteMessage | undefined> {
+    const recordsDeleteMessages = messages.filter((message): message is RecordsDeleteMessage =>
+      message.descriptor.interface === DwnInterfaceName.Records && message.descriptor.method === DwnMethodName.Delete
+    );
+    const newestRecordsDelete = await Message.getNewestMessage(recordsDeleteMessages);
+    return newestRecordsDelete as RecordsDeleteMessage | undefined;
+  }
+
+  /**
    * Decrypts the encrypted data in a message reply.
    *
    * Overload 1 (callback-based): Accepts a KeyDecrypter that performs

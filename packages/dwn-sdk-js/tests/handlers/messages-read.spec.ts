@@ -1186,7 +1186,7 @@ export function testMessagesReadHandler(): void {
 
           // Alice inserts the RecordsDelete message directly into the message store
           const recordsDeleteCid = await Message.getCid(recordsDelete.message);
-          const indexes = recordsDelete.constructIndexes(recordsWrite.message);
+          const indexes = recordsDelete.constructIndexes(recordsWrite.message, recordsWrite.message);
           await messageStore.put(alice.did, recordsDelete.message, indexes);
 
           // Bob tries to read the message
