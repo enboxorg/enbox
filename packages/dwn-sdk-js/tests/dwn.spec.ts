@@ -13,7 +13,20 @@ import { StorageController } from '../src/store/storage-controller.js';
 import { TestEventLog } from './test-event-stream.js';
 import { TestStores } from './test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStoreLevel, DataStream, EventEmitterEventLog, Jws, Message, MessageStoreLevel, RecordsDelete, RecordsRead, ResumableTaskStoreLevel, StateIndexLevel, Time } from '../src/index.js';
+import {
+  DataStoreLevel,
+  DataStream,
+  EventEmitterEventLog,
+  Jws,
+  Message,
+  MessageStoreLevel,
+  RecordsDelete,
+  RecordsRead,
+  RecordsWrite,
+  ResumableTaskStoreLevel,
+  StateIndexLevel,
+  Time
+} from '../src/index.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from './utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
@@ -397,6 +410,7 @@ export function testDwnClass(): void {
         expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
 
         // initial write -> tombstone -> newer update, with strictly increasing timestamps
+        const datePublished = '2025-01-05T00:00:00.000000Z';
         const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
         await Time.minimalSleep();
         const recordsDelete = await RecordsDelete.create({
@@ -404,9 +418,14 @@ export function testDwnClass(): void {
           signer   : Jws.createSigner(alice),
         });
         await Time.minimalSleep();
-        const update = await TestDataGenerator.generateFromRecordsWrite({
-          author        : alice,
-          existingWrite : initialWrite.recordsWrite,
+        const updateDataBytes = TestDataGenerator.randomBytes(32);
+        const update = await RecordsWrite.createFrom({
+          recordsWriteMessage : initialWrite.message,
+          data                : updateDataBytes,
+          published           : true,
+          datePublished,
+          tags                : { team: 'blue' },
+          signer              : Jws.createSigner(alice),
         });
 
         // replica A: initial write and the newer update land first, the older tombstone last
@@ -414,7 +433,7 @@ export function testDwnClass(): void {
           alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
         )).toEqual({ kind: 'Applied' });
         expect(await dwn.applyReplicatedMessage(
-          alice.did, update.message, { dataStream: DataStream.fromBytes(update.dataBytes) },
+          alice.did, update.message, { dataStream: DataStream.fromBytes(updateDataBytes) },
         )).toEqual({ kind: 'Applied' });
         expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
 
@@ -447,10 +466,10 @@ export function testDwnClass(): void {
           )).toEqual({ kind: 'Applied' });
           expect(await dwnB.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
           expect(await dwnB.applyReplicatedMessage(
-            alice.did, update.message, { dataStream: DataStream.fromBytes(update.dataBytes) },
+            alice.did, update.message, { dataStream: DataStream.fromBytes(updateDataBytes) },
           )).toEqual({ kind: 'Superseded' });
 
-          // both replicas read the record as deleted and report identical state roots
+          // both replicas read the record as deleted, retain the update-derived tombstone visibility, and report identical state roots
           const readA = await RecordsRead.create({
             signer : Jws.createSigner(alice),
             filter : { recordId: initialWrite.message.recordId },
@@ -461,6 +480,19 @@ export function testDwnClass(): void {
             filter : { recordId: initialWrite.message.recordId },
           });
           expect((await dwnB.processMessage(alice.did, readB.message)).status.code).toBe(404);
+
+          const tombstoneFilter = {
+            'method'        : 'Delete',
+            'tag.team'      : 'blue',
+            'published'     : true,
+            'datePublished' : datePublished,
+          };
+          const { messages: tombstonesA } = await messageStore.query(alice.did, [tombstoneFilter]);
+          const { messages: tombstonesB } = await messageStoreB.query(alice.did, [tombstoneFilter]);
+          expect(tombstonesA.length).toBe(1);
+          expect(tombstonesB.length).toBe(1);
+          expect(await Message.getCid(tombstonesA[0])).toBe(await Message.getCid(recordsDelete.message));
+          expect(await Message.getCid(tombstonesB[0])).toBe(await Message.getCid(recordsDelete.message));
 
           expect(await stateIndexB.getRoot(alice.did)).toEqual(await stateIndex.getRoot(alice.did));
         } finally {

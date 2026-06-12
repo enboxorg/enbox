@@ -917,11 +917,12 @@ export function testRecordsDeleteHandler(): void {
           expect(matchesAfterDelete[0].descriptor.method).toBe(DwnMethodName.Delete);
         });
 
-        it('should carry `published` onto the tombstone so it matches `published: true` queries and subscriptions', async () => {
+        it('should carry `published` and `datePublished` onto the tombstone so it matches published queries and subscriptions', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          const datePublished = '2025-01-01T00:00:00.000000Z';
           await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
-          // subscribe to published records of the test schema before any writes
+          // subscribe to date-published records of the test schema before any writes
           const receivedEvents: RecordEvent[] = [];
           const subscriptionHandler: SubscriptionListener = (message): void => {
             if (message.type === 'event') {
@@ -930,7 +931,7 @@ export function testRecordsDeleteHandler(): void {
           };
           const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
             author : alice,
-            filter : { schema: 'http://published-tombstone', published: true },
+            filter : { schema: 'http://published-tombstone', datePublished: { from: datePublished } },
           });
           const subscribeReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
           expect(subscribeReply.status.code).toBe(200);
@@ -940,6 +941,7 @@ export function testRecordsDeleteHandler(): void {
             author    : alice,
             schema    : 'http://published-tombstone',
             published : true,
+            datePublished,
           });
           const publishedWriteReply = await dwn.processMessage(alice.did, publishedWrite.message, { dataStream: publishedWrite.dataStream });
           expect(publishedWriteReply.status.code).toBe(202);
@@ -970,6 +972,7 @@ export function testRecordsDeleteHandler(): void {
           const publishedTombstoneFilter = {
             method    : DwnMethodName.Delete,
             published : true,
+            datePublished,
             schema    : normalizeSchemaUrl('http://published-tombstone'),
           };
           const { messages: publishedTombstones } = await messageStore.query(alice.did, [publishedTombstoneFilter]);
@@ -992,6 +995,7 @@ export function testRecordsDeleteHandler(): void {
 
         it('should take mutable visibility facts from the latest pre-delete write and immutable facts from the initial write', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          const datePublished = '2025-01-02T00:00:00.000000Z';
           await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           // initial write: unpublished, tagged red
@@ -1007,6 +1011,7 @@ export function testRecordsDeleteHandler(): void {
           const updateWrite = await RecordsWrite.createFrom({
             recordsWriteMessage : initialWriteData.message,
             published           : true,
+            datePublished,
             tags                : { team: 'blue' },
             signer              : Jws.createSigner(alice),
           });
@@ -1036,6 +1041,7 @@ export function testRecordsDeleteHandler(): void {
             schema      : normalizeSchemaUrl('http://visibility-facts'),
             dateCreated : initialWriteData.message.descriptor.dateCreated,
             published   : true,
+            datePublished,
           }]);
           expect(immutableMatches.length).toBe(1);
           expect(await Message.getCid(immutableMatches[0])).toBe(deleteMessageCid);
@@ -1043,16 +1049,27 @@ export function testRecordsDeleteHandler(): void {
 
         it('should carry the existing tombstone visibility facts forward when pruning an already-deleted record', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          const datePublished = '2025-01-03T00:00:00.000000Z';
           await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
-          // published, tagged record
+          // initial write: unpublished, tagged red
           const initialWriteData = await TestDataGenerator.generateRecordsWrite({
-            author    : alice,
-            published : true,
-            tags      : { team: 'red' },
+            author : alice,
+            tags   : { team: 'red' },
           });
           const initialWriteReply = await dwn.processMessage(alice.did, initialWriteData.message, { dataStream: initialWriteData.dataStream });
           expect(initialWriteReply.status.code).toBe(202);
+
+          // update: published, tagged blue
+          const updateWrite = await RecordsWrite.createFrom({
+            recordsWriteMessage : initialWriteData.message,
+            published           : true,
+            datePublished,
+            tags                : { team: 'blue' },
+            signer              : Jws.createSigner(alice),
+          });
+          const updateReply = await dwn.processMessage(alice.did, updateWrite.message);
+          expect(updateReply.status.code).toBe(202);
 
           // plain delete: the tombstone carries the record's visibility facts
           const plainDelete = await RecordsDelete.create({
@@ -1074,14 +1091,23 @@ export function testRecordsDeleteHandler(): void {
           expect(pruneDeleteReply.status.code).toBe(202);
 
           // exactly one tombstone matches the visibility facts and it is the prune
-          const { messages: tombstones } = await messageStore.query(alice.did, [{ 'method': DwnMethodName.Delete, 'tag.team': 'red', 'published': true }]);
+          const { messages: tombstones } = await messageStore.query(alice.did, [{
+            'method'        : DwnMethodName.Delete,
+            'tag.team'      : 'blue',
+            'published'     : true,
+            'datePublished' : datePublished
+          }]);
           expect(tombstones.length).toBe(1);
           expect(await Message.getCid(tombstones[0])).toBe(await Message.getCid(pruneDelete.message));
           expect((tombstones[0] as RecordsDeleteMessage).descriptor.prune).toBe(true);
+
+          const { messages: redMatches } = await messageStore.query(alice.did, [{ 'method': DwnMethodName.Delete, 'tag.team': 'red' }]);
+          expect(redMatches.length).toBe(0);
         });
 
         it('should carry the displaced newer write tags and published state when a tombstone applies over it (delete-wins)', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
+          const datePublished = '2025-01-04T00:00:00.000000Z';
           await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
           // initial write: unpublished, tagged red
@@ -1103,6 +1129,7 @@ export function testRecordsDeleteHandler(): void {
           const updateWrite = await RecordsWrite.createFrom({
             recordsWriteMessage : initialWriteData.message,
             published           : true,
+            datePublished,
             tags                : { team: 'blue' },
             signer              : Jws.createSigner(alice),
           });
@@ -1114,7 +1141,12 @@ export function testRecordsDeleteHandler(): void {
           expect(deleteReply.status.code).toBe(202);
 
           // tombstone visibility facts reflect the displaced newer write
-          const { messages: blueMatches } = await messageStore.query(alice.did, [{ 'method': DwnMethodName.Delete, 'tag.team': 'blue', 'published': true }]);
+          const { messages: blueMatches } = await messageStore.query(alice.did, [{
+            'method'        : DwnMethodName.Delete,
+            'tag.team'      : 'blue',
+            'published'     : true,
+            'datePublished' : datePublished
+          }]);
           expect(blueMatches.length).toBe(1);
           expect(await Message.getCid(blueMatches[0])).toBe(await Message.getCid(recordsDelete.message));
 
@@ -1155,7 +1187,7 @@ export function testRecordsDeleteHandler(): void {
           expect(expectedMessageCids.size).toBe(0);
         });
 
-        it('should only keep first write and delete when subsequent writes happen', async () => {
+        it('should keep first write, latest pre-delete write, and delete when subsequent writes happen', async () => {
           const author = await TestDataGenerator.generatePersona();
           TestStubGenerator.stubDidResolver(didResolver, [author]);
           await TestDataGenerator.installDefaultTestProtocol(dwn, author);
@@ -1183,15 +1215,10 @@ export function testRecordsDeleteHandler(): void {
           expect(deleteReply.status.code).toBe(202);
 
           const events = await stateIndex.getLeaves(author.did, []);
-          expect(events.length).toBe(3);
+          expect(events.length).toBe(4); // 1 for protocol configure + first write + latest pre-delete write + delete
 
-          const deletedMessageCid = await Message.getCid(newWrite.message);
-
-          for (const messageCid of events) {
-            if (messageCid === deletedMessageCid ) {
-              throw new Error(`${messageCid} should not exist`);
-            }
-          }
+          const retainedWriteCid = await Message.getCid(newWrite.message);
+          expect(events).toContain(retainedWriteCid);
         });
       });
     });

@@ -47,39 +47,45 @@ describe('RecordsDelete', () => {
   });
 
   describe('constructIndexes()', () => {
-    it('should carry flattened `tag.*` and `published` from the newest pre-delete write while immutable facts come from the initial write', async () => {
-      const alice = await TestDataGenerator.generatePersona();
+    it(
+      'should carry flattened `tag.*` and `published` from the newest pre-delete write while immutable facts come from the initial write',
+      async () => {
+        const alice = await TestDataGenerator.generatePersona();
+        const datePublished = '2025-01-01T00:00:00.000000Z';
 
-      const { recordsWrite: initialWrite } = await TestDataGenerator.generateRecordsWrite({
-        author : alice,
-        schema : 'http://test-schema',
-        tags   : { team: 'red' },
-      });
+        const { recordsWrite: initialWrite } = await TestDataGenerator.generateRecordsWrite({
+          author : alice,
+          schema : 'http://test-schema',
+          tags   : { team: 'red' },
+        });
 
-      const updateWrite = await RecordsWrite.createFrom({
-        recordsWriteMessage : initialWrite.message,
-        published           : true,
-        tags                : { team: 'blue', priority: 1 },
-        signer              : Jws.createSigner(alice),
-      });
+        const updateWrite = await RecordsWrite.createFrom({
+          recordsWriteMessage : initialWrite.message,
+          published           : true,
+          datePublished,
+          tags                : { team: 'blue', priority: 1 },
+          signer              : Jws.createSigner(alice),
+        });
 
-      const recordsDelete = await RecordsDelete.create({
-        recordId : initialWrite.message.recordId,
-        signer   : Jws.createSigner(alice),
-      });
+        const recordsDelete = await RecordsDelete.create({
+          recordId : initialWrite.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
 
-      const indexes = recordsDelete.constructIndexes(initialWrite.message, updateWrite.message);
+        const indexes = recordsDelete.constructIndexes(initialWrite.message, updateWrite.message);
 
-      // mutable visibility facts come from the newest pre-delete write
-      expect(indexes['tag.team']).toBe('blue');
-      expect(indexes['tag.priority']).toBe(1);
-      expect(indexes.published).toBe(true);
+        // mutable visibility facts come from the newest pre-delete write
+        expect(indexes['tag.team']).toBe('blue');
+        expect(indexes['tag.priority']).toBe(1);
+        expect(indexes.published).toBe(true);
+        expect(indexes.datePublished).toBe(datePublished);
 
-      // immutable facts still come from the initial write
-      expect(indexes.schema).toBe(initialWrite.message.descriptor.schema!);
-      expect(indexes.dateCreated).toBe(initialWrite.message.descriptor.dateCreated);
-      expect(indexes.isLatestBaseState).toBe(true);
-    });
+        // immutable facts still come from the initial write
+        expect(indexes.schema).toBe(initialWrite.message.descriptor.schema!);
+        expect(indexes.dateCreated).toBe(initialWrite.message.descriptor.dateCreated);
+        expect(indexes.isLatestBaseState).toBe(true);
+      }
+    );
 
     it('should index `published` as `false` for a tombstone of an unpublished record', async () => {
       const alice = await TestDataGenerator.generatePersona();
@@ -97,18 +103,21 @@ describe('RecordsDelete', () => {
       expect(Object.keys(indexes).some((key) => key.startsWith('tag.'))).toBe(false);
     });
 
-    it('should reconstruct visibility facts from the initial write when the newest pre-delete message is an existing tombstone', async () => {
+    it('should reconstruct replacement tombstone visibility facts from the newest retained write', async () => {
       const alice = await TestDataGenerator.generatePersona();
+      const datePublished = '2025-02-01T00:00:00.000000Z';
 
       const { recordsWrite: initialWrite } = await TestDataGenerator.generateRecordsWrite({
-        author    : alice,
-        published : true,
-        tags      : { team: 'red' },
+        author : alice,
+        tags   : { team: 'red' },
       });
 
-      const existingDelete = await RecordsDelete.create({
-        recordId : initialWrite.message.recordId,
-        signer   : Jws.createSigner(alice),
+      const updateWrite = await RecordsWrite.createFrom({
+        recordsWriteMessage : initialWrite.message,
+        published           : true,
+        datePublished,
+        tags                : { team: 'blue' },
+        signer              : Jws.createSigner(alice),
       });
 
       const pruneDelete = await RecordsDelete.create({
@@ -117,11 +126,11 @@ describe('RecordsDelete', () => {
         signer   : Jws.createSigner(alice),
       });
 
-      const indexes = pruneDelete.constructIndexes(initialWrite.message, existingDelete.message);
+      const indexes = pruneDelete.constructIndexes(initialWrite.message, updateWrite.message);
 
-      // the existing tombstone's visibility facts carry forward via the initial write it derived them from
-      expect(indexes['tag.team']).toBe('red');
+      expect(indexes['tag.team']).toBe('blue');
       expect(indexes.published).toBe(true);
+      expect(indexes.datePublished).toBe(datePublished);
     });
   });
 });

@@ -9,9 +9,30 @@ import type { UnionMessageReply } from './core/message-reply.js';
 import type { EventLog, MessageEvent, SubscriptionListener } from './types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from './types/method-handler.js';
-import type { MessagesReadMessage, MessagesReadReply, MessagesSubscribeMessage, MessagesSubscribeMessageOptions, MessagesSubscribeReply, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
+import type {
+  MessagesReadMessage,
+  MessagesReadReply,
+  MessagesSubscribeMessage,
+  MessagesSubscribeMessageOptions,
+  MessagesSubscribeReply,
+  MessagesSyncMessage,
+  MessagesSyncReply
+} from './types/messages-types.js';
 import type { ProtocolDefinition, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
-import type { RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsQueryMessage, RecordsQueryReply, RecordsReadMessage, RecordsReadReply, RecordsSubscribeMessage, RecordsSubscribeMessageOptions, RecordsSubscribeReply, RecordsWriteMessage, RecordsWriteMessageOptions } from './types/records-types.js';
+import type {
+  RecordsCountMessage,
+  RecordsCountReply,
+  RecordsDeleteMessage,
+  RecordsQueryMessage,
+  RecordsQueryReply,
+  RecordsReadMessage,
+  RecordsReadReply,
+  RecordsSubscribeMessage,
+  RecordsSubscribeMessageOptions,
+  RecordsSubscribeReply,
+  RecordsWriteMessage,
+  RecordsWriteMessageOptions
+} from './types/records-types.js';
 import type { ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
@@ -27,6 +48,7 @@ import { ProtocolAuthorization } from './core/protocol-authorization.js';
 import { ProtocolsConfigure } from './interfaces/protocols-configure.js';
 import { ProtocolsConfigureHandler } from './handlers/protocols-configure.js';
 import { ProtocolsQueryHandler } from './handlers/protocols-query.js';
+import { Records } from './utils/records.js';
 import { RecordsCountHandler } from './handlers/records-count.js';
 import { RecordsDelete } from './interfaces/records-delete.js';
 import { RecordsDeleteHandler } from './handlers/records-delete.js';
@@ -264,8 +286,53 @@ export class Dwn {
     }
 
     const reply = await this.processMessage(tenant, rawMessage, options);
+    if (await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply)) {
+      return { kind: 'Superseded' };
+    }
+
     const protocolDefinition = await this.getReplicationApplyProtocolDefinition(tenant, rawMessage, reply);
     return replicationApplyResultFromReply(rawMessage, reply, { protocolDefinition });
+  }
+
+  private async storeReplicatedWriteBeatenByDelete(
+    tenant: string,
+    message: GenericMessage,
+    reply: { status: { detail?: string } },
+  ): Promise<boolean> {
+    const detail = reply.status.detail ?? '';
+    if (!detail.startsWith(`${DwnErrorCode.RecordsWriteNotAllowedAfterDelete}:`) || !Records.isRecordsWrite(message)) {
+      return false;
+    }
+
+    const query = {
+      interface : DwnInterfaceName.Records,
+      recordId  : message.recordId,
+    };
+    const { messages: existingMessages } = await this.messageStore.query(tenant, [query]);
+    const initialWrite = await RecordsWrite.getInitialWrite(existingMessages);
+    const existingDelete = await Records.getNewestRecordsDelete(existingMessages);
+    if (existingDelete === undefined) {
+      return false;
+    }
+
+    const recordsWrite = await RecordsWrite.parse(message);
+    const storedWriteMessage: RecordsWriteMessage & { encodedData?: string } = { ...message };
+    delete storedWriteMessage.encodedData;
+    const recordsWriteCid = await Message.getCid(storedWriteMessage);
+    const recordsWriteIndexes = await recordsWrite.constructIndexes(false);
+    await this.messageStore.put(tenant, storedWriteMessage, recordsWriteIndexes);
+    await this.stateIndex.insert(tenant, recordsWriteCid, recordsWriteIndexes);
+
+    const recordsDelete = await RecordsDelete.parse(existingDelete);
+    const visibilitySourceWrite = await Records.getNewestRecordsWrite([...existingMessages, storedWriteMessage]) ?? initialWrite;
+    const recordsDeleteIndexes = recordsDelete.constructIndexes(initialWrite, visibilitySourceWrite);
+    const recordsDeleteCid = await Message.getCid(existingDelete);
+    await this.messageStore.delete(tenant, recordsDeleteCid);
+    await this.messageStore.put(tenant, existingDelete, recordsDeleteIndexes);
+    await this.stateIndex.delete(tenant, [recordsDeleteCid]);
+    await this.stateIndex.insert(tenant, recordsDeleteCid, recordsDeleteIndexes);
+
+    return true;
   }
 
   private async getReplicationApplyProtocolDefinition(
@@ -443,7 +510,8 @@ export class Dwn {
     const { descriptor } = message;
 
     if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Write) {
-      const isLatest = await Dwn.isNewestStoredMessage(message, existingMessages);
+      const isLatest = await Records.getNewestRecordsDelete(existingMessages) === undefined &&
+        await Dwn.isNewestStoredMessage(message, existingMessages);
       const eventMessage = await Dwn.getStoredMessageForCid(existingMessages, await Message.getCid(message)) ?? message;
       const recordsWrite = await RecordsWrite.parse(eventMessage as RecordsWriteMessage);
       const indexes = await recordsWrite.constructIndexes(isLatest);
@@ -468,8 +536,8 @@ export class Dwn {
       const recordsDelete = await RecordsDelete.parse(message as RecordsDeleteMessage);
       const isLatest = await Dwn.isNewestStoredMessage(message, existingMessages);
 
-      // the duplicate delete is already stored, so the pre-delete newest message — the source of
-      // the tombstone's mutable `tag.*`/`published` visibility facts — is the newest among the
+      // the duplicate delete is already stored, so the tombstone's mutable `tag.*`/`published`/
+      // `datePublished` visibility facts come from the newest retained RecordsWrite among the
       // OTHER stored messages for the record, falling back to the initial write.
       const deleteCid = await Message.getCid(message);
       const preDeleteMessages: GenericMessage[] = [];
@@ -478,10 +546,10 @@ export class Dwn {
           preDeleteMessages.push(existingMessage);
         }
       }
-      const newestPreDeleteMessage = await Message.getNewestMessage(preDeleteMessages) ?? initialWrite;
+      const newestPreDeleteWrite = await Records.getNewestRecordsWrite(preDeleteMessages) ?? initialWrite;
 
       return {
-        indexes   : recordsDelete.constructIndexes(initialWrite, newestPreDeleteMessage),
+        indexes   : recordsDelete.constructIndexes(initialWrite, newestPreDeleteWrite),
         event     : { message, initialWrite },
         emitEvent : isLatest,
       };
