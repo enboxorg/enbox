@@ -550,6 +550,95 @@ export function testDwnClass(): void {
         expect(reindexedTombstones.length).toBe(0);
       });
 
+      it('reports missing data for tombstone-beaten replicated writes without data', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const scenarios = [
+          { dataBytes: TestDataGenerator.randomBytes(32), storage: 'inline' },
+          { dataBytes: TestDataGenerator.randomBytes(31_000), storage: 'data-store' },
+        ];
+
+        for (const { dataBytes, storage } of scenarios) {
+          const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
+          expect(await dwn.applyReplicatedMessage(
+            alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(dataBytes) },
+          )).toEqual({ kind: 'Applied' });
+
+          const recordsDelete = await RecordsDelete.create({
+            recordId : initialWrite.message.recordId,
+            signer   : Jws.createSigner(alice),
+          });
+          expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+
+          await Time.minimalSleep();
+          const update = await RecordsWrite.createFrom({
+            recordsWriteMessage : initialWrite.message,
+            tags                : { storage },
+            signer              : Jws.createSigner(alice),
+          });
+
+          const result = await dwn.applyReplicatedMessage(alice.did, update.message);
+          expect(result).toEqual({
+            kind    : 'Incomplete',
+            missing : [{
+              type     : 'RecordData',
+              recordId : update.message.recordId,
+              dataCid  : update.message.descriptor.dataCid,
+              protocol : update.message.descriptor.protocol,
+            }],
+          });
+
+          const updateCid = await Message.getCid(update.message);
+          expect(await messageStore.get(alice.did, updateCid)).toBeUndefined();
+
+          const { messages: reindexedTombstones } = await messageStore.query(alice.did, [{
+            method        : DwnMethodName.Delete,
+            'tag.storage' : storage,
+          }]);
+          expect(reindexedTombstones.length).toBe(0);
+        }
+      });
+
+      it('accepts a tombstone-beaten replicated write with a valid large data stream', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        expect(await dwn.applyReplicatedMessage(
+          alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
+        )).toEqual({ kind: 'Applied' });
+
+        const recordsDelete = await RecordsDelete.create({
+          recordId : initialWrite.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
+        expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+
+        await Time.minimalSleep();
+        const updateDataBytes = TestDataGenerator.randomBytes(31_000);
+        const update = await RecordsWrite.createFrom({
+          recordsWriteMessage : initialWrite.message,
+          data                : updateDataBytes,
+          tags                : { storage: 'data-store' },
+          signer              : Jws.createSigner(alice),
+        });
+
+        expect(await dwn.applyReplicatedMessage(
+          alice.did, update.message, { dataStream: DataStream.fromBytes(updateDataBytes) },
+        )).toEqual({ kind: 'Superseded' });
+
+        const updateCid = await Message.getCid(update.message);
+        expect(await messageStore.get(alice.did, updateCid)).toBeDefined();
+
+        const { messages: reindexedTombstones } = await messageStore.query(alice.did, [{
+          method        : DwnMethodName.Delete,
+          'tag.storage' : 'data-store',
+        }]);
+        expect(reindexedTombstones.length).toBe(1);
+        expect(await Message.getCid(reindexedTombstones[0])).toBe(await Message.getCid(recordsDelete.message));
+      });
+
       it('applies the handler stale-tombstone gate on resumable-task replay', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
