@@ -1640,7 +1640,7 @@ export function testPermissions(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // A replicated initial grant write is admitted.
+        // An initial grant write is admitted through replication apply.
         const grantWrite = await PermissionsProtocol.createGrant({
           signer      : Jws.createSigner(alice),
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),

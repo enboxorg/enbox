@@ -433,7 +433,7 @@ describe('validation read closure', () => {
       snapshot('replicated: role-invoking write admitted under dataless role record');
     }
 
-    // ---- scenario: replicated initial write rejected by the latest config (row 6) ----
+    // ---- scenario: initial write rejected by the latest config through replication apply (row 6) ----
     {
       await clearStores();
       recorder.clearRecordedReads();

@@ -53,7 +53,7 @@ describe('RecordsWrite', () => {
         dataStore             : {} as any,
         stateIndex            : {} as any,
       });
-      await (handler as any).authorizeRecordsWrite(alice.did, recordsWrite, 'live');
+      await (handler as any).authorizeRecordsWrite(alice.did, recordsWrite);
     });
 
     it('should include permissionGrantId in the descriptor when provided', async () => {

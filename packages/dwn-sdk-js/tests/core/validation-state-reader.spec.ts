@@ -20,7 +20,7 @@ import { DidKey, UniversalResolver } from '@enbox/dids';
 
 /**
  * Validation-state reader parity: replicated apply returns structured repair outcomes, but it
- * must not admit messages through a weaker validation basis than live `processMessage()`.
+ * must not admit messages through a weaker validation basis than `processMessage()`.
  */
 describe('validation-state reader admission parity', () => {
   let didResolver: DidResolver;
@@ -159,7 +159,7 @@ describe('validation-state reader admission parity', () => {
       expect(childAfterCompletionReply.status.code).toBe(202);
     });
 
-    it('should admit a live child after a parent update because immutable parent facts are unchanged', async () => {
+    it('should admit a child after a parent update because immutable parent facts are unchanged', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolDefinition = nestedProtocolDefinition;
@@ -352,7 +352,7 @@ describe('validation-state reader admission parity', () => {
   });
 
   describe('row 6 — protocol definition history', () => {
-    it('should reject a replicated initial write using the same latest config as processMessage', async () => {
+    it('should reject initial writes using the latest config in both entry points', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolUri = 'http://earliest-retained-config.xyz';
@@ -405,6 +405,12 @@ describe('validation-state reader admission parity', () => {
         messageTimestamp   : v2Timestamp,
       });
       expect((await dwn.processMessage(alice.did, v2Configure.message)).status.code).toBe(202);
+
+      const processReply = await dwn.processMessage(
+        alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream },
+      );
+      expect(processReply.status.code).toBe(400);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationInvalidType);
 
       const result = await dwn.applyReplicatedMessage(
         alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(recordsWrite.dataBytes!) },
@@ -648,7 +654,7 @@ describe('validation-state reader admission parity', () => {
       });
     });
 
-    it('should not validate a replicated initial write against a backdated config', async () => {
+    it('should not validate initial writes against a backdated config in either entry point', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolUri = 'http://config-history.xyz';
@@ -723,7 +729,7 @@ describe('validation-state reader admission parity', () => {
       }
     });
 
-    it('should not enforce squash backstop from a backdated config for replicated initial writes', async () => {
+    it('should not enforce squash backstop from a backdated config in either entry point', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolUri = 'http://config-history-squash.xyz';
@@ -778,6 +784,21 @@ describe('validation-state reader admission parity', () => {
         messageTimestamp   : v2Timestamp,
       });
       expect((await dwn.processMessage(alice.did, v2Message)).status.code).toBe(202);
+
+      const processOlderPatch = await TestDataGenerator.generateRecordsWrite({
+        author           : alice,
+        protocol         : protocolUri,
+        protocolPath     : 'patch',
+        schema           : 'patch',
+        dataFormat       : 'text/plain',
+        dateCreated      : olderPatchTimestamp,
+        messageTimestamp : olderPatchTimestamp,
+      });
+
+      const processReply = await dwn.processMessage(alice.did, processOlderPatch.message, {
+        dataStream: processOlderPatch.dataStream,
+      });
+      expect(processReply.status.code).toBe(202);
 
       const olderPatch = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
