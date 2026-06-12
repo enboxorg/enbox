@@ -493,8 +493,8 @@ export class Dwn {
       return;
     }
 
-    const dataStoreGetResult = await this.dataStore.get(tenant, newestExistingWrite.recordId, dataCid);
-    if (dataStoreGetResult === undefined) {
+    const priorDataExists = await this.validationStateReader.hasStoredData(tenant, newestExistingWrite.recordId, dataCid);
+    if (!priorDataExists) {
       throw new DwnError(
         DwnErrorCode.RecordsWriteMissingDataInPrevious,
         `No dataStream was provided and unable to get data from previous message`

@@ -14,6 +14,7 @@ import { DwnConstant } from '../../src/core/dwn-constant.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
 import { RecordingValidationStateReader as RecordingReader } from '../../src/core/recording-validation-state-reader.js';
+import { RecordsDelete } from '../../src/interfaces/records-delete.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -502,6 +503,43 @@ describe('validation read closure', () => {
       expect(completionResult.kind).toBe('Applied');
 
       snapshot('replicated: same-CID completion of dataless stub');
+    }
+
+    // ---- scenario: replicated tombstone-beaten dataless update missing compacted data (row 8) ----
+    {
+      await clearStores();
+      recorder.clearRecordedReads();
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const definition = nestedProtocolDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
+
+      const largeData = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
+      const { message: initialMessage, recordsWrite: initialWrite } = await TestDataGenerator.generateRecordsWrite({
+        author: alice, protocol: definition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain', data: largeData,
+      });
+      expect(await dwn.applyReplicatedMessage(
+        alice.did, initialMessage, { dataStream: DataStream.fromBytes(largeData) },
+      )).toEqual({ kind: 'Applied' });
+
+      const recordsDelete = await RecordsDelete.create({
+        recordId : initialMessage.recordId,
+        signer   : Jws.createSigner(alice),
+      });
+      expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+      recorder.clearRecordedReads(); // trace the beaten-write validation only
+
+      await Time.minimalSleep();
+      const datalessUpdate = await RecordsWrite.createFrom({
+        recordsWriteMessage : initialWrite.message,
+        signer              : Jws.createSigner(alice),
+        published           : true,
+        datePublished       : Time.getCurrentTimestamp(),
+      });
+      const datalessUpdateResult = await dwn.applyReplicatedMessage(alice.did, datalessUpdate.message);
+      expect(datalessUpdateResult.kind).toBe('Incomplete');
+
+      snapshot('replicated: tombstone-beaten dataless update missing compacted data');
     }
 
     // ---- closure assertion: every recorded read maps to a read-set table row ----

@@ -63,5 +63,10 @@
     "fetchProtocolDefinition",
     "getGoverningTimestamp [replicated]",
     "hasStoredData"
+  ],
+  "replicated: tombstone-beaten dataless update missing compacted data": [
+    "fetchProtocolDefinition",
+    "getGoverningTimestamp [replicated]",
+    "hasStoredData"
   ]
 }
