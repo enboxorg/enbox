@@ -9,6 +9,7 @@ import type { ValidationMode, ValidationStateReader } from '../types/validation-
 
 import { FilterUtility } from '../utils/filter.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
+import { PERMISSIONS_REVOCATION_PATH } from './constants.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
@@ -211,6 +212,28 @@ export class StoreValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
+  public async fetchOldestGrantRevocation(tenant: string, permissionGrantId: string): Promise<GenericMessage | undefined> {
+    const query: Filter = {
+      parentId          : permissionGrantId,
+      protocolPath      : PERMISSIONS_REVOCATION_PATH,
+      isLatestBaseState : true
+    };
+    const { messages } = await this.messageStore.query(
+      tenant,
+      [query],
+      { messageTimestamp: SortDirection.Ascending },
+      { limit: 1 },
+    );
+
+    return messages[0];
+  }
+
+  /** @inheritdoc */
+  public async fetchNewestRecordsWrite(tenant: string, recordId: string): Promise<RecordsWriteMessage> {
+    return RecordsWrite.fetchNewestRecordsWrite(this.messageStore, tenant, recordId);
+  }
+
+  /** @inheritdoc */
   public async getGoverningTimestamp(input: {
     tenant: string;
     recordId: string;
@@ -314,6 +337,36 @@ export class StoreValidationStateReader implements ValidationStateReader {
     }
 
     return this.messageStore.count(input.tenant, [filter]);
+  }
+
+  /** @inheritdoc */
+  public async fetchLatestSquashRecordAtScope(input: {
+    tenant: string;
+    protocol: string;
+    protocolPath: string;
+    contextIdPrefix?: string;
+  }): Promise<RecordsWriteMessage | undefined> {
+    const filter: Filter = {
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+      protocol          : input.protocol,
+      protocolPath      : input.protocolPath,
+      squash            : true,
+    };
+
+    if (input.contextIdPrefix !== undefined) {
+      filter.contextId = FilterUtility.constructPrefixFilterAsRangeFilter(input.contextIdPrefix);
+    }
+
+    const { messages } = await this.messageStore.query(
+      input.tenant,
+      [filter],
+      { messageTimestamp: SortDirection.Descending },
+      { limit: 1 },
+    );
+
+    return messages[0] as RecordsWriteMessage | undefined;
   }
 
   /** @inheritdoc */

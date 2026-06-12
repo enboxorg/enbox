@@ -1,9 +1,7 @@
 import type { GenericMessage } from '../types/message-types.js';
-import type { MessageStore } from '../types/message-store.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 
-import { Message } from './message.js';
-import { PERMISSIONS_REVOCATION_PATH } from './constants.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
@@ -17,7 +15,7 @@ export class GrantAuthorization {
    *
    * NOTE: Does not validate grant `conditions` or `scope` beyond `interface` and `method`
    *
-   * @param messageStore Used to check if the grant has been revoked.
+   * @param validationStateReader Used to check if the grant has been revoked.
    * @throws {DwnError} if validation fails
    */
   public static async performBaseValidation(input: {
@@ -25,9 +23,9 @@ export class GrantAuthorization {
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrant: PermissionGrant,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
     }): Promise<void> {
-    const { incomingMessage, expectedGrantor, expectedGrantee, permissionGrant, messageStore } = input;
+    const { incomingMessage, expectedGrantor, expectedGrantee, permissionGrant, validationStateReader } = input;
 
     const incomingMessageDescriptor = incomingMessage.descriptor;
 
@@ -39,7 +37,7 @@ export class GrantAuthorization {
       grantedFor,
       incomingMessageDescriptor.messageTimestamp,
       permissionGrant,
-      messageStore
+      validationStateReader
     );
 
     // Check grant scope for interface and method
@@ -81,14 +79,14 @@ export class GrantAuthorization {
   /**
    * Verify that the incoming message is within the allowed time frame of the grant,
    * and the grant has not been revoked.
-   * @param messageStore Used to check if the grant has been revoked.
+   * @param validationStateReader Used to check if the grant has been revoked.
    * @throws {DwnError} if incomingMessage has timestamp for a time in which the grant is not active.
    */
   private static async verifyGrantActive(
     grantedFor: string,
     incomingMessageTimestamp: string,
     permissionGrant: PermissionGrant,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   ): Promise<void> {
     // Check that incomingMessage is within the grant's time frame
     if (incomingMessageTimestamp < permissionGrant.dateGranted) {
@@ -107,14 +105,7 @@ export class GrantAuthorization {
       );
     }
 
-    // Check if grant has been revoked
-    const query = {
-      parentId          : permissionGrant.id,
-      protocolPath      : PERMISSIONS_REVOCATION_PATH,
-      isLatestBaseState : true
-    };
-    const { messages: revokes } = await messageStore.query(grantedFor, [query]);
-    const oldestExistingRevoke = await Message.getOldestMessage(revokes);
+    const oldestExistingRevoke = await validationStateReader.fetchOldestGrantRevocation(grantedFor, permissionGrant.id);
 
     if (oldestExistingRevoke !== undefined && oldestExistingRevoke.descriptor.messageTimestamp <= incomingMessageTimestamp) {
       throw new DwnError(

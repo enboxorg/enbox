@@ -1,4 +1,3 @@
-import type { MessageStore } from '../types/message-store.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { EventSubscription, ProgressGapInfo, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
@@ -65,7 +64,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
     const guardedHandler = MessagesSubscribeHandler.createAuthorizationGuard({
       authorization,
       messagesSubscribe,
-      messageStore: this.deps.messageStore,
+      validationStateReader: this.deps.validationStateReader,
       subscriptionHandler,
     });
 
@@ -110,11 +109,11 @@ export class MessagesSubscribeHandler implements MethodHandler {
     if (messagesSubscribe.author !== undefined && permissionGrantIds.length > 0) {
       const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, deps.validationStateReader, permissionGrantIds);
       await MessagesGrantAuthorization.authorizeSubscribeOrSync({
-        incomingMessage : messagesSubscribe.message,
-        expectedGrantor : tenant,
-        expectedGrantee : messagesSubscribe.author,
+        incomingMessage       : messagesSubscribe.message,
+        expectedGrantor       : tenant,
+        expectedGrantee       : messagesSubscribe.author,
         permissionGrants,
-        messageStore    : deps.messageStore
+        validationStateReader : deps.validationStateReader
       });
       return {
         kind            : 'delegate',
@@ -130,10 +129,10 @@ export class MessagesSubscribeHandler implements MethodHandler {
   private static createAuthorizationGuard(input: {
     authorization: MessagesSubscribeAuthorization;
     messagesSubscribe: MessagesSubscribe;
-    messageStore: MessageStore;
+    validationStateReader: HandlerDependencies['validationStateReader'];
     subscriptionHandler: SubscriptionListener;
   }): GuardedSubscriptionHandler {
-    const { authorization, messagesSubscribe, messageStore, subscriptionHandler } = input;
+    const { authorization, messagesSubscribe, validationStateReader, subscriptionHandler } = input;
     if (authorization.kind === 'owner') {
       return {
         listener        : subscriptionHandler,
@@ -182,7 +181,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
           expectedGrantor          : authorization.expectedGrantor,
           expectedGrantee          : authorization.expectedGrantee,
           permissionGrants         : authorization.permissionGrants,
-          messageStore,
+          validationStateReader,
           deliveryTimestamp        : Time.getCurrentTimestamp(),
         });
       } catch {

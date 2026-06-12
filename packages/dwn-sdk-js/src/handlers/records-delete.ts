@@ -107,7 +107,7 @@ export class RecordsDeleteHandler implements MethodHandler {
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsDelete.message)) {
-      await recordsDelete.authorizeDelegate(recordsWrite.message, this.deps.messageStore);
+      await recordsDelete.authorizeDelegate(recordsWrite.message, this.deps.validationStateReader);
     }
 
     if (recordsDelete.author === tenant) {
@@ -116,12 +116,12 @@ export class RecordsDeleteHandler implements MethodHandler {
       const permissionGrantId = Message.getPermissionGrantId(recordsDelete.signaturePayload!)!;
       const permissionGrant = await this.deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
       await RecordsGrantAuthorization.authorizeDelete({
-        recordsDeleteMessage : recordsDelete.message,
-        recordsWriteToDelete : recordsWrite.message,
-        expectedGrantor      : tenant,
-        expectedGrantee      : recordsDelete.author,
+        recordsDeleteMessage  : recordsDelete.message,
+        recordsWriteToDelete  : recordsWrite.message,
+        expectedGrantor       : tenant,
+        expectedGrantee       : recordsDelete.author,
         permissionGrant,
-        messageStore         : this.deps.messageStore,
+        validationStateReader : this.deps.validationStateReader,
       });
     } else {
       await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, this.deps.validationStateReader, validationMode);

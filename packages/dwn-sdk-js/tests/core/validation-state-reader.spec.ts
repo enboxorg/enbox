@@ -362,5 +362,77 @@ describe('replicated validation divergences', () => {
       expect(queryReply.status.code).toBe(200);
       expect(queryReply.entries?.length).toBe(1);
     });
+
+    it('should enforce squash backstop using the historically-governing config for replicated initial writes', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+
+      const protocolUri = 'http://config-history-squash.xyz';
+      const v1Definition: ProtocolDefinition = {
+        protocol  : protocolUri,
+        published : false,
+        types     : {
+          patch: { schema: 'patch', dataFormats: ['text/plain'] },
+        },
+        structure: {
+          patch: { $squash: true },
+        },
+      };
+      const v2Definition: ProtocolDefinition = {
+        protocol  : protocolUri,
+        published : false,
+        types     : {
+          patch: { schema: 'patch', dataFormats: ['text/plain'] },
+        },
+        structure: {
+          patch: {},
+        },
+      };
+
+      const v1Timestamp = Time.createTimestamp({ year: 2024, month: 1, day: 1 });
+      const olderPatchTimestamp = Time.createTimestamp({ year: 2024, month: 2, day: 1 });
+      const squashTimestamp = Time.createTimestamp({ year: 2024, month: 3, day: 1 });
+      const v2Timestamp = Time.createTimestamp({ year: 2024, month: 4, day: 1 });
+
+      const { message: v1Message } = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : v1Definition,
+        messageTimestamp   : v1Timestamp,
+      });
+      expect((await dwn.processMessage(alice.did, v1Message)).status.code).toBe(202);
+
+      const squashRecord = await TestDataGenerator.generateRecordsWrite({
+        author           : alice,
+        protocol         : protocolUri,
+        protocolPath     : 'patch',
+        schema           : 'patch',
+        dataFormat       : 'text/plain',
+        dateCreated      : squashTimestamp,
+        messageTimestamp : squashTimestamp,
+        squash           : true,
+      });
+      expect((await dwn.processMessage(alice.did, squashRecord.message, { dataStream: squashRecord.dataStream })).status.code).toBe(202);
+
+      const { message: v2Message } = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : v2Definition,
+        messageTimestamp   : v2Timestamp,
+      });
+      expect((await dwn.processMessage(alice.did, v2Message)).status.code).toBe(202);
+
+      const olderPatch = await TestDataGenerator.generateRecordsWrite({
+        author           : alice,
+        protocol         : protocolUri,
+        protocolPath     : 'patch',
+        schema           : 'patch',
+        dataFormat       : 'text/plain',
+        dateCreated      : olderPatchTimestamp,
+        messageTimestamp : olderPatchTimestamp,
+      });
+
+      const result = await dwn.applyReplicatedMessage(alice.did, olderPatch.message, {
+        dataStream: DataStream.fromBytes(olderPatch.dataBytes!),
+      });
+      expect(result).toEqual({ kind: 'Superseded' });
+    });
   });
 });

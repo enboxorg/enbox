@@ -5,8 +5,8 @@ import { GrantAuthorization } from '../../src/core/grant-authorization.js';
 
 describe('GrantAuthorization', () => {
   describe('verifyGrantScopeInterfaceAndMethod', () => {
-    const mockMessageStore = {
-      query: async (): Promise<any> => ({ messages: [] }),
+    const validationStateReader = {
+      fetchOldestGrantRevocation: async (): Promise<any> => undefined,
     };
 
     it('should reject Messages grant with method !== Read', async () => {
@@ -31,11 +31,11 @@ describe('GrantAuthorization', () => {
 
       await expect(
         GrantAuthorization.performBaseValidation({
-          incomingMessage : mockMessage as any,
-          expectedGrantor : 'did:example:grantor',
-          expectedGrantee : 'did:example:grantee',
-          permissionGrant : mockGrant as any,
-          messageStore    : mockMessageStore as any,
+          incomingMessage       : mockMessage as any,
+          expectedGrantor       : 'did:example:grantor',
+          expectedGrantee       : 'did:example:grantee',
+          permissionGrant       : mockGrant as any,
+          validationStateReader : validationStateReader as any,
         })
       ).rejects.toThrow(DwnErrorCode.GrantAuthorizationMethodMismatch);
     });
@@ -60,11 +60,11 @@ describe('GrantAuthorization', () => {
 
       await expect(
         GrantAuthorization.performBaseValidation({
-          incomingMessage : mockMessage as any,
-          expectedGrantor : 'did:example:grantor',
-          expectedGrantee : 'did:example:grantee',
-          permissionGrant : mockGrant as any,
-          messageStore    : mockMessageStore as any,
+          incomingMessage       : mockMessage as any,
+          expectedGrantor       : 'did:example:grantor',
+          expectedGrantee       : 'did:example:grantee',
+          permissionGrant       : mockGrant as any,
+          validationStateReader : validationStateReader as any,
         })
       ).rejects.toThrow(DwnErrorCode.GrantAuthorizationMethodMismatch);
     });

@@ -165,7 +165,7 @@ export class RecordsReadHandler implements MethodHandler {
     validationMode: ValidationMode,
   ): Promise<void> {
     if (Message.isSignedByAuthorDelegate(recordsRead.message)) {
-      await recordsRead.authorizeDelegate(matchedRecordsWrite.message, deps.messageStore);
+      await recordsRead.authorizeDelegate(matchedRecordsWrite.message, deps.validationStateReader);
     }
 
     const { descriptor } = matchedRecordsWrite.message;
@@ -190,7 +190,7 @@ export class RecordsReadHandler implements MethodHandler {
         expectedGrantor             : tenant,
         expectedGrantee             : recordsRead.author,
         permissionGrant,
-        messageStore                : deps.messageStore
+        validationStateReader       : deps.validationStateReader
       });
     } else {
       await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader, validationMode);

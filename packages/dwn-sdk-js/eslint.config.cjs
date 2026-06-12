@@ -90,6 +90,7 @@ module.exports = [{
   // validation modules read state only through `ValidationStateReader` (HandlerDependencies.validationStateReader).
   // Importing `MessageStore` here would open a validation read outside the read-set table.
   files: [
+    'src/core/*grant-authorization*.ts',
     'src/core/protocol-authorization*.ts',
     'src/protocols/permissions*.ts',
   ],

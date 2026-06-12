@@ -1,3 +1,4 @@
+import type { GenericMessage } from '../types/message-types.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
@@ -97,6 +98,18 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
+  public async fetchOldestGrantRevocation(tenant: string, permissionGrantId: string): Promise<GenericMessage | undefined> {
+    this.recordedReads.push({ method: 'fetchOldestGrantRevocation' });
+    return this.inner.fetchOldestGrantRevocation(tenant, permissionGrantId);
+  }
+
+  /** @inheritdoc */
+  public async fetchNewestRecordsWrite(tenant: string, recordId: string): Promise<RecordsWriteMessage> {
+    this.recordedReads.push({ method: 'fetchNewestRecordsWrite' });
+    return this.inner.fetchNewestRecordsWrite(tenant, recordId);
+  }
+
+  /** @inheritdoc */
   public async getGoverningTimestamp(input: {
     tenant: string;
     recordId: string;
@@ -122,6 +135,17 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   }): Promise<number> {
     this.recordedReads.push({ method: 'countLatestRecordsAtScope' });
     return this.inner.countLatestRecordsAtScope(input);
+  }
+
+  /** @inheritdoc */
+  public async fetchLatestSquashRecordAtScope(input: {
+    tenant: string;
+    protocol: string;
+    protocolPath: string;
+    contextIdPrefix?: string;
+  }): Promise<RecordsWriteMessage | undefined> {
+    this.recordedReads.push({ method: 'fetchLatestSquashRecordAtScope' });
+    return this.inner.fetchLatestSquashRecordAtScope(input);
   }
 
   /** @inheritdoc */

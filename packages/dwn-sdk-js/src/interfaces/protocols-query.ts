@@ -1,6 +1,5 @@
 import type { AuthorizationModel } from '../types/message-types.js';
 import type { MessageSigner } from '../types/signer.js';
-import type { MessageStore } from '../types/message-store.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { ProtocolsQueryDescriptor, ProtocolsQueryFilter, ProtocolsQueryMessage } from '../types/protocols-types.js';
 
@@ -77,7 +76,7 @@ export class ProtocolsQuery extends AbstractMessage<ProtocolsQueryMessage> {
     };
   }
 
-  public async authorize(tenant: string, messageStore: MessageStore, validationStateReader: ValidationStateReader): Promise<void> {
+  public async authorize(tenant: string, validationStateReader: ValidationStateReader): Promise<void> {
     // if author is the same as the target tenant, we can directly grant access
     if (this.author === tenant) {
       return;
@@ -89,7 +88,7 @@ export class ProtocolsQuery extends AbstractMessage<ProtocolsQueryMessage> {
         expectedGrantee : this.author,
         incomingMessage : this.message,
         permissionGrant,
-        messageStore
+        validationStateReader
       });
     } else {
       throw new DwnError(

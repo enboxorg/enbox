@@ -1,4 +1,3 @@
-import type { Filter } from '../types/query-types.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { ValidationMode } from '../types/validation-state-reader.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
@@ -9,7 +8,6 @@ import { Cid } from '../utils/cid.js';
 import { DataStream } from '../utils/data-stream.js';
 import { DwnConstant } from '../core/dwn-constant.js';
 import { Encoder } from '../utils/encoder.js';
-import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -17,7 +15,6 @@ import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { ResumableTaskName } from '../core/resumable-task-manager.js';
-import { SortDirection } from '../types/query-types.js';
 import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -104,7 +101,7 @@ export class RecordsWriteHandler implements MethodHandler {
     // messageTimestamp is <= the most recent squash record at the same path and parent context.
     // The squash record acts as a temporal floor — no record older than the latest squash can exist.
     try {
-      await this.enforceSquashBackstop(tenant, message);
+      await this.enforceSquashBackstop(tenant, message, validationMode);
     } catch (e) {
       return messageReplyFromError(e, 409);
     }
@@ -389,19 +386,27 @@ export class RecordsWriteHandler implements MethodHandler {
    *
    * This check only applies to protocol-based records at `$squash: true` paths.
    */
-  private async enforceSquashBackstop(tenant: string, message: RecordsWriteMessage): Promise<void> {
+  private async enforceSquashBackstop(tenant: string, message: RecordsWriteMessage, validationMode: ValidationMode): Promise<void> {
     // Only applies to protocol-based records
     if (message.descriptor.protocol === undefined || message.descriptor.protocolPath === undefined) {
       return;
     }
 
-    // Fetch the protocol definition to check if $squash is enabled at this path.
+    // Fetch the historically governing protocol definition to check if $squash is enabled at this path.
     // The reader resolves core protocols (e.g. permissions) from the registry.
+    const governingTimestamp = await this.deps.validationStateReader.getGoverningTimestamp({
+      tenant,
+      recordId         : message.recordId,
+      messageTimestamp : message.descriptor.messageTimestamp,
+      validationMode,
+    });
+
     let protocolDefinition;
     try {
       protocolDefinition = await this.deps.validationStateReader.fetchProtocolDefinition(
         tenant,
         message.descriptor.protocol,
+        governingTimestamp,
       );
     } catch (error) {
       // If the protocol definition can't be found, skip the backstop check.
@@ -421,35 +426,18 @@ export class RecordsWriteHandler implements MethodHandler {
       return;
     }
 
-    // Find the most recent squash record at the same protocol path and parent context
-    const filter: Filter = {
-      interface         : DwnInterfaceName.Records,
-      method            : DwnMethodName.Write,
-      isLatestBaseState : true,
-      protocol          : message.descriptor.protocol,
-      protocolPath      : message.descriptor.protocolPath,
-      squash            : true,
-    };
-
-    // Scope by parent context for nested records
     const parentContextId = Records.getParentContextFromOfContextId(message.contextId);
-    if (parentContextId !== undefined && parentContextId !== '') {
-      const prefixFilter = FilterUtility.constructPrefixFilterAsRangeFilter(parentContextId);
-      filter.contextId = prefixFilter;
-    }
-
-    const { messages: squashMessages } = await this.deps.messageStore.query(
+    const contextIdPrefix = parentContextId !== undefined && parentContextId !== '' ? parentContextId : undefined;
+    const newestSquash = await this.deps.validationStateReader.fetchLatestSquashRecordAtScope({
       tenant,
-      [filter],
-      { messageTimestamp: SortDirection.Descending },
-      { limit: 1 },
-    );
+      protocol     : message.descriptor.protocol,
+      protocolPath : message.descriptor.protocolPath,
+      contextIdPrefix,
+    });
 
-    if (squashMessages.length === 0) {
+    if (newestSquash === undefined) {
       return;
     }
-
-    const newestSquash = squashMessages[0] as RecordsWriteMessage;
 
     // Reject if the incoming message's timestamp is <= the squash record's timestamp
     if (message.descriptor.messageTimestamp <= newestSquash.descriptor.messageTimestamp) {
@@ -472,11 +460,11 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     if (recordsWrite.isSignedByAuthorDelegate) {
-      await recordsWrite.authorizeAuthorDelegate(this.deps.messageStore);
+      await recordsWrite.authorizeAuthorDelegate(this.deps.validationStateReader);
     }
 
     if (recordsWrite.isSignedByOwnerDelegate) {
-      await recordsWrite.authorizeOwnerDelegate(this.deps.messageStore);
+      await recordsWrite.authorizeOwnerDelegate(this.deps.validationStateReader);
     }
 
     if (recordsWrite.owner !== undefined) {
@@ -490,11 +478,11 @@ export class RecordsWriteHandler implements MethodHandler {
       const permissionGrantId = Message.getPermissionGrantId(recordsWrite.signaturePayload!)!;
       const permissionGrant = await this.deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
       await RecordsGrantAuthorization.authorizeWrite({
-        recordsWriteMessage : recordsWrite.message,
-        expectedGrantor     : tenant,
-        expectedGrantee     : recordsWrite.author,
+        recordsWriteMessage   : recordsWrite.message,
+        expectedGrantor       : tenant,
+        expectedGrantee       : recordsWrite.author,
         permissionGrant,
-        messageStore        : this.deps.messageStore
+        validationStateReader : this.deps.validationStateReader
       });
     } else {
       await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, this.deps.validationStateReader, validationMode);

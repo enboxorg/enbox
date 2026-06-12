@@ -353,18 +353,18 @@ export class RecordsSubscribeHandler implements MethodHandler {
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsSubscribe.message)) {
-      await recordsSubscribe.authorizeDelegate(deps.messageStore);
+      await recordsSubscribe.authorizeDelegate(deps.validationStateReader);
     }
 
     const permissionGrantId = Message.getPermissionGrantId(recordsSubscribe.signaturePayload!);
     if (permissionGrantId !== undefined) {
       const permissionGrant = await deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
       await RecordsGrantAuthorization.authorizeQueryOrSubscribe({
-        incomingMessage : recordsSubscribe.message,
-        expectedGrantor : tenant,
-        expectedGrantee : recordsSubscribe.author!,
+        incomingMessage       : recordsSubscribe.message,
+        expectedGrantor       : tenant,
+        expectedGrantee       : recordsSubscribe.author!,
         permissionGrant,
-        messageStore    : deps.messageStore,
+        validationStateReader : deps.validationStateReader,
       });
       return;
     }

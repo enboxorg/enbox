@@ -388,11 +388,11 @@ export class MessagesSyncHandler implements MethodHandler {
     if (messagesSync.author !== undefined && permissionGrantIds.length > 0) {
       const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, deps.validationStateReader, permissionGrantIds);
       await MessagesGrantAuthorization.authorizeSubscribeOrSync({
-        incomingMessage : messagesSync.message,
-        expectedGrantor : tenant,
-        expectedGrantee : messagesSync.author,
+        incomingMessage       : messagesSync.message,
+        expectedGrantor       : tenant,
+        expectedGrantee       : messagesSync.author,
         permissionGrants,
-        messageStore    : deps.messageStore
+        validationStateReader : deps.validationStateReader
       });
       return;
     }

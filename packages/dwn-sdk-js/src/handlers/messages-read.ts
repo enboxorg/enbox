@@ -94,7 +94,6 @@ export class MessagesReadHandler implements MethodHandler {
         expectedGrantor       : tenant,
         expectedGrantee       : messagesRead.author,
         permissionGrants,
-        messageStore          : deps.messageStore,
         validationStateReader : deps.validationStateReader
       });
     } else {

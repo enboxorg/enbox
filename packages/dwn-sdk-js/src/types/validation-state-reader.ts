@@ -1,3 +1,4 @@
+import type { GenericMessage } from './message-types.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { ProtocolDefinition } from './protocols-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
@@ -112,6 +113,21 @@ export interface ValidationStateReader {
   fetchGrant(tenant: string, permissionGrantId: string): Promise<PermissionGrant>;
 
   /**
+   * Read-set row 5: fetches the oldest latest-state revocation record for the given permission
+   * grant, if any. Grant activity checks compare the oldest revocation timestamp to the incoming
+   * message timestamp.
+   */
+  fetchOldestGrantRevocation(tenant: string, permissionGrantId: string): Promise<GenericMessage | undefined>;
+
+  /**
+   * Read-set row 2: fetches the newest `RecordsWrite` associated with a record, used to authorize
+   * `Messages.Read` access to `RecordsDelete` messages by projecting the delete back to the
+   * deleted record's protocol scope.
+   * @throws {DwnError} with `RecordsWriteGetNewestWriteRecordNotFound` when no write exists.
+   */
+  fetchNewestRecordsWrite(tenant: string, recordId: string): Promise<RecordsWriteMessage>;
+
+  /**
    * Read-set row 6: determines the timestamp that selects the governing protocol definition for
    * the given `RecordsWrite`.
    *
@@ -152,6 +168,17 @@ export interface ValidationStateReader {
     protocolPath: string;
     contextIdPrefix?: string;
   }): Promise<number>;
+
+  /**
+   * Read-set row 9: fetches the latest `$squash: true` record at a protocol path within the parent
+   * context. This is the temporal floor used by the squash backstop.
+   */
+  fetchLatestSquashRecordAtScope(input: {
+    tenant: string;
+    protocol: string;
+    protocolPath: string;
+    contextIdPrefix?: string;
+  }): Promise<RecordsWriteMessage | undefined>;
 
   /**
    * Read-set row 8: checks whether the data with the given CID is present in the `DataStore` for

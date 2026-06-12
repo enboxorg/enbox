@@ -1,5 +1,5 @@
 import type { MessageSigner } from '../types/signer.js';
-import type { MessageStore } from '../types/message-store.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { DataEncodedRecordsWriteMessage, RecordsCountDescriptor, RecordsCountMessage, RecordsFilter } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -98,16 +98,16 @@ export class RecordsCount extends AbstractMessage<RecordsCountMessage> {
 
   /**
    * Authorizes the delegate who signed the message.
-   * @param messageStore Used to check if the grant has been revoked.
+   * @param validationStateReader Used to check if the grant has been revoked.
    */
-  public async authorizeDelegate(messageStore: MessageStore): Promise<void> {
+  public async authorizeDelegate(validationStateReader: ValidationStateReader): Promise<void> {
     const delegatedGrant = PermissionGrant.parse(this.message.authorization!.authorDelegatedGrant!);
     await RecordsGrantAuthorization.authorizeQueryOrSubscribe({
       incomingMessage : this.message,
       expectedGrantor : this.author!,
       expectedGrantee : this.signer!,
       permissionGrant : delegatedGrant,
-      messageStore
+      validationStateReader
     });
   }
 }

@@ -12,6 +12,7 @@ import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
 import { DwnConstant } from '../../src/core/dwn-constant.js';
 import { Jws } from '../../src/utils/jws.js';
+import { Message } from '../../src/core/message.js';
 import { RecordingValidationStateReader as RecordingReader } from '../../src/core/recording-validation-state-reader.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
@@ -31,17 +32,20 @@ import { readFileSync, writeFileSync } from 'node:fs';
  * writing its row (compaction risk and strategy) first, and adding it to this map.
  */
 const READ_SET_TABLE_ROW_BY_METHOD: Record<string, number> = {
-  fetchInitialRecordsWrite  : 1,
-  fetchInitialWrite         : 1,
-  constructRecordChain      : 1,
-  fetchParentRecord         : 3,
-  hasMatchingRoleRecord     : 4,
-  queryLatestRoleRecords    : 4,
-  fetchGrant                : 5,
-  getGoverningTimestamp     : 6,
-  fetchProtocolDefinition   : 6,
-  countLatestRecordsAtScope : 7,
-  hasStoredData             : 8,
+  fetchInitialRecordsWrite       : 1,
+  fetchInitialWrite              : 1,
+  constructRecordChain           : 1,
+  fetchParentRecord              : 3,
+  hasMatchingRoleRecord          : 4,
+  queryLatestRoleRecords         : 4,
+  fetchGrant                     : 5,
+  fetchOldestGrantRevocation     : 5,
+  fetchNewestRecordsWrite        : 2,
+  getGoverningTimestamp          : 6,
+  fetchProtocolDefinition        : 6,
+  countLatestRecordsAtScope      : 7,
+  fetchLatestSquashRecordAtScope : 9,
+  hasStoredData                  : 8,
 };
 
 const TRACE_ARTIFACT_PATH = new URL('./validation-read-trace.json', import.meta.url).pathname;
@@ -206,6 +210,50 @@ describe('validation read closure', () => {
       snapshot('live: grant-authorized write');
     }
 
+    // ---- scenario: live Messages.Read of a RecordsDelete with a protocol grant ----
+    {
+      await clearStores();
+      recorder.clearRecordedReads();
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const definition = freeForAllProtocolDefinition as ProtocolDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
+
+      const { message: recordMessage, dataStream: recordDataStream } = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : definition.protocol,
+        protocolPath : 'post',
+        schema       : definition.types.post.schema,
+        dataFormat   : definition.types.post.dataFormats![0],
+      });
+      expect((await dwn.processMessage(alice.did, recordMessage, { dataStream: recordDataStream })).status.code).toBe(202);
+
+      const { message: deleteMessage } = await TestDataGenerator.generateRecordsDelete({ author: alice, recordId: recordMessage.recordId });
+      expect((await dwn.processMessage(alice.did, deleteMessage)).status.code).toBe(202);
+
+      const { dataStream: grantDataStream, recordsWrite: grantWrite } = await TestDataGenerator.generateGrantCreate({
+        author    : alice,
+        grantedTo : bob,
+        scope     : {
+          interface : DwnInterfaceName.Messages,
+          method    : DwnMethodName.Read,
+          protocol  : definition.protocol,
+        },
+      });
+      expect((await dwn.processMessage(alice.did, grantWrite.message, { dataStream: grantDataStream })).status.code).toBe(202);
+      recorder.clearRecordedReads(); // trace the grant-authorized Messages.Read only
+
+      const { message: messagesReadMessage } = await TestDataGenerator.generateMessagesRead({
+        author             : bob,
+        messageCid         : await Message.getCid(deleteMessage),
+        permissionGrantIds : [grantWrite.message.recordId],
+      });
+      expect((await dwn.processMessage(alice.did, messagesReadMessage)).status.code).toBe(200);
+
+      snapshot('live: messages-read of deleted record with grant');
+    }
+
     // ---- scenario: live record-limit rejection ----
     {
       await clearStores();
@@ -231,6 +279,34 @@ describe('validation read closure', () => {
       expect((await dwn.processMessage(alice.did, secondMessage, { dataStream: secondDataStream })).status.code).toBe(400);
 
       snapshot('live: record-limit rejection');
+    }
+
+    // ---- scenario: live squash backstop ----
+    {
+      await clearStores();
+      recorder.clearRecordedReads();
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const definition: ProtocolDefinition = {
+        protocol  : 'http://squash-closure.xyz',
+        published : false,
+        types     : { patch: { schema: 'patch', dataFormats: ['text/plain'] } },
+        structure : { patch: { $squash: true } },
+      };
+      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
+      recorder.clearRecordedReads(); // trace the squash write admission only
+
+      const { message: squashMessage, dataStream: squashDataStream } = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : definition.protocol,
+        protocolPath : 'patch',
+        schema       : 'patch',
+        dataFormat   : 'text/plain',
+        squash       : true,
+      });
+      expect((await dwn.processMessage(alice.did, squashMessage, { dataStream: squashDataStream })).status.code).toBe(202);
+
+      snapshot('live: squash backstop');
     }
 
     // ---- scenario: live dataless update of an above-threshold record ----

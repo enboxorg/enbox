@@ -15,11 +15,22 @@
   ],
   "live: grant-authorized write": [
     "fetchGrant",
+    "fetchOldestGrantRevocation",
     "fetchProtocolDefinition",
     "getGoverningTimestamp [live]"
   ],
+  "live: messages-read of deleted record with grant": [
+    "fetchGrant",
+    "fetchNewestRecordsWrite",
+    "fetchOldestGrantRevocation"
+  ],
   "live: record-limit rejection": [
     "countLatestRecordsAtScope",
+    "fetchProtocolDefinition",
+    "getGoverningTimestamp [live]"
+  ],
+  "live: squash backstop": [
+    "fetchLatestSquashRecordAtScope",
     "fetchProtocolDefinition",
     "getGoverningTimestamp [live]"
   ],

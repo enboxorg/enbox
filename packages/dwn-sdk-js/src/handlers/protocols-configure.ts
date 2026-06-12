@@ -161,7 +161,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
   private static async authorizeProtocolsConfigure(tenant: string, protocolConfigure: ProtocolsConfigure, deps: HandlerDependencies): Promise<void> {
 
     if (protocolConfigure.isSignedByAuthorDelegate) {
-      await protocolConfigure.authorizeAuthorDelegate(deps.messageStore);
+      await protocolConfigure.authorizeAuthorDelegate(deps.validationStateReader);
     }
 
     if (protocolConfigure.author === tenant) {
@@ -174,7 +174,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
         expectedGrantor           : tenant,
         expectedGrantee           : protocolConfigure.author,
         permissionGrant,
-        messageStore              : deps.messageStore
+        validationStateReader     : deps.validationStateReader
       });
     } else {
       throw new DwnError(DwnErrorCode.ProtocolsConfigureAuthorizationFailed, 'message failed authorization');
