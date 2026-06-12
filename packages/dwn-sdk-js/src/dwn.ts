@@ -36,6 +36,7 @@ import type {
   RecordsWriteMessageOptions
 } from './types/records-types.js';
 import type { ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
+import type { ValidationMode, ValidationStateReader } from './types/validation-state-reader.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
 import { Cid } from './utils/cid.js';
@@ -48,7 +49,6 @@ import { MessagesReadHandler } from './handlers/messages-read.js';
 import { MessagesSubscribeHandler } from './handlers/messages-subscribe.js';
 import { MessagesSyncHandler } from './handlers/messages-sync.js';
 import { PermissionsProtocol } from './protocols/permissions.js';
-import { ProtocolAuthorization } from './core/protocol-authorization.js';
 import { ProtocolsConfigure } from './interfaces/protocols-configure.js';
 import { ProtocolsConfigureHandler } from './handlers/protocols-configure.js';
 import { ProtocolsQueryHandler } from './handlers/protocols-query.js';
@@ -63,6 +63,7 @@ import { RecordsWrite } from './interfaces/records-write.js';
 import { RecordsWriteHandler } from './handlers/records-write.js';
 import { ResumableTaskManager } from './core/resumable-task-manager.js';
 import { StorageController } from './store/storage-controller.js';
+import { StoreValidationStateReader } from './core/validation-state-reader.js';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from './core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
@@ -92,6 +93,7 @@ export class Dwn {
   private readonly storageController: StorageController;
   private readonly resumableTaskManager: ResumableTaskManager;
   private readonly _coreProtocols: CoreProtocolRegistry;
+  private readonly validationStateReader: ValidationStateReader;
 
   /** Whether the DWN owns the resolver's lifecycle (i.e., created it via defaults). */
   private readonly ownsResolver: boolean;
@@ -122,16 +124,25 @@ export class Dwn {
     this._coreProtocols = new CoreProtocolRegistry();
     this._coreProtocols.register(new PermissionsProtocol());
 
+    // The single narrow surface through which validation logic reads state (replay-basis closure).
+    const validationStateReader = new StoreValidationStateReader({
+      messageStore  : this.messageStore,
+      dataStore     : this.dataStore,
+      coreProtocols : this._coreProtocols,
+    });
+    this.validationStateReader = config.instrumentValidationStateReader?.(validationStateReader) ?? validationStateReader;
+
     // Build the shared dependency bag once; every handler receives the same object
     // and accesses only the dependencies it needs.
     const deps: HandlerDependencies = {
-      didResolver          : this.didResolver,
-      messageStore         : this.messageStore,
-      dataStore            : this.dataStore,
-      stateIndex           : this.stateIndex,
-      resumableTaskManager : this.resumableTaskManager,
-      coreProtocols        : this._coreProtocols,
-      eventLog             : this.eventLog,
+      didResolver           : this.didResolver,
+      messageStore          : this.messageStore,
+      validationStateReader : this.validationStateReader,
+      dataStore             : this.dataStore,
+      stateIndex            : this.stateIndex,
+      resumableTaskManager  : this.resumableTaskManager,
+      coreProtocols         : this._coreProtocols,
+      eventLog              : this.eventLog,
     };
 
     this.methodHandlers = {
@@ -246,6 +257,20 @@ export class Dwn {
   public async processMessage(tenant: string, rawMessage: RecordsWriteMessage, options?: RecordsWriteMessageOptions): Promise<GenericMessageReply>;
   public async processMessage(tenant: string, rawMessage: unknown, options?: MessageOptions): Promise<UnionMessageReply>;
   public async processMessage(tenant: string, rawMessage: GenericMessage, options: MessageOptions = {}): Promise<UnionMessageReply> {
+    return this.processMessageWithMode(tenant, rawMessage, options, 'live');
+  }
+
+  /**
+   * Validates and dispatches the given message to its method handler under the given validation
+   * mode. The mode is threaded per call: `processMessage()` passes `'live'`,
+   * `applyReplicatedMessage()` passes `'replicated'`.
+   */
+  private async processMessageWithMode(
+    tenant: string,
+    rawMessage: GenericMessage,
+    options: MessageOptions,
+    validationMode: ValidationMode,
+  ): Promise<UnionMessageReply> {
     const errorMessageReply = await this.validateTenant(tenant) ?? await this.validateMessageIntegrity(rawMessage);
     if (errorMessageReply !== undefined) {
       return errorMessageReply;
@@ -258,7 +283,8 @@ export class Dwn {
       tenant,
       message: rawMessage,
       dataStream,
-      subscriptionHandler
+      subscriptionHandler,
+      validationMode
     });
 
     return methodHandlerReply;
@@ -290,7 +316,7 @@ export class Dwn {
       return { kind: 'Duplicate' };
     }
 
-    const reply = await this.processMessage(tenant, rawMessage, options);
+    const reply = await this.processMessageWithMode(tenant, rawMessage, options, 'replicated');
     const replicatedWriteBeatenByDeleteResult = await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply, options);
     if (replicatedWriteBeatenByDeleteResult !== undefined) {
       return replicatedWriteBeatenByDeleteResult;
@@ -313,7 +339,7 @@ export class Dwn {
     reply: { status: { detail?: string } },
   ): Promise<string[] | undefined> {
     try {
-      return await missingAncestorRecordIdsFromReply(tenant, message, reply, this.messageStore);
+      return await missingAncestorRecordIdsFromReply(tenant, message, reply, this.validationStateReader);
     } catch {
       return undefined;
     }
@@ -394,7 +420,7 @@ export class Dwn {
       : this._coreProtocols.get(message.descriptor.protocol);
 
     if (coreProtocol?.preProcessWrite !== undefined) {
-      await coreProtocol.preProcessWrite(tenant, message, this.messageStore);
+      await coreProtocol.preProcessWrite(tenant, message, this.validationStateReader);
     }
 
     if (options.dataStream !== undefined) {
@@ -496,12 +522,10 @@ export class Dwn {
     }
 
     try {
-      return await ProtocolAuthorization.fetchProtocolDefinition(
+      return await this.validationStateReader.fetchProtocolDefinition(
         tenant,
         protocol,
-        this.messageStore,
         message.descriptor.messageTimestamp,
-        this._coreProtocols,
       );
     } catch {
       return undefined;
@@ -823,6 +847,13 @@ export type DwnConfig = {
    * Optional — if not provided, subscriptions will not be supported.
    */
   eventLog?: EventLog;
+
+  /**
+   * Instrumentation seam: wraps the internally constructed `ValidationStateReader` before it is
+   * handed to the handlers (e.g. with a `RecordingValidationStateReader`). Used by the
+   * replay-basis closure tests and harnesses to record every validation-time state read.
+   */
+  instrumentValidationStateReader?: (validationStateReader: ValidationStateReader) => ValidationStateReader;
 
   messageStore: MessageStore;
   dataStore: DataStore;

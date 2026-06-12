@@ -1,14 +1,14 @@
 import type { Filter } from '../types/query-types.js';
-import type { GenericMessage } from '../types/message-types.js';
 import type { MessagesFilter } from '../types/messages-types.js';
 import type { MessageSigner } from '../types/signer.js';
-import type { MessageStore } from '../types/message-store.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { CoreProtocol, CoreProtocolStores } from '../core/core-protocol.js';
 import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
 import type { PermissionConditions, PermissionGrantData, PermissionRequestData, PermissionRevocationData, PermissionScope, RecordsPermissionScope } from '../types/permission-types.js';
 
 import { DwnConstant } from '../core/dwn-constant.js';
+import { DwnMethodName } from '../enums/dwn-interface-method.js';
 import { Encoder } from '../utils/encoder.js';
 import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
@@ -20,7 +20,6 @@ import { RecordsWrite } from '../interfaces/records-write.js';
 import { Time } from '../utils/time.js';
 import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
-import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { normalizeProtocolUrl, validateProtocolUrlNormalized } from '../utils/url.js';
 
 /**
@@ -203,7 +202,7 @@ export class PermissionsProtocol implements CoreProtocol {
   public async preProcessWrite(
     tenant: string,
     message: RecordsWriteMessage,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   ): Promise<void> {
     if (message.descriptor.protocolPath !== PermissionsProtocol.revocationPath) {
       return;
@@ -211,7 +210,7 @@ export class PermissionsProtocol implements CoreProtocol {
 
     // fetch the parent grant to compare the scoped protocol against the revocation tag
     const permissionGrantId = message.descriptor.parentId!;
-    const grant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+    const grant = await validationStateReader.fetchGrant(tenant, permissionGrantId);
 
     const revokeTagProtocol = message.descriptor.tags?.protocol;
     const grantProtocol = 'protocol' in grant.scope ? grant.scope.protocol : undefined;
@@ -540,50 +539,14 @@ export class PermissionsProtocol implements CoreProtocol {
 
 
   /**
-   * Fetches PermissionGrant with the specified `recordID`.
-   * @returns the PermissionGrant matching the `recordId` specified.
-   * @throws {Error} if PermissionGrant does not exist
-   */
-  public static async fetchGrant(
-    tenant: string,
-    messageStore: MessageStore,
-    permissionGrantId: string,
-  ): Promise<PermissionGrant> {
-
-    const grantQuery = {
-      recordId          : permissionGrantId,
-      isLatestBaseState : true
-    };
-    const { messages } = await messageStore.query(tenant, [grantQuery]);
-    const possibleGrantMessage: GenericMessage | undefined = messages[0];
-
-    const dwnInterface = possibleGrantMessage?.descriptor.interface;
-    const dwnMethod = possibleGrantMessage?.descriptor.method;
-
-    if (dwnInterface !== DwnInterfaceName.Records ||
-        dwnMethod !== DwnMethodName.Write ||
-        (possibleGrantMessage as RecordsWriteMessage).descriptor.protocolPath !== PermissionsProtocol.grantPath) {
-      throw new DwnError(
-        DwnErrorCode.GrantAuthorizationGrantMissing,
-        `Could not find permission grant with record ID ${permissionGrantId}.`
-      );
-    }
-
-    const permissionGrantMessage = possibleGrantMessage as DataEncodedRecordsWriteMessage;
-    const permissionGrant = PermissionGrant.parse(permissionGrantMessage);
-
-    return permissionGrant;
-  }
-
-  /**
    * Gets the scope from the given permission record.
    * If the record is a revocation, the scope is fetched from the grant that is being revoked.
    *
-   * @param messageStore The message store to fetch the grant for a revocation.
+   * @param validationStateReader Used to fetch the grant for a revocation.
    */
   public static async getScopeFromPermissionRecord(
     tenant: string,
-    messageStore:MessageStore,
+    validationStateReader: ValidationStateReader,
     incomingMessage: DataEncodedRecordsWriteMessage,
   ): Promise<PermissionScope> {
     if (incomingMessage.descriptor.protocol !== PermissionsProtocol.uri) {
@@ -594,7 +557,7 @@ export class PermissionsProtocol implements CoreProtocol {
     }
 
     if (incomingMessage.descriptor.protocolPath === PermissionsProtocol.revocationPath) {
-      const grant = await PermissionsProtocol.fetchGrant(tenant, messageStore, incomingMessage.descriptor.parentId!);
+      const grant = await validationStateReader.fetchGrant(tenant, incomingMessage.descriptor.parentId!);
       return grant.scope;
     } else if (incomingMessage.descriptor.protocolPath === PermissionsProtocol.grantPath) {
       const grant = PermissionGrant.parse(incomingMessage);

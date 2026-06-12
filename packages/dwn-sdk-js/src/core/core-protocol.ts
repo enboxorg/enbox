@@ -6,6 +6,7 @@ import type { ProtocolDefinition } from '../types/protocols-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { StateIndex } from '../types/state-index.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 
 /**
  * Bundled store references passed to core protocol post-processing hooks.
@@ -41,12 +42,13 @@ export interface CoreProtocol {
   /**
    * Pre-processing hook: runs before storing a record under this protocol.
    * Can perform cross-record validation (e.g., revocation tag consistency checks).
+   * State reads are validation-time reads and must route through the `ValidationStateReader`.
    * @throws DwnError to reject the write.
    */
   preProcessWrite?(
     tenant: string,
     message: RecordsWriteMessage,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   ): Promise<void>;
 
   /**

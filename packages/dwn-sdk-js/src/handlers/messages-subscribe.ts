@@ -57,7 +57,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
     let authorization: MessagesSubscribeAuthorization;
     try {
       await authenticate(message.authorization, this.deps.didResolver);
-      authorization = await MessagesSubscribeHandler.authorizeMessagesSubscribe(tenant, messagesSubscribe, this.deps.messageStore);
+      authorization = await MessagesSubscribeHandler.authorizeMessagesSubscribe(tenant, messagesSubscribe, this.deps);
     } catch (error) {
       return messageReplyFromError(error, 401);
     }
@@ -99,7 +99,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
   private static async authorizeMessagesSubscribe(
     tenant: string,
     messagesSubscribe: MessagesSubscribe,
-    messageStore: MessageStore
+    deps: HandlerDependencies
   ): Promise<MessagesSubscribeAuthorization> {
     // if `MessagesSubscribe` author is the same as the target tenant, we can directly grant access
     if (messagesSubscribe.author === tenant) {
@@ -108,13 +108,13 @@ export class MessagesSubscribeHandler implements MethodHandler {
 
     const permissionGrantIds = Message.getPermissionGrantIds(messagesSubscribe.signaturePayload!);
     if (messagesSubscribe.author !== undefined && permissionGrantIds.length > 0) {
-      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, messageStore, permissionGrantIds);
+      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, deps.validationStateReader, permissionGrantIds);
       await MessagesGrantAuthorization.authorizeSubscribeOrSync({
         incomingMessage : messagesSubscribe.message,
         expectedGrantor : tenant,
         expectedGrantee : messagesSubscribe.author,
         permissionGrants,
-        messageStore
+        messageStore    : deps.messageStore
       });
       return {
         kind            : 'delegate',

@@ -1,0 +1,53 @@
+{
+  "live: protocol record lifecycle": [
+    "fetchInitialRecordsWrite",
+    "fetchParentRecord [live]",
+    "fetchProtocolDefinition",
+    "getGoverningTimestamp [live]"
+  ],
+  "live: role-authorized write": [
+    "constructRecordChain",
+    "fetchInitialWrite",
+    "fetchProtocolDefinition",
+    "getGoverningTimestamp [live]",
+    "hasMatchingRoleRecord [live]",
+    "queryLatestRoleRecords"
+  ],
+  "live: grant-authorized write": [
+    "fetchGrant",
+    "fetchProtocolDefinition",
+    "getGoverningTimestamp [live]"
+  ],
+  "live: record-limit rejection": [
+    "countLatestRecordsAtScope",
+    "fetchProtocolDefinition",
+    "getGoverningTimestamp [live]"
+  ],
+  "live: dataless update of above-threshold record": [
+    "fetchProtocolDefinition",
+    "getGoverningTimestamp [live]",
+    "hasStoredData"
+  ],
+  "replicated: child under dataless parent": [
+    "fetchParentRecord [replicated]",
+    "fetchProtocolDefinition",
+    "getGoverningTimestamp [replicated]"
+  ],
+  "replicated: role-invoking write under dataless role record": [
+    "constructRecordChain",
+    "fetchInitialWrite",
+    "fetchProtocolDefinition",
+    "getGoverningTimestamp [replicated]",
+    "hasMatchingRoleRecord [replicated]",
+    "queryLatestRoleRecords"
+  ],
+  "replicated: initial write under superseded config": [
+    "fetchProtocolDefinition",
+    "getGoverningTimestamp [replicated]"
+  ],
+  "replicated: same-CID completion of dataless stub": [
+    "fetchProtocolDefinition",
+    "getGoverningTimestamp [replicated]",
+    "hasStoredData"
+  ]
+}

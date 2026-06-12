@@ -49,6 +49,8 @@ import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
 
+import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+
 export function testRecordsWriteHandler(): void {
   describe('RecordsWriteHandler.handle()', () => {
     let didResolver: DidResolver;
@@ -3128,7 +3130,8 @@ export function testRecordsWriteHandler(): void {
         message.encryption!.iv = Encoder.stringToBase64Url('any value which will result in a different CID');
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
@@ -4510,7 +4513,13 @@ export function testRecordsWriteHandler(): void {
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver,
+          messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub,
+          stateIndex,
+          coreProtocols         : new CoreProtocolRegistry(),
+          eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
@@ -4536,7 +4545,13 @@ export function testRecordsWriteHandler(): void {
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver,
+          messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub,
+          stateIndex,
+          coreProtocols         : new CoreProtocolRegistry(),
+          eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
@@ -4560,7 +4575,13 @@ export function testRecordsWriteHandler(): void {
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver,
+          messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub,
+          stateIndex,
+          coreProtocols         : new CoreProtocolRegistry(),
+          eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
@@ -4581,7 +4602,13 @@ export function testRecordsWriteHandler(): void {
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver,
+          messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub,
+          stateIndex,
+          coreProtocols         : new CoreProtocolRegistry(),
+          eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
 
         const tenant = await (await TestDataGenerator.generatePersona()).did; // unauthorized tenant
@@ -4616,7 +4643,13 @@ export function testRecordsWriteHandler(): void {
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver,
+          messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub,
+          stateIndex,
+          coreProtocols         : new CoreProtocolRegistry(),
+          eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
@@ -4630,7 +4663,8 @@ export function testRecordsWriteHandler(): void {
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [alice, bob] });
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
@@ -4647,7 +4681,8 @@ export function testRecordsWriteHandler(): void {
         message.attestation = anotherWrite.message.attestation;
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
@@ -4666,7 +4701,8 @@ export function testRecordsWriteHandler(): void {
         message.attestation = attestationNotReferencedByAuthorization;
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
@@ -4694,8 +4730,9 @@ export function testRecordsWriteHandler(): void {
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver   : didResolverStub, messageStore  : messageStoreStub,
-          dataStore     : dataStoreStub, stateIndex, coreProtocols : new CoreProtocolRegistry(), eventLog,
+          didResolver           : didResolverStub, messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
 
         // stub the squash backstop so the stubbed messageStore (which returns RecordsWrite messages

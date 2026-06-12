@@ -1,3 +1,4 @@
+import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { getActionsSeekingARuleMatch } from '../../src/core/protocol-authorization-action.js';
 import { MessageStoreLevel } from '../../src/index.js';
@@ -24,8 +25,9 @@ describe('ProtocolAuthorization', () => {
       // stub the message store
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       messageStoreStub.query.resolves({ messages: [] }); // simulate parent not in message store
+      const validationStateReader = createTestValidationStateReader({ messageStore: messageStoreStub });
 
-      await expect(ProtocolAuthorization.authorizeWrite(alice.did, recordsWrite, messageStoreStub)).rejects.toThrow(
+      await expect(ProtocolAuthorization.authorizeWrite(alice.did, recordsWrite, validationStateReader, 'live')).rejects.toThrow(
         DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain
       );
     });
@@ -44,7 +46,8 @@ describe('ProtocolAuthorization', () => {
       } as any;
 
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
-      expect(await getActionsSeekingARuleMatch(alice.did, deliberatelyCraftedInvalidMessage, messageStoreStub)).toHaveLength(0);
+      const validationStateReader = createTestValidationStateReader({ messageStore: messageStoreStub });
+      expect(await getActionsSeekingARuleMatch(alice.did, deliberatelyCraftedInvalidMessage, validationStateReader)).toHaveLength(0);
     });
   });
 });

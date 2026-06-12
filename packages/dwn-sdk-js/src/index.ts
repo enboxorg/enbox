@@ -4,6 +4,10 @@ export type { EventListener, EventLog, EventLogEntry, EventLogReadOptions, Event
 export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSort, MessageSubscription, Pagination, QueryResultEntry, Status } from './types/message-types.js';
 export type { DependencyRef, ReplicationApplyOptions, ReplicationApplyResult, ReplicationApplyResultContext } from './core/replication-apply.js';
 export { replicationApplyResultFromReply } from './core/replication-apply.js';
+export type { ValidationMode, ValidationStateReader } from './types/validation-state-reader.js';
+export { StoreValidationStateReader } from './core/validation-state-reader.js';
+export type { RecordedValidationRead } from './core/recording-validation-state-reader.js';
+export { RecordingValidationStateReader } from './core/recording-validation-state-reader.js';
 export type { MessagesFilter, MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessagesSubscribeMessageOptions, MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
 export type { GT, LT, Filter, FilterValue, KeyValues, EqualFilter, OneOfFilter, RangeFilter, RangeCriterion, PaginationCursor, QueryOptions, RangeValue, StartsWithFilter } from './types/query-types.js';
 export type { ProtocolsConfigureDescriptor, ProtocolDefinition, ProtocolTypes, ProtocolRuleSet, ProtocolsQueryFilter, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply, ProtocolActionRule, ProtocolDeliveryStrategy, ProtocolPathEncryption, ProtocolsQueryDescriptor, ProtocolRecordLimitDefinition, ProtocolSizeDefinition, ProtocolTagsDefinition, ProtocolTagSchema, ProtocolType, ProtocolUses } from './types/protocols-types.js';

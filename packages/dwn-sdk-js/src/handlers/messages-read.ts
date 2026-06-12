@@ -1,5 +1,4 @@
 import type { GenericMessage } from '../types/message-types.js';
-import type { MessageStore } from '../types/message-store.js';
 import type { RecordsQueryReplyEntry } from '../types/records-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry } from '../types/messages-types.js';
@@ -41,7 +40,7 @@ export class MessagesReadHandler implements MethodHandler {
     }
 
     try {
-      await MessagesReadHandler.authorizeMessagesRead(tenant, messagesRead, messageResult, this.deps.messageStore);
+      await MessagesReadHandler.authorizeMessagesRead(tenant, messagesRead, messageResult, this.deps);
     } catch (error) {
       return messageReplyFromError(error, 401);
     }
@@ -72,13 +71,13 @@ export class MessagesReadHandler implements MethodHandler {
   }
 
   /**
-   * @param messageStore Used to fetch related permission grant, permission revocation, and/or RecordsWrites for permission scope validation.
+   * @param deps Used to fetch related permission grant, permission revocation, and/or RecordsWrites for permission scope validation.
    */
   private static async authorizeMessagesRead(
     tenant: string,
     messagesRead: MessagesRead,
     matchedMessage: GenericMessage,
-    messageStore: MessageStore
+    deps: HandlerDependencies
   ): Promise<void> {
 
     if (messagesRead.author === tenant) {
@@ -88,14 +87,15 @@ export class MessagesReadHandler implements MethodHandler {
 
     const permissionGrantIds = Message.getPermissionGrantIds(messagesRead.signaturePayload!);
     if (messagesRead.author !== undefined && permissionGrantIds.length > 0) {
-      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, messageStore, permissionGrantIds);
+      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, deps.validationStateReader, permissionGrantIds);
       await MessagesGrantAuthorization.authorizeMessagesRead({
-        messagesReadMessage : messagesRead.message,
-        messageToRead       : matchedMessage,
-        expectedGrantor     : tenant,
-        expectedGrantee     : messagesRead.author,
+        messagesReadMessage   : messagesRead.message,
+        messageToRead         : matchedMessage,
+        expectedGrantor       : tenant,
+        expectedGrantee       : messagesRead.author,
         permissionGrants,
-        messageStore
+        messageStore          : deps.messageStore,
+        validationStateReader : deps.validationStateReader
       });
     } else {
       throw new DwnError(DwnErrorCode.MessagesReadAuthorizationFailed, 'protocol message failed authorization');

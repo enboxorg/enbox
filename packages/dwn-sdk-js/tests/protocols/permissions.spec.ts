@@ -1,8 +1,9 @@
-import type { MessageStore, ProtocolRuleSet } from '../../src/index.js';
+import type { MessageStore, ProtocolRuleSet, ValidationStateReader } from '../../src/index.js';
 
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
+import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
 import { Jws } from '../../src/utils/jws.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
@@ -10,6 +11,7 @@ import { DwnConstant, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Pe
 
 describe('PermissionsProtocol', () => {
   let messageStore: MessageStore;
+  let validationStateReader: ValidationStateReader;
 
   // important to follow the `beforeAll` and `afterAll` pattern to initialize and clean the stores in tests
   // so that different test suites can reuse the same backend store for testing
@@ -17,6 +19,7 @@ describe('PermissionsProtocol', () => {
 
     const stores = TestStores.get();
     messageStore = stores.messageStore;
+    validationStateReader = createTestValidationStateReader({ messageStore });
     await messageStore.open();
   });
 
@@ -98,7 +101,7 @@ describe('PermissionsProtocol', () => {
 
       const scope = await PermissionsProtocol.getScopeFromPermissionRecord(
         alice.did,
-        messageStore,
+        validationStateReader,
         permissionRequest.dataEncodedMessage
       );
 
@@ -124,7 +127,7 @@ describe('PermissionsProtocol', () => {
 
       const scope = await PermissionsProtocol.getScopeFromPermissionRecord(
         alice.did,
-        messageStore,
+        validationStateReader,
         grantMessage
       );
 
@@ -159,7 +162,7 @@ describe('PermissionsProtocol', () => {
 
       const scope = await PermissionsProtocol.getScopeFromPermissionRecord(
         alice.did,
-        messageStore,
+        validationStateReader,
         revocation.dataEncodedMessage
       );
 
@@ -191,7 +194,7 @@ describe('PermissionsProtocol', () => {
 
       await expect(PermissionsProtocol.getScopeFromPermissionRecord(
         alice.did,
-        messageStore,
+        validationStateReader,
         revocation.dataEncodedMessage
       )).rejects.toThrow(DwnErrorCode.GrantAuthorizationGrantMissing);
     });
@@ -205,7 +208,7 @@ describe('PermissionsProtocol', () => {
 
       await expect(PermissionsProtocol.getScopeFromPermissionRecord(
         recordsWriteMessage.author.did,
-        messageStore,
+        validationStateReader,
         dataEncodedMessage
       )).rejects.toThrow(DwnErrorCode.PermissionsProtocolGetScopeInvalidProtocol);
     });

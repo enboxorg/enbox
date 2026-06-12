@@ -37,6 +37,8 @@ import { DataStream, Dwn, Encoder, Jws, MessageStoreLevel, PermissionsProtocol, 
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 
+import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+
 export function testRecordsDeleteHandler(): void {
   describe('RecordsDeleteHandler.handle()', () => {
     let didResolver: DidResolver;
@@ -1237,7 +1239,8 @@ export function testRecordsDeleteHandler(): void {
       const resumableTaskManagerStub = sinon.createStubInstance(ResumableTaskManager);
 
       const recordsDeleteHandler = new RecordsDeleteHandler({
-        didResolver, messageStore: messageStoreStub, resumableTaskManager: resumableTaskManagerStub,
+        didResolver, messageStore          : messageStoreStub, resumableTaskManager  : resumableTaskManagerStub,
+        validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub }),
       });
       const reply = await recordsDeleteHandler.handle({ tenant, message });
       expect(reply.status.code).toBe(401);
@@ -1252,7 +1255,8 @@ export function testRecordsDeleteHandler(): void {
       const resumableTaskManagerStub = sinon.createStubInstance(ResumableTaskManager);
 
       const recordsDeleteHandler = new RecordsDeleteHandler({
-        didResolver, messageStore: messageStoreStub, resumableTaskManager: resumableTaskManagerStub,
+        didResolver, messageStore          : messageStoreStub, resumableTaskManager  : resumableTaskManagerStub,
+        validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub }),
       });
 
       // stub the `parse()` function to throw an error

@@ -28,7 +28,7 @@ export class ProtocolsQueryHandler implements MethodHandler {
     // authentication & authorization
     try {
       await authenticate(message.authorization, this.deps.didResolver);
-      await protocolsQuery.authorize(tenant, this.deps.messageStore);
+      await protocolsQuery.authorize(tenant, this.deps.messageStore, this.deps.validationStateReader);
     } catch (error: any) {
 
       // return public ProtocolsConfigures if query fails with a certain authentication or authorization code

@@ -1,6 +1,6 @@
 import type { Filter } from '../types/query-types.js';
 import type { GenericMessageReply } from '../types/message-types.js';
-import type { MessageStore } from '../types/message-store.js';
+import type { ValidationMode } from '../types/validation-state-reader.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
 
@@ -12,7 +12,6 @@ import { Encoder } from '../utils/encoder.js';
 import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
@@ -23,7 +22,7 @@ import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
-type HandlerArgs = { tenant: string, message: RecordsWriteMessage, dataStream?: ReadableStream<Uint8Array>};
+type HandlerArgs = { tenant: string, message: RecordsWriteMessage, dataStream?: ReadableStream<Uint8Array>, validationMode?: ValidationMode };
 
 export class RecordsWriteHandler implements MethodHandler {
 
@@ -32,7 +31,8 @@ export class RecordsWriteHandler implements MethodHandler {
   public async handle({
     tenant,
     message,
-    dataStream
+    dataStream,
+    validationMode = 'live'
   }: HandlerArgs): Promise<GenericMessageReply> {
     let recordsWrite: RecordsWrite;
     try {
@@ -75,7 +75,7 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     try {
-      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.deps.messageStore, this.deps.coreProtocols);
+      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.deps.validationStateReader, validationMode);
     } catch (e) {
       return messageReplyFromError(e, 400);
     }
@@ -83,7 +83,7 @@ export class RecordsWriteHandler implements MethodHandler {
     // authentication & authorization
     try {
       await authenticate(message.authorization, this.deps.didResolver, message.attestation);
-      await this.authorizeRecordsWrite(tenant, recordsWrite, this.deps.messageStore);
+      await this.authorizeRecordsWrite(tenant, recordsWrite, validationMode);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -165,7 +165,7 @@ export class RecordsWriteHandler implements MethodHandler {
       // This allows core protocols to perform cross-record validation before storage
       // (e.g. ensuring revocation tag consistency with the parent grant's scoped protocol).
       if (coreProtocol?.preProcessWrite !== undefined) {
-        await coreProtocol.preProcessWrite(tenant, message, this.deps.messageStore);
+        await coreProtocol.preProcessWrite(tenant, message, this.deps.validationStateReader);
       }
 
       // NOTE: We allow isLatestBaseState to be true ONLY if the incoming message comes with data, or if the incoming message is NOT an initial write
@@ -332,13 +332,11 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     const hasInlineData = !!(existingMessage as RecordsQueryReplyEntry).encodedData;
-    const hasStoredData = this.deps.dataStore
-      ? !!(await this.deps.dataStore.get(
-        tenant,
-        existingMessage.recordId,
-        incomingMessage.descriptor.dataCid,
-      ))
-      : false;
+    const hasStoredData = await this.deps.validationStateReader.hasStoredData(
+      tenant,
+      existingMessage.recordId,
+      incomingMessage.descriptor.dataCid,
+    );
 
     return !hasInlineData && !hasStoredData;
   }
@@ -371,9 +369,9 @@ export class RecordsWriteHandler implements MethodHandler {
       // else just make sure the data is in the data store
 
       // attempt to retrieve the data from the previous message
-      const DataStoreGetResult = await this.deps.dataStore!.get(tenant, newestExistingWrite.recordId, message.descriptor.dataCid);
+      const priorDataExists = await this.deps.validationStateReader.hasStoredData(tenant, newestExistingWrite.recordId, message.descriptor.dataCid);
 
-      if (DataStoreGetResult === undefined) {
+      if (!priorDataExists) {
         throw new DwnError(
           DwnErrorCode.RecordsWriteMissingDataInPrevious,
           `No dataStream was provided and unable to get data from previous message`
@@ -398,15 +396,12 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     // Fetch the protocol definition to check if $squash is enabled at this path.
-    // Pass coreProtocols so that core protocols (e.g. permissions) are resolved from the registry.
+    // The reader resolves core protocols (e.g. permissions) from the registry.
     let protocolDefinition;
     try {
-      protocolDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
+      protocolDefinition = await this.deps.validationStateReader.fetchProtocolDefinition(
         tenant,
         message.descriptor.protocol,
-        this.deps.messageStore,
-        undefined,
-        this.deps.coreProtocols,
       );
     } catch (error) {
       // If the protocol definition can't be found, skip the backstop check.
@@ -467,7 +462,7 @@ export class RecordsWriteHandler implements MethodHandler {
     }
   }
 
-  private async authorizeRecordsWrite(tenant: string, recordsWrite: RecordsWrite, messageStore: MessageStore): Promise<void> {
+  private async authorizeRecordsWrite(tenant: string, recordsWrite: RecordsWrite, validationMode: ValidationMode): Promise<void> {
     // if owner signature is given (`owner` is not `undefined`), it must be the same as the tenant DID
     if (recordsWrite.owner !== undefined && recordsWrite.owner !== tenant) {
       throw new DwnError(
@@ -477,11 +472,11 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     if (recordsWrite.isSignedByAuthorDelegate) {
-      await recordsWrite.authorizeAuthorDelegate(messageStore);
+      await recordsWrite.authorizeAuthorDelegate(this.deps.messageStore);
     }
 
     if (recordsWrite.isSignedByOwnerDelegate) {
-      await recordsWrite.authorizeOwnerDelegate(messageStore);
+      await recordsWrite.authorizeOwnerDelegate(this.deps.messageStore);
     }
 
     if (recordsWrite.owner !== undefined) {
@@ -493,16 +488,16 @@ export class RecordsWriteHandler implements MethodHandler {
       return;
     } else if (recordsWrite.author !== undefined && Message.getPermissionGrantId(recordsWrite.signaturePayload!) !== undefined) {
       const permissionGrantId = Message.getPermissionGrantId(recordsWrite.signaturePayload!)!;
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+      const permissionGrant = await this.deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
       await RecordsGrantAuthorization.authorizeWrite({
         recordsWriteMessage : recordsWrite.message,
         expectedGrantor     : tenant,
         expectedGrantee     : recordsWrite.author,
         permissionGrant,
-        messageStore
+        messageStore        : this.deps.messageStore
       });
     } else {
-      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, messageStore, this.deps.coreProtocols);
+      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, this.deps.validationStateReader, validationMode);
     }
   }
 }

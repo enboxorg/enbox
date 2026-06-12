@@ -7,7 +7,6 @@ import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage } f
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { ProtocolsConfigure } from '../interfaces/protocols-configure.js';
 import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorization.js';
@@ -54,7 +53,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     // authentication & authorization
     try {
       await authenticate(message.authorization, this.deps.didResolver);
-      await ProtocolsConfigureHandler.authorizeProtocolsConfigure(tenant, protocolsConfigure, this.deps.messageStore);
+      await ProtocolsConfigureHandler.authorizeProtocolsConfigure(tenant, protocolsConfigure, this.deps);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -159,23 +158,23 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     return indexes;
   }
 
-  private static async authorizeProtocolsConfigure(tenant: string, protocolConfigure: ProtocolsConfigure, messageStore: MessageStore): Promise<void> {
+  private static async authorizeProtocolsConfigure(tenant: string, protocolConfigure: ProtocolsConfigure, deps: HandlerDependencies): Promise<void> {
 
     if (protocolConfigure.isSignedByAuthorDelegate) {
-      await protocolConfigure.authorizeAuthorDelegate(messageStore);
+      await protocolConfigure.authorizeAuthorDelegate(deps.messageStore);
     }
 
     if (protocolConfigure.author === tenant) {
       return;
     } else if (protocolConfigure.author !== undefined && Message.getPermissionGrantId(protocolConfigure.signaturePayload!) !== undefined) {
       const permissionGrantId = Message.getPermissionGrantId(protocolConfigure.signaturePayload!)!;
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+      const permissionGrant = await deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
       await ProtocolsGrantAuthorization.authorizeConfigure({
         protocolsConfigureMessage : protocolConfigure.message,
         expectedGrantor           : tenant,
         expectedGrantee           : protocolConfigure.author,
         permissionGrant,
-        messageStore
+        messageStore              : deps.messageStore
       });
     } else {
       throw new DwnError(DwnErrorCode.ProtocolsConfigureAuthorizationFailed, 'message failed authorization');
@@ -241,7 +240,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       // Stored records were authenticated when admitted. Reconciliation should not make
       // record retention depend on fresh DID resolution availability or mutable dependency state.
       await ProtocolAuthorization.validateStoredInitialWrite(
-        tenant, recordsWrite, this.deps.messageStore, this.deps.coreProtocols
+        tenant, recordsWrite, this.deps.validationStateReader
       );
       return 'valid';
     } catch (error) {

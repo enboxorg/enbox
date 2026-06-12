@@ -30,6 +30,8 @@ import { DataStream, DateSort, Dwn, Jws, Protocols, ProtocolsConfigure, Protocol
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
 
+import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+
 export function testRecordsReadHandler(): void {
   describe('RecordsReadHandler.handle()', () => {
     let didResolver: DidResolver;
@@ -2166,7 +2168,8 @@ export function testRecordsReadHandler(): void {
       const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
       const recordsReadHandler = new RecordsReadHandler({
-        didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub,
+        didResolver, messageStore          : messageStoreStub, dataStore             : dataStoreStub,
+        validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
       });
       const reply = await recordsReadHandler.handle({ tenant: alice.did, message: recordsRead.message });
       expect(reply.status.code).toBe(401);
@@ -2186,7 +2189,8 @@ export function testRecordsReadHandler(): void {
       const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
       const recordsReadHandler = new RecordsReadHandler({
-        didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub,
+        didResolver, messageStore          : messageStoreStub, dataStore             : dataStoreStub,
+        validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
       });
 
       // stub the `parse()` function to throw an error
