@@ -461,6 +461,35 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   }
 
   /**
+   * Validates the expected `dataCid` and `dataSize` in the descriptor against the actual data.
+   *
+   * @throws {DwnError} with `DwnErrorCode.RecordsWriteDataCidMismatch`
+   *                    if the actual data CID does not match `dataCid` in the descriptor.
+   * @throws {DwnError} with `DwnErrorCode.RecordsWriteDataSizeMismatch`
+   *                    if the actual byte size does not match `dataSize` in the descriptor.
+   */
+  public static validateDataIntegrity(
+    expectedDataCid: string,
+    expectedDataSize: number,
+    actualDataCid: string,
+    actualDataSize: number
+  ): void {
+    if (expectedDataCid !== actualDataCid) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteDataCidMismatch,
+        `actual data CID ${actualDataCid} does not match dataCid in descriptor: ${expectedDataCid}`
+      );
+    }
+
+    if (expectedDataSize !== actualDataSize) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteDataSizeMismatch,
+        `actual data size ${actualDataSize} bytes does not match dataSize in descriptor: ${expectedDataSize}`
+      );
+    }
+  }
+
+  /**
    * Called by `JSON.stringify(...)` automatically.
    */
   toJSON(): RecordsWriteMessage {

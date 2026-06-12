@@ -1,3 +1,4 @@
+import type { CoreProtocol } from './core/core-protocol.js';
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
 import type { KeyValues } from './types/query-types.js';
@@ -25,6 +26,7 @@ import type {
   RecordsDeleteMessage,
   RecordsQueryMessage,
   RecordsQueryReply,
+  RecordsQueryReplyEntry,
   RecordsReadMessage,
   RecordsReadReply,
   RecordsSubscribeMessage,
@@ -36,8 +38,10 @@ import type {
 import type { ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
+import { Cid } from './utils/cid.js';
 import { CoreProtocolRegistry } from './core/core-protocol.js';
-import { DwnErrorCode } from './core/dwn-error.js';
+import { DataStream } from './utils/data-stream.js';
+import { DwnConstant } from './core/dwn-constant.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesReadHandler } from './handlers/messages-read.js';
@@ -61,6 +65,7 @@ import { replicationApplyResultFromReply } from './core/replication-apply.js';
 import { ResumableTaskManager } from './core/resumable-task-manager.js';
 import { StorageController } from './store/storage-controller.js';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
+import { DwnError, DwnErrorCode } from './core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
 
 /**
@@ -286,8 +291,9 @@ export class Dwn {
     }
 
     const reply = await this.processMessage(tenant, rawMessage, options);
-    if (await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply)) {
-      return { kind: 'Superseded' };
+    const replicatedWriteBeatenByDeleteResult = await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply, options);
+    if (replicatedWriteBeatenByDeleteResult !== undefined) {
+      return replicatedWriteBeatenByDeleteResult;
     }
 
     const protocolDefinition = await this.getReplicationApplyProtocolDefinition(tenant, rawMessage, reply);
@@ -298,10 +304,11 @@ export class Dwn {
     tenant: string,
     message: GenericMessage,
     reply: { status: { detail?: string } },
-  ): Promise<boolean> {
+    options: ReplicationApplyOptions,
+  ): Promise<ReplicationApplyResult | undefined> {
     const detail = reply.status.detail ?? '';
     if (!detail.startsWith(`${DwnErrorCode.RecordsWriteNotAllowedAfterDelete}:`) || !Records.isRecordsWrite(message)) {
-      return false;
+      return undefined;
     }
 
     const query = {
@@ -312,7 +319,12 @@ export class Dwn {
     const initialWrite = await RecordsWrite.getInitialWrite(existingMessages);
     const existingDelete = await Records.getNewestRecordsDelete(existingMessages);
     if (existingDelete === undefined) {
-      return false;
+      return undefined;
+    }
+
+    const validationReply = await this.validateReplicatedWriteBeatenByDelete(tenant, message, existingMessages, options);
+    if (validationReply !== undefined) {
+      return replicationApplyResultFromReply(message, validationReply);
     }
 
     const recordsWrite = await RecordsWrite.parse(message);
@@ -332,7 +344,121 @@ export class Dwn {
     await this.stateIndex.delete(tenant, [recordsDeleteCid]);
     await this.stateIndex.insert(tenant, recordsDeleteCid, recordsDeleteIndexes);
 
-    return true;
+    return { kind: 'Superseded' };
+  }
+
+  private async validateReplicatedWriteBeatenByDelete(
+    tenant: string,
+    message: RecordsWriteMessage,
+    existingMessages: GenericMessage[],
+    options: ReplicationApplyOptions,
+  ): Promise<GenericMessageReply | undefined> {
+    try {
+      await this.validateReplicatedWriteBeatenByDeleteOrThrow(tenant, message, existingMessages, options);
+      return undefined;
+    } catch (error) {
+      const statusCode = error instanceof DwnError
+        ? this._coreProtocols.mapErrorToStatusCode(error.code) ?? 400
+        : 400;
+      return messageReplyFromError(error, statusCode);
+    }
+  }
+
+  private async validateReplicatedWriteBeatenByDeleteOrThrow(
+    tenant: string,
+    message: RecordsWriteMessage,
+    existingMessages: GenericMessage[],
+    options: ReplicationApplyOptions,
+  ): Promise<void> {
+    const coreProtocol = message.descriptor.protocol === undefined
+      ? undefined
+      : this._coreProtocols.get(message.descriptor.protocol);
+
+    if (coreProtocol?.preProcessWrite !== undefined) {
+      await coreProtocol.preProcessWrite(tenant, message, this.messageStore);
+    }
+
+    if (options.dataStream !== undefined) {
+      await Dwn.validateReplicatedWriteBeatenByDeleteDataStream(message, options.dataStream, coreProtocol);
+      return;
+    }
+
+    if (await RecordsWrite.isInitialWrite(message)) {
+      return;
+    }
+
+    await this.validateReplicatedWriteBeatenByDeleteExistingData(tenant, message, existingMessages);
+  }
+
+  private static async validateReplicatedWriteBeatenByDeleteDataStream(
+    message: RecordsWriteMessage,
+    dataStream: ReadableStream<Uint8Array>,
+    coreProtocol: CoreProtocol | undefined,
+  ): Promise<void> {
+    if (message.descriptor.dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {
+      const dataBytes = await DataStream.toBytes(dataStream);
+      const dataCid = await Cid.computeDagPbCidFromBytes(dataBytes);
+      RecordsWrite.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataBytes.length);
+
+      if (coreProtocol?.validateRecord !== undefined) {
+        coreProtocol.validateRecord(message, dataBytes);
+      }
+
+      return;
+    }
+
+    const [dataCidStream, dataSizeStream] = DataStream.duplicateDataStream(dataStream, 2);
+    const [dataCid, dataSize] = await Promise.all([
+      Cid.computeDagPbCidFromStream(dataCidStream),
+      Dwn.getDataStreamByteLength(dataSizeStream),
+    ]);
+    RecordsWrite.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataSize);
+  }
+
+  private async validateReplicatedWriteBeatenByDeleteExistingData(
+    tenant: string,
+    message: RecordsWriteMessage,
+    existingMessages: GenericMessage[],
+  ): Promise<void> {
+    const newestExistingWrite = await Records.getNewestRecordsWrite(existingMessages);
+    if (newestExistingWrite === undefined) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteGetInitialWriteNotFound,
+        `initial write is missing for record ${message.recordId}`
+      );
+    }
+
+    const { dataCid, dataSize } = message.descriptor;
+    RecordsWrite.validateDataIntegrity(dataCid, dataSize, newestExistingWrite.descriptor.dataCid, newestExistingWrite.descriptor.dataSize);
+
+    if (dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {
+      const newestExistingWriteWithData = newestExistingWrite as RecordsQueryReplyEntry;
+      if (newestExistingWriteWithData.encodedData === undefined) {
+        throw new DwnError(
+          DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious,
+          `No dataStream was provided and unable to get data from previous message`
+        );
+      }
+
+      return;
+    }
+
+    const dataStoreGetResult = await this.dataStore.get(tenant, newestExistingWrite.recordId, dataCid);
+    if (dataStoreGetResult === undefined) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteMissingDataInPrevious,
+        `No dataStream was provided and unable to get data from previous message`
+      );
+    }
+  }
+
+  private static async getDataStreamByteLength(dataStream: ReadableStream<Uint8Array>): Promise<number> {
+    let byteLength = 0;
+    for await (const chunk of DataStream.asAsyncIterable(dataStream)) {
+      byteLength += chunk.length;
+    }
+
+    return byteLength;
   }
 
   private async getReplicationApplyProtocolDefinition(

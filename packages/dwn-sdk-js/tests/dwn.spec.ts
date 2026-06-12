@@ -16,6 +16,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import {
   DataStoreLevel,
   DataStream,
+  DwnErrorCode,
+  DwnMethodName,
   EventEmitterEventLog,
   Jws,
   Message,
@@ -498,6 +500,54 @@ export function testDwnClass(): void {
         } finally {
           await dwnB.close();
         }
+      });
+
+      it('rejects a tombstone-beaten replicated write when its data does not match its descriptor', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : defaultTestProtocolDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+
+        const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        expect(await dwn.applyReplicatedMessage(
+          alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
+        )).toEqual({ kind: 'Applied' });
+
+        const recordsDelete = await RecordsDelete.create({
+          recordId : initialWrite.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
+        expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+
+        await Time.minimalSleep();
+        const updateDataBytes = TestDataGenerator.randomBytes(32);
+        const update = await RecordsWrite.createFrom({
+          recordsWriteMessage : initialWrite.message,
+          data                : updateDataBytes,
+          tags                : { team: 'blue' },
+          signer              : Jws.createSigner(alice),
+        });
+        const malformedDataBytes = TestDataGenerator.randomBytes(32);
+
+        const result = await dwn.applyReplicatedMessage(
+          alice.did, update.message, { dataStream: DataStream.fromBytes(malformedDataBytes) },
+        );
+
+        expect(result.kind).toBe('Invalid');
+        expect((result as { reason: string }).reason).toContain(DwnErrorCode.RecordsWriteDataCidMismatch);
+
+        const updateCid = await Message.getCid(update.message);
+        const { messages } = await messageStore.query(alice.did, [{ recordId: initialWrite.message.recordId }]);
+        const messageCids = await Promise.all(messages.map(message => Message.getCid(message)));
+        expect(messageCids).not.toContain(updateCid);
+
+        const { messages: reindexedTombstones } = await messageStore.query(alice.did, [{
+          method     : DwnMethodName.Delete,
+          'tag.team' : 'blue',
+        }]);
+        expect(reindexedTombstones.length).toBe(0);
       });
 
       it('applies the handler stale-tombstone gate on resumable-task replay', async () => {

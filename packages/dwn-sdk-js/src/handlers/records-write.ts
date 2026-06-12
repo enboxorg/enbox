@@ -282,7 +282,7 @@ export class RecordsWriteHandler implements MethodHandler {
       // validate data integrity before setting.
       const dataBytes = await DataStream.toBytes(dataStream);
       const dataCid = await Cid.computeDagPbCidFromBytes(dataBytes);
-      RecordsWriteHandler.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataBytes.length);
+      RecordsWrite.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataBytes.length);
 
       // Dispatch schema validation to the core protocol, if applicable.
       const coreProtocol = message.descriptor.protocol === undefined
@@ -304,7 +304,7 @@ export class RecordsWriteHandler implements MethodHandler {
           this.deps.dataStore!.put(tenant, message.recordId, message.descriptor.dataCid, dataStreamCopy2)
         ]);
 
-        RecordsWriteHandler.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, DataStorePutResult.dataSize);
+        RecordsWrite.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, DataStorePutResult.dataSize);
       } catch (error) {
         // unwind/delete data if we have issue with storage or the data failed integrity validation
         await this.deps.dataStore!.delete(tenant, message.recordId, message.descriptor.dataCid);
@@ -355,7 +355,7 @@ export class RecordsWriteHandler implements MethodHandler {
     // we preform the dataCid check in case a user attempts to gain access to data by referencing a different known dataCid,
     // so we insure that the data is already associated with the existing newest message
     // See: https://github.com/enboxorg/enbox/issues/359 for more info
-    RecordsWriteHandler.validateDataIntegrity(dataCid, dataSize, newestExistingWrite.descriptor.dataCid, newestExistingWrite.descriptor.dataSize);
+    RecordsWrite.validateDataIntegrity(dataCid, dataSize, newestExistingWrite.descriptor.dataCid, newestExistingWrite.descriptor.dataSize);
 
     if (dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {
       // we encode the data from the original write if it is smaller than the data-store threshold
@@ -382,35 +382,6 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     return messageWithOptionalEncodedData;
-  }
-
-  /**
-   * Validates the expected `dataCid` and `dataSize` in the descriptor vs the received data.
-   *
-   * @throws {DwnError} with `DwnErrorCode.RecordsWriteDataCidMismatch`
-   *                    if the data stream resulted in a data CID that mismatches with `dataCid` in the given message
-   * @throws {DwnError} with `DwnErrorCode.RecordsWriteDataSizeMismatch`
-   *                    if `dataSize` in `descriptor` given mismatches the actual data size
-   */
-  private static validateDataIntegrity(
-    expectedDataCid: string,
-    expectedDataSize: number,
-    actualDataCid: string,
-    actualDataSize: number
-  ): void {
-    if (expectedDataCid !== actualDataCid) {
-      throw new DwnError(
-        DwnErrorCode.RecordsWriteDataCidMismatch,
-        `actual data CID ${actualDataCid} does not match dataCid in descriptor: ${expectedDataCid}`
-      );
-    }
-
-    if (expectedDataSize !== actualDataSize) {
-      throw new DwnError(
-        DwnErrorCode.RecordsWriteDataSizeMismatch,
-        `actual data size ${actualDataSize} bytes does not match dataSize in descriptor: ${expectedDataSize}`
-      );
-    }
   }
 
   /**
