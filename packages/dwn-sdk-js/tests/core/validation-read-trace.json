@@ -13,6 +13,9 @@
     "hasMatchingRoleRecord [live]",
     "queryLatestRoleRecords"
   ],
+  "live: composed protocol configure": [
+    "fetchProtocolDefinition"
+  ],
   "live: grant-authorized write": [
     "fetchGrant",
     "fetchOldestGrantRevocation",

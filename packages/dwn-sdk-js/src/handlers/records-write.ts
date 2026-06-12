@@ -71,6 +71,18 @@ export class RecordsWriteHandler implements MethodHandler {
       }
     }
 
+    // if the incoming write is not the initial write, then it must not modify any immutable properties defined by the initial write
+    const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
+    let initialWrite: RecordsWriteMessage | undefined;
+    if (!newMessageIsInitialWrite) {
+      try {
+        initialWrite = await RecordsWrite.getInitialWrite(existingMessages);
+        RecordsWrite.verifyEqualityOfImmutableProperties(initialWrite, message);
+      } catch (e) {
+        return messageReplyFromError(e, 400);
+      }
+    }
+
     try {
       await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.deps.validationStateReader, validationMode);
     } catch (e) {
@@ -83,18 +95,6 @@ export class RecordsWriteHandler implements MethodHandler {
       await this.authorizeRecordsWrite(tenant, recordsWrite, validationMode);
     } catch (e) {
       return messageReplyFromError(e, 401);
-    }
-
-    // if the incoming write is not the initial write, then it must not modify any immutable properties defined by the initial write
-    const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
-    let initialWrite: RecordsWriteMessage | undefined;
-    if (!newMessageIsInitialWrite) {
-      try {
-        initialWrite = await RecordsWrite.getInitialWrite(existingMessages);
-        RecordsWrite.verifyEqualityOfImmutableProperties(initialWrite, message);
-      } catch (e) {
-        return messageReplyFromError(e, 400);
-      }
     }
 
     // Squash backstop: if the protocol path has $squash: true, reject any write whose

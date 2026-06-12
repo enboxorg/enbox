@@ -259,27 +259,288 @@ describe('replicated validation divergences', () => {
     it('should apply a replicated initial write authored before the earliest retained config', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
+      const protocolUri = 'http://earliest-retained-config.xyz';
+      const v1Definition: ProtocolDefinition = {
+        protocol  : protocolUri,
+        published : false,
+        types     : {
+          foo : { schema: 'foo', dataFormats: ['text/plain'] },
+          bar : { schema: 'bar', dataFormats: ['text/plain'] },
+        },
+        structure: {
+          foo : {},
+          bar : {},
+        },
+      };
+      const v2Definition: ProtocolDefinition = {
+        protocol  : protocolUri,
+        published : false,
+        types     : {
+          bar: { schema: 'bar', dataFormats: ['text/plain'] },
+        },
+        structure: {
+          bar: {},
+        },
+      };
+      const writeTimestamp = Time.createTimestamp({ year: 2023, month: 1, day: 1 });
+      const v1Timestamp = Time.createTimestamp({ year: 2024, month: 1, day: 1 });
+      const v2Timestamp = Time.createTimestamp({ year: 2025, month: 1, day: 1 });
+
       // the record is authored before the retained protocol config timestamp — admission order,
       // not timestamp order, governed the source, so replay must not classify the installed
-      // protocol as missing
+      // protocol as missing or validate against a later config that rejects the type
       const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : nestedProtocolDefinition.protocol,
-        protocolPath : 'foo',
-        schema       : nestedProtocolDefinition.types.foo.schema,
-        dataFormat   : nestedProtocolDefinition.types.foo.dataFormats[0],
+        author           : alice,
+        protocol         : protocolUri,
+        protocolPath     : 'foo',
+        schema           : 'foo',
+        dataFormat       : 'text/plain',
+        dateCreated      : writeTimestamp,
+        messageTimestamp : writeTimestamp,
       });
 
-      const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+      const v1Configure = await TestDataGenerator.generateProtocolsConfigure({
         author             : alice,
-        protocolDefinition : nestedProtocolDefinition as ProtocolDefinition,
+        protocolDefinition : v1Definition,
+        messageTimestamp   : v1Timestamp,
       });
-      expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+      expect((await dwn.processMessage(alice.did, v1Configure.message)).status.code).toBe(202);
+
+      const v2Configure = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : v2Definition,
+        messageTimestamp   : v2Timestamp,
+      });
+      expect((await dwn.processMessage(alice.did, v2Configure.message)).status.code).toBe(202);
 
       const result = await dwn.applyReplicatedMessage(
         alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(recordsWrite.dataBytes!) },
       );
       expect(result).toEqual({ kind: 'Applied' });
+    });
+
+    it('should report a missing initial write before authorizing a replicated non-initial write', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocolDefinition = nestedProtocolDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+        author: alice,
+        protocolDefinition,
+      });
+      expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
+
+      const initialWrite = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'foo',
+        schema       : 'foo',
+        dataFormat   : 'text/plain',
+      });
+      const update = await TestDataGenerator.generateFromRecordsWrite({
+        author        : alice,
+        existingWrite : initialWrite.recordsWrite,
+      });
+
+      const result = await dwn.applyReplicatedMessage(
+        alice.did, update.message, { dataStream: update.dataStream },
+      );
+
+      expect(result).toEqual({
+        kind    : 'Incomplete',
+        missing : [{
+          type     : 'InitialWrite',
+          recordId : update.message.recordId,
+          protocol : protocolDefinition.protocol,
+        }],
+      });
+    });
+
+    it('should validate replicated ProtocolsConfigure composition against historical referenced configs', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const baseProtocolUri = 'http://historical-composition-base.xyz';
+      const composedProtocolUri = 'http://historical-composition-composed.xyz';
+      const v1Timestamp = Time.createTimestamp({ year: 2024, month: 1, day: 1 });
+      const composedTimestamp = Time.createTimestamp({ year: 2024, month: 6, day: 1 });
+      const v2Timestamp = Time.createTimestamp({ year: 2025, month: 1, day: 1 });
+      const baseV1Definition: ProtocolDefinition = {
+        protocol  : baseProtocolUri,
+        published : false,
+        types     : {
+          profile : { schema: 'profile', dataFormats: ['text/plain'] },
+          keeper  : { schema: 'keeper', dataFormats: ['text/plain'] },
+        },
+        structure: {
+          profile : {},
+          keeper  : {},
+        },
+      };
+      const baseV2Definition: ProtocolDefinition = {
+        protocol  : baseProtocolUri,
+        published : false,
+        types     : {
+          keeper: { schema: 'keeper', dataFormats: ['text/plain'] },
+        },
+        structure: {
+          keeper: {},
+        },
+      };
+      const composedDefinition: ProtocolDefinition = {
+        protocol  : composedProtocolUri,
+        published : false,
+        uses      : {
+          base: baseProtocolUri,
+        },
+        types: {
+          mirror: { schema: 'mirror', dataFormats: ['text/plain'] },
+        },
+        structure: {
+          mirror: {
+            $ref: 'base:profile',
+          },
+        },
+      };
+
+      const baseV1Configure = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : baseV1Definition,
+        messageTimestamp   : v1Timestamp,
+      });
+      expect((await dwn.processMessage(alice.did, baseV1Configure.message)).status.code).toBe(202);
+
+      const baseV2Configure = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : baseV2Definition,
+        messageTimestamp   : v2Timestamp,
+      });
+      expect((await dwn.processMessage(alice.did, baseV2Configure.message)).status.code).toBe(202);
+
+      const composedConfigure = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : composedDefinition,
+        messageTimestamp   : composedTimestamp,
+      });
+
+      const liveReply = await dwn.processMessage(alice.did, composedConfigure.message);
+      expect(liveReply.status.code).toBe(400);
+      expect(liveReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath);
+
+      const replicatedResult = await dwn.applyReplicatedMessage(alice.did, composedConfigure.message);
+      expect(replicatedResult).toEqual({ kind: 'Applied' });
+    });
+
+    it('should derive missing cross-protocol role dependencies from the governing config', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const roleProtocolV1Uri = 'http://role-context-v1.xyz';
+      const roleProtocolV2Uri = 'http://role-context-v2.xyz';
+      const composedProtocolUri = 'http://role-context-composed.xyz';
+      const v1Timestamp = Time.createTimestamp({ year: 2024, month: 1, day: 1 });
+      const initialTimestamp = Time.createTimestamp({ year: 2024, month: 6, day: 1 });
+      const v2Timestamp = Time.createTimestamp({ year: 2025, month: 1, day: 1 });
+      const updateTimestamp = Time.createTimestamp({ year: 2025, month: 6, day: 1 });
+
+      const roleProtocolV1: ProtocolDefinition = {
+        protocol  : roleProtocolV1Uri,
+        published : false,
+        types     : {
+          participant: {},
+        },
+        structure: {
+          participant: {
+            $role: true,
+          },
+        },
+      };
+      const roleProtocolV2: ProtocolDefinition = {
+        protocol  : roleProtocolV2Uri,
+        published : false,
+        types     : {
+          participant: {},
+        },
+        structure: {
+          participant: {
+            $role: true,
+          },
+        },
+      };
+      const composedV1: ProtocolDefinition = {
+        protocol  : composedProtocolUri,
+        published : false,
+        uses      : {
+          roles: roleProtocolV1Uri,
+        },
+        types: {
+          comment: { schema: 'comment', dataFormats: ['text/plain'] },
+        },
+        structure: {
+          comment: {
+            $actions: [
+              { who: 'anyone', can: ['create'] },
+              { role: 'roles:participant', can: ['co-update'] },
+            ],
+          },
+        },
+      };
+      const composedV2: ProtocolDefinition = {
+        ...composedV1,
+        uses: {
+          roles: roleProtocolV2Uri,
+        },
+      };
+
+      for (const protocolDefinition of [roleProtocolV1, roleProtocolV2]) {
+        const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+        expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
+      }
+
+      const composedV1Configure = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : composedV1,
+        messageTimestamp   : v1Timestamp,
+      });
+      expect((await dwn.processMessage(alice.did, composedV1Configure.message)).status.code).toBe(202);
+
+      const initialComment = await TestDataGenerator.generateRecordsWrite({
+        author           : alice,
+        protocol         : composedProtocolUri,
+        protocolPath     : 'comment',
+        schema           : 'comment',
+        dataFormat       : 'text/plain',
+        dateCreated      : initialTimestamp,
+        messageTimestamp : initialTimestamp,
+      });
+      expect(await dwn.applyReplicatedMessage(
+        alice.did,
+        initialComment.message,
+        { dataStream: DataStream.fromBytes(initialComment.dataBytes!) },
+      )).toEqual({ kind: 'Applied' });
+
+      const composedV2Configure = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : composedV2,
+        messageTimestamp   : v2Timestamp,
+      });
+      expect((await dwn.processMessage(alice.did, composedV2Configure.message)).status.code).toBe(202);
+
+      const update = await TestDataGenerator.generateFromRecordsWrite({
+        author           : bob,
+        existingWrite    : initialComment.recordsWrite,
+        protocolRole     : 'roles:participant',
+        messageTimestamp : updateTimestamp,
+      });
+
+      const result = await dwn.applyReplicatedMessage(
+        alice.did, update.message, { dataStream: update.dataStream },
+      );
+
+      expect(result).toEqual({
+        kind    : 'Incomplete',
+        missing : [{
+          type         : 'Role',
+          protocol     : roleProtocolV1Uri,
+          protocolPath : 'participant',
+          recipient    : bob.did,
+        }],
+      });
     });
 
     it('should validate a replicated initial write against the historically-governing config while live mode uses the latest', async () => {

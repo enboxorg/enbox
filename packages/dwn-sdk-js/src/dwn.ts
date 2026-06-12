@@ -81,6 +81,11 @@ type LifecycleResolver = {
   close: () => Promise<void>;
 };
 
+type ReplicationApplyProtocolDefinitionLookup = {
+  protocol: string;
+  messageTimestamp?: string;
+};
+
 export class Dwn {
   private readonly methodHandlers: { [key:string]: MethodHandler };
   private readonly didResolver: DidResolver;
@@ -516,20 +521,42 @@ export class Dwn {
       return undefined;
     }
 
-    const protocol = Dwn.getMessageProtocolForReplicationApply(message);
-    if (protocol === undefined) {
+    const lookup = await this.getReplicationApplyProtocolDefinitionLookup(tenant, message);
+    if (lookup === undefined) {
       return undefined;
     }
 
     try {
       return await this.validationStateReader.fetchProtocolDefinition(
         tenant,
-        protocol,
-        message.descriptor.messageTimestamp,
+        lookup.protocol,
+        lookup.messageTimestamp,
       );
     } catch {
       return undefined;
     }
+  }
+
+  private async getReplicationApplyProtocolDefinitionLookup(
+    tenant: string,
+    message: GenericMessage,
+  ): Promise<ReplicationApplyProtocolDefinitionLookup | undefined> {
+    if (Dwn.isRecordsWriteMessage(message)) {
+      const governingTimestamp = await this.validationStateReader.getGoverningTimestamp({
+        tenant,
+        recordId         : message.recordId,
+        messageTimestamp : message.descriptor.messageTimestamp,
+        validationMode   : 'replicated',
+      });
+
+      return {
+        protocol         : message.descriptor.protocol,
+        messageTimestamp : governingTimestamp,
+      };
+    }
+
+    const protocol = Dwn.getMessageProtocolForReplicationApply(message);
+    return protocol === undefined ? undefined : { protocol };
   }
 
   private static getMessageProtocolForReplicationApply(message: GenericMessage): string | undefined {
@@ -540,6 +567,11 @@ export class Dwn {
     if (typeof descriptor.filter?.protocol === 'string') {
       return descriptor.filter.protocol;
     }
+  }
+
+  private static isRecordsWriteMessage(message: GenericMessage): message is RecordsWriteMessage {
+    return message.descriptor.interface === DwnInterfaceName.Records &&
+      message.descriptor.method === DwnMethodName.Write;
   }
 
   private async replicatedMessageAlreadyStored(

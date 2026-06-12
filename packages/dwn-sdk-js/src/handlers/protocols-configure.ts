@@ -1,8 +1,9 @@
 import type { GenericMessageReply } from '../types/message-types.js';
-import type { MessageStore } from '../types//message-store.js';
+import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
-import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage } from '../types/protocols-types.js';
+import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
+import type { ValidationMode, ValidationStateReader } from '../types/validation-state-reader.js';
 
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
@@ -42,7 +43,8 @@ export class ProtocolsConfigureHandler implements MethodHandler {
   public async handle({
     tenant,
     message,
-  }: {tenant: string, message: ProtocolsConfigureMessage }): Promise<GenericMessageReply> {
+    validationMode = 'live',
+  }: { tenant: string, message: ProtocolsConfigureMessage, validationMode?: ValidationMode }): Promise<GenericMessageReply> {
     let protocolsConfigure: ProtocolsConfigure;
     try {
       protocolsConfigure = await ProtocolsConfigure.parse(message);
@@ -62,7 +64,10 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     // `$ref` paths must exist in the referenced protocols, and cross-protocol roles must exist.
     try {
       await ProtocolsConfigureHandler.validateCompositionDependencies(
-        tenant, message.descriptor.definition, this.deps.messageStore
+        tenant,
+        message.descriptor.definition,
+        this.deps.validationStateReader,
+        validationMode === 'replicated' ? message.descriptor.messageTimestamp : undefined,
       );
     } catch (e) {
       return messageReplyFromError(e, 400);
@@ -265,7 +270,10 @@ export class ProtocolsConfigureHandler implements MethodHandler {
    * This is a no-op if the protocol definition has no `uses` map.
    */
   private static async validateCompositionDependencies(
-    tenant: string, definition: ProtocolDefinition, messageStore: MessageStore
+    tenant: string,
+    definition: ProtocolDefinition,
+    validationStateReader: ValidationStateReader,
+    messageTimestamp?: string,
   ): Promise<void> {
     const { uses } = definition;
     if (uses === undefined) {
@@ -276,42 +284,23 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     const referencedDefinitions = new Map<string, ProtocolDefinition>();
     for (const alias in uses) {
       const protocolUri = uses[alias];
-      const refDefinition = await ProtocolsConfigureHandler.fetchInstalledProtocolDefinition(tenant, protocolUri, messageStore);
+      try {
+        const refDefinition = await validationStateReader.fetchProtocolDefinition(tenant, protocolUri, messageTimestamp);
+        referencedDefinitions.set(alias, refDefinition);
+      } catch (error) {
+        if (!(error instanceof DwnError) || error.code !== DwnErrorCode.ProtocolAuthorizationProtocolNotFound) {
+          throw error;
+        }
 
-      if (refDefinition === undefined) {
         throw new DwnError(
           DwnErrorCode.ProtocolsConfigureComposedProtocolNotInstalled,
           `composed protocol '${protocolUri}' (alias '${alias}') is not installed for tenant '${tenant}'.`
         );
       }
-
-      referencedDefinitions.set(alias, refDefinition);
     }
 
     // Walk the structure and validate all $ref paths and cross-protocol role references
     ProtocolsConfigureHandler.validateRefsAndRolesRecursively(definition.structure as ProtocolRuleSet, '', referencedDefinitions);
-  }
-
-  /**
-   * Fetches the latest installed protocol definition for the given protocol URI.
-   * @returns The protocol definition, or `undefined` if not installed.
-   */
-  private static async fetchInstalledProtocolDefinition(
-    tenant: string, protocolUri: string, messageStore: MessageStore
-  ): Promise<ProtocolDefinition | undefined> {
-    const query = {
-      interface         : DwnInterfaceName.Protocols,
-      method            : DwnMethodName.Configure,
-      protocol          : protocolUri,
-      isLatestBaseState : true
-    };
-    const { messages } = await messageStore.query(tenant, [query]);
-
-    if (messages.length === 0) {
-      return undefined;
-    }
-
-    return (messages[0] as ProtocolsConfigureMessage).descriptor.definition;
   }
 
   /**

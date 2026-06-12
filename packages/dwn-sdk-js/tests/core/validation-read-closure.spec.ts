@@ -176,6 +176,51 @@ describe('validation read closure', () => {
       snapshot('live: role-authorized write');
     }
 
+    // ---- scenario: live composed protocol configure ----
+    {
+      await clearStores();
+      recorder.clearRecordedReads();
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const baseDefinition: ProtocolDefinition = {
+        protocol  : 'http://closure-composition-base.xyz',
+        published : false,
+        types     : {
+          profile: { schema: 'profile', dataFormats: ['text/plain'] },
+        },
+        structure: {
+          profile: {},
+        },
+      };
+      const composedDefinition: ProtocolDefinition = {
+        protocol  : 'http://closure-composition-composed.xyz',
+        published : false,
+        uses      : {
+          base: baseDefinition.protocol,
+        },
+        types: {
+          mirror: { schema: 'mirror', dataFormats: ['text/plain'] },
+        },
+        structure: {
+          mirror: {
+            $ref: 'base:profile',
+          },
+        },
+      };
+      const { message: baseConfigureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : baseDefinition,
+      });
+      expect((await dwn.processMessage(alice.did, baseConfigureMessage)).status.code).toBe(202);
+
+      const { message: composedConfigureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : composedDefinition,
+      });
+      expect((await dwn.processMessage(alice.did, composedConfigureMessage)).status.code).toBe(202);
+
+      snapshot('live: composed protocol configure');
+    }
+
     // ---- scenario: live grant-authorized write ----
     {
       await clearStores();
