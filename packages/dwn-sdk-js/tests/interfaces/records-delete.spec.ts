@@ -1,8 +1,8 @@
-import { Jws, RecordsWrite } from '../../src/index.js';
 import { RecordsDelete } from '../../src/interfaces/records-delete.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { describe, expect, it } from 'bun:test';
+import { Jws, RecordsWrite } from '../../src/index.js';
 
 describe('RecordsDelete', () => {
   describe('create()', () => {
