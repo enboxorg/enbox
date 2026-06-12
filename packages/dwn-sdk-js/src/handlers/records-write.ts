@@ -1,5 +1,5 @@
-import type { GenericMessageReply } from '../types/message-types.js';
 import type { ValidationMode } from '../types/validation-state-reader.js';
+import type { GenericMessage, GenericMessageReply } from '../types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
 
@@ -71,13 +71,13 @@ export class RecordsWriteHandler implements MethodHandler {
       }
     }
 
-    // if the incoming write is not the initial write, then it must not modify any immutable properties defined by the initial write
     const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
     let initialWrite: RecordsWriteMessage | undefined;
-    if (!newMessageIsInitialWrite) {
+    // Replicated admission reports a missing initial write as a repair dependency before
+    // protocol authorization can interpret the message as a fresh create.
+    if (validationMode === 'replicated') {
       try {
-        initialWrite = await RecordsWrite.getInitialWrite(existingMessages);
-        RecordsWrite.verifyEqualityOfImmutableProperties(initialWrite, message);
+        initialWrite = await this.validateNonInitialWrite(message, existingMessages, newMessageIsInitialWrite);
       } catch (e) {
         return messageReplyFromError(e, 400);
       }
@@ -95,6 +95,15 @@ export class RecordsWriteHandler implements MethodHandler {
       await this.authorizeRecordsWrite(tenant, recordsWrite, validationMode);
     } catch (e) {
       return messageReplyFromError(e, 401);
+    }
+
+    // Live admission preserves the existing auth-first ordering, then verifies immutable fields.
+    if (validationMode === 'live') {
+      try {
+        initialWrite = await this.validateNonInitialWrite(message, existingMessages, newMessageIsInitialWrite);
+      } catch (e) {
+        return messageReplyFromError(e, 400);
+      }
     }
 
     // Squash backstop: if the protocol path has $squash: true, reject any write whose
@@ -336,6 +345,20 @@ export class RecordsWriteHandler implements MethodHandler {
     );
 
     return !hasInlineData && !hasStoredData;
+  }
+
+  private async validateNonInitialWrite(
+    message: RecordsWriteMessage,
+    existingMessages: GenericMessage[],
+    newMessageIsInitialWrite: boolean,
+  ): Promise<RecordsWriteMessage | undefined> {
+    if (newMessageIsInitialWrite) {
+      return undefined;
+    }
+
+    const initialWrite = await RecordsWrite.getInitialWrite(existingMessages);
+    RecordsWrite.verifyEqualityOfImmutableProperties(initialWrite, message);
+    return initialWrite;
   }
 
   private async processMessageWithoutDataStream(
