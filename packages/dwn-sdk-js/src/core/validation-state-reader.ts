@@ -216,22 +216,6 @@ export class StoreValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
-  public async getGoverningTimestamp(input: {
-    tenant: string;
-    recordId: string;
-  }): Promise<string | undefined> {
-    const existingInitialWrite = await this.fetchInitialWrite(input.tenant, input.recordId);
-
-    if (existingInitialWrite !== undefined) {
-      // update case: use the initial write's timestamp — the protocol version is locked at creation time
-      return existingInitialWrite.descriptor.messageTimestamp;
-    }
-
-    // initial write case: validate against the latest protocol definition
-    return undefined;
-  }
-
-  /** @inheritdoc */
   public async fetchProtocolDefinition(tenant: string, protocolUri: string, messageTimestamp?: string): Promise<ProtocolDefinition> {
     // if the protocol is a registered core protocol, return the definition directly without a store query
     if (this.coreProtocols !== undefined) {

@@ -2151,18 +2151,18 @@ export function testProtocolComposition(): void {
     });
 
     // =========================================================================
-    // Temporal correctness — governing timestamp for cross-protocol lookups
+    // Temporal correctness — incoming timestamp for cross-protocol lookups
     // =========================================================================
 
-    describe('temporal correctness — governing timestamp', () => {
-      it('should use the governing timestamp when fetching the referenced protocol for role verification', async () => {
+    describe('temporal correctness — incoming message timestamp', () => {
+      it('should use the incoming message timestamp when fetching the referenced protocol for role verification', async () => {
         // Scenario:
         // 1. Install threads V1 (participant has $role: true)
         // 2. Install comments protocol (uses threads, references threads:thread/participant role)
         // 3. Create thread, assign Bob as participant, create comment — all under V1
         // 4. Update threads to V2 where participant is no longer a role ($role removed)
         // 5. Bob reads the comment using the cross-protocol role
-        //    → should SUCCEED because the comment's governing timestamp pins to threads V1
+        //    → should fail because the read's message timestamp resolves threads V2
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
@@ -2293,8 +2293,7 @@ export function testProtocolComposition(): void {
         expect(threadsV2Reply.status.code).toBe(202);
 
         // Bob reads the comment using the cross-protocol role.
-        // The comment was created under V1. The governing timestamp pins the referenced protocol
-        // lookup to V1 where participant IS a valid role. This should SUCCEED.
+        // The read is authored after V2, where participant is no longer a valid role.
         const bobRead = await RecordsRead.create({
           signer       : Jws.createSigner(bob),
           protocolRole : 'threads:thread/participant',
@@ -2305,7 +2304,8 @@ export function testProtocolComposition(): void {
           },
         });
         const bobReadReply = await dwn.processMessage(alice.did, bobRead.message);
-        expect(bobReadReply.status.code).toBe(200);
+        expect(bobReadReply.status.code).toBe(401);
+        expect(bobReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationNotARole);
       });
     });
 

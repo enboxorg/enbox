@@ -106,15 +106,6 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
-  public async getGoverningTimestamp(input: {
-    tenant: string;
-    recordId: string;
-  }): Promise<string | undefined> {
-    this.recordedReads.push({ method: 'getGoverningTimestamp' });
-    return this.inner.getGoverningTimestamp(input);
-  }
-
-  /** @inheritdoc */
   public async fetchProtocolDefinition(tenant: string, protocolUri: string, messageTimestamp?: string): Promise<ProtocolDefinition> {
     this.recordedReads.push({ method: 'fetchProtocolDefinition' });
     return this.inner.fetchProtocolDefinition(tenant, protocolUri, messageTimestamp);

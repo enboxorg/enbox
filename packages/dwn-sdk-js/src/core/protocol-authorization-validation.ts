@@ -19,7 +19,7 @@ export async function verifyProtocolPathAndContextId(
   tenant: string,
   inboundMessage: RecordsWrite,
   validationStateReader: ValidationStateReader,
-  governingTimestamp?: string,
+  protocolDefinitionTimestamp?: string,
 ): Promise<void> {
   const declaredProtocolPath = inboundMessage.message.descriptor.protocolPath;
   const declaredTypeName = getTypeName(declaredProtocolPath);
@@ -42,7 +42,7 @@ export async function verifyProtocolPathAndContextId(
   // If the parent path segment has a `$ref` in the composing protocol, the parent lives in a different protocol.
   const childProtocol = inboundMessage.message.descriptor.protocol;
   const parentProtocolUri = await resolveParentProtocolUri(
-    tenant, childProtocol, declaredProtocolPath, validationStateReader, governingTimestamp
+    tenant, childProtocol, declaredProtocolPath, validationStateReader, protocolDefinitionTimestamp
   );
 
   // fetch the parent message (read-set row 3)
@@ -107,7 +107,7 @@ export async function resolveParentProtocolUri(
   childProtocolUri: string,
   childProtocolPath: string,
   validationStateReader: ValidationStateReader,
-  governingTimestamp?: string,
+  protocolDefinitionTimestamp?: string,
 ): Promise<string> {
   const segments = childProtocolPath.split('/');
 
@@ -116,9 +116,9 @@ export async function resolveParentProtocolUri(
     return childProtocolUri;
   }
 
-  // Fetch the composing protocol's definition at the governing timestamp
+  // Fetch the composing protocol's definition at the incoming message timestamp
   const composingDefinition = await validationStateReader.fetchProtocolDefinition(
-    tenant, childProtocolUri, governingTimestamp
+    tenant, childProtocolUri, protocolDefinitionTimestamp
   );
 
   // Walk the structure to find the parent's path segment
@@ -159,7 +159,7 @@ export async function verifyTypeWithComposition(
   inboundMessage: RecordsWriteMessage,
   protocolDefinition: ProtocolDefinition,
   validationStateReader: ValidationStateReader,
-  governingTimestamp?: string,
+  protocolDefinitionTimestamp?: string,
 ): Promise<void> {
   const declaredProtocolPath = inboundMessage.descriptor.protocolPath;
   const declaredTypeName = getTypeName(declaredProtocolPath);
@@ -167,7 +167,7 @@ export async function verifyTypeWithComposition(
   // Resolve which protocol types map to use.
   // If the first path segment has `$ref`, this record's type might be defined in a referenced protocol.
   const protocolTypes = await resolveProtocolTypesForPath(
-    tenant, declaredProtocolPath, protocolDefinition, validationStateReader, governingTimestamp
+    tenant, declaredProtocolPath, protocolDefinition, validationStateReader, protocolDefinitionTimestamp
   );
 
   verifyType(inboundMessage, protocolTypes, declaredTypeName);
@@ -183,7 +183,7 @@ export async function resolveProtocolTypesForPath(
   protocolPath: string,
   protocolDefinition: ProtocolDefinition,
   validationStateReader: ValidationStateReader,
-  governingTimestamp?: string,
+  protocolDefinitionTimestamp?: string,
 ): Promise<ProtocolTypes> {
   const segments = protocolPath.split('/');
 
@@ -196,7 +196,7 @@ export async function resolveProtocolTypesForPath(
       const refProtocolUri = protocolDefinition.uses[parsed.alias];
       if (refProtocolUri !== undefined) {
         const refDefinition = await validationStateReader.fetchProtocolDefinition(
-          tenant, refProtocolUri, governingTimestamp
+          tenant, refProtocolUri, protocolDefinitionTimestamp
         );
         return refDefinition.types;
       }

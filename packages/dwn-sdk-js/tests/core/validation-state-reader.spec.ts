@@ -352,7 +352,7 @@ describe('validation-state reader admission parity', () => {
   });
 
   describe('row 6 — protocol definition history', () => {
-    it('should reject initial writes using the latest config in both entry points', async () => {
+    it('should accept backdated initial writes using the earliest retained config in both entry points', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolUri = 'http://earliest-retained-config.xyz';
@@ -406,19 +406,23 @@ describe('validation-state reader admission parity', () => {
       });
       expect((await dwn.processMessage(alice.did, v2Configure.message)).status.code).toBe(202);
 
-      const processReply = await dwn.processMessage(
-        alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream },
-      );
-      expect(processReply.status.code).toBe(400);
-      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationInvalidType);
+      const processReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
+      expect(processReply.status.code).toBe(202);
+
+      const replicatedWrite = await TestDataGenerator.generateRecordsWrite({
+        author           : alice,
+        protocol         : protocolUri,
+        protocolPath     : 'foo',
+        schema           : 'foo',
+        dataFormat       : 'text/plain',
+        dateCreated      : writeTimestamp,
+        messageTimestamp : writeTimestamp,
+      });
 
       const result = await dwn.applyReplicatedMessage(
-        alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(recordsWrite.dataBytes!) },
+        alice.did, replicatedWrite.message, { dataStream: DataStream.fromBytes(replicatedWrite.dataBytes!) },
       );
-      expect(result.kind).toBe('Invalid');
-      if (result.kind === 'Invalid') {
-        expect(result.reason).toContain(DwnErrorCode.ProtocolAuthorizationInvalidType);
-      }
+      expect(result.kind).toBe('Applied');
     });
 
     it('should report a missing initial write through standard admission before replication maps it to incomplete', async () => {
@@ -538,7 +542,7 @@ describe('validation-state reader admission parity', () => {
       }
     });
 
-    it('should derive missing cross-protocol role dependencies from the governing config', async () => {
+    it('should derive missing cross-protocol role dependencies from the incoming message timestamp config', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const roleProtocolV1Uri = 'http://role-context-v1.xyz';
@@ -647,14 +651,14 @@ describe('validation-state reader admission parity', () => {
         kind    : 'Incomplete',
         missing : [{
           type         : 'Role',
-          protocol     : roleProtocolV1Uri,
+          protocol     : roleProtocolV2Uri,
           protocolPath : 'participant',
           recipient    : bob.did,
         }],
       });
     });
 
-    it('should not validate initial writes against a backdated config in either entry point', async () => {
+    it('should validate initial writes against the config active at their message timestamp in both entry points', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolUri = 'http://config-history.xyz';
@@ -704,7 +708,7 @@ describe('validation-state reader admission parity', () => {
       expect(v2Reply.status.code).toBe(202);
 
       // an initial write authored between v1 and v2, arriving after v2 superseded v1
-      const { message: alphaMessage, dataStream: alphaDataStream, dataBytes: alphaDataBytes } = await TestDataGenerator.generateRecordsWrite({
+      const { message: alphaMessage, dataStream: alphaDataStream } = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
         protocol         : protocolUri,
         protocolPath     : 'alpha',
@@ -714,22 +718,26 @@ describe('validation-state reader admission parity', () => {
         messageTimestamp : writeTimestamp,
       });
 
-      // processMessage validates an initial write against the latest definition (v2): `alpha` no longer exists
       const processReply = await dwn.processMessage(alice.did, alphaMessage, { dataStream: alphaDataStream });
-      expect(processReply.status.code).toBe(400);
-      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationInvalidType);
+      expect(processReply.status.code).toBe(202);
 
-      // applyReplicatedMessage uses the same latest-config admission rule
-      const replicatedResult = await dwn.applyReplicatedMessage(alice.did, alphaMessage, {
-        dataStream: DataStream.fromBytes(alphaDataBytes!),
+      const replicatedWrite = await TestDataGenerator.generateRecordsWrite({
+        author           : alice,
+        protocol         : protocolUri,
+        protocolPath     : 'alpha',
+        schema           : 'alpha',
+        dataFormat       : 'text/plain',
+        dateCreated      : writeTimestamp,
+        messageTimestamp : writeTimestamp,
       });
-      expect(replicatedResult.kind).toBe('Invalid');
-      if (replicatedResult.kind === 'Invalid') {
-        expect(replicatedResult.reason).toContain(DwnErrorCode.ProtocolAuthorizationInvalidType);
-      }
+
+      const replicatedResult = await dwn.applyReplicatedMessage(alice.did, replicatedWrite.message, {
+        dataStream: DataStream.fromBytes(replicatedWrite.dataBytes!),
+      });
+      expect(replicatedResult.kind).toBe('Applied');
     });
 
-    it('should not enforce squash backstop from a backdated config in either entry point', async () => {
+    it('should enforce squash backstop from the config active at the incoming write timestamp in both entry points', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolUri = 'http://config-history-squash.xyz';
@@ -798,7 +806,8 @@ describe('validation-state reader admission parity', () => {
       const processReply = await dwn.processMessage(alice.did, processOlderPatch.message, {
         dataStream: processOlderPatch.dataStream,
       });
-      expect(processReply.status.code).toBe(202);
+      expect(processReply.status.code).toBe(409);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
 
       const olderPatch = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
@@ -813,7 +822,7 @@ describe('validation-state reader admission parity', () => {
       const result = await dwn.applyReplicatedMessage(alice.did, olderPatch.message, {
         dataStream: DataStream.fromBytes(olderPatch.dataBytes!),
       });
-      expect(result).toEqual({ kind: 'Applied' });
+      expect(result.kind).toBe('Superseded');
     });
   });
 });

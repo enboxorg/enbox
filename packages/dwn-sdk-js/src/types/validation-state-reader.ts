@@ -104,21 +104,6 @@ export interface ValidationStateReader {
   fetchNewestRecordsWrite(tenant: string, recordId: string): Promise<RecordsWriteMessage>;
 
   /**
-   * Read-set row 6: determines the timestamp that selects the governing protocol definition for
-   * the given `RecordsWrite`.
-   *
-   * For an update (an initial write already exists), returns the initial write's
-   * `messageTimestamp` — the protocol version is locked at creation time. For an initial write,
-   * returns `undefined` so the latest definition governs.
-   * @throws {DwnError} with `RecordsWriteGetInitialWriteNotFound` when writes exist for the
-   *         record but none of them is the initial write.
-   */
-  getGoverningTimestamp(input: {
-    tenant: string;
-    recordId: string;
-  }): Promise<string | undefined>;
-
-  /**
    * Read-set row 6: fetches the protocol definition for the given protocol URI.
    * When `messageTimestamp` is provided, returns the definition active at that point in time —
    * the `ProtocolsConfigure` with the greatest `messageTimestamp` that is <= the given timestamp,

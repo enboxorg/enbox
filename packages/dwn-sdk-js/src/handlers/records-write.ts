@@ -401,19 +401,14 @@ export class RecordsWriteHandler implements MethodHandler {
       return;
     }
 
-    // Fetch the governing protocol definition to check if $squash is enabled at this path.
+    // Fetch the protocol definition active at the incoming message timestamp to check if $squash is enabled at this path.
     // The reader resolves core protocols (e.g. permissions) from the registry.
-    const governingTimestamp = await this.deps.validationStateReader.getGoverningTimestamp({
-      tenant,
-      recordId: message.recordId,
-    });
-
     let protocolDefinition;
     try {
       protocolDefinition = await this.deps.validationStateReader.fetchProtocolDefinition(
         tenant,
         message.descriptor.protocol,
-        governingTimestamp,
+        message.descriptor.messageTimestamp,
       );
     } catch (error) {
       // If the protocol definition can't be found, skip the backstop check.

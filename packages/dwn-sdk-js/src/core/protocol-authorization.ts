@@ -35,30 +35,24 @@ export class ProtocolAuthorization {
     incomingMessage: RecordsWrite,
     validationStateReader: ValidationStateReader,
   ): Promise<void> {
-    // Determine the governing timestamp for protocol definition lookup.
-    // For an initial write, this is undefined so the latest definition governs.
-    // For an update, this is the initial write's timestamp (the protocol version is locked at creation time).
-    const governingTimestamp = await validationStateReader.getGoverningTimestamp({
-      tenant   : tenant,
-      recordId : incomingMessage.message.recordId,
-    });
+    const protocolDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
 
-    // fetch the protocol definition that was active at the governing timestamp
+    // fetch the protocol definition active at the incoming message timestamp
     const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
       tenant,
       incomingMessage.message.descriptor.protocol,
-      governingTimestamp,
+      protocolDefinitionTimestamp,
     );
 
     // verify declared protocol type exists in protocol and that it conforms to type specification.
     // For cross-protocol composition, the type may be defined in a referenced protocol.
     await verifyTypeWithComposition(
-      tenant, incomingMessage.message, protocolDefinition, validationStateReader, governingTimestamp
+      tenant, incomingMessage.message, protocolDefinition, validationStateReader, protocolDefinitionTimestamp
     );
 
     // validate `protocolPath`
     await verifyProtocolPathAndContextId(
-      tenant, incomingMessage, validationStateReader, governingTimestamp,
+      tenant, incomingMessage, validationStateReader, protocolDefinitionTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -105,15 +99,15 @@ export class ProtocolAuthorization {
   ): Promise<void> {
     await ProtocolAuthorization.verifyStoredInitialWrite(incomingMessage);
 
-    const governingTimestamp = incomingMessage.message.descriptor.messageTimestamp;
+    const protocolDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
     const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
       tenant,
       incomingMessage.message.descriptor.protocol,
-      governingTimestamp,
+      protocolDefinitionTimestamp,
     );
 
     await verifyTypeWithComposition(
-      tenant, incomingMessage.message, protocolDefinition, validationStateReader, governingTimestamp
+      tenant, incomingMessage.message, protocolDefinition, validationStateReader, protocolDefinitionTimestamp
     );
 
     const ruleSet = ProtocolAuthorization.getRuleSet(
@@ -153,17 +147,13 @@ export class ProtocolAuthorization {
       recordChain = await validationStateReader.constructRecordChain(tenant, incomingMessage.message.recordId);
     }
 
-    // Determine the governing timestamp for protocol definition lookup.
-    const governingTimestamp = await validationStateReader.getGoverningTimestamp({
-      tenant   : tenant,
-      recordId : incomingMessage.message.recordId,
-    });
+    const protocolDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
 
-    // fetch the protocol definition that was active at the governing timestamp
+    // fetch the protocol definition active at the incoming message timestamp
     const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
       tenant,
       incomingMessage.message.descriptor.protocol,
-      governingTimestamp,
+      protocolDefinitionTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -180,7 +170,7 @@ export class ProtocolAuthorization {
       incomingMessage.message.contextId,
       protocolDefinition,
       validationStateReader,
-      governingTimestamp,
+      protocolDefinitionTimestamp,
     );
 
     // verify method invoked against the allowed actions in the rule set
@@ -209,20 +199,13 @@ export class ProtocolAuthorization {
     const recordChain: RecordsWriteMessage[] =
       await validationStateReader.constructRecordChain(tenant, newestRecordsWrite.message.recordId);
 
-    // Use the initial write's timestamp to determine the governing protocol definition.
-    // The protocol version is locked at the time the record was first created.
-    const initialWrite = await validationStateReader.fetchInitialWrite(
-      tenant, newestRecordsWrite.message.recordId
-    );
-    const governingTimestamp = initialWrite === undefined
-      ? newestRecordsWrite.message.descriptor.messageTimestamp
-      : initialWrite.descriptor.messageTimestamp;
+    const protocolDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
 
-    // fetch the protocol definition that was active when the record was created
+    // fetch the protocol definition active at the incoming message timestamp
     const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
       tenant,
       newestRecordsWrite.message.descriptor.protocol,
-      governingTimestamp,
+      protocolDefinitionTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -239,7 +222,7 @@ export class ProtocolAuthorization {
       newestRecordsWrite.message.contextId,
       protocolDefinition,
       validationStateReader,
-      governingTimestamp,
+      protocolDefinitionTimestamp,
     );
 
     // verify method invoked against the allowed actions in the rule set
@@ -264,6 +247,7 @@ export class ProtocolAuthorization {
     const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
       tenant,
       protocol!, // `authorizeQueryOrSubscribe` is only called if `protocol` is present
+      incomingMessage.message.descriptor.messageTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -308,19 +292,13 @@ export class ProtocolAuthorization {
     const recordChain: RecordsWriteMessage[] =
       await validationStateReader.constructRecordChain(tenant, incomingMessage.message.descriptor.recordId);
 
-    // Use the initial write's timestamp to determine the governing protocol definition.
-    const initialWrite = await validationStateReader.fetchInitialWrite(
-      tenant, incomingMessage.message.descriptor.recordId
-    );
-    const governingTimestamp = initialWrite === undefined
-      ? recordsWrite.message.descriptor.messageTimestamp
-      : initialWrite.descriptor.messageTimestamp;
+    const protocolDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
 
-    // fetch the protocol definition that was active when the record was created
+    // fetch the protocol definition active at the incoming message timestamp
     const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
       tenant,
       recordsWrite.message.descriptor.protocol,
-      governingTimestamp,
+      protocolDefinitionTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -337,7 +315,7 @@ export class ProtocolAuthorization {
       recordsWrite.message.contextId,
       protocolDefinition,
       validationStateReader,
-      governingTimestamp,
+      protocolDefinitionTimestamp,
     );
 
     // verify method invoked against the allowed actions in the rule set
@@ -437,7 +415,7 @@ export class ProtocolAuthorization {
 
     throw new DwnError(
       DwnErrorCode.ProtocolAuthorizationStoredInitialWriteActionNotAllowed,
-      `stored RecordsWrite by author ${incomingMessage.author} is not allowed by the governing protocol config`
+      `stored RecordsWrite by author ${incomingMessage.author} is not allowed by the resolved protocol config`
     );
   }
 

@@ -228,7 +228,7 @@ export function testProtocolsConfigureHandler(): void {
         expect(queryReply.entries?.length).toBe(1);
       });
 
-      it('should purge records invalidated by a newly learned governing protocol config', async () => {
+      it('should purge records invalidated by a newly learned protocol config', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
@@ -1161,13 +1161,13 @@ export function testProtocolsConfigureHandler(): void {
       });
 
       describe('temporal protocol versioning', () => {
-        it('should authorize records created under v1 even after re-configuring to v2 that removes the type', async () => {
+        it('should authorize records against the protocol definition active at the incoming message timestamp', async () => {
           // scenario:
           // 1. Alice installs protocol v1 with types `post` and `comment`
           // 2. Alice writes a `post` record under v1
           // 3. Alice re-configures the protocol to v2 which removes the `comment` type
-          // 4. Alice should still be able to read the v1 `post` record
-          // 5. Alice should still be able to update the v1 `post` record (governed by v1 definition)
+          // 4. Alice can still read the records as the tenant
+          // 5. Alice cannot update the v1-shaped `post` because the update validates against v2
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
           // v1: has `post` and `comment` types
@@ -1242,7 +1242,7 @@ export function testProtocolsConfigureHandler(): void {
           const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
           expect(configureV2Reply.status.code).toBe(202);
 
-          // read the v1 `post` record — should succeed because read authorization uses v1 definition
+          // read the v1 `post` record — should succeed because `post` still exists in v2
           const readPost = await RecordsRead.create({
             filter : { recordId: postRecord.message.recordId },
             signer : Jws.createSigner(alice),
@@ -1250,7 +1250,7 @@ export function testProtocolsConfigureHandler(): void {
           const readPostReply = await dwn.processMessage(alice.did, readPost.message);
           expect(readPostReply.status.code).toBe(200);
 
-          // read the v1 `comment` record — should succeed (governed by v1 definition where `comment` exists)
+          // read the v1 `comment` record — tenant/owner reads are still allowed
           const readComment = await RecordsRead.create({
             filter : { recordId: commentRecord.message.recordId },
             signer : Jws.createSigner(alice),
@@ -1258,7 +1258,7 @@ export function testProtocolsConfigureHandler(): void {
           const readCommentReply = await dwn.processMessage(alice.did, readComment.message);
           expect(readCommentReply.status.code).toBe(200);
 
-          // update the v1 `post` record — should succeed (governed by v1 definition)
+          // update the v1 `post` record — should fail because the update message resolves v2 with the v2 schema
           const updatedData = new TextEncoder().encode('{"title":"updated post"}');
           const updatePost = await RecordsWrite.createFrom({
             recordsWriteMessage : postRecord.message,
@@ -1268,7 +1268,8 @@ export function testProtocolsConfigureHandler(): void {
           const updatePostReply = await dwn.processMessage(
             alice.did, updatePost.message, { dataStream: DataStream.fromBytes(updatedData) }
           );
-          expect(updatePostReply.status.code).toBe(202);
+          expect(updatePostReply.status.code).toBe(400);
+          expect(updatePostReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationInvalidSchema);
         });
 
         it('should authorize new records against the latest protocol definition, not an older one', async () => {
@@ -1431,12 +1432,12 @@ export function testProtocolsConfigureHandler(): void {
           expect(deleteReply.status.code).toBe(202);
         });
 
-        it('should not retroactively apply v2 action rules to records created under v1', async () => {
+        it('should apply action rules from the protocol definition active at the update timestamp', async () => {
           // scenario:
           // 1. Alice installs protocol v1 where anyone can create and update `post` records
           // 2. Bob writes a `post` to Alice's DWN
           // 3. Alice re-configures to v2 that restricts `post` updates to author-only (removes co-update)
-          // 4. Bob should still be able to update his own record (governed by v1 definition which had update)
+          // 4. Bob cannot update because the update message resolves v2, which no longer allows update
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
@@ -1493,7 +1494,7 @@ export function testProtocolsConfigureHandler(): void {
           const configureV2Reply = await dwn.processMessage(alice.did, configureV2.message);
           expect(configureV2Reply.status.code).toBe(202);
 
-          // Bob updates his v1 record — should succeed because v1 definition (which governs this record) allowed update
+          // Bob updates his v1 record — should fail because the update message resolves v2, which no longer allows update
           const updatedData = new TextEncoder().encode('updated-post-data');
           const updatePost = await RecordsWrite.createFrom({
             recordsWriteMessage : postRecord.message,
@@ -1503,7 +1504,8 @@ export function testProtocolsConfigureHandler(): void {
           const updateReply = await dwn.processMessage(
             alice.did, updatePost.message, { dataStream: DataStream.fromBytes(updatedData) }
           );
-          expect(updateReply.status.code).toBe(202);
+          expect(updateReply.status.code).toBe(401);
+          expect(updateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
         });
 
         it('should handle out-of-order protocol configure processing correctly', async () => {

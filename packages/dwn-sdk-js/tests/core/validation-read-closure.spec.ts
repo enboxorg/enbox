@@ -42,7 +42,6 @@ const READ_SET_TABLE_ROW_BY_METHOD: Record<string, number> = {
   fetchGrant                     : 5,
   fetchOldestGrantRevocation     : 5,
   fetchNewestRecordsWrite        : 2,
-  getGoverningTimestamp          : 6,
   fetchProtocolDefinition        : 6,
   countLatestRecordsAtScope      : 7,
   fetchLatestSquashRecordAtScope : 9,
@@ -433,7 +432,7 @@ describe('validation read closure', () => {
       snapshot('replicated: role-invoking write admitted under dataless role record');
     }
 
-    // ---- scenario: initial write rejected by the latest config through replication apply (row 6) ----
+    // ---- scenario: initial write accepted by timestamped protocol history through replication apply (row 6) ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -476,9 +475,9 @@ describe('validation read closure', () => {
         messageTimestamp : writeTimestamp,
       });
       const alphaResult = await dwn.applyReplicatedMessage(alice.did, alphaMessage, { dataStream: DataStream.fromBytes(alphaDataBytes!) });
-      expect(alphaResult.kind).toBe('Invalid');
+      expect(alphaResult.kind).toBe('Applied');
 
-      snapshot('replicated: initial write rejected by latest config');
+      snapshot('replicated: initial write accepted by timestamped config');
     }
 
     // ---- scenario: replicated completion of a dataless stub (row 8) ----

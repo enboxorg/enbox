@@ -25,7 +25,7 @@ export async function verifyInvokedRole(
   contextId: string | undefined,
   protocolDefinition: ProtocolDefinition,
   validationStateReader: ValidationStateReader,
-  governingTimestamp?: string,
+  protocolDefinitionTimestamp?: string,
 ): Promise<void> {
   const protocolRole = incomingMessage.signaturePayload?.protocolRole;
 
@@ -60,7 +60,7 @@ export async function verifyInvokedRole(
 
     // Fetch the referenced protocol's definition to validate the role exists
     const refDefinition = await validationStateReader.fetchProtocolDefinition(
-      tenant, roleProtocolUri, governingTimestamp
+      tenant, roleProtocolUri, protocolDefinitionTimestamp
     );
     const roleRuleSet = getRuleSetAtPath(roleProtocolPath, refDefinition.structure);
     if (!roleRuleSet?.$role) {

@@ -2,14 +2,12 @@
   "live: protocol record lifecycle": [
     "fetchInitialRecordsWrite",
     "fetchParentRecord",
-    "fetchProtocolDefinition",
-    "getGoverningTimestamp"
+    "fetchProtocolDefinition"
   ],
   "live: role-authorized write": [
     "constructRecordChain",
     "fetchInitialWrite",
     "fetchProtocolDefinition",
-    "getGoverningTimestamp",
     "hasMatchingRoleRecord",
     "queryLatestRoleRecords"
   ],
@@ -19,8 +17,7 @@
   "live: grant-authorized write": [
     "fetchGrant",
     "fetchOldestGrantRevocation",
-    "fetchProtocolDefinition",
-    "getGoverningTimestamp"
+    "fetchProtocolDefinition"
   ],
   "live: messages-read of deleted record with grant": [
     "fetchGrant",
@@ -29,44 +26,36 @@
   ],
   "live: record-limit rejection": [
     "countLatestRecordsAtScope",
-    "fetchProtocolDefinition",
-    "getGoverningTimestamp"
+    "fetchProtocolDefinition"
   ],
   "live: squash backstop": [
     "fetchLatestSquashRecordAtScope",
-    "fetchProtocolDefinition",
-    "getGoverningTimestamp"
+    "fetchProtocolDefinition"
   ],
   "live: dataless update of above-threshold record": [
     "fetchProtocolDefinition",
-    "getGoverningTimestamp",
     "hasStoredData"
   ],
   "replicated: child admitted under dataless parent": [
     "fetchParentRecord",
-    "fetchProtocolDefinition",
-    "getGoverningTimestamp"
+    "fetchProtocolDefinition"
   ],
   "replicated: role-invoking write admitted under dataless role record": [
     "constructRecordChain",
     "fetchInitialWrite",
     "fetchProtocolDefinition",
-    "getGoverningTimestamp",
     "hasMatchingRoleRecord",
     "queryLatestRoleRecords"
   ],
-  "replicated: initial write rejected by latest config": [
-    "fetchProtocolDefinition",
-    "getGoverningTimestamp"
+  "replicated: initial write accepted by timestamped config": [
+    "fetchProtocolDefinition"
   ],
   "replicated: same-CID completion of dataless stub": [
     "fetchProtocolDefinition",
-    "getGoverningTimestamp",
     "hasStoredData"
   ],
   "replicated: tombstone-beaten dataless update missing compacted data": [
     "fetchProtocolDefinition",
-    "getGoverningTimestamp",
     "hasStoredData"
   ]
 }

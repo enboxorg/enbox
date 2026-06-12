@@ -506,7 +506,7 @@ export class Dwn {
       return undefined;
     }
 
-    const lookup = await this.getReplicationApplyProtocolDefinitionLookup(tenant, message);
+    const lookup = Dwn.getReplicationApplyProtocolDefinitionLookup(message);
     if (lookup === undefined) {
       return undefined;
     }
@@ -522,19 +522,13 @@ export class Dwn {
     }
   }
 
-  private async getReplicationApplyProtocolDefinitionLookup(
-    tenant: string,
+  private static getReplicationApplyProtocolDefinitionLookup(
     message: GenericMessage,
-  ): Promise<ReplicationApplyProtocolDefinitionLookup | undefined> {
+  ): ReplicationApplyProtocolDefinitionLookup | undefined {
     if (Dwn.isRecordsWriteMessage(message)) {
-      const governingTimestamp = await this.validationStateReader.getGoverningTimestamp({
-        tenant,
-        recordId: message.recordId,
-      });
-
       return {
         protocol         : message.descriptor.protocol,
-        messageTimestamp : governingTimestamp,
+        messageTimestamp : message.descriptor.messageTimestamp,
       };
     }
 
