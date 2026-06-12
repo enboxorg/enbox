@@ -121,7 +121,7 @@ export class StoreValidationStateReader implements ValidationStateReader {
     // for the parent, which preserves exactly the deleted-parent exclusion the latest-only filter
     // exists for, evaluated against replayed state in replayed order.
     const initialWrite = await fetchInitialRecordsWriteMessage(this.messageStore, tenant, parentId);
-    if (initialWrite === undefined || initialWrite.descriptor.protocol !== parentProtocolUri) {
+    if (initialWrite?.descriptor.protocol !== parentProtocolUri) {
       return undefined;
     }
 

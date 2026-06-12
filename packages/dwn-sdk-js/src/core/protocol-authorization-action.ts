@@ -134,7 +134,7 @@ export async function getActionsSeekingARuleMatch(
 ): Promise<ProtocolAction[]> {
 
   switch (incomingMessage.message.descriptor.method) {
-  case DwnMethodName.Delete:
+  case DwnMethodName.Delete: {
     const recordsDelete = incomingMessage as RecordsDelete;
     const recordId = recordsDelete.message.descriptor.recordId;
     const initialWrite = await validationStateReader.fetchInitialRecordsWrite(tenant, recordId);
@@ -146,7 +146,7 @@ export async function getActionsSeekingARuleMatch(
       return [];
     }
 
-    const actionsThatWouldAuthorizeDelete = [];
+    const actionsThatWouldAuthorizeDelete: ProtocolAction[] = [];
     const prune = recordsDelete.message.descriptor.prune;
     if (prune) {
       actionsThatWouldAuthorizeDelete.push(ProtocolAction.CoPrune);
@@ -165,6 +165,7 @@ export async function getActionsSeekingARuleMatch(
     }
 
     return actionsThatWouldAuthorizeDelete;
+  }
 
   case DwnMethodName.Count:
     return [ProtocolAction.Read];
@@ -178,7 +179,7 @@ export async function getActionsSeekingARuleMatch(
   case DwnMethodName.Subscribe:
     return [ProtocolAction.Read];
 
-  case DwnMethodName.Write:
+  case DwnMethodName.Write: {
     const incomingRecordsWrite = incomingMessage as RecordsWrite;
 
     if (await incomingRecordsWrite.isInitialWrite()) {
@@ -207,6 +208,7 @@ export async function getActionsSeekingARuleMatch(
         return [ProtocolAction.CoUpdate];
       }
     }
+  }
   }
 
   // purely defensive programming: should not be reachable

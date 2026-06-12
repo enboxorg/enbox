@@ -359,7 +359,7 @@ export async function verifyAsRoleRecordIfNeeded(
     protocol        : incomingRecordsWrite.message.descriptor.protocol,
     protocolPath,
     recipient,
-    contextIdPrefix : parentContextId !== '' ? parentContextId : undefined,
+    contextIdPrefix : parentContextId === '' ? undefined : parentContextId,
   });
 
   const matchingRecordsExceptIncomingRecordId = matchingRecords.filter((recordsWriteMessage: RecordsWriteMessage): boolean =>
@@ -410,7 +410,7 @@ export async function verifyRecordLimit(
     tenant,
     protocol        : incomingMessage.message.descriptor.protocol,
     protocolPath,
-    contextIdPrefix : parentContextId !== '' ? parentContextId : undefined,
+    contextIdPrefix : parentContextId === '' ? undefined : parentContextId,
   });
 
   if (existingCount >= max) {
