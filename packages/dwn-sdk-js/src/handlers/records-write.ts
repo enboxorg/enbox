@@ -233,9 +233,9 @@ export class RecordsWriteHandler implements MethodHandler {
         { code: 202, detail: 'Accepted' }
     };
 
-    // displace every other message for this record, except the initial write which is kept unmarked
-    await StorageController.deleteDisplacedMessagesButKeepInitialWrite(
-      tenant, existingMessages, newestMessage, this.deps.messageStore, this.deps.dataStore!, this.deps.stateIndex!
+    // displace every other message for this record, retaining only the initial write as non-latest state
+    await StorageController.deleteDisplacedMessagesAndRetainWrites(
+      tenant, existingMessages, newestMessage, this.deps.messageStore, this.deps.dataStore!, this.deps.stateIndex!, []
     );
 
     // Squash processing: if the incoming write is a squash, delete all older sibling records

@@ -1,6 +1,6 @@
 import type { KeyValues } from '../types/query-types.js';
 import type { MessageSigner } from '../types/signer.js';
-import type { MessageStore } from '../types//message-store.js';
+import type { MessageStore } from '../types/message-store.js';
 import type { DataEncodedRecordsWriteMessage, RecordsDeleteDescriptor, RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';

@@ -101,9 +101,9 @@ export class StorageController {
       );
     }
 
-    // displace every other message for this record, except retained writes which are kept unmarked
-    await StorageController.deleteDisplacedMessagesButKeepInitialWrite(
-      tenant, existingMessages, message, this.messageStore, this.dataStore, this.stateIndex, newestPreDeleteWrite
+    // displace every other message for this record, retaining the writes needed for replay and future tombstone visibility
+    await StorageController.deleteDisplacedMessagesAndRetainWrites(
+      tenant, existingMessages, message, this.messageStore, this.dataStore, this.stateIndex, [newestPreDeleteWrite]
     );
   }
 
@@ -297,27 +297,28 @@ export class StorageController {
   }
 
   /**
-   * Deletes all messages in `existingMessages` that the `retainedMessage` displaces (every other
-   * message for the record), but keeps the initial write and optional visibility-source write for
-   * future processing by ensuring their `isLatestBaseState` indexes are "false". Displacement is
-   * deliberately NOT a timestamp comparison: a RecordsDelete displaces even a newer RecordsWrite
-   * (delete-wins convergence), and on resumable-task replay the retained message itself is back in
-   * `existingMessages` and must survive — so membership is decided by CID.
+   * Deletes all messages in `existingMessages` that the `retainedMessage` displaces, while keeping
+   * the initial write and the caller-supplied writes as non-latest state for future replay and
+   * tombstone visibility reconstruction. Displacement is deliberately NOT a timestamp comparison:
+   * a RecordsDelete displaces even a newer RecordsWrite (delete-wins convergence), and on
+   * resumable-task replay the retained message itself is back in `existingMessages` and must
+   * survive — so membership is decided by CID.
    */
-  public static async deleteDisplacedMessagesButKeepInitialWrite(
+  public static async deleteDisplacedMessagesAndRetainWrites(
     tenant: string,
     existingMessages: GenericMessage[],
     retainedMessage: GenericMessage,
     messageStore: MessageStore,
     dataStore: DataStore,
     stateIndex: StateIndex,
-    additionalRetainedRecordsWrite?: RecordsWriteMessage
+    additionalRetainedRecordsWrites: RecordsWriteMessage[],
   ): Promise<void> {
     const deletedMessageCids: string[] = [];
     const retainedMessageCid = await Message.getCid(retainedMessage);
-    const additionalRetainedRecordsWriteCid = additionalRetainedRecordsWrite === undefined ?
-      undefined :
-      await Message.getCid(additionalRetainedRecordsWrite);
+    const additionalRetainedRecordsWriteCids = new Set<string>();
+    for (const retainedRecordsWrite of additionalRetainedRecordsWrites) {
+      additionalRetainedRecordsWriteCids.add(await Message.getCid(retainedRecordsWrite));
+    }
 
     // NOTE: under normal operation, there should only be at most two existing records per `recordId` (initial + a potential subsequent write/delete),
     // but the DWN may crash before `delete()` is called below, so we use a loop as a tactic to clean up lingering data as needed
@@ -338,7 +339,7 @@ export class StorageController {
         // replicas can reconstruct tombstone visibility, but they must no longer be latest state.
         const shouldKeepAsNonLatestWrite =
           await RecordsWrite.isInitialWrite(message) ||
-          messageCid === additionalRetainedRecordsWriteCid;
+          additionalRetainedRecordsWriteCids.has(messageCid);
         if (shouldKeepAsNonLatestWrite) {
           const existingRecordsWrite = await RecordsWrite.parse(message as RecordsWriteMessage);
           const isLatestBaseState = false;
