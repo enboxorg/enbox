@@ -4,9 +4,9 @@ import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from './message-store.js';
 import type { ResumableTaskManager } from '../core/resumable-task-manager.js';
 import type { StateIndex } from './state-index.js';
+import type { ValidationStateReader } from './validation-state-reader.js';
 import type { EventLog, SubscriptionListener } from './subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './message-types.js';
-import type { ValidationMode, ValidationStateReader } from './validation-state-reader.js';
 
 /**
  * Interface that defines a message handler of a specific method.
@@ -20,14 +20,6 @@ export interface MethodHandler {
     message: GenericMessage;
     dataStream?: ReadableStream<Uint8Array>;
     subscriptionHandler?: SubscriptionListener;
-
-    /**
-     * The validation mode the message is admitted under, defaulting to `'live'`.
-     * Threaded per call from the two entry points: `processMessage()` passes `'live'`,
-     * `applyReplicatedMessage()` passes `'replicated'` — never stored on the shared
-     * `HandlerDependencies` bag, which is built once per `Dwn` instance and serves both.
-     */
-    validationMode?: ValidationMode;
   }): Promise<GenericMessageReply>;
 }
 

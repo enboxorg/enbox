@@ -3,9 +3,9 @@ import type { DataStore } from '../types/data-store.js';
 import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
 import type { ProtocolDefinition, ProtocolsConfigureMessage } from '../types/protocols-types.js';
-import type { ValidationMode, ValidationStateReader } from '../types/validation-state-reader.js';
 
 import { FilterUtility } from '../utils/filter.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
@@ -19,9 +19,7 @@ import { fetchInitialRecordsWrite, fetchInitialRecordsWriteMessage, getInitialWr
 
 /**
  * The store-backed `ValidationStateReader` — the single place where validation-time state reads
- * touch the `MessageStore`/`DataStore`, and the home of every replicated-validation divergence
- * (read-set table rows 3, 4, and 6). The divergences are implemented here keyed on
- * `ValidationMode` — nowhere else — so the divergence list stays grep-ably exhaustive.
+ * touch the `MessageStore`/`DataStore`.
  */
 export class StoreValidationStateReader implements ValidationStateReader {
   private readonly messageStore: MessageStore;
@@ -97,9 +95,8 @@ export class StoreValidationStateReader implements ValidationStateReader {
     tenant: string;
     parentProtocolUri: string;
     parentId: string;
-    validationMode: ValidationMode;
   }): Promise<RecordsWriteMessage | undefined> {
-    const { tenant, parentProtocolUri, parentId, validationMode } = input;
+    const { tenant, parentProtocolUri, parentId } = input;
 
     const latestStateQuery: Filter = {
       isLatestBaseState : true, // NOTE: this filter is critical, to ensure are are not returning a deleted parent
@@ -110,16 +107,10 @@ export class StoreValidationStateReader implements ValidationStateReader {
     };
     const { messages: parentMessages } = await this.messageStore.query(tenant, [latestStateQuery]);
     const latestParent = (parentMessages as RecordsWriteMessage[])[0];
-
-    if (latestParent !== undefined || validationMode === 'live') {
+    if (latestParent !== undefined) {
       return latestParent;
     }
 
-    // Replicated divergence — read-set row 3 (parent): a data-compacted parent is ancestry-only
-    // mid-replay, so when no latest-state write exists, accept the parent's initial write for the
-    // immutable protocolPath/contextId facts — provided no local RecordsDelete tombstone exists
-    // for the parent, which preserves exactly the deleted-parent exclusion the latest-only filter
-    // exists for, evaluated against replayed state in replayed order.
     const initialWrite = await fetchInitialRecordsWriteMessage(this.messageStore, tenant, parentId);
     if (initialWrite?.descriptor.protocol !== parentProtocolUri) {
       return undefined;
@@ -139,31 +130,22 @@ export class StoreValidationStateReader implements ValidationStateReader {
     protocolPath: string;
     recipient: string;
     contextIdPrefix?: string;
-    validationMode: ValidationMode;
   }): Promise<boolean> {
-    const { tenant, validationMode } = input;
-
     const latestStateFilter = StoreValidationStateReader.constructRoleRecordFilter({ ...input, latestStateOnly: true });
-    const { messages: matchingMessages } = await this.messageStore.query(tenant, [latestStateFilter]);
-
-    if (matchingMessages.length > 0 || validationMode === 'live') {
-      return matchingMessages.length > 0;
+    const { messages: matchingMessages } = await this.messageStore.query(input.tenant, [latestStateFilter]);
+    if (matchingMessages.length > 0) {
+      return true;
     }
 
-    // Replicated divergence — read-set row 4 (role): a role record superseded or compacted after
-    // its dependents is ancestry-only mid-replay, so when no latest-state match exists, accept an
-    // initial-write role record matching the selector — recipient, protocolPath, and context are
-    // initial-write facts — provided its record has no local tombstone. The lookup stays
-    // filter-only: role validation never reads record data.
     const anyWriteFilter = StoreValidationStateReader.constructRoleRecordFilter({ ...input, latestStateOnly: false });
-    const { messages: candidates } = await this.messageStore.query(tenant, [anyWriteFilter]);
+    const { messages: candidates } = await this.messageStore.query(input.tenant, [anyWriteFilter]);
 
     for (const candidate of candidates as RecordsWriteMessage[]) {
       if (!await RecordsWrite.isInitialWrite(candidate)) {
         continue;
       }
 
-      if (!await this.recordHasLocalTombstone(tenant, candidate.recordId)) {
+      if (!await this.recordHasLocalTombstone(input.tenant, candidate.recordId)) {
         return true;
       }
     }
@@ -237,8 +219,6 @@ export class StoreValidationStateReader implements ValidationStateReader {
   public async getGoverningTimestamp(input: {
     tenant: string;
     recordId: string;
-    messageTimestamp: string;
-    validationMode: ValidationMode;
   }): Promise<string | undefined> {
     const existingInitialWrite = await this.fetchInitialWrite(input.tenant, input.recordId);
 
@@ -247,14 +227,7 @@ export class StoreValidationStateReader implements ValidationStateReader {
       return existingInitialWrite.descriptor.messageTimestamp;
     }
 
-    if (input.validationMode === 'replicated') {
-      // Replicated divergence — read-set row 6 (protocol definition): the governing config for an
-      // initial write is selected by the message's own messageTimestamp against retained config
-      // history, reproducing the definition that governed the write's original admission.
-      return input.messageTimestamp;
-    }
-
-    // live initial write case: validate against the latest protocol definition
+    // initial write case: validate against the latest protocol definition
     return undefined;
   }
 
@@ -376,8 +349,7 @@ export class StoreValidationStateReader implements ValidationStateReader {
 
   /**
    * Checks whether a `RecordsDelete` tombstone for the given record is locally present.
-   * Used by the replicated reconstruction fallbacks (read-set rows 3 and 4) to preserve the
-   * deleted-record exclusion that the live path's `isLatestBaseState` filter provides.
+   * Retained initial writes can prove immutable parent/role facts, but a tombstone still wins.
    */
   private async recordHasLocalTombstone(tenant: string, recordId: string): Promise<boolean> {
     const tombstoneQuery: Filter = {

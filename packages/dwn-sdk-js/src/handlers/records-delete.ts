@@ -1,7 +1,6 @@
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { RecordsDeleteMessage } from '../types/records-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
-import type { ValidationMode } from '../types/validation-state-reader.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 
 import { authenticate } from '../core/auth.js';
@@ -21,8 +20,7 @@ export class RecordsDeleteHandler implements MethodHandler {
   public async handle({
     tenant,
     message,
-    validationMode = 'live'
-  }: { tenant: string, message: RecordsDeleteMessage, validationMode?: ValidationMode }): Promise<GenericMessageReply> {
+  }: { tenant: string, message: RecordsDeleteMessage }): Promise<GenericMessageReply> {
     let recordsDelete: RecordsDelete;
     try {
       recordsDelete = await RecordsDelete.parse(message);
@@ -77,7 +75,6 @@ export class RecordsDeleteHandler implements MethodHandler {
         tenant,
         recordsDelete,
         initialWrite!,
-        validationMode,
       );
     } catch (e) {
       return messageReplyFromError(e, 401);
@@ -103,7 +100,6 @@ export class RecordsDeleteHandler implements MethodHandler {
     tenant: string,
     recordsDelete: RecordsDelete,
     recordsWrite: RecordsWrite,
-    validationMode: ValidationMode,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsDelete.message)) {
@@ -124,7 +120,7 @@ export class RecordsDeleteHandler implements MethodHandler {
         validationStateReader : this.deps.validationStateReader,
       });
     } else {
-      await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, this.deps.validationStateReader, validationMode);
+      await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, this.deps.validationStateReader);
     }
   }
 };

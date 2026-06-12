@@ -2324,19 +2324,13 @@ export function testRecordsWriteHandler(): void {
           expect(bobRecordsQueryReply.entries?.length).toBe(1);
           expect(bobRecordsQueryReply.entries![0].encodedData).toBe(base64url.baseEncode(bobData));
 
-          // generate a new message from carol updating the existing message, which should not be allowed/accepted
+          // generate a well-formed update from Carol, which should not be allowed/accepted
           const modifiedMessageData = new TextEncoder().encode('modified message by carol');
-          const modifiedMessageFromCarol = await TestDataGenerator.generateRecordsWrite(
-            {
-              author       : carol,
-              protocol,
-              protocolPath : 'message', // this comes from `types` in protocol definition
-              schema       : protocolDefinition.types.message.schema,
-              dataFormat   : protocolDefinition.types.message.dataFormats[0],
-              data         : modifiedMessageData,
-              recordId     : messageFromBob.message.recordId,
-            }
-          );
+          const modifiedMessageFromCarol = await TestDataGenerator.generateFromRecordsWrite({
+            author        : carol,
+            existingWrite : messageFromBob.recordsWrite,
+            data          : modifiedMessageData,
+          });
 
           const carolWriteReply =
             await dwn.processMessage(alice.did, modifiedMessageFromCarol.message, { dataStream: modifiedMessageFromCarol.dataStream });

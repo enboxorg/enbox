@@ -1,8 +1,8 @@
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage } from '../types/protocols-types.js';
-import type { ValidationMode, ValidationStateReader } from '../types/validation-state-reader.js';
 
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
@@ -42,8 +42,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
   public async handle({
     tenant,
     message,
-    validationMode = 'live',
-  }: { tenant: string, message: ProtocolsConfigureMessage, validationMode?: ValidationMode }): Promise<GenericMessageReply> {
+  }: { tenant: string, message: ProtocolsConfigureMessage }): Promise<GenericMessageReply> {
     let protocolsConfigure: ProtocolsConfigure;
     try {
       protocolsConfigure = await ProtocolsConfigure.parse(message);
@@ -66,7 +65,6 @@ export class ProtocolsConfigureHandler implements MethodHandler {
         tenant,
         message.descriptor.definition,
         this.deps.validationStateReader,
-        validationMode === 'replicated' ? message.descriptor.messageTimestamp : undefined,
       );
     } catch (e) {
       return messageReplyFromError(e, 400);

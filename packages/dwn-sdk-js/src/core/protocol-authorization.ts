@@ -5,8 +5,8 @@ import type { RecordsRead } from '../interfaces/records-read.js';
 import type { RecordsSubscribe } from '../interfaces/records-subscribe.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
-import type { ValidationMode, ValidationStateReader } from '../types/validation-state-reader.js';
 
 import { getRuleSetAtPath } from '../utils/protocols.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
@@ -34,16 +34,13 @@ export class ProtocolAuthorization {
     tenant: string,
     incomingMessage: RecordsWrite,
     validationStateReader: ValidationStateReader,
-    validationMode: ValidationMode,
   ): Promise<void> {
     // Determine the governing timestamp for protocol definition lookup.
-    // For an initial write, this is the message's own timestamp (live mode: the latest definition).
+    // For an initial write, this is undefined so the latest definition governs.
     // For an update, this is the initial write's timestamp (the protocol version is locked at creation time).
     const governingTimestamp = await validationStateReader.getGoverningTimestamp({
-      tenant,
-      recordId         : incomingMessage.message.recordId,
-      messageTimestamp : incomingMessage.message.descriptor.messageTimestamp,
-      validationMode,
+      tenant   : tenant,
+      recordId : incomingMessage.message.recordId,
     });
 
     // fetch the protocol definition that was active at the governing timestamp
@@ -61,7 +58,7 @@ export class ProtocolAuthorization {
 
     // validate `protocolPath`
     await verifyProtocolPathAndContextId(
-      tenant, incomingMessage, validationStateReader, validationMode, governingTimestamp,
+      tenant, incomingMessage, validationStateReader, governingTimestamp,
     );
 
     // get the rule set for the inbound message
@@ -143,7 +140,6 @@ export class ProtocolAuthorization {
     tenant: string,
     incomingMessage: RecordsWrite,
     validationStateReader: ValidationStateReader,
-    validationMode: ValidationMode,
   ): Promise<void> {
     const existingInitialWrite = await validationStateReader.fetchInitialWrite(tenant, incomingMessage.message.recordId);
 
@@ -159,10 +155,8 @@ export class ProtocolAuthorization {
 
     // Determine the governing timestamp for protocol definition lookup.
     const governingTimestamp = await validationStateReader.getGoverningTimestamp({
-      tenant,
-      recordId         : incomingMessage.message.recordId,
-      messageTimestamp : incomingMessage.message.descriptor.messageTimestamp,
-      validationMode,
+      tenant   : tenant,
+      recordId : incomingMessage.message.recordId,
     });
 
     // fetch the protocol definition that was active at the governing timestamp
@@ -186,7 +180,6 @@ export class ProtocolAuthorization {
       incomingMessage.message.contextId,
       protocolDefinition,
       validationStateReader,
-      validationMode,
       governingTimestamp,
     );
 
@@ -211,7 +204,6 @@ export class ProtocolAuthorization {
     incomingMessage: RecordsRead,
     newestRecordsWrite: RecordsWrite,
     validationStateReader: ValidationStateReader,
-    validationMode: ValidationMode,
   ): Promise<void> {
     // fetch record chain
     const recordChain: RecordsWriteMessage[] =
@@ -247,7 +239,6 @@ export class ProtocolAuthorization {
       newestRecordsWrite.message.contextId,
       protocolDefinition,
       validationStateReader,
-      validationMode,
       governingTimestamp,
     );
 
@@ -266,7 +257,6 @@ export class ProtocolAuthorization {
     tenant: string,
     incomingMessage: RecordsCount | RecordsQuery | RecordsSubscribe,
     validationStateReader: ValidationStateReader,
-    validationMode: ValidationMode,
   ): Promise<void> {
     const { protocol, protocolPath, contextId } = incomingMessage.message.descriptor.filter;
 
@@ -290,7 +280,6 @@ export class ProtocolAuthorization {
       contextId,
       protocolDefinition,
       validationStateReader,
-      validationMode,
     );
 
     // verify method invoked against the allowed actions in the rule set
@@ -313,7 +302,6 @@ export class ProtocolAuthorization {
     incomingMessage: RecordsDelete,
     recordsWrite: RecordsWrite,
     validationStateReader: ValidationStateReader,
-    validationMode: ValidationMode,
   ): Promise<void> {
 
     // fetch record chain
@@ -349,7 +337,6 @@ export class ProtocolAuthorization {
       recordsWrite.message.contextId,
       protocolDefinition,
       validationStateReader,
-      validationMode,
       governingTimestamp,
     );
 

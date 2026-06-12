@@ -7,6 +7,7 @@ import type { ResumableTaskStore } from './types/resumable-task-store.js';
 import type { StateIndex } from './types/state-index.js';
 import type { TenantGate } from './core/tenant-gate.js';
 import type { UnionMessageReply } from './core/message-reply.js';
+import type { ValidationStateReader } from './types/validation-state-reader.js';
 import type { EventLog, MessageEvent, SubscriptionListener } from './types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from './types/method-handler.js';
@@ -36,7 +37,6 @@ import type {
   RecordsWriteMessageOptions
 } from './types/records-types.js';
 import type { ReplicationApplyOptions, ReplicationApplyResult } from './core/replication-apply.js';
-import type { ValidationMode, ValidationStateReader } from './types/validation-state-reader.js';
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
 import { Cid } from './utils/cid.js';
@@ -262,20 +262,6 @@ export class Dwn {
   public async processMessage(tenant: string, rawMessage: RecordsWriteMessage, options?: RecordsWriteMessageOptions): Promise<GenericMessageReply>;
   public async processMessage(tenant: string, rawMessage: unknown, options?: MessageOptions): Promise<UnionMessageReply>;
   public async processMessage(tenant: string, rawMessage: GenericMessage, options: MessageOptions = {}): Promise<UnionMessageReply> {
-    return this.processMessageWithMode(tenant, rawMessage, options, 'live');
-  }
-
-  /**
-   * Validates and dispatches the given message to its method handler under the given validation
-   * mode. The mode is threaded per call: `processMessage()` passes `'live'`,
-   * `applyReplicatedMessage()` passes `'replicated'`.
-   */
-  private async processMessageWithMode(
-    tenant: string,
-    rawMessage: GenericMessage,
-    options: MessageOptions,
-    validationMode: ValidationMode,
-  ): Promise<UnionMessageReply> {
     const errorMessageReply = await this.validateTenant(tenant) ?? await this.validateMessageIntegrity(rawMessage);
     if (errorMessageReply !== undefined) {
       return errorMessageReply;
@@ -289,7 +275,6 @@ export class Dwn {
       message: rawMessage,
       dataStream,
       subscriptionHandler,
-      validationMode
     });
 
     return methodHandlerReply;
@@ -321,7 +306,7 @@ export class Dwn {
       return { kind: 'Duplicate' };
     }
 
-    const reply = await this.processMessageWithMode(tenant, rawMessage, options, 'replicated');
+    const reply = await this.processMessage(tenant, rawMessage, options);
     const replicatedWriteBeatenByDeleteResult = await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply, options);
     if (replicatedWriteBeatenByDeleteResult !== undefined) {
       return replicatedWriteBeatenByDeleteResult;
@@ -544,9 +529,7 @@ export class Dwn {
     if (Dwn.isRecordsWriteMessage(message)) {
       const governingTimestamp = await this.validationStateReader.getGoverningTimestamp({
         tenant,
-        recordId         : message.recordId,
-        messageTimestamp : message.descriptor.messageTimestamp,
-        validationMode   : 'replicated',
+        recordId: message.recordId,
       });
 
       return {

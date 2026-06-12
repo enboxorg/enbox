@@ -1,5 +1,4 @@
 import type { Filter } from '../types/query-types.js';
-import type { ValidationMode } from '../types/validation-state-reader.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply } from '../types/records-types.js';
 
@@ -23,8 +22,7 @@ export class RecordsReadHandler implements MethodHandler {
   public async handle({
     tenant,
     message,
-    validationMode = 'live'
-  }: { tenant: string, message: RecordsReadMessage, validationMode?: ValidationMode }): Promise<RecordsReadReply> {
+  }: { tenant: string, message: RecordsReadMessage }): Promise<RecordsReadReply> {
 
     let recordsRead: RecordsRead;
     try {
@@ -87,7 +85,7 @@ export class RecordsReadHandler implements MethodHandler {
       const parsedNewestWrite = await RecordsWrite.parse(newestWrite);
 
       try {
-        await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps, validationMode);
+        await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps);
       } catch (error) {
         return messageReplyFromError(error, 401);
       }
@@ -107,7 +105,7 @@ export class RecordsReadHandler implements MethodHandler {
     try {
       const parsedWrite = await RecordsWrite.parse(matchedRecordsWrite);
       await RecordsReadHandler.authorizeRecordsRead(
-        tenant, recordsRead, parsedWrite, this.deps, validationMode,
+        tenant, recordsRead, parsedWrite, this.deps,
       );
     } catch (error) {
       return messageReplyFromError(error, 401);
@@ -162,7 +160,6 @@ export class RecordsReadHandler implements MethodHandler {
     recordsRead: RecordsRead,
     matchedRecordsWrite: RecordsWrite,
     deps: HandlerDependencies,
-    validationMode: ValidationMode,
   ): Promise<void> {
     if (Message.isSignedByAuthorDelegate(recordsRead.message)) {
       await recordsRead.authorizeDelegate(matchedRecordsWrite.message, deps.validationStateReader);
@@ -193,7 +190,7 @@ export class RecordsReadHandler implements MethodHandler {
         validationStateReader       : deps.validationStateReader
       });
     } else {
-      await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader, validationMode);
+      await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
     }
   }
 }

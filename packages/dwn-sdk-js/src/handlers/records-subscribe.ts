@@ -1,5 +1,4 @@
 import type { MessageSort } from '../types/message-types.js';
-import type { ValidationMode } from '../types/validation-state-reader.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { ProgressGapInfo, SubscriptionListener } from '../types/subscriptions.js';
@@ -26,12 +25,10 @@ export class RecordsSubscribeHandler implements MethodHandler {
     tenant,
     message,
     subscriptionHandler,
-    validationMode = 'live'
   }: {
     tenant: string,
     message: RecordsSubscribeMessage,
     subscriptionHandler: SubscriptionListener,
-    validationMode?: ValidationMode,
   }): Promise<RecordsSubscribeReply> {
     if (this.deps.eventLog === undefined) {
       return messageReplyFromError(new DwnError(
@@ -61,7 +58,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
       // authentication and authorization
       try {
         await authenticate(message.authorization!, this.deps.didResolver);
-        await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.deps, validationMode);
+        await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.deps);
       } catch (error) {
         return messageReplyFromError(error, 401);
       }
@@ -349,7 +346,6 @@ export class RecordsSubscribeHandler implements MethodHandler {
     tenant: string,
     recordsSubscribe: RecordsSubscribe,
     deps: HandlerDependencies,
-    validationMode: ValidationMode,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsSubscribe.message)) {
@@ -373,7 +369,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     // this is because we dynamically filter out records that the caller is not authorized to see.
     // Currently only run protocol authorization if message deliberately invokes a protocol role.
     if (Records.shouldProtocolAuthorize(recordsSubscribe.signaturePayload!)) {
-      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsSubscribe, deps.validationStateReader, validationMode);
+      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsSubscribe, deps.validationStateReader);
     }
   }
 }

@@ -5,21 +5,6 @@ import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from './records-types.js';
 
 /**
- * The validation mode a message is admitted under.
- *
- * - `live`: direct authoring through `processMessage()` — every validation read sees current state
- *   and is enforced strictly.
- * - `replicated`: admission through `applyReplicatedMessage()` — the message was already validated
- *   by its source against the state the source held at that position, so a small, exhaustively
- *   enumerated set of reads (read-set table rows 3, 4, and 6) reconstructs the historical answer
- *   from retained material instead of requiring current-latest state.
- *
- * The mode is threaded from the two entry points as a per-call field on `MethodHandler.handle()`
- * input — never stored on the shared `HandlerDependencies` bag.
- */
-export type ValidationMode = 'live' | 'replicated';
-
-/**
  * The single narrow surface through which validation logic reads state.
  *
  * Every validation-time state read performed during message admission routes through this
@@ -30,8 +15,7 @@ export type ValidationMode = 'live' | 'replicated';
  * a reader method here, which forces writing its read-set table row first.
  *
  * Each method's doc names its row in the read-set table (sync replication-log design,
- * "Invariant and the replay basis"). Methods take a `ValidationMode` argument only where the
- * replicated behavior diverges from live — rows 3, 4, and 6 are the complete divergence list.
+ * "Invariant and the replay basis").
  */
 export interface ValidationStateReader {
   /**
@@ -60,28 +44,22 @@ export interface ValidationStateReader {
   /**
    * Read-set row 3: fetches the immediate parent record for protocolPath/contextId verification.
    *
-   * Live mode queries the latest-state write only — the `isLatestBaseState` filter is what
-   * excludes deleted parents. Replicated mode adds a reconstruction fallback: when no latest
-   * write exists (a data-compacted parent is ancestry-only mid-replay), the parent's initial
-   * write is accepted for the immutable protocolPath/contextId facts, provided no local
-   * `RecordsDelete` tombstone exists for the parent — preserving the deleted-parent exclusion.
+   * Queries the latest-state write first — the fast path that excludes deleted parents. If no
+   * latest write exists, a retained initial write is sufficient for immutable parent facts
+   * (protocolPath/contextId) provided no local tombstone exists for that record.
    * @returns the parent write, or `undefined` when the parent is absent (or deleted).
    */
   fetchParentRecord(input: {
     tenant: string;
     parentProtocolUri: string;
     parentId: string;
-    validationMode: ValidationMode;
   }): Promise<RecordsWriteMessage | undefined>;
 
   /**
    * Read-set row 4: checks whether a role record matching the invoked-role selector exists.
-   * Filter-only — role validation never reads record data.
-   *
-   * Live mode requires a latest-state match. Replicated mode adds a reconstruction fallback:
-   * when no latest match exists (a role record superseded or compacted after its dependents),
-   * an initial-write role record matching the selector is accepted — recipient, protocolPath,
-   * and context are initial-write facts — provided its record has no local tombstone.
+   * Filter-only — role validation never reads record data. The latest-state match is the fast
+   * path. If no latest match exists, a retained initial role write is sufficient for immutable
+   * role facts (recipient/path/context) provided no local tombstone exists for that role record.
    */
   hasMatchingRoleRecord(input: {
     tenant: string;
@@ -89,13 +67,11 @@ export interface ValidationStateReader {
     protocolPath: string;
     recipient: string;
     contextIdPrefix?: string;
-    validationMode: ValidationMode;
   }): Promise<boolean>;
 
   /**
    * Read-set row 4 (role uniqueness): queries the latest-state role records matching the given
-   * selector, used to reject duplicate role assignments to the same recipient. Filter-only; no
-   * mode divergence — the uniqueness constraint is enforced identically in both modes.
+   * selector, used to reject duplicate role assignments to the same recipient. Filter-only.
    */
   queryLatestRoleRecords(input: {
     tenant: string;
@@ -131,19 +107,15 @@ export interface ValidationStateReader {
    * Read-set row 6: determines the timestamp that selects the governing protocol definition for
    * the given `RecordsWrite`.
    *
-   * For an update (an initial write already exists), both modes return the initial write's
+   * For an update (an initial write already exists), returns the initial write's
    * `messageTimestamp` — the protocol version is locked at creation time. For an initial write,
-   * live mode returns `undefined` (the record is being created now, so the latest definition
-   * governs) while replicated mode returns the message's own `messageTimestamp`, selecting the
-   * historically-governing config from retained config history.
+   * returns `undefined` so the latest definition governs.
    * @throws {DwnError} with `RecordsWriteGetInitialWriteNotFound` when writes exist for the
    *         record but none of them is the initial write.
    */
   getGoverningTimestamp(input: {
     tenant: string;
     recordId: string;
-    messageTimestamp: string;
-    validationMode: ValidationMode;
   }): Promise<string | undefined>;
 
   /**
@@ -158,9 +130,8 @@ export interface ValidationStateReader {
 
   /**
    * Read-set row 7: counts the latest-state records at a `$recordLimit` scope
-   * (protocol + protocolPath within the parent context). No mode divergence in this reader —
-   * live-mode `Reject` semantics apply as-is; the replicated occupancy fold is a separate,
-   * later change.
+   * (protocol + protocolPath within the parent context). Direct-write `Reject` semantics apply
+   * as-is; any future replicated occupancy fold must be implemented separately from admission.
    */
   countLatestRecordsAtScope(input: {
     tenant: string;

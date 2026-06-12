@@ -1,4 +1,3 @@
-import type { ValidationMode } from '../types/validation-state-reader.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { GenericMessage, MessageSort } from '../types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
@@ -23,8 +22,7 @@ export class RecordsQueryHandler implements MethodHandler {
   public async handle({
     tenant,
     message,
-    validationMode = 'live'
-  }: {tenant: string, message: RecordsQueryMessage, validationMode?: ValidationMode}): Promise<RecordsQueryReply> {
+  }: {tenant: string, message: RecordsQueryMessage}): Promise<RecordsQueryReply> {
     let recordsQuery: RecordsQuery;
     try {
       recordsQuery = await RecordsQuery.parse(message);
@@ -44,7 +42,7 @@ export class RecordsQueryHandler implements MethodHandler {
       try {
         await authenticate(message.authorization!, this.deps.didResolver);
 
-        await RecordsQueryHandler.authorizeRecordsQuery(tenant, recordsQuery, this.deps, validationMode);
+        await RecordsQueryHandler.authorizeRecordsQuery(tenant, recordsQuery, this.deps);
       } catch (e) {
         return messageReplyFromError(e, 401);
       }
@@ -268,7 +266,6 @@ export class RecordsQueryHandler implements MethodHandler {
     tenant: string,
     recordsQuery: RecordsQuery,
     deps: HandlerDependencies,
-    validationMode: ValidationMode,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsQuery.message)) {
@@ -292,7 +289,7 @@ export class RecordsQueryHandler implements MethodHandler {
     // this is because we dynamically filter out records that the caller is not authorized to see.
     // Currently only run protocol authorization if message deliberately invokes a protocol role.
     if (Records.shouldProtocolAuthorize(recordsQuery.signaturePayload!)) {
-      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsQuery, deps.validationStateReader, validationMode);
+      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsQuery, deps.validationStateReader);
     }
   }
 }

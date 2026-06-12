@@ -20,15 +20,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 /**
- * Live-mode parity pin: this spec exercises a representative matrix of writes, deletes, queries,
+ * processMessage parity pin: this spec exercises a representative matrix of writes, deletes, queries,
  * and reads through the public `processMessage()` API only, asserting the observable replies the
- * handlers produce on the live path.
+ * handlers produce through the direct admission path.
  *
- * The expectations were derived from the pre-`ValidationStateReader` handlers (current `main`).
- * The `ValidationStateReader` refactor must not change any of them: this file deliberately avoids
- * every new API and checks full reply bodies for the representative data-bearing paths.
+ * This file deliberately avoids every replication API and checks full reply bodies for the
+ * representative data-bearing paths so processMessage behavior stays explicit as validation
+ * reads move behind `ValidationStateReader`.
  */
-describe('live-mode parity', () => {
+describe('processMessage parity', () => {
   let didResolver: DidResolver;
   let messageStore: MessageStore;
   let dataStore: DataStore;
@@ -166,7 +166,7 @@ describe('live-mode parity', () => {
     const datalessParentReply = await dwn.processMessage(alice.did, parentMessage);
     expect(datalessParentReply).toEqual({ status: { code: 204, detail: 'No Content' } });
 
-    // 3. child write under the dataless (non-latest) parent → 400 parent not found
+    // 3. child write under the dataless (non-latest) parent → 202
     const { message: childMessage, dataStream: childDataStream } = await TestDataGenerator.generateRecordsWrite({
       author          : alice,
       protocol        : protocolDefinition.protocol,
@@ -176,13 +176,7 @@ describe('live-mode parity', () => {
       parentContextId : parentWrite.message.contextId,
     });
     const childReply = await dwn.processMessage(alice.did, childMessage, { dataStream: childDataStream });
-    expect(childReply).toEqual({
-      status: {
-        code   : 400,
-        detail : `${DwnErrorCode.ProtocolAuthorizationParentRecordNotFound}: ` +
-          `Could not find parent record '${parentMessage.recordId}' to verify declared protocol path 'foo/bar'.`,
-      },
-    });
+    expect(childReply).toEqual({ status: { code: 202, detail: 'Accepted' } });
 
     // 4. write by a non-tenant author with no grant, role, or action rule → 401
     const { message: strangerMessage, dataStream: strangerDataStream } = await TestDataGenerator.generateRecordsWrite({

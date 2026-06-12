@@ -4,8 +4,8 @@ import type { RecordsQuery } from '../interfaces/records-query.js';
 import type { RecordsRead } from '../interfaces/records-read.js';
 import type { RecordsSubscribe } from '../interfaces/records-subscribe.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
-import type { ValidationMode, ValidationStateReader } from '../types/validation-state-reader.js';
 
 import { DwnMethodName } from '../enums/dwn-interface-method.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
@@ -25,7 +25,6 @@ export async function verifyInvokedRole(
   contextId: string | undefined,
   protocolDefinition: ProtocolDefinition,
   validationStateReader: ValidationStateReader,
-  validationMode: ValidationMode,
   governingTimestamp?: string,
 ): Promise<void> {
   const protocolRole = incomingMessage.signaturePayload?.protocolRole;
@@ -99,14 +98,13 @@ export async function verifyInvokedRole(
     contextIdPrefix = contextIdSegments.slice(0, ancestorSegmentCountOfRolePath).join('/');
   }
 
-  // fetch the invoked role record (read-set row 4 — the reader applies the replicated-mode fallback)
+  // fetch the invoked role record (read-set row 4)
   const matchingRoleRecordExists = await validationStateReader.hasMatchingRoleRecord({
     tenant,
     protocol     : roleProtocolUri,
     protocolPath : roleProtocolPath,
     recipient    : incomingMessage.author!,
     contextIdPrefix,
-    validationMode,
   });
 
   if (!matchingRoleRecordExists) {

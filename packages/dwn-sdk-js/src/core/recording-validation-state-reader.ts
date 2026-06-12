@@ -3,15 +3,13 @@ import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
-import type { ValidationMode, ValidationStateReader } from '../types/validation-state-reader.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 
 /**
- * One recorded validation-time state read: the reader method invoked and, for the mode-keyed
- * methods (read-set table rows 3, 4, and 6), the `ValidationMode` it was invoked under.
+ * One recorded validation-time state read: the reader method invoked.
  */
 export type RecordedValidationRead = {
   method: keyof ValidationStateReader;
-  validationMode?: ValidationMode;
 };
 
 /**
@@ -60,9 +58,8 @@ export class RecordingValidationStateReader implements ValidationStateReader {
     tenant: string;
     parentProtocolUri: string;
     parentId: string;
-    validationMode: ValidationMode;
   }): Promise<RecordsWriteMessage | undefined> {
-    this.recordedReads.push({ method: 'fetchParentRecord', validationMode: input.validationMode });
+    this.recordedReads.push({ method: 'fetchParentRecord' });
     return this.inner.fetchParentRecord(input);
   }
 
@@ -73,9 +70,8 @@ export class RecordingValidationStateReader implements ValidationStateReader {
     protocolPath: string;
     recipient: string;
     contextIdPrefix?: string;
-    validationMode: ValidationMode;
   }): Promise<boolean> {
-    this.recordedReads.push({ method: 'hasMatchingRoleRecord', validationMode: input.validationMode });
+    this.recordedReads.push({ method: 'hasMatchingRoleRecord' });
     return this.inner.hasMatchingRoleRecord(input);
   }
 
@@ -113,10 +109,8 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   public async getGoverningTimestamp(input: {
     tenant: string;
     recordId: string;
-    messageTimestamp: string;
-    validationMode: ValidationMode;
   }): Promise<string | undefined> {
-    this.recordedReads.push({ method: 'getGoverningTimestamp', validationMode: input.validationMode });
+    this.recordedReads.push({ method: 'getGoverningTimestamp' });
     return this.inner.getGoverningTimestamp(input);
   }
 

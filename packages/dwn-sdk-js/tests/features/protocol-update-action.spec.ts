@@ -609,8 +609,8 @@ export function testProtocolUpdateAction(): void {
       );
       const bobAuthorizedFooUpdateReply
         = await dwn.processMessage(alice.did, bobAuthorizedFooUpdate.message, { dataStream: DataStream.fromBytes(bobFooNewBytes) });
-      expect(bobAuthorizedFooUpdateReply.status.code).toBe(401);
-      expect(bobAuthorizedFooUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(bobAuthorizedFooUpdateReply.status.code).toBe(400);
+      expect(bobAuthorizedFooUpdateReply.status.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
     });
 
     it('should not allow creation of a protocol definition with action rule containing `update` without `create`', async () => {

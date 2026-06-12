@@ -1,7 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
-import type { RecordsQueryReply } from '../../src/types/records-types.js';
 import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
 
 import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
@@ -10,6 +9,8 @@ import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.jso
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
+import { Jws } from '../../src/utils/jws.js';
+import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -18,11 +19,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 /**
- * The replicated-validation divergences (read-set table rows 3, 4, and 6): each test drives the
- * same message through both entry points and asserts the live path keeps its strict behavior
- * while the replicated path reconstructs the historical answer from retained material.
+ * Validation-state reader parity: replicated apply returns structured repair outcomes, but it
+ * must not admit messages through a weaker validation basis than live `processMessage()`.
  */
-describe('replicated validation divergences', () => {
+describe('validation-state reader admission parity', () => {
   let didResolver: DidResolver;
   let messageStore: MessageStore;
   let dataStore: DataStore;
@@ -56,7 +56,7 @@ describe('replicated validation divergences', () => {
   });
 
   describe('row 3 — parent existence', () => {
-    it('should admit a child of a dataless (ancestry-only) parent in replicated mode but not in live mode', async () => {
+    it('should admit a child of a dataless parent through processMessage and replication apply', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolDefinition = nestedProtocolDefinition;
@@ -78,7 +78,7 @@ describe('replicated validation divergences', () => {
       const parentResult = await dwn.applyReplicatedMessage(alice.did, parentMessage);
       expect(parentResult.kind).toBe('Applied'); // stored as non-queryable initial state (204)
 
-      const { message: childMessage, dataStream: childDataStream, dataBytes: childDataBytes } = await TestDataGenerator.generateRecordsWrite({
+      const { message: processChildMessage, dataStream: processChildDataStream } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
         protocol        : protocolDefinition.protocol,
         protocolPath    : 'foo/bar',
@@ -87,28 +87,120 @@ describe('replicated validation divergences', () => {
         parentContextId : parentWrite.message.contextId,
       });
 
-      // live mode: the latest-only parent query misses the ancestry-only parent
-      const liveReply = await dwn.processMessage(alice.did, childMessage, { dataStream: childDataStream });
-      expect(liveReply.status.code).toBe(400);
-      expect(liveReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
+      const processReply = await dwn.processMessage(alice.did, processChildMessage, { dataStream: processChildDataStream });
+      expect(processReply.status.code).toBe(202);
 
-      // replicated mode: the parent's initial write verifies the immutable protocolPath/contextId facts
-      const replicatedResult = await dwn.applyReplicatedMessage(alice.did, childMessage, {
-        dataStream: DataStream.fromBytes(childDataBytes!),
+      const { message: replicatedChildMessage, dataBytes: replicatedChildDataBytes } = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'foo/bar',
+        schema          : 'bar',
+        dataFormat      : 'text/plain',
+        parentContextId : parentWrite.message.contextId,
+      });
+
+      const replicatedResult = await dwn.applyReplicatedMessage(alice.did, replicatedChildMessage, {
+        dataStream: DataStream.fromBytes(replicatedChildDataBytes!),
       });
       expect(replicatedResult.kind).toBe('Applied');
-
-      // the child is live and queryable
-      const { message: queryMessage } = await TestDataGenerator.generateRecordsQuery({
-        author : alice,
-        filter : { recordId: childMessage.recordId },
-      });
-      const queryReply = await dwn.processMessage(alice.did, queryMessage) as RecordsQueryReply;
-      expect(queryReply.status.code).toBe(200);
-      expect(queryReply.entries?.length).toBe(1);
     });
 
-    it('should reject a child of a tombstoned parent in both modes', async () => {
+    it('should continue to admit a child after the same dataless parent is completed with data', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+
+      const protocolDefinition = nestedProtocolDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+        author: alice,
+        protocolDefinition,
+      });
+      const configureReply = await dwn.processMessage(alice.did, configureMessage);
+      expect(configureReply.status.code).toBe(202);
+
+      const { message: parentMessage, recordsWrite: parentWrite, dataBytes: parentDataBytes } = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'foo',
+        schema       : 'foo',
+        dataFormat   : 'text/plain',
+      });
+      const datalessParentReply = await dwn.processMessage(alice.did, parentMessage);
+      expect(datalessParentReply.status.code).toBe(204);
+
+      const { message: childBeforeCompletionMessage, dataStream: childBeforeCompletionDataStream } = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'foo/bar',
+        schema          : 'bar',
+        dataFormat      : 'text/plain',
+        parentContextId : parentWrite.message.contextId,
+      });
+      const childBeforeCompletionReply = await dwn.processMessage(alice.did, childBeforeCompletionMessage, {
+        dataStream: childBeforeCompletionDataStream,
+      });
+      expect(childBeforeCompletionReply.status.code).toBe(202);
+
+      // Same-CID delivery with data flips the parent from retained ancestry to latest/queryable state.
+      const completedParentReply = await dwn.processMessage(alice.did, parentMessage, {
+        dataStream: DataStream.fromBytes(parentDataBytes!),
+      });
+      expect(completedParentReply.status.code).toBe(202);
+
+      const { message: childAfterCompletionMessage, dataStream: childAfterCompletionDataStream } = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'foo/bar',
+        schema          : 'bar',
+        dataFormat      : 'text/plain',
+        parentContextId : parentWrite.message.contextId,
+      });
+      const childAfterCompletionReply = await dwn.processMessage(alice.did, childAfterCompletionMessage, {
+        dataStream: childAfterCompletionDataStream,
+      });
+      expect(childAfterCompletionReply.status.code).toBe(202);
+    });
+
+    it('should admit a live child after a parent update because immutable parent facts are unchanged', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+
+      const protocolDefinition = nestedProtocolDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+        author: alice,
+        protocolDefinition,
+      });
+      const configureReply = await dwn.processMessage(alice.did, configureMessage);
+      expect(configureReply.status.code).toBe(202);
+
+      const { message: parentMessage, dataStream: parentDataStream, recordsWrite: parentWrite } = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'foo',
+        schema       : 'foo',
+        dataFormat   : 'text/plain',
+      });
+      const parentReply = await dwn.processMessage(alice.did, parentMessage, { dataStream: parentDataStream });
+      expect(parentReply.status.code).toBe(202);
+
+      const parentUpdate = await RecordsWrite.createFrom({
+        recordsWriteMessage : parentMessage,
+        published           : true,
+        signer              : Jws.createSigner(alice),
+      });
+      const parentUpdateReply = await dwn.processMessage(alice.did, parentUpdate.message);
+      expect(parentUpdateReply.status.code).toBe(202);
+
+      const { message: childMessage, dataStream: childDataStream } = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'foo/bar',
+        schema          : 'bar',
+        dataFormat      : 'text/plain',
+        parentContextId : parentWrite.message.contextId,
+      });
+      const childReply = await dwn.processMessage(alice.did, childMessage, { dataStream: childDataStream });
+      expect(childReply.status.code).toBe(202);
+    });
+
+    it('should reject a child of a tombstoned parent through processMessage and replication apply', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolDefinition = nestedProtocolDefinition;
@@ -146,12 +238,12 @@ describe('replicated validation divergences', () => {
         parentContextId : parentWrite.message.contextId,
       });
 
-      // live mode rejects — the latest-only filter exists exactly to exclude deleted parents
-      const liveReply = await dwn.processMessage(alice.did, childMessage, { dataStream: childDataStream });
-      expect(liveReply.status.code).toBe(400);
-      expect(liveReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
+      // processMessage rejects — the latest-only filter exists exactly to exclude deleted parents
+      const processReply = await dwn.processMessage(alice.did, childMessage, { dataStream: childDataStream });
+      expect(processReply.status.code).toBe(400);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
 
-      // replicated mode also rejects — the local tombstone blocks the initial-write fallback
+      // applyReplicatedMessage uses the same admission rule
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, childMessage, {
         dataStream: DataStream.fromBytes(childDataBytes!),
       });
@@ -163,7 +255,7 @@ describe('replicated validation divergences', () => {
   });
 
   describe('row 4 — role records', () => {
-    it('should authorize a role-invoking write against a dataless (ancestry-only) role record in replicated mode but not in live mode', async () => {
+    it('should authorize a role-invoking write against a dataless role record through processMessage and replication apply', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
@@ -185,26 +277,30 @@ describe('replicated validation divergences', () => {
       const roleResult = await dwn.applyReplicatedMessage(alice.did, roleMessage);
       expect(roleResult.kind).toBe('Applied'); // stored as non-queryable initial state (204)
 
-      const { message: chatMessage, dataStream: chatDataStream, dataBytes: chatDataBytes } = await TestDataGenerator.generateRecordsWrite({
+      const { message: processChatMessage, dataStream: processChatDataStream } = await TestDataGenerator.generateRecordsWrite({
         author       : bob,
         protocol     : protocolDefinition.protocol,
         protocolPath : 'chat',
         protocolRole : 'friend',
       });
 
-      // live mode: the latest-only role query misses the ancestry-only role record
-      const liveReply = await dwn.processMessage(alice.did, chatMessage, { dataStream: chatDataStream });
-      expect(liveReply.status.code).toBe(401);
-      expect(liveReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+      const processReply = await dwn.processMessage(alice.did, processChatMessage, { dataStream: processChatDataStream });
+      expect(processReply.status.code).toBe(202);
 
-      // replicated mode: the initial-write role record matches the selector (filter-only facts)
-      const replicatedResult = await dwn.applyReplicatedMessage(alice.did, chatMessage, {
-        dataStream: DataStream.fromBytes(chatDataBytes!),
+      const { message: replicatedChatMessage, dataBytes: replicatedChatDataBytes } = await TestDataGenerator.generateRecordsWrite({
+        author       : bob,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'chat',
+        protocolRole : 'friend',
+      });
+
+      const replicatedResult = await dwn.applyReplicatedMessage(alice.did, replicatedChatMessage, {
+        dataStream: DataStream.fromBytes(replicatedChatDataBytes!),
       });
       expect(replicatedResult.kind).toBe('Applied');
     });
 
-    it('should reject a role-invoking write against a tombstoned role record in both modes', async () => {
+    it('should reject a role-invoking write against a tombstoned role record through processMessage and replication apply', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
@@ -239,12 +335,12 @@ describe('replicated validation divergences', () => {
         protocolRole : 'friend',
       });
 
-      // live mode rejects
-      const liveReply = await dwn.processMessage(alice.did, chatMessage, { dataStream: chatDataStream });
-      expect(liveReply.status.code).toBe(401);
-      expect(liveReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+      // processMessage rejects
+      const processReply = await dwn.processMessage(alice.did, chatMessage, { dataStream: chatDataStream });
+      expect(processReply.status.code).toBe(401);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
 
-      // replicated mode also rejects — the local tombstone blocks the initial-write fallback
+      // applyReplicatedMessage uses the same admission rule
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, chatMessage, {
         dataStream: DataStream.fromBytes(chatDataBytes!),
       });
@@ -256,7 +352,7 @@ describe('replicated validation divergences', () => {
   });
 
   describe('row 6 — protocol definition history', () => {
-    it('should apply a replicated initial write authored before the earliest retained config', async () => {
+    it('should reject a replicated initial write using the same latest config as processMessage', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolUri = 'http://earliest-retained-config.xyz';
@@ -286,9 +382,6 @@ describe('replicated validation divergences', () => {
       const v1Timestamp = Time.createTimestamp({ year: 2024, month: 1, day: 1 });
       const v2Timestamp = Time.createTimestamp({ year: 2025, month: 1, day: 1 });
 
-      // the record is authored before the retained protocol config timestamp — admission order,
-      // not timestamp order, governed the source, so replay must not classify the installed
-      // protocol as missing or validate against a later config that rejects the type
       const recordsWrite = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
         protocol         : protocolUri,
@@ -316,10 +409,13 @@ describe('replicated validation divergences', () => {
       const result = await dwn.applyReplicatedMessage(
         alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(recordsWrite.dataBytes!) },
       );
-      expect(result).toEqual({ kind: 'Applied' });
+      expect(result.kind).toBe('Invalid');
+      if (result.kind === 'Invalid') {
+        expect(result.reason).toContain(DwnErrorCode.ProtocolAuthorizationInvalidType);
+      }
     });
 
-    it('should report a missing initial write before authorizing a replicated non-initial write', async () => {
+    it('should report a missing initial write through standard admission before replication maps it to incomplete', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const protocolDefinition = nestedProtocolDefinition;
       const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
@@ -340,8 +436,14 @@ describe('replicated validation divergences', () => {
         existingWrite : initialWrite.recordsWrite,
       });
 
+      const processReply = await dwn.processMessage(
+        alice.did, update.message, { dataStream: DataStream.fromBytes(update.dataBytes!) },
+      );
+      expect(processReply.status.code).toBe(400);
+      expect(processReply.status.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
+
       const result = await dwn.applyReplicatedMessage(
-        alice.did, update.message, { dataStream: update.dataStream },
+        alice.did, update.message, { dataStream: DataStream.fromBytes(update.dataBytes!) },
       );
 
       expect(result).toEqual({
@@ -354,7 +456,7 @@ describe('replicated validation divergences', () => {
       });
     });
 
-    it('should validate replicated ProtocolsConfigure composition against historical referenced configs', async () => {
+    it('should validate replicated ProtocolsConfigure composition against current referenced configs', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const baseProtocolUri = 'http://historical-composition-base.xyz';
       const composedProtocolUri = 'http://historical-composition-composed.xyz';
@@ -419,12 +521,15 @@ describe('replicated validation divergences', () => {
         messageTimestamp   : composedTimestamp,
       });
 
-      const liveReply = await dwn.processMessage(alice.did, composedConfigure.message);
-      expect(liveReply.status.code).toBe(400);
-      expect(liveReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath);
+      const processReply = await dwn.processMessage(alice.did, composedConfigure.message);
+      expect(processReply.status.code).toBe(400);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath);
 
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, composedConfigure.message);
-      expect(replicatedResult).toEqual({ kind: 'Applied' });
+      expect(replicatedResult.kind).toBe('Invalid');
+      if (replicatedResult.kind === 'Invalid') {
+        expect(replicatedResult.reason).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath);
+      }
     });
 
     it('should derive missing cross-protocol role dependencies from the governing config', async () => {
@@ -543,7 +648,7 @@ describe('replicated validation divergences', () => {
       });
     });
 
-    it('should validate a replicated initial write against the historically-governing config while live mode uses the latest', async () => {
+    it('should not validate a replicated initial write against a backdated config', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolUri = 'http://config-history.xyz';
@@ -603,28 +708,22 @@ describe('replicated validation divergences', () => {
         messageTimestamp : writeTimestamp,
       });
 
-      // live mode validates an initial write against the latest definition (v2): `alpha` no longer exists
-      const liveReply = await dwn.processMessage(alice.did, alphaMessage, { dataStream: alphaDataStream });
-      expect(liveReply.status.code).toBe(400);
-      expect(liveReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationInvalidType);
+      // processMessage validates an initial write against the latest definition (v2): `alpha` no longer exists
+      const processReply = await dwn.processMessage(alice.did, alphaMessage, { dataStream: alphaDataStream });
+      expect(processReply.status.code).toBe(400);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationInvalidType);
 
-      // replicated mode selects the governing config by the message's own timestamp: v1 admits it
+      // applyReplicatedMessage uses the same latest-config admission rule
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, alphaMessage, {
         dataStream: DataStream.fromBytes(alphaDataBytes!),
       });
-      expect(replicatedResult.kind).toBe('Applied');
-
-      // the record is live and queryable
-      const { message: queryMessage } = await TestDataGenerator.generateRecordsQuery({
-        author : alice,
-        filter : { recordId: alphaMessage.recordId },
-      });
-      const queryReply = await dwn.processMessage(alice.did, queryMessage) as RecordsQueryReply;
-      expect(queryReply.status.code).toBe(200);
-      expect(queryReply.entries?.length).toBe(1);
+      expect(replicatedResult.kind).toBe('Invalid');
+      if (replicatedResult.kind === 'Invalid') {
+        expect(replicatedResult.reason).toContain(DwnErrorCode.ProtocolAuthorizationInvalidType);
+      }
     });
 
-    it('should enforce squash backstop using the historically-governing config for replicated initial writes', async () => {
+    it('should not enforce squash backstop from a backdated config for replicated initial writes', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolUri = 'http://config-history-squash.xyz';
@@ -693,7 +792,7 @@ describe('replicated validation divergences', () => {
       const result = await dwn.applyReplicatedMessage(alice.did, olderPatch.message, {
         dataStream: DataStream.fromBytes(olderPatch.dataBytes!),
       });
-      expect(result).toEqual({ kind: 'Superseded' });
+      expect(result).toEqual({ kind: 'Applied' });
     });
   });
 });

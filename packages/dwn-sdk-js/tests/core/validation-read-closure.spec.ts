@@ -104,9 +104,7 @@ describe('validation read closure', () => {
     };
 
     const snapshot = (scenario: string): void => {
-      const reads = recorder.reads.map((read): string =>
-        read.validationMode === undefined ? read.method : `${read.method} [${read.validationMode}]`
-      );
+      const reads = recorder.reads.map((read): string => read.method);
       trace[scenario] = [...new Set(reads)].sort();
       recorder.clearRecordedReads();
     };
@@ -381,7 +379,7 @@ describe('validation read closure', () => {
       snapshot('live: dataless update of above-threshold record');
     }
 
-    // ---- scenario: replicated child under a dataless parent (row 3) ----
+    // ---- scenario: replicated child admitted under a dataless parent (row 3) ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -407,10 +405,10 @@ describe('validation read closure', () => {
       const childResult = await dwn.applyReplicatedMessage(alice.did, childMessage, { dataStream: DataStream.fromBytes(childDataBytes!) });
       expect(childResult.kind).toBe('Applied');
 
-      snapshot('replicated: child under dataless parent');
+      snapshot('replicated: child admitted under dataless parent');
     }
 
-    // ---- scenario: replicated role-invoking write under a dataless role record (row 4) ----
+    // ---- scenario: replicated role-invoking write admitted under a dataless role record (row 4) ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -432,10 +430,10 @@ describe('validation read closure', () => {
       const chatResult = await dwn.applyReplicatedMessage(alice.did, chatMessage, { dataStream: DataStream.fromBytes(chatDataBytes!) });
       expect(chatResult.kind).toBe('Applied');
 
-      snapshot('replicated: role-invoking write under dataless role record');
+      snapshot('replicated: role-invoking write admitted under dataless role record');
     }
 
-    // ---- scenario: replicated initial write under a superseded config (row 6) ----
+    // ---- scenario: replicated initial write rejected by the latest config (row 6) ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -478,9 +476,9 @@ describe('validation read closure', () => {
         messageTimestamp : writeTimestamp,
       });
       const alphaResult = await dwn.applyReplicatedMessage(alice.did, alphaMessage, { dataStream: DataStream.fromBytes(alphaDataBytes!) });
-      expect(alphaResult.kind).toBe('Applied');
+      expect(alphaResult.kind).toBe('Invalid');
 
-      snapshot('replicated: initial write under superseded config');
+      snapshot('replicated: initial write rejected by latest config');
     }
 
     // ---- scenario: replicated completion of a dataless stub (row 8) ----

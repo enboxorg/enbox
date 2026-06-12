@@ -27,7 +27,7 @@ describe('ProtocolAuthorization', () => {
       messageStoreStub.query.resolves({ messages: [] }); // simulate parent not in message store
       const validationStateReader = createTestValidationStateReader({ messageStore: messageStoreStub });
 
-      await expect(ProtocolAuthorization.authorizeWrite(alice.did, recordsWrite, validationStateReader, 'live')).rejects.toThrow(
+      await expect(ProtocolAuthorization.authorizeWrite(alice.did, recordsWrite, validationStateReader)).rejects.toThrow(
         DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain
       );
     });

@@ -1,5 +1,4 @@
 import type { Filter } from '../types/query-types.js';
-import type { ValidationMode } from '../types/validation-state-reader.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsCountMessage, RecordsCountReply } from '../types/records-types.js';
 
@@ -19,8 +18,7 @@ export class RecordsCountHandler implements MethodHandler {
   public async handle({
     tenant,
     message,
-    validationMode = 'live'
-  }: {tenant: string, message: RecordsCountMessage, validationMode?: ValidationMode}): Promise<RecordsCountReply> {
+  }: {tenant: string, message: RecordsCountMessage}): Promise<RecordsCountReply> {
     let recordsCount: RecordsCount;
     try {
       recordsCount = await RecordsCount.parse(message);
@@ -38,7 +36,7 @@ export class RecordsCountHandler implements MethodHandler {
       try {
         await authenticate(message.authorization!, this.deps.didResolver);
 
-        await RecordsCountHandler.authorizeRecordsCount(tenant, recordsCount, this.deps, validationMode);
+        await RecordsCountHandler.authorizeRecordsCount(tenant, recordsCount, this.deps);
       } catch (e) {
         return messageReplyFromError(e, 401);
       }
@@ -187,7 +185,6 @@ export class RecordsCountHandler implements MethodHandler {
     tenant: string,
     recordsCount: RecordsCount,
     deps: HandlerDependencies,
-    validationMode: ValidationMode,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsCount.message)) {
@@ -211,7 +208,7 @@ export class RecordsCountHandler implements MethodHandler {
     // this is because we dynamically filter out records that the caller is not authorized to see.
     // Currently only run protocol authorization if message deliberately invokes a protocol role.
     if (Records.shouldProtocolAuthorize(recordsCount.signaturePayload!)) {
-      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsCount, deps.validationStateReader, validationMode);
+      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsCount, deps.validationStateReader);
     }
   }
 }

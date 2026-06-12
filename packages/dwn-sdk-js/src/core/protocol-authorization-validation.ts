@@ -1,10 +1,9 @@
+import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolType, ProtocolTypes } from '../types/protocols-types.js';
-import type { ValidationMode, ValidationStateReader } from '../types/validation-state-reader.js';
 
 import { ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
-
-import type { RecordsWrite } from '../interfaces/records-write.js';
 
 import Ajv from 'ajv/dist/2020.js';
 import { Records } from '../utils/records.js';
@@ -20,7 +19,6 @@ export async function verifyProtocolPathAndContextId(
   tenant: string,
   inboundMessage: RecordsWrite,
   validationStateReader: ValidationStateReader,
-  validationMode: ValidationMode,
   governingTimestamp?: string,
 ): Promise<void> {
   const declaredProtocolPath = inboundMessage.message.descriptor.protocolPath;
@@ -47,12 +45,11 @@ export async function verifyProtocolPathAndContextId(
     tenant, childProtocol, declaredProtocolPath, validationStateReader, governingTimestamp
   );
 
-  // fetch the parent message (read-set row 3 — the reader applies the replicated-mode fallback)
+  // fetch the parent message (read-set row 3)
   const parentMessage = await validationStateReader.fetchParentRecord({
     tenant,
     parentProtocolUri,
     parentId,
-    validationMode,
   });
 
   if (parentMessage === undefined) {

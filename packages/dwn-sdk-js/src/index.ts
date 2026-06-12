@@ -4,7 +4,7 @@ export type { EventListener, EventLog, EventLogEntry, EventLogReadOptions, Event
 export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSort, MessageSubscription, Pagination, QueryResultEntry, Status } from './types/message-types.js';
 export type { DependencyRef, ReplicationApplyOptions, ReplicationApplyResult, ReplicationApplyResultContext } from './core/replication-apply.js';
 export { replicationApplyResultFromReply } from './core/replication-apply.js';
-export type { ValidationMode, ValidationStateReader } from './types/validation-state-reader.js';
+export type { ValidationStateReader } from './types/validation-state-reader.js';
 export { StoreValidationStateReader } from './core/validation-state-reader.js';
 export type { RecordedValidationRead } from './core/recording-validation-state-reader.js';
 export { RecordingValidationStateReader } from './core/recording-validation-state-reader.js';

@@ -1,4 +1,3 @@
-import type { ValidationMode } from '../types/validation-state-reader.js';
 import type { GenericMessage, GenericMessageReply } from '../types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
@@ -19,7 +18,7 @@ import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
-type HandlerArgs = { tenant: string, message: RecordsWriteMessage, dataStream?: ReadableStream<Uint8Array>, validationMode?: ValidationMode };
+type HandlerArgs = { tenant: string, message: RecordsWriteMessage, dataStream?: ReadableStream<Uint8Array> };
 
 export class RecordsWriteHandler implements MethodHandler {
 
@@ -29,7 +28,6 @@ export class RecordsWriteHandler implements MethodHandler {
     tenant,
     message,
     dataStream,
-    validationMode = 'live'
   }: HandlerArgs): Promise<GenericMessageReply> {
     let recordsWrite: RecordsWrite;
     try {
@@ -72,19 +70,16 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
+
     let initialWrite: RecordsWriteMessage | undefined;
-    // Replicated admission reports a missing initial write as a repair dependency before
-    // protocol authorization can interpret the message as a fresh create.
-    if (validationMode === 'replicated') {
-      try {
-        initialWrite = await this.validateNonInitialWrite(message, existingMessages, newMessageIsInitialWrite);
-      } catch (e) {
-        return messageReplyFromError(e, 400);
-      }
+    try {
+      initialWrite = await this.validateNonInitialWrite(message, existingMessages, newMessageIsInitialWrite);
+    } catch (e) {
+      return messageReplyFromError(e, 400);
     }
 
     try {
-      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.deps.validationStateReader, validationMode);
+      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.deps.validationStateReader);
     } catch (e) {
       return messageReplyFromError(e, 400);
     }
@@ -92,25 +87,16 @@ export class RecordsWriteHandler implements MethodHandler {
     // authentication & authorization
     try {
       await authenticate(message.authorization, this.deps.didResolver, message.attestation);
-      await this.authorizeRecordsWrite(tenant, recordsWrite, validationMode);
+      await this.authorizeRecordsWrite(tenant, recordsWrite);
     } catch (e) {
       return messageReplyFromError(e, 401);
-    }
-
-    // Live admission preserves the existing auth-first ordering, then verifies immutable fields.
-    if (validationMode === 'live') {
-      try {
-        initialWrite = await this.validateNonInitialWrite(message, existingMessages, newMessageIsInitialWrite);
-      } catch (e) {
-        return messageReplyFromError(e, 400);
-      }
     }
 
     // Squash backstop: if the protocol path has $squash: true, reject any write whose
     // messageTimestamp is <= the most recent squash record at the same path and parent context.
     // The squash record acts as a temporal floor — no record older than the latest squash can exist.
     try {
-      await this.enforceSquashBackstop(tenant, message, validationMode);
+      await this.enforceSquashBackstop(tenant, message);
     } catch (e) {
       return messageReplyFromError(e, 409);
     }
@@ -409,19 +395,17 @@ export class RecordsWriteHandler implements MethodHandler {
    *
    * This check only applies to protocol-based records at `$squash: true` paths.
    */
-  private async enforceSquashBackstop(tenant: string, message: RecordsWriteMessage, validationMode: ValidationMode): Promise<void> {
+  private async enforceSquashBackstop(tenant: string, message: RecordsWriteMessage): Promise<void> {
     // Only applies to protocol-based records
     if (message.descriptor.protocol === undefined || message.descriptor.protocolPath === undefined) {
       return;
     }
 
-    // Fetch the historically governing protocol definition to check if $squash is enabled at this path.
+    // Fetch the governing protocol definition to check if $squash is enabled at this path.
     // The reader resolves core protocols (e.g. permissions) from the registry.
     const governingTimestamp = await this.deps.validationStateReader.getGoverningTimestamp({
       tenant,
-      recordId         : message.recordId,
-      messageTimestamp : message.descriptor.messageTimestamp,
-      validationMode,
+      recordId: message.recordId,
     });
 
     let protocolDefinition;
@@ -473,7 +457,7 @@ export class RecordsWriteHandler implements MethodHandler {
     }
   }
 
-  private async authorizeRecordsWrite(tenant: string, recordsWrite: RecordsWrite, validationMode: ValidationMode): Promise<void> {
+  private async authorizeRecordsWrite(tenant: string, recordsWrite: RecordsWrite): Promise<void> {
     // if owner signature is given (`owner` is not `undefined`), it must be the same as the tenant DID
     if (recordsWrite.owner !== undefined && recordsWrite.owner !== tenant) {
       throw new DwnError(
@@ -508,7 +492,7 @@ export class RecordsWriteHandler implements MethodHandler {
         validationStateReader : this.deps.validationStateReader
       });
     } else {
-      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, this.deps.validationStateReader, validationMode);
+      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, this.deps.validationStateReader);
     }
   }
 }

@@ -1,16 +1,16 @@
 {
   "live: protocol record lifecycle": [
     "fetchInitialRecordsWrite",
-    "fetchParentRecord [live]",
+    "fetchParentRecord",
     "fetchProtocolDefinition",
-    "getGoverningTimestamp [live]"
+    "getGoverningTimestamp"
   ],
   "live: role-authorized write": [
     "constructRecordChain",
     "fetchInitialWrite",
     "fetchProtocolDefinition",
-    "getGoverningTimestamp [live]",
-    "hasMatchingRoleRecord [live]",
+    "getGoverningTimestamp",
+    "hasMatchingRoleRecord",
     "queryLatestRoleRecords"
   ],
   "live: composed protocol configure": [
@@ -20,7 +20,7 @@
     "fetchGrant",
     "fetchOldestGrantRevocation",
     "fetchProtocolDefinition",
-    "getGoverningTimestamp [live]"
+    "getGoverningTimestamp"
   ],
   "live: messages-read of deleted record with grant": [
     "fetchGrant",
@@ -30,43 +30,43 @@
   "live: record-limit rejection": [
     "countLatestRecordsAtScope",
     "fetchProtocolDefinition",
-    "getGoverningTimestamp [live]"
+    "getGoverningTimestamp"
   ],
   "live: squash backstop": [
     "fetchLatestSquashRecordAtScope",
     "fetchProtocolDefinition",
-    "getGoverningTimestamp [live]"
+    "getGoverningTimestamp"
   ],
   "live: dataless update of above-threshold record": [
     "fetchProtocolDefinition",
-    "getGoverningTimestamp [live]",
+    "getGoverningTimestamp",
     "hasStoredData"
   ],
-  "replicated: child under dataless parent": [
-    "fetchParentRecord [replicated]",
+  "replicated: child admitted under dataless parent": [
+    "fetchParentRecord",
     "fetchProtocolDefinition",
-    "getGoverningTimestamp [replicated]"
+    "getGoverningTimestamp"
   ],
-  "replicated: role-invoking write under dataless role record": [
+  "replicated: role-invoking write admitted under dataless role record": [
     "constructRecordChain",
     "fetchInitialWrite",
     "fetchProtocolDefinition",
-    "getGoverningTimestamp [replicated]",
-    "hasMatchingRoleRecord [replicated]",
+    "getGoverningTimestamp",
+    "hasMatchingRoleRecord",
     "queryLatestRoleRecords"
   ],
-  "replicated: initial write under superseded config": [
+  "replicated: initial write rejected by latest config": [
     "fetchProtocolDefinition",
-    "getGoverningTimestamp [replicated]"
+    "getGoverningTimestamp"
   ],
   "replicated: same-CID completion of dataless stub": [
     "fetchProtocolDefinition",
-    "getGoverningTimestamp [replicated]",
+    "getGoverningTimestamp",
     "hasStoredData"
   ],
   "replicated: tombstone-beaten dataless update missing compacted data": [
     "fetchProtocolDefinition",
-    "getGoverningTimestamp [replicated]",
+    "getGoverningTimestamp",
     "hasStoredData"
   ]
 }
