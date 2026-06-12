@@ -256,6 +256,32 @@ describe('replicated validation divergences', () => {
   });
 
   describe('row 6 — protocol definition history', () => {
+    it('should apply a replicated initial write authored before the earliest retained config (oldest-config fallback)', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+
+      // the record is AUTHORED before the protocol is configured — admission order, not
+      // timestamp order, governed the source, so replay must not classify the installed
+      // protocol as a missing dependency
+      const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : nestedProtocolDefinition.protocol,
+        protocolPath : 'foo',
+        schema       : nestedProtocolDefinition.types.foo.schema,
+        dataFormat   : nestedProtocolDefinition.types.foo.dataFormats[0],
+      });
+
+      const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : nestedProtocolDefinition as ProtocolDefinition,
+      });
+      expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+
+      const result = await dwn.applyReplicatedMessage(
+        alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(recordsWrite.dataBytes!) },
+      );
+      expect(result).toEqual({ kind: 'Applied' });
+    });
+
     it('should validate a replicated initial write against the historically-governing config while live mode uses the latest', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
