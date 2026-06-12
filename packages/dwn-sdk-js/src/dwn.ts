@@ -35,11 +35,11 @@ import { RecordsReadHandler } from './handlers/records-read.js';
 import { RecordsSubscribeHandler } from './handlers/records-subscribe.js';
 import { RecordsWrite } from './interfaces/records-write.js';
 import { RecordsWriteHandler } from './handlers/records-write.js';
-import { replicationApplyResultFromReply } from './core/replication-apply.js';
 import { ResumableTaskManager } from './core/resumable-task-manager.js';
 import { StorageController } from './store/storage-controller.js';
 import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js';
+import { missingAncestorRecordIdsFromReply, replicationApplyResultFromReply } from './core/replication-apply.js';
 
 /**
  * Structural shape for `DidResolver` implementations that expose
@@ -265,7 +265,26 @@ export class Dwn {
 
     const reply = await this.processMessage(tenant, rawMessage, options);
     const protocolDefinition = await this.getReplicationApplyProtocolDefinition(tenant, rawMessage, reply);
-    return replicationApplyResultFromReply(rawMessage, reply, { protocolDefinition });
+    const missingAncestorRecordIds = await this.getReplicationApplyMissingAncestors(tenant, rawMessage, reply);
+    return replicationApplyResultFromReply(rawMessage, reply, { protocolDefinition, missingAncestorRecordIds });
+  }
+
+  /**
+   * Computes the layer-batched missing-ancestor set for a replicated message that failed on a
+   * missing ancestor (immediate parent or record-chain construction), so the resulting
+   * `Incomplete` names every locally-absent ancestor at once. Returns `undefined`
+   * (single-ancestor emission) when the set cannot be computed.
+   */
+  private async getReplicationApplyMissingAncestors(
+    tenant: string,
+    message: GenericMessage,
+    reply: { status: { detail?: string } },
+  ): Promise<string[] | undefined> {
+    try {
+      return await missingAncestorRecordIdsFromReply(tenant, message, reply, this.messageStore);
+    } catch {
+      return undefined;
+    }
   }
 
   private async getReplicationApplyProtocolDefinition(
