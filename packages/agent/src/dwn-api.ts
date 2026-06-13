@@ -716,8 +716,16 @@ export class AgentDwnApi {
       const rootPathSegment = writeParams.protocolPath.split('/')[0];
       const isMultiParty = isMultiPartyContextFn(protocolDefinition, rootPathSegment);
 
-      // Externally-authored root records stay ProtocolPath-encrypted to the target.
-      // Any future owner augmentation must be a normal DWN write path, not direct message-store mutation.
+      // Owner-authored multi-party root records get context-key delivery below
+      // (participant, delegate, and cross-device paths). The externally-authored
+      // multi-party root record is the open gap: it lands ProtocolPath-encrypted to
+      // the owner only, so other context-key holders cannot decrypt it. The owner
+      // cannot retrofit a ProtocolContext recipient here — that was the removed
+      // reactive-upgrade path, which mutated the stored message in place. Closing
+      // this needs a normal authored DWN write (a signed message cannot be rewritten
+      // by the owner); the mechanism is still open.
+      // TODO(https://github.com/enboxorg/enbox/issues/923): resolve externally-authored
+      // multi-party root-record context-key access.
       const newParticipants = detectNewParticipantsFn({
         protocolDefinition,
         protocolPath : writeParams.protocolPath,
