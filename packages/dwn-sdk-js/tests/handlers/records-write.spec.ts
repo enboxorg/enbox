@@ -49,6 +49,8 @@ import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
 
+import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+
 export function testRecordsWriteHandler(): void {
   describe('RecordsWriteHandler.handle()', () => {
     let didResolver: DidResolver;
@@ -400,7 +402,7 @@ export function testRecordsWriteHandler(): void {
         let reply = await dwn.processMessage(tenant, childMessageData.message, { dataStream: childMessageData.dataStream });
 
         expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain('dateCreated is an immutable property');
+        expect(reply.status.detail).toContain('immutable RecordsWrite properties cannot be changed.');
 
         // schema test
         childMessageData = await TestDataGenerator.generateRecordsWrite({
@@ -414,7 +416,39 @@ export function testRecordsWriteHandler(): void {
         reply = await dwn.processMessage(tenant, childMessageData.message, { dataStream: childMessageData.dataStream });
 
         expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain('schema is an immutable property');
+        expect(reply.status.detail).toContain('immutable RecordsWrite properties cannot be changed.');
+      });
+
+      it('should not leak immutable properties before authenticating a forged RecordsWrite', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const mallory = await TestDataGenerator.generatePersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const initialWrite = await TestDataGenerator.generateRecordsWrite({
+          author    : alice,
+          recipient : bob.did,
+        });
+        const initialReply = await dwn.processMessage(alice.did, initialWrite.message, { dataStream: initialWrite.dataStream });
+        expect(initialReply.status.code).toBe(202);
+
+        const forgedWrite = await TestDataGenerator.generateRecordsWrite({
+          author       : mallory,
+          recordId     : initialWrite.message.recordId,
+          recipient    : mallory.did,
+          protocol     : initialWrite.message.descriptor.protocol,
+          protocolPath : initialWrite.message.descriptor.protocolPath,
+          schema       : initialWrite.message.descriptor.schema,
+          dataFormat   : initialWrite.message.descriptor.dataFormat,
+          dateCreated  : initialWrite.message.descriptor.dateCreated,
+        });
+
+        const reply = await dwn.processMessage(alice.did, forgedWrite.message, { dataStream: forgedWrite.dataStream });
+
+        expect(reply.status.code).toBe(401);
+        expect(reply.status.detail).not.toContain(bob.did);
+        expect(reply.status.detail).not.toContain('recipient is an immutable property');
+        expect(reply.status.detail).not.toContain(DwnErrorCode.RecordsWriteImmutablePropertyChanged);
       });
 
       it('should inherit data from previous RecordsWrite given a matching dataCid and dataSize and no dataStream', async () => {
@@ -2322,19 +2356,13 @@ export function testRecordsWriteHandler(): void {
           expect(bobRecordsQueryReply.entries?.length).toBe(1);
           expect(bobRecordsQueryReply.entries![0].encodedData).toBe(base64url.baseEncode(bobData));
 
-          // generate a new message from carol updating the existing message, which should not be allowed/accepted
+          // generate a well-formed update from Carol, which should not be allowed/accepted
           const modifiedMessageData = new TextEncoder().encode('modified message by carol');
-          const modifiedMessageFromCarol = await TestDataGenerator.generateRecordsWrite(
-            {
-              author       : carol,
-              protocol,
-              protocolPath : 'message', // this comes from `types` in protocol definition
-              schema       : protocolDefinition.types.message.schema,
-              dataFormat   : protocolDefinition.types.message.dataFormats[0],
-              data         : modifiedMessageData,
-              recordId     : messageFromBob.message.recordId,
-            }
-          );
+          const modifiedMessageFromCarol = await TestDataGenerator.generateFromRecordsWrite({
+            author        : carol,
+            existingWrite : messageFromBob.recordsWrite,
+            data          : modifiedMessageData,
+          });
 
           const carolWriteReply =
             await dwn.processMessage(alice.did, modifiedMessageFromCarol.message, { dataStream: modifiedMessageFromCarol.dataStream });
@@ -2408,7 +2436,7 @@ export function testRecordsWriteHandler(): void {
 
           const newWriteReply = await dwn.processMessage(alice.did, updatedMessageFromBob.message, { dataStream: updatedMessageFromBob.dataStream });
           expect(newWriteReply.status.code).toBe(400);
-          expect(newWriteReply.status.detail).toContain('recipient is an immutable property');
+          expect(newWriteReply.status.detail).toContain('immutable RecordsWrite properties cannot be changed.');
         });
 
         it('should block unauthorized write with recipient rule', async () => {
@@ -3128,7 +3156,8 @@ export function testRecordsWriteHandler(): void {
         message.encryption!.iv = Encoder.stringToBase64Url('any value which will result in a different CID');
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
@@ -4510,7 +4539,13 @@ export function testRecordsWriteHandler(): void {
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver,
+          messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub,
+          stateIndex,
+          coreProtocols         : new CoreProtocolRegistry(),
+          eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
@@ -4536,7 +4571,13 @@ export function testRecordsWriteHandler(): void {
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver,
+          messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub,
+          stateIndex,
+          coreProtocols         : new CoreProtocolRegistry(),
+          eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
@@ -4560,7 +4601,13 @@ export function testRecordsWriteHandler(): void {
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver,
+          messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub,
+          stateIndex,
+          coreProtocols         : new CoreProtocolRegistry(),
+          eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
@@ -4581,7 +4628,13 @@ export function testRecordsWriteHandler(): void {
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver,
+          messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub,
+          stateIndex,
+          coreProtocols         : new CoreProtocolRegistry(),
+          eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
 
         const tenant = await (await TestDataGenerator.generatePersona()).did; // unauthorized tenant
@@ -4616,7 +4669,13 @@ export function testRecordsWriteHandler(): void {
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver,
+          messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub,
+          stateIndex,
+          coreProtocols         : new CoreProtocolRegistry(),
+          eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
         const reply = await recordsWriteHandler.handle({ tenant, message, dataStream: dataStream! });
 
@@ -4630,7 +4689,8 @@ export function testRecordsWriteHandler(): void {
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [alice, bob] });
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
@@ -4647,7 +4707,8 @@ export function testRecordsWriteHandler(): void {
         message.attestation = anotherWrite.message.attestation;
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
@@ -4666,7 +4727,8 @@ export function testRecordsWriteHandler(): void {
         message.attestation = attestationNotReferencedByAuthorization;
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
@@ -4694,8 +4756,9 @@ export function testRecordsWriteHandler(): void {
         sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves();
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver   : didResolverStub, messageStore  : messageStoreStub,
-          dataStore     : dataStoreStub, stateIndex, coreProtocols : new CoreProtocolRegistry(), eventLog,
+          didResolver           : didResolverStub, messageStore          : messageStoreStub,
+          dataStore             : dataStoreStub, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
 
         // stub the squash backstop so the stubbed messageStore (which returns RecordsWrite messages

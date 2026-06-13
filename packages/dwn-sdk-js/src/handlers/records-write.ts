@@ -1,6 +1,4 @@
-import type { Filter } from '../types/query-types.js';
-import type { GenericMessageReply } from '../types/message-types.js';
-import type { MessageStore } from '../types/message-store.js';
+import type { GenericMessage, GenericMessageReply } from '../types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
 
@@ -9,21 +7,18 @@ import { Cid } from '../utils/cid.js';
 import { DataStream } from '../utils/data-stream.js';
 import { DwnConstant } from '../core/dwn-constant.js';
 import { Encoder } from '../utils/encoder.js';
-import { FilterUtility } from '../utils/filter.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { ResumableTaskName } from '../core/resumable-task-manager.js';
-import { SortDirection } from '../types/query-types.js';
 import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
-type HandlerArgs = { tenant: string, message: RecordsWriteMessage, dataStream?: ReadableStream<Uint8Array>};
+type HandlerArgs = { tenant: string, message: RecordsWriteMessage, dataStream?: ReadableStream<Uint8Array> };
 
 export class RecordsWriteHandler implements MethodHandler {
 
@@ -32,7 +27,7 @@ export class RecordsWriteHandler implements MethodHandler {
   public async handle({
     tenant,
     message,
-    dataStream
+    dataStream,
   }: HandlerArgs): Promise<GenericMessageReply> {
     let recordsWrite: RecordsWrite;
     try {
@@ -74,8 +69,17 @@ export class RecordsWriteHandler implements MethodHandler {
       }
     }
 
+    const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
+
+    let initialWrite: RecordsWriteMessage | undefined;
     try {
-      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.deps.messageStore, this.deps.coreProtocols);
+      initialWrite = await this.getInitialWrite(existingMessages, newMessageIsInitialWrite);
+    } catch (e) {
+      return messageReplyFromError(e, 400);
+    }
+
+    try {
+      await ProtocolAuthorization.validateReferentialIntegrity(tenant, recordsWrite, this.deps.validationStateReader);
     } catch (e) {
       return messageReplyFromError(e, 400);
     }
@@ -83,18 +87,14 @@ export class RecordsWriteHandler implements MethodHandler {
     // authentication & authorization
     try {
       await authenticate(message.authorization, this.deps.didResolver, message.attestation);
-      await this.authorizeRecordsWrite(tenant, recordsWrite, this.deps.messageStore);
+      await this.authorizeRecordsWrite(tenant, recordsWrite);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
 
-    // if the incoming write is not the initial write, then it must not modify any immutable properties defined by the initial write
-    const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
-    let initialWrite: RecordsWriteMessage | undefined;
-    if (!newMessageIsInitialWrite) {
+    if (initialWrite !== undefined) {
       try {
-        initialWrite = await RecordsWrite.getInitialWrite(existingMessages);
-        RecordsWrite.verifyEqualityOfImmutableProperties(initialWrite, message);
+        this.verifyImmutableProperties(initialWrite, message);
       } catch (e) {
         return messageReplyFromError(e, 400);
       }
@@ -165,7 +165,7 @@ export class RecordsWriteHandler implements MethodHandler {
       // This allows core protocols to perform cross-record validation before storage
       // (e.g. ensuring revocation tag consistency with the parent grant's scoped protocol).
       if (coreProtocol?.preProcessWrite !== undefined) {
-        await coreProtocol.preProcessWrite(tenant, message, this.deps.messageStore);
+        await coreProtocol.preProcessWrite(tenant, message, this.deps.validationStateReader);
       }
 
       // NOTE: We allow isLatestBaseState to be true ONLY if the incoming message comes with data, or if the incoming message is NOT an initial write
@@ -332,15 +332,42 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     const hasInlineData = !!(existingMessage as RecordsQueryReplyEntry).encodedData;
-    const hasStoredData = this.deps.dataStore
-      ? !!(await this.deps.dataStore.get(
-        tenant,
-        existingMessage.recordId,
-        incomingMessage.descriptor.dataCid,
-      ))
-      : false;
+    const hasStoredData = await this.deps.validationStateReader.hasStoredData(
+      tenant,
+      existingMessage.recordId,
+      incomingMessage.descriptor.dataCid,
+    );
 
     return !hasInlineData && !hasStoredData;
+  }
+
+  private async getInitialWrite(
+    existingMessages: GenericMessage[],
+    newMessageIsInitialWrite: boolean,
+  ): Promise<RecordsWriteMessage | undefined> {
+    if (newMessageIsInitialWrite) {
+      return undefined;
+    }
+
+    return RecordsWrite.getInitialWrite(existingMessages);
+  }
+
+  private verifyImmutableProperties(
+    initialWrite: RecordsWriteMessage,
+    message: RecordsWriteMessage,
+  ): void {
+    try {
+      RecordsWrite.verifyEqualityOfImmutableProperties(initialWrite, message);
+    } catch (error) {
+      if (error instanceof DwnError && error.code === DwnErrorCode.RecordsWriteImmutablePropertyChanged) {
+        throw new DwnError(
+          DwnErrorCode.RecordsWriteImmutablePropertyChanged,
+          'immutable RecordsWrite properties cannot be changed.'
+        );
+      }
+
+      throw error;
+    }
   }
 
   private async processMessageWithoutDataStream(
@@ -371,9 +398,9 @@ export class RecordsWriteHandler implements MethodHandler {
       // else just make sure the data is in the data store
 
       // attempt to retrieve the data from the previous message
-      const DataStoreGetResult = await this.deps.dataStore!.get(tenant, newestExistingWrite.recordId, message.descriptor.dataCid);
+      const priorDataExists = await this.deps.validationStateReader.hasStoredData(tenant, newestExistingWrite.recordId, message.descriptor.dataCid);
 
-      if (DataStoreGetResult === undefined) {
+      if (!priorDataExists) {
         throw new DwnError(
           DwnErrorCode.RecordsWriteMissingDataInPrevious,
           `No dataStream was provided and unable to get data from previous message`
@@ -397,16 +424,14 @@ export class RecordsWriteHandler implements MethodHandler {
       return;
     }
 
-    // Fetch the protocol definition to check if $squash is enabled at this path.
-    // Pass coreProtocols so that core protocols (e.g. permissions) are resolved from the registry.
+    // Fetch the protocol definition active at the incoming message timestamp to check if $squash is enabled at this path.
+    // The reader resolves core protocols (e.g. permissions) from the registry.
     let protocolDefinition;
     try {
-      protocolDefinition = await ProtocolAuthorization.fetchProtocolDefinition(
+      protocolDefinition = await this.deps.validationStateReader.fetchProtocolDefinition(
         tenant,
         message.descriptor.protocol,
-        this.deps.messageStore,
-        undefined,
-        this.deps.coreProtocols,
+        message.descriptor.messageTimestamp,
       );
     } catch (error) {
       // If the protocol definition can't be found, skip the backstop check.
@@ -426,35 +451,18 @@ export class RecordsWriteHandler implements MethodHandler {
       return;
     }
 
-    // Find the most recent squash record at the same protocol path and parent context
-    const filter: Filter = {
-      interface         : DwnInterfaceName.Records,
-      method            : DwnMethodName.Write,
-      isLatestBaseState : true,
-      protocol          : message.descriptor.protocol,
-      protocolPath      : message.descriptor.protocolPath,
-      squash            : true,
-    };
-
-    // Scope by parent context for nested records
     const parentContextId = Records.getParentContextFromOfContextId(message.contextId);
-    if (parentContextId !== undefined && parentContextId !== '') {
-      const prefixFilter = FilterUtility.constructPrefixFilterAsRangeFilter(parentContextId);
-      filter.contextId = prefixFilter;
-    }
-
-    const { messages: squashMessages } = await this.deps.messageStore.query(
+    const contextIdPrefix = parentContextId !== undefined && parentContextId !== '' ? parentContextId : undefined;
+    const newestSquash = await this.deps.validationStateReader.fetchLatestSquashRecordAtScope({
       tenant,
-      [filter],
-      { messageTimestamp: SortDirection.Descending },
-      { limit: 1 },
-    );
+      protocol     : message.descriptor.protocol,
+      protocolPath : message.descriptor.protocolPath,
+      contextIdPrefix,
+    });
 
-    if (squashMessages.length === 0) {
+    if (newestSquash === undefined) {
       return;
     }
-
-    const newestSquash = squashMessages[0] as RecordsWriteMessage;
 
     // Reject if the incoming message's timestamp is <= the squash record's timestamp
     if (message.descriptor.messageTimestamp <= newestSquash.descriptor.messageTimestamp) {
@@ -467,7 +475,7 @@ export class RecordsWriteHandler implements MethodHandler {
     }
   }
 
-  private async authorizeRecordsWrite(tenant: string, recordsWrite: RecordsWrite, messageStore: MessageStore): Promise<void> {
+  private async authorizeRecordsWrite(tenant: string, recordsWrite: RecordsWrite): Promise<void> {
     // if owner signature is given (`owner` is not `undefined`), it must be the same as the tenant DID
     if (recordsWrite.owner !== undefined && recordsWrite.owner !== tenant) {
       throw new DwnError(
@@ -477,11 +485,11 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     if (recordsWrite.isSignedByAuthorDelegate) {
-      await recordsWrite.authorizeAuthorDelegate(messageStore);
+      await recordsWrite.authorizeAuthorDelegate(this.deps.validationStateReader);
     }
 
     if (recordsWrite.isSignedByOwnerDelegate) {
-      await recordsWrite.authorizeOwnerDelegate(messageStore);
+      await recordsWrite.authorizeOwnerDelegate(this.deps.validationStateReader);
     }
 
     if (recordsWrite.owner !== undefined) {
@@ -493,16 +501,16 @@ export class RecordsWriteHandler implements MethodHandler {
       return;
     } else if (recordsWrite.author !== undefined && Message.getPermissionGrantId(recordsWrite.signaturePayload!) !== undefined) {
       const permissionGrantId = Message.getPermissionGrantId(recordsWrite.signaturePayload!)!;
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+      const permissionGrant = await this.deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
       await RecordsGrantAuthorization.authorizeWrite({
-        recordsWriteMessage : recordsWrite.message,
-        expectedGrantor     : tenant,
-        expectedGrantee     : recordsWrite.author,
+        recordsWriteMessage   : recordsWrite.message,
+        expectedGrantor       : tenant,
+        expectedGrantee       : recordsWrite.author,
         permissionGrant,
-        messageStore
+        validationStateReader : this.deps.validationStateReader
       });
     } else {
-      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, messageStore, this.deps.coreProtocols);
+      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, this.deps.validationStateReader);
     }
   }
 }

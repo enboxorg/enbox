@@ -1,21 +1,17 @@
-import type { Filter } from '../types/query-types.js';
-import type { MessageStore } from '../types/message-store.js';
 import type { RecordsCount } from '../interfaces/records-count.js';
 import type { RecordsDelete } from '../interfaces/records-delete.js';
 import type { RecordsQuery } from '../interfaces/records-query.js';
 import type { RecordsRead } from '../interfaces/records-read.js';
 import type { RecordsSubscribe } from '../interfaces/records-subscribe.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
-import { FilterUtility } from '../utils/filter.js';
+import { DwnMethodName } from '../enums/dwn-interface-method.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
-import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
-
-import type { FetchProtocolDefinitionFn } from './protocol-authorization.js';
 
 /**
  * Check if the incoming message is invoking a role. If so, validate the invoked role.
@@ -28,9 +24,8 @@ export async function verifyInvokedRole(
   protocolUri: string,
   contextId: string | undefined,
   protocolDefinition: ProtocolDefinition,
-  messageStore: MessageStore,
-  fetchProtocolDefinition: FetchProtocolDefinitionFn,
-  governingTimestamp?: string,
+  validationStateReader: ValidationStateReader,
+  protocolDefinitionTimestamp?: string,
 ): Promise<void> {
   const protocolRole = incomingMessage.signaturePayload?.protocolRole;
 
@@ -64,8 +59,8 @@ export async function verifyInvokedRole(
     roleProtocolPath = parsed.protocolPath;
 
     // Fetch the referenced protocol's definition to validate the role exists
-    const refDefinition = await fetchProtocolDefinition(
-      tenant, roleProtocolUri, messageStore, governingTimestamp
+    const refDefinition = await validationStateReader.fetchProtocolDefinition(
+      tenant, roleProtocolUri, protocolDefinitionTimestamp
     );
     const roleRuleSet = getRuleSetAtPath(roleProtocolPath, refDefinition.structure);
     if (!roleRuleSet?.$role) {
@@ -85,16 +80,6 @@ export async function verifyInvokedRole(
     }
   }
 
-  // Construct a filter to fetch the invoked role record
-  const roleRecordFilter: Filter = {
-    interface         : DwnInterfaceName.Records,
-    method            : DwnMethodName.Write,
-    protocol          : roleProtocolUri,
-    protocolPath      : roleProtocolPath,
-    recipient         : incomingMessage.author!,
-    isLatestBaseState : true,
-  };
-
   const ancestorSegmentCountOfRolePath = roleProtocolPath.split('/').length - 1;
   if (contextId === undefined && ancestorSegmentCountOfRolePath > 0) {
     throw new DwnError(
@@ -103,22 +88,26 @@ export async function verifyInvokedRole(
     );
   }
 
-  // Compute `contextId` prefix filter for fetching the invoked role record if the role path is not at the root level.
+  // Compute `contextId` prefix for fetching the invoked role record if the role path is not at the root level.
   // e.g. if invoked role path is `Thread/Participant`, and the `contextId` of the message is `threadX/messageY/attachmentZ`,
-  // then we need to add a prefix filter as `threadX` for the `contextId`
+  // then we need to use the prefix `threadX` for the `contextId`
   // because the `contextId` of the Participant record would be in the form of be `threadX/participantA`
+  let contextIdPrefix: string | undefined;
   if (ancestorSegmentCountOfRolePath > 0) {
     const contextIdSegments = contextId!.split('/'); // NOTE: currently contextId segment count is never shorter than the role path count.
-    const contextIdPrefix = contextIdSegments.slice(0, ancestorSegmentCountOfRolePath).join('/');
-    const contextIdPrefixFilter = FilterUtility.constructPrefixFilterAsRangeFilter(contextIdPrefix);
-
-    roleRecordFilter.contextId = contextIdPrefixFilter;
+    contextIdPrefix = contextIdSegments.slice(0, ancestorSegmentCountOfRolePath).join('/');
   }
 
+  // fetch the invoked role record
+  const matchingRoleRecordExists = await validationStateReader.hasMatchingRoleRecord({
+    tenant,
+    protocol     : roleProtocolUri,
+    protocolPath : roleProtocolPath,
+    recipient    : incomingMessage.author!,
+    contextIdPrefix,
+  });
 
-  const { messages: matchingMessages } = await messageStore.query(tenant, [roleRecordFilter]);
-
-  if (matchingMessages.length === 0) {
+  if (!matchingRoleRecordExists) {
     throw new DwnError(
       DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound,
       `No matching role record found for protocol path ${roleProtocolPath}`
@@ -139,14 +128,14 @@ export async function verifyInvokedRole(
 export async function getActionsSeekingARuleMatch(
   tenant: string,
   incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
-  messageStore: MessageStore,
+  validationStateReader: ValidationStateReader,
 ): Promise<ProtocolAction[]> {
 
   switch (incomingMessage.message.descriptor.method) {
-  case DwnMethodName.Delete:
+  case DwnMethodName.Delete: {
     const recordsDelete = incomingMessage as RecordsDelete;
     const recordId = recordsDelete.message.descriptor.recordId;
-    const initialWrite = await RecordsWrite.fetchInitialRecordsWrite(messageStore, tenant, recordId);
+    const initialWrite = await validationStateReader.fetchInitialRecordsWrite(tenant, recordId);
 
     // if there is no initial write, then no action rule can authorize the incoming message, because we won't know who the original author is
     // NOTE: purely defensive programming: currently not reachable
@@ -155,7 +144,7 @@ export async function getActionsSeekingARuleMatch(
       return [];
     }
 
-    const actionsThatWouldAuthorizeDelete = [];
+    const actionsThatWouldAuthorizeDelete: ProtocolAction[] = [];
     const prune = recordsDelete.message.descriptor.prune;
     if (prune) {
       actionsThatWouldAuthorizeDelete.push(ProtocolAction.CoPrune);
@@ -174,6 +163,7 @@ export async function getActionsSeekingARuleMatch(
     }
 
     return actionsThatWouldAuthorizeDelete;
+  }
 
   case DwnMethodName.Count:
     return [ProtocolAction.Read];
@@ -187,7 +177,7 @@ export async function getActionsSeekingARuleMatch(
   case DwnMethodName.Subscribe:
     return [ProtocolAction.Read];
 
-  case DwnMethodName.Write:
+  case DwnMethodName.Write: {
     const incomingRecordsWrite = incomingMessage as RecordsWrite;
 
     if (await incomingRecordsWrite.isInitialWrite()) {
@@ -201,7 +191,7 @@ export async function getActionsSeekingARuleMatch(
       // else incoming RecordsWrite not an initial write
 
       const recordId = (incomingMessage as RecordsWrite).message.recordId;
-      const initialWrite = await RecordsWrite.fetchInitialRecordsWrite(messageStore, tenant, recordId);
+      const initialWrite = await validationStateReader.fetchInitialRecordsWrite(tenant, recordId);
 
       // if there is no initial write to update from, then no action rule can authorize the incoming message
       if (initialWrite === undefined) {
@@ -216,6 +206,7 @@ export async function getActionsSeekingARuleMatch(
         return [ProtocolAction.CoUpdate];
       }
     }
+  }
   }
 
   // purely defensive programming: should not be reachable
@@ -233,11 +224,11 @@ export async function authorizeAgainstAllowedActions(
   incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
   ruleSet: ProtocolRuleSet,
   recordChain: RecordsWriteMessage[],
-  messageStore: MessageStore,
+  validationStateReader: ValidationStateReader,
   protocolDefinition?: ProtocolDefinition,
 ): Promise<void> {
   const incomingMessageMethod = incomingMessage.message.descriptor.method;
-  const actionsSeekingARuleMatch = await getActionsSeekingARuleMatch(tenant, incomingMessage, messageStore);
+  const actionsSeekingARuleMatch = await getActionsSeekingARuleMatch(tenant, incomingMessage, validationStateReader);
   const author = incomingMessage.author;
   const actionRules = ruleSet.$actions;
 

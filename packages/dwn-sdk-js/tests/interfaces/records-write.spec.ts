@@ -12,6 +12,8 @@ import { Time } from '../../src/utils/time.js';
 
 import { DwnInterfaceName, DwnMethodName, Encoder, Jws, KeyDerivationScheme, Message, MessageStoreLevel, PermissionsProtocol } from '../../src/index.js';
 
+import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+
 
 describe('RecordsWrite', () => {
   beforeEach(() => {
@@ -45,12 +47,13 @@ describe('RecordsWrite', () => {
 
       // authorizeRecordsWrite is a private instance method; invoke via bracket notation on an instance
       const handler = new RecordsWriteHandler({
-        didResolver  : {} as any,
-        messageStore : messageStoreStub,
-        dataStore    : {} as any,
-        stateIndex   : {} as any,
+        didResolver           : {} as any,
+        messageStore          : messageStoreStub,
+        validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub }),
+        dataStore             : {} as any,
+        stateIndex            : {} as any,
       });
-      await (handler as any).authorizeRecordsWrite(alice.did, recordsWrite, messageStoreStub);
+      await (handler as any).authorizeRecordsWrite(alice.did, recordsWrite);
     });
 
     it('should include permissionGrantId in the descriptor when provided', async () => {

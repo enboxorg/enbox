@@ -1,6 +1,4 @@
-import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { Filter } from '../types/query-types.js';
-import type { MessageStore } from '../types//message-store.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply } from '../types/records-types.js';
 
@@ -9,7 +7,6 @@ import { DataStream } from '../utils/data-stream.js';
 import { Encoder } from '../utils/encoder.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
@@ -24,7 +21,7 @@ export class RecordsReadHandler implements MethodHandler {
 
   public async handle({
     tenant,
-    message
+    message,
   }: { tenant: string, message: RecordsReadMessage }): Promise<RecordsReadReply> {
 
     let recordsRead: RecordsRead;
@@ -88,7 +85,7 @@ export class RecordsReadHandler implements MethodHandler {
       const parsedNewestWrite = await RecordsWrite.parse(newestWrite);
 
       try {
-        await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps.messageStore, this.deps.coreProtocols);
+        await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps);
       } catch (error) {
         return messageReplyFromError(error, 401);
       }
@@ -108,7 +105,7 @@ export class RecordsReadHandler implements MethodHandler {
     try {
       const parsedWrite = await RecordsWrite.parse(matchedRecordsWrite);
       await RecordsReadHandler.authorizeRecordsRead(
-        tenant, recordsRead, parsedWrite, this.deps.messageStore, this.deps.coreProtocols,
+        tenant, recordsRead, parsedWrite, this.deps,
       );
     } catch (error) {
       return messageReplyFromError(error, 401);
@@ -162,11 +159,10 @@ export class RecordsReadHandler implements MethodHandler {
     tenant: string,
     recordsRead: RecordsRead,
     matchedRecordsWrite: RecordsWrite,
-    messageStore: MessageStore,
-    coreProtocols?: CoreProtocolRegistry,
+    deps: HandlerDependencies,
   ): Promise<void> {
     if (Message.isSignedByAuthorDelegate(recordsRead.message)) {
-      await recordsRead.authorizeDelegate(matchedRecordsWrite.message, messageStore);
+      await recordsRead.authorizeDelegate(matchedRecordsWrite.message, deps.validationStateReader);
     }
 
     const { descriptor } = matchedRecordsWrite.message;
@@ -184,17 +180,17 @@ export class RecordsReadHandler implements MethodHandler {
       return;
     } else if (recordsRead.author !== undefined && Message.getPermissionGrantId(recordsRead.signaturePayload!) !== undefined) {
       const permissionGrantId = Message.getPermissionGrantId(recordsRead.signaturePayload!)!;
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+      const permissionGrant = await deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
       await RecordsGrantAuthorization.authorizeRead({
         recordsReadMessage          : recordsRead.message,
         recordsWriteMessageToBeRead : matchedRecordsWrite.message,
         expectedGrantor             : tenant,
         expectedGrantee             : recordsRead.author,
         permissionGrant,
-        messageStore
+        validationStateReader       : deps.validationStateReader
       });
     } else {
-      await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, messageStore, coreProtocols);
+      await ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
     }
   }
 }

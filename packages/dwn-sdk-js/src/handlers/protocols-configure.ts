@@ -1,13 +1,12 @@
 import type { GenericMessageReply } from '../types/message-types.js';
-import type { MessageStore } from '../types//message-store.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { ProtocolsConfigure } from '../interfaces/protocols-configure.js';
 import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorization.js';
@@ -43,7 +42,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
   public async handle({
     tenant,
     message,
-  }: {tenant: string, message: ProtocolsConfigureMessage }): Promise<GenericMessageReply> {
+  }: { tenant: string, message: ProtocolsConfigureMessage }): Promise<GenericMessageReply> {
     let protocolsConfigure: ProtocolsConfigure;
     try {
       protocolsConfigure = await ProtocolsConfigure.parse(message);
@@ -54,7 +53,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     // authentication & authorization
     try {
       await authenticate(message.authorization, this.deps.didResolver);
-      await ProtocolsConfigureHandler.authorizeProtocolsConfigure(tenant, protocolsConfigure, this.deps.messageStore);
+      await ProtocolsConfigureHandler.authorizeProtocolsConfigure(tenant, protocolsConfigure, this.deps);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -63,7 +62,9 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     // `$ref` paths must exist in the referenced protocols, and cross-protocol roles must exist.
     try {
       await ProtocolsConfigureHandler.validateCompositionDependencies(
-        tenant, message.descriptor.definition, this.deps.messageStore
+        tenant,
+        message.descriptor.definition,
+        this.deps.validationStateReader,
       );
     } catch (e) {
       return messageReplyFromError(e, 400);
@@ -159,23 +160,23 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     return indexes;
   }
 
-  private static async authorizeProtocolsConfigure(tenant: string, protocolConfigure: ProtocolsConfigure, messageStore: MessageStore): Promise<void> {
+  private static async authorizeProtocolsConfigure(tenant: string, protocolConfigure: ProtocolsConfigure, deps: HandlerDependencies): Promise<void> {
 
     if (protocolConfigure.isSignedByAuthorDelegate) {
-      await protocolConfigure.authorizeAuthorDelegate(messageStore);
+      await protocolConfigure.authorizeAuthorDelegate(deps.validationStateReader);
     }
 
     if (protocolConfigure.author === tenant) {
       return;
     } else if (protocolConfigure.author !== undefined && Message.getPermissionGrantId(protocolConfigure.signaturePayload!) !== undefined) {
       const permissionGrantId = Message.getPermissionGrantId(protocolConfigure.signaturePayload!)!;
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+      const permissionGrant = await deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
       await ProtocolsGrantAuthorization.authorizeConfigure({
         protocolsConfigureMessage : protocolConfigure.message,
         expectedGrantor           : tenant,
         expectedGrantee           : protocolConfigure.author,
         permissionGrant,
-        messageStore
+        validationStateReader     : deps.validationStateReader
       });
     } else {
       throw new DwnError(DwnErrorCode.ProtocolsConfigureAuthorizationFailed, 'message failed authorization');
@@ -241,7 +242,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       // Stored records were authenticated when admitted. Reconciliation should not make
       // record retention depend on fresh DID resolution availability or mutable dependency state.
       await ProtocolAuthorization.validateStoredInitialWrite(
-        tenant, recordsWrite, this.deps.messageStore, this.deps.coreProtocols
+        tenant, recordsWrite, this.deps.validationStateReader
       );
       return 'valid';
     } catch (error) {
@@ -266,7 +267,10 @@ export class ProtocolsConfigureHandler implements MethodHandler {
    * This is a no-op if the protocol definition has no `uses` map.
    */
   private static async validateCompositionDependencies(
-    tenant: string, definition: ProtocolDefinition, messageStore: MessageStore
+    tenant: string,
+    definition: ProtocolDefinition,
+    validationStateReader: ValidationStateReader,
+    messageTimestamp?: string,
   ): Promise<void> {
     const { uses } = definition;
     if (uses === undefined) {
@@ -277,42 +281,23 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     const referencedDefinitions = new Map<string, ProtocolDefinition>();
     for (const alias in uses) {
       const protocolUri = uses[alias];
-      const refDefinition = await ProtocolsConfigureHandler.fetchInstalledProtocolDefinition(tenant, protocolUri, messageStore);
+      try {
+        const refDefinition = await validationStateReader.fetchProtocolDefinition(tenant, protocolUri, messageTimestamp);
+        referencedDefinitions.set(alias, refDefinition);
+      } catch (error) {
+        if (!(error instanceof DwnError) || error.code !== DwnErrorCode.ProtocolAuthorizationProtocolNotFound) {
+          throw error;
+        }
 
-      if (refDefinition === undefined) {
         throw new DwnError(
           DwnErrorCode.ProtocolsConfigureComposedProtocolNotInstalled,
           `composed protocol '${protocolUri}' (alias '${alias}') is not installed for tenant '${tenant}'.`
         );
       }
-
-      referencedDefinitions.set(alias, refDefinition);
     }
 
     // Walk the structure and validate all $ref paths and cross-protocol role references
     ProtocolsConfigureHandler.validateRefsAndRolesRecursively(definition.structure as ProtocolRuleSet, '', referencedDefinitions);
-  }
-
-  /**
-   * Fetches the latest installed protocol definition for the given protocol URI.
-   * @returns The protocol definition, or `undefined` if not installed.
-   */
-  private static async fetchInstalledProtocolDefinition(
-    tenant: string, protocolUri: string, messageStore: MessageStore
-  ): Promise<ProtocolDefinition | undefined> {
-    const query = {
-      interface         : DwnInterfaceName.Protocols,
-      method            : DwnMethodName.Configure,
-      protocol          : protocolUri,
-      isLatestBaseState : true
-    };
-    const { messages } = await messageStore.query(tenant, [query]);
-
-    if (messages.length === 0) {
-      return undefined;
-    }
-
-    return (messages[0] as ProtocolsConfigureMessage).descriptor.definition;
   }
 
   /**

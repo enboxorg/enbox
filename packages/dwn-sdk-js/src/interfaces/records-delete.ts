@@ -1,6 +1,6 @@
 import type { KeyValues } from '../types/query-types.js';
 import type { MessageSigner } from '../types/signer.js';
-import type { MessageStore } from '../types/message-store.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { DataEncodedRecordsWriteMessage, RecordsDeleteDescriptor, RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
@@ -131,9 +131,9 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
 
   /*
    * Authorizes the delegate who signed the message.
-   * @param messageStore Used to check if the grant has been revoked.
+   * @param validationStateReader Used to check if the grant has been revoked.
    */
-  public async authorizeDelegate(recordsWriteToDelete: RecordsWriteMessage, messageStore: MessageStore): Promise<void> {
+  public async authorizeDelegate(recordsWriteToDelete: RecordsWriteMessage, validationStateReader: ValidationStateReader): Promise<void> {
     const delegatedGrant = PermissionGrant.parse(this.message.authorization.authorDelegatedGrant!);
     await RecordsGrantAuthorization.authorizeDelete({
       recordsDeleteMessage : this.message,
@@ -141,7 +141,7 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
       expectedGrantor      : this.author!,
       expectedGrantee      : this.signer!,
       permissionGrant      : delegatedGrant,
-      messageStore
+      validationStateReader
     });
   }
 }

@@ -1,6 +1,6 @@
-import type { MessageStore } from '../../src/types/message-store.js';
 import type { PermissionGrant } from '../../src/protocols/permission-grant.js';
 import type { RecordsPermissionScope } from '../../src/types/permission-types.js';
+import type { ValidationStateReader } from '../../src/types/validation-state-reader.js';
 import type { RecordsCountMessage, RecordsFilter, RecordsQueryMessage, RecordsSubscribeMessage, RecordsWriteMessage } from '../../src/types/records-types.js';
 
 import { describe, expect, it } from 'bun:test';
@@ -14,9 +14,9 @@ describe('RecordsGrantAuthorization', () => {
   const grantee = 'did:example:bob';
   const protocol = 'https://example.com/protocol';
   const timestamp = '2026-05-31T00:00:00.000000Z';
-  const messageStore = {
-    query: async () => ({ messages: [] }),
-  } as unknown as MessageStore;
+  const validationStateReader = {
+    fetchOldestGrantRevocation: async () => undefined,
+  } as unknown as ValidationStateReader;
 
   function makeRecordsWrite(contextId: string): RecordsWriteMessage {
     const contextIdSegments = contextId.split('/');
@@ -79,7 +79,7 @@ describe('RecordsGrantAuthorization', () => {
       expectedGrantor : grantor,
       expectedGrantee : grantee,
       permissionGrant : makePermissionGrant(method, grantScope),
-      messageStore,
+      validationStateReader,
     })).rejects.toThrow(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
   }
 
@@ -123,7 +123,7 @@ describe('RecordsGrantAuthorization', () => {
           protocol,
           protocolPath: 'thread/message',
         }),
-        messageStore,
+        validationStateReader,
       })).resolves.toBeUndefined();
     });
 
@@ -148,7 +148,7 @@ describe('RecordsGrantAuthorization', () => {
           expectedGrantor : grantor,
           expectedGrantee : grantee,
           permissionGrant : makePermissionGrant(method, { protocol }),
-          messageStore,
+          validationStateReader,
         })).resolves.toBeUndefined();
       }
     });

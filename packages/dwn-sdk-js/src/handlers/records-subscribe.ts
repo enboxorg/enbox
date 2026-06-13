@@ -1,6 +1,4 @@
-import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { MessageSort } from '../types/message-types.js';
-import type { MessageStore } from '../types//message-store.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { ProgressGapInfo, SubscriptionListener } from '../types/subscriptions.js';
@@ -10,7 +8,6 @@ import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
@@ -27,7 +24,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
   public async handle({
     tenant,
     message,
-    subscriptionHandler
+    subscriptionHandler,
   }: {
     tenant: string,
     message: RecordsSubscribeMessage,
@@ -61,7 +58,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
       // authentication and authorization
       try {
         await authenticate(message.authorization!, this.deps.didResolver);
-        await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.deps.messageStore, this.deps.coreProtocols);
+        await RecordsSubscribeHandler.authorizeRecordsSubscribe(tenant, recordsSubscribe, this.deps);
       } catch (error) {
         return messageReplyFromError(error, 401);
       }
@@ -348,23 +345,22 @@ export class RecordsSubscribeHandler implements MethodHandler {
   public static async authorizeRecordsSubscribe(
     tenant: string,
     recordsSubscribe: RecordsSubscribe,
-    messageStore: MessageStore,
-    coreProtocols?: CoreProtocolRegistry,
+    deps: HandlerDependencies,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsSubscribe.message)) {
-      await recordsSubscribe.authorizeDelegate(messageStore);
+      await recordsSubscribe.authorizeDelegate(deps.validationStateReader);
     }
 
     const permissionGrantId = Message.getPermissionGrantId(recordsSubscribe.signaturePayload!);
     if (permissionGrantId !== undefined) {
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+      const permissionGrant = await deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
       await RecordsGrantAuthorization.authorizeQueryOrSubscribe({
-        incomingMessage : recordsSubscribe.message,
-        expectedGrantor : tenant,
-        expectedGrantee : recordsSubscribe.author!,
+        incomingMessage       : recordsSubscribe.message,
+        expectedGrantor       : tenant,
+        expectedGrantee       : recordsSubscribe.author!,
         permissionGrant,
-        messageStore,
+        validationStateReader : deps.validationStateReader,
       });
       return;
     }
@@ -373,7 +369,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     // this is because we dynamically filter out records that the caller is not authorized to see.
     // Currently only run protocol authorization if message deliberately invokes a protocol role.
     if (Records.shouldProtocolAuthorize(recordsSubscribe.signaturePayload!)) {
-      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsSubscribe, messageStore, coreProtocols);
+      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsSubscribe, deps.validationStateReader);
     }
   }
 }

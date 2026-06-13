@@ -19,6 +19,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message, ProtocolsConfigure, RecordsDelete, Time } from '../../src/index.js';
 
+import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+
 
 export function testProtocolDeleteAction(): void {
   describe('Protocol `delete` action', () => {
@@ -584,7 +586,8 @@ export function testProtocolDeleteAction(): void {
           = await dwn.processMessage(alice.did, bobUnauthorizedFooDelete.message);
         expect(bobUnauthorizedFooDeleteReply.status.code).toBe(404);
 
-        const actionsSeekingARuleMatch = await getActionsSeekingARuleMatch(alice.did, bobUnauthorizedFooDelete, messageStore);
+        const actionsSeekingARuleMatch =
+          await getActionsSeekingARuleMatch(alice.did, bobUnauthorizedFooDelete, createTestValidationStateReader({ messageStore }));
         expect(actionsSeekingARuleMatch).toHaveLength(0);
       });
     });

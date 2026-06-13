@@ -1,5 +1,4 @@
 import type { GenericMessage } from '../types/message-types.js';
-import type { MessageStore } from '../types/message-store.js';
 import type { StateIndex } from '../types/state-index.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from '../types/messages-types.js';
@@ -43,7 +42,7 @@ export class MessagesSyncHandler implements MethodHandler {
 
     try {
       await authenticate(message.authorization, this.deps.didResolver);
-      await MessagesSyncHandler.authorizeMessagesSync(tenant, messagesSync, this.deps.messageStore);
+      await MessagesSyncHandler.authorizeMessagesSync(tenant, messagesSync, this.deps);
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -379,7 +378,7 @@ export class MessagesSyncHandler implements MethodHandler {
   private static async authorizeMessagesSync(
     tenant: string,
     messagesSync: MessagesSync,
-    messageStore: MessageStore
+    deps: HandlerDependencies
   ): Promise<void> {
     if (messagesSync.author === tenant) {
       return;
@@ -387,13 +386,13 @@ export class MessagesSyncHandler implements MethodHandler {
 
     const permissionGrantIds = Message.getPermissionGrantIds(messagesSync.signaturePayload!);
     if (messagesSync.author !== undefined && permissionGrantIds.length > 0) {
-      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, messageStore, permissionGrantIds);
+      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, deps.validationStateReader, permissionGrantIds);
       await MessagesGrantAuthorization.authorizeSubscribeOrSync({
-        incomingMessage : messagesSync.message,
-        expectedGrantor : tenant,
-        expectedGrantee : messagesSync.author,
+        incomingMessage       : messagesSync.message,
+        expectedGrantor       : tenant,
+        expectedGrantee       : messagesSync.author,
         permissionGrants,
-        messageStore
+        validationStateReader : deps.validationStateReader
       });
       return;
     }

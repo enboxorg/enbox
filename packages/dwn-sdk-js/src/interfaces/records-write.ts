@@ -4,6 +4,7 @@ import type { MessageInterface } from '../types/message-interface.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { PublicKeyJwk } from '../types/jose-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type {
   DataEncodedRecordsWriteMessage,
   InternalRecordsWriteMessage,
@@ -817,31 +818,31 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
   /**
    * Authorizes the author-delegate who signed this message.
-   * @param messageStore Used to check if the grant has been revoked.
+   * @param validationStateReader Used to check if the grant has been revoked.
    */
-  public async authorizeAuthorDelegate(messageStore: MessageStore): Promise<void> {
+  public async authorizeAuthorDelegate(validationStateReader: ValidationStateReader): Promise<void> {
     const delegatedGrant = PermissionGrant.parse(this.message.authorization.authorDelegatedGrant!);
     await RecordsGrantAuthorization.authorizeWrite({
       recordsWriteMessage : this.message,
       expectedGrantor     : this.author!,
       expectedGrantee     : this.signer!,
       permissionGrant     : delegatedGrant,
-      messageStore
+      validationStateReader
     });
   }
 
   /**
    * Authorizes the owner-delegate who signed this message.
-   * @param messageStore Used to check if the grant has been revoked.
+   * @param validationStateReader Used to check if the grant has been revoked.
    */
-  public async authorizeOwnerDelegate(messageStore: MessageStore): Promise<void> {
+  public async authorizeOwnerDelegate(validationStateReader: ValidationStateReader): Promise<void> {
     const delegatedGrant = PermissionGrant.parse(this.message.authorization.ownerDelegatedGrant!);
     await RecordsGrantAuthorization.authorizeWrite({
       recordsWriteMessage : this.message,
       expectedGrantor     : this.owner!,
       expectedGrantee     : this.ownerSignatureSigner!,
       permissionGrant     : delegatedGrant,
-      messageStore
+      validationStateReader
     });
   }
 

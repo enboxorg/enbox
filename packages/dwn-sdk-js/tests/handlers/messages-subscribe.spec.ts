@@ -22,6 +22,8 @@ import { TestStores } from '../test-stores.js';
 import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
+import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+
 export function testMessagesSubscribeHandler(): void {
   describe('MessagesSubscribe.handle()', () => {
 
@@ -138,6 +140,7 @@ export function testMessagesSubscribeHandler(): void {
 
         const messagesSubscribeHandler = new MessagesSubscribeHandler({
           didResolver, messageStore, eventLog,
+          validationStateReader: createTestValidationStateReader({ messageStore }),
         });
 
         const reply = await messagesSubscribeHandler.handle({ tenant: alice.did, message, subscriptionHandler: (_) => {} });

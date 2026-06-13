@@ -4,6 +4,7 @@ import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from './message-store.js';
 import type { ResumableTaskManager } from '../core/resumable-task-manager.js';
 import type { StateIndex } from './state-index.js';
+import type { ValidationStateReader } from './validation-state-reader.js';
 import type { EventLog, SubscriptionListener } from './subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './message-types.js';
 
@@ -17,7 +18,7 @@ export interface MethodHandler {
   handle(input: {
     tenant: string;
     message: GenericMessage;
-    dataStream?: ReadableStream<Uint8Array>
+    dataStream?: ReadableStream<Uint8Array>;
     subscriptionHandler?: SubscriptionListener;
   }): Promise<GenericMessageReply>;
 }
@@ -32,6 +33,7 @@ export interface MethodHandler {
 export type HandlerDependencies = {
   didResolver: DidResolver;
   messageStore: MessageStore;
+  validationStateReader: ValidationStateReader;
   dataStore?: DataStore;
   stateIndex?: StateIndex;
   resumableTaskManager?: ResumableTaskManager;

@@ -31,6 +31,8 @@ import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 
+import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+
 export function testRecordsQueryHandler(): void {
   describe('RecordsQueryHandler.handle()', () => {
 
@@ -2415,7 +2417,8 @@ export function testRecordsQueryHandler(): void {
         ];
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols: new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
 
         const messages: GenericMessage[] = [];
@@ -3575,7 +3578,8 @@ export function testRecordsQueryHandler(): void {
       const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
       const recordsQueryHandler = new RecordsQueryHandler({
-        didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub,
+        didResolver, messageStore          : messageStoreStub, dataStore             : dataStoreStub,
+        validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
       });
       const reply = await recordsQueryHandler.handle({ tenant, message });
 
@@ -3591,7 +3595,8 @@ export function testRecordsQueryHandler(): void {
       const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
       const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
       const recordsQueryHandler = new RecordsQueryHandler({
-        didResolver, messageStore: messageStoreStub, dataStore: dataStoreStub,
+        didResolver, messageStore          : messageStoreStub, dataStore             : dataStoreStub,
+        validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
       });
 
       // stub the `parse()` function to throw an error

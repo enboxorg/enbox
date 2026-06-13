@@ -1,11 +1,10 @@
 import type { AuthorizationModel } from '../types/message-types.js';
 import type { MessageSigner } from '../types/signer.js';
-import type { MessageStore } from '../types/message-store.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { ProtocolsQueryDescriptor, ProtocolsQueryFilter, ProtocolsQueryMessage } from '../types/protocols-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import { Message } from '../core/message.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorization.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
@@ -77,19 +76,19 @@ export class ProtocolsQuery extends AbstractMessage<ProtocolsQueryMessage> {
     };
   }
 
-  public async authorize(tenant: string, messageStore: MessageStore): Promise<void> {
+  public async authorize(tenant: string, validationStateReader: ValidationStateReader): Promise<void> {
     // if author is the same as the target tenant, we can directly grant access
     if (this.author === tenant) {
       return;
     } else if (this.author !== undefined && Message.getPermissionGrantId(this.signaturePayload!) !== undefined) {
       const permissionGrantId = Message.getPermissionGrantId(this.signaturePayload!)!;
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+      const permissionGrant = await validationStateReader.fetchGrant(tenant, permissionGrantId);
       await ProtocolsGrantAuthorization.authorizeQuery({
         expectedGrantor : tenant,
         expectedGrantee : this.author,
         incomingMessage : this.message,
         permissionGrant,
-        messageStore
+        validationStateReader
       });
     } else {
       throw new DwnError(

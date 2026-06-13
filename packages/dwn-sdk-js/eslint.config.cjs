@@ -86,6 +86,24 @@ module.exports = [{
     'todo-plz/ticket-ref': ['error', { 'commentPattern': '.*github\.com\/enboxorg\/enbox\/issues\/.*' }],
   }
 }, {
+  // Replay-basis closure boundary:
+  // validation modules read state only through `ValidationStateReader` (HandlerDependencies.validationStateReader).
+  // Importing `MessageStore` here would open a validation read outside the reader surface.
+  files: [
+    'src/core/*grant-authorization*.ts',
+    'src/core/protocol-authorization*.ts',
+    'src/protocols/permissions*.ts',
+  ],
+  rules: {
+    'no-restricted-imports': ['error', {
+      patterns: [{
+        group   : ['**/types/message-store.js'],
+        message : 'Validation modules must read state through ValidationStateReader, never MessageStore directly. ' +
+                  'A new state read needs a ValidationStateReader method first.',
+      }],
+    }],
+  },
+}, {
   ignores: [
     '**/*.js',
   ],

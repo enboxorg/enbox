@@ -1,10 +1,9 @@
 import type { GenericMessage } from '../types/message-types.js';
-import type { MessageStore } from '../types/message-store.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 
 import { DwnErrorCode } from './dwn-error.js';
 import { Encoder } from '../utils/encoder.js';
-import { fetchInitialWrite } from './record-chain.js';
 import { Message } from './message.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
@@ -106,7 +105,7 @@ export async function missingAncestorRecordIdsFromReply(
   tenant: string,
   message: GenericMessage,
   reply: { status: { detail?: string } },
-  messageStore: MessageStore,
+  validationStateReader: ValidationStateReader,
 ): Promise<string[] | undefined> {
   const detail = reply.status.detail ?? '';
   const errorCode = getDwnErrorCode(detail);
@@ -138,7 +137,7 @@ export async function missingAncestorRecordIdsFromReply(
 
   const missingRecordIds: string[] = [];
   for (const ancestorRecordId of ancestorRecordIds.slice(0, namedIndex)) {
-    const initialWrite = await fetchInitialWrite(tenant, ancestorRecordId, messageStore);
+    const initialWrite = await validationStateReader.fetchInitialWrite(tenant, ancestorRecordId);
     if (initialWrite === undefined) {
       missingRecordIds.push(ancestorRecordId);
     }

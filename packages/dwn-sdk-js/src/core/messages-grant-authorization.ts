@@ -1,9 +1,9 @@
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessagesPermissionScope } from '../types/permission-types.js';
-import type { MessageStore } from '../types/message-store.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
 import type { ProtocolScope } from '../utils/permission-scope.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { DataEncodedRecordsWriteMessage, RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 import type { MessagesReadMessage, MessagesSubscribeMessage, MessagesSyncMessage } from '../types/messages-types.js';
 
@@ -13,24 +13,23 @@ import { isRecordsPrimaryProjectionExcludedProtocol } from './constants.js';
 import { PermissionScopeMatcher } from '../utils/permission-scope.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { Records } from '../utils/records.js';
-import { RecordsWrite } from '../interfaces/records-write.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 
 export class MessagesGrantAuthorization {
 
   public static async fetchPermissionGrants(
     tenant: string,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
     permissionGrantIds: string[]
   ): Promise<PermissionGrant[]> {
     return Promise.all(
-      permissionGrantIds.map(permissionGrantId => PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId))
+      permissionGrantIds.map(permissionGrantId => validationStateReader.fetchGrant(tenant, permissionGrantId))
     );
   }
 
   /**
    * Authorizes a MessagesReadMessage using the given permission grant.
-   * @param messageStore Used to check if the given grant has been revoked; and to fetch related RecordsWrites if needed.
+   * @param validationStateReader Used to check grant revocation and fetch related RecordsWrites if needed.
    */
   public static async authorizeMessagesRead(input: {
     messagesReadMessage: MessagesReadMessage,
@@ -38,10 +37,10 @@ export class MessagesGrantAuthorization {
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrants: PermissionGrant[],
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   }): Promise<void> {
     const {
-      messagesReadMessage, messageToRead, expectedGrantor, expectedGrantee, permissionGrants, messageStore
+      messagesReadMessage, messageToRead, expectedGrantor, expectedGrantee, permissionGrants, validationStateReader
     } = input;
 
     await MessagesGrantAuthorization.performBaseValidationForGrantSet({
@@ -49,12 +48,12 @@ export class MessagesGrantAuthorization {
       expectedGrantor,
       expectedGrantee,
       permissionGrants,
-      messageStore
+      validationStateReader
     });
 
     for (const permissionGrant of permissionGrants) {
       const scope = permissionGrant.scope as MessagesPermissionScope;
-      if (await MessagesGrantAuthorization.isScopeAuthorized(expectedGrantor, messageToRead, scope, messageStore)) {
+      if (await MessagesGrantAuthorization.isScopeAuthorized(expectedGrantor, messageToRead, scope, validationStateReader)) {
         return;
       }
     }
@@ -64,17 +63,17 @@ export class MessagesGrantAuthorization {
 
   /**
    * Authorizes the scope of a permission grant for MessagesSubscribe or MessagesSync.
-   * @param messageStore Used to check if the grant has been revoked.
+   * @param validationStateReader Used to check if the grant has been revoked.
    */
   public static async authorizeSubscribeOrSync(input: {
     incomingMessage: MessagesSubscribeMessage | MessagesSyncMessage,
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrants: PermissionGrant[],
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   }): Promise<void> {
     const {
-      incomingMessage, expectedGrantor, expectedGrantee, permissionGrants, messageStore
+      incomingMessage, expectedGrantor, expectedGrantee, permissionGrants, validationStateReader
     } = input;
 
     await MessagesGrantAuthorization.performBaseValidationForGrantSet({
@@ -82,7 +81,7 @@ export class MessagesGrantAuthorization {
       expectedGrantor,
       expectedGrantee,
       permissionGrants,
-      messageStore
+      validationStateReader
     });
 
     const scopes = permissionGrants.map(permissionGrant => permissionGrant.scope as MessagesPermissionScope);
@@ -165,7 +164,7 @@ export class MessagesGrantAuthorization {
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrants: PermissionGrant[],
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
     deliveryTimestamp: string,
   }): Promise<void> {
     const {
@@ -173,7 +172,7 @@ export class MessagesGrantAuthorization {
       expectedGrantor,
       expectedGrantee,
       permissionGrants,
-      messageStore,
+      validationStateReader,
       deliveryTimestamp,
     } = input;
 
@@ -190,7 +189,7 @@ export class MessagesGrantAuthorization {
       expectedGrantor,
       expectedGrantee,
       permissionGrants,
-      messageStore,
+      validationStateReader,
     });
   }
 
@@ -203,10 +202,10 @@ export class MessagesGrantAuthorization {
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrants: PermissionGrant[],
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   }): Promise<void> {
     const {
-      incomingMessage, expectedGrantor, expectedGrantee, permissionGrants, messageStore
+      incomingMessage, expectedGrantor, expectedGrantee, permissionGrants, validationStateReader
     } = input;
 
     for (const permissionGrant of permissionGrants) {
@@ -215,7 +214,7 @@ export class MessagesGrantAuthorization {
         expectedGrantor,
         expectedGrantee,
         permissionGrant,
-        messageStore
+        validationStateReader
       });
     }
   }
@@ -227,7 +226,7 @@ export class MessagesGrantAuthorization {
     tenant: string,
     messageToGet: GenericMessage,
     incomingScope: MessagesPermissionScope,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   ): Promise<boolean> {
     if (incomingScope.protocol === undefined) {
       return true;
@@ -238,7 +237,7 @@ export class MessagesGrantAuthorization {
         tenant,
         messageToGet as RecordsWriteMessage | RecordsDeleteMessage,
         incomingScope,
-        messageStore
+        validationStateReader
       );
     }
 
@@ -256,12 +255,12 @@ export class MessagesGrantAuthorization {
     tenant: string,
     recordsMessage: RecordsWriteMessage | RecordsDeleteMessage,
     incomingScope: MessagesPermissionScope,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   ): Promise<boolean> {
     const recordsWriteMessage = await MessagesGrantAuthorization.getAssociatedRecordsWrite(
       tenant,
       recordsMessage,
-      messageStore
+      validationStateReader
     );
 
     if (recordsWriteMessage.descriptor.protocol === PermissionsProtocol.uri) {
@@ -269,7 +268,7 @@ export class MessagesGrantAuthorization {
         tenant,
         recordsWriteMessage,
         incomingScope,
-        messageStore
+        validationStateReader
       );
     }
 
@@ -280,7 +279,7 @@ export class MessagesGrantAuthorization {
     tenant: string,
     recordsWriteMessage: RecordsWriteMessage,
     incomingScope: MessagesPermissionScope,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   ): Promise<boolean> {
     if (MessagesGrantAuthorization.isSubtreeScope(incomingScope)) {
       return false;
@@ -288,7 +287,7 @@ export class MessagesGrantAuthorization {
 
     const permissionScope = await PermissionsProtocol.getScopeFromPermissionRecord(
       tenant,
-      messageStore,
+      validationStateReader,
       recordsWriteMessage as DataEncodedRecordsWriteMessage
     );
 
@@ -309,13 +308,13 @@ export class MessagesGrantAuthorization {
   private static async getAssociatedRecordsWrite(
     tenant: string,
     recordsMessage: RecordsWriteMessage | RecordsDeleteMessage,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   ): Promise<RecordsWriteMessage> {
     if (Records.isRecordsWrite(recordsMessage)) {
       return recordsMessage;
     }
 
-    return RecordsWrite.fetchNewestRecordsWrite(messageStore, tenant, recordsMessage.descriptor.recordId);
+    return validationStateReader.fetchNewestRecordsWrite(tenant, recordsMessage.descriptor.recordId);
   }
 
   private static getRecordsScopeTarget(recordsWriteMessage: RecordsWriteMessage): ProtocolScope {

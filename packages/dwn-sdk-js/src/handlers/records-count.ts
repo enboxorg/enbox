@@ -1,13 +1,10 @@
-import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { Filter } from '../types/query-types.js';
-import type { MessageStore } from '../types//message-store.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsCountMessage, RecordsCountReply } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsCount } from '../interfaces/records-count.js';
@@ -20,7 +17,7 @@ export class RecordsCountHandler implements MethodHandler {
 
   public async handle({
     tenant,
-    message
+    message,
   }: {tenant: string, message: RecordsCountMessage}): Promise<RecordsCountReply> {
     let recordsCount: RecordsCount;
     try {
@@ -39,7 +36,7 @@ export class RecordsCountHandler implements MethodHandler {
       try {
         await authenticate(message.authorization!, this.deps.didResolver);
 
-        await RecordsCountHandler.authorizeRecordsCount(tenant, recordsCount, this.deps.messageStore, this.deps.coreProtocols);
+        await RecordsCountHandler.authorizeRecordsCount(tenant, recordsCount, this.deps);
       } catch (e) {
         return messageReplyFromError(e, 401);
       }
@@ -187,23 +184,22 @@ export class RecordsCountHandler implements MethodHandler {
   private static async authorizeRecordsCount(
     tenant: string,
     recordsCount: RecordsCount,
-    messageStore: MessageStore,
-    coreProtocols?: CoreProtocolRegistry,
+    deps: HandlerDependencies,
   ): Promise<void> {
 
     if (Message.isSignedByAuthorDelegate(recordsCount.message)) {
-      await recordsCount.authorizeDelegate(messageStore);
+      await recordsCount.authorizeDelegate(deps.validationStateReader);
     }
 
     const permissionGrantId = Message.getPermissionGrantId(recordsCount.signaturePayload!);
     if (permissionGrantId !== undefined) {
-      const permissionGrant = await PermissionsProtocol.fetchGrant(tenant, messageStore, permissionGrantId);
+      const permissionGrant = await deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
       await RecordsGrantAuthorization.authorizeQueryOrSubscribe({
-        incomingMessage : recordsCount.message,
-        expectedGrantor : tenant,
-        expectedGrantee : recordsCount.author!,
+        incomingMessage       : recordsCount.message,
+        expectedGrantor       : tenant,
+        expectedGrantee       : recordsCount.author!,
         permissionGrant,
-        messageStore,
+        validationStateReader : deps.validationStateReader,
       });
       return;
     }
@@ -212,7 +208,7 @@ export class RecordsCountHandler implements MethodHandler {
     // this is because we dynamically filter out records that the caller is not authorized to see.
     // Currently only run protocol authorization if message deliberately invokes a protocol role.
     if (Records.shouldProtocolAuthorize(recordsCount.signaturePayload!)) {
-      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsCount, messageStore, coreProtocols);
+      await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsCount, deps.validationStateReader);
     }
   }
 }

@@ -1,6 +1,6 @@
-import type { MessageStore } from '../types/message-store.js';
 import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { ProtocolScope } from '../utils/permission-scope.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { PermissionConditions, RecordsPermissionScope } from '../types/permission-types.js';
 import type { RecordsCountMessage, RecordsDeleteMessage, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage } from '../types/records-types.js';
 
@@ -18,10 +18,10 @@ export class RecordsGrantAuthorization {
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrant: PermissionGrant,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   }): Promise<void> {
     const {
-      recordsWriteMessage, expectedGrantor, expectedGrantee, permissionGrant, messageStore
+      recordsWriteMessage, expectedGrantor, expectedGrantee, permissionGrant, validationStateReader
     } = input;
 
     await GrantAuthorization.performBaseValidation({
@@ -29,7 +29,7 @@ export class RecordsGrantAuthorization {
       expectedGrantor,
       expectedGrantee,
       permissionGrant,
-      messageStore
+      validationStateReader
     });
 
     // NOTE: validated the invoked permission is for Records in GrantAuthorization.performBaseValidation()
@@ -40,7 +40,7 @@ export class RecordsGrantAuthorization {
 
   /**
    * Authorizes a RecordsReadMessage using the given permission grant.
-   * @param messageStore Used to check if the given grant has been revoked.
+   * @param validationStateReader Used to check if the given grant has been revoked.
    */
   public static async authorizeRead(input: {
     recordsReadMessage: RecordsReadMessage,
@@ -48,10 +48,10 @@ export class RecordsGrantAuthorization {
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrant: PermissionGrant,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   }): Promise<void> {
     const {
-      recordsReadMessage, recordsWriteMessageToBeRead, expectedGrantor, expectedGrantee, permissionGrant, messageStore
+      recordsReadMessage, recordsWriteMessageToBeRead, expectedGrantor, expectedGrantee, permissionGrant, validationStateReader
     } = input;
 
     await GrantAuthorization.performBaseValidation({
@@ -59,7 +59,7 @@ export class RecordsGrantAuthorization {
       expectedGrantor,
       expectedGrantee,
       permissionGrant,
-      messageStore
+      validationStateReader
     });
 
     // NOTE: validated the invoked permission is for Records in GrantAuthorization.performBaseValidation()
@@ -68,17 +68,17 @@ export class RecordsGrantAuthorization {
 
   /**
    * Authorizes the scope of a permission grant for RecordsQuery or RecordsSubscribe.
-   * @param messageStore Used to check if the grant has been revoked.
+   * @param validationStateReader Used to check if the grant has been revoked.
    */
   public static async authorizeQueryOrSubscribe(input: {
     incomingMessage: RecordsCountMessage | RecordsQueryMessage | RecordsSubscribeMessage,
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrant: PermissionGrant,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   }): Promise<void> {
     const {
-      incomingMessage, expectedGrantor, expectedGrantee, permissionGrant, messageStore
+      incomingMessage, expectedGrantor, expectedGrantee, permissionGrant, validationStateReader
     } = input;
 
     await GrantAuthorization.performBaseValidation({
@@ -86,7 +86,7 @@ export class RecordsGrantAuthorization {
       expectedGrantor,
       expectedGrantee,
       permissionGrant,
-      messageStore
+      validationStateReader
     });
 
     // The grant's protocol must match the query/subscribe filter's protocol.
@@ -107,7 +107,7 @@ export class RecordsGrantAuthorization {
 
   /**
    * Authorizes the scope of a permission grant for RecordsDelete.
-   * @param messageStore Used to check if the grant has been revoked.
+   * @param validationStateReader Used to check if the grant has been revoked.
    */
   public static async authorizeDelete(input: {
     recordsDeleteMessage: RecordsDeleteMessage,
@@ -115,10 +115,10 @@ export class RecordsGrantAuthorization {
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrant: PermissionGrant,
-    messageStore: MessageStore,
+    validationStateReader: ValidationStateReader,
   }): Promise<void> {
     const {
-      recordsDeleteMessage, recordsWriteToDelete, expectedGrantor, expectedGrantee, permissionGrant, messageStore
+      recordsDeleteMessage, recordsWriteToDelete, expectedGrantor, expectedGrantee, permissionGrant, validationStateReader
     } = input;
 
     await GrantAuthorization.performBaseValidation({
@@ -126,7 +126,7 @@ export class RecordsGrantAuthorization {
       expectedGrantor,
       expectedGrantee,
       permissionGrant,
-      messageStore
+      validationStateReader
     });
 
     // NOTE: validated the invoked permission is for Records in GrantAuthorization.performBaseValidation()

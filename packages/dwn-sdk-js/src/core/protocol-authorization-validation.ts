@@ -1,20 +1,14 @@
-import type { Filter } from '../types/query-types.js';
-import type { MessageStore } from '../types/message-store.js';
+import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolType, ProtocolTypes } from '../types/protocols-types.js';
 
 import { ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
-import type { RecordsWrite } from '../interfaces/records-write.js';
-
 import Ajv from 'ajv/dist/2020.js';
-import { FilterUtility } from '../utils/filter.js';
 import { Records } from '../utils/records.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
-import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { getTypeName, parseCrossProtocolRef } from '../utils/protocols.js';
-
-import type { FetchProtocolDefinitionFn } from './protocol-authorization.js';
 
 /**
  * Verifies the `protocolPath` declared in the given message matches the path of actual record chain.
@@ -24,9 +18,8 @@ import type { FetchProtocolDefinitionFn } from './protocol-authorization.js';
 export async function verifyProtocolPathAndContextId(
   tenant: string,
   inboundMessage: RecordsWrite,
-  messageStore: MessageStore,
-  fetchProtocolDefinition: FetchProtocolDefinitionFn,
-  governingTimestamp?: string,
+  validationStateReader: ValidationStateReader,
+  protocolDefinitionTimestamp?: string,
 ): Promise<void> {
   const declaredProtocolPath = inboundMessage.message.descriptor.protocolPath;
   const declaredTypeName = getTypeName(declaredProtocolPath);
@@ -49,19 +42,15 @@ export async function verifyProtocolPathAndContextId(
   // If the parent path segment has a `$ref` in the composing protocol, the parent lives in a different protocol.
   const childProtocol = inboundMessage.message.descriptor.protocol;
   const parentProtocolUri = await resolveParentProtocolUri(
-    tenant, childProtocol, declaredProtocolPath, messageStore, fetchProtocolDefinition, governingTimestamp
+    tenant, childProtocol, declaredProtocolPath, validationStateReader, protocolDefinitionTimestamp
   );
 
   // fetch the parent message
-  const query: Filter = {
-    isLatestBaseState : true, // NOTE: this filter is critical, to ensure are are not returning a deleted parent
-    interface         : DwnInterfaceName.Records,
-    method            : DwnMethodName.Write,
-    protocol          : parentProtocolUri,
-    recordId          : parentId
-  };
-  const { messages: parentMessages } = await messageStore.query(tenant, [query]);
-  const parentMessage = (parentMessages as RecordsWriteMessage[])[0];
+  const parentMessage = await validationStateReader.fetchParentRecord({
+    tenant,
+    parentProtocolUri,
+    parentId,
+  });
 
   if (parentMessage === undefined) {
     // if this is a cross-protocol composition lookup, use a more descriptive error
@@ -117,9 +106,8 @@ export async function resolveParentProtocolUri(
   tenant: string,
   childProtocolUri: string,
   childProtocolPath: string,
-  messageStore: MessageStore,
-  fetchProtocolDefinition: FetchProtocolDefinitionFn,
-  governingTimestamp?: string,
+  validationStateReader: ValidationStateReader,
+  protocolDefinitionTimestamp?: string,
 ): Promise<string> {
   const segments = childProtocolPath.split('/');
 
@@ -128,9 +116,9 @@ export async function resolveParentProtocolUri(
     return childProtocolUri;
   }
 
-  // Fetch the composing protocol's definition at the governing timestamp
-  const composingDefinition = await fetchProtocolDefinition(
-    tenant, childProtocolUri, messageStore, governingTimestamp
+  // Fetch the composing protocol's definition at the incoming message timestamp
+  const composingDefinition = await validationStateReader.fetchProtocolDefinition(
+    tenant, childProtocolUri, protocolDefinitionTimestamp
   );
 
   // Walk the structure to find the parent's path segment
@@ -170,9 +158,8 @@ export async function verifyTypeWithComposition(
   tenant: string,
   inboundMessage: RecordsWriteMessage,
   protocolDefinition: ProtocolDefinition,
-  messageStore: MessageStore,
-  fetchProtocolDefinition: FetchProtocolDefinitionFn,
-  governingTimestamp?: string,
+  validationStateReader: ValidationStateReader,
+  protocolDefinitionTimestamp?: string,
 ): Promise<void> {
   const declaredProtocolPath = inboundMessage.descriptor.protocolPath;
   const declaredTypeName = getTypeName(declaredProtocolPath);
@@ -180,7 +167,7 @@ export async function verifyTypeWithComposition(
   // Resolve which protocol types map to use.
   // If the first path segment has `$ref`, this record's type might be defined in a referenced protocol.
   const protocolTypes = await resolveProtocolTypesForPath(
-    tenant, declaredProtocolPath, protocolDefinition, messageStore, fetchProtocolDefinition, governingTimestamp
+    tenant, declaredProtocolPath, protocolDefinition, validationStateReader, protocolDefinitionTimestamp
   );
 
   verifyType(inboundMessage, protocolTypes, declaredTypeName);
@@ -195,9 +182,8 @@ export async function resolveProtocolTypesForPath(
   tenant: string,
   protocolPath: string,
   protocolDefinition: ProtocolDefinition,
-  messageStore: MessageStore,
-  fetchProtocolDefinition: FetchProtocolDefinitionFn,
-  governingTimestamp?: string,
+  validationStateReader: ValidationStateReader,
+  protocolDefinitionTimestamp?: string,
 ): Promise<ProtocolTypes> {
   const segments = protocolPath.split('/');
 
@@ -209,8 +195,8 @@ export async function resolveProtocolTypesForPath(
     if (parsed !== undefined && protocolDefinition.uses !== undefined) {
       const refProtocolUri = protocolDefinition.uses[parsed.alias];
       if (refProtocolUri !== undefined) {
-        const refDefinition = await fetchProtocolDefinition(
-          tenant, refProtocolUri, messageStore, governingTimestamp
+        const refDefinition = await validationStateReader.fetchProtocolDefinition(
+          tenant, refProtocolUri, protocolDefinitionTimestamp
         );
         return refDefinition.types;
       }
@@ -344,7 +330,7 @@ export async function verifyAsRoleRecordIfNeeded(
   tenant: string,
   incomingMessage: RecordsWrite,
   ruleSet: ProtocolRuleSet,
-  messageStore: MessageStore,
+  validationStateReader: ValidationStateReader,
 ): Promise<void> {
   if (!ruleSet.$role) {
     return;
@@ -362,25 +348,17 @@ export async function verifyAsRoleRecordIfNeeded(
   }
 
   const protocolPath = incomingRecordsWrite.message.descriptor.protocolPath;
-  const filter: Filter = {
-    interface         : DwnInterfaceName.Records,
-    method            : DwnMethodName.Write,
-    isLatestBaseState : true,
-    protocol          : incomingRecordsWrite.message.descriptor.protocol,
-    protocolPath,
-    recipient,
-  };
-
   const parentContextId = Records.getParentContextFromOfContextId(incomingRecordsWrite.message.contextId)!;
 
-  // if this is not the root record, add a prefix filter to the query
-  if (parentContextId !== '') {
-    const prefixFilter = FilterUtility.constructPrefixFilterAsRangeFilter(parentContextId);
-    filter.contextId = prefixFilter;
-  }
+  // if this is not the root record, scope the role-record query to the parent context
+  const matchingRecords = await validationStateReader.queryLatestRoleRecords({
+    tenant,
+    protocol        : incomingRecordsWrite.message.descriptor.protocol,
+    protocolPath,
+    recipient,
+    contextIdPrefix : parentContextId === '' ? undefined : parentContextId,
+  });
 
-  const { messages: matchingMessages } = await messageStore.query(tenant, [filter]);
-  const matchingRecords = matchingMessages as RecordsWriteMessage[];
   const matchingRecordsExceptIncomingRecordId = matchingRecords.filter((recordsWriteMessage: RecordsWriteMessage): boolean =>
     recordsWriteMessage.recordId !== incomingRecordsWrite.message.recordId
   );
@@ -407,7 +385,7 @@ export async function verifyRecordLimit(
   tenant: string,
   incomingMessage: RecordsWrite,
   ruleSet: ProtocolRuleSet,
-  messageStore: MessageStore,
+  validationStateReader: ValidationStateReader,
 ): Promise<void> {
   if (ruleSet.$recordLimit === undefined) {
     return;
@@ -421,24 +399,16 @@ export async function verifyRecordLimit(
 
   const { max, strategy } = ruleSet.$recordLimit;
 
-  // Build a filter to count existing records at the same protocol path and parent context.
+  // Count existing records at the same protocol path, scoped by parent context for nested records.
   const protocolPath = incomingMessage.message.descriptor.protocolPath;
-  const filter: Filter = {
-    interface         : DwnInterfaceName.Records,
-    method            : DwnMethodName.Write,
-    isLatestBaseState : true,
-    protocol          : incomingMessage.message.descriptor.protocol,
-    protocolPath,
-  };
-
-  // Scope by parent context for nested records.
   const parentContextId = Records.getParentContextFromOfContextId(incomingMessage.message.contextId)!;
-  if (parentContextId !== '') {
-    const prefixFilter = FilterUtility.constructPrefixFilterAsRangeFilter(parentContextId);
-    filter.contextId = prefixFilter;
-  }
 
-  const existingCount = await messageStore.count(tenant, [filter]);
+  const existingCount = await validationStateReader.countLatestRecordsAtScope({
+    tenant,
+    protocol        : incomingMessage.message.descriptor.protocol,
+    protocolPath,
+    contextIdPrefix : parentContextId === '' ? undefined : parentContextId,
+  });
 
   if (existingCount >= max) {
     if (strategy === ProtocolRecordLimitStrategy.Reject) {

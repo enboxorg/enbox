@@ -1,0 +1,61 @@
+{
+  "live: protocol record lifecycle": [
+    "fetchInitialRecordsWrite",
+    "fetchParentRecord",
+    "fetchProtocolDefinition"
+  ],
+  "live: role-authorized write": [
+    "constructRecordChain",
+    "fetchInitialWrite",
+    "fetchProtocolDefinition",
+    "hasMatchingRoleRecord",
+    "queryLatestRoleRecords"
+  ],
+  "live: composed protocol configure": [
+    "fetchProtocolDefinition"
+  ],
+  "live: grant-authorized write": [
+    "fetchGrant",
+    "fetchOldestGrantRevocation",
+    "fetchProtocolDefinition"
+  ],
+  "live: messages-read of deleted record with grant": [
+    "fetchGrant",
+    "fetchNewestRecordsWrite",
+    "fetchOldestGrantRevocation"
+  ],
+  "live: record-limit rejection": [
+    "countLatestRecordsAtScope",
+    "fetchProtocolDefinition"
+  ],
+  "live: squash backstop": [
+    "fetchLatestSquashRecordAtScope",
+    "fetchProtocolDefinition"
+  ],
+  "live: dataless update of above-threshold record": [
+    "fetchProtocolDefinition",
+    "hasStoredData"
+  ],
+  "replicated: child admitted under dataless parent": [
+    "fetchParentRecord",
+    "fetchProtocolDefinition"
+  ],
+  "replicated: role-invoking write admitted under dataless role record": [
+    "constructRecordChain",
+    "fetchInitialWrite",
+    "fetchProtocolDefinition",
+    "hasMatchingRoleRecord",
+    "queryLatestRoleRecords"
+  ],
+  "replicated: initial write accepted by timestamped config": [
+    "fetchProtocolDefinition"
+  ],
+  "replicated: same-CID completion of dataless stub": [
+    "fetchProtocolDefinition",
+    "hasStoredData"
+  ],
+  "replicated: tombstone-beaten dataless update missing compacted data": [
+    "fetchProtocolDefinition",
+    "hasStoredData"
+  ]
+}

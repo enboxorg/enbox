@@ -25,6 +25,8 @@ import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, EventEmitterEventLog, MessageStoreLevel, Time } from '../../src/index.js';
 
+import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
+
 export function testRecordsSubscribeHandler(): void {
   describe('RecordsSubscribeHandler.handle()', () => {
     describe('EventLog disabled',() => {
@@ -564,7 +566,8 @@ export function testRecordsSubscribeHandler(): void {
         const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
 
         const recordsSubscribeHandler = new RecordsSubscribeHandler({
-          didResolver, messageStore: messageStoreStub, eventLog: eventLogStub,
+          didResolver, messageStore          : messageStoreStub, eventLog              : eventLogStub,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub }),
         });
         const reply = await recordsSubscribeHandler.handle({ tenant, message, subscriptionHandler: () => {} });
 
@@ -580,7 +583,8 @@ export function testRecordsSubscribeHandler(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
         const recordsSubscribeHandler = new RecordsSubscribeHandler({
-          didResolver, messageStore: messageStoreStub, eventLog: eventLogStub,
+          didResolver, messageStore          : messageStoreStub, eventLog              : eventLogStub,
+          validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub }),
         });
 
         // stub the `parse()` function to throw an error

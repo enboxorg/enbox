@@ -12,7 +12,7 @@ import {
   dwnMessageConstructors, EnboxConnectProtocol, EnboxUserAgent, getRecordAuthor,
   getRecordProtocolRole, PlatformAgentTestHarness,
 } from '@enbox/agent';
-import { Jws, Message, Poller, Time } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, Jws, Message, Poller, Time } from '@enbox/dwn-sdk-js';
 
 import { WalletConnect } from '@enbox/auth';
 
@@ -4286,7 +4286,8 @@ describe('Record', () => {
 
       // Attempts to store the record without signing it, which should fail.
       let { status: storeRecordStatus } = await queriedRecord.store();
-      expect(storeRecordStatus.code).toBe(401, storeRecordStatus.detail);
+      expect(storeRecordStatus.code).toBe(400, storeRecordStatus.detail);
+      expect(storeRecordStatus.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
 
       // Stores the record in Bob's DWN, the importRecord parameter is set to true so that Bob
       // signs the record before storing it.
