@@ -540,7 +540,7 @@ describe('validation read closure', () => {
         expect(
           VALIDATION_READER_METHODS.has(method),
           `validation read '${read}' in scenario '${scenario}' is outside the validation reader surface`
-        ).toBeTrue();
+        ).toBe(true);
       }
     }
 
