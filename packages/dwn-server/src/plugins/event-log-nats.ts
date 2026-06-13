@@ -608,10 +608,7 @@ export default class NatsEventLog implements EventLog {
   async #getPerSubjectMessage(
     request: { seq: number; next_by_subj: string } | { last_by_subj: string },
   ): Promise<StoredMsg | undefined> {
-    const message = await this.#jsm!.streams.getMessage(
-      this.#config.streamName,
-      request as unknown as Parameters<JetStreamManager['streams']['getMessage']>[1]
-    );
+    const message = await this.#jsm!.streams.getMessage(this.#config.streamName, request);
     return message ?? undefined;
   }
 

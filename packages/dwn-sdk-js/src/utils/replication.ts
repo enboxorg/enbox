@@ -6,6 +6,11 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 const POSITION_PAD_WIDTH = 20;
 
+type ReplicationMessageDescriptor = GenericMessage['descriptor'] & {
+  protocol?: unknown;
+  tags?: Record<string, unknown>;
+};
+
 /**
  * Shared helpers for the replication log substrate.
  */
@@ -30,11 +35,7 @@ export class Replication {
   public static computeFingerprintScopes(message: GenericMessage): string[] {
     const scopes = [Replication.globalDomain];
 
-    const descriptor = message.descriptor as GenericMessage['descriptor'] & {
-      protocol?: unknown;
-      tags?: Record<string, unknown>;
-    };
-
+    const descriptor = Replication.descriptor(message);
     const protocol = descriptor.protocol;
     if (typeof protocol === 'string') {
       scopes.push(Replication.protocolDomain(protocol));
@@ -65,9 +66,7 @@ export class Replication {
       return;
     }
 
-    const descriptor = message.descriptor as GenericMessage['descriptor'] & {
-      protocol?: unknown;
-    };
+    const descriptor = Replication.descriptor(message);
     const expectedProtocol = descriptor.protocol;
     const indexedProtocol = newIndexes.protocol;
     if (expectedProtocol !== undefined && expectedProtocol !== indexedProtocol) {
@@ -93,6 +92,10 @@ export class Replication {
     }
 
     return right.every((scope) => left.includes(scope));
+  }
+
+  private static descriptor(message: GenericMessage): ReplicationMessageDescriptor {
+    return message.descriptor as ReplicationMessageDescriptor;
   }
 
   private static throwFingerprintScopeMutation(messageCid: string): never {

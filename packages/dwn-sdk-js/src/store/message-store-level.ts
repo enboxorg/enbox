@@ -192,7 +192,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
   async open(): Promise<void> {
     const partitions = await this.partitions();
     await partitions.root.open();
-    await this.assertNoPreSubstrateLayout(partitions.root);
+    await this.assertNoPreSubstrateLayout(partitions);
     await this.getEpoch();
   }
 
@@ -840,8 +840,12 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     return headString === undefined ? 0n : BigInt(headString);
   }
 
-  private async assertNoPreSubstrateLayout(root: LevelWrapper<string>): Promise<void> {
-    for await (const key of root.keys()) {
+  private async assertNoPreSubstrateLayout(partitions: StorePartitions): Promise<void> {
+    if (await partitions.meta.get(EPOCH_KEY) !== undefined) {
+      return;
+    }
+
+    for await (const key of partitions.root.keys()) {
       const partition = MessageStoreLevel.parseSublevelPartition(key);
       if (partition === undefined || CURRENT_PARTITIONS.has(partition)) {
         continue;
