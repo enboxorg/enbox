@@ -1,3 +1,4 @@
+import type { GenericMessage } from '../types/message-types.js';
 import type { KeyValues } from '../types/query-types.js';
 
 import { PermissionsProtocol } from '../protocols/permissions.js';
@@ -26,15 +27,20 @@ export class Replication {
     return Array.from(hashArray.slice(0, 8), (b: number) => b.toString(16).padStart(2, '0')).join('');
   }
 
-  public static computeFingerprintScopes(indexes: KeyValues): string[] {
+  public static computeFingerprintScopes(message: GenericMessage): string[] {
     const scopes = [Replication.globalDomain];
 
-    const protocol = indexes.protocol;
+    const descriptor = message.descriptor as GenericMessage['descriptor'] & {
+      protocol?: unknown;
+      tags?: Record<string, unknown>;
+    };
+
+    const protocol = descriptor.protocol;
     if (typeof protocol === 'string') {
       scopes.push(Replication.protocolDomain(protocol));
 
       if (protocol === PermissionsProtocol.uri) {
-        const taggedProtocol = indexes['tag.protocol'];
+        const taggedProtocol = descriptor.tags?.protocol;
         if (typeof taggedProtocol === 'string') {
           scopes.push(Replication.permissionDomain(taggedProtocol));
         }
@@ -44,31 +50,56 @@ export class Replication {
     return scopes;
   }
 
-  public static assertFingerprintScopesUntouched(persistedScopes: string[], newIndexes: KeyValues, messageCid: string): void {
-    const protocol = newIndexes.protocol;
-    const expectedProtocolDomain = typeof protocol === 'string' ? Replication.protocolDomain(protocol) : undefined;
-    const persistedProtocolDomain = persistedScopes.find((scope) => scope.startsWith('protocol:'));
-
-    if (expectedProtocolDomain !== persistedProtocolDomain) {
-      throw new DwnError(
-        DwnErrorCode.MessageStoreFingerprintScopeMutation,
-        `index replacement for message ${messageCid} would change its persisted fingerprint scopes`
-      );
+  public static assertFingerprintScopesUntouched(
+    persistedScopes: string[],
+    message: GenericMessage,
+    messageCid: string,
+    newIndexes?: KeyValues,
+  ): void {
+    const expectedScopes = Replication.computeFingerprintScopes(message);
+    if (!Replication.scopeSetsMatch(persistedScopes, expectedScopes)) {
+      Replication.throwFingerprintScopeMutation(messageCid);
     }
 
-    const taggedProtocol = newIndexes['tag.protocol'];
-    const expectedPermissionDomain =
-      protocol === PermissionsProtocol.uri && typeof taggedProtocol === 'string'
-        ? Replication.permissionDomain(taggedProtocol)
+    if (newIndexes === undefined) {
+      return;
+    }
+
+    const descriptor = message.descriptor as GenericMessage['descriptor'] & {
+      protocol?: unknown;
+    };
+    const expectedProtocol = descriptor.protocol;
+    const indexedProtocol = newIndexes.protocol;
+    if (expectedProtocol !== undefined && expectedProtocol !== indexedProtocol) {
+      Replication.throwFingerprintScopeMutation(messageCid);
+    }
+
+    const indexedTaggedProtocol = newIndexes['tag.protocol'];
+    if (indexedTaggedProtocol !== undefined) {
+      const expectedPermissionDomain = expectedScopes.find((scope) => scope.startsWith('perm:'));
+      const indexedPermissionDomain = typeof indexedTaggedProtocol === 'string'
+        ? Replication.permissionDomain(indexedTaggedProtocol)
         : undefined;
-    const persistedPermissionDomain = persistedScopes.find((scope) => scope.startsWith('perm:'));
 
-    if (expectedPermissionDomain !== undefined && expectedPermissionDomain !== persistedPermissionDomain) {
-      throw new DwnError(
-        DwnErrorCode.MessageStoreFingerprintScopeMutation,
-        `index replacement for message ${messageCid} would change its persisted fingerprint scopes`
-      );
+      if (expectedPermissionDomain !== undefined && expectedPermissionDomain !== indexedPermissionDomain) {
+        Replication.throwFingerprintScopeMutation(messageCid);
+      }
     }
+  }
+
+  private static scopeSetsMatch(left: string[], right: string[]): boolean {
+    if (left.length !== right.length) {
+      return false;
+    }
+
+    return right.every((scope) => left.includes(scope));
+  }
+
+  private static throwFingerprintScopeMutation(messageCid: string): never {
+    throw new DwnError(
+      DwnErrorCode.MessageStoreFingerprintScopeMutation,
+      `index replacement for message ${messageCid} would change its persisted fingerprint scopes`
+    );
   }
 
   public static async hashMessageCid(messageCid: string): Promise<Uint8Array> {

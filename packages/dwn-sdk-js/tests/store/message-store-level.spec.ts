@@ -70,20 +70,47 @@ describe('MessageStoreLevel Test Suite', () => {
 
       expect(locations).toEqual(new Set([ 'TEST-MESSAGESTORE' ]));
     });
+
+    it('should fail fast when a pre-substrate Level blockstore layout is detected', async () => {
+      const location = 'TEST-MESSAGESTORE-PRE-SUBSTRATE';
+      const oldDb = await createLevelDatabase<Uint8Array>(location, { valueEncoding: 'binary' });
+      await oldDb.put('!did:test:alice!bafy-old-message', new Uint8Array([1]));
+      await oldDb.close();
+
+      const oldLayoutStore = new MessageStoreLevel({ location });
+
+      await expect(oldLayoutStore.open()).rejects.toThrow(DwnErrorCode.MessageStorePreSubstrateLayout);
+      await oldLayoutStore.close();
+
+      const cleanupDb = await createLevelDatabase<Uint8Array>(location, { valueEncoding: 'binary' });
+      await cleanupDb.clear();
+      await cleanupDb.close();
+    });
   });
 
-  async function generateStoredMessage(overrides: { protocol?: string } = {}): Promise<{ message: any, messageCid: string, indexes: KeyValues }> {
-    const { message } = await TestDataGenerator.generateRecordsWrite(overrides.protocol === undefined
-      ? {}
-      : { protocol: overrides.protocol, protocolPath: 'post' });
+  async function generateStoredMessage(overrides: {
+    protocol?: string;
+    tags?: Record<string, string>;
+  } = {}): Promise<{ message: any, messageCid: string, indexes: KeyValues }> {
+    const { message } = await TestDataGenerator.generateRecordsWrite({
+      ...(overrides.protocol !== undefined && { protocol: overrides.protocol, protocolPath: 'post' }),
+      ...(overrides.tags !== undefined && { tags: overrides.tags }),
+    });
     const messageCid = await Message.getCid(message);
     const indexes: KeyValues = {
       interface         : 'Records',
       method            : 'Write',
       messageTimestamp  : message.descriptor.messageTimestamp,
       isLatestBaseState : true,
-      ...(overrides.protocol !== undefined && { protocol: overrides.protocol }),
+      protocol          : message.descriptor.protocol,
+      protocolPath      : message.descriptor.protocolPath,
     };
+
+    if (message.descriptor.tags !== undefined) {
+      for (const [key, value] of Object.entries(message.descriptor.tags)) {
+        indexes[`tag.${key}`] = value;
+      }
+    }
 
     return { message, messageCid, indexes };
   }
@@ -225,15 +252,8 @@ describe('MessageStoreLevel Test Suite', () => {
       await expect(messageStore.updateIndexes(alice.did, messageCid, indexesWithoutProtocol))
         .rejects.toThrow(DwnErrorCode.MessageStoreFingerprintScopeMutation);
 
-      const grant = await generateStoredMessage();
-      const grantIndexes: KeyValues = {
-        interface         : 'Records',
-        method            : 'Write',
-        messageTimestamp  : grant.message.descriptor.messageTimestamp,
-        isLatestBaseState : true,
-        protocol          : PermissionsProtocol.uri,
-        'tag.protocol'    : protocol,
-      };
+      const grant = await generateStoredMessage({ protocol: PermissionsProtocol.uri, tags: { protocol } });
+      const grantIndexes = grant.indexes;
       await messageStore.put(alice.did, grant.message, grantIndexes);
       await expect(messageStore.updateIndexes(alice.did, grant.messageCid, { ...grantIndexes, 'tag.protocol': 'https://example.com/other' }))
         .rejects.toThrow(DwnErrorCode.MessageStoreFingerprintScopeMutation);
@@ -305,6 +325,29 @@ describe('MessageStoreLevel Test Suite', () => {
         .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataAlreadyStamped);
     });
 
+    it('should complete dataless permission records without changing permission fingerprint scope', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const scopedProtocol = 'https://example.com/photos';
+      const grant = await generateStoredMessage({
+        protocol : PermissionsProtocol.uri,
+        tags     : { protocol: scopedProtocol },
+      });
+      const grantFingerprint = await cidFingerprint(grant.messageCid);
+      const { 'tag.protocol': _tagProtocol, ...datalessGrantIndexes } = grant.indexes;
+
+      await messageStore.put(alice.did, grant.message, { ...datalessGrantIndexes, isLatestBaseState: false });
+      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(scopedProtocol)])).toBe(grantFingerprint);
+      const datalessFiltered = await messageStore.logRead(alice.did, { filters: [{ 'tag.protocol': scopedProtocol }] });
+      expect(datalessFiltered.events).toHaveLength(0);
+
+      const result = await messageStore.completeData(alice.did, grant.messageCid, grant.indexes, 'aGVsbG8');
+
+      expect(result.position!.position).toBe('2');
+      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(scopedProtocol)])).toBe(grantFingerprint);
+      const { events } = await messageStore.logRead(alice.did);
+      expect(events.map((entry) => entry.indexes['tag.protocol'])).toEqual([scopedProtocol, scopedProtocol]);
+    });
+
     it('should reject missing messages', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const { messageCid, indexes } = await generateStoredMessage();
@@ -323,15 +366,8 @@ describe('MessageStoreLevel Test Suite', () => {
       await messageStore.put(alice.did, photo.message, photo.indexes);
       const photoFingerprint = await cidFingerprint(photo.messageCid);
 
-      const grant = await generateStoredMessage();
-      const grantIndexes: KeyValues = {
-        interface         : 'Records',
-        method            : 'Write',
-        messageTimestamp  : grant.message.descriptor.messageTimestamp,
-        isLatestBaseState : true,
-        protocol          : PermissionsProtocol.uri,
-        'tag.protocol'    : photosProtocol,
-      };
+      const grant = await generateStoredMessage({ protocol: PermissionsProtocol.uri, tags: { protocol: photosProtocol } });
+      const grantIndexes = grant.indexes;
       await messageStore.put(alice.did, grant.message, grantIndexes);
       const grantFingerprint = await cidFingerprint(grant.messageCid);
 

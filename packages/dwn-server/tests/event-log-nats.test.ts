@@ -251,6 +251,11 @@ describe('NatsEventLog', () => {
       expect(result.cursor).toBeUndefined();
     });
 
+    natsIt('should return undefined replay bounds when no tenant events exist', async () => {
+      const bounds = await eventLog.getReplayBounds('did:test:empty-bounds');
+      expect(bounds).toBeUndefined();
+    });
+
     natsIt('should return all events for a tenant', async () => {
       const tenant = 'did:test:reader';
       await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
@@ -513,6 +518,38 @@ describe('NatsEventLog', () => {
 
       expect(aliceResult.events).toHaveLength(2);
       expect(bobResult.events).toHaveLength(1);
+    });
+
+    natsIt('should compute replay bounds from the tenant subject, not the whole stream', async () => {
+      const alice = 'did:test:alice-bounds';
+      const bob = 'did:test:bob-bounds';
+      const aliceFirstCid = cid();
+      const aliceSecondCid = cid();
+
+      const aliceFirst = await eventLog.emit(alice, createEvent({ id: 'a1' }), createIndexes(), aliceFirstCid);
+      await eventLog.emit(bob, createEvent({ id: 'b1' }), createIndexes(), cid());
+      const aliceSecond = await eventLog.emit(alice, createEvent({ id: 'a2' }), createIndexes(), aliceSecondCid);
+      await eventLog.emit(bob, createEvent({ id: 'b2' }), createIndexes(), cid());
+
+      const bounds = await eventLog.getReplayBounds(alice);
+
+      expect(bounds!.oldest.position).toBe(aliceFirst!.position);
+      expect(bounds!.oldest.messageCid).toBe(aliceFirstCid);
+      expect(bounds!.latest.position).toBe(aliceSecond!.position);
+      expect(bounds!.latest.messageCid).toBe(aliceSecondCid);
+    });
+
+    natsIt('should report zero-limit reads as drained when only another tenant advanced the stream', async () => {
+      const alice = 'did:test:alice-limit-zero-iso';
+      const bob = 'did:test:bob-limit-zero-iso';
+      const aliceCursor = await eventLog.emit(alice, createEvent({ id: 'a1' }), createIndexes(), cid());
+      await eventLog.emit(bob, createEvent({ id: 'b1' }), createIndexes(), cid());
+
+      const result = await eventLog.read(alice, { cursor: aliceCursor, limit: 0 });
+
+      expect(result.events).toHaveLength(0);
+      expect(result.cursor).toBe(aliceCursor);
+      expect(result.drained).toBe(true);
     });
 
     natsIt('should not deliver events from one tenant to another tenant subscription', async () => {

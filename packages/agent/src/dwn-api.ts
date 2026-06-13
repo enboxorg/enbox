@@ -716,12 +716,8 @@ export class AgentDwnApi {
       const rootPathSegment = writeParams.protocolPath.split('/')[0];
       const isMultiParty = isMultiPartyContextFn(protocolDefinition, rootPathSegment);
 
-      if (isExternallyAuthored && isRootRecord && isMultiParty) {
-        // Externally-authored root records stay ProtocolPath-encrypted to the target.
-        // Any future owner augmentation must be a normal DWN write path, not direct
-        // message-store mutation.
-      }
-
+      // Externally-authored root records stay ProtocolPath-encrypted to the target.
+      // Any future owner augmentation must be a normal DWN write path, not direct message-store mutation.
       const newParticipants = detectNewParticipantsFn({
         protocolDefinition,
         protocolPath : writeParams.protocolPath,

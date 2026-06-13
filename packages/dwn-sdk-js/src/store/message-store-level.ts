@@ -90,6 +90,16 @@ const HEADS_PARTITION = 'heads';
 const META_PARTITION = 'meta';
 
 const EPOCH_KEY = 'epoch';
+const CURRENT_PARTITIONS = new Set([
+  BLOCKS_PARTITION,
+  INDEX_PARTITION,
+  LOG_PARTITION,
+  CID_TO_SEQ_PARTITION,
+  REDELIVERY_PARTITION,
+  FINGERPRINT_PARTITION,
+  HEADS_PARTITION,
+  META_PARTITION,
+]);
 
 /**
  * The persisted shape of a replication log row (the value at key `log!<tenant>!<paddedSeq>`).
@@ -182,6 +192,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
   async open(): Promise<void> {
     const partitions = await this.partitions();
     await partitions.root.open();
+    await this.assertNoPreSubstrateLayout(partitions.root);
     await this.getEpoch();
   }
 
@@ -411,7 +422,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
       const head = await this.getHead(partitions, tenant);
       const seq = head + 1n;
-      const fingerprintScopes = Replication.computeFingerprintScopes(indexes);
+      const fingerprintScopes = Replication.computeFingerprintScopes(message);
 
       const logEntry: LogEntryValue = {
         seq: seq.toString(),
@@ -465,7 +476,10 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
         partitions, tenant, messageCid, DwnErrorCode.MessageStoreUpdateIndexesMessageNotFound
       );
 
-      Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, indexes, messageCid);
+      const storedMessage = await this.readStoredMessage(
+        partitions, tenant, messageCid, DwnErrorCode.MessageStoreUpdateIndexesMessageNotFound, options
+      );
+      Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, storedMessage, messageCid, indexes);
 
       // Same row, same seq: indexes replaced; fingerprint scopes carried forward verbatim;
       // never stamps and never touches the fingerprints or the head.
@@ -507,7 +521,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
         partitions, tenant, normalizedMessageCid, DwnErrorCode.MessageStoreUpdateMessageAndIndexesMessageNotFound
       );
 
-      Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, indexes, normalizedMessageCid);
+      Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, message, normalizedMessageCid, indexes);
 
       const updatedEntry: LogEntryValue = { ...entry, indexes };
 
@@ -547,7 +561,10 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
         );
       }
 
-      Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, indexes, messageCid);
+      const storedMessage = await this.readStoredMessage(
+        partitions, tenant, messageCid, DwnErrorCode.MessageStoreCompleteDataMessageNotFound, options
+      );
+      Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, storedMessage, messageCid, indexes);
 
       // The completion is the one substance mutation whose cause does not append a log row, so it
       // stamps the row for redelivery: same CID, same seq, a second delivery position drawn from
@@ -562,9 +579,6 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
       if (encodedData !== undefined) {
         const tenantBlocks = await partitions.blocks.partition(tenant);
-        const storedBytes = await tenantBlocks.get(messageCid, options);
-        const decodedBlock = await block.decode({ bytes: storedBytes!, codec: cbor, hasher: sha256 });
-        const storedMessage = decodedBlock.value as GenericMessage;
         const completedMessage = { ...storedMessage, encodedData };
         const reEncodedBlock = await block.encode({ value: completedMessage, codec: cbor, hasher: sha256 });
         const blockOperation = tenantBlocks.createOperation({ type: 'put', key: messageCid, value: reEncodedBlock.bytes });
@@ -614,7 +628,14 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       const positionKey = Replication.encodePositionKey(seq);
       const tenantLog = await partitions.log.partition(tenant);
       const serializedEntry = await tenantLog.get(positionKey);
-      const entry = serializedEntry === undefined ? undefined : JSON.parse(serializedEntry) as LogEntryValue;
+      if (serializedEntry === undefined) {
+        throw new DwnError(
+          DwnErrorCode.MessageStoreDeleteLogEntryMissing,
+          `cid index for tenant ${tenant} points to missing log entry at seq ${seqString} (CID ${messageCid})`
+        );
+      }
+
+      const entry = JSON.parse(serializedEntry) as LogEntryValue;
 
       const operations: LevelWrapperBatchOperation<string>[] = [];
 
@@ -626,16 +647,14 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       operations.push(tenantLog.createOperation({ type: 'del', key: positionKey }));
       operations.push(tenantCidToSeq.createOperation({ type: 'del', key: messageCid }));
 
-      if (entry !== undefined) {
-        // Removing the row removes both delivery appearances — the stamp lives and dies with it.
-        if (entry.redeliverSeq !== undefined) {
-          const tenantRedeliveries = await partitions.redeliveries.partition(tenant);
-          operations.push(tenantRedeliveries.createOperation({ type: 'del', key: Replication.encodePositionKey(BigInt(entry.redeliverSeq)) }));
-        }
-
-        // XOR is self-inverse: folding the persisted scopes again removes the row's contribution.
-        operations.push(...await this.createFingerprintFoldOperations(partitions, tenant, messageCid, entry.fingerprintScopes));
+      // Removing the row removes both delivery appearances — the stamp lives and dies with it.
+      if (entry.redeliverSeq !== undefined) {
+        const tenantRedeliveries = await partitions.redeliveries.partition(tenant);
+        operations.push(tenantRedeliveries.createOperation({ type: 'del', key: Replication.encodePositionKey(BigInt(entry.redeliverSeq)) }));
       }
+
+      // XOR is self-inverse: folding the persisted scopes again removes the row's contribution.
+      operations.push(...await this.createFingerprintFoldOperations(partitions, tenant, messageCid, entry.fingerprintScopes));
 
       await partitions.root.batch(operations);
     });
@@ -727,7 +746,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       lastDeliveredMessageCid = entry.messageCid;
 
       if (events.length >= maxResults) {
-        drained = false;
+        drained = position >= head;
         break;
       }
     }
@@ -819,6 +838,46 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
   private async getHead(partitions: StorePartitions, tenant: string): Promise<bigint> {
     const headString = await partitions.heads.get(tenant);
     return headString === undefined ? 0n : BigInt(headString);
+  }
+
+  private async assertNoPreSubstrateLayout(root: LevelWrapper<string>): Promise<void> {
+    for await (const key of root.keys()) {
+      const partition = MessageStoreLevel.parseSublevelPartition(key);
+      if (partition === undefined || CURRENT_PARTITIONS.has(partition)) {
+        continue;
+      }
+
+      throw new DwnError(
+        DwnErrorCode.MessageStorePreSubstrateLayout,
+        `message store location ${this.config.location} contains pre-substrate Level data; reset the store before opening it`
+      );
+    }
+  }
+
+  private static parseSublevelPartition(key: string): string | undefined {
+    if (!key.startsWith('!')) {
+      return undefined;
+    }
+
+    const end = key.indexOf('!', 1);
+    return end === -1 ? undefined : key.slice(1, end);
+  }
+
+  private async readStoredMessage(
+    partitions: StorePartitions,
+    tenant: string,
+    messageCid: string,
+    notFoundErrorCode: DwnErrorCode,
+    options?: MessageStoreOptions,
+  ): Promise<GenericMessage> {
+    const tenantBlocks = await partitions.blocks.partition(tenant);
+    const bytes = await tenantBlocks.get(messageCid, options);
+    if (bytes === undefined) {
+      throw new DwnError(notFoundErrorCode, `no message block found for tenant ${tenant} with CID ${messageCid}`);
+    }
+
+    const decodedBlock = await block.decode({ bytes, codec: cbor, hasher: sha256 });
+    return decodedBlock.value as GenericMessage;
   }
 
   /**
