@@ -40,8 +40,7 @@ export class TestStores {
     resumableTaskStore: ResumableTaskStore,
     } {
     TestStores.messageStore ??= new MessageStoreLevel({
-      blockstoreLocation : 'TEST-MESSAGESTORE',
-      indexLocation      : 'TEST-INDEX'
+      location: 'TEST-MESSAGESTORE'
     });
 
     TestStores.dataStore ??= new DataStoreLevel({

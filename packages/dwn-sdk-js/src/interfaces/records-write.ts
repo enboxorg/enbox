@@ -502,9 +502,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
    *
    * @param options.append - When `true`, appends new `recipients` entries to the existing
    *   `encryption` property instead of replacing it. Requires `this._message.encryption` to
-   *   already exist (i.e., the record must already be encrypted). This is used for the reactive
-   *   root-record upgrade: adding a ProtocolContext recipient entry alongside an existing
-   *   ProtocolPath entry so both the owner and context key holders can decrypt.
+   *   already exist (i.e., the record must already be encrypted).
    */
   public async encryptSymmetricEncryptionKey(
     encryptionInput: EncryptionInput,
@@ -723,10 +721,10 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
     // If `encryption` is given in message, make sure the correct `encryptionCid`
     // is in the payload of the message signature — UNLESS the message has an
-    // ownerSignature. When the DWN owner appends recipients to an
-    // externally-authored record (reactive root-record upgrade), the author's
-    // encryptionCid becomes stale. The owner's signature vouches for the
-    // updated encryption property, so the mismatch is expected and safe.
+    // ownerSignature. When the DWN owner appends recipients to an externally-authored
+    // record before normal admission, the author's encryptionCid becomes stale. The
+    // owner's signature vouches for the updated encryption property, so the mismatch
+    // is expected and safe.
     const hasOwnerSignature = this.message.authorization?.ownerSignature !== undefined;
     if (signaturePayload.encryptionCid !== undefined && !hasOwnerSignature) {
       const expectedEncryptionCid = await Cid.computeCid(this.message.encryption);

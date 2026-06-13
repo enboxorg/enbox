@@ -272,7 +272,7 @@ describe('NatsEventLog', () => {
       expect(result.events).toHaveLength(2);
       // Verify events are after c1.
       for (const entry of result.events) {
-        expect(entry.seq).toBeGreaterThan(Number(c1!.position));
+        expect(Number(entry.seq)).toBeGreaterThan(Number(c1!.position));
       }
     });
 
@@ -286,6 +286,22 @@ describe('NatsEventLog', () => {
       expect(result.events).toHaveLength(2);
     });
 
+    natsIt('should not deliver events or advance the cursor when limit is zero', async () => {
+      const tenant = 'did:test:limit-zero';
+      const firstCursor = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
+
+      const withoutCursor = await eventLog.read(tenant, { limit: 0 });
+      expect(withoutCursor.events).toHaveLength(0);
+      expect(withoutCursor.cursor).toBeUndefined();
+      expect(withoutCursor.drained).toBe(false);
+
+      const withCursor = await eventLog.read(tenant, { cursor: firstCursor, limit: 0 });
+      expect(withCursor.events).toHaveLength(0);
+      expect(withCursor.cursor).toBe(firstCursor);
+      expect(withCursor.drained).toBe(false);
+    });
+
     natsIt('should filter events (OR semantics across filters)', async () => {
       const tenant = 'did:test:filter';
       await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }), cid());
@@ -296,6 +312,22 @@ describe('NatsEventLog', () => {
         filters: [{ method: 'Delete' }, { method: 'Query' }],
       });
       expect(result.events).toHaveLength(2);
+    });
+
+    natsIt('should advance to a high-water cursor when filters skip tail events', async () => {
+      const tenant = 'did:test:filter-high-water';
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ method: 'Delete' }), cid());
+      const tailCursor = await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ method: 'Query' }), cid());
+
+      const result = await eventLog.read(tenant, {
+        filters: [{ method: 'Write' }],
+      });
+
+      expect(result.events).toHaveLength(1);
+      expect(result.cursor!.position).toBe(tailCursor!.position);
+      expect(result.cursor!.messageCid).toBeUndefined();
+      expect(result.drained).toBe(true);
     });
 
     natsIt('should return input cursor when no new events exist', async () => {
@@ -448,7 +480,7 @@ describe('NatsEventLog', () => {
       const result = await eventLog.read(tenant);
       // After purging seq < c2, only events at seq >= c2 remain.
       for (const entry of result.events) {
-        expect(entry.seq).toBeGreaterThanOrEqual(Number(c2!.position));
+        expect(Number(entry.seq)).toBeGreaterThanOrEqual(Number(c2!.position));
       }
     });
 

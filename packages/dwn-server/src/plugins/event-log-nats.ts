@@ -114,8 +114,8 @@ function matchSingleValue(filterValue: unknown, indexValue: string | number | bo
 type NatsEventPayload = {
   event : MessageEvent;
   indexes : KeyValues;
-  /** The CID of the message that triggered this event. Added in v0.0.16. */
-  messageCid? : string;
+  /** The CID of the message that triggered this event. */
+  messageCid : string;
 };
 
 function encodePayload(payload: NatsEventPayload): Uint8Array {
@@ -124,7 +124,19 @@ function encodePayload(payload: NatsEventPayload): Uint8Array {
 
 function decodePayload(data: Uint8Array): NatsEventPayload | undefined {
   try {
-    return JSON.parse(new TextDecoder().decode(data)) as NatsEventPayload;
+    const payload = JSON.parse(new TextDecoder().decode(data)) as Partial<NatsEventPayload>;
+    if (
+      payload.event === undefined ||
+      typeof payload.indexes !== 'object' ||
+      payload.indexes === null ||
+      typeof payload.messageCid !== 'string' ||
+      payload.messageCid === ''
+    ) {
+      log.error('NatsEventLog: payload is missing required fields, skipping message');
+      return undefined;
+    }
+
+    return payload as NatsEventPayload;
   } catch {
     log.error('NatsEventLog: failed to decode payload, skipping corrupt message');
     return undefined;
@@ -233,13 +245,18 @@ export default class NatsEventLog implements EventLog {
     return Array.from(hashArray.slice(0, 8), (b: number) => b.toString(16).padStart(2, '0')).join('');
   }
 
-  async #buildToken(tenant: string, seq: number, messageCid: string): Promise<ProgressToken> {
-    return {
+  async #buildToken(tenant: string, seq: number, messageCid?: string): Promise<ProgressToken> {
+    const token: ProgressToken = {
       streamId : await this.#getStreamId(tenant),
       epoch    : this.#epoch,
       position : String(seq),
-      messageCid,
     };
+
+    if (messageCid !== undefined) {
+      token.messageCid = messageCid;
+    }
+
+    return token;
   }
 
   /**
@@ -308,6 +325,16 @@ export default class NatsEventLog implements EventLog {
       await this.#validateCursor(tenant, cursor);
     }
     const subject = this.#tenantSubject(tenant);
+    const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
+    if (maxResults <= 0) {
+      const bounds = await this.getReplayBounds(tenant);
+      if (bounds === undefined) {
+        return { events: [], cursor, drained: true };
+      }
+
+      const cursorPosition = cursor === undefined ? 0n : BigInt(cursor.position);
+      return { events: [], cursor, drained: cursorPosition >= BigInt(bounds.latest.position) };
+    }
 
     // Create a one-shot ordered consumer for the read.
     const consumerOpts: Record<string, unknown> = {
@@ -323,17 +350,21 @@ export default class NatsEventLog implements EventLog {
     }
 
     const consumer = await this.#jsm!.consumers.add(this.#config.streamName, consumerOpts);
-    const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
 
     const events: EventLogEntry[] = [];
-    let lastSeq: number | undefined;
-    let lastMessageCid: string | undefined;
+    let lastScannedSeq: number | undefined;
+    let lastDeliveredSeq: number | undefined;
+    let lastDeliveredMessageCid: string | undefined;
+    let drained = true;
 
     try {
       const messages = await this.#js!.consumers.get(this.#config.streamName, consumer.name);
       const iter = await messages.fetch({ max_messages: maxResults, expires: 2_000 });
 
       for await (const msg of iter) {
+        lastScannedSeq = msg.seq;
+        drained = msg.info.pending === 0;
+
         const payload = decodePayload(msg.data);
         if (payload === undefined) {
           continue;
@@ -344,17 +375,17 @@ export default class NatsEventLog implements EventLog {
         }
 
         events.push({
-          seq     : msg.seq,
-          event   : payload.event,
-          indexes : payload.indexes,
+          seq        : String(msg.seq),
+          event      : payload.event,
+          indexes    : payload.indexes,
+          messageCid : payload.messageCid,
         });
 
-        lastSeq = msg.seq;
-        // Prefer the dedicated messageCid field (v0.0.16+), fall back to indexes for older payloads,
-        // then a deterministic placeholder so pre-upgrade messages never produce empty-string tokens.
-        lastMessageCid = payload.messageCid || (payload.indexes['messageCid'] as string) || `legacy-seq-${msg.seq}`;
+        lastDeliveredSeq = msg.seq;
+        lastDeliveredMessageCid = payload.messageCid;
 
         if (events.length >= maxResults) {
+          drained = false;
           break;
         }
       }
@@ -367,14 +398,16 @@ export default class NatsEventLog implements EventLog {
       }
     }
 
-    if (lastSeq !== undefined) {
-      const lastToken = await this.#buildToken(tenant, lastSeq, lastMessageCid || `legacy-seq-${lastSeq}`);
-      return { events, cursor: lastToken };
+    if (lastScannedSeq !== undefined) {
+      const cursorMessageCid = lastDeliveredSeq === lastScannedSeq ? lastDeliveredMessageCid : undefined;
+      const highWaterToken = await this.#buildToken(tenant, lastScannedSeq, cursorMessageCid);
+      return { events, cursor: highWaterToken, drained };
     }
 
     return {
       events,
       cursor,
+      drained,
     };
   }
 
@@ -434,18 +467,29 @@ export default class NatsEventLog implements EventLog {
           const payload = decodePayload(msg.data);
           if (payload === undefined) {
             msg.ack();
+
+            if (!sentEose && msg.info.pending === 0) {
+              const highWaterToken = await this.#buildToken(tenant, msg.seq);
+              listener({ type: 'eose', cursor: highWaterToken });
+              sentEose = true;
+            }
+
             continue;
           }
 
           if (!matchAnyFilter(payload.indexes, filters)) {
             msg.ack();
+
+            if (!sentEose && msg.info.pending === 0) {
+              const highWaterToken = await this.#buildToken(tenant, msg.seq);
+              listener({ type: 'eose', cursor: highWaterToken });
+              sentEose = true;
+            }
+
             continue;
           }
 
-          // Prefer the dedicated messageCid field (v0.0.16+), fall back to indexes for older payloads,
-          // then a deterministic placeholder so pre-upgrade messages never produce empty-string tokens.
-          const msgCid = payload.messageCid || (payload.indexes['messageCid'] as string) || `legacy-seq-${msg.seq}`;
-          const eventToken = await this.#buildToken(tenant, msg.seq, msgCid);
+          const eventToken = await this.#buildToken(tenant, msg.seq, payload.messageCid);
           listener({ type: 'event', cursor: eventToken, event: payload.event });
           msg.ack();
 
@@ -519,7 +563,7 @@ export default class NatsEventLog implements EventLog {
 
     // Read boundary messages to extract their real messageCid values.
     // Uses a one-shot ordered consumer to fetch a single message at a given sequence.
-    const readBoundaryCid = async (seq: number): Promise<string> => {
+    const readBoundaryCid = async (seq: number): Promise<string | undefined> => {
       let consumerName: string | undefined;
       try {
         const consumer = await this.#jsm!.consumers.add(this.#config.streamName, {
@@ -535,13 +579,12 @@ export default class NatsEventLog implements EventLog {
 
         for await (const msg of iter) {
           const payload = decodePayload(msg.data);
-          const cid = (payload?.indexes?.['messageCid'] as string);
-          if (cid && cid !== '') {
-            return cid;
+          if (payload !== undefined) {
+            return payload.messageCid;
           }
         }
       } catch {
-        // Fall through to deterministic placeholder.
+        // Fall through to a boundary token without messageCid.
       } finally {
         if (consumerName) {
           try {
@@ -549,8 +592,7 @@ export default class NatsEventLog implements EventLog {
           } catch { /* best effort */ }
         }
       }
-      // Deterministic placeholder if the message could not be read.
-      return `boundary-seq-${seq}`;
+      return undefined;
     };
 
     const oldestCid = await readBoundaryCid(firstSeq);

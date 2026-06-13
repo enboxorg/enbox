@@ -1903,7 +1903,7 @@ export class SyncEngineLevel implements SyncEngine {
       // On reconnect, use the latest durable checkpoint position if available.
       // Discard tokens with empty fields to avoid schema validation failures.
       let effectiveCursor = resumeCursor ?? link?.pull.contiguousAppliedToken ?? cursor;
-      if (effectiveCursor && (!effectiveCursor.streamId || !effectiveCursor.messageCid || !effectiveCursor.epoch || !effectiveCursor.position)) {
+      if (effectiveCursor && (!effectiveCursor.streamId || !effectiveCursor.epoch || !effectiveCursor.position)) {
         effectiveCursor = undefined;
       }
       const resumeRequest = {
@@ -1988,7 +1988,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private isValidProgressToken(token: ProgressToken): boolean {
-    return !!(token.streamId && token.messageCid && token.epoch && token.position);
+    return !!(token.streamId && token.epoch && token.position);
   }
 
   private createLinkStalePredicate(
@@ -2300,7 +2300,8 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private emitPullCheckpointAdvance(link: ReplicationLinkState): void {
-    if (!link.pull.contiguousAppliedToken) {
+    const token = link.pull.contiguousAppliedToken;
+    if (!token || token.messageCid === undefined) {
       return;
     }
 
@@ -2310,8 +2311,8 @@ export class SyncEngineLevel implements SyncEngine {
       tenantDid      : link.tenantDid,
       remoteEndpoint : link.remoteEndpoint,
       ...syncEventScope(link.scope),
-      position       : link.pull.contiguousAppliedToken.position,
-      messageCid     : link.pull.contiguousAppliedToken.messageCid,
+      position       : token.position,
+      messageCid     : token.messageCid,
     });
   }
 

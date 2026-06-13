@@ -6,8 +6,7 @@
   "required": [
     "streamId",
     "epoch",
-    "position",
-    "messageCid"
+    "position"
   ],
   "properties": {
     "streamId": {

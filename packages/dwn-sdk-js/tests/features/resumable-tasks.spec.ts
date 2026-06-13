@@ -288,7 +288,7 @@ export function testResumableTasks(): void {
           throw new Error('This is fine, we deliberately force an error in the first attempt in this test.');
         }
 
-        await originalPerformRecordsDelete(input);
+        return originalPerformRecordsDelete(input);
       });
 
       await dwn.close();
@@ -326,6 +326,7 @@ export function testResumableTasks(): void {
       });
       sinon.stub(dwn['storageController'], 'performRecordsDelete').callsFake(async () => {
         await completeDeletePromise;
+        return {};
       });
 
       // 2. Write a record to DWN.

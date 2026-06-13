@@ -11,6 +11,7 @@ export type ResumableTask = {
   data: any;
 };
 
+type ResumableTaskHandler = (taskData: any) => Promise<unknown>;
 
 export class ResumableTaskManager {
 
@@ -20,34 +21,34 @@ export class ResumableTaskManager {
   public static readonly timeoutExtensionFrequencyInSeconds = 30;
 
   private resumableTaskBatchSize = 100;
-  private readonly resumableTaskHandlers: { [key:string]: (taskData: any) => Promise<void> };
+  private readonly resumableTaskHandlers: { [key:string]: ResumableTaskHandler };
 
   public constructor(private readonly resumableTaskStore: ResumableTaskStore, storageController: StorageController) {
     // assign resumable task handlers
     this.resumableTaskHandlers = {
       // NOTE: The arrow function is IMPORTANT here, else the `this` context will be lost within the invoked method.
       // e.g. code within performRecordsDelete() won't know `this` refers to the `storageController` instance.
-      [ResumableTaskName.RecordsDelete] : async (task): Promise<void> => await storageController.performRecordsDelete(task),
-      [ResumableTaskName.RecordsSquash] : async (task): Promise<void> => await storageController.performRecordsSquash(task),
+      [ResumableTaskName.RecordsDelete] : async (task): Promise<unknown> => storageController.performRecordsDelete(task),
+      [ResumableTaskName.RecordsSquash] : async (task): Promise<unknown> => storageController.performRecordsSquash(task),
     };
   }
 
   /**
    * Runs a new resumable task.
    */
-  public async run(task: ResumableTask): Promise<void> {
+  public async run<T = unknown>(task: ResumableTask): Promise<T> {
     const timeoutInSeconds = ResumableTaskManager.timeoutExtensionFrequencyInSeconds * 2; // give ample time for extension to take place
 
     // register the new resumable task before running it so that it can be resumed if it times out for any reason
     const managedResumableTask = await this.resumableTaskStore.register(task, timeoutInSeconds);
-    await this.runWithAutomaticTimeoutExtension(managedResumableTask);
+    return this.runWithAutomaticTimeoutExtension<T>(managedResumableTask);
   }
 
   /**
    * Runs a resumable task with automatic timeout extension.
    * Deletes the task from the resumable task store once it is completed.
    */
-  private async runWithAutomaticTimeoutExtension(managedTask: ManagedResumableTask): Promise<void> {
+  private async runWithAutomaticTimeoutExtension<T = unknown>(managedTask: ManagedResumableTask): Promise<T> {
     const timeoutInSeconds = ResumableTaskManager.timeoutExtensionFrequencyInSeconds * 2; // give ample time for extension to take place
 
     let timer!: ReturnType<typeof setInterval>;
@@ -58,8 +59,9 @@ export class ResumableTaskManager {
       }, ResumableTaskManager.timeoutExtensionFrequencyInSeconds * 1000);
 
       const handler = this.resumableTaskHandlers[managedTask.task.name];
-      await handler(managedTask.task.data);
+      const result = await handler(managedTask.task.data) as T;
       await this.resumableTaskStore.delete(managedTask.id);
+      return result;
     } finally {
       ResumableTaskManager.clearTimeoutExtensionTimer(timer);
     }

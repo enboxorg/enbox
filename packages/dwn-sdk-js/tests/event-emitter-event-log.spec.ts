@@ -110,6 +110,20 @@ describe('EventEmitterEventLog', () => {
       expect(result.events.length).toBe(2);
     });
 
+    it('should advance to a high-water cursor when filters skip tail events', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      await eventLog.emit(tenant, event, { schema: 'http://match' }, cid(1));
+      await eventLog.emit(tenant, event, { schema: 'http://other' }, cid(2));
+
+      const result = await eventLog.read(tenant, { filters: [{ schema: 'http://match' }] });
+      expect(result.events.length).toBe(1);
+      expect(result.cursor?.position).toBe('2');
+      expect(result.cursor?.messageCid).toBeUndefined();
+      expect(result.drained).toBe(true);
+    });
+
     it('should return undefined cursor for unknown tenant', async () => {
       const result = await eventLog.read('did:example:unknown');
       expect(result.events.length).toBe(0);
@@ -125,7 +139,8 @@ describe('EventEmitterEventLog', () => {
       // Read after the last event — nothing new.
       const result = await eventLog.read(tenant, { cursor: lastCursor! });
       expect(result.events.length).toBe(0);
-      expect(result.cursor).toEqual(lastCursor);
+      expect(result.cursor?.position).toBe(lastCursor!.position);
+      expect(result.cursor?.messageCid).toBeUndefined();
     });
 
     it('should respect the limit option', async () => {
@@ -139,6 +154,24 @@ describe('EventEmitterEventLog', () => {
       const result = await eventLog.read(tenant, { limit: 2 });
       expect(result.events.length).toBe(2);
       expect(result.cursor).toBeDefined();
+    });
+
+    it('should not deliver events or advance the cursor when limit is zero', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      const firstCursor = await eventLog.emit(tenant, event, {}, cid(1));
+      await eventLog.emit(tenant, event, {}, cid(2));
+
+      const withoutCursor = await eventLog.read(tenant, { limit: 0 });
+      expect(withoutCursor.events.length).toBe(0);
+      expect(withoutCursor.cursor).toBeUndefined();
+      expect(withoutCursor.drained).toBe(false);
+
+      const withCursor = await eventLog.read(tenant, { cursor: firstCursor!, limit: 0 });
+      expect(withCursor.events.length).toBe(0);
+      expect(withCursor.cursor).toBe(firstCursor);
+      expect(withCursor.drained).toBe(false);
     });
   });
 
@@ -265,7 +298,10 @@ describe('EventEmitterEventLog', () => {
       // Should just get EOSE echoing the input cursor.
       expect(received.length).toBe(1);
       expect(received[0].type).toBe('eose');
-      if (received[0].type === 'eose') { expect(received[0].cursor).toEqual(lastCursor); }
+      if (received[0].type === 'eose') {
+        expect(received[0].cursor.position).toBe(lastCursor!.position);
+        expect(received[0].cursor.messageCid).toBeUndefined();
+      }
     });
 
     it('should continue delivering live events after EOSE', async () => {
@@ -525,7 +561,7 @@ describe('EventEmitterEventLog', () => {
 
       const result = await eventLog.read(tenant);
       expect(result.events.length).toBe(1);
-      expect(result.events[0].seq).toBe(3);
+      expect(result.events[0].seq).toBe('3');
     });
 
     it('should trim events by ISO-8601 timestamp', async () => {
@@ -560,8 +596,8 @@ describe('EventEmitterEventLog', () => {
 
       const result = await smallLog.read(tenant);
       expect(result.events.length).toBe(3);
-      expect(result.events[0].seq).toBe(2); // seq=1 was evicted
-      expect(result.events[2].seq).toBe(4);
+      expect(result.events[0].seq).toBe('2'); // seq=1 was evicted
+      expect(result.events[2].seq).toBe('4');
 
       await smallLog.close();
     });
@@ -606,7 +642,7 @@ describe('EventEmitterEventLog', () => {
       expect(events[0].cursor.messageCid).toBe(cid(2));
       expect(events[1].cursor.messageCid).toBe(cid(3));
 
-      // EOSE should also have a valid messageCid.
+      // EOSE should carry the last replayed cursor when catch-up delivered events.
       const eose = received.find(m => m.type === 'eose');
       expect(eose).toBeDefined();
       expect(eose!.cursor.messageCid).toBeTruthy();
@@ -637,8 +673,8 @@ describe('EventEmitterEventLog', () => {
 
       // Every event token should have a non-empty messageCid.
       for (const msg of received) {
-        if (msg.type === 'event' || msg.type === 'eose') {
-          expect(msg.cursor.messageCid.length).toBeGreaterThan(0);
+        if (msg.type === 'event') {
+          expect(msg.cursor.messageCid?.length ?? 0).toBeGreaterThan(0);
         }
       }
 

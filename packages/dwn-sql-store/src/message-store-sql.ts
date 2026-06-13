@@ -1,14 +1,17 @@
 import type { Dialect } from './dialect/dialect.js';
-import type { Transaction } from 'kysely';
 import type { DwnDatabaseType, KeyValues } from './types.js';
 import type {
   Filter,
   GenericMessage,
   MessageSort,
   MessageStore,
+  MessageStoreCompleteDataResult,
   MessageStoreOptions,
+  MessageStorePutResult,
   Pagination,
-  PaginationCursor } from '@enbox/dwn-sdk-js';
+  PaginationCursor,
+  WakePublisher } from '@enbox/dwn-sdk-js';
+import type { Transaction, UpdateObject } from 'kysely';
 
 import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
@@ -19,22 +22,71 @@ import { isDuplicateKeyError } from './utils/duplicate-key-error.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { TagTables } from './utils/tags.js';
 import {
+  DwnError,
+  DwnErrorCode,
   DwnInterfaceName,
   DwnMethodName,
   executeUnlessAborted,
+  Message,
   SortDirection
 } from '@enbox/dwn-sdk-js';
 import { Kysely, sql } from 'kysely';
 
+/**
+ * Every index column of `messageStoreMessages`, nulled. Index replacement operations spread the
+ * new indexes over this object so columns absent from the replacement are cleared — matching the
+ * semantics of a delete + re-put without losing the row (and its `encodedData`).
+ */
+const NULLED_INDEX_COLUMNS = {
+  interface         : null,
+  method            : null,
+  schema            : null,
+  dataCid           : null,
+  dataSize          : null,
+  dateCreated       : null,
+  messageTimestamp  : null,
+  dataFormat        : null,
+  isLatestBaseState : null,
+  published         : null,
+  author            : null,
+  recordId          : null,
+  entryId           : null,
+  datePublished     : null,
+  protocol          : null,
+  attester          : null,
+  protocolPath      : null,
+  recipient         : null,
+  contextId         : null,
+  parentId          : null,
+  permissionGrantId : null,
+  prune             : null,
+  squash            : null,
+} as const;
 
 export class MessageStoreSql implements MessageStore {
   readonly #dialect: Dialect;
   readonly #tags: TagTables;
   #db: Kysely<DwnDatabaseType> | null = null;
 
-  constructor(dialect: Dialect) {
+  /**
+   * Optional bus for store-owned wake publication. Accepted ahead of the SQL replication log:
+   * wakes carry `{tenant, seq}`, so publication begins once the SQL log (seq column and tenant
+   * counters) lands and this store can construct them.
+   */
+  protected wakePublisher?: WakePublisher;
+
+  constructor(dialect: Dialect, wakePublisher?: WakePublisher) {
     this.#dialect = dialect;
     this.#tags = new TagTables(dialect);
+    this.wakePublisher = wakePublisher;
+  }
+
+  /**
+   * Injects the wake publisher after construction — supports the dwn-server plugin contract,
+   * which requires no-arg store constructors.
+   */
+  public setWakePublisher(wakePublisher: WakePublisher): void {
+    this.wakePublisher = wakePublisher;
   }
 
   async open(): Promise<void> {
@@ -75,7 +127,7 @@ export class MessageStoreSql implements MessageStore {
     message: GenericMessage,
     indexes: KeyValues,
     options?: MessageStoreOptions
-  ): Promise<void> {
+  ): Promise<MessageStorePutResult> {
     if (!this.#db) {
       throw new Error(
         'Connection to database not open. Call `open` before using `put`.'
@@ -88,15 +140,16 @@ export class MessageStoreSql implements MessageStore {
     // we remove it from the message as it would cause the `encodedMessageBytes` to be greater than the
     // maximum bytes allowed by SQL
     const getEncodedData = (message: GenericMessage): { message: GenericMessage, encodedData: string|null} => {
+      const messageToProcess = { ...message };
       let encodedData: string|null = null;
-      if (message.descriptor.interface === DwnInterfaceName.Records && message.descriptor.method === DwnMethodName.Write) {
-        const data = message.encodedData;
+      if (messageToProcess.descriptor.interface === DwnInterfaceName.Records && messageToProcess.descriptor.method === DwnMethodName.Write) {
+        const data = messageToProcess.encodedData;
         if (data) {
-          delete message.encodedData;
+          delete messageToProcess.encodedData;
           encodedData = data;
         }
       }
-      return { message, encodedData };
+      return { message: messageToProcess, encodedData };
     };
 
     const { message: messageToProcess, encodedData } = getEncodedData(message);
@@ -122,10 +175,180 @@ export class MessageStoreSql implements MessageStore {
         // message the DWN already has.  A race between the handler's
         // duplicate-CID check and the actual insert makes this
         // unavoidable in concurrent environments.
-        return;
+        // NOTE: `position` is omitted until the SQL replication log lands (no seq column yet).
+        return { status: 'duplicate' };
       }
       throw error;
     }
+
+    return { status: 'inserted' };
+  }
+
+  /**
+   * Replaces the indexes of an existing message in place — a row UPDATE that also syncs the tag
+   * tables (tags are indexed only while `isLatestBaseState` is true, so an index flip must add or
+   * remove tag rows in the same transaction). The row — and its `encodedData` — is never deleted.
+   */
+  async updateIndexes(
+    tenant: string,
+    messageCid: string,
+    indexes: KeyValues,
+    options?: MessageStoreOptions
+  ): Promise<void> {
+    if (!this.#db) {
+      throw new Error(
+        'Connection to database not open. Call `open` before using `updateIndexes`.'
+      );
+    }
+
+    options?.signal?.throwIfAborted();
+
+    await this.replaceRowIndexes({
+      tenant,
+      messageCid,
+      indexes,
+      notFoundErrorCode: DwnErrorCode.MessageStoreUpdateIndexesMessageNotFound,
+    });
+  }
+
+  /**
+   * Replaces the same-CID row payload and indexes in place. This is used when an inline-data
+   * RecordsWrite is retained only for lineage/reconstruction and must no longer expose data.
+   */
+  async updateMessageAndIndexes(
+    tenant: string,
+    messageCid: string,
+    message: GenericMessage,
+    indexes: KeyValues,
+    options?: MessageStoreOptions
+  ): Promise<void> {
+    if (!this.#db) {
+      throw new Error(
+        'Connection to database not open. Call `open` before using `updateMessageAndIndexes`.'
+      );
+    }
+
+    options?.signal?.throwIfAborted();
+
+    const computedMessageCid = await Message.getCid(message);
+    if (computedMessageCid !== messageCid) {
+      throw new DwnError(
+        DwnErrorCode.MessageStoreUpdateMessageAndIndexesCidMismatch,
+        `replacement message CID ${computedMessageCid} does not match target CID ${messageCid}`
+      );
+    }
+
+    let encodedData: string | null = null;
+    const messageToProcess = { ...message };
+    if (messageToProcess.descriptor.interface === DwnInterfaceName.Records && messageToProcess.descriptor.method === DwnMethodName.Write) {
+      if (messageToProcess.encodedData !== undefined) {
+        encodedData = messageToProcess.encodedData;
+        delete messageToProcess.encodedData;
+      }
+    }
+
+    const encodedMessageBlock = await executeUnlessAborted(
+      block.encode({ value: messageToProcess, codec: cbor, hasher: sha256 }),
+      options?.signal
+    );
+
+    await this.replaceRowIndexes({
+      tenant,
+      messageCid,
+      indexes,
+      encodedMessageBytes : Buffer.from(encodedMessageBlock.bytes),
+      encodedData,
+      notFoundErrorCode   : DwnErrorCode.MessageStoreUpdateMessageAndIndexesMessageNotFound,
+    });
+  }
+
+  /**
+   * Completes a previously dataless row with its data: same CID, same row. Attaches the inline
+   * `encodedData` column when given and flips the row's indexes (syncing the tag tables).
+   *
+   * NOTE: redelivery stamping (`redeliverSeq` from the tenant counter) and the post-commit wake
+   * land with the SQL replication log; until then this store returns no `position`.
+   */
+  async completeData(
+    tenant: string,
+    messageCid: string,
+    indexes: KeyValues,
+    encodedData?: string,
+    options?: MessageStoreOptions
+  ): Promise<MessageStoreCompleteDataResult> {
+    if (!this.#db) {
+      throw new Error(
+        'Connection to database not open. Call `open` before using `completeData`.'
+      );
+    }
+
+    options?.signal?.throwIfAborted();
+
+    await this.replaceRowIndexes({
+      tenant,
+      messageCid,
+      indexes,
+      encodedData,
+      notFoundErrorCode: DwnErrorCode.MessageStoreCompleteDataMessageNotFound,
+    });
+
+    return {};
+  }
+
+  /**
+   * Shared row-UPDATE implementation for `updateIndexes` and `completeData`: nulls every index
+   * column, overlays the sanitized replacement indexes, optionally attaches `encodedData`, and
+   * rebuilds the row's tag table entries — all in one transaction.
+   */
+  private async replaceRowIndexes(input: {
+    tenant: string;
+    messageCid: string;
+    indexes: KeyValues;
+    encodedMessageBytes?: Buffer;
+    encodedData?: string | null;
+    notFoundErrorCode: DwnErrorCode;
+  }): Promise<void> {
+    const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, notFoundErrorCode } = input;
+
+    // we extract the tag indexes into their own object to be inserted separately.
+    // we also sanitize the indexes to convert any `boolean` values to `number` representations.
+    const { indexes: replacementIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
+
+    await executeWithTransaction(this.#db!, async (tx) => {
+      const existingRow = await tx
+        .selectFrom('messageStoreMessages')
+        .select(['id'])
+        .where('tenant', '=', tenant)
+        .where('messageCid', '=', messageCid)
+        .executeTakeFirst();
+
+      if (existingRow === undefined) {
+        throw new DwnError(notFoundErrorCode, `no message found for tenant ${tenant} with CID ${messageCid}`);
+      }
+
+      const replacementColumns = {
+        ...NULLED_INDEX_COLUMNS,
+        ...replacementIndexes,
+        ...(encodedMessageBytes !== undefined && { encodedMessageBytes }),
+        ...(encodedData !== undefined && { encodedData }),
+      };
+
+      await tx
+        .updateTable('messageStoreMessages')
+        .set(replacementColumns as UpdateObject<DwnDatabaseType, 'messageStoreMessages'>)
+        .where('id', '=', existingRow.id)
+        .execute();
+
+      // rebuild the tag rows to mirror the replacement indexes
+      await tx
+        .deleteFrom('messageStoreRecordsTags')
+        .where('messageInsertId', '=', existingRow.id)
+        .execute();
+
+      if (Object.keys(tags).length > 0) {
+        await this.#tags.executeTagsInsert(existingRow.id, tags, tx);
+      }
+    });
   }
 
   /**

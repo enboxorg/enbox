@@ -1,6 +1,6 @@
 // export everything that we want to be consumable
 export type { DwnConfig } from './dwn.js';
-export type { EventListener, EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, MessageEvent, ProgressGapInfo, ProgressGapReason, ProgressToken, SubscriptionEose, SubscriptionError, SubscriptionEvent, SubscriptionListener, SubscriptionMessage, SubscriptionReply } from './types/subscriptions.js';
+export type { EventListener, EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, MessageEvent, ProgressGapInfo, ProgressGapReason, ProgressToken, ReplicationFeedReader, SubscriptionEose, SubscriptionError, SubscriptionEvent, SubscriptionListener, SubscriptionMessage, SubscriptionReply, Wake, WakePublisher } from './types/subscriptions.js';
 export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSort, MessageSubscription, Pagination, QueryResultEntry, Status } from './types/message-types.js';
 export type { DependencyRef, ReplicationApplyOptions, ReplicationApplyResult, ReplicationApplyResultContext } from './core/replication-apply.js';
 export { replicationApplyResultFromReply } from './core/replication-apply.js';
@@ -51,7 +51,8 @@ export type { MessagesReadOptions } from './interfaces/messages-read.js';
 export { MessagesSync } from './interfaces/messages-sync.js';
 export type { MessagesSyncOptions } from './interfaces/messages-sync.js';
 export type { UnionMessageReply } from './core/message-reply.js';
-export type { MessageStore, MessageStoreOptions } from './types/message-store.js';
+export type { MessageStore, MessageStoreCompleteDataResult, MessageStoreOptions, MessageStorePutResult } from './types/message-store.js';
+export { Replication } from './utils/replication.js';
 export type { MessageInterface } from './types/message-interface.js';
 export { PermissionGrant } from './protocols/permission-grant.js';
 export { PermissionRequest } from './protocols/permission-request.js';

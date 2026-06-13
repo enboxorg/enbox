@@ -57,7 +57,7 @@ import { LocalDwnDiscovery } from './local-dwn.js';
 import { DwnInterface, dwnMessageConstructors } from './types/dwn.js';
 import { getDwnServiceEndpointUrls, isRecordsWrite } from './utils.js';
 
-// Re-export type guards for backward compatibility
+// Re-export DWN type guards from the agent API surface.
 export { isDwnMessage, isDwnRequest, isMessagesPermissionScope, isRecordPermissionScope, isRecordsType } from './dwn-type-guards.js';
 
 // Import type guards for internal use
@@ -88,10 +88,6 @@ import {
   fetchContextKeyRecord as fetchContextKeyRecordFn,
   writeContextKeyRecord as writeContextKeyRecordFn,
 } from './dwn-key-delivery.js';
-
-// NOTE: upgradeExternalRootRecord is disabled — see TODO in postWriteKeyDelivery().
-// The module is kept for reference but no longer imported.
-// import { upgradeExternalRootRecord as upgradeExternalRootRecordFn } from './dwn-record-upgrade.js';
 
 // Import extracted protocol definition fetching functions
 import {
@@ -492,8 +488,7 @@ export class AgentDwnApi {
     stateIndex ??= new StateIndexLevel({ location: `${dataPath}/DWN_STATEINDEX` });
 
     messageStore ??= new MessageStoreLevel(({
-      blockstoreLocation : `${dataPath}/DWN_MESSAGESTORE`,
-      indexLocation      : `${dataPath}/DWN_MESSAGEINDEX`
+      location: `${dataPath}/DWN_MESSAGESTORE`
     }));
 
     resumableTaskStore ??= new ResumableTaskStoreLevel({ location: `${dataPath}/DWN_RESUMABLETASKSTORE` });
@@ -713,10 +708,6 @@ export class AgentDwnApi {
 
       const recordsWriteMessage = message as unknown as RecordsWriteMessage;
 
-      // Reactive root-record upgrade (PR E): if this is an externally-authored
-      // root record with only ProtocolPath encryption, the owner upgrades it by
-      // appending a ProtocolContext recipient entry so that context key
-      // holders (including the external author) can also decrypt.
       const authorDid = Jws.getSignerDid(
         recordsWriteMessage.authorization.signature.signatures[0]
       );
@@ -726,31 +717,9 @@ export class AgentDwnApi {
       const isMultiParty = isMultiPartyContextFn(protocolDefinition, rootPathSegment);
 
       if (isExternallyAuthored && isRootRecord && isMultiParty) {
-        // TODO: Reactive root-record upgrade is disabled and needs redesign.
-        //
-        // The previous implementation (`upgradeExternalRootRecord` in
-        // `dwn-record-upgrade.ts`) bypassed DWN SDK conflict resolution by
-        // directly manipulating messageStore/stateIndex/eventLog internals.
-        // This is incompatible with remote DWN operation (local DWN server
-        // accessed via RPC) where the agent has no direct access to the
-        // server's storage layer.
-        //
-        // The correct approach is either:
-        //   (a) Perform the upgrade BEFORE the initial processMessage() call
-        //       (pre-store augmentation), so the message is stored in its
-        //       final form on the first pass — no replacement needed.
-        //   (b) Add DWN SDK support for same-timestamp owner-augmented
-        //       replacements in the RecordsWrite handler.
-        //
-        // Bumping messageTimestamp is NOT viable because the author's
-        // signature payload contains descriptorCid (which includes the
-        // timestamp). The owner does not have the external author's signing
-        // key and cannot re-sign.
-        //
-        // Until this is redesigned, externally-authored root records in
-        // multi-party encrypted contexts will only have ProtocolPath
-        // encryption. Context key holders will not be able to decrypt
-        // these records via ProtocolContext.
+        // Externally-authored root records stay ProtocolPath-encrypted to the target.
+        // Any future owner augmentation must be a normal DWN write path, not direct
+        // message-store mutation.
       }
 
       const newParticipants = detectNewParticipantsFn({
@@ -1006,7 +975,7 @@ export class AgentDwnApi {
     //   | Local root record, multi-party               | ProtocolContext  | deferred (needs recordId)
     //   | Local non-root record, multi-party           | ProtocolContext  |
     //   | Local single-party                           | ProtocolPath    |
-    //   | Cross-DWN root record, multi-party           | ProtocolPath    | target's key; owner upgrades later
+    //   | Cross-DWN root record, multi-party           | ProtocolPath    | target's key
     //   | Cross-DWN non-root record, multi-party       | ProtocolContext  | uses derivedPublicKey from existing records
     //   | Cross-DWN single-party                       | ProtocolPath    | target's key
     //
@@ -1020,10 +989,9 @@ export class AgentDwnApi {
     //
     // For cross-DWN writes (target !== author), the external author cannot
     // derive the target's context key. Root records use the target's ProtocolPath
-    // public key. The target's agent reactively upgrades the record to include a
-    // ProtocolContext recipient entry. Non-root records extract the context
-    // public key (derivedPublicKey) from existing ProtocolContext-encrypted records
-    // in the same context on the target's DWN.
+    // public key. Non-root records extract the context public key (derivedPublicKey)
+    // from existing ProtocolContext-encrypted records in the same context on the
+    // target's DWN.
 
     // Tracks deferred context encryption info for root multi-party records.
     let deferredContextEncryption: {
@@ -1136,8 +1104,8 @@ export class AgentDwnApi {
               KeyDerivationScheme.ProtocolContext,
             );
           } else {
-            // Fallback: no ProtocolContext-encrypted record exists yet (owner hasn't
-            // upgraded the root record). Use ProtocolPath encryption instead.
+            // Fallback: no ProtocolContext-encrypted record exists yet. Use
+            // ProtocolPath encryption instead.
             encryptionInput = buildProtocolPathInput();
           }
 

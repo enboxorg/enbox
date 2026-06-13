@@ -1,3 +1,4 @@
+import type { ProgressToken } from '../types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from '../types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
@@ -52,6 +53,7 @@ export class RecordsWriteHandler implements MethodHandler {
     // (204). A later delivery of the same message with data must be allowed
     // to complete the record.
     const incomingCid = await Message.getCid(message);
+    let isDataCompletion = false;
     for (const existingMessage of existingMessages) {
       if (await Message.getCid(existingMessage) !== incomingCid) {
         continue;
@@ -67,6 +69,8 @@ export class RecordsWriteHandler implements MethodHandler {
       if (!canCompleteMissingData) {
         return { status: { code: 409, detail: 'Conflict' } };
       }
+
+      isDataCompletion = true;
     }
 
     const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
@@ -152,6 +156,7 @@ export class RecordsWriteHandler implements MethodHandler {
     const coreProtocol = message.descriptor.protocol === undefined
       ? undefined
       : this.deps.coreProtocols?.get(message.descriptor.protocol);
+    let position: ProgressToken | undefined;
 
     try {
       if (newestExistingMessage?.descriptor.method === DwnMethodName.Delete) {
@@ -192,9 +197,15 @@ export class RecordsWriteHandler implements MethodHandler {
       }
 
       const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
-      await this.deps.messageStore.put(tenant, messageWithOptionalEncodedData, indexes);
       const messageCid = await Message.getCid(message);
-      await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
+      if (isDataCompletion) {
+        const completeDataResult = await this.deps.messageStore.completeData(tenant, messageCid, indexes, messageWithOptionalEncodedData.encodedData);
+        position = completeDataResult.position;
+      } else {
+        const putResult = await this.deps.messageStore.put(tenant, messageWithOptionalEncodedData, indexes);
+        position = putResult.position;
+        await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
+      }
 
       // NOTE: We only emit a `RecordsWrite` when the message is the latest base state.
       // Because we allow a `RecordsWrite` which is not the latest state to be written, but not queried, we shouldn't emit it either.
@@ -230,7 +241,8 @@ export class RecordsWriteHandler implements MethodHandler {
       // for more details.
       status: (newMessageIsInitialWrite && dataStream === undefined) ?
         { code: 204, detail: 'No Content' } :
-        { code: 202, detail: 'Accepted' }
+        { code: 202, detail: 'Accepted' },
+      position,
     };
 
     // displace every other message for this record, retaining only the initial write as non-latest state

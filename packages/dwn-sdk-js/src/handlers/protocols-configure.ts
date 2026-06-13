@@ -1,4 +1,5 @@
 import type { GenericMessageReply } from '../types/message-types.js';
+import type { ProgressToken } from '../types/subscriptions.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
@@ -98,10 +99,12 @@ export class ProtocolsConfigureHandler implements MethodHandler {
 
     // write the incoming message to DB if incoming message is newest
     let messageReply: GenericMessageReply;
+    let position: ProgressToken | undefined;
     if (incomingMessageIsNewest) {
       const indexes = ProtocolsConfigureHandler.constructIndexes(protocolsConfigure, true);
 
-      await this.deps.messageStore.put(tenant, message, indexes);
+      const putResult = await this.deps.messageStore.put(tenant, message, indexes);
+      position = putResult.position;
       const messageCid = await Message.getCid(message);
       await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
 
@@ -111,31 +114,32 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       }
 
       messageReply = {
-        status: { code: 202, detail: 'Accepted' }
+        status: { code: 202, detail: 'Accepted' },
+        position,
       };
     } else {
       // incoming message is older — still store it as a historical version (not the latest)
       const indexes = ProtocolsConfigureHandler.constructIndexes(protocolsConfigure, false);
 
-      await this.deps.messageStore.put(tenant, message, indexes);
+      const putResult = await this.deps.messageStore.put(tenant, message, indexes);
+      position = putResult.position;
       const messageCid = await Message.getCid(message);
       await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
 
       messageReply = {
-        status: { code: 202, detail: 'Accepted' }
+        status: { code: 202, detail: 'Accepted' },
+        position,
       };
     }
 
     // re-index previously-latest messages as no longer the latest base state.
-    // We must delete and re-put (not just put) to properly replace old index entries.
     for (const existingMessage of existingMessages) {
       if (existingMessage !== newestMessage) {
         const existingProtocolsConfigure = await ProtocolsConfigure.parse(existingMessage as ProtocolsConfigureMessage);
         const updatedIndexes = ProtocolsConfigureHandler.constructIndexes(existingProtocolsConfigure, false);
         const existingCid = await Message.getCid(existingMessage);
 
-        await this.deps.messageStore.delete(tenant, existingCid);
-        await this.deps.messageStore.put(tenant, existingMessage, updatedIndexes);
+        await this.deps.messageStore.updateIndexes(tenant, existingCid, updatedIndexes);
       }
     }
 

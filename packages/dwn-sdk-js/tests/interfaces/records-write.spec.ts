@@ -651,7 +651,7 @@ describe('RecordsWrite', () => {
       expect(recordsWrite['_message'].authorization).toBeUndefined();
     });
 
-    it('should allow signAsOwner after append (reactive root-record upgrade)', async () => {
+    it('should allow signAsOwner after appending an owner recipient', async () => {
       // Simulates the cross-DWN scenario: Bob authors a record, Alice (owner)
       // appends a ProtocolContext recipient entry, then signs as owner.
       const alice = await TestDataGenerator.generatePersona();

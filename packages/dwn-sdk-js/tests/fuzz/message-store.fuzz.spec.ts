@@ -16,8 +16,7 @@ describe('MessageStoreLevel — fuzz', () => {
 
   beforeAll(async () => {
     messageStore = new MessageStoreLevel({
-      blockstoreLocation : `${testDataPath}/blocks`,
-      indexLocation      : `${testDataPath}/index`,
+      location: `${testDataPath}/messages`,
     });
     await messageStore.open();
   });

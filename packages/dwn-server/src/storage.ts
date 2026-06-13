@@ -260,8 +260,7 @@ function getLevelStore(
       });
     case StoreType.MessageStore:
       return new MessageStoreLevel({
-        blockstoreLocation : storeURI.host + storeURI.pathname + '/MESSAGESTORE',
-        indexLocation      : storeURI.host + storeURI.pathname + '/INDEX',
+        location: storeURI.host + storeURI.pathname + '/MESSAGESTORE',
       });
     case StoreType.StateIndex:
       return new StateIndexLevel({

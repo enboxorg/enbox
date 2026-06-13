@@ -19,6 +19,18 @@ import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
+function expectReplyWithPosition(reply: GenericMessageReply, status: GenericMessageReply['status']): void {
+  expect(reply).toEqual({
+    status,
+    position: expect.objectContaining({
+      epoch      : expect.any(String),
+      messageCid : expect.any(String),
+      position   : expect.any(String),
+      streamId   : expect.any(String),
+    }),
+  });
+}
+
 /**
  * processMessage parity pin: this spec exercises a representative matrix of writes, deletes, queries,
  * and reads through the public `processMessage()` API only, asserting the observable replies the
@@ -68,7 +80,7 @@ describe('processMessage parity', () => {
     // 1. initial write with data → 202
     const { message: writeMessage, dataStream, dataBytes, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ author: alice });
     const writeReply = await dwn.processMessage(alice.did, writeMessage, { dataStream });
-    expect(writeReply).toEqual({ status: { code: 202, detail: 'Accepted' } });
+    expectReplyWithPosition(writeReply, { code: 202, detail: 'Accepted' });
 
     // 2. exact duplicate of an already-stored write → 409
     const duplicateReply = await dwn.processMessage(alice.did, writeMessage);
@@ -80,7 +92,7 @@ describe('processMessage parity', () => {
       existingWrite : recordsWrite,
     });
     const updateReply = await dwn.processMessage(alice.did, updateMessage, { dataStream: updateDataStream });
-    expect(updateReply).toEqual({ status: { code: 202, detail: 'Accepted' } });
+    expectReplyWithPosition(updateReply, { code: 202, detail: 'Accepted' });
 
     // 4. read → 200 with the updated record, initial write, and data stream
     const recordsRead = await RecordsRead.create({
@@ -116,7 +128,7 @@ describe('processMessage parity', () => {
       recordId : writeMessage.recordId,
     });
     const deleteReply = await dwn.processMessage(alice.did, deleteMessage);
-    expect(deleteReply).toEqual({ status: { code: 202, detail: 'Accepted' } });
+    expectReplyWithPosition(deleteReply, { code: 202, detail: 'Accepted' });
 
     // 7. write-after-delete → 400 RecordsWriteNotAllowedAfterDelete
     const { message: writeAfterDeleteMessage, dataStream: writeAfterDeleteStream } = await TestDataGenerator.generateFromRecordsWrite({
@@ -153,7 +165,7 @@ describe('processMessage parity', () => {
       protocolDefinition,
     });
     const configureReply = await dwn.processMessage(alice.did, configureMessage);
-    expect(configureReply).toEqual({ status: { code: 202, detail: 'Accepted' } });
+    expectReplyWithPosition(configureReply, { code: 202, detail: 'Accepted' });
 
     // 2. initial protocol write without data → 204 (stored as non-queryable initial state)
     const { message: parentMessage, recordsWrite: parentWrite } = await TestDataGenerator.generateRecordsWrite({
@@ -164,7 +176,7 @@ describe('processMessage parity', () => {
       dataFormat   : 'text/plain',
     });
     const datalessParentReply = await dwn.processMessage(alice.did, parentMessage);
-    expect(datalessParentReply).toEqual({ status: { code: 204, detail: 'No Content' } });
+    expectReplyWithPosition(datalessParentReply, { code: 204, detail: 'No Content' });
 
     // 3. child write under the dataless (non-latest) parent → 202
     const { message: childMessage, dataStream: childDataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -176,7 +188,7 @@ describe('processMessage parity', () => {
       parentContextId : parentWrite.message.contextId,
     });
     const childReply = await dwn.processMessage(alice.did, childMessage, { dataStream: childDataStream });
-    expect(childReply).toEqual({ status: { code: 202, detail: 'Accepted' } });
+    expectReplyWithPosition(childReply, { code: 202, detail: 'Accepted' });
 
     // 4. write by a non-tenant author with no grant, role, or action rule → 401
     const { message: strangerMessage, dataStream: strangerDataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -206,7 +218,7 @@ describe('processMessage parity', () => {
       protocolDefinition,
     });
     const configureReply = await dwn.processMessage(alice.did, configureMessage);
-    expect(configureReply).toEqual({ status: { code: 202, detail: 'Accepted' } });
+    expectReplyWithPosition(configureReply, { code: 202, detail: 'Accepted' });
 
     // 1. role record for bob with data → 202
     const { message: roleMessage, dataStream: roleDataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -216,7 +228,7 @@ describe('processMessage parity', () => {
       protocolPath : 'friend',
     });
     const roleReply = await dwn.processMessage(alice.did, roleMessage, { dataStream: roleDataStream });
-    expect(roleReply).toEqual({ status: { code: 202, detail: 'Accepted' } });
+    expectReplyWithPosition(roleReply, { code: 202, detail: 'Accepted' });
 
     // 2. bob invokes the friend role to create a chat record → 202
     const { message: chatMessage, dataStream: chatDataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -226,7 +238,7 @@ describe('processMessage parity', () => {
       protocolRole : 'friend',
     });
     const chatReply = await dwn.processMessage(alice.did, chatMessage, { dataStream: chatDataStream });
-    expect(chatReply).toEqual({ status: { code: 202, detail: 'Accepted' } });
+    expectReplyWithPosition(chatReply, { code: 202, detail: 'Accepted' });
 
     // 3. carol invokes the friend role without holding a role record → 401 matching role record not found
     const { message: carolChatMessage, dataStream: carolChatDataStream } = await TestDataGenerator.generateRecordsWrite({

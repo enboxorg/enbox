@@ -28,9 +28,6 @@ export * from './dwn-discovery-file.js';
 export * from './dwn-discovery-payload.js';
 export * from './dwn-encryption.js';
 export * from './dwn-key-delivery.js';
-// NOTE: dwn-record-upgrade.js is intentionally NOT exported — the module
-// is disabled (see TODO in dwn-api.ts postWriteKeyDelivery). Keeping the
-// source file for reference until the redesign in a future PR.
 export * from './dwn-type-guards.js';
 export * from './protocol-utils.js';
 export * from './hd-identity-vault.js';

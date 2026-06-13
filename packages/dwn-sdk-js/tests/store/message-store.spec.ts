@@ -67,6 +67,22 @@ export function testMessageStore(): void {
         expect(resultCid).toBe(expectedCid);
       });
 
+      it('should not mutate the caller message when storing inline encodedData', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const { message } = await TestDataGenerator.generateRecordsWrite();
+        const messageWithInlineData = { ...message, encodedData: 'c29tZSBkYXRh' } as RecordsWriteMessage & { encodedData: string };
+        const { messageTimestamp } = message.descriptor;
+
+        await messageStore.put(alice.did, messageWithInlineData, { messageTimestamp });
+
+        expect(messageWithInlineData.encodedData).toBe('c29tZSBkYXRh');
+
+        const expectedCid = await Message.getCid(message);
+        const storedMessage = await messageStore.get(alice.did, expectedCid) as RecordsWriteMessage & { encodedData?: string };
+        expect(storedMessage.encodedData).toBe('c29tZSBkYXRh');
+      });
+
       // https://github.com/enboxorg/enbox/issues/170
       it('#170 - should be able to update (delete and insert new) indexes to an existing message', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
