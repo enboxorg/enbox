@@ -55,7 +55,7 @@ describe('validation-state reader admission parity', () => {
     await dwn.close();
   });
 
-  describe('row 3 — parent existence', () => {
+  describe('parent existence', () => {
     it('should admit a child of a dataless parent through processMessage and replication apply', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
@@ -254,7 +254,7 @@ describe('validation-state reader admission parity', () => {
     });
   });
 
-  describe('row 4 — role records', () => {
+  describe('role records', () => {
     it('should authorize a role-invoking write against a dataless role record through processMessage and replication apply', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
@@ -351,7 +351,7 @@ describe('validation-state reader admission parity', () => {
     });
   });
 
-  describe('row 6 — protocol definition history', () => {
+  describe('protocol definition history', () => {
     it('should accept backdated initial writes using the earliest retained config in both entry points', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 

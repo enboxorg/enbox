@@ -45,7 +45,7 @@ export async function verifyProtocolPathAndContextId(
     tenant, childProtocol, declaredProtocolPath, validationStateReader, protocolDefinitionTimestamp
   );
 
-  // fetch the parent message (read-set row 3)
+  // fetch the parent message
   const parentMessage = await validationStateReader.fetchParentRecord({
     tenant,
     parentProtocolUri,

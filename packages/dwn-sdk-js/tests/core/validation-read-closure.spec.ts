@@ -26,38 +26,32 @@ import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 
-/**
- * Maps every `ValidationStateReader` method to its row in the read-set table
- * (sync replication-log design, "Invariant and the replay basis"). A validation read whose
- * method is missing here is a read outside the table — adding a new reader method requires
- * writing its row (compaction risk and strategy) first, and adding it to this map.
- */
-const READ_SET_TABLE_ROW_BY_METHOD: Record<string, number> = {
-  fetchInitialRecordsWrite       : 1,
-  fetchInitialWrite              : 1,
-  constructRecordChain           : 1,
-  fetchParentRecord              : 3,
-  hasMatchingRoleRecord          : 4,
-  queryLatestRoleRecords         : 4,
-  fetchGrant                     : 5,
-  fetchOldestGrantRevocation     : 5,
-  fetchNewestRecordsWrite        : 2,
-  fetchProtocolDefinition        : 6,
-  countLatestRecordsAtScope      : 7,
-  fetchLatestSquashRecordAtScope : 9,
-  hasStoredData                  : 8,
-};
+const VALIDATION_READER_METHODS = new Set<string>([
+  'fetchInitialRecordsWrite',
+  'fetchInitialWrite',
+  'constructRecordChain',
+  'fetchParentRecord',
+  'hasMatchingRoleRecord',
+  'queryLatestRoleRecords',
+  'fetchGrant',
+  'fetchOldestGrantRevocation',
+  'fetchNewestRecordsWrite',
+  'fetchProtocolDefinition',
+  'countLatestRecordsAtScope',
+  'fetchLatestSquashRecordAtScope',
+  'hasStoredData',
+]);
 
 const TRACE_ARTIFACT_PATH = new URL('./validation-read-trace.json', import.meta.url).pathname;
 
 /**
  * Replay-basis closure: representative admissions run with a recording `ValidationStateReader`;
- * the test fails on any validation read outside the read-set table, and the recorded traces are
+ * the test fails on any validation read outside the reader surface, and the recorded traces are
  * compared against the committed regression artifact (`validation-read-trace.json`).
  *
  * When validation reads legitimately change, regenerate the artifact deliberately:
  * `REGENERATE_VALIDATION_READ_TRACE=true bun test tests/core/validation-read-closure.spec.ts`
- * and review the diff — it is the read-set change you are shipping.
+ * and review the diff.
  */
 describe('validation read closure', () => {
   let didResolver: DidResolver;
@@ -92,7 +86,7 @@ describe('validation read closure', () => {
     await dwn.close();
   });
 
-  it('should perform no validation read outside the read-set table across representative admissions', async () => {
+  it('should perform no validation read outside the reader surface across representative admissions', async () => {
     const trace: Record<string, string[]> = {};
 
     const clearStores = async (): Promise<void> => {
@@ -378,7 +372,7 @@ describe('validation read closure', () => {
       snapshot('live: dataless update of above-threshold record');
     }
 
-    // ---- scenario: replicated child admitted under a dataless parent (row 3) ----
+    // ---- scenario: replicated child admitted under a dataless parent ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -407,7 +401,7 @@ describe('validation read closure', () => {
       snapshot('replicated: child admitted under dataless parent');
     }
 
-    // ---- scenario: replicated role-invoking write admitted under a dataless role record (row 4) ----
+    // ---- scenario: replicated role-invoking write admitted under a dataless role record ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -432,7 +426,7 @@ describe('validation read closure', () => {
       snapshot('replicated: role-invoking write admitted under dataless role record');
     }
 
-    // ---- scenario: initial write accepted by timestamped protocol history through replication apply (row 6) ----
+    // ---- scenario: initial write accepted by timestamped protocol history through replication apply ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -480,7 +474,7 @@ describe('validation read closure', () => {
       snapshot('replicated: initial write accepted by timestamped config');
     }
 
-    // ---- scenario: replicated completion of a dataless stub (row 8) ----
+    // ---- scenario: replicated completion of a dataless stub ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -502,7 +496,7 @@ describe('validation read closure', () => {
       snapshot('replicated: same-CID completion of dataless stub');
     }
 
-    // ---- scenario: replicated tombstone-beaten dataless update missing compacted data (row 8) ----
+    // ---- scenario: replicated tombstone-beaten dataless update missing compacted data ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -539,14 +533,14 @@ describe('validation read closure', () => {
       snapshot('replicated: tombstone-beaten dataless update missing compacted data');
     }
 
-    // ---- closure assertion: every recorded read maps to a read-set table row ----
+    // ---- closure assertion: every recorded read is part of the validation reader surface ----
     for (const [scenario, reads] of Object.entries(trace)) {
       for (const read of reads) {
         const method = read.split(' ')[0];
         expect(
-          READ_SET_TABLE_ROW_BY_METHOD[method],
-          `validation read '${read}' in scenario '${scenario}' is outside the read-set table`
-        ).toBeDefined();
+          VALIDATION_READER_METHODS.has(method),
+          `validation read '${read}' in scenario '${scenario}' is outside the validation reader surface`
+        ).toBeTrue();
       }
     }
 

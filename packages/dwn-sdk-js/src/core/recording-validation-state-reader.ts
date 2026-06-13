@@ -15,8 +15,8 @@ export type RecordedValidationRead = {
 /**
  * A `ValidationStateReader` decorator that records every read before delegating to the wrapped
  * reader. Used by the replay-basis closure tests (and harnesses) to assert that admission
- * performs no validation read outside the read-set table, and to keep recorded read-traces as a
- * regression artifact when reads change.
+ * performs no validation read outside the reader surface, and to keep recorded read-traces as a
+ * regression artifact when validation reads change.
  *
  * Inject via `DwnConfig.instrumentValidationStateReader`.
  */

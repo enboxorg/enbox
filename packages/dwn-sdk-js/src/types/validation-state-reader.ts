@@ -12,20 +12,17 @@ import type { RecordsWriteMessage } from './records-types.js';
  * history ∪ permission records) provably stays closed under admission's read set. Validation
  * modules (`core/protocol-authorization*`, `protocols/permissions*`) are lint-banned from
  * importing `MessageStore` directly; a new protocol-engine feature that needs new state must add
- * a reader method here, which forces writing its read-set table row first.
- *
- * Each method's doc names its row in the read-set table (sync replication-log design,
- * "Invariant and the replay basis").
+ * a reader method here.
  */
 export interface ValidationStateReader {
   /**
-   * Read-set row 1: fetches a record's initial `RecordsWrite` by entry ID, parsed.
+   * Fetches a record's initial `RecordsWrite` by entry ID, parsed.
    * @returns the initial write, or `undefined` when no message carries the entry ID.
    */
   fetchInitialRecordsWrite(tenant: string, recordId: string): Promise<RecordsWrite | undefined>;
 
   /**
-   * Read-set row 1: fetches a record's initial write from among all of the record's writes.
+   * Fetches a record's initial write from among all of the record's writes.
    * @returns the initial write message, or `undefined` when the record has no messages at all.
    * @throws {DwnError} with `RecordsWriteGetInitialWriteNotFound` when writes exist for the
    *         record but none of them is the initial write.
@@ -33,7 +30,7 @@ export interface ValidationStateReader {
   fetchInitialWrite(tenant: string, recordId: string): Promise<RecordsWriteMessage | undefined>;
 
   /**
-   * Read-set row 1: constructs the chain of existing records from the root to the given
+   * Constructs the chain of existing records from the root to the given
    * descendant, each represented by its initial `RecordsWrite`.
    * @returns the chain root-first; an empty array when `descendantRecordId` is `undefined`.
    * @throws {DwnError} with `ProtocolAuthorizationParentNotFoundConstructingRecordChain` when any
@@ -42,7 +39,7 @@ export interface ValidationStateReader {
   constructRecordChain(tenant: string, descendantRecordId: string | undefined): Promise<RecordsWriteMessage[]>;
 
   /**
-   * Read-set row 3: fetches the immediate parent record for protocolPath/contextId verification.
+   * Fetches the immediate parent record for protocolPath/contextId verification.
    *
    * Queries the latest-state write first — the fast path that excludes deleted parents. If no
    * latest write exists, a retained initial write is sufficient for immutable parent facts
@@ -56,7 +53,7 @@ export interface ValidationStateReader {
   }): Promise<RecordsWriteMessage | undefined>;
 
   /**
-   * Read-set row 4: checks whether a role record matching the invoked-role selector exists.
+   * Checks whether a role record matching the invoked-role selector exists.
    * Filter-only — role validation never reads record data. The latest-state match is the fast
    * path. If no latest match exists, a retained initial role write is sufficient for immutable
    * role facts (recipient/path/context) provided no local tombstone exists for that role record.
@@ -70,7 +67,7 @@ export interface ValidationStateReader {
   }): Promise<boolean>;
 
   /**
-   * Read-set row 4 (role uniqueness): queries the latest-state role records matching the given
+   * Queries the latest-state role records matching the given
    * selector, used to reject duplicate role assignments to the same recipient. Filter-only.
    */
   queryLatestRoleRecords(input: {
@@ -82,29 +79,27 @@ export interface ValidationStateReader {
   }): Promise<RecordsWriteMessage[]>;
 
   /**
-   * Read-set row 5: fetches the permission grant with the given record ID (latest state, scope
-   * parsed from the grant's data).
+   * Fetches the permission grant with the given record ID, with its scope parsed from grant data.
    * @throws {DwnError} with `GrantAuthorizationGrantMissing` when the grant does not exist.
    */
   fetchGrant(tenant: string, permissionGrantId: string): Promise<PermissionGrant>;
 
   /**
-   * Read-set row 5: fetches the oldest latest-state revocation record for the given permission
-   * grant, if any. Grant activity checks compare the oldest revocation timestamp to the incoming
-   * message timestamp.
+   * Fetches the oldest latest-state revocation record for the given permission grant, if any.
+   * Grant activity checks compare the oldest revocation timestamp to the incoming message timestamp.
    */
   fetchOldestGrantRevocation(tenant: string, permissionGrantId: string): Promise<GenericMessage | undefined>;
 
   /**
-   * Read-set row 2: fetches the newest `RecordsWrite` associated with a record, used to authorize
-   * `Messages.Read` access to `RecordsDelete` messages by projecting the delete back to the
-   * deleted record's protocol scope.
+   * Fetches the newest `RecordsWrite` associated with a record, used to authorize `Messages.Read`
+   * access to `RecordsDelete` messages by projecting the delete back to the deleted record's
+   * protocol scope.
    * @throws {DwnError} with `RecordsWriteGetNewestWriteRecordNotFound` when no write exists.
    */
   fetchNewestRecordsWrite(tenant: string, recordId: string): Promise<RecordsWriteMessage>;
 
   /**
-   * Read-set row 6: fetches the protocol definition for the given protocol URI.
+   * Fetches the protocol definition for the given protocol URI.
    * When `messageTimestamp` is provided, returns the definition active at that point in time —
    * the `ProtocolsConfigure` with the greatest `messageTimestamp` that is <= the given timestamp,
    * read from retained config history. When not provided, returns the latest definition.
@@ -114,9 +109,8 @@ export interface ValidationStateReader {
   fetchProtocolDefinition(tenant: string, protocolUri: string, messageTimestamp?: string): Promise<ProtocolDefinition>;
 
   /**
-   * Read-set row 7: counts the latest-state records at a `$recordLimit` scope
-   * (protocol + protocolPath within the parent context). Direct-write `Reject` semantics apply
-   * as-is; any future replicated occupancy fold must be implemented separately from admission.
+   * Counts the latest-state records at a `$recordLimit` scope:
+   * protocol + protocolPath within the parent context.
    */
   countLatestRecordsAtScope(input: {
     tenant: string;
@@ -126,8 +120,8 @@ export interface ValidationStateReader {
   }): Promise<number>;
 
   /**
-   * Read-set row 9: fetches the latest `$squash: true` record at a protocol path within the parent
-   * context. This is the temporal floor used by the squash backstop.
+   * Fetches the latest `$squash: true` record at a protocol path within the parent context.
+   * This is the temporal floor used by the squash backstop.
    */
   fetchLatestSquashRecordAtScope(input: {
     tenant: string;
@@ -137,8 +131,8 @@ export interface ValidationStateReader {
   }): Promise<RecordsWriteMessage | undefined>;
 
   /**
-   * Read-set row 8: checks whether the data with the given CID is present in the `DataStore` for
-   * the given record — the prior-data integrity check for dataless non-initial writes.
+   * Checks whether the data with the given CID is present in the `DataStore` for the given record.
+   * This is the prior-data integrity check for dataless non-initial writes.
    */
   hasStoredData(tenant: string, recordId: string, dataCid: string): Promise<boolean>;
 }

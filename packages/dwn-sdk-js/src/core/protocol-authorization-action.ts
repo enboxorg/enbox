@@ -98,7 +98,7 @@ export async function verifyInvokedRole(
     contextIdPrefix = contextIdSegments.slice(0, ancestorSegmentCountOfRolePath).join('/');
   }
 
-  // fetch the invoked role record (read-set row 4)
+  // fetch the invoked role record
   const matchingRoleRecordExists = await validationStateReader.hasMatchingRoleRecord({
     tenant,
     protocol     : roleProtocolUri,

@@ -86,9 +86,9 @@ module.exports = [{
     'todo-plz/ticket-ref': ['error', { 'commentPattern': '.*github\.com\/enboxorg\/enbox\/issues\/.*' }],
   }
 }, {
-  // Replay-basis closure boundary (sync replication-log design, "Invariant and the replay basis"):
+  // Replay-basis closure boundary:
   // validation modules read state only through `ValidationStateReader` (HandlerDependencies.validationStateReader).
-  // Importing `MessageStore` here would open a validation read outside the read-set table.
+  // Importing `MessageStore` here would open a validation read outside the reader surface.
   files: [
     'src/core/*grant-authorization*.ts',
     'src/core/protocol-authorization*.ts',
@@ -99,7 +99,7 @@ module.exports = [{
       patterns: [{
         group   : ['**/types/message-store.js'],
         message : 'Validation modules must read state through ValidationStateReader, never MessageStore directly. ' +
-                  'A new state read needs a reader method and a read-set table row first.',
+                  'A new state read needs a ValidationStateReader method first.',
       }],
     }],
   },
