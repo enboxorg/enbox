@@ -73,7 +73,7 @@ export class RecordsWriteHandler implements MethodHandler {
 
     let initialWrite: RecordsWriteMessage | undefined;
     try {
-      initialWrite = await this.validateNonInitialWrite(message, existingMessages, newMessageIsInitialWrite);
+      initialWrite = await this.getInitialWrite(existingMessages, newMessageIsInitialWrite);
     } catch (e) {
       return messageReplyFromError(e, 400);
     }
@@ -90,6 +90,14 @@ export class RecordsWriteHandler implements MethodHandler {
       await this.authorizeRecordsWrite(tenant, recordsWrite);
     } catch (e) {
       return messageReplyFromError(e, 401);
+    }
+
+    if (initialWrite !== undefined) {
+      try {
+        this.verifyImmutableProperties(initialWrite, message);
+      } catch (e) {
+        return messageReplyFromError(e, 400);
+      }
     }
 
     // Squash backstop: if the protocol path has $squash: true, reject any write whose
@@ -333,8 +341,7 @@ export class RecordsWriteHandler implements MethodHandler {
     return !hasInlineData && !hasStoredData;
   }
 
-  private async validateNonInitialWrite(
-    message: RecordsWriteMessage,
+  private async getInitialWrite(
     existingMessages: GenericMessage[],
     newMessageIsInitialWrite: boolean,
   ): Promise<RecordsWriteMessage | undefined> {
@@ -342,9 +349,25 @@ export class RecordsWriteHandler implements MethodHandler {
       return undefined;
     }
 
-    const initialWrite = await RecordsWrite.getInitialWrite(existingMessages);
-    RecordsWrite.verifyEqualityOfImmutableProperties(initialWrite, message);
-    return initialWrite;
+    return RecordsWrite.getInitialWrite(existingMessages);
+  }
+
+  private verifyImmutableProperties(
+    initialWrite: RecordsWriteMessage,
+    message: RecordsWriteMessage,
+  ): void {
+    try {
+      RecordsWrite.verifyEqualityOfImmutableProperties(initialWrite, message);
+    } catch (error) {
+      if (error instanceof DwnError && error.code === DwnErrorCode.RecordsWriteImmutablePropertyChanged) {
+        throw new DwnError(
+          DwnErrorCode.RecordsWriteImmutablePropertyChanged,
+          'immutable RecordsWrite properties cannot be changed.'
+        );
+      }
+
+      throw error;
+    }
   }
 
   private async processMessageWithoutDataStream(
