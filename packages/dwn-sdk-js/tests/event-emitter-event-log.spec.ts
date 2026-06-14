@@ -474,6 +474,28 @@ describe('EventEmitterEventLog', () => {
         .rejects.toThrow('stream_mismatch');
     });
 
+    it('should throw EventLogProgressGap with reason token_too_new when position is beyond the head', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      const token = await eventLog.emit(tenant, event, {}, cid(1));
+      const futureToken = { ...token!, position: '2' };
+
+      await expect(eventLog.read(tenant, { cursor: futureToken }))
+        .rejects.toThrow('token_too_new');
+    });
+
+    it('should throw EventLogProgressGap with reason message_mismatch when cursor message CID differs', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      const token = await eventLog.emit(tenant, event, {}, cid(1));
+      const mismatchedToken = { ...token!, messageCid: cid(2) };
+
+      await expect(eventLog.read(tenant, { cursor: mismatchedToken }))
+        .rejects.toThrow('message_mismatch');
+    });
+
     it('should throw EventLogProgressGap with reason token_too_old when position is evicted', async () => {
       const smallLog = new EventEmitterEventLog({ maxEventsPerTenant: 2 });
       await smallLog.open();

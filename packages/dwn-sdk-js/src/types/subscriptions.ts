@@ -34,7 +34,7 @@ export type ProgressToken = {
  * Reason code for a {@link ProgressGapInfo} — explains why the cursor
  * cannot be resumed.
  */
-export type ProgressGapReason = 'token_too_old' | 'epoch_mismatch' | 'stream_mismatch';
+export type ProgressGapReason = 'token_too_old' | 'token_too_new' | 'epoch_mismatch' | 'stream_mismatch' | 'message_mismatch';
 
 /**
  * Metadata attached to a `DwnError(DwnErrorCode.EventLogProgressGap, ...)`

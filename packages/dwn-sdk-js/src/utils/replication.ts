@@ -7,7 +7,6 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 const POSITION_PAD_WIDTH = 20;
 
 type ReplicationMessageDescriptor = GenericMessage['descriptor'] & {
-  protocol?: unknown;
   tags?: Record<string, unknown>;
 };
 
@@ -32,16 +31,17 @@ export class Replication {
     return Array.from(hashArray.slice(0, 8), (b: number) => b.toString(16).padStart(2, '0')).join('');
   }
 
-  public static computeFingerprintScopes(message: GenericMessage): string[] {
+  public static computeFingerprintScopes(message: GenericMessage, indexes: KeyValues): string[] {
     const scopes = [Replication.globalDomain];
 
     const descriptor = Replication.descriptor(message);
-    const protocol = descriptor.protocol;
+    const protocol = indexes.protocol;
     if (typeof protocol === 'string') {
       scopes.push(Replication.protocolDomain(protocol));
 
       if (protocol === PermissionsProtocol.uri) {
-        const taggedProtocol = descriptor.tags?.protocol;
+        const indexedTaggedProtocol = indexes['tag.protocol'];
+        const taggedProtocol = indexedTaggedProtocol ?? descriptor.tags?.protocol;
         if (typeof taggedProtocol === 'string') {
           scopes.push(Replication.permissionDomain(taggedProtocol));
         }
@@ -55,34 +55,11 @@ export class Replication {
     persistedScopes: string[],
     message: GenericMessage,
     messageCid: string,
-    newIndexes?: KeyValues,
+    newIndexes: KeyValues,
   ): void {
-    const expectedScopes = Replication.computeFingerprintScopes(message);
+    const expectedScopes = Replication.computeFingerprintScopes(message, newIndexes);
     if (!Replication.scopeSetsMatch(persistedScopes, expectedScopes)) {
       Replication.throwFingerprintScopeMutation(messageCid);
-    }
-
-    if (newIndexes === undefined) {
-      return;
-    }
-
-    const descriptor = Replication.descriptor(message);
-    const expectedProtocol = descriptor.protocol;
-    const indexedProtocol = newIndexes.protocol;
-    if (expectedProtocol !== undefined && expectedProtocol !== indexedProtocol) {
-      Replication.throwFingerprintScopeMutation(messageCid);
-    }
-
-    const indexedTaggedProtocol = newIndexes['tag.protocol'];
-    if (indexedTaggedProtocol !== undefined) {
-      const expectedPermissionDomain = expectedScopes.find((scope) => scope.startsWith('perm:'));
-      const indexedPermissionDomain = typeof indexedTaggedProtocol === 'string'
-        ? Replication.permissionDomain(indexedTaggedProtocol)
-        : undefined;
-
-      if (expectedPermissionDomain !== undefined && expectedPermissionDomain !== indexedPermissionDomain) {
-        Replication.throwFingerprintScopeMutation(messageCid);
-      }
     }
   }
 

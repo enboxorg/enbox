@@ -139,15 +139,22 @@ export class EventEmitterEventLog implements EventLog {
     } else if (cursor.epoch === this.epoch) {
       // Check if position is still within replay bounds.
       const log = this.tenantLogs.get(tenant);
-      if (log !== undefined && log.size > 0) {
+      const headSeq = this.tenantSeqs.get(tenant) ?? 0;
+      const cursorSeq = EventEmitterEventLog.parsePosition(cursor.position);
+      if (cursorSeq > headSeq) {
+        reason = 'token_too_new';
+      } else if (log !== undefined && log.size > 0) {
         const firstSeq = log.keys().next().value as number;
-        const cursorSeq = EventEmitterEventLog.parsePosition(cursor.position);
         if (cursorSeq < firstSeq - 1) {
           // Cursor position has been evicted — events between cursor and firstSeq are lost.
           reason = 'token_too_old';
+        } else if (cursor.messageCid !== undefined && log.get(cursorSeq)?.messageCid !== cursor.messageCid) {
+          reason = 'message_mismatch';
         } else {
           return; // Cursor is valid.
         }
+      } else if (cursor.messageCid !== undefined) {
+        reason = 'message_mismatch';
       } else {
         return; // No events for tenant — cursor is vacuously valid (will get empty catch-up + EOSE).
       }

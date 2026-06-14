@@ -281,6 +281,22 @@ describe('NatsEventLog', () => {
       }
     });
 
+    natsIt('should reject a cursor whose position is beyond the tenant head', async () => {
+      const tenant = 'did:test:cursor-too-new';
+      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      const futureCursor = { ...c1!, position: String(Number(c1!.position) + 1) };
+
+      await expect(eventLog.read(tenant, { cursor: futureCursor })).rejects.toThrow('token_too_new');
+    });
+
+    natsIt('should reject a cursor whose message CID does not match its position', async () => {
+      const tenant = 'did:test:cursor-message-mismatch';
+      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      const mismatchedCursor = { ...c1!, messageCid: cid() };
+
+      await expect(eventLog.read(tenant, { cursor: mismatchedCursor })).rejects.toThrow('message_mismatch');
+    });
+
     natsIt('should respect the limit parameter', async () => {
       const tenant = 'did:test:limit';
       await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());

@@ -274,12 +274,24 @@ export default class NatsEventLog implements EventLog {
       // for safe handling of NATS sequences beyond Number.MAX_SAFE_INTEGER.
       const bounds = await this.getReplayBounds(tenant);
       if (bounds === undefined) {
-        return; // No events — vacuously valid.
+        const cursorSeq = BigInt(cursor.position);
+        if (cursorSeq > 0n) {
+          reason = 'token_too_new';
+        } else if (cursor.messageCid !== undefined) {
+          reason = 'message_mismatch';
+        } else {
+          return; // No events — vacuously valid.
+        }
       } else {
         const cursorSeq = BigInt(cursor.position);
         const oldestSeq = BigInt(bounds.oldest.position);
+        const latestSeq = BigInt(bounds.latest.position);
         if (cursorSeq < oldestSeq - 1n) {
           reason = 'token_too_old';
+        } else if (cursorSeq > latestSeq) {
+          reason = 'token_too_new';
+        } else if (cursor.messageCid !== undefined && !await this.#cursorMessageCidMatches(tenant, cursorSeq, cursor.messageCid)) {
+          reason = 'message_mismatch';
         } else {
           return; // Valid.
         }
@@ -610,6 +622,20 @@ export default class NatsEventLog implements EventLog {
   ): Promise<StoredMsg | undefined> {
     const message = await this.#jsm!.streams.getMessage(this.#config.streamName, request);
     return message ?? undefined;
+  }
+
+  async #cursorMessageCidMatches(tenant: string, position: bigint, messageCid: string): Promise<boolean> {
+    if (position <= 0n) {
+      return false;
+    }
+
+    const subject = this.#tenantSubject(tenant);
+    const message = await this.#getPerSubjectMessage({ seq: Number(position), next_by_subj: subject });
+    if (message === undefined || BigInt(message.seq) !== position) {
+      return false;
+    }
+
+    return decodePayload(message.data)?.messageCid === messageCid;
   }
 
   async #ensureStream(): Promise<void> {

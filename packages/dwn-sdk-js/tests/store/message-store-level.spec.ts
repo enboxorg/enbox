@@ -8,6 +8,7 @@ import { EventEmitterWakePublisher } from '../../src/event-stream/event-emitter-
 import { Message } from '../../src/core/message.js';
 import { MessageStoreLevel } from '../../src/store/message-store-level.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
+import { ProtocolsConfigureHandler } from '../../src/handlers/protocols-configure.js';
 import { Replication } from '../../src/utils/replication.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -201,7 +202,7 @@ describe('MessageStoreLevel Test Suite', () => {
       expect(withCursor.drained).toBe(false);
     });
 
-    it('should reject cursors from the wrong stream or epoch', async () => {
+    it('should reject cursors from the wrong stream, epoch, future position, or mismatched message CID', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const { message, indexes } = await generateStoredMessage();
       const putResult = await messageStore.put(alice.did, message, indexes);
@@ -209,6 +210,12 @@ describe('MessageStoreLevel Test Suite', () => {
 
       await expect(messageStore.logRead(alice.did, { cursor: { ...cursor, streamId: 'wrong-stream' } }))
         .rejects.toThrow('stream_mismatch');
+
+      await expect(messageStore.logRead(alice.did, { cursor: { ...cursor, position: '2' } }))
+        .rejects.toThrow('token_too_new');
+
+      await expect(messageStore.logRead(alice.did, { cursor: { ...cursor, messageCid: 'bafy-wrong-message' } }))
+        .rejects.toThrow('message_mismatch');
 
       await messageStore.clear();
       await expect(messageStore.logRead(alice.did, { cursor }))
@@ -383,6 +390,39 @@ describe('MessageStoreLevel Test Suite', () => {
       await messageStore.delete(alice.did, grant.messageCid);
       expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(photoFingerprint);
       expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(photosProtocol)])).toBe(ZERO_FINGERPRINT);
+    });
+
+    it('should fold protocol configs and tombstones into their protocol domain', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const photosProtocol = 'https://example.com/photos';
+      const protocolDefinition = {
+        protocol  : photosProtocol,
+        published : false,
+        types     : { post: { schema: 'post', dataFormats: ['text/plain'] } },
+        structure : { post: {} },
+      };
+
+      const config = await TestDataGenerator.generateProtocolsConfigure({ protocolDefinition });
+      const configIndexes = ProtocolsConfigureHandler.constructIndexes(config.protocolsConfigure, true);
+      await messageStore.put(alice.did, config.message, configIndexes);
+      const configFingerprint = await cidFingerprint(await Message.getCid(config.message));
+
+      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)])).toBe(configFingerprint);
+
+      const photo = await generateStoredMessage({ protocol: photosProtocol });
+      await messageStore.put(alice.did, photo.message, photo.indexes);
+      const photoFingerprint = await cidFingerprint(photo.messageCid);
+
+      const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+        author   : alice,
+        recordId : photo.message.descriptor.recordId,
+      });
+      const deleteIndexes = recordsDelete.recordsDelete.constructIndexes(photo.message, photo.message);
+      await messageStore.put(alice.did, recordsDelete.message, deleteIndexes);
+      const deleteFingerprint = await cidFingerprint(await Message.getCid(recordsDelete.message));
+
+      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)]))
+        .toBe(xorHex(xorHex(configFingerprint, photoFingerprint), deleteFingerprint));
     });
   });
 

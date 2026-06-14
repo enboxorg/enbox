@@ -422,7 +422,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
       const head = await this.getHead(partitions, tenant);
       const seq = head + 1n;
-      const fingerprintScopes = Replication.computeFingerprintScopes(message);
+      const fingerprintScopes = Replication.computeFingerprintScopes(message, indexes);
 
       const logEntry: LogEntryValue = {
         seq: seq.toString(),
@@ -686,7 +686,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     // the next page.
     const head = await this.getHead(partitions, tenant);
     if (cursor !== undefined) {
-      await this.validateCursor(tenant, cursor);
+      await this.validateCursor(partitions, tenant, cursor, head);
     }
 
     const startPosition = cursor === undefined ? 0n : BigInt(cursor.position);
@@ -888,7 +888,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
    * Validates a replication cursor against the tenant stream and persisted store epoch.
    * Throws `EventLogProgressGap` with bounds metadata when the cursor cannot be replayed.
    */
-  private async validateCursor(tenant: string, cursor: ProgressToken): Promise<void> {
+  private async validateCursor(partitions: StorePartitions, tenant: string, cursor: ProgressToken, head: bigint): Promise<void> {
     const expectedStreamId = await Replication.deriveStreamId(tenant);
 
     let reason: ProgressGapReason | undefined;
@@ -896,6 +896,16 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       reason = 'stream_mismatch';
     } else if (cursor.epoch !== await this.getEpoch()) {
       reason = 'epoch_mismatch';
+    } else {
+      const cursorPosition = BigInt(cursor.position);
+      if (cursorPosition > head) {
+        reason = 'token_too_new';
+      } else if (cursor.messageCid !== undefined) {
+        const positionMessageCid = await this.getMessageCidAtPosition(partitions, tenant, cursorPosition);
+        if (positionMessageCid !== cursor.messageCid) {
+          reason = 'message_mismatch';
+        }
+      }
     }
 
     if (reason === undefined) {
@@ -916,6 +926,27 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     );
     (error as any).gapInfo = gapInfo;
     throw error;
+  }
+
+  private async getMessageCidAtPosition(partitions: StorePartitions, tenant: string, position: bigint): Promise<string | undefined> {
+    if (position <= 0n) {
+      return undefined;
+    }
+
+    const positionKey = Replication.encodePositionKey(position);
+    const tenantLog = await partitions.log.partition(tenant);
+    const serializedEntry = await tenantLog.get(positionKey);
+    if (serializedEntry !== undefined) {
+      return (JSON.parse(serializedEntry) as LogEntryValue).messageCid;
+    }
+
+    const tenantRedeliveries = await partitions.redeliveries.partition(tenant);
+    const serializedStamp = await tenantRedeliveries.get(positionKey);
+    if (serializedStamp !== undefined) {
+      return (JSON.parse(serializedStamp) as { seq: string, messageCid: string }).messageCid;
+    }
+
+    return undefined;
   }
 
   /**
