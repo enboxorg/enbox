@@ -34,7 +34,7 @@ export class Replication {
   public static computeFingerprintScopes(message: GenericMessage, indexes: KeyValues): string[] {
     const scopes = [Replication.globalDomain];
 
-    const descriptor = Replication.descriptor(message);
+    const descriptor: ReplicationMessageDescriptor = message.descriptor;
     const protocol = indexes.protocol;
     if (typeof protocol === 'string') {
       scopes.push(Replication.protocolDomain(protocol));
@@ -71,10 +71,6 @@ export class Replication {
     return right.every((scope) => left.includes(scope));
   }
 
-  private static descriptor(message: GenericMessage): ReplicationMessageDescriptor {
-    return message.descriptor as ReplicationMessageDescriptor;
-  }
-
   private static throwFingerprintScopeMutation(messageCid: string): never {
     throw new DwnError(
       DwnErrorCode.MessageStoreFingerprintScopeMutation,
@@ -107,7 +103,7 @@ export class Replication {
   public static hexToFingerprint(hex: string): Uint8Array {
     const bytes = new Uint8Array(32);
     for (let i = 0; i < 32; i++) {
-      bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+      bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
     }
     return bytes;
   }
@@ -122,9 +118,5 @@ export class Replication {
     }
 
     return decimal.padStart(POSITION_PAD_WIDTH, '0');
-  }
-
-  public static decodePositionKey(key: string): bigint {
-    return BigInt(key);
   }
 }

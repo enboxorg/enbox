@@ -724,7 +724,7 @@ export class AgentDwnApi {
       // reactive-upgrade path, which mutated the stored message in place. Closing
       // this needs a normal authored DWN write (a signed message cannot be rewritten
       // by the owner); the mechanism is still open.
-      // TODO(https://github.com/enboxorg/enbox/issues/923): resolve externally-authored
+      // Open issue https://github.com/enboxorg/enbox/issues/923: resolve externally-authored
       // multi-party root-record context-key access.
       const newParticipants = detectNewParticipantsFn({
         protocolDefinition,

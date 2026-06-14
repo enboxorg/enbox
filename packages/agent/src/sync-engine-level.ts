@@ -2301,7 +2301,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private emitPullCheckpointAdvance(link: ReplicationLinkState): void {
     const token = link.pull.contiguousAppliedToken;
-    if (!token || token.messageCid === undefined) {
+    if (token?.messageCid === undefined) {
       return;
     }
 

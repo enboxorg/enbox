@@ -309,12 +309,18 @@ export class MessageStoreSql implements MessageStore {
     notFoundErrorCode: DwnErrorCode;
   }): Promise<void> {
     const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, notFoundErrorCode } = input;
+    const db = this.#db;
+    if (!db) {
+      throw new Error(
+        'Connection to database not open. Call `open` before replacing row indexes.'
+      );
+    }
 
     // we extract the tag indexes into their own object to be inserted separately.
     // we also sanitize the indexes to convert any `boolean` values to `number` representations.
     const { indexes: replacementIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
 
-    await executeWithTransaction(this.#db!, async (tx) => {
+    await executeWithTransaction(db, async (tx) => {
       const existingRow = await tx
         .selectFrom('messageStoreMessages')
         .select(['id'])

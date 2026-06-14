@@ -431,22 +431,18 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
         fingerprintScopes,
       };
 
-      const operations: LevelWrapperBatchOperation<string>[] = [];
-
       const tenantBlocks = await partitions.blocks.partition(tenant);
       const blockOperation = tenantBlocks.createOperation({ type: 'put', key: messageCid, value: encodedMessageBlock.bytes });
-      operations.push(blockOperation as unknown as LevelWrapperBatchOperation<string>);
-
-      operations.push(...await index.createPutOperations(tenant, messageCid, indexes));
 
       const tenantLog = await partitions.log.partition(tenant);
-      operations.push(tenantLog.createOperation({ type: 'put', key: Replication.encodePositionKey(seq), value: JSON.stringify(logEntry) }));
-
-      operations.push(tenantCidToSeq.createOperation({ type: 'put', key: messageCid, value: seq.toString() }));
-
-      operations.push(partitions.heads.createOperation({ type: 'put', key: tenant, value: seq.toString() }));
-
-      operations.push(...await this.createFingerprintFoldOperations(partitions, tenant, messageCid, fingerprintScopes));
+      const operations: LevelWrapperBatchOperation<string>[] = [
+        blockOperation as unknown as LevelWrapperBatchOperation<string>,
+        ...await index.createPutOperations(tenant, messageCid, indexes),
+        tenantLog.createOperation({ type: 'put', key: Replication.encodePositionKey(seq), value: JSON.stringify(logEntry) }),
+        tenantCidToSeq.createOperation({ type: 'put', key: messageCid, value: seq.toString() }),
+        partitions.heads.createOperation({ type: 'put', key: tenant, value: seq.toString() }),
+        ...await this.createFingerprintFoldOperations(partitions, tenant, messageCid, fingerprintScopes),
+      ];
 
       await partitions.root.batch(operations);
 
@@ -485,10 +481,11 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       // never stamps and never touches the fingerprints or the head.
       const updatedEntry: LogEntryValue = { ...entry, indexes };
 
-      const operations: LevelWrapperBatchOperation<string>[] = [];
-      operations.push(...await index.createDeleteOperations(tenant, messageCid));
-      operations.push(...await index.createPutOperations(tenant, messageCid, indexes));
-      operations.push(tenantLog.createOperation({ type: 'put', key: positionKey, value: JSON.stringify(updatedEntry) }));
+      const operations: LevelWrapperBatchOperation<string>[] = [
+        ...await index.createDeleteOperations(tenant, messageCid),
+        ...await index.createPutOperations(tenant, messageCid, indexes),
+        tenantLog.createOperation({ type: 'put', key: positionKey, value: JSON.stringify(updatedEntry) }),
+      ];
 
       await partitions.root.batch(operations);
     });
@@ -525,13 +522,14 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
       const updatedEntry: LogEntryValue = { ...entry, indexes };
 
-      const operations: LevelWrapperBatchOperation<string>[] = [];
       const tenantBlocks = await partitions.blocks.partition(tenant);
       const blockOperation = tenantBlocks.createOperation({ type: 'put', key: normalizedMessageCid, value: encodedMessageBlock.bytes });
-      operations.push(blockOperation as unknown as LevelWrapperBatchOperation<string>);
-      operations.push(...await index.createDeleteOperations(tenant, normalizedMessageCid));
-      operations.push(...await index.createPutOperations(tenant, normalizedMessageCid, indexes));
-      operations.push(tenantLog.createOperation({ type: 'put', key: positionKey, value: JSON.stringify(updatedEntry) }));
+      const operations: LevelWrapperBatchOperation<string>[] = [
+        blockOperation as unknown as LevelWrapperBatchOperation<string>,
+        ...await index.createDeleteOperations(tenant, normalizedMessageCid),
+        ...await index.createPutOperations(tenant, normalizedMessageCid, indexes),
+        tenantLog.createOperation({ type: 'put', key: positionKey, value: JSON.stringify(updatedEntry) }),
+      ];
 
       await partitions.root.batch(operations);
     });
@@ -575,28 +573,29 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
       const updatedEntry: LogEntryValue = { ...entry, indexes, redeliverSeq: redeliverSeq.toString() };
 
-      const operations: LevelWrapperBatchOperation<string>[] = [];
+      let blockOperations: LevelWrapperBatchOperation<string>[] = [];
 
       if (encodedData !== undefined) {
         const tenantBlocks = await partitions.blocks.partition(tenant);
         const completedMessage = { ...storedMessage, encodedData };
         const reEncodedBlock = await block.encode({ value: completedMessage, codec: cbor, hasher: sha256 });
         const blockOperation = tenantBlocks.createOperation({ type: 'put', key: messageCid, value: reEncodedBlock.bytes });
-        operations.push(blockOperation as unknown as LevelWrapperBatchOperation<string>);
+        blockOperations = [blockOperation as unknown as LevelWrapperBatchOperation<string>];
       }
 
-      operations.push(...await index.createDeleteOperations(tenant, messageCid));
-      operations.push(...await index.createPutOperations(tenant, messageCid, indexes));
-      operations.push(tenantLog.createOperation({ type: 'put', key: positionKey, value: JSON.stringify(updatedEntry) }));
-
       const tenantRedeliveries = await partitions.redeliveries.partition(tenant);
-      operations.push(tenantRedeliveries.createOperation({
-        type  : 'put',
-        key   : Replication.encodePositionKey(redeliverSeq),
-        value : JSON.stringify({ seq: entry.seq, messageCid }),
-      }));
-
-      operations.push(partitions.heads.createOperation({ type: 'put', key: tenant, value: redeliverSeq.toString() }));
+      const operations: LevelWrapperBatchOperation<string>[] = [
+        ...blockOperations,
+        ...await index.createDeleteOperations(tenant, messageCid),
+        ...await index.createPutOperations(tenant, messageCid, indexes),
+        tenantLog.createOperation({ type: 'put', key: positionKey, value: JSON.stringify(updatedEntry) }),
+        tenantRedeliveries.createOperation({
+          type  : 'put',
+          key   : Replication.encodePositionKey(redeliverSeq),
+          value : JSON.stringify({ seq: entry.seq, messageCid }),
+        }),
+        partitions.heads.createOperation({ type: 'put', key: tenant, value: redeliverSeq.toString() }),
+      ];
 
       await partitions.root.batch(operations);
 
@@ -637,24 +636,25 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
       const entry = JSON.parse(serializedEntry) as LogEntryValue;
 
-      const operations: LevelWrapperBatchOperation<string>[] = [];
-
       const tenantBlocks = await partitions.blocks.partition(tenant);
       const blockOperation = tenantBlocks.createOperation({ type: 'del', key: messageCid });
-      operations.push(blockOperation as unknown as LevelWrapperBatchOperation<string>);
-
-      operations.push(...await index.createDeleteOperations(tenant, messageCid));
-      operations.push(tenantLog.createOperation({ type: 'del', key: positionKey }));
-      operations.push(tenantCidToSeq.createOperation({ type: 'del', key: messageCid }));
 
       // Removing the row removes both delivery appearances — the stamp lives and dies with it.
+      let redeliveryOperations: LevelWrapperBatchOperation<string>[] = [];
       if (entry.redeliverSeq !== undefined) {
         const tenantRedeliveries = await partitions.redeliveries.partition(tenant);
-        operations.push(tenantRedeliveries.createOperation({ type: 'del', key: Replication.encodePositionKey(BigInt(entry.redeliverSeq)) }));
+        redeliveryOperations = [tenantRedeliveries.createOperation({ type: 'del', key: Replication.encodePositionKey(BigInt(entry.redeliverSeq)) })];
       }
 
       // XOR is self-inverse: folding the persisted scopes again removes the row's contribution.
-      operations.push(...await this.createFingerprintFoldOperations(partitions, tenant, messageCid, entry.fingerprintScopes));
+      const operations: LevelWrapperBatchOperation<string>[] = [
+        blockOperation as unknown as LevelWrapperBatchOperation<string>,
+        ...await index.createDeleteOperations(tenant, messageCid),
+        tenantLog.createOperation({ type: 'del', key: positionKey }),
+        tenantCidToSeq.createOperation({ type: 'del', key: messageCid }),
+        ...redeliveryOperations,
+        ...await this.createFingerprintFoldOperations(partitions, tenant, messageCid, entry.fingerprintScopes),
+      ];
 
       await partitions.root.batch(operations);
     });
@@ -778,13 +778,13 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
     let headMessageCid: string | undefined;
     const headLogEntry = await tenantLog.get(headKey);
-    if (headLogEntry !== undefined) {
-      headMessageCid = (JSON.parse(headLogEntry) as LogEntryValue).messageCid;
-    } else {
+    if (headLogEntry === undefined) {
       const headRedelivery = await tenantRedeliveries.get(headKey);
       if (headRedelivery !== undefined) {
         headMessageCid = (JSON.parse(headRedelivery) as { seq: string, messageCid: string }).messageCid;
       }
+    } else {
+      headMessageCid = (JSON.parse(headLogEntry) as LogEntryValue).messageCid;
     }
 
     const latest = await this.buildToken(tenant, head, headMessageCid);
@@ -891,23 +891,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
   private async validateCursor(partitions: StorePartitions, tenant: string, cursor: ProgressToken, head: bigint): Promise<void> {
     const expectedStreamId = await Replication.deriveStreamId(tenant);
 
-    let reason: ProgressGapReason | undefined;
-    if (cursor.streamId !== expectedStreamId) {
-      reason = 'stream_mismatch';
-    } else if (cursor.epoch !== await this.getEpoch()) {
-      reason = 'epoch_mismatch';
-    } else {
-      const cursorPosition = BigInt(cursor.position);
-      if (cursorPosition > head) {
-        reason = 'token_too_new';
-      } else if (cursor.messageCid !== undefined) {
-        const positionMessageCid = await this.getMessageCidAtPosition(partitions, tenant, cursorPosition);
-        if (positionMessageCid !== undefined && positionMessageCid !== cursor.messageCid) {
-          reason = 'message_mismatch';
-        }
-      }
-    }
-
+    const reason = await this.validateCursorPosition(partitions, tenant, cursor, head, expectedStreamId);
     if (reason === undefined) {
       return;
     }
@@ -926,6 +910,38 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     );
     (error as any).gapInfo = gapInfo;
     throw error;
+  }
+
+  private async validateCursorPosition(
+    partitions: StorePartitions,
+    tenant: string,
+    cursor: ProgressToken,
+    head: bigint,
+    expectedStreamId: string,
+  ): Promise<ProgressGapReason | undefined> {
+    if (cursor.streamId !== expectedStreamId) {
+      return 'stream_mismatch';
+    }
+
+    if (cursor.epoch !== await this.getEpoch()) {
+      return 'epoch_mismatch';
+    }
+
+    const cursorPosition = BigInt(cursor.position);
+    if (cursorPosition > head) {
+      return 'token_too_new';
+    }
+
+    if (cursor.messageCid === undefined) {
+      return undefined;
+    }
+
+    const positionMessageCid = await this.getMessageCidAtPosition(partitions, tenant, cursorPosition);
+    if (positionMessageCid !== undefined && positionMessageCid !== cursor.messageCid) {
+      return 'message_mismatch';
+    }
+
+    return undefined;
   }
 
   private async getMessageCidAtPosition(partitions: StorePartitions, tenant: string, position: bigint): Promise<string | undefined> {
@@ -1028,21 +1044,21 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
         } else if (redeliveryNext.done) {
           useLogStream = true;
         } else {
-          const logPosition = Replication.decodePositionKey(logNext.value[0]);
-          const redeliveryPosition = Replication.decodePositionKey(redeliveryNext.value[0]);
+          const logPosition = BigInt(logNext.value[0]);
+          const redeliveryPosition = BigInt(redeliveryNext.value[0]);
           useLogStream = logPosition < redeliveryPosition;
         }
 
         if (useLogStream) {
           const [positionKey, serializedEntry] = logNext.value!;
-          yield { position: Replication.decodePositionKey(positionKey), entry: JSON.parse(serializedEntry) as LogEntryValue };
+          yield { position: BigInt(positionKey), entry: JSON.parse(serializedEntry) as LogEntryValue };
           logNext = await logIterator.next();
         } else {
           const [positionKey, serializedStamp] = redeliveryNext.value!;
           const stamp = JSON.parse(serializedStamp) as { seq: string, messageCid: string };
           const serializedEntry = await tenantLog.get(Replication.encodePositionKey(BigInt(stamp.seq)));
           const entry = serializedEntry === undefined ? undefined : JSON.parse(serializedEntry) as LogEntryValue;
-          yield { position: Replication.decodePositionKey(positionKey), entry };
+          yield { position: BigInt(positionKey), entry };
           redeliveryNext = await redeliveryIterator.next();
         }
       }

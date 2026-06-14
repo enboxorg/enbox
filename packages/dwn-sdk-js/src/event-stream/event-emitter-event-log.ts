@@ -281,13 +281,12 @@ export class EventEmitterEventLog implements EventLog {
       if (results.length >= maxResults) { break; }
     }
 
-    const highWaterCursor = lastScannedSeq === undefined
-      ? cursor
-      : await this.buildToken(
-        tenant,
-        lastScannedSeq,
-        lastDeliveredSeq === lastScannedSeq ? lastDeliveredMessageCid : undefined
-      );
+    let highWaterCursor = cursor;
+    if (lastScannedSeq !== undefined) {
+      const cursorMessageCid = lastDeliveredSeq === lastScannedSeq ? lastDeliveredMessageCid : undefined;
+      highWaterCursor = await this.buildToken(tenant, lastScannedSeq, cursorMessageCid);
+    }
+
     return { events: results, cursor: highWaterCursor, drained: lastScannedSeq === undefined || lastScannedSeq === headSeq };
   }
 
