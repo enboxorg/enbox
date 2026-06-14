@@ -297,6 +297,18 @@ describe('NatsEventLog', () => {
       await expect(eventLog.read(tenant, { cursor: mismatchedCursor })).rejects.toThrow('message_mismatch');
     });
 
+    natsIt('should resume from a cursor whose exact event was trimmed', async () => {
+      const tenant = 'did:test:cursor-trimmed-position';
+      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      const c2 = await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
+      await eventLog.trim(tenant, Number(c2!.position));
+
+      const result = await eventLog.read(tenant, { cursor: c1 });
+
+      expect(result.events.map((entry) => entry.seq)).toEqual([c2!.position]);
+      expect(result.drained).toBe(true);
+    });
+
     natsIt('should respect the limit parameter', async () => {
       const tenant = 'did:test:limit';
       await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());

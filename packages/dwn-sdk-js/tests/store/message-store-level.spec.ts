@@ -221,6 +221,22 @@ describe('MessageStoreLevel Test Suite', () => {
       await expect(messageStore.logRead(alice.did, { cursor }))
         .rejects.toThrow('epoch_mismatch');
     });
+
+    it('should resume from a cursor whose exact log row was deleted', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const first = await generateStoredMessage();
+      const second = await generateStoredMessage();
+
+      const firstPut = await messageStore.put(alice.did, first.message, first.indexes);
+      await messageStore.put(alice.did, second.message, second.indexes);
+      await messageStore.delete(alice.did, first.messageCid);
+
+      const result = await messageStore.logRead(alice.did, { cursor: firstPut.position });
+
+      expect(result.events.map((entry) => entry.seq)).toEqual(['2']);
+      expect(result.events.map((entry) => entry.messageCid)).toEqual([second.messageCid]);
+      expect(result.drained).toBe(true);
+    });
   });
 
   describe('updateIndexes', () => {

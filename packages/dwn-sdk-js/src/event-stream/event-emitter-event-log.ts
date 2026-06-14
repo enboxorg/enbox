@@ -148,13 +148,15 @@ export class EventEmitterEventLog implements EventLog {
         if (cursorSeq < firstSeq - 1) {
           // Cursor position has been evicted — events between cursor and firstSeq are lost.
           reason = 'token_too_old';
-        } else if (cursor.messageCid !== undefined && log.get(cursorSeq)?.messageCid !== cursor.messageCid) {
+        } else if (
+          cursor.messageCid !== undefined &&
+          log.has(cursorSeq) &&
+          log.get(cursorSeq)?.messageCid !== cursor.messageCid
+        ) {
           reason = 'message_mismatch';
         } else {
           return; // Cursor is valid.
         }
-      } else if (cursor.messageCid !== undefined) {
-        reason = 'message_mismatch';
       } else {
         return; // No events for tenant — cursor is vacuously valid (will get empty catch-up + EOSE).
       }

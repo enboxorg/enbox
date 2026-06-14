@@ -902,7 +902,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
         reason = 'token_too_new';
       } else if (cursor.messageCid !== undefined) {
         const positionMessageCid = await this.getMessageCidAtPosition(partitions, tenant, cursorPosition);
-        if (positionMessageCid !== cursor.messageCid) {
+        if (positionMessageCid !== undefined && positionMessageCid !== cursor.messageCid) {
           reason = 'message_mismatch';
         }
       }

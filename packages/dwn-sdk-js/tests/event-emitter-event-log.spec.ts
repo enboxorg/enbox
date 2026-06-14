@@ -496,6 +496,21 @@ describe('EventEmitterEventLog', () => {
         .rejects.toThrow('message_mismatch');
     });
 
+    it('should resume from a cursor whose exact event was trimmed', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+
+      const firstToken = await eventLog.emit(tenant, event, {}, cid(1));
+      const secondToken = await eventLog.emit(tenant, event, {}, cid(2));
+      await eventLog.trim(tenant, Number(secondToken!.position));
+
+      const result = await eventLog.read(tenant, { cursor: firstToken! });
+
+      expect(result.events.map((entry) => entry.seq)).toEqual([secondToken!.position]);
+      expect(result.events.map((entry) => entry.messageCid)).toEqual([cid(2)]);
+      expect(result.drained).toBe(true);
+    });
+
     it('should throw EventLogProgressGap with reason token_too_old when position is evicted', async () => {
       const smallLog = new EventEmitterEventLog({ maxEventsPerTenant: 2 });
       await smallLog.open();

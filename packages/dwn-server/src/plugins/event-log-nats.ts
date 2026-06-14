@@ -277,8 +277,6 @@ export default class NatsEventLog implements EventLog {
         const cursorSeq = BigInt(cursor.position);
         if (cursorSeq > 0n) {
           reason = 'token_too_new';
-        } else if (cursor.messageCid !== undefined) {
-          reason = 'message_mismatch';
         } else {
           return; // No events — vacuously valid.
         }
@@ -290,8 +288,13 @@ export default class NatsEventLog implements EventLog {
           reason = 'token_too_old';
         } else if (cursorSeq > latestSeq) {
           reason = 'token_too_new';
-        } else if (cursor.messageCid !== undefined && !await this.#cursorMessageCidMatches(tenant, cursorSeq, cursor.messageCid)) {
-          reason = 'message_mismatch';
+        } else if (cursor.messageCid !== undefined) {
+          const positionMessage = await this.#cursorMessageAtPosition(tenant, cursorSeq);
+          if (positionMessage.found && positionMessage.messageCid !== cursor.messageCid) {
+            reason = 'message_mismatch';
+          } else {
+            return; // Valid.
+          }
         } else {
           return; // Valid.
         }
@@ -624,18 +627,18 @@ export default class NatsEventLog implements EventLog {
     return message ?? undefined;
   }
 
-  async #cursorMessageCidMatches(tenant: string, position: bigint, messageCid: string): Promise<boolean> {
+  async #cursorMessageAtPosition(tenant: string, position: bigint): Promise<{ found: boolean; messageCid?: string }> {
     if (position <= 0n) {
-      return false;
+      return { found: false };
     }
 
     const subject = this.#tenantSubject(tenant);
     const message = await this.#getPerSubjectMessage({ seq: Number(position), next_by_subj: subject });
     if (message === undefined || BigInt(message.seq) !== position) {
-      return false;
+      return { found: false };
     }
 
-    return decodePayload(message.data)?.messageCid === messageCid;
+    return { found: true, messageCid: decodePayload(message.data)?.messageCid };
   }
 
   async #ensureStream(): Promise<void> {
