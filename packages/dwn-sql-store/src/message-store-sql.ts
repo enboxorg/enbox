@@ -64,7 +64,8 @@ const MESSAGE_STORE_INDEX_COLUMNS = [
 
 type MissingMessageStoreIndexColumn = Exclude<MessageStoreIndexColumn, typeof MESSAGE_STORE_INDEX_COLUMNS[number]>;
 type ExtraMessageStoreIndexColumn = Exclude<typeof MESSAGE_STORE_INDEX_COLUMNS[number], MessageStoreIndexColumn>;
-type _MessageStoreIndexColumnCoverage = AssertNever<MissingMessageStoreIndexColumn | ExtraMessageStoreIndexColumn>;
+type _MissingMessageStoreIndexColumnCoverage = AssertNever<MissingMessageStoreIndexColumn>;
+type _ExtraMessageStoreIndexColumnCoverage = AssertNever<ExtraMessageStoreIndexColumn>;
 
 const NULLED_INDEX_COLUMNS = Object.fromEntries(
   MESSAGE_STORE_INDEX_COLUMNS.map((column) => [column, null])
