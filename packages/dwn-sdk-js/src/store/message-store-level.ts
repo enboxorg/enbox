@@ -157,7 +157,7 @@ type StorePartitions = {
 export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
   config: MessageStoreLevelConfig;
 
-  private wakePublisher?: WakePublisher;
+  private readonly wakePublisher?: WakePublisher;
   private partitionsPromise?: Promise<StorePartitions>;
   private epochPromise?: Promise<string>;
   private readonly writeLocks: Map<string, Promise<void>> = new Map();
