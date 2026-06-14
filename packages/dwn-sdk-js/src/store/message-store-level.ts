@@ -718,32 +718,14 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     for await (const { position, entry } of this.mergePositionStreams(logIterator, redeliveryIterator, tenantLog)) {
       lastScannedPosition = position;
 
-      if (entry === undefined) {
-        // A redelivery stamp whose row vanished between the head capture and this lookup —
-        // deletion removes both appearances, so there is nothing to deliver at this position.
+      const event = await this.readEventFromLogEntry(tenantBlocks, entry, filters);
+      if (event === undefined) {
         continue;
       }
 
-      if (filters !== undefined && filters.length > 0 && !FilterUtility.matchAnyFilter(entry.indexes, filters)) {
-        continue;
-      }
-
-      const bytes = await tenantBlocks.get(entry.messageCid);
-      if (bytes === undefined) {
-        // The row was deleted after the head capture; skip — its positions are gone with it.
-        continue;
-      }
-      const decodedBlock = await block.decode({ bytes, codec: cbor, hasher: sha256 });
-      const message = decodedBlock.value as GenericMessage;
-
-      events.push({
-        seq        : entry.seq, // a redelivered entry carries the row's original seq
-        event      : { message },
-        indexes    : entry.indexes,
-        messageCid : entry.messageCid,
-      });
+      events.push(event);
       lastDeliveredPosition = position;
-      lastDeliveredMessageCid = entry.messageCid;
+      lastDeliveredMessageCid = event.messageCid;
 
       if (events.length >= maxResults) {
         drained = position >= head;
@@ -758,6 +740,37 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     const resultCursor = await this.buildToken(tenant, cursorPosition, cursorMessageCid);
 
     return { events, cursor: resultCursor, drained };
+  }
+
+  private async readEventFromLogEntry(
+    tenantBlocks: LevelWrapper<Uint8Array>,
+    entry: LogEntryValue | undefined,
+    filters: Filter[] | undefined,
+  ): Promise<EventLogEntry | undefined> {
+    if (entry === undefined) {
+      // A redelivery stamp whose row vanished between the head capture and this lookup —
+      // deletion removes both appearances, so there is nothing to deliver at this position.
+      return undefined;
+    }
+
+    if (filters !== undefined && filters.length > 0 && !FilterUtility.matchAnyFilter(entry.indexes, filters)) {
+      return undefined;
+    }
+
+    const bytes = await tenantBlocks.get(entry.messageCid);
+    if (bytes === undefined) {
+      // The row was deleted after the head capture; skip — its positions are gone with it.
+      return undefined;
+    }
+
+    const decodedBlock = await block.decode({ bytes, codec: cbor, hasher: sha256 });
+    const message = decodedBlock.value as GenericMessage;
+    return {
+      seq        : entry.seq, // a redelivered entry carries the row's original seq
+      event      : { message },
+      indexes    : entry.indexes,
+      messageCid : entry.messageCid,
+    };
   }
 
   async logBounds(tenant: string): Promise<{ oldest: ProgressToken; latest: ProgressToken } | undefined> {
