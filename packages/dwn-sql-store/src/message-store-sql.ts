@@ -10,7 +10,7 @@ import type {
   MessageStorePutResult,
   Pagination,
   PaginationCursor,
-  WakePublisher } from '@enbox/dwn-sdk-js';
+} from '@enbox/dwn-sdk-js';
 import type { Transaction, UpdateObject } from 'kysely';
 
 import * as block from 'multiformats/block';
@@ -34,38 +34,34 @@ import { Kysely, sql } from 'kysely';
 
 type MessageStoreSystemColumn = 'id' | 'tenant' | 'messageCid' | 'encodedMessageBytes' | 'encodedData';
 type MessageStoreIndexColumn = Exclude<keyof DwnDatabaseType['messageStoreMessages'], MessageStoreSystemColumn>;
-type AssertNever<T extends never> = T;
 
-const MESSAGE_STORE_INDEX_COLUMNS = [
-  'interface',
-  'method',
-  'schema',
-  'dataCid',
-  'dataSize',
-  'dateCreated',
-  'messageTimestamp',
-  'dataFormat',
-  'isLatestBaseState',
-  'published',
-  'author',
-  'recordId',
-  'entryId',
-  'datePublished',
-  'protocol',
-  'attester',
-  'protocolPath',
-  'recipient',
-  'contextId',
-  'parentId',
-  'permissionGrantId',
-  'prune',
-  'squash',
-] as const satisfies readonly MessageStoreIndexColumn[];
+const MESSAGE_STORE_INDEX_COLUMN_COVERAGE = {
+  interface         : true,
+  method            : true,
+  schema            : true,
+  dataCid           : true,
+  dataSize          : true,
+  dateCreated       : true,
+  messageTimestamp  : true,
+  dataFormat        : true,
+  isLatestBaseState : true,
+  published         : true,
+  author            : true,
+  recordId          : true,
+  entryId           : true,
+  datePublished     : true,
+  protocol          : true,
+  attester          : true,
+  protocolPath      : true,
+  recipient         : true,
+  contextId         : true,
+  parentId          : true,
+  permissionGrantId : true,
+  prune             : true,
+  squash            : true,
+} as const satisfies Record<MessageStoreIndexColumn, true>;
 
-type MissingMessageStoreIndexColumn = Exclude<MessageStoreIndexColumn, typeof MESSAGE_STORE_INDEX_COLUMNS[number]>;
-type ExtraMessageStoreIndexColumn = Exclude<typeof MESSAGE_STORE_INDEX_COLUMNS[number], MessageStoreIndexColumn>;
-type _MissingMessageStoreIndexColumnCoverage = AssertNever<MissingMessageStoreIndexColumn>;
-type _ExtraMessageStoreIndexColumnCoverage = AssertNever<ExtraMessageStoreIndexColumn>;
+const MESSAGE_STORE_INDEX_COLUMNS = Object.keys(MESSAGE_STORE_INDEX_COLUMN_COVERAGE) as MessageStoreIndexColumn[];
 
 const NULLED_INDEX_COLUMNS = Object.fromEntries(
   MESSAGE_STORE_INDEX_COLUMNS.map((column) => [column, null])
@@ -76,25 +72,9 @@ export class MessageStoreSql implements MessageStore {
   readonly #tags: TagTables;
   #db: Kysely<DwnDatabaseType> | null = null;
 
-  /**
-   * Optional bus for store-owned wake publication. Accepted ahead of the SQL replication log:
-   * wakes carry `{tenant, seq}`, so publication begins once the SQL log (seq column and tenant
-   * counters) lands and this store can construct them.
-   */
-  protected wakePublisher?: WakePublisher;
-
-  constructor(dialect: Dialect, wakePublisher?: WakePublisher) {
+  constructor(dialect: Dialect) {
     this.#dialect = dialect;
     this.#tags = new TagTables(dialect);
-    this.wakePublisher = wakePublisher;
-  }
-
-  /**
-   * Injects the wake publisher after construction — supports the dwn-server plugin contract,
-   * which requires no-arg store constructors.
-   */
-  public setWakePublisher(wakePublisher: WakePublisher): void {
-    this.wakePublisher = wakePublisher;
   }
 
   async open(): Promise<void> {
@@ -333,7 +313,7 @@ export class MessageStoreSql implements MessageStore {
     await executeWithTransaction(db, async (tx) => {
       const existingRow = await tx
         .selectFrom('messageStoreMessages')
-        .select(['id', 'encodedData'])
+        .select(['id', 'encodedData', 'isLatestBaseState'])
         .where('tenant', '=', tenant)
         .where('messageCid', '=', messageCid)
         .executeTakeFirst();
@@ -342,10 +322,10 @@ export class MessageStoreSql implements MessageStore {
         throw new DwnError(notFoundErrorCode, `no message found for tenant ${tenant} with CID ${messageCid}`);
       }
 
-      if (rejectAlreadyStamped === true && existingRow.encodedData !== null) {
+      if (rejectAlreadyStamped === true && (existingRow.encodedData !== null || Number(existingRow.isLatestBaseState) === 1)) {
         throw new DwnError(
           DwnErrorCode.MessageStoreCompleteDataAlreadyStamped,
-          `message ${messageCid} already has inline data; the dataless-to-data transition cannot repeat`
+          `message ${messageCid} is already completed; the dataless-to-data transition cannot repeat`
         );
       }
 

@@ -191,6 +191,30 @@ export function testMessageStore(): void {
           .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataAlreadyStamped);
       });
 
+      it('should complete data-store-backed rows once and reject repeated completion', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const oldSchema = 'https://schema.org/DatalessLarge';
+        const newSchema = 'https://schema.org/CompletedLarge';
+        const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema: oldSchema });
+        const messageCid = await Message.getCid(message);
+        const latestIndexes = await recordsWrite.constructIndexes(true);
+        const replacementIndexes: KeyValues = {
+          ...latestIndexes,
+          schema: newSchema,
+        };
+
+        await messageStore.put(alice.did, message, await recordsWrite.constructIndexes(false));
+        await messageStore.completeData(alice.did, messageCid, replacementIndexes);
+
+        const storedMessage = await messageStore.get(alice.did, messageCid) as RecordsWriteMessage & { encodedData?: string };
+        expect(storedMessage.encodedData).toBeUndefined();
+        expect((await messageStore.query(alice.did, [{ schema: oldSchema }])).messages.length).toBe(0);
+        expect((await messageStore.query(alice.did, [{ schema: newSchema }])).messages.length).toBe(1);
+
+        await expect(messageStore.completeData(alice.did, messageCid, replacementIndexes))
+          .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataAlreadyStamped);
+      });
+
       it('should index properties with characters beyond just letters and digits', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 

@@ -14,7 +14,13 @@ export type ReplicationApplyOptions = {
 };
 
 export type ReplicationApplyResult =
-  | { kind: 'Applied'; ancestryOnly?: true; position?: ProgressToken }
+  | {
+      kind: 'Applied';
+      /** True when the local store retained dependency ancestry but did not advance latest state. */
+      ancestryOnly?: true;
+      /** Local admission position, when the receiving store has a durable replication log. */
+      position?: ProgressToken;
+    }
   | { kind: 'Duplicate' }
   | { kind: 'Superseded' }
   | { kind: 'Incomplete'; missing: DependencyRef[] }

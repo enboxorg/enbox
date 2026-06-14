@@ -181,14 +181,6 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     this.wakePublisher = this.config.wakePublisher;
   }
 
-  /**
-   * Injects the wake publisher after construction — supports wiring contexts that require
-   * no-arg store constructors (e.g. the dwn-server plugin contract).
-   */
-  public setWakePublisher(wakePublisher: WakePublisher): void {
-    this.wakePublisher = wakePublisher;
-  }
-
   async open(): Promise<void> {
     const partitions = await this.partitions();
     await partitions.root.open();

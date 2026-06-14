@@ -116,6 +116,24 @@ describe('MessageStoreLevel Test Suite', () => {
     return { message, messageCid, indexes };
   }
 
+  async function withIsolatedMessageStore<T>(
+    locationPrefix: string,
+    test: (store: MessageStoreLevel) => Promise<T>,
+  ): Promise<T> {
+    const isolatedStore = new MessageStoreLevel({
+      location: `${locationPrefix}-${TestDataGenerator.randomString(10)}`,
+    });
+
+    await isolatedStore.open();
+    try {
+      await isolatedStore.clear();
+      return await test(isolatedStore);
+    } finally {
+      await isolatedStore.clear();
+      await isolatedStore.close();
+    }
+  }
+
   describe('replication log', () => {
     it('should append puts in commit order, return positions, and publish wakes', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -137,6 +155,27 @@ describe('MessageStoreLevel Test Suite', () => {
       expect(events.map((entry) => entry.seq)).toEqual(['1', '2', '3']);
       expect(events.map((entry) => entry.messageCid)).toEqual(storedCids);
       expect(cursor!.position).toBe('3');
+      expect(drained).toBe(true);
+    });
+
+    it('should assign gap-free monotonic positions for concurrent puts', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const writes = await Promise.all(
+        Array.from({ length: 12 }, async () => generateStoredMessage())
+      );
+
+      const results = await Promise.all(
+        writes.map(async ({ message, indexes }) => messageStore.put(alice.did, message, indexes))
+      );
+      const positions = results
+        .map((result) => Number(result.position!.position))
+        .sort((a, b) => a - b);
+
+      expect(positions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+
+      const { events, cursor, drained } = await messageStore.logRead(alice.did);
+      expect(events).toHaveLength(12);
+      expect(cursor!.position).toBe('12');
       expect(drained).toBe(true);
     });
 
@@ -383,6 +422,23 @@ describe('MessageStoreLevel Test Suite', () => {
       await expect(messageStore.completeData(alice.did, messageCid, indexes))
         .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataMessageNotFound);
     });
+
+    it('should resume from a cursor whose redelivery position was deleted', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const stub = await generateStoredMessage();
+      const later = await generateStoredMessage();
+
+      await messageStore.put(alice.did, stub.message, { ...stub.indexes, isLatestBaseState: false });
+      const completion = await messageStore.completeData(alice.did, stub.messageCid, stub.indexes, 'aGVsbG8');
+      await messageStore.put(alice.did, later.message, later.indexes);
+      await messageStore.delete(alice.did, stub.messageCid);
+
+      const { events, cursor, drained } = await messageStore.logRead(alice.did, { cursor: completion.position });
+
+      expect(events.map((entry) => entry.messageCid)).toEqual([later.messageCid]);
+      expect(cursor!.position).toBe('3');
+      expect(drained).toBe(true);
+    });
   });
 
   describe('fingerprints', () => {
@@ -445,18 +501,79 @@ describe('MessageStoreLevel Test Suite', () => {
       expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)]))
         .toBe(xorHex(xorHex(configFingerprint, photoFingerprint), deleteFingerprint));
     });
+
+    it('should converge fingerprints across stores that learn the same messages in different orders', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const photosProtocol = 'https://example.com/photos-convergence';
+      const protocolDefinition = {
+        protocol  : photosProtocol,
+        published : false,
+        types     : { post: { schema: 'post', dataFormats: ['text/plain'] } },
+        structure : { post: {} },
+      };
+
+      await withIsolatedMessageStore('TEST-MESSAGESTORE-FINGERPRINT-PEER', async (peerStore) => {
+        const config = await TestDataGenerator.generateProtocolsConfigure({ protocolDefinition });
+        const configIndexes = ProtocolsConfigureHandler.constructIndexes(config.protocolsConfigure, true);
+        const photo = await generateStoredMessage({ protocol: photosProtocol });
+        const grant = await generateStoredMessage({ protocol: PermissionsProtocol.uri, tags: { protocol: photosProtocol } });
+
+        await messageStore.put(alice.did, config.message, configIndexes);
+        await messageStore.put(alice.did, photo.message, photo.indexes);
+        await messageStore.put(alice.did, grant.message, grant.indexes);
+
+        await peerStore.put(alice.did, grant.message, grant.indexes);
+        await peerStore.put(alice.did, config.message, configIndexes);
+        await peerStore.put(alice.did, photo.message, photo.indexes);
+
+        const scopes = [
+          Replication.globalDomain,
+          Replication.protocolDomain(photosProtocol),
+          Replication.protocolDomain(PermissionsProtocol.uri),
+          Replication.permissionDomain(photosProtocol),
+        ];
+
+        for (const scope of scopes) {
+          expect(await peerStore.fingerprint(alice.did, [scope]))
+            .toBe(await messageStore.fingerprint(alice.did, [scope]));
+        }
+      });
+    });
   });
 
-  describe('epoch', () => {
-    it('should persist across reopen and reset on clear', async () => {
+  describe('durability', () => {
+    it('should persist epoch, log positions, and fingerprints across reopen and reset on clear', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const protocol = 'https://example.com/reopen';
       const initialEpoch = await messageStore.epoch();
+      const first = await generateStoredMessage({ protocol });
+      const second = await generateStoredMessage();
+
+      await messageStore.put(alice.did, first.message, first.indexes);
+      await messageStore.put(alice.did, second.message, { ...second.indexes, isLatestBaseState: false });
+      await messageStore.completeData(alice.did, second.messageCid, second.indexes, 'aGVsbG8');
+
+      const boundsBefore = await messageStore.logBounds(alice.did);
+      const logBefore = await messageStore.logRead(alice.did);
+      const globalFingerprintBefore = await messageStore.fingerprint(alice.did, [Replication.globalDomain]);
+      const protocolFingerprintBefore = await messageStore.fingerprint(alice.did, [Replication.protocolDomain(protocol)]);
 
       await messageStore.close();
       await messageStore.open();
+
       expect(await messageStore.epoch()).toBe(initialEpoch);
+      expect(await messageStore.logBounds(alice.did)).toEqual(boundsBefore);
+      const logAfter = await messageStore.logRead(alice.did);
+      expect(logAfter.events.map((entry) => entry.messageCid))
+        .toEqual(logBefore.events.map((entry) => entry.messageCid));
+      expect(logAfter.cursor).toEqual(logBefore.cursor);
+      expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(globalFingerprintBefore);
+      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(protocol)])).toBe(protocolFingerprintBefore);
 
       await messageStore.clear();
       expect(await messageStore.epoch()).not.toBe(initialEpoch);
+      expect(await messageStore.logBounds(alice.did)).toBeUndefined();
+      expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(ZERO_FINGERPRINT);
     });
   });
 });
