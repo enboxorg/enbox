@@ -12,7 +12,14 @@ describe('replicationApplyResultFromReply', () => {
     expect(replicationApplyResultFromReply(message, { status: { code: 202 } }))
       .toEqual({ kind: 'Applied' });
     expect(replicationApplyResultFromReply(message, { status: { code: 204 } }))
-      .toEqual({ kind: 'Applied' });
+      .toEqual({ kind: 'Applied', ancestryOnly: true });
+    expect(replicationApplyResultFromReply(message, {
+      status   : { code: 202 },
+      position : { streamId: 's', epoch: 'e', position: '1', messageCid: 'c' },
+    })).toEqual({
+      kind     : 'Applied',
+      position : { streamId: 's', epoch: 'e', position: '1', messageCid: 'c' },
+    });
     expect(replicationApplyResultFromReply(message, { status: { code: 409 } }))
       .toEqual({ kind: 'Superseded' });
     expect(replicationApplyResultFromReply(message, {

@@ -215,6 +215,14 @@ export class LevelWrapper<V> {
     }) };
   }
 
+  /**
+   * Wraps the given operation as targeting this wrapper's own partition, so it
+   * can be executed in a batch on an ancestor database.
+   */
+  createOperation(operation: LevelWrapperBatchOperation<V>): LevelWrapperBatchOperation<V> {
+    return { ...operation, sublevel: this.db as any };
+  }
+
   private async compactUnderlyingStorage(options?: LevelWrapperOptions): Promise<void> {
     options?.signal?.throwIfAborted();
 

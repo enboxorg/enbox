@@ -1658,7 +1658,7 @@ export function testPermissions(): void {
           grantWrite.recordsWrite.message,
           { dataStream: DataStream.fromBytes(grantWrite.permissionGrantBytes) }
         );
-        expect(applyInitialResult).toEqual({ kind: 'Applied' });
+        expect(applyInitialResult).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
         // A replicated non-initial write to the same grant record is terminally invalid,
         // not a missing-dependency retry.

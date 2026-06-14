@@ -251,6 +251,11 @@ describe('NatsEventLog', () => {
       expect(result.cursor).toBeUndefined();
     });
 
+    natsIt('should return undefined replay bounds when no tenant events exist', async () => {
+      const bounds = await eventLog.getReplayBounds('did:test:empty-bounds');
+      expect(bounds).toBeUndefined();
+    });
+
     natsIt('should return all events for a tenant', async () => {
       const tenant = 'did:test:reader';
       await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
@@ -272,8 +277,36 @@ describe('NatsEventLog', () => {
       expect(result.events).toHaveLength(2);
       // Verify events are after c1.
       for (const entry of result.events) {
-        expect(entry.seq).toBeGreaterThan(Number(c1!.position));
+        expect(Number(entry.seq)).toBeGreaterThan(Number(c1!.position));
       }
+    });
+
+    natsIt('should reject a cursor whose position is beyond the tenant head', async () => {
+      const tenant = 'did:test:cursor-too-new';
+      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      const futureCursor = { ...c1!, position: String(Number(c1!.position) + 1) };
+
+      await expect(eventLog.read(tenant, { cursor: futureCursor })).rejects.toThrow('token_too_new');
+    });
+
+    natsIt('should reject a cursor whose message CID does not match its position', async () => {
+      const tenant = 'did:test:cursor-message-mismatch';
+      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      const mismatchedCursor = { ...c1!, messageCid: cid() };
+
+      await expect(eventLog.read(tenant, { cursor: mismatchedCursor })).rejects.toThrow('message_mismatch');
+    });
+
+    natsIt('should resume from a cursor whose exact event was trimmed', async () => {
+      const tenant = 'did:test:cursor-trimmed-position';
+      const c1 = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      const c2 = await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
+      await eventLog.trim(tenant, Number(c2!.position));
+
+      const result = await eventLog.read(tenant, { cursor: c1 });
+
+      expect(result.events.map((entry) => entry.seq)).toEqual([c2!.position]);
+      expect(result.drained).toBe(true);
     });
 
     natsIt('should respect the limit parameter', async () => {
@@ -286,6 +319,27 @@ describe('NatsEventLog', () => {
       expect(result.events).toHaveLength(2);
     });
 
+    natsIt('should not deliver events or advance the cursor when limit is zero', async () => {
+      const tenant = 'did:test:limit-zero';
+      const firstCursor = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
+      const secondCursor = await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
+
+      const withoutCursor = await eventLog.read(tenant, { limit: 0 });
+      expect(withoutCursor.events).toHaveLength(0);
+      expect(withoutCursor.cursor).toBeUndefined();
+      expect(withoutCursor.drained).toBe(false);
+
+      const withCursor = await eventLog.read(tenant, { cursor: firstCursor, limit: 0 });
+      expect(withCursor.events).toHaveLength(0);
+      expect(withCursor.cursor).toBe(firstCursor);
+      expect(withCursor.drained).toBe(false);
+
+      const atHead = await eventLog.read(tenant, { cursor: secondCursor, limit: 0 });
+      expect(atHead.events).toHaveLength(0);
+      expect(atHead.cursor).toBe(secondCursor);
+      expect(atHead.drained).toBe(true);
+    });
+
     natsIt('should filter events (OR semantics across filters)', async () => {
       const tenant = 'did:test:filter';
       await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }), cid());
@@ -296,6 +350,22 @@ describe('NatsEventLog', () => {
         filters: [{ method: 'Delete' }, { method: 'Query' }],
       });
       expect(result.events).toHaveLength(2);
+    });
+
+    natsIt('should advance to a high-water cursor when filters skip tail events', async () => {
+      const tenant = 'did:test:filter-high-water';
+      await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes({ method: 'Write' }), cid());
+      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes({ method: 'Delete' }), cid());
+      const tailCursor = await eventLog.emit(tenant, createEvent({ id: '3' }), createIndexes({ method: 'Query' }), cid());
+
+      const result = await eventLog.read(tenant, {
+        filters: [{ method: 'Write' }],
+      });
+
+      expect(result.events).toHaveLength(1);
+      expect(result.cursor!.position).toBe(tailCursor!.position);
+      expect(result.cursor!.messageCid).toBeUndefined();
+      expect(result.drained).toBe(true);
     });
 
     natsIt('should return input cursor when no new events exist', async () => {
@@ -448,7 +518,7 @@ describe('NatsEventLog', () => {
       const result = await eventLog.read(tenant);
       // After purging seq < c2, only events at seq >= c2 remain.
       for (const entry of result.events) {
-        expect(entry.seq).toBeGreaterThanOrEqual(Number(c2!.position));
+        expect(Number(entry.seq)).toBeGreaterThanOrEqual(Number(c2!.position));
       }
     });
 
@@ -481,6 +551,38 @@ describe('NatsEventLog', () => {
 
       expect(aliceResult.events).toHaveLength(2);
       expect(bobResult.events).toHaveLength(1);
+    });
+
+    natsIt('should compute replay bounds from the tenant subject, not the whole stream', async () => {
+      const alice = 'did:test:alice-bounds';
+      const bob = 'did:test:bob-bounds';
+      const aliceFirstCid = cid();
+      const aliceSecondCid = cid();
+
+      const aliceFirst = await eventLog.emit(alice, createEvent({ id: 'a1' }), createIndexes(), aliceFirstCid);
+      await eventLog.emit(bob, createEvent({ id: 'b1' }), createIndexes(), cid());
+      const aliceSecond = await eventLog.emit(alice, createEvent({ id: 'a2' }), createIndexes(), aliceSecondCid);
+      await eventLog.emit(bob, createEvent({ id: 'b2' }), createIndexes(), cid());
+
+      const bounds = await eventLog.getReplayBounds(alice);
+
+      expect(bounds!.oldest.position).toBe(aliceFirst!.position);
+      expect(bounds!.oldest.messageCid).toBe(aliceFirstCid);
+      expect(bounds!.latest.position).toBe(aliceSecond!.position);
+      expect(bounds!.latest.messageCid).toBe(aliceSecondCid);
+    });
+
+    natsIt('should report zero-limit reads as drained when only another tenant advanced the stream', async () => {
+      const alice = 'did:test:alice-limit-zero-iso';
+      const bob = 'did:test:bob-limit-zero-iso';
+      const aliceCursor = await eventLog.emit(alice, createEvent({ id: 'a1' }), createIndexes(), cid());
+      await eventLog.emit(bob, createEvent({ id: 'b1' }), createIndexes(), cid());
+
+      const result = await eventLog.read(alice, { cursor: aliceCursor, limit: 0 });
+
+      expect(result.events).toHaveLength(0);
+      expect(result.cursor).toBe(aliceCursor);
+      expect(result.drained).toBe(true);
     });
 
     natsIt('should not deliver events from one tenant to another tenant subscription', async () => {

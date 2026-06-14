@@ -23,15 +23,18 @@ export type ProgressToken = {
   epoch : string;
   /** Monotonic decimal string within `(streamId, epoch)`. Compared numerically. */
   position : string;
-  /** The CID of the message associated with this event. */
-  messageCid : string;
+  /**
+   * The CID of the message associated with this event. Omitted for high-water
+   * cursors that do not point at a delivered in-scope message.
+   */
+  messageCid? : string;
 };
 
 /**
  * Reason code for a {@link ProgressGapInfo} — explains why the cursor
  * cannot be resumed.
  */
-export type ProgressGapReason = 'token_too_old' | 'epoch_mismatch' | 'stream_mismatch';
+export type ProgressGapReason = 'token_too_old' | 'token_too_new' | 'epoch_mismatch' | 'stream_mismatch' | 'message_mismatch';
 
 /**
  * Metadata attached to a `DwnError(DwnErrorCode.EventLogProgressGap, ...)`
@@ -168,8 +171,8 @@ export type EventLogSubscribeOptions = {
  * A single entry returned by {@link EventLog.read}.
  */
 export type EventLogEntry = {
-  /** Monotonic sequence number scoped to (instance, tenant). */
-  seq: number;
+  /** Monotonic sequence number scoped to (instance, tenant), as a decimal string. */
+  seq: string;
 
   /** The event payload. */
   event: MessageEvent;
@@ -207,15 +210,11 @@ export type EventLogReadResult = {
   /** Events matching the read request, ordered by ascending seq. */
   events : EventLogEntry[];
 
-  /**
-   * Progress token for resuming subsequent reads or subscriptions.
-   *
-   * - When events are returned: token of the last event.
-   * - When no events are returned but a cursor was provided: the input cursor
-   *   (meaning "you are caught up, nothing new since this point").
-   * - When no events exist and no cursor was provided: `undefined`.
-   */
+  /** High-water progress token for resuming subsequent reads or subscriptions. */
   cursor? : ProgressToken;
+
+  /** True when the scan reached the captured tenant head. */
+  drained : boolean;
 };
 
 /**
@@ -277,4 +276,20 @@ export interface EventLog {
 
   open(): Promise<void>;
   close(): Promise<void>;
+}
+
+export type Wake = {
+  tenant : string;
+  seq : string;
+};
+
+export interface WakePublisher {
+  publish(wake: Wake): void;
+}
+
+export interface ReplicationFeedReader {
+  logRead(tenant: string, options?: EventLogReadOptions): Promise<EventLogReadResult>;
+  logBounds(tenant: string): Promise<{ oldest: ProgressToken; latest: ProgressToken } | undefined>;
+  fingerprint(tenant: string, scopes: string[]): Promise<string>;
+  epoch(): Promise<string>;
 }

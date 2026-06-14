@@ -1,9 +1,10 @@
-import type { MessageStore } from '../../src/index.js';
 import type { PaginationCursor } from '../../src/types/query-types.js';
 import type { RecordsWriteMessage } from '../../src/types/records-types.js';
+import type { KeyValues, MessageStore } from '../../src/index.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
+import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { lexicographicalCompare } from '../../src/utils/string.js';
 import { Message } from '../../src/core/message.js';
 import { SortDirection } from '../../src/types/query-types.js';
@@ -67,6 +68,22 @@ export function testMessageStore(): void {
         expect(resultCid).toBe(expectedCid);
       });
 
+      it('should not mutate the caller message when storing inline encodedData', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const { message } = await TestDataGenerator.generateRecordsWrite();
+        const messageWithInlineData = { ...message, encodedData: 'c29tZSBkYXRh' } as RecordsWriteMessage & { encodedData: string };
+        const { messageTimestamp } = message.descriptor;
+
+        await messageStore.put(alice.did, messageWithInlineData, { messageTimestamp });
+
+        expect(messageWithInlineData.encodedData).toBe('c29tZSBkYXRh');
+
+        const expectedCid = await Message.getCid(message);
+        const storedMessage = await messageStore.get(alice.did, expectedCid) as RecordsWriteMessage & { encodedData?: string };
+        expect(storedMessage.encodedData).toBe('c29tZSBkYXRh');
+      });
+
       // https://github.com/enboxorg/enbox/issues/170
       it('#170 - should be able to update (delete and insert new) indexes to an existing message', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -93,6 +110,109 @@ export function testMessageStore(): void {
 
         const { messages: results4 } = await messageStore.query(alice.did, [{ isLatestBaseState: false }]);
         expect(results4.length).toBe(1);
+      });
+
+      it('should update indexes in place and clear stale index columns', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const oldSchema = 'https://schema.org/OldIndex';
+        const newSchema = 'https://schema.org/NewIndex';
+        const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema: oldSchema });
+        const messageCid = await Message.getCid(message);
+        const initialIndexes: KeyValues = {
+          ...await recordsWrite.constructIndexes(true),
+          attester: 'did:example:attester',
+        };
+        const replacementIndexes: KeyValues = {
+          ...initialIndexes,
+          isLatestBaseState : false,
+          schema            : newSchema,
+        };
+        delete replacementIndexes.attester;
+
+        await messageStore.put(alice.did, message, initialIndexes);
+        expect((await messageStore.query(alice.did, [{ attester: 'did:example:attester' }])).messages.length).toBe(1);
+        await messageStore.updateIndexes(alice.did, messageCid, replacementIndexes);
+
+        expect((await messageStore.query(alice.did, [{ schema: oldSchema }])).messages.length).toBe(0);
+        expect((await messageStore.query(alice.did, [{ schema: newSchema }])).messages.length).toBe(1);
+        expect((await messageStore.query(alice.did, [{ attester: 'did:example:attester' }])).messages.length).toBe(0);
+        expect((await messageStore.query(alice.did, [{ isLatestBaseState: true }])).messages.length).toBe(0);
+        expect((await messageStore.query(alice.did, [{ isLatestBaseState: false }])).messages.length).toBe(1);
+        expect(await messageStore.get(alice.did, messageCid)).toBeDefined();
+      });
+
+      it('should replace a same-CID message payload and reject CID mismatches', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const oldSchema = 'https://schema.org/OldPayload';
+        const newSchema = 'https://schema.org/NewPayload';
+        const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema: oldSchema });
+        const messageCid = await Message.getCid(message);
+        const messageWithInlineData = { ...message, encodedData: 'c29tZSBkYXRh' } as RecordsWriteMessage & { encodedData: string };
+        const retainedIndexes = await recordsWrite.constructIndexes(false);
+        const replacementIndexes: KeyValues = {
+          ...retainedIndexes,
+          schema: newSchema,
+        };
+
+        await messageStore.put(alice.did, messageWithInlineData, await recordsWrite.constructIndexes(true));
+        await messageStore.updateMessageAndIndexes(alice.did, messageCid, message, replacementIndexes);
+
+        const storedMessage = await messageStore.get(alice.did, messageCid) as RecordsWriteMessage & { encodedData?: string };
+        expect(storedMessage.encodedData).toBeUndefined();
+        expect((await messageStore.query(alice.did, [{ schema: oldSchema }])).messages.length).toBe(0);
+        expect((await messageStore.query(alice.did, [{ schema: newSchema }])).messages.length).toBe(1);
+
+        const { message: otherMessage } = await TestDataGenerator.generateRecordsWrite({ schema: newSchema });
+        await expect(messageStore.updateMessageAndIndexes(alice.did, messageCid, otherMessage, replacementIndexes))
+          .rejects.toThrow(DwnErrorCode.MessageStoreUpdateMessageAndIndexesCidMismatch);
+      });
+
+      it('should complete dataless rows once and reject repeated inline completion', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const oldSchema = 'https://schema.org/Dataless';
+        const newSchema = 'https://schema.org/Completed';
+        const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema: oldSchema });
+        const messageCid = await Message.getCid(message);
+        const latestIndexes = await recordsWrite.constructIndexes(true);
+        const replacementIndexes: KeyValues = {
+          ...latestIndexes,
+          schema: newSchema,
+        };
+
+        await messageStore.put(alice.did, message, await recordsWrite.constructIndexes(false));
+        await messageStore.completeData(alice.did, messageCid, replacementIndexes, 'aGVsbG8');
+
+        const storedMessage = await messageStore.get(alice.did, messageCid) as RecordsWriteMessage & { encodedData?: string };
+        expect(storedMessage.encodedData).toBe('aGVsbG8');
+        expect((await messageStore.query(alice.did, [{ schema: oldSchema }])).messages.length).toBe(0);
+        expect((await messageStore.query(alice.did, [{ schema: newSchema }])).messages.length).toBe(1);
+
+        await expect(messageStore.completeData(alice.did, messageCid, replacementIndexes, 'aGVsbG8'))
+          .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataAlreadyStamped);
+      });
+
+      it('should complete data-store-backed rows once and reject repeated completion', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const oldSchema = 'https://schema.org/DatalessLarge';
+        const newSchema = 'https://schema.org/CompletedLarge';
+        const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema: oldSchema });
+        const messageCid = await Message.getCid(message);
+        const latestIndexes = await recordsWrite.constructIndexes(true);
+        const replacementIndexes: KeyValues = {
+          ...latestIndexes,
+          schema: newSchema,
+        };
+
+        await messageStore.put(alice.did, message, await recordsWrite.constructIndexes(false));
+        await messageStore.completeData(alice.did, messageCid, replacementIndexes);
+
+        const storedMessage = await messageStore.get(alice.did, messageCid) as RecordsWriteMessage & { encodedData?: string };
+        expect(storedMessage.encodedData).toBeUndefined();
+        expect((await messageStore.query(alice.did, [{ schema: oldSchema }])).messages.length).toBe(0);
+        expect((await messageStore.query(alice.did, [{ schema: newSchema }])).messages.length).toBe(1);
+
+        await expect(messageStore.completeData(alice.did, messageCid, replacementIndexes))
+          .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataAlreadyStamped);
       });
 
       it('should index properties with characters beyond just letters and digits', async () => {

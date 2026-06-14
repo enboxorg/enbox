@@ -511,13 +511,13 @@ describe('validation read closure', () => {
       });
       expect(await dwn.applyReplicatedMessage(
         alice.did, initialMessage, { dataStream: DataStream.fromBytes(largeData) },
-      )).toEqual({ kind: 'Applied' });
+      )).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
       const recordsDelete = await RecordsDelete.create({
         recordId : initialMessage.recordId,
         signer   : Jws.createSigner(alice),
       });
-      expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+      expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
       recorder.clearRecordedReads(); // trace the beaten-write validation only
 
       await Time.minimalSleep();

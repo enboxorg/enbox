@@ -434,16 +434,15 @@ export function testDwnClass(): void {
         // replica A: initial write and the newer update land first, the older tombstone last
         expect(await dwn.applyReplicatedMessage(
           alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
-        )).toEqual({ kind: 'Applied' });
+        )).toEqual(expect.objectContaining({ kind: 'Applied' }));
         expect(await dwn.applyReplicatedMessage(
           alice.did, update.message, { dataStream: DataStream.fromBytes(updateDataBytes) },
-        )).toEqual({ kind: 'Applied' });
-        expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+        )).toEqual(expect.objectContaining({ kind: 'Applied' }));
+        expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
         // replica B: the tombstone lands before the newer update
         const messageStoreB = new MessageStoreLevel({
-          blockstoreLocation : 'TEST-MESSAGESTORE-DELETEWINS',
-          indexLocation      : 'TEST-INDEX-DELETEWINS',
+          location: 'TEST-MESSAGESTORE-DELETEWINS',
         });
         const dataStoreB = new DataStoreLevel({ blockstoreLocation: 'TEST-DATASTORE-DELETEWINS' });
         const stateIndexB = new StateIndexLevel({ location: 'TEST-STATEINDEX-DELETEWINS' });
@@ -466,8 +465,8 @@ export function testDwnClass(): void {
           expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
           expect(await dwnB.applyReplicatedMessage(
             alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
-          )).toEqual({ kind: 'Applied' });
-          expect(await dwnB.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+          )).toEqual(expect.objectContaining({ kind: 'Applied' }));
+          expect(await dwnB.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
           expect(await dwnB.applyReplicatedMessage(
             alice.did, update.message, { dataStream: DataStream.fromBytes(updateDataBytes) },
           )).toEqual({ kind: 'Superseded' });
@@ -514,13 +513,13 @@ export function testDwnClass(): void {
         const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect(await dwn.applyReplicatedMessage(
           alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
-        )).toEqual({ kind: 'Applied' });
+        )).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
         const recordsDelete = await RecordsDelete.create({
           recordId : initialWrite.message.recordId,
           signer   : Jws.createSigner(alice),
         });
-        expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+        expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
         await Time.minimalSleep();
         const updateDataBytes = TestDataGenerator.randomBytes(32);
@@ -564,13 +563,13 @@ export function testDwnClass(): void {
           const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
           expect(await dwn.applyReplicatedMessage(
             alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(dataBytes) },
-          )).toEqual({ kind: 'Applied' });
+          )).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
           const recordsDelete = await RecordsDelete.create({
             recordId : initialWrite.message.recordId,
             signer   : Jws.createSigner(alice),
           });
-          expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+          expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
           await Time.minimalSleep();
           const update = await RecordsWrite.createFrom({
@@ -608,13 +607,13 @@ export function testDwnClass(): void {
         const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect(await dwn.applyReplicatedMessage(
           alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
-        )).toEqual({ kind: 'Applied' });
+        )).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
         const recordsDelete = await RecordsDelete.create({
           recordId : initialWrite.message.recordId,
           signer   : Jws.createSigner(alice),
         });
-        expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual({ kind: 'Applied' });
+        expect(await dwn.applyReplicatedMessage(alice.did, recordsDelete.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
         await Time.minimalSleep();
         const updateDataBytes = TestDataGenerator.randomBytes(31_000);
@@ -694,14 +693,13 @@ export function testDwnClass(): void {
         // replica A: d1 lands first, then d2 displaces it
         expect(await dwn.applyReplicatedMessage(
           alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
-        )).toEqual({ kind: 'Applied' });
-        expect(await dwn.applyReplicatedMessage(alice.did, d1.message)).toEqual({ kind: 'Applied' });
-        expect(await dwn.applyReplicatedMessage(alice.did, d2.message)).toEqual({ kind: 'Applied' });
+        )).toEqual(expect.objectContaining({ kind: 'Applied' }));
+        expect(await dwn.applyReplicatedMessage(alice.did, d1.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
+        expect(await dwn.applyReplicatedMessage(alice.did, d2.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
         // replica B: d2 lands first; the beaten d1 converges as a Superseded no-op
         const messageStoreB = new MessageStoreLevel({
-          blockstoreLocation : 'TEST-MESSAGESTORE-DELETEWINS',
-          indexLocation      : 'TEST-INDEX-DELETEWINS',
+          location: 'TEST-MESSAGESTORE-DELETEWINS',
         });
         const dataStoreB = new DataStoreLevel({ blockstoreLocation: 'TEST-DATASTORE-DELETEWINS' });
         const stateIndexB = new StateIndexLevel({ location: 'TEST-STATEINDEX-DELETEWINS' });
@@ -724,8 +722,8 @@ export function testDwnClass(): void {
           expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
           expect(await dwnB.applyReplicatedMessage(
             alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
-          )).toEqual({ kind: 'Applied' });
-          expect(await dwnB.applyReplicatedMessage(alice.did, d2.message)).toEqual({ kind: 'Applied' });
+          )).toEqual(expect.objectContaining({ kind: 'Applied' }));
+          expect(await dwnB.applyReplicatedMessage(alice.did, d2.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
           expect(await dwnB.applyReplicatedMessage(alice.did, d1.message)).toEqual({ kind: 'Superseded' });
 
           // both replicas hold d2 as the canonical tombstone and identical state roots
@@ -781,17 +779,16 @@ export function testDwnClass(): void {
         // replica A: prune first, then the newer plain delete loses on class
         expect(await dwn.applyReplicatedMessage(
           alice.did, foo.message, { dataStream: DataStream.fromBytes(foo.dataBytes!) },
-        )).toEqual({ kind: 'Applied' });
+        )).toEqual(expect.objectContaining({ kind: 'Applied' }));
         expect(await dwn.applyReplicatedMessage(
           alice.did, bar.message, { dataStream: DataStream.fromBytes(bar.dataBytes!) },
-        )).toEqual({ kind: 'Applied' });
-        expect(await dwn.applyReplicatedMessage(alice.did, prune.message)).toEqual({ kind: 'Applied' });
+        )).toEqual(expect.objectContaining({ kind: 'Applied' }));
+        expect(await dwn.applyReplicatedMessage(alice.did, prune.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
         expect(await dwn.applyReplicatedMessage(alice.did, plainDelete.message)).toEqual({ kind: 'Superseded' });
 
         // replica B: the newer plain delete lands first; the prune still wins and cascades
         const messageStoreB = new MessageStoreLevel({
-          blockstoreLocation : 'TEST-MESSAGESTORE-DELETEWINS',
-          indexLocation      : 'TEST-INDEX-DELETEWINS',
+          location: 'TEST-MESSAGESTORE-DELETEWINS',
         });
         const dataStoreB = new DataStoreLevel({ blockstoreLocation: 'TEST-DATASTORE-DELETEWINS' });
         const stateIndexB = new StateIndexLevel({ location: 'TEST-STATEINDEX-DELETEWINS' });
@@ -814,12 +811,12 @@ export function testDwnClass(): void {
           expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
           expect(await dwnB.applyReplicatedMessage(
             alice.did, foo.message, { dataStream: DataStream.fromBytes(foo.dataBytes!) },
-          )).toEqual({ kind: 'Applied' });
+          )).toEqual(expect.objectContaining({ kind: 'Applied' }));
           expect(await dwnB.applyReplicatedMessage(
             alice.did, bar.message, { dataStream: DataStream.fromBytes(bar.dataBytes!) },
-          )).toEqual({ kind: 'Applied' });
-          expect(await dwnB.applyReplicatedMessage(alice.did, plainDelete.message)).toEqual({ kind: 'Applied' });
-          expect(await dwnB.applyReplicatedMessage(alice.did, prune.message)).toEqual({ kind: 'Applied' });
+          )).toEqual(expect.objectContaining({ kind: 'Applied' }));
+          expect(await dwnB.applyReplicatedMessage(alice.did, plainDelete.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
+          expect(await dwnB.applyReplicatedMessage(alice.did, prune.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
           // the child is purged on both replicas and the state roots agree
           const barCid = await Message.getCid(bar.message);
@@ -919,7 +916,7 @@ export function testDwnClass(): void {
         // the root of the chain is already present locally
         expect(await dwn.applyReplicatedMessage(
           alice.did, foo.message, { dataStream: DataStream.fromBytes(foo.dataBytes!) },
-        )).toEqual({ kind: 'Applied' });
+        )).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
         const result = await dwn.applyReplicatedMessage(
           alice.did, qux.message, { dataStream: DataStream.fromBytes(qux.dataBytes!) },
@@ -964,14 +961,14 @@ export function testDwnClass(): void {
               }
               expect(await dwn.applyReplicatedMessage(
                 alice.did, ancestor.message, { dataStream: DataStream.fromBytes(ancestor.dataBytes!) },
-              )).toEqual({ kind: 'Applied' });
+              )).toEqual(expect.objectContaining({ kind: 'Applied' }));
             }
           }
         } while (result.kind === 'Incomplete' && applyAttempts < 4);
 
         // the full 4-level chain resolves in two passes — one Incomplete naming all three
         // ancestors, then a clean apply — never one round trip per ancestry level
-        expect(result).toEqual({ kind: 'Applied' });
+        expect(result).toEqual(expect.objectContaining({ kind: 'Applied' }));
         expect(applyAttempts).toBe(2);
       });
     });

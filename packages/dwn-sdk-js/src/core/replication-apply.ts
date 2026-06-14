@@ -1,4 +1,5 @@
 import type { GenericMessage } from '../types/message-types.js';
+import type { ProgressToken } from '../types/subscriptions.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 
@@ -13,7 +14,13 @@ export type ReplicationApplyOptions = {
 };
 
 export type ReplicationApplyResult =
-  | { kind: 'Applied' }
+  | {
+      kind: 'Applied';
+      /** True when the local store retained dependency ancestry but did not advance latest state. */
+      ancestryOnly?: true;
+      /** Local admission position, when the receiving store has a durable replication log. */
+      position?: ProgressToken;
+    }
   | { kind: 'Duplicate' }
   | { kind: 'Superseded' }
   | { kind: 'Incomplete'; missing: DependencyRef[] }
@@ -52,13 +59,17 @@ export type DependencyRef =
  */
 export function replicationApplyResultFromReply(
   message: GenericMessage,
-  reply: { status: { code: number; detail?: string } },
+  reply: { status: { code: number; detail?: string }; position?: ProgressToken },
   context: ReplicationApplyResultContext = {},
 ): ReplicationApplyResult {
   const { code, detail = '' } = reply.status;
 
   if (code === 202 || code === 204) {
-    return { kind: 'Applied' };
+    return {
+      kind: 'Applied',
+      ...(code === 204 ? { ancestryOnly: true as const } : {}),
+      ...(reply.position === undefined ? {} : { position: reply.position }),
+    };
   }
 
   if (code === 409) {

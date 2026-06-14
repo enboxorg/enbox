@@ -1,9 +1,39 @@
+import type { ProgressToken } from './subscriptions.js';
 import type { Filter, KeyValues, PaginationCursor } from './query-types.js';
 import type { GenericMessage, MessageSort, Pagination } from './message-types.js';
 
 export interface MessageStoreOptions {
   signal?: AbortSignal;
 }
+
+/**
+ * Result of a {@link MessageStore.put} operation.
+ */
+export type MessageStorePutResult = {
+  /**
+   * `inserted` when a new row was created; `duplicate` when a row for the same
+   * `(tenant, messageCid)` already exists.
+   */
+  status: 'inserted' | 'duplicate';
+
+  /**
+   * The inserted row's log position. Present for stores that maintain a
+   * replication log; omitted for duplicates and store implementations whose
+   * durable log support has not landed.
+   */
+  position?: ProgressToken;
+};
+
+/**
+ * Result of a {@link MessageStore.completeData} operation.
+ */
+export type MessageStoreCompleteDataResult = {
+  /**
+   * The redelivery stamp position assigned to the completed row. Present on
+   * stores that maintain a replication log.
+   */
+  position?: ProgressToken;
+};
 
 export interface MessageStore {
   /**
@@ -25,7 +55,7 @@ export interface MessageStore {
     message: GenericMessage,
     indexes: KeyValues,
     options?: MessageStoreOptions
-  ): Promise<void>;
+  ): Promise<MessageStorePutResult>;
 
   /**
    * Fetches a single message by `cid` from the underlying store.
@@ -55,6 +85,43 @@ export interface MessageStore {
     messageSort?: MessageSort,
     options?: MessageStoreOptions
   ): Promise<number>;
+
+  /**
+   * Replaces the indexes of an existing message in place: same row, same log
+   * sequence, and no redelivery stamp.
+   */
+  updateIndexes(
+    tenant: string,
+    messageCid: string,
+    indexes: KeyValues,
+    options?: MessageStoreOptions
+  ): Promise<void>;
+
+  /**
+   * Replaces the stored same-CID message payload and indexes in place: same
+   * row, same log sequence, and no redelivery stamp. The replacement message
+   * must resolve to `messageCid` under DWN CID rules.
+   */
+  updateMessageAndIndexes(
+    tenant: string,
+    messageCid: string,
+    message: GenericMessage,
+    indexes: KeyValues,
+    options?: MessageStoreOptions
+  ): Promise<void>;
+
+  /**
+   * Completes a previously dataless row with its inline data and replacement
+   * indexes, assigning a redelivery position when the store supports durable
+   * log stamps.
+   */
+  completeData(
+    tenant: string,
+    messageCid: string,
+    indexes: KeyValues,
+    encodedData?: string,
+    options?: MessageStoreOptions
+  ): Promise<MessageStoreCompleteDataResult>;
 
   /**
    * Deletes the message associated with the id provided.

@@ -60,8 +60,7 @@ const insertMessages = Array(items).fill().map((_,i) => {
 // create
 const createStart = Date.now();
 const messageStore = new MessageStoreLevel({
-  blockstoreLocation : 'BENCHMARK-BLOCK',
-  indexLocation      : 'BENCHMARK-INDEX',
+  location: 'BENCHMARK-MESSAGESTORE',
 });
 await messageStore.open();
 const createEnd = Date.now();

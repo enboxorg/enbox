@@ -1,4 +1,5 @@
 import type { GenericMessageReply } from '../types/message-types.js';
+import type { ProgressToken } from '../types/subscriptions.js';
 import type { RecordsDeleteMessage } from '../types/records-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
@@ -80,13 +81,14 @@ export class RecordsDeleteHandler implements MethodHandler {
       return messageReplyFromError(e, 401);
     }
 
-    await this.deps.resumableTaskManager!.run({
+    const taskResult = await this.deps.resumableTaskManager!.run<{ position?: ProgressToken }>({
       name : ResumableTaskName.RecordsDelete,
       data : { tenant, message }
     });
 
     const messageReply = {
-      status: { code: 202, detail: 'Accepted' }
+      status   : { code: 202, detail: 'Accepted' },
+      position : taskResult.position,
     };
     return messageReply;
   };

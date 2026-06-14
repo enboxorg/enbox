@@ -17,8 +17,7 @@ describe('Dwn.processMessage — fuzz', () => {
 
   beforeAll(async () => {
     const messageStore = new MessageStoreLevel({
-      blockstoreLocation : `${testDataPath}/messages/blocks`,
-      indexLocation      : `${testDataPath}/messages/idx`,
+      location: `${testDataPath}/messages`,
     });
     dwn = await DwnClass.create({
       messageStore,

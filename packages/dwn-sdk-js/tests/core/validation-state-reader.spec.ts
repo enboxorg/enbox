@@ -627,7 +627,7 @@ describe('validation-state reader admission parity', () => {
         alice.did,
         initialComment.message,
         { dataStream: DataStream.fromBytes(initialComment.dataBytes!) },
-      )).toEqual({ kind: 'Applied' });
+      )).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
       const composedV2Configure = await TestDataGenerator.generateProtocolsConfigure({
         author             : alice,

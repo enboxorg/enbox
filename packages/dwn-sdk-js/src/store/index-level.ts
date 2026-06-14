@@ -55,7 +55,7 @@ export class IndexLevel {
   config: IndexLevelConfig;
   private readonly _compoundIndexes: CompoundIndexDefinition[];
 
-  constructor(config: IndexLevelConfig) {
+  constructor(config: IndexLevelConfig, db?: LevelWrapper<string>) {
     this.config = {
       createLevelDatabase,
       ...config,
@@ -63,7 +63,7 @@ export class IndexLevel {
 
     this._compoundIndexes = config.compoundIndexes ?? [];
 
-    this.db = new LevelWrapper<string>({
+    this.db = db ?? new LevelWrapper<string>({
       location            : this.config.location,
       createLevelDatabase : this.config.createLevelDatabase,
       keyEncoding         : 'utf8'
@@ -99,7 +99,19 @@ export class IndexLevel {
     indexes: KeyValues,
     options?: IndexLevelOptions
   ): Promise<void> {
+    const indexOps = await this.createPutOperations(tenant, messageCid, indexes);
+    const tenantPartition = await this.db.partition(tenant);
+    await tenantPartition.batch(indexOps, options);
+  }
 
+  /**
+   * Creates the batch operations for indexing an item without executing them.
+   */
+  async createPutOperations(
+    tenant: string,
+    messageCid: string,
+    indexes: KeyValues,
+  ): Promise<LevelWrapperBatchOperation<string>[]> {
     // ensure we have something valid to index
     if (isEmptyObject(indexes)) {
       throw new DwnError(DwnErrorCode.IndexMissingIndexableProperty, 'Index must include at least one valid indexable property');
@@ -140,21 +152,32 @@ export class IndexLevel {
     );
     opCreationPromises.push(partitionOperationPromise);
 
-    const indexOps = await Promise.all(opCreationPromises);
-    const tenantPartition = await this.db.partition(tenant);
-    await tenantPartition.batch(indexOps, options);
+    return Promise.all(opCreationPromises);
   }
 
   /**
    *  Deletes all of the index data associated with the item.
    */
   async delete(tenant: string, messageCid: string, options?: IndexLevelOptions): Promise<void> {
+    const indexOps = await this.createDeleteOperations(tenant, messageCid);
+    if (indexOps.length === 0) {
+      return;
+    }
+
+    const tenantPartition = await this.db.partition(tenant);
+    await tenantPartition.batch(indexOps, options);
+  }
+
+  /**
+   * Creates the batch operations for removing an item's index data without executing them.
+   */
+  async createDeleteOperations(tenant: string, messageCid: string): Promise<LevelWrapperBatchOperation<string>[]> {
     const opCreationPromises: Promise<LevelWrapperBatchOperation<string>>[] = [];
 
     const indexes = await this.getIndexes(tenant, messageCid);
     if (indexes === undefined) {
       // invalid messageCid
-      return;
+      return [];
     }
 
     // delete the reverse lookup
@@ -185,9 +208,7 @@ export class IndexLevel {
       }
     }
 
-    const indexOps = await Promise.all(opCreationPromises);
-    const tenantPartition = await this.db.partition(tenant);
-    await tenantPartition.batch(indexOps, options);
+    return Promise.all(opCreationPromises);
   }
 
   /**

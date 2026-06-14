@@ -111,13 +111,18 @@ export class EventEmitterEventLog implements EventLog {
   /**
    * Constructs a {@link ProgressToken} from internal state.
    */
-  private async buildToken(tenant: string, seq: number, messageCid: string): Promise<ProgressToken> {
-    return {
+  private async buildToken(tenant: string, seq: number, messageCid?: string): Promise<ProgressToken> {
+    const token: ProgressToken = {
       streamId : await this.getStreamId(tenant),
       epoch    : this.epoch,
       position : String(seq),
-      messageCid,
     };
+
+    if (messageCid !== undefined) {
+      token.messageCid = messageCid;
+    }
+
+    return token;
   }
 
   /**
@@ -134,12 +139,21 @@ export class EventEmitterEventLog implements EventLog {
     } else if (cursor.epoch === this.epoch) {
       // Check if position is still within replay bounds.
       const log = this.tenantLogs.get(tenant);
-      if (log !== undefined && log.size > 0) {
+      const headSeq = this.tenantSeqs.get(tenant) ?? 0;
+      const cursorSeq = EventEmitterEventLog.parsePosition(cursor.position);
+      if (cursorSeq > headSeq) {
+        reason = 'token_too_new';
+      } else if (log !== undefined && log.size > 0) {
         const firstSeq = log.keys().next().value as number;
-        const cursorSeq = EventEmitterEventLog.parsePosition(cursor.position);
         if (cursorSeq < firstSeq - 1) {
           // Cursor position has been evicted — events between cursor and firstSeq are lost.
           reason = 'token_too_old';
+        } else if (
+          cursor.messageCid !== undefined &&
+          log.has(cursorSeq) &&
+          log.get(cursorSeq)?.messageCid !== cursor.messageCid
+        ) {
+          reason = 'message_mismatch';
         } else {
           return; // Cursor is valid.
         }
@@ -230,15 +244,25 @@ export class EventEmitterEventLog implements EventLog {
     const log = this.tenantLogs.get(tenant);
 
     if (log === undefined || log.size === 0) {
-      return { events: [], cursor };
+      return { events: [], cursor, drained: true };
+    }
+
+    const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
+    const headSeq = [...log.keys()].at(-1)!;
+    if (maxResults <= 0) {
+      return { events: [], cursor, drained: cursorSeq !== undefined && cursorSeq >= headSeq };
     }
 
     const results: EventLogEntry[] = [];
-    const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
+    let lastScannedSeq = cursorSeq;
+    let lastDeliveredSeq: number | undefined;
+    let lastDeliveredMessageCid: string | undefined;
 
     for (const [seq, entry] of log) {
       // Skip entries at or before the cursor.
       if (cursorSeq !== undefined && seq <= cursorSeq) { continue; }
+
+      lastScannedSeq = seq;
 
       // Apply filters if provided (OR semantics — match any filter).
       if (filters !== undefined && filters.length > 0) {
@@ -246,24 +270,24 @@ export class EventEmitterEventLog implements EventLog {
       }
 
       results.push({
-        seq,
+        seq        : String(seq),
         event      : entry.event,
         indexes    : entry.indexes,
         messageCid : entry.messageCid,
       });
+      lastDeliveredSeq = seq;
+      lastDeliveredMessageCid = entry.messageCid;
 
       if (results.length >= maxResults) { break; }
     }
 
-    if (results.length > 0) {
-      const lastEntry = results[results.length - 1];
-      // Use the messageCid captured during the synchronous iteration above —
-      // no re-lookup needed, so eviction during the await cannot lose it.
-      const lastToken = await this.buildToken(tenant, lastEntry.seq, lastEntry.messageCid!);
-      return { events: results, cursor: lastToken };
+    let highWaterCursor = cursor;
+    if (lastScannedSeq !== undefined) {
+      const cursorMessageCid = lastDeliveredSeq === lastScannedSeq ? lastDeliveredMessageCid : undefined;
+      highWaterCursor = await this.buildToken(tenant, lastScannedSeq, cursorMessageCid);
     }
 
-    return { events: results, cursor };
+    return { events: results, cursor: highWaterCursor, drained: lastScannedSeq === undefined || lastScannedSeq === headSeq };
   }
 
   /**
@@ -342,7 +366,7 @@ export class EventEmitterEventLog implements EventLog {
       // This eliminates re-lookup races: read() populates entry.messageCid before
       // any async yield, so eviction during read()'s buildToken() cannot lose it.
       for (const entry of readResult.events) {
-        const token = await this.buildToken(tenant, entry.seq, entry.messageCid ?? '');
+        const token = await this.buildToken(tenant, EventEmitterEventLog.parsePosition(entry.seq), entry.messageCid);
         listener({ type: 'event', cursor: token, event: entry.event });
       }
 

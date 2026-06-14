@@ -36,7 +36,7 @@ export class TestStubGenerator {
       didToResolutionMap.set(persona.did, mockResolution);
     }
 
-    sinon.stub(didResolver, 'resolve').callsFake((did) => {
+    sinon.stub(didResolver, 'resolve').callsFake((did: string) => {
       const mockResolution = didToResolutionMap.get(did);
 
       return new Promise((resolve, _reject) => {

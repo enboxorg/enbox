@@ -230,8 +230,7 @@ export class Dwn {
 
   /**
    * Returns the internal storage components for advanced operations that
-   * cannot be expressed through the standard `processMessage()` pipeline
-   * (e.g., owner-upgrade of externally authored encrypted records).
+   * cannot be expressed through the standard `processMessage()` pipeline.
    *
    * Callers are responsible for maintaining consistency across stores.
    */
@@ -374,10 +373,7 @@ export class Dwn {
     const visibilitySourceWrite = await Records.getNewestRecordsWrite([...existingMessages, storedWriteMessage]) ?? initialWrite;
     const recordsDeleteIndexes = recordsDelete.constructIndexes(initialWrite, visibilitySourceWrite);
     const recordsDeleteCid = await Message.getCid(existingDelete);
-    await this.messageStore.delete(tenant, recordsDeleteCid);
-    await this.messageStore.put(tenant, existingDelete, recordsDeleteIndexes);
-    await this.stateIndex.delete(tenant, [recordsDeleteCid]);
-    await this.stateIndex.insert(tenant, recordsDeleteCid, recordsDeleteIndexes);
+    await this.messageStore.updateIndexes(tenant, recordsDeleteCid, recordsDeleteIndexes);
 
     return { kind: 'Superseded' };
   }
@@ -567,7 +563,7 @@ export class Dwn {
         continue;
       }
 
-      if (options.dataStream !== undefined && Dwn.existingReplicatedWriteMayNeedDataCompletion(existing, message)) {
+      if (options.dataStream !== undefined && await this.existingReplicatedWriteIsDatalessInitial(tenant, existing, message)) {
         return false;
       }
 
@@ -626,7 +622,11 @@ export class Dwn {
     return [];
   }
 
-  private static existingReplicatedWriteMayNeedDataCompletion(existing: GenericMessage, incoming: GenericMessage): boolean {
+  private async existingReplicatedWriteIsDatalessInitial(
+    tenant: string,
+    existing: GenericMessage,
+    incoming: GenericMessage,
+  ): Promise<boolean> {
     if (
       incoming.descriptor.interface !== DwnInterfaceName.Records ||
       incoming.descriptor.method !== DwnMethodName.Write ||
@@ -636,9 +636,17 @@ export class Dwn {
       return false;
     }
 
-    const existingWrite = existing as { encodedData?: string; descriptor: { dateCreated?: string; messageTimestamp?: string } };
-    const isInitialWrite = existingWrite.descriptor.dateCreated === existingWrite.descriptor.messageTimestamp;
-    return isInitialWrite && existingWrite.encodedData === undefined;
+    const existingWrite = existing as RecordsWriteMessage & { encodedData?: string };
+    if (!await RecordsWrite.isInitialWrite(existingWrite)) {
+      return false;
+    }
+
+    if (existingWrite.encodedData !== undefined) {
+      return false;
+    }
+
+    const storedData = await this.dataStore.get(tenant, existingWrite.recordId, existingWrite.descriptor.dataCid);
+    return storedData === undefined;
   }
 
   private async repairReplicationIndexesForDuplicate(

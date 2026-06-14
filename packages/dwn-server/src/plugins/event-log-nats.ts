@@ -1,5 +1,5 @@
 import type { NatsConnection } from '@nats-io/transport-node';
-import type { ConsumerMessages, JetStreamClient, JetStreamManager } from '@nats-io/jetstream';
+import type { ConsumerMessages, JetStreamClient, JetStreamManager, JsMsg, StoredMsg } from '@nats-io/jetstream';
 import type { EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, Filter, KeyValues, MessageEvent, ProgressGapInfo, ProgressGapReason, ProgressToken, SubscriptionListener } from '@enbox/dwn-sdk-js';
 
 import log from 'loglevel';
@@ -114,8 +114,21 @@ function matchSingleValue(filterValue: unknown, indexValue: string | number | bo
 type NatsEventPayload = {
   event : MessageEvent;
   indexes : KeyValues;
-  /** The CID of the message that triggered this event. Added in v0.0.16. */
-  messageCid? : string;
+  /** The CID of the message that triggered this event. */
+  messageCid : string;
+};
+
+type ReplayBounds = { oldest: ProgressToken; latest: ProgressToken };
+
+type CursorPositionMessage = { found: boolean; messageCid?: string };
+
+type NatsReadState = {
+  events : EventLogEntry[];
+  drained : boolean;
+  lastScannedSeq? : number;
+  lastDeliveredSeq? : number;
+  lastDeliveredMessageCid? : string;
+  done : boolean;
 };
 
 function encodePayload(payload: NatsEventPayload): Uint8Array {
@@ -124,7 +137,19 @@ function encodePayload(payload: NatsEventPayload): Uint8Array {
 
 function decodePayload(data: Uint8Array): NatsEventPayload | undefined {
   try {
-    return JSON.parse(new TextDecoder().decode(data)) as NatsEventPayload;
+    const payload = JSON.parse(new TextDecoder().decode(data)) as Partial<NatsEventPayload>;
+    if (
+      payload.event === undefined ||
+      typeof payload.indexes !== 'object' ||
+      payload.indexes === null ||
+      typeof payload.messageCid !== 'string' ||
+      payload.messageCid === ''
+    ) {
+      log.error('NatsEventLog: payload is missing required fields, skipping message');
+      return undefined;
+    }
+
+    return payload as NatsEventPayload;
   } catch {
     log.error('NatsEventLog: failed to decode payload, skipping corrupt message');
     return undefined;
@@ -233,13 +258,18 @@ export default class NatsEventLog implements EventLog {
     return Array.from(hashArray.slice(0, 8), (b: number) => b.toString(16).padStart(2, '0')).join('');
   }
 
-  async #buildToken(tenant: string, seq: number, messageCid: string): Promise<ProgressToken> {
-    return {
+  async #buildToken(tenant: string, seq: number, messageCid?: string): Promise<ProgressToken> {
+    const token: ProgressToken = {
       streamId : await this.#getStreamId(tenant),
       epoch    : this.#epoch,
       position : String(seq),
-      messageCid,
     };
+
+    if (messageCid !== undefined) {
+      token.messageCid = messageCid;
+    }
+
+    return token;
   }
 
   /**
@@ -247,28 +277,9 @@ export default class NatsEventLog implements EventLog {
    * Throws `DwnError(EventLogProgressGap)` if the cursor cannot be resumed.
    */
   async #validateCursor(tenant: string, cursor: ProgressToken): Promise<void> {
-    const expectedStreamId = await this.#getStreamId(tenant);
-
-    let reason: ProgressGapReason;
-    if (cursor.streamId !== expectedStreamId) {
-      reason = 'stream_mismatch';
-    } else if (cursor.epoch === this.#epoch) {
-      // Check if position is within replay bounds using BigInt
-      // for safe handling of NATS sequences beyond Number.MAX_SAFE_INTEGER.
-      const bounds = await this.getReplayBounds(tenant);
-      if (bounds === undefined) {
-        return; // No events — vacuously valid.
-      } else {
-        const cursorSeq = BigInt(cursor.position);
-        const oldestSeq = BigInt(bounds.oldest.position);
-        if (cursorSeq < oldestSeq - 1n) {
-          reason = 'token_too_old';
-        } else {
-          return; // Valid.
-        }
-      }
-    } else {
-      reason = 'epoch_mismatch';
+    const reason = await this.#cursorGapReason(tenant, cursor);
+    if (reason === undefined) {
+      return;
     }
 
     const bounds = await this.getReplayBounds(tenant);
@@ -285,6 +296,44 @@ export default class NatsEventLog implements EventLog {
     );
     (error as any).gapInfo = gapInfo;
     throw error;
+  }
+
+  async #cursorGapReason(tenant: string, cursor: ProgressToken): Promise<ProgressGapReason | undefined> {
+    const expectedStreamId = await this.#getStreamId(tenant);
+    if (cursor.streamId !== expectedStreamId) {
+      return 'stream_mismatch';
+    }
+
+    if (cursor.epoch !== this.#epoch) {
+      return 'epoch_mismatch';
+    }
+
+    const bounds = await this.getReplayBounds(tenant);
+    const cursorSeq = BigInt(cursor.position);
+    if (bounds === undefined) {
+      return cursorSeq > 0n ? 'token_too_new' : undefined;
+    }
+
+    const oldestSeq = BigInt(bounds.oldest.position);
+    const latestSeq = BigInt(bounds.latest.position);
+    if (cursorSeq < oldestSeq - 1n) {
+      return 'token_too_old';
+    }
+
+    if (cursorSeq > latestSeq) {
+      return 'token_too_new';
+    }
+
+    if (cursor.messageCid === undefined) {
+      return undefined;
+    }
+
+    const positionMessage = await this.#cursorMessageAtPosition(tenant, cursorSeq);
+    if (positionMessage.found && positionMessage.messageCid !== cursor.messageCid) {
+      return 'message_mismatch';
+    }
+
+    return undefined;
   }
 
   // ---- emit ----------------------------------------------------------------
@@ -307,57 +356,18 @@ export default class NatsEventLog implements EventLog {
     if (cursor !== undefined) {
       await this.#validateCursor(tenant, cursor);
     }
+
     const subject = this.#tenantSubject(tenant);
-
-    // Create a one-shot ordered consumer for the read.
-    const consumerOpts: Record<string, unknown> = {
-      filter_subject : subject,
-      ack_policy     : AckPolicy.None, // ordered consumers use AckNone
-    };
-
-    if (cursor === undefined) {
-      consumerOpts.deliver_policy = DeliverPolicy.All;
-    } else {
-      consumerOpts.deliver_policy = DeliverPolicy.StartSequence;
-      consumerOpts.opt_start_seq = Number(cursor.position) + 1;
+    const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
+    if (maxResults <= 0) {
+      return this.#readEmptyPage(tenant, cursor);
     }
 
+    const consumerOpts = this.#readConsumerOptions(subject, cursor);
     const consumer = await this.#jsm!.consumers.add(this.#config.streamName, consumerOpts);
-    const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
-
-    const events: EventLogEntry[] = [];
-    let lastSeq: number | undefined;
-    let lastMessageCid: string | undefined;
 
     try {
-      const messages = await this.#js!.consumers.get(this.#config.streamName, consumer.name);
-      const iter = await messages.fetch({ max_messages: maxResults, expires: 2_000 });
-
-      for await (const msg of iter) {
-        const payload = decodePayload(msg.data);
-        if (payload === undefined) {
-          continue;
-        }
-
-        if (!matchAnyFilter(payload.indexes, filters)) {
-          continue;
-        }
-
-        events.push({
-          seq     : msg.seq,
-          event   : payload.event,
-          indexes : payload.indexes,
-        });
-
-        lastSeq = msg.seq;
-        // Prefer the dedicated messageCid field (v0.0.16+), fall back to indexes for older payloads,
-        // then a deterministic placeholder so pre-upgrade messages never produce empty-string tokens.
-        lastMessageCid = payload.messageCid || (payload.indexes['messageCid'] as string) || `legacy-seq-${msg.seq}`;
-
-        if (events.length >= maxResults) {
-          break;
-        }
-      }
+      return await this.#readConsumerPage(tenant, consumer.name, cursor, filters, maxResults);
     } finally {
       // Clean up the one-shot consumer.
       try {
@@ -366,16 +376,97 @@ export default class NatsEventLog implements EventLog {
         // May already be cleaned up.
       }
     }
+  }
 
-    if (lastSeq !== undefined) {
-      const lastToken = await this.#buildToken(tenant, lastSeq, lastMessageCid || `legacy-seq-${lastSeq}`);
-      return { events, cursor: lastToken };
+  async #readEmptyPage(tenant: string, cursor: ProgressToken | undefined): Promise<EventLogReadResult> {
+    const bounds = await this.getReplayBounds(tenant);
+    if (bounds === undefined) {
+      return { events: [], cursor, drained: true };
     }
 
-    return {
-      events,
-      cursor,
+    const cursorPosition = cursor === undefined ? 0n : BigInt(cursor.position);
+    return { events: [], cursor, drained: cursorPosition >= BigInt(bounds.latest.position) };
+  }
+
+  #readConsumerOptions(subject: string, cursor: ProgressToken | undefined): Record<string, unknown> {
+    const consumerOpts: Record<string, unknown> = {
+      filter_subject : subject,
+      ack_policy     : AckPolicy.None, // ordered consumers use AckNone
     };
+
+    if (cursor === undefined) {
+      consumerOpts.deliver_policy = DeliverPolicy.All;
+      return consumerOpts;
+    }
+
+    consumerOpts.deliver_policy = DeliverPolicy.StartSequence;
+    consumerOpts.opt_start_seq = Number(cursor.position) + 1;
+    return consumerOpts;
+  }
+
+  async #readConsumerPage(
+    tenant: string,
+    consumerName: string,
+    cursor: ProgressToken | undefined,
+    filters: Filter[] | undefined,
+    maxResults: number,
+  ): Promise<EventLogReadResult> {
+    const state: NatsReadState = {
+      events  : [],
+      drained : true,
+      done    : false,
+    };
+
+    const messages = await this.#js!.consumers.get(this.#config.streamName, consumerName);
+    const iter = await messages.fetch({ max_messages: maxResults, expires: 2_000 });
+
+    for await (const msg of iter) {
+      this.#readMessageIntoState(state, msg, filters, maxResults);
+      if (state.done) {
+        break;
+      }
+    }
+
+    return this.#readResultFromState(tenant, cursor, state);
+  }
+
+  #readMessageIntoState(state: NatsReadState, msg: JsMsg, filters: Filter[] | undefined, maxResults: number): void {
+    state.lastScannedSeq = msg.seq;
+    state.drained = msg.info.pending === 0;
+
+    const payload = decodePayload(msg.data);
+    if (payload === undefined || !matchAnyFilter(payload.indexes, filters)) {
+      return;
+    }
+
+    state.events.push({
+      seq        : String(msg.seq),
+      event      : payload.event,
+      indexes    : payload.indexes,
+      messageCid : payload.messageCid,
+    });
+
+    state.lastDeliveredSeq = msg.seq;
+    state.lastDeliveredMessageCid = payload.messageCid;
+
+    if (state.events.length >= maxResults) {
+      state.drained = false;
+      state.done = true;
+    }
+  }
+
+  async #readResultFromState(tenant: string, cursor: ProgressToken | undefined, state: NatsReadState): Promise<EventLogReadResult> {
+    if (state.lastScannedSeq === undefined) {
+      return {
+        events  : state.events,
+        cursor,
+        drained : state.drained,
+      };
+    }
+
+    const cursorMessageCid = state.lastDeliveredSeq === state.lastScannedSeq ? state.lastDeliveredMessageCid : undefined;
+    const highWaterToken = await this.#buildToken(tenant, state.lastScannedSeq, cursorMessageCid);
+    return { events: state.events, cursor: highWaterToken, drained: state.drained };
   }
 
   // ---- subscribe -----------------------------------------------------------
@@ -419,8 +510,6 @@ export default class NatsEventLog implements EventLog {
 
     // Start the consume loop asynchronously.
     const consumeLoop = async (): Promise<void> => {
-      let sentEose = cursor === undefined; // no cursor → no EOSE needed
-
       try {
         const consumer = await this.#js!.consumers.get(this.#config.streamName, consumerName);
         const messages = await consumer.consume();
@@ -431,30 +520,7 @@ export default class NatsEventLog implements EventLog {
             break;
           }
 
-          const payload = decodePayload(msg.data);
-          if (payload === undefined) {
-            msg.ack();
-            continue;
-          }
-
-          if (!matchAnyFilter(payload.indexes, filters)) {
-            msg.ack();
-            continue;
-          }
-
-          // Prefer the dedicated messageCid field (v0.0.16+), fall back to indexes for older payloads,
-          // then a deterministic placeholder so pre-upgrade messages never produce empty-string tokens.
-          const msgCid = payload.messageCid || (payload.indexes['messageCid'] as string) || `legacy-seq-${msg.seq}`;
-          const eventToken = await this.#buildToken(tenant, msg.seq, msgCid);
-          listener({ type: 'event', cursor: eventToken, event: payload.event });
-          msg.ack();
-
-          // EOSE detection: when pending reaches 0, all stored events have been
-          // delivered and we transition to live mode.
-          if (!sentEose && msg.info.pending === 0) {
-            listener({ type: 'eose', cursor: eventToken });
-            sentEose = true;
-          }
+          sentEose = await this.#deliverSubscriptionMessage(tenant, msg, filters, listener, sentEose);
         }
       } catch (err) {
         if (!entry.stopped) {
@@ -464,6 +530,7 @@ export default class NatsEventLog implements EventLog {
     };
 
     // Fire and forget — the loop runs until stop or connection close.
+    let sentEose = cursor === undefined; // no cursor → no EOSE needed
     consumeLoop();
 
     // Handle the edge case where cursor was provided but there are zero
@@ -477,8 +544,9 @@ export default class NatsEventLog implements EventLog {
         }
         try {
           const info = await this.#jsm!.consumers.info(this.#config.streamName, consumerName);
-          if (info.num_pending === 0 && info.delivered.stream_seq <= Number(cursor.position)) {
+          if (!sentEose && info.num_pending === 0 && info.delivered.stream_seq <= Number(cursor.position)) {
             listener({ type: 'eose', cursor });
+            sentEose = true;
           }
         } catch {
           // Consumer may be gone already.
@@ -501,63 +569,59 @@ export default class NatsEventLog implements EventLog {
     };
   }
 
+  async #deliverSubscriptionMessage(
+    tenant: string,
+    msg: JsMsg,
+    filters: Filter[] | undefined,
+    listener: SubscriptionListener,
+    sentEose: boolean,
+  ): Promise<boolean> {
+    const payload = decodePayload(msg.data);
+    if (payload === undefined || !matchAnyFilter(payload.indexes, filters)) {
+      msg.ack();
+      return this.#emitEoseIfCaughtUp(tenant, msg, listener, sentEose);
+    }
+
+    const eventToken = await this.#buildToken(tenant, msg.seq, payload.messageCid);
+    listener({ type: 'event', cursor: eventToken, event: payload.event });
+    msg.ack();
+
+    return this.#emitEoseIfCaughtUp(tenant, msg, listener, sentEose, eventToken);
+  }
+
+  async #emitEoseIfCaughtUp(
+    tenant: string,
+    msg: JsMsg,
+    listener: SubscriptionListener,
+    sentEose: boolean,
+    cursor?: ProgressToken,
+  ): Promise<boolean> {
+    if (sentEose || msg.info.pending !== 0) {
+      return sentEose;
+    }
+
+    const highWaterToken = cursor ?? await this.#buildToken(tenant, msg.seq);
+    listener({ type: 'eose', cursor: highWaterToken });
+    return true;
+  }
+
   // ---- getReplayBounds ------------------------------------------------------
 
-  public async getReplayBounds(tenant: string): Promise<{ oldest: ProgressToken; latest: ProgressToken } | undefined> {
+  public async getReplayBounds(tenant: string): Promise<ReplayBounds | undefined> {
     this.#assertOpen();
 
     const subject = this.#tenantSubject(tenant);
-
-    // Get stream info to find first/last sequence for this subject.
-    const streamInfo = await this.#jsm!.streams.info(this.#config.streamName, { subjects_filter: subject });
-    const firstSeq = streamInfo.state.first_seq;
-    const lastSeq = streamInfo.state.last_seq;
-
-    if (lastSeq === 0 || firstSeq > lastSeq) {
+    const oldestMessage = await this.#getPerSubjectMessage({ seq: 1, next_by_subj: subject });
+    if (oldestMessage === undefined) {
       return undefined;
     }
 
-    // Read boundary messages to extract their real messageCid values.
-    // Uses a one-shot ordered consumer to fetch a single message at a given sequence.
-    const readBoundaryCid = async (seq: number): Promise<string> => {
-      let consumerName: string | undefined;
-      try {
-        const consumer = await this.#jsm!.consumers.add(this.#config.streamName, {
-          filter_subject : subject,
-          ack_policy     : AckPolicy.None,
-          deliver_policy : DeliverPolicy.StartSequence,
-          opt_start_seq  : seq,
-        });
-        consumerName = consumer.name;
+    const latestMessage = await this.#getPerSubjectMessage({ last_by_subj: subject }) ?? oldestMessage;
+    const oldestCid = decodePayload(oldestMessage.data)?.messageCid;
+    const latestCid = decodePayload(latestMessage.data)?.messageCid;
 
-        const handle = await this.#js!.consumers.get(this.#config.streamName, consumerName);
-        const iter = await handle.fetch({ max_messages: 1, expires: 2_000 });
-
-        for await (const msg of iter) {
-          const payload = decodePayload(msg.data);
-          const cid = (payload?.indexes?.['messageCid'] as string);
-          if (cid && cid !== '') {
-            return cid;
-          }
-        }
-      } catch {
-        // Fall through to deterministic placeholder.
-      } finally {
-        if (consumerName) {
-          try {
-            await this.#jsm!.consumers.delete(this.#config.streamName, consumerName);
-          } catch { /* best effort */ }
-        }
-      }
-      // Deterministic placeholder if the message could not be read.
-      return `boundary-seq-${seq}`;
-    };
-
-    const oldestCid = await readBoundaryCid(firstSeq);
-    const latestCid = await readBoundaryCid(lastSeq);
-
-    const oldest = await this.#buildToken(tenant, firstSeq, oldestCid);
-    const latest = await this.#buildToken(tenant, lastSeq, latestCid);
+    const oldest = await this.#buildToken(tenant, oldestMessage.seq, oldestCid);
+    const latest = await this.#buildToken(tenant, latestMessage.seq, latestCid);
 
     return { oldest, latest };
   }
@@ -599,6 +663,27 @@ export default class NatsEventLog implements EventLog {
     if (this.#nc === undefined || this.#js === undefined || this.#jsm === undefined) {
       throw new Error('NatsEventLog: not open. Call open() before using.');
     }
+  }
+
+  async #getPerSubjectMessage(
+    request: { seq: number; next_by_subj: string } | { last_by_subj: string },
+  ): Promise<StoredMsg | undefined> {
+    const message = await this.#jsm!.streams.getMessage(this.#config.streamName, request);
+    return message ?? undefined;
+  }
+
+  async #cursorMessageAtPosition(tenant: string, position: bigint): Promise<CursorPositionMessage> {
+    if (position <= 0n) {
+      return { found: false };
+    }
+
+    const subject = this.#tenantSubject(tenant);
+    const message = await this.#getPerSubjectMessage({ seq: Number(position), next_by_subj: subject });
+    if (message === undefined || BigInt(message.seq) !== position) {
+      return { found: false };
+    }
+
+    return { found: true, messageCid: decodePayload(message.data)?.messageCid };
   }
 
   async #ensureStream(): Promise<void> {

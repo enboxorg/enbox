@@ -1,10 +1,10 @@
 import type { DataStore } from '../types/data-store.js';
-import type { EventLog } from '../types/subscriptions.js';
 import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { StateIndex } from '../types/state-index.js';
-import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
+import type { EventLog, ProgressToken } from '../types/subscriptions.js';
+import type { RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { DwnConstant } from '../core/dwn-constant.js';
 import { FilterUtility } from '../utils/filter.js';
@@ -23,6 +23,10 @@ export type ResumableRecordsDeleteData = {
 export type ResumableRecordsSquashData = {
   tenant: string;
   message: RecordsWriteMessage;
+};
+
+export type RecordsDeleteTaskResult = {
+  position?: ProgressToken;
 };
 
 /**
@@ -47,7 +51,7 @@ export class StorageController {
     this.eventLog = eventLog;
   }
 
-  public async performRecordsDelete({ tenant, message }: ResumableRecordsDeleteData): Promise<void> {
+  public async performRecordsDelete({ tenant, message }: ResumableRecordsDeleteData): Promise<RecordsDeleteTaskResult> {
     // get existing records matching the `recordId`
     const query = {
       interface : DwnInterfaceName.Records,
@@ -59,14 +63,14 @@ export class StorageController {
     const newestExistingMessage = await Message.getNewestMessage(existingMessages);
 
     if (newestExistingMessage === undefined) {
-      return;
+      return {};
     }
 
     // Same tombstone-lattice gate as the RecordsDelete handler: state can advance between
     // acceptance and task replay, and a beaten delete accepted earlier must not displace the
     // tombstone that has since become the record's canonical winner.
     if (await Records.isDeleteBeatenByExistingTombstone(message, newestExistingMessage)) {
-      return;
+      return {};
     }
 
     // NOTE: code above is duplicated from `RecordsDeleteHandler` and is already performed if this was invoked by the `RecordsDeleteHandler`,
@@ -83,7 +87,7 @@ export class StorageController {
     // durable source of truth for later prune/replay/replication index reconstruction.
     const indexes = recordsDelete.constructIndexes(initialWrite, newestPreDeleteWrite);
     const messageCid = await Message.getCid(message);
-    await this.messageStore.put(tenant, message, indexes);
+    const { position } = await this.messageStore.put(tenant, message, indexes);
     await this.stateIndex.insert(tenant, messageCid, indexes);
 
     // only emit if the event log is set
@@ -105,6 +109,8 @@ export class StorageController {
     await StorageController.deleteDisplacedMessagesAndRetainWrites(
       tenant, existingMessages, message, this.messageStore, this.dataStore, this.stateIndex, [newestPreDeleteWrite]
     );
+
+    return { position };
   }
 
   /**
@@ -332,27 +338,31 @@ export class StorageController {
 
         await StorageController.deleteFromDataStoreIfNeeded(dataStore, tenant, message, retainedMessage);
 
-        // delete message from message store
-        await messageStore.delete(tenant, messageCid);
-
         // Retained writes must stay in the message store and state index so future deletes and
         // replicas can reconstruct tombstone visibility, but they must no longer be latest state.
         const shouldKeepAsNonLatestWrite =
           await RecordsWrite.isInitialWrite(message) ||
           additionalRetainedRecordsWriteCids.has(messageCid);
         if (shouldKeepAsNonLatestWrite) {
-          const existingRecordsWrite = await RecordsWrite.parse(message as RecordsWriteMessage);
+          const retainedRecordsWriteMessage = StorageController.stripInlineData(message as RecordsWriteMessage);
+          const existingRecordsWrite = await RecordsWrite.parse(retainedRecordsWriteMessage);
           const isLatestBaseState = false;
           const indexes = await existingRecordsWrite.constructIndexes(isLatestBaseState);
-          const writeMessage = message as RecordsQueryReplyEntry;
-          delete writeMessage.encodedData;
-          await messageStore.put(tenant, writeMessage, indexes);
+          await messageStore.updateMessageAndIndexes(tenant, messageCid, retainedRecordsWriteMessage, indexes);
         } else {
+          // delete message from message store
+          await messageStore.delete(tenant, messageCid);
           deletedMessageCids.push(messageCid);
         }
       }
     }
 
     await stateIndex.delete(tenant, deletedMessageCids);
+  }
+
+  private static stripInlineData(message: RecordsWriteMessage): RecordsWriteMessage {
+    const retainedMessage = { ...message } as RecordsWriteMessage & { encodedData?: string };
+    delete retainedMessage.encodedData;
+    return retainedMessage;
   }
 }

@@ -286,8 +286,7 @@ export class PlatformAgentTestHarness {
     const dwnResumableTaskStore = new ResumableTaskStoreLevel({ location: testDataPath('DWN_RESUMABLETASKSTORE') });
 
     const dwnMessageStore = new MessageStoreLevel({
-      blockstoreLocation : testDataPath('DWN_MESSAGESTORE'),
-      indexLocation      : testDataPath('DWN_MESSAGEINDEX')
+      location: testDataPath('DWN_MESSAGESTORE')
     });
 
     // Instantiate DWN instance using the custom stores.

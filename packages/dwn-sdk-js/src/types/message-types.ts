@@ -1,4 +1,5 @@
 import type { GeneralJws } from './jws-types.js';
+import type { ProgressToken } from './subscriptions.js';
 import type { PublicKeyJwk } from './jose-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { PaginationCursor, SortDirection } from './query-types.js';
@@ -145,6 +146,7 @@ export type Status = {
 
 export type GenericMessageReply = {
   status: Status;
+  position?: ProgressToken;
 };
 
 export type MessageSort = {
