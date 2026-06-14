@@ -21,7 +21,7 @@ function isProgressToken(value: unknown): value is ProgressToken {
   return typeof obj.streamId === 'string' && obj.streamId !== '' &&
     typeof obj.epoch === 'string' && obj.epoch !== '' &&
     typeof obj.position === 'string' && obj.position !== '' &&
-    typeof obj.messageCid === 'string' && obj.messageCid !== '';
+    (obj.messageCid === undefined || (typeof obj.messageCid === 'string' && obj.messageCid !== ''));
 }
 
 /**
@@ -67,7 +67,7 @@ export const handleSubscriptionAck: JsonRpcHandler = async (
   if (!isProgressToken(cursor)) {
     const jsonRpcResponse = createJsonRpcErrorResponse(
       requestId, JsonRpcErrorCodes.InvalidParams,
-      'params.cursor is required and must be a ProgressToken object with streamId, epoch, position, and messageCid'
+      'params.cursor is required and must be a ProgressToken object with streamId, epoch, and position'
     );
     return { jsonRpcResponse };
   }

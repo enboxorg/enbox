@@ -198,10 +198,11 @@ describe('HttpDwnRpcClient', () => {
     });
 
     it('sends replicated apply requests to the replication JSON-RPC method', async () => {
+      const position = { streamId: 's1', epoch: 'e1', position: '42' };
       const jsonRpcResponse = {
         id      : 'test',
         jsonrpc : '2.0',
-        result  : { result: { kind: 'Duplicate' } },
+        result  : { result: { kind: 'Applied', ancestryOnly: true, position } },
       };
       const fetchStub = sinon.stub(globalThis, 'fetch').resolves({
         status  : 200,
@@ -216,7 +217,7 @@ describe('HttpDwnRpcClient', () => {
         message,
       });
 
-      expect(result).toEqual({ kind: 'Duplicate' });
+      expect(result).toEqual({ kind: 'Applied', ancestryOnly: true, position });
       expect(fetchStub.calledOnce).toBe(true);
 
       const fetchOpts = fetchStub.firstCall.args[1] as RequestInit;

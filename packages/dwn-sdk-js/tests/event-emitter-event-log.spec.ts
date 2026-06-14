@@ -161,7 +161,7 @@ describe('EventEmitterEventLog', () => {
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
       const firstCursor = await eventLog.emit(tenant, event, {}, cid(1));
-      await eventLog.emit(tenant, event, {}, cid(2));
+      const secondCursor = await eventLog.emit(tenant, event, {}, cid(2));
 
       const withoutCursor = await eventLog.read(tenant, { limit: 0 });
       expect(withoutCursor.events.length).toBe(0);
@@ -172,6 +172,11 @@ describe('EventEmitterEventLog', () => {
       expect(withCursor.events.length).toBe(0);
       expect(withCursor.cursor).toBe(firstCursor);
       expect(withCursor.drained).toBe(false);
+
+      const atHead = await eventLog.read(tenant, { cursor: secondCursor!, limit: 0 });
+      expect(atHead.events.length).toBe(0);
+      expect(atHead.cursor).toBe(secondCursor);
+      expect(atHead.drained).toBe(true);
     });
   });
 

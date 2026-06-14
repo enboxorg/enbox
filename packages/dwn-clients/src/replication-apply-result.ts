@@ -1,4 +1,4 @@
-import type { DependencyRef, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+import type { DependencyRef, ProgressToken, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 import { DwnRpcError } from './dwn-rpc-error.js';
 import { JsonRpcErrorCodes } from './json-rpc.js';
@@ -12,6 +12,7 @@ export function parseReplicationApplyResult(value: unknown): ReplicationApplyRes
 
   switch (value.kind) {
     case 'Applied':
+      return parseAppliedResult(value);
     case 'Duplicate':
     case 'Superseded':
       return { kind: value.kind };
@@ -33,6 +34,26 @@ export function parseReplicationApplyResult(value: unknown): ReplicationApplyRes
     default:
       throw malformedReplicationApplyResult(`unknown result kind ${value.kind}`);
   }
+}
+
+function parseAppliedResult(value: Record<string, unknown>): Extract<ReplicationApplyResult, { kind: 'Applied' }> {
+  const result: Extract<ReplicationApplyResult, { kind: 'Applied' }> = { kind: 'Applied' };
+
+  if (value.ancestryOnly !== undefined) {
+    if (value.ancestryOnly !== true) {
+      throw malformedReplicationApplyResult('Applied result ancestryOnly must be true when present');
+    }
+    result.ancestryOnly = true;
+  }
+
+  if (value.position !== undefined) {
+    if (!isProgressToken(value.position)) {
+      throw malformedReplicationApplyResult('Applied result position must be a valid ProgressToken when present');
+    }
+    result.position = value.position;
+  }
+
+  return result;
 }
 
 function malformedReplicationApplyResult(detail: string): DwnRpcError {
@@ -81,6 +102,17 @@ function isDependencyRef(value: unknown): value is DependencyRef {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function isProgressToken(value: unknown): value is ProgressToken {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  return typeof value.streamId === 'string' && value.streamId !== '' &&
+    typeof value.epoch === 'string' && value.epoch !== '' &&
+    typeof value.position === 'string' && value.position !== '' &&
+    (value.messageCid === undefined || (typeof value.messageCid === 'string' && value.messageCid !== ''));
 }
 
 function isOptionalString(value: unknown): value is string | undefined {

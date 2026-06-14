@@ -32,36 +32,43 @@ import {
 } from '@enbox/dwn-sdk-js';
 import { Kysely, sql } from 'kysely';
 
-/**
- * Every index column of `messageStoreMessages`, nulled. Index replacement operations spread the
- * new indexes over this object so columns absent from the replacement are cleared — matching the
- * semantics of a delete + re-put without losing the row (and its `encodedData`).
- */
-const NULLED_INDEX_COLUMNS = {
-  interface         : null,
-  method            : null,
-  schema            : null,
-  dataCid           : null,
-  dataSize          : null,
-  dateCreated       : null,
-  messageTimestamp  : null,
-  dataFormat        : null,
-  isLatestBaseState : null,
-  published         : null,
-  author            : null,
-  recordId          : null,
-  entryId           : null,
-  datePublished     : null,
-  protocol          : null,
-  attester          : null,
-  protocolPath      : null,
-  recipient         : null,
-  contextId         : null,
-  parentId          : null,
-  permissionGrantId : null,
-  prune             : null,
-  squash            : null,
-} as const;
+type MessageStoreSystemColumn = 'id' | 'tenant' | 'messageCid' | 'encodedMessageBytes' | 'encodedData';
+type MessageStoreIndexColumn = Exclude<keyof DwnDatabaseType['messageStoreMessages'], MessageStoreSystemColumn>;
+type AssertNever<T extends never> = T;
+
+const MESSAGE_STORE_INDEX_COLUMNS = [
+  'interface',
+  'method',
+  'schema',
+  'dataCid',
+  'dataSize',
+  'dateCreated',
+  'messageTimestamp',
+  'dataFormat',
+  'isLatestBaseState',
+  'published',
+  'author',
+  'recordId',
+  'entryId',
+  'datePublished',
+  'protocol',
+  'attester',
+  'protocolPath',
+  'recipient',
+  'contextId',
+  'parentId',
+  'permissionGrantId',
+  'prune',
+  'squash',
+] as const satisfies readonly MessageStoreIndexColumn[];
+
+type MissingMessageStoreIndexColumn = Exclude<MessageStoreIndexColumn, typeof MESSAGE_STORE_INDEX_COLUMNS[number]>;
+type ExtraMessageStoreIndexColumn = Exclude<typeof MESSAGE_STORE_INDEX_COLUMNS[number], MessageStoreIndexColumn>;
+type _MessageStoreIndexColumnCoverage = AssertNever<MissingMessageStoreIndexColumn | ExtraMessageStoreIndexColumn>;
+
+const NULLED_INDEX_COLUMNS = Object.fromEntries(
+  MESSAGE_STORE_INDEX_COLUMNS.map((column) => [column, null])
+) as Record<MessageStoreIndexColumn, null>;
 
 export class MessageStoreSql implements MessageStore {
   readonly #dialect: Dialect;
@@ -289,7 +296,8 @@ export class MessageStoreSql implements MessageStore {
       messageCid,
       indexes,
       encodedData,
-      notFoundErrorCode: DwnErrorCode.MessageStoreCompleteDataMessageNotFound,
+      notFoundErrorCode    : DwnErrorCode.MessageStoreCompleteDataMessageNotFound,
+      rejectAlreadyStamped : true,
     });
 
     return {};
@@ -307,8 +315,9 @@ export class MessageStoreSql implements MessageStore {
     encodedMessageBytes?: Buffer;
     encodedData?: string | null;
     notFoundErrorCode: DwnErrorCode;
+    rejectAlreadyStamped?: boolean;
   }): Promise<void> {
-    const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, notFoundErrorCode } = input;
+    const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, notFoundErrorCode, rejectAlreadyStamped } = input;
     const db = this.#db;
     if (!db) {
       throw new Error(
@@ -323,13 +332,20 @@ export class MessageStoreSql implements MessageStore {
     await executeWithTransaction(db, async (tx) => {
       const existingRow = await tx
         .selectFrom('messageStoreMessages')
-        .select(['id'])
+        .select(['id', 'encodedData'])
         .where('tenant', '=', tenant)
         .where('messageCid', '=', messageCid)
         .executeTakeFirst();
 
       if (existingRow === undefined) {
         throw new DwnError(notFoundErrorCode, `no message found for tenant ${tenant} with CID ${messageCid}`);
+      }
+
+      if (rejectAlreadyStamped === true && existingRow.encodedData !== null) {
+        throw new DwnError(
+          DwnErrorCode.MessageStoreCompleteDataAlreadyStamped,
+          `message ${messageCid} already has inline data; the dataless-to-data transition cannot repeat`
+        );
       }
 
       const replacementColumns = {

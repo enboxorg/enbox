@@ -691,14 +691,19 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
     const startPosition = cursor === undefined ? 0n : BigInt(cursor.position);
 
-    if (head === 0n || startPosition >= head) {
+    if (head === 0n) {
       // Nothing to scan — caught up at the input position.
       return { events: [], cursor, drained: true };
     }
 
     const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
     if (maxResults <= 0) {
-      return { events: [], cursor, drained: false };
+      return { events: [], cursor, drained: startPosition >= head };
+    }
+
+    if (startPosition >= head) {
+      // Nothing to scan — caught up at the input position.
+      return { events: [], cursor, drained: true };
     }
 
     const tenantLog = await partitions.log.partition(tenant);

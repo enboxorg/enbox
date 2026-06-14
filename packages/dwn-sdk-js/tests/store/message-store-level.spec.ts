@@ -189,7 +189,7 @@ describe('MessageStoreLevel Test Suite', () => {
       const second = await generateStoredMessage();
 
       const firstPut = await messageStore.put(alice.did, first.message, first.indexes);
-      await messageStore.put(alice.did, second.message, second.indexes);
+      const secondPut = await messageStore.put(alice.did, second.message, second.indexes);
 
       const withoutCursor = await messageStore.logRead(alice.did, { limit: 0 });
       expect(withoutCursor.events).toEqual([]);
@@ -200,6 +200,11 @@ describe('MessageStoreLevel Test Suite', () => {
       expect(withCursor.events).toEqual([]);
       expect(withCursor.cursor).toBe(firstPut.position);
       expect(withCursor.drained).toBe(false);
+
+      const atHead = await messageStore.logRead(alice.did, { cursor: secondPut.position, limit: 0 });
+      expect(atHead.events).toEqual([]);
+      expect(atHead.cursor).toBe(secondPut.position);
+      expect(atHead.drained).toBe(true);
     });
 
     it('should reject cursors from the wrong stream, epoch, future position, or mismatched message CID', async () => {

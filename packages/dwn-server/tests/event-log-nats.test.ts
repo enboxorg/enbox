@@ -322,7 +322,7 @@ describe('NatsEventLog', () => {
     natsIt('should not deliver events or advance the cursor when limit is zero', async () => {
       const tenant = 'did:test:limit-zero';
       const firstCursor = await eventLog.emit(tenant, createEvent({ id: '1' }), createIndexes(), cid());
-      await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
+      const secondCursor = await eventLog.emit(tenant, createEvent({ id: '2' }), createIndexes(), cid());
 
       const withoutCursor = await eventLog.read(tenant, { limit: 0 });
       expect(withoutCursor.events).toHaveLength(0);
@@ -333,6 +333,11 @@ describe('NatsEventLog', () => {
       expect(withCursor.events).toHaveLength(0);
       expect(withCursor.cursor).toBe(firstCursor);
       expect(withCursor.drained).toBe(false);
+
+      const atHead = await eventLog.read(tenant, { cursor: secondCursor, limit: 0 });
+      expect(atHead.events).toHaveLength(0);
+      expect(atHead.cursor).toBe(secondCursor);
+      expect(atHead.drained).toBe(true);
     });
 
     natsIt('should filter events (OR semantics across filters)', async () => {

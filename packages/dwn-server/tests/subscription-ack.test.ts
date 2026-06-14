@@ -223,4 +223,30 @@ describe('handleSubscriptionAck', () => {
 
     await connection.close();
   });
+
+  it('should return success when cursor omits messageCid', async () => {
+    const ackSubscription = sinon.stub();
+    const request: JsonRpcRequest = {
+      jsonrpc      : '2.0',
+      id           : uuidv4(),
+      method       : 'rpc.ack',
+      params       : { cursor: { streamId: 's1', epoch: 'e1', position: '42' } },
+      subscription : { id: 'sub-123' },
+    };
+
+    const context: RequestContext = {
+      transport        : 'ws',
+      dwn,
+      socketConnection : { ackSubscription } as any,
+    };
+
+    const { jsonRpcResponse } = await handleSubscriptionAck(request, context);
+    expect(jsonRpcResponse.error).toBeUndefined();
+    expect(jsonRpcResponse.result.reply.status).toBe(200);
+    expect(ackSubscription.calledOnceWithExactly('sub-123', {
+      streamId : 's1',
+      epoch    : 'e1',
+      position : '42',
+    })).toBe(true);
+  });
 });
