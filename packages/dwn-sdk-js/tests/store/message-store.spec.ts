@@ -118,18 +118,24 @@ export function testMessageStore(): void {
         const newSchema = 'https://schema.org/NewIndex';
         const { message, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ schema: oldSchema });
         const messageCid = await Message.getCid(message);
-        const initialIndexes = await recordsWrite.constructIndexes(true);
+        const initialIndexes: KeyValues = {
+          ...await recordsWrite.constructIndexes(true),
+          attester: 'did:example:attester',
+        };
         const replacementIndexes: KeyValues = {
+          ...initialIndexes,
           isLatestBaseState : false,
-          messageTimestamp  : message.descriptor.messageTimestamp,
           schema            : newSchema,
         };
+        delete replacementIndexes.attester;
 
         await messageStore.put(alice.did, message, initialIndexes);
+        expect((await messageStore.query(alice.did, [{ attester: 'did:example:attester' }])).messages.length).toBe(1);
         await messageStore.updateIndexes(alice.did, messageCid, replacementIndexes);
 
         expect((await messageStore.query(alice.did, [{ schema: oldSchema }])).messages.length).toBe(0);
         expect((await messageStore.query(alice.did, [{ schema: newSchema }])).messages.length).toBe(1);
+        expect((await messageStore.query(alice.did, [{ attester: 'did:example:attester' }])).messages.length).toBe(0);
         expect((await messageStore.query(alice.did, [{ isLatestBaseState: true }])).messages.length).toBe(0);
         expect((await messageStore.query(alice.did, [{ isLatestBaseState: false }])).messages.length).toBe(1);
         expect(await messageStore.get(alice.did, messageCid)).toBeDefined();
