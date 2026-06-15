@@ -1,3 +1,7 @@
+import type { DurableEventLogStore } from '../src/event-stream/durable-event-log.js';
+import type { Filter } from '../src/types/query-types.js';
+import type { GenericMessage } from '../src/types/message-types.js';
+import type { EventLogEntry, EventLogReadOptions, EventLogReadResult, ProgressGapInfo, ProgressToken } from '../src/types/subscriptions.js';
 import type { GenerateRecordsWriteOutput, Persona } from './utils/test-data-generator.js';
 import type { RecordsWriteMessage, SubscriptionMessage } from '../src/index.js';
 
@@ -8,12 +12,152 @@ import { EventEmitterWakePublisher } from '../src/event-stream/event-emitter-wak
 import { Message } from '../src/core/message.js';
 import { MessageStoreLevel } from '../src/store/message-store-level.js';
 import { Poller } from './utils/poller.js';
+import { Replication } from '../src/utils/replication.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
+import { DwnError, DwnErrorCode } from '../src/core/dwn-error.js';
 
 type StoredRecord = GenerateRecordsWriteOutput & {
   messageCid: string;
   position: string;
 };
+
+class ScriptedFeedStore implements DurableEventLogStore {
+  private readonly epochValue: string = crypto.randomUUID();
+  private wakeDuringNextRead?: EventLogEntry;
+  public throwGapOnNextRead: boolean = false;
+
+  public constructor(
+    private readonly tenant: string,
+    private readonly entries: EventLogEntry[],
+    private readonly wakePublisher: EventEmitterWakePublisher,
+  ) {}
+
+  public append(entry: EventLogEntry): void {
+    this.entries.push(entry);
+    this.entries.sort((left, right): number => Number(BigInt(ScriptedFeedStore.getPosition(left)) - BigInt(ScriptedFeedStore.getPosition(right))));
+  }
+
+  public publishWakeDuringNextRead(entry: EventLogEntry): void {
+    this.wakeDuringNextRead = entry;
+  }
+
+  public async epoch(): Promise<string> {
+    return this.epochValue;
+  }
+
+  public async fingerprint(_tenant: string, _scopes: string[]): Promise<string> {
+    return Replication.fingerprintToHex(Replication.emptyFingerprint());
+  }
+
+  public async query(_tenant: string, _filters: Filter[]): Promise<{ messages: GenericMessage[] }> {
+    return { messages: [] };
+  }
+
+  public async logBounds(tenant: string): Promise<{ oldest: ProgressToken; latest: ProgressToken } | undefined> {
+    this.assertTenant(tenant);
+    if (this.entries.length === 0) {
+      return undefined;
+    }
+
+    const oldestEntry = this.entries[0];
+    const latestEntry = this.entries[this.entries.length - 1];
+    return {
+      oldest : await this.createToken(ScriptedFeedStore.getPosition(oldestEntry), oldestEntry.messageCid),
+      latest : await this.createToken(ScriptedFeedStore.getPosition(latestEntry), latestEntry.messageCid),
+    };
+  }
+
+  public async logRead(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
+    this.assertTenant(tenant);
+    await this.validateCursor(options.cursor);
+
+    if (this.throwGapOnNextRead) {
+      this.throwGapOnNextRead = false;
+      await this.throwProgressGap(options.cursor);
+    }
+
+    const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
+    const cursorPosition = options.cursor === undefined ? 0n : BigInt(options.cursor.position);
+    const headPosition = this.getHeadPosition();
+    if (limit <= 0) {
+      return { events: [], cursor: options.cursor, drained: cursorPosition >= headPosition };
+    }
+
+    if (this.wakeDuringNextRead !== undefined) {
+      const entry = this.wakeDuringNextRead;
+      this.wakeDuringNextRead = undefined;
+      this.append(entry);
+      this.wakePublisher.publish({ tenant: this.tenant, seq: ScriptedFeedStore.getPosition(entry) });
+    }
+
+    const events = this.entries
+      .filter(entry => BigInt(ScriptedFeedStore.getPosition(entry)) > cursorPosition)
+      .slice(0, limit);
+    const lastEvent = events.at(-1);
+    const resultCursor = lastEvent === undefined
+      ? options.cursor
+      : await this.createToken(ScriptedFeedStore.getPosition(lastEvent), lastEvent.messageCid);
+    const drained = BigInt(resultCursor?.position ?? options.cursor?.position ?? '0') >= this.getHeadPosition();
+
+    return { events, cursor: resultCursor, drained };
+  }
+
+  public async createToken(position: string, messageCid?: string): Promise<ProgressToken> {
+    const token: ProgressToken = {
+      streamId : await Replication.deriveStreamId(this.tenant),
+      epoch    : this.epochValue,
+      position,
+    };
+
+    if (messageCid !== undefined) {
+      token.messageCid = messageCid;
+    }
+
+    return token;
+  }
+
+  private assertTenant(tenant: string): void {
+    if (tenant !== this.tenant) {
+      throw new Error(`unexpected tenant ${tenant}`);
+    }
+  }
+
+  private async validateCursor(cursor: ProgressToken | undefined): Promise<void> {
+    if (cursor === undefined) {
+      return;
+    }
+
+    const invalidStream = cursor.streamId !== await Replication.deriveStreamId(this.tenant);
+    const invalidEpoch = cursor.epoch !== this.epochValue;
+    const invalidPosition = BigInt(cursor.position) > this.getHeadPosition();
+    if (invalidStream || invalidEpoch || invalidPosition) {
+      await this.throwProgressGap(cursor);
+    }
+  }
+
+  private async throwProgressGap(cursor: ProgressToken | undefined): Promise<never> {
+    const fallbackCursor = cursor ?? await this.createToken('0');
+    const bounds = await this.logBounds(this.tenant);
+    const gapInfo: ProgressGapInfo = {
+      requested       : fallbackCursor,
+      oldestAvailable : bounds?.oldest ?? fallbackCursor,
+      latestAvailable : bounds?.latest ?? fallbackCursor,
+      reason          : 'token_too_old',
+    };
+    const error = new DwnError(DwnErrorCode.EventLogProgressGap, 'progress token gap: token_too_old');
+    (error as DwnError & { gapInfo?: ProgressGapInfo }).gapInfo = gapInfo;
+    throw error;
+  }
+
+  private getHeadPosition(): bigint {
+    const latestEntry = this.entries.at(-1);
+    return latestEntry === undefined ? 0n : BigInt(ScriptedFeedStore.getPosition(latestEntry));
+  }
+
+  private static getPosition(entry: EventLogEntry): string {
+    return entry.position ?? entry.seq;
+  }
+}
 
 describe('DurableEventLog', () => {
   let messageStore: MessageStoreLevel;
@@ -93,6 +237,99 @@ describe('DurableEventLog', () => {
     await subscription.close();
   });
 
+  it('should gate wake-driven live delivery until after EOSE at the frozen catch-up cursor', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const firstEntry = await createLogEntry(alice, '1');
+    const secondEntry = await createLogEntry(alice, '2');
+    const scriptedStore = new ScriptedFeedStore(alice.did, [firstEntry], localWakePublisher);
+    const scriptedLog = new DurableEventLog(scriptedStore, localWakePublisher, { idleRedrainIntervalMs: 0 });
+    const received: SubscriptionMessage[] = [];
+
+    await scriptedLog.open();
+    scriptedStore.publishWakeDuringNextRead(secondEntry);
+    await scriptedLog.subscribe(alice.did, 'wake-during-catch-up', (message): void => {
+      received.push(message);
+    }, { cursor: await scriptedStore.createToken('0') });
+
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(received.map(message => message.type)).toEqual(['event', 'eose', 'event']);
+    });
+
+    expect(received[0].cursor.position).toBe('1');
+    expect(received[1].cursor.position).toBe('1');
+    expect(received[2].cursor.position).toBe('2');
+    await scriptedLog.close();
+  });
+
+  it('should emit a subscription error and close after a wake-driven progress gap', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const firstEntry = await createLogEntry(alice, '1');
+    const secondEntry = await createLogEntry(alice, '2');
+    const scriptedStore = new ScriptedFeedStore(alice.did, [firstEntry], localWakePublisher);
+    const scriptedLog = new DurableEventLog(scriptedStore, localWakePublisher, { idleRedrainIntervalMs: 0 });
+    const received: SubscriptionMessage[] = [];
+
+    await scriptedLog.open();
+    await scriptedLog.subscribe(alice.did, 'gap-after-subscribe', (message): void => {
+      received.push(message);
+    });
+
+    scriptedStore.throwGapOnNextRead = true;
+    localWakePublisher.publish({ tenant: alice.did, seq: '2' });
+
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(received).toHaveLength(1);
+      expect(received[0].type).toBe('error');
+    });
+
+    expect(received[0].cursor.position).toBe('1');
+    if (received[0].type !== 'error') {
+      throw new Error('expected subscription error');
+    }
+    expect(received[0].error.code).toBe('ProgressGap');
+
+    scriptedStore.append(secondEntry);
+    localWakePublisher.publish({ tenant: alice.did, seq: '2' });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(received).toHaveLength(1);
+    await scriptedLog.close();
+  });
+
+  it('should stop delivering the current page after a subscription closes', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const firstEntry = await createLogEntry(alice, '1');
+    const secondEntry = await createLogEntry(alice, '2');
+    const thirdEntry = await createLogEntry(alice, '3');
+    const scriptedStore = new ScriptedFeedStore(alice.did, [firstEntry], localWakePublisher);
+    const scriptedLog = new DurableEventLog(scriptedStore, localWakePublisher, { idleRedrainIntervalMs: 0 });
+    const received: SubscriptionMessage[] = [];
+
+    await scriptedLog.open();
+    const subscription = await scriptedLog.subscribe(alice.did, 'close-during-drain', (message): void => {
+      if (message.type !== 'event') {
+        return;
+      }
+
+      received.push(message);
+      void subscription.close();
+    });
+
+    scriptedStore.append(secondEntry);
+    scriptedStore.append(thirdEntry);
+    localWakePublisher.publish({ tenant: alice.did, seq: '3' });
+
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(received).toHaveLength(1);
+    });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(received).toHaveLength(1);
+    expect(received[0].cursor.position).toBe('2');
+    await scriptedLog.close();
+  });
+
   it('should emit redelivery events at the redelivery cursor position', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -160,6 +397,19 @@ describe('DurableEventLog', () => {
       ...record,
       messageCid : await Message.getCid(record.message),
       position   : putResult.position!.position,
+    };
+  }
+
+  async function createLogEntry(author: Persona, position: string): Promise<EventLogEntry> {
+    const record = await TestDataGenerator.generateRecordsWrite({ author });
+    const indexes = await record.recordsWrite.constructIndexes(true);
+
+    return {
+      seq        : position,
+      position,
+      event      : { message: record.message },
+      indexes,
+      messageCid : await Message.getCid(record.message),
     };
   }
 });

@@ -9,6 +9,7 @@ import type {
   EventLogSubscribeOptions,
   EventSubscription,
   MessageEvent,
+  ProgressGapInfo,
   ProgressToken,
   ReplicationFeedReader,
   SubscriptionEvent,
@@ -22,6 +23,7 @@ import { Messages } from '../utils/messages.js';
 import { Records } from '../utils/records.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { Replication } from '../utils/replication.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export type DurableEventLogStore = ReplicationFeedReader & Pick<MessageStore, 'query'>;
@@ -53,6 +55,7 @@ type DurableSubscription = {
   cursor?: ProgressToken;
   closed: boolean;
   draining: boolean;
+  liveReady: boolean;
   redrainRequested: boolean;
 };
 
@@ -145,19 +148,26 @@ export class DurableEventLog implements EventLog {
       cursor           : await this.getInitialCursor(tenant, options.cursor),
       closed           : false,
       draining         : false,
+      liveReady        : options.cursor === undefined,
       redrainRequested : false,
     };
     this.subscriptions.set(id, subscription);
 
     if (options.cursor !== undefined) {
       try {
-        await this.drainSubscription(subscription);
+        const eoseCursor = await this.catchUpSubscription(subscription, options.cursor);
+        if (!subscription.closed) {
+          listener({ type: 'eose', cursor: eoseCursor });
+          subscription.liveReady = true;
+          if (subscription.redrainRequested) {
+            this.scheduleDrain(subscription);
+          }
+        }
       } catch (error) {
         subscription.closed = true;
         this.subscriptions.delete(id);
         throw error;
       }
-      listener({ type: 'eose', cursor: subscription.cursor ?? options.cursor });
     }
 
     return {
@@ -192,7 +202,7 @@ export class DurableEventLog implements EventLog {
         continue;
       }
 
-      void this.drainSubscription(subscription).catch(this.errorHandler);
+      this.scheduleDrain(subscription);
     }
   }
 
@@ -202,8 +212,108 @@ export class DurableEventLog implements EventLog {
         continue;
       }
 
-      void this.drainSubscription(subscription).catch(this.errorHandler);
+      this.scheduleDrain(subscription);
     }
+  }
+
+  private scheduleDrain(subscription: DurableSubscription): void {
+    if (!subscription.liveReady) {
+      subscription.redrainRequested = true;
+      return;
+    }
+
+    void this.drainSubscription(subscription).catch((error): void => {
+      this.handleDrainError(subscription, error);
+    });
+  }
+
+  private handleDrainError(subscription: DurableSubscription, error: unknown): void {
+    if (subscription.closed) {
+      return;
+    }
+
+    if (error instanceof DwnError && error.code === DwnErrorCode.EventLogProgressGap) {
+      const gapInfo = DurableEventLog.getProgressGapInfo(error);
+      const cursor = gapInfo?.requested ?? subscription.cursor ?? gapInfo?.latestAvailable;
+      if (cursor === undefined) {
+        this.errorHandler(error);
+        return;
+      }
+
+      subscription.closed = true;
+      this.subscriptions.delete(subscription.id);
+      subscription.listener({
+        type  : 'error',
+        cursor,
+        error : {
+          code   : 'ProgressGap',
+          detail : error.message,
+        },
+      });
+      return;
+    }
+
+    this.errorHandler(error);
+  }
+
+  private async catchUpSubscription(subscription: DurableSubscription, cursor: ProgressToken): Promise<ProgressToken> {
+    const frozenCursor = await this.getCatchUpHighWater(subscription.tenant, cursor);
+    const frozenPosition = BigInt(frozenCursor.position);
+    let readCursor = cursor;
+    subscription.cursor = cursor;
+
+    for (;;) {
+      if (subscription.closed) {
+        return frozenCursor;
+      }
+
+      if (BigInt(readCursor.position) >= frozenPosition) {
+        subscription.cursor = frozenCursor;
+        return frozenCursor;
+      }
+
+      const result = await this.read(subscription.tenant, {
+        cursor  : readCursor,
+        filters : subscription.filters,
+        limit   : this.readLimit,
+      });
+
+      let reachedFrozenPosition = false;
+      for (const entry of result.events) {
+        const entryPosition = BigInt(DurableEventLog.getEntryPosition(entry));
+        if (entryPosition > frozenPosition) {
+          reachedFrozenPosition = true;
+          break;
+        }
+
+        const deliveredCursor = await this.deliverEntry(subscription, entry);
+        if (subscription.closed) {
+          return frozenCursor;
+        }
+
+        if (deliveredCursor !== undefined) {
+          readCursor = deliveredCursor;
+          subscription.cursor = deliveredCursor;
+        }
+      }
+
+      const resultCursor = result.cursor ?? readCursor;
+      if (reachedFrozenPosition || result.drained || BigInt(resultCursor.position) >= frozenPosition) {
+        subscription.cursor = frozenCursor;
+        return frozenCursor;
+      }
+
+      readCursor = resultCursor;
+      subscription.cursor = resultCursor;
+    }
+  }
+
+  private async getCatchUpHighWater(tenant: string, cursor: ProgressToken): Promise<ProgressToken> {
+    const bounds = await this.store.logBounds(tenant);
+    const frozenCursor = bounds?.latest ?? cursor;
+
+    await this.read(tenant, { cursor, limit: 0 });
+    return frozenCursor;
   }
 
   private async drainSubscription(subscription: DurableSubscription): Promise<void> {
@@ -236,22 +346,16 @@ export class DurableEventLog implements EventLog {
       });
 
       for (const entry of result.events) {
-        const cursor = await this.buildToken(subscription.tenant, entry.position ?? entry.seq, entry.messageCid);
-        const event: SubscriptionEvent = {
-          type              : 'event',
-          cursor,
-          event             : entry.event,
-          seq               : entry.seq,
-          messageCid        : entry.messageCid,
-          isLatestBaseState : DurableEventLog.isLatestBaseState(entry),
-          protocol          : DurableEventLog.getProtocol(entry),
-        };
-
-        if (entry.encodedData !== undefined) {
-          event.encodedData = entry.encodedData;
+        const cursor = await this.deliverEntry(subscription, entry);
+        if (subscription.closed) {
+          return;
         }
 
-        subscription.listener(event);
+        subscription.cursor = cursor ?? subscription.cursor;
+      }
+
+      if (subscription.closed) {
+        return;
       }
 
       subscription.cursor = result.cursor ?? subscription.cursor;
@@ -259,6 +363,34 @@ export class DurableEventLog implements EventLog {
         return;
       }
     }
+  }
+
+  private async deliverEntry(subscription: DurableSubscription, entry: EventLogEntry): Promise<ProgressToken | undefined> {
+    if (subscription.closed) {
+      return undefined;
+    }
+
+    const cursor = await this.buildToken(subscription.tenant, DurableEventLog.getEntryPosition(entry), entry.messageCid);
+    if (subscription.closed) {
+      return undefined;
+    }
+
+    const event: SubscriptionEvent = {
+      type              : 'event',
+      cursor,
+      event             : entry.event,
+      seq               : entry.seq,
+      messageCid        : entry.messageCid,
+      isLatestBaseState : DurableEventLog.isLatestBaseState(entry),
+      protocol          : DurableEventLog.getProtocol(entry),
+    };
+
+    if (entry.encodedData !== undefined) {
+      event.encodedData = entry.encodedData;
+    }
+
+    subscription.listener(event);
+    return cursor;
   }
 
   private async attachInitialWrites(tenant: string, entries: EventLogEntry[]): Promise<EventLogEntry[]> {
@@ -317,6 +449,19 @@ export class DurableEventLog implements EventLog {
     }
 
     return token;
+  }
+
+  private static getEntryPosition(entry: EventLogEntry): string {
+    return entry.position ?? entry.seq;
+  }
+
+  private static getProgressGapInfo(error: DwnError): ProgressGapInfo | undefined {
+    const gapInfo = (error as DwnError & { gapInfo?: ProgressGapInfo }).gapInfo;
+    if (gapInfo === undefined) {
+      return undefined;
+    }
+
+    return gapInfo;
   }
 
   private static isLatestBaseState(entry: EventLogEntry): boolean {
