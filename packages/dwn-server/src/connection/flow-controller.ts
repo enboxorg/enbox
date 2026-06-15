@@ -89,9 +89,11 @@ export class FlowController {
       }
     }
 
-    // Find the matching token by position + messageCid.
+    // Find the matching token. High-water cursors may omit messageCid, so
+    // those acknowledgements match by position alone within the stream domain.
     const idx = this.unacked.findIndex(
-      (t) => t.position === cursor.position && t.messageCid === cursor.messageCid
+      (t) => t.position === cursor.position &&
+        (cursor.messageCid === undefined || t.messageCid === cursor.messageCid)
     );
     if (idx === -1) {
       // Unknown token — could be a stale or duplicate ack. Ignore silently.

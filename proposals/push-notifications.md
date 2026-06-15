@@ -20,8 +20,8 @@ Push notifications solve the **"app is not running"** problem. They are the comp
 |---|---|---|
 | WebSocket subscriptions | `dwn-server/src/connection/socket-connection.ts` | Per-connection subscription management with flow control |
 | Flow control | `dwn-server/src/connection/flow-controller.ts` | Sliding window backpressure (default 32 unacked events) |
-| EventLog (in-memory) | `dwn-sdk-js/src/event-stream/event-emitter-event-log.ts` | `mitt`-based pub/sub with per-tenant channels, cursor-based resume |
-| EventLog (NATS) | `dwn-server/src/plugins/event-log-nats.ts` | Distributed EventLog over NATS JetStream (`dwn.events.<tenant>`) |
+| EventLog (durable store) | `dwn-sdk-js/src/event-stream/durable-event-log.ts` | Cursor-based replay over the committed message-store feed |
+| EventBus (NATS) | `dwn-server/src/plugins/event-bus-nats.ts` | Cross-process wake fan-out for durable EventLog drains |
 | Admin webhooks | `dwn-server/src/admin/webhook-manager.ts` | Server-to-server HTTP callbacks for admin events only (not DWN message events) |
 | Agent sync engine | `agent/src/sync-engine-level.ts` | Poll (SMT reconciliation) and live (WebSocket subscription) sync modes |
 | LiveQuery | `api/src/live-query.ts` | Reactive record change stream with dedup and lifecycle events |
@@ -67,7 +67,7 @@ Push subscriptions are stored server-side in a SQL table managed by `dwn-server`
 
 **For small-to-medium deployments (Phase 1):** A `PushNotificationManager` component inside `dwn-server` that hooks into the message processing path. Single deployment artifact, no additional infrastructure.
 
-**For large-scale providers (Phase 5):** Extract the push logic into a standalone gateway service that consumes from the NATS event stream (`dwn.events.>`). Independently scalable, crash-isolated.
+**For large-scale providers (Phase 5):** Extract the push logic into a standalone gateway service that listens for NATS wakes and reads the durable message-store feed. Independently scalable, crash-isolated.
 
 The core logic is identical — what changes is only the event source (in-process hook vs. NATS consumer).
 
@@ -84,13 +84,13 @@ process-message.ts:
 ```
 
 **Why this approach:**
-- Works identically with both `EventEmitterEventLog` and `NatsEventLog`
+- Works with the same durable EventLog surface regardless of whether wakes are local or NATS-backed
 - No changes to `dwn-sdk-js` required
 - The hook is at the server layer, not the SDK layer
 - Access to the exact message and target DID
 - Easy to add rate limiting, dedup, and filtering before touching push providers
 
-**For the gateway model (Phase 5):** The standalone service subscribes to `dwn.events.>` via a durable NATS consumer instead. The NATS stream is already configured with `subjects: ['dwn.events.>']` (`event-log-nats.ts:450`), so a push gateway consumer works out of the box.
+**For the gateway model (Phase 5):** The standalone service subscribes to NATS wakes and then drains the authoritative durable feed from the shared message store. NATS is only a wake signal; replay state stays in Level/SQL.
 
 ### 4. Authentication: Provider-Auth Token
 
@@ -378,7 +378,7 @@ Web Push content encryption (RFC 8291) may require a small implementation using 
 
 ### Phase 5: Gateway Extraction (Large Providers)
 - Extract `PushNotificationManager` into standalone service
-- NATS consumer subscribing to `dwn.events.>` for all-tenant events
+- NATS wake subscriber plus durable message-store feed reader
 - Shared push subscription store (Postgres)
 - Connection presence coordination via NATS KV
 

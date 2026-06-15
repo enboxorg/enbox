@@ -102,6 +102,7 @@ export { ResumableTaskStoreLevel } from './store/resumable-task-store-level.js';
 export type { ResumableTaskStoreLevelConfig } from './store/resumable-task-store-level.js';
 export { EventEmitterEventLog } from './event-stream/event-emitter-event-log.js';
 export type { EventEmitterEventLogConfig } from './event-stream/event-emitter-event-log.js';
+export { EventEmitterWakePublisher } from './event-stream/event-emitter-wake-publisher.js';
 export { DurableEventLog } from './event-stream/durable-event-log.js';
 export type { DurableEventLogConfig, DurableEventLogStore } from './event-stream/durable-event-log.js';
 

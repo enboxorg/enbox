@@ -89,6 +89,13 @@ type ReplicationApplyProtocolDefinitionLookup = {
   messageTimestamp?: string;
 };
 
+type DwnStorage = {
+  dataStore: DataStore;
+  messageStore: MessageStore;
+  stateIndex: StateIndex;
+  eventLog: EventLog | undefined;
+};
+
 export class Dwn {
   private readonly methodHandlers: { [key:string]: MethodHandler };
   private readonly didResolver: DidResolver;
@@ -238,8 +245,9 @@ export class Dwn {
    *
    * Callers are responsible for maintaining consistency across stores.
    */
-  public get storage(): { messageStore: MessageStore; stateIndex: StateIndex; eventLog: EventLog | undefined } {
+  public get storage(): DwnStorage {
     return {
+      dataStore    : this.dataStore,
       messageStore : this.messageStore,
       stateIndex   : this.stateIndex,
       eventLog     : this.eventLog,

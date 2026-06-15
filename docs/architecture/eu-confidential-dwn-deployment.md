@@ -40,7 +40,7 @@ is required for any of the initial launches.
 |---|---|---|
 | DWN server with Postgres | **Production-ready** | CI-validated, runs all 748 agent tests |
 | Shared PG connection pool | **Implemented** | `storage.ts` caches dialects by URL |
-| NATS EventLog plugin | **Implemented + tested** | `plugins/event-log-nats.ts` (454 lines, 20+ tests) |
+| NATS EventBus plugin | **Implemented + tested** | `plugins/event-bus-nats.ts` |
 | S3 DataStore (blob offload) | **Implemented + tested** | `dwn-sql-store/src/data-store-s3.ts` (CI runs against MinIO) |
 | Provider auth (JWT) | **Implemented** | Built-in open-auth + JWT validation |
 | Admin API | **Implemented** | Bearer token auth, metrics, activity log, audit |
@@ -104,7 +104,7 @@ This gives users **three distinct trust/region profiles** at launch:
 | Vault deploy | EU | Infra | Deploy Vault in Contrast CVM. Seed secrets (PG pass, JWT secret, admin token). |
 | Vault attestation auth | EU | Infra | Configure Contrast-based auth method. Test secret retrieval from attested pod. |
 | entrypoint-contrast.sh | EU | Dev | Startup script: Vault auth → fetch secrets → env export → exec DWN. (~50 lines) |
-| DWN deployment | EU | Infra | Deploy DWN pods (2 replicas) with Contrast runtime + NATS EventLog plugin. |
+| DWN deployment | EU | Infra | Deploy DWN pods (2 replicas) with Contrast runtime + NATS EventBus plugin. |
 | Ingress + TLS | EU | Infra | nginx Ingress with Let's Encrypt. HTTP/WS routing. |
 | E2E validation | EU | QA | Full flow: attestation → Vault → DWN → RecordsWrite/Read → WebSocket. |
 
@@ -650,7 +650,7 @@ to the accelerated timeline:
 |---|---|---|
 | HashiCorp Vault | Infra | Deploy Vault as a Contrast confidential pod. Seed secrets. Configure attestation-based auth. |
 | entrypoint-contrast.sh | Dev | Startup script: Vault auth → fetch secrets → env export → exec DWN. (~50 lines) |
-| DWN deployment | Infra | Deploy DWN pods (2 replicas) with Contrast runtime + NATS EventLog plugin. |
+| DWN deployment | Infra | Deploy DWN pods (2 replicas) with Contrast runtime + NATS EventBus plugin. |
 | Ingress + TLS | Infra | nginx Ingress with Let's Encrypt. HTTP/WS routing. |
 | E2E validation | QA | Full flow: attestation → Vault → DWN → RecordsWrite/Read → WebSocket. |
 | CI/CD pipeline | DevOps | GitHub Actions: build → OVHcloud registry → `contrast generate/set` → `kubectl apply`. |
@@ -709,7 +709,7 @@ overhead (self-managed K8s nodes, NATS, Vault).
 |---|---|---|
 | `dwn-server` | Add `entrypoint-contrast.sh` — startup script that fetches secrets from Vault before exec'ing the DWN server | Small (new file, ~50 lines of shell) |
 | `dwn-server` | Extend Helm chart `values.yaml` with Contrast-specific fields (`runtimeClassName`, init container, Vault config) | Small (values + template additions) |
-| `dwn-server` | Ensure NATS EventLog plugin is loadable via `DWN_EVENT_LOG_PLUGIN_PATH` | Already supported — just config |
+| `dwn-server` | Ensure NATS EventBus plugin is loadable via `DWN_EVENT_BUS_PLUGIN_PATH` | Already supported — just config |
 | None | `HdIdentityVault`, `LocalKeyManager`, `AgentDwnApi` — **no changes** | Zero |
 | None | `DwnKeyStore` encryption — **no changes** (Layer 2 encryption works as-is inside the CVM) | Zero |
 
@@ -728,7 +728,7 @@ These are already built, tested, and CI-validated:
 
 | Component | Location | Status |
 |---|---|---|
-| `NatsEventLog` plugin | `packages/dwn-server/src/plugins/event-log-nats.ts` | 454 lines, 20+ tests, production-ready |
+| `NatsEventBus` plugin | `packages/dwn-server/src/plugins/event-bus-nats.ts` | Wake fan-out for durable MessageStore replay |
 | `DataStoreS3` (blob offload) | `packages/dwn-sql-store/src/data-store-s3.ts` | 338 lines, tested against MinIO in CI |
 | Shared PG pool | `packages/dwn-server/src/storage.ts` (lines 57-97) | Caches `PostgresDialect` per URL |
 | Provider auth (JWT) | `packages/dwn-server/src/registration/jwt-provider-auth-plugin.ts` | HMAC + JWKS support |

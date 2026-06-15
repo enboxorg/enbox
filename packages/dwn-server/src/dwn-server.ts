@@ -1,18 +1,11 @@
 import type { DidResolver } from '@enbox/dids';
 import type { DwnServerConfig } from './config.js';
-import type { EventLog } from '@enbox/dwn-sdk-js';
+import type { EventBus } from './event-bus.js';
 import type { MessageProcessedHook } from './message-processed-hook.js';
 import type { ProcessHandlers } from './process-handlers.js';
-import type { Server } from 'bun';
-
-import type { WsData } from './http-api.js';
-
-import log from 'loglevel';
-import prefix from 'loglevel-plugin-prefix';
-import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
-import { Dwn, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
-
 import type { ProviderAuthPlugin } from './registration/provider-auth-plugin.js';
+import type { Server } from 'bun';
+import type { WsData } from './http-api.js';
 
 import { ActivityLog } from './admin/activity-log.js';
 import { AdminApi } from './admin/admin-api.js';
@@ -22,15 +15,20 @@ import { AdminStore } from './admin/admin-store.js';
 import { AuditLog } from './admin/audit-log.js';
 import { config as defaultConfig } from './config.js';
 import { DeliveryService } from './delivery-service.js';
+import { Dwn } from '@enbox/dwn-sdk-js';
 import { HttpApi } from './http-api.js';
+import { InMemoryEventBus } from './event-bus.js';
 import { JwtProviderAuthPlugin } from './registration/jwt-provider-auth-plugin.js';
 import { loadProviderAuthPlugin } from './registration/provider-auth-plugin.js';
+import log from 'loglevel';
 import { OpenAuthHandler } from './registration/open-auth-handler.js';
 import { PluginLoader } from './plugin-loader.js';
+import prefix from 'loglevel-plugin-prefix';
 import { RateLimiter } from './rate-limiter.js';
 import { RegistrationManager } from './registration/registration-manager.js';
 import { WebhookManager } from './admin/webhook-manager.js';
 import { WsApi } from './ws-api.js';
+import { DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 import { getDialectFromUrl, getDwnConfig, runServerMigrationsIfNeeded } from './storage.js';
 import { removeProcessHandlers, setProcessHandlers } from './process-handlers.js';
 
@@ -101,6 +99,7 @@ export class DwnServer {
   #auditLog: AuditLog | undefined;
   #passkeyStore: AdminPasskeyStore | undefined;
   #sessionManager: AdminSessionManager | undefined;
+  #eventBus: EventBus | undefined;
   readonly #externalHooks: MessageProcessedHook[];
   readonly #externalRegistrationManager: RegistrationManager | undefined;
   readonly #externalOpenAuthHandler: OpenAuthHandler | undefined;
@@ -156,33 +155,31 @@ export class DwnServer {
     if (!this.dwn) {
       // No pre-built DWN — create everything from scratch including registration.
       registrationManager = await this.#createRegistrationManager();
+      const eventBus = await this.#createEventBus();
+      this.#eventBus = eventBus;
 
-      let eventLog: EventLog | undefined;
-      if (this.config.webSocketSupport) {
-        // If EventLog plugin is not specified, use `EventEmitterEventLog` implementation as default.
-        if (this.config.eventLogPluginPath === undefined || this.config.eventLogPluginPath === '') {
-          eventLog = new EventEmitterEventLog();
-        } else {
-          eventLog = await PluginLoader.loadPlugin<EventLog>(this.config.eventLogPluginPath);
-        }
+      try {
+        // Use an in-memory DID resolver cache for the server. The Dwn class now
+        // properly manages the resolver cache lifecycle via open()/close(), so
+        // LevelDB would also work, but in-memory is simpler for server deployments
+        // (no lock files, no filesystem state to manage across container restarts).
+        const didResolver = this.didResolver ?? new UniversalResolver({
+          didResolvers : [DidDht, DidJwk, DidKey, DidWeb],
+          cache        : new DidResolverCacheMemory(),
+        });
 
+        const dwnConfig = await getDwnConfig(this.config, {
+          didResolver,
+          tenantGate     : registrationManager,
+          eventBus,
+          enableEventLog : this.config.webSocketSupport,
+        });
+        this.dwn = await Dwn.create(dwnConfig);
+      } catch (error) {
+        await eventBus.close();
+        this.#eventBus = undefined;
+        throw error;
       }
-
-      // Use an in-memory DID resolver cache for the server. The Dwn class now
-      // properly manages the resolver cache lifecycle via open()/close(), so
-      // LevelDB would also work, but in-memory is simpler for server deployments
-      // (no lock files, no filesystem state to manage across container restarts).
-      const didResolver = this.didResolver ?? new UniversalResolver({
-        didResolvers : [DidDht, DidJwk, DidKey, DidWeb],
-        cache        : new DidResolverCacheMemory(),
-      });
-
-      const dwnConfig = await getDwnConfig(this.config, {
-        didResolver,
-        tenantGate: registrationManager,
-        eventLog,
-      });
-      this.dwn = await Dwn.create(dwnConfig);
     } else if (this.#externalRegistrationManager) {
       // Pre-built DWN with an externally-provided RegistrationManager.
       // The caller is responsible for passing this RegistrationManager as the
@@ -360,6 +357,15 @@ export class DwnServer {
     }
   }
 
+  async #createEventBus(): Promise<EventBus> {
+    const eventBus = this.config.eventBusPluginPath === undefined || this.config.eventBusPluginPath === ''
+      ? new InMemoryEventBus()
+      : await PluginLoader.loadPlugin<EventBus>(this.config.eventBusPluginPath);
+
+    await eventBus.open();
+    return eventBus;
+  }
+
   /**
    * Creates a RegistrationManager based on the server config. Factored out of
    * `#setupServer()` so the same logic can be reused regardless of whether the
@@ -443,11 +449,16 @@ export class DwnServer {
       this.#tenantRateLimiter.destroy();
     }
 
-    await this.dwn.close();
-
     // Close WebSocket server if it was initialized.
     if (this.#wsApi !== undefined) {
       await this.#wsApi.close();
+    }
+
+    await this.dwn.close();
+
+    if (this.#eventBus !== undefined) {
+      await this.#eventBus.close();
+      this.#eventBus = undefined;
     }
 
     await this.#httpApi.close();

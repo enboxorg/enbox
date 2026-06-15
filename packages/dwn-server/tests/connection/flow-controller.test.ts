@@ -10,6 +10,10 @@ function token(pos: number): ProgressToken {
   return { streamId: 'stream-1', epoch: 'epoch-1', position: String(pos), messageCid: `cid-${pos}` };
 }
 
+function highWaterToken(pos: number): ProgressToken {
+  return { streamId: 'stream-1', epoch: 'epoch-1', position: String(pos) };
+}
+
 /** Helper to create a SubscriptionEvent message with a given position. */
 function makeEvent(pos: number): SubscriptionMessage {
   return {
@@ -160,6 +164,22 @@ describe('FlowController', () => {
       expect(sent).toHaveLength(3);
       expect(sent[2].result.subscription.cursor).toEqual(token(3));
       expect(fc.inFlightCount).toBe(2); // 2 and 3 still in flight
+      expect(fc.bufferCount).toBe(0);
+    });
+
+    it('should match messageCid-less acks by position', () => {
+      const sent: JsonRpcSuccessResponse[] = [];
+      const fc = createFc(2, sent);
+
+      fc.push(makeEvent(1));
+      fc.push(makeEvent(2));
+      fc.push(makeEvent(3));
+
+      fc.ack(highWaterToken(2));
+
+      expect(sent).toHaveLength(3);
+      expect(sent[2].result.subscription.cursor).toEqual(token(3));
+      expect(fc.inFlightCount).toBe(1);
       expect(fc.bufferCount).toBe(0);
     });
 

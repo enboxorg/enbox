@@ -43,20 +43,11 @@ export function validateInboundDwnMessageTransport(params: InboundDwnMessagePara
 }
 
 export async function enforceInboundDwnMessageLimits(params: InboundDwnMessageParams): Promise<HandlerResponse | undefined> {
-  const { context, message, requestId, target } = params;
+  const { context, message, target } = params;
 
-  if (context.tenantRateLimiter) {
-    const result = context.tenantRateLimiter.consume(target);
-    if (result.allowed === false) {
-      const retryAfterSec = Math.ceil(result.retryAfterMs / 1000);
-      const jsonRpcResponse = createJsonRpcErrorResponse(
-        requestId,
-        JsonRpcErrorCodes.TooManyRequests,
-        `${DwnServerErrorCode.RateLimitExceeded}: tenant rate limit exceeded, retry after ${retryAfterSec}s`,
-        { retryAfterSec },
-      );
-      return { jsonRpcResponse };
-    }
+  const rateLimitResult = enforceTenantRateLimit(params);
+  if (rateLimitResult !== undefined) {
+    return rateLimitResult;
   }
 
   if (
@@ -67,6 +58,28 @@ export async function enforceInboundDwnMessageLimits(params: InboundDwnMessagePa
   ) {
     return enforceQuota(target, message, context);
   }
+}
+
+export function enforceTenantRateLimit(params: InboundDwnMessageParams): HandlerResponse | undefined {
+  const { context, requestId, target } = params;
+
+  if (context.tenantRateLimiter === undefined) {
+    return undefined;
+  }
+
+  const result = context.tenantRateLimiter.consume(target);
+  if (result.allowed === true) {
+    return undefined;
+  }
+
+  const retryAfterSec = Math.ceil(result.retryAfterMs / 1000);
+  const jsonRpcResponse = createJsonRpcErrorResponse(
+    requestId,
+    JsonRpcErrorCodes.TooManyRequests,
+    `${DwnServerErrorCode.RateLimitExceeded}: tenant rate limit exceeded, retry after ${retryAfterSec}s`,
+    { retryAfterSec },
+  );
+  return { jsonRpcResponse };
 }
 
 /**

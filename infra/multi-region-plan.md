@@ -38,7 +38,7 @@
 |---|---|---|
 | Aurora PostgreSQL | No | Independent cluster per region |
 | S3 | No | Independent bucket per region |
-| NATS JetStream | No | Independent 3-node cluster per region |
+| NATS core pub/sub | No | Independent 3-node wake cluster per region |
 | ALB | No | One per region |
 | Secrets Manager | No | Independent secrets per region |
 | VPC | No | Independent VPC per region |
@@ -95,34 +95,37 @@ infrastructure coupling between regions.
 ### Data Flow
 
 ```
-NATS (local)                  Sync Daemon                  Remote DWN
+NATS wake bus                 Sync Daemon                  Remote DWN
     │                              │                           │
-    │ dwn.events.>                 │                           │
-    │ (all tenant events)          │                           │
+    │ dwn.wakes.>                 │                           │
+    │ (tenant wake only)           │                           │
     ├─────────────────────────────►│                           │
-    │                              │ 1. Decode tenant DID      │
-    │                              │    from NATS subject      │
-    │                              │ 2. Resolve tenant's DWN   │
+    │                              │ 1. Read tenant + seq      │
+    │                              │    from wake payload      │
+    │                              │ 2. Drain local durable    │
+    │                              │    log from stored cursor │
+    │                              │ 3. Resolve tenant's DWN   │
     │                              │    endpoints (cached)     │
-    │                              │ 3. Filter out local       │
+    │                              │ 4. Filter out local       │
     │                              │    endpoint               │
-    │                              │ 4. Read message + data    │
-    │                              │    from local DWN         │
-    │                              │ 5. Forward via            │
+    │                              │ 5. Read message + data    │
+    │                              │    from local store/DWN   │
+    │                              │ 6. Forward via            │
     │                              │    HttpDwnRpcClient       │
     │                              │────────────────────────────►
     │                              │    RecordsWrite / etc.     │
     │                              │◄────────────────────────────
     │                              │    202 / 409 (idempotent)  │
-    │                              │ 6. ACK NATS message        │
+    │                              │ 7. Persist durable cursor  │
 ```
 
 ### Key Design Decisions
 
-**NATS as the event source.** The sync daemon subscribes to `dwn.events.>` on
-the local NATS JetStream stream (`DWN_EVENTS`). This is a single subscription
-that catches all writes across all tenants. Uses `AckPolicy.Explicit` so
-messages are retried on failure.
+**MessageStore as the event source.** The sync daemon subscribes to local NATS
+wakes (`dwn.wakes.>`), but treats them only as hints. The durable replication
+log in the local MessageStore is the source of truth for replay, cursor
+validation, and retry. If a wake is dropped or duplicated, the daemon resumes
+from its stored durable cursor and drains the tenant log until caught up.
 
 **DID resolution for endpoint discovery.** For each tenant DID, the daemon
 resolves the DWN service endpoints from the DID document (via `DidDht.resolve()`).
@@ -140,14 +143,14 @@ exists, same `messageCid`). The daemon treats 409 as success and ACKs the NATS
 message. No infinite loop — just one extra round-trip that returns immediately.
 No custom headers or code changes to the DWN server needed.
 
-**Data payload handling.** The NATS event payload contains the full
-`GenericMessage` (descriptor + authorization) but NOT the record data body. For
-RecordsWrite messages with `dataSize > 0`, the daemon reads the data from the
-local DWN via `MessagesRead` before forwarding.
+**Data payload handling.** The NATS wake payload contains no DWN message body.
+For each durable log row, the daemon reads the message envelope and, for
+RecordsWrite messages with `dataSize > 0`, reads the data from the local DWN via
+MessagesRead before forwarding.
 
-**Cursor persistence.** The NATS durable consumer tracks the last-delivered
-sequence number. On daemon restart, delivery resumes from the last unACKed
-message automatically.
+**Cursor persistence.** The daemon persists DWN progress tokens from the local
+durable replication log. NATS sequence numbers are never stored as replication
+cursors.
 
 ### Configuration
 
@@ -156,8 +159,8 @@ message automatically.
 | `DWN_SYNC_ENABLED` | `false` | Enable the sync daemon |
 | `DWN_SYNC_LOCAL_ENDPOINT` | (required) | This region's DWN URL (excluded from forwarding targets) |
 | `DWN_SYNC_CONCURRENCY` | `10` | Max parallel forwards |
-| `DWN_SYNC_CONSUMER_NAME` | `sync-daemon` | NATS durable consumer name |
-| `DWN_SYNC_BATCH_SIZE` | `50` | NATS fetch batch size |
+| `DWN_SYNC_CONSUMER_NAME` | `sync-daemon` | Local daemon identity for durable cursor storage |
+| `DWN_SYNC_BATCH_SIZE` | `50` | Durable log read batch size |
 | `DWN_SYNC_DID_CACHE_TTL` | `3600` | DID resolution cache TTL (seconds) |
 
 ### Deployment
@@ -173,8 +176,8 @@ HTTP or WS services):
 
 - Prometheus metrics: `sync_events_forwarded_total`, `sync_events_failed_total`,
   `sync_events_skipped_total`, `sync_lag_seconds`
-- Health check endpoint at `/health` (reports NATS connection state + consumer lag)
-- CloudWatch alarms on consumer lag exceeding threshold
+- Health check endpoint at `/health` (reports NATS connection state + durable cursor lag)
+- CloudWatch alarms on durable cursor lag exceeding threshold
 
 ---
 
@@ -281,7 +284,8 @@ can use either one, but data written to one does not appear on the other yet.
 New application code in the DWN server package.
 
 8. Implement `packages/dwn-server/src/sync/sync-daemon.ts` (~500-800 lines):
-   - NATS consumer subscribing to `dwn.events.>`
+   - NATS wake subscriber listening on `dwn.wakes.>`
+   - Durable replication log reader with persisted DWN progress tokens
    - DID resolution + caching for endpoint discovery
    - Message reading from local DWN (for data payloads)
    - Forwarding via `HttpDwnRpcClient`

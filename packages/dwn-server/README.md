@@ -170,7 +170,7 @@ All configuration is via environment variables:
 | `DWN_STORAGE_DATA`                                | Data store URL (overrides `DWN_STORAGE`)                                                                                       | value of `DWN_STORAGE` |
 | `DWN_STORAGE_RESUMABLE_TASKS`                     | Resumable task store URL                                                                                                       | value of `DWN_STORAGE` |
 | `DWN_STORAGE_STATE_INDEX`                         | State index store URL                                                                                                          | value of `DWN_STORAGE` |
-| `DWN_EVENT_STREAM_PLUGIN_PATH`                    | Path to custom Event Stream plugin                                                                                             | unset                  |
+| `DWN_EVENT_BUS_PLUGIN_PATH`                       | Path to custom EventBus plugin for cross-process durable-log wakes                                                              | unset                  |
 | `DWN_REGISTRATION_STORE_URL`                      | URL for registered DID storage. Unset = open for all                                                                           | unset                  |
 | `DWN_REGISTRATION_PROOF_OF_WORK_ENABLED`          | Require proof-of-work for registration                                                                                         | `false`                |
 | `DWN_REGISTRATION_PROOF_OF_WORK_SEED`             | Seed for challenge nonce (cluster consistency)                                                                                  | unset                  |

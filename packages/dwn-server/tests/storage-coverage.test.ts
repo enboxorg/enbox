@@ -1,9 +1,11 @@
 import type { DwnServerConfig } from '../src/config.js';
 
 import sinon from 'sinon';
-import { afterEach, describe, expect, it } from 'bun:test';
 
 import { config } from '../src/config.js';
+import { DurableEventLog } from '@enbox/dwn-sdk-js';
+import { InMemoryEventBus } from '../src/event-bus.js';
+import { afterEach, describe, expect, it } from 'bun:test';
 import { getDialectFromUrl, getDwnConfig } from '../src/storage.js';
 
 // ---------------------------------------------------------------------------
@@ -153,6 +155,18 @@ describe('storage — coverage', () => {
       expect(dwnConfig.didResolver).toBe(fakeDidResolver);
       expect(dwnConfig.tenantGate).toBe(fakeTenantGate);
       expect(dwnConfig.eventLog).toBe(fakeEventLog);
+    });
+
+    it('should create a durable event log when an event bus is provided', async () => {
+      const cfg = testConfig();
+      const eventBus = new InMemoryEventBus();
+
+      const dwnConfig = await getDwnConfig(cfg, {
+        eventBus,
+        enableEventLog: true,
+      });
+
+      expect(dwnConfig.eventLog).toBeInstanceOf(DurableEventLog);
     });
   });
 

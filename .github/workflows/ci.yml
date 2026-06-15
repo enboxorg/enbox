@@ -776,9 +776,9 @@ jobs:
           name: workspace-build
           path: packages
 
-      - name: Start NATS with JetStream
+      - name: Start NATS
         run: |
-          docker run -d --name nats -p 4222:4222 -p 8222:8222 nats:2.10-alpine -js -m 8222
+          docker run -d --name nats -p 4222:4222 -p 8222:8222 nats:2.10-alpine -m 8222
           for i in $(seq 1 30); do
             if wget -q --spider http://localhost:8222/healthz 2>/dev/null; then
               echo "NATS is ready"

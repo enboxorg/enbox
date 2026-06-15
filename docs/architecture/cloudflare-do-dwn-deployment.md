@@ -11,16 +11,17 @@ architecture addresses three capabilities unique to this provider:
    with a private 10 GB SQLite database, eliminating cross-tenant data leakage by
    construction
 2. **WebSocket firehose at scale** — 10,000+ concurrent connections, each
-   subscribing to hundreds of tenants, with events routed through NATS JetStream
-   and delivered via hibernatable Connection DOs
+   subscribing to hundreds of tenants, with durable log replay in SQLite and
+   cross-object wakes routed through NATS core pub/sub to hibernatable
+   Connection DOs
 3. **IPFS data layer** — unencrypted record data is stored in IPFS-native DAG-PB
    format, served over the IPFS bitswap protocol, and discoverable via the IPFS
    DHT — making the DWN provider a first-class IPFS peer
 
 The design introduces three Durable Object classes (Tenant, Connection, Admin),
-Cloudflare R2 for blob storage, NATS JetStream for cross-component pub/sub and
-delivery fan-out, Cloudflare Queues for async operations, and Helia (JS IPFS)
-running on Fly.io as an R2-backed IPFS peer.
+Cloudflare R2 for blob storage, NATS core pub/sub for cross-component wake
+fan-out, Cloudflare Queues for async operations, and Helia (JS IPFS) running on
+Fly.io as an R2-backed IPFS peer.
 
 ---
 
@@ -61,7 +62,7 @@ running on Fly.io as an R2-backed IPFS peer.
           ▼          ▼                 ▼              ▼
     ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
     │    R2    │  │  Queues  │  │   NATS   │  │  Helia   │
-    │  (blobs) │  │  (async) │  │ JetStream│  │  (IPFS)  │
+    │  (blobs) │  │  (async) │  │ wake bus │  │  (IPFS)  │
     │          │  │          │  │          │  │          │
     │  shared  │  │ delivery │  │ 3-region │  │  R2-back │
     │  bucket  │  │ ipfs-ann │  │ super-   │  │  Fly.io  │
@@ -79,9 +80,11 @@ running on Fly.io as an R2-backed IPFS peer.
 | 4 | AWS + Nitro | US | ECS + Aurora + Enclaves | Confidential compute |
 | **5** | **Cloudflare** | **Global** | **DOs + R2 + NATS** | **Edge-native, per-tenant isolation, IPFS, firehose** |
 
-A user's DID document lists endpoints from multiple providers. All providers
-share a NATS super-cluster for real-time event propagation. SMT reconciliation
-provides the correctness backstop regardless of delivery path.
+A user's DID document lists endpoints from multiple providers. Providers can
+share a NATS super-cluster for low-latency wake propagation, but durable replay
+and cursor validation stay in each provider's Level/SQL-compatible message
+store. SMT reconciliation provides the correctness backstop regardless of
+delivery path.
 
 ---
 
@@ -131,12 +134,12 @@ versa) with no schema translation.
 | `DataStore` | `DataStoreDOR2` | DO SQLite for refs + R2 for blobs > 30 KB |
 | `StateIndex` | `StateIndexDOSql` | DO SQLite (reuses `SMTStoreSql` patterns) |
 | `ResumableTaskStore` | `ResumableTaskStoreDOSql` | DO SQLite |
-| `EventLog` | `EventLogDOSql` | DO SQLite for persistence + in-memory `mitt` for live pub/sub |
+| `EventLog` | `DurableEventLogDOSql` | Store-backed replay/cursors + in-memory `mitt` for live pub/sub |
 | `TenantGate` | N/A | Gateway Worker checks registration before routing |
 
 **Key simplification from single-threaded execution:**
 - `ResumableTaskStore.grab()` does not need transactions — no concurrent workers
-- `EventLog` subscriptions are race-free — emit and subscribe in same context
+- In-DO live subscription fan-out is race-free — emit and subscribe in same context
 - `StateIndex` SMT updates need no locking
 
 **SQLite schema:**
@@ -175,6 +178,9 @@ CREATE TABLE messageStoreMessages (
   prune INTEGER,
   squash INTEGER,
   attester TEXT,
+  seq INTEGER NOT NULL,
+  redeliverSeq INTEGER,
+  fingerprintScopes TEXT NOT NULL,
   UNIQUE(tenant, messageCid)
 );
 
@@ -188,6 +194,9 @@ CREATE INDEX idx_tenant_permGrant ON messageStoreMessages(tenant, permissionGran
 CREATE INDEX idx_tenant_dateCreated ON messageStoreMessages(tenant, dateCreated);
 CREATE INDEX idx_tenant_datePub ON messageStoreMessages(tenant, datePublished);
 CREATE INDEX idx_tenant_contextId ON messageStoreMessages(tenant, contextId, messageTimestamp);
+CREATE INDEX idx_tenant_seq ON messageStoreMessages(tenant, seq);
+CREATE INDEX idx_tenant_redeliverSeq ON messageStoreMessages(tenant, redeliverSeq);
+CREATE INDEX idx_tenant_protocol_seq ON messageStoreMessages(tenant, protocol, seq);
 
 -- Tags (identical to dwn-sql-store messageStoreRecordsTags)
 CREATE TABLE messageStoreRecordsTags (
@@ -258,16 +267,23 @@ CREATE TABLE resumableTasks (
 );
 CREATE INDEX idx_tasks_timeout ON resumableTasks(timeout);
 
--- Event log (new — replaces in-memory EventEmitterEventLog)
-CREATE TABLE events (
-  seq INTEGER PRIMARY KEY AUTOINCREMENT,
-  tenant TEXT NOT NULL,
-  eventData BLOB NOT NULL,
-  indexes TEXT NOT NULL,
-  messageTimestamp TEXT,
-  createdAt TEXT DEFAULT (datetime('now'))
+-- Durable replication log metadata
+CREATE TABLE replicationCounters (
+  tenant TEXT PRIMARY KEY,
+  seq INTEGER NOT NULL
 );
-CREATE INDEX idx_events_tenant ON events(tenant, seq);
+
+CREATE TABLE replicationFingerprints (
+  tenant TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  UNIQUE(tenant, scope)
+);
+
+CREATE TABLE replicationMeta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 
 -- IPFS pin status tracking
 CREATE TABLE ipfsPinStatus (
@@ -280,22 +296,22 @@ CREATE TABLE ipfsPinStatus (
 );
 ```
 
-**NATS publish on emit:**
+**NATS wake publish after commit:**
 
-When `EventLogDOSql.emit()` is called (after a successful RecordsWrite,
-ProtocolsConfigure, or RecordsDelete), the Tenant DO:
+When a RecordsWrite, ProtocolsConfigure, or RecordsDelete commits, the Tenant
+DO:
 
-1. Inserts the event into SQLite `events` table (persistence)
+1. Inserts the message row into SQLite with a monotonic per-tenant `seq`
 2. Fires `mitt` for any in-DO live subscribers (local WebSocket, if any)
-3. Publishes to NATS via `wsconnect()`:
+3. Publishes a best-effort wake to NATS via `wsconnect()`:
    ```
-   dwn.events.{tenant}.{interface}.{method}.{protocol-token}.{protocolPath-tokens}
+   dwn.wakes.{tenant-token}
    ```
 
-The NATS connection is opened lazily on first emit and reused. If the DO
-hibernates, the connection is lost; on wake, it reconnects. The SQLite `events`
-table provides durability — NATS is the fan-out mechanism, not the source of
-truth for the Tenant DO.
+The wake payload contains only `{ tenant, seq }`. The NATS connection is opened
+lazily on first publish and reused. If the DO hibernates, the connection is
+lost; on wake, it reconnects. SQLite provides the durable replication log;
+NATS is a wake mechanism, not the replay source or cursor authority.
 
 **R2 integration for large data:**
 
@@ -361,30 +377,30 @@ Client WS upgrade → Gateway Worker → Connection DO
   → ws.serializeAttachment({ subscriptions: [] })
 
 Client sends JSON-RPC subscribe { target: did:alice, filter: {...} }:
-  → Parse filter, extract NATS subject pattern
-  → If no existing NATS sub for this pattern:
-      Open NATS subscription (wsconnect, JetStream consumer)
+  → Parse filter and record durable-log cursor
+  → If no existing NATS wake sub for this tenant:
+      Open NATS core subscription to dwn.wakes.{tenant-token}
   → Add (socketId, subscriptionId, clientFilter) to routing table
   → Store subscription state in ws.serializeAttachment()
 
-NATS delivers event:
-  → Connection DO receives via NATS consumer
-  → Look up routing table: which sockets care about this tenant+subject?
-  → For each matching socket: evaluate client-side filters
+NATS delivers wake:
+  → Connection DO receives { tenant, seq }
+  → Drain the Tenant DO durable log from each subscription cursor
+  → For each durable event: evaluate client-side filters
     (recipient, author, contextId, published, tags, date ranges)
   → Send matching events to matching sockets
 
 All clients idle → Connection DO hibernates:
   → Client WebSockets stay connected at Cloudflare edge
   → Outbound NATS connection drops (outbound WS does not hibernate)
-  → Last-processed NATS cursor stored in DO SQLite
+  → Last durable-log cursor stored in socket attachment / DO state
 
 Client sends message → Connection DO wakes:
   → constructor() re-runs
   → Rebuild subscription state from ws.serializeAttachment()
      on each connected socket (ctx.getWebSockets())
-  → Reconnect to NATS from stored cursors
-  → JetStream delivers missed events (catch-up from cursor)
+  → Reconnect to NATS wake subjects
+  → Drain missed events from Tenant DO durable log cursors
   → Resume normal operation
 ```
 
@@ -392,17 +408,18 @@ Client sends message → Connection DO wakes:
 
 If 500 clients on the same Connection DO all subscribe to
 `did:alice / protocol:social / protocolPath:post`, the Connection DO creates
-**one** NATS subscription for:
+**one** NATS wake subscription for:
 ```
-dwn.events.did~alice.Records.*.social-v1.post
+dwn.wakes.did~alice
 ```
 
-When an event arrives, it evaluates 500 client-side filters (cheap in-memory
-property matching using the same `FilterUtility.matchAnyFilter` from
-`dwn-sdk-js`) and sends to only the sockets whose full filter matches.
+When a wake arrives, it drains the Tenant DO durable log once and evaluates 500
+client-side filters (cheap in-memory property matching using the same
+`FilterUtility.matchAnyFilter` from `dwn-sdk-js`) against the durable entries.
 
-This is the key efficiency: NATS handles **inter-DO** routing, the Connection
-DO handles **intra-DO** fan-out to sockets.
+This is the key efficiency: NATS handles **inter-DO wake routing**, the Tenant
+DO remains the source of truth for replay, and the Connection DO handles
+**intra-DO** fan-out to sockets.
 
 **Non-subscribe messages (RecordsWrite, RecordsQuery, etc.):**
 
@@ -420,53 +437,54 @@ in the current server. The Connection DO enforces this transport restriction.
 
 ---
 
-### 2.3 NATS Subject Hierarchy and Delivery Integration
+### 2.3 NATS Wake Subjects and Delivery Integration
 
-The NATS subject design serves dual purposes: real-time subscription routing
-AND multi-party record delivery (implementing the `$delivery` proposal from
-`proposals/dwn-delivery-and-sync.md`).
+NATS carries wake notifications only. Durable event replay, filtering, and
+cursor validation stay in the Tenant DO's SQLite-backed message store.
+Multi-party record delivery still uses Queues and provider-to-provider DWN
+messages; NATS wakes are only the low-latency signal that a tenant has new
+durable rows.
 
 **Subject format:**
 ```
-dwn.events.{tenant-token}.{interface}.{method}.{protocol-token}.{protocolPath-tokens}
+dwn.wakes.{tenant-token}
 ```
 
 **Encoding:**
-- `tenant-token`: DID with `:` → `~`, `.` → `~` (NATS-safe)
-- `protocol-token`: SHA-256(protocolUri)[0:8] hex (short, collision-resistant)
-- `protocolPath-tokens`: path segments joined with `.` (e.g., `thread.reply`)
-- `_` used as placeholder when a segment is absent
+- `tenant-token`: DID encoded for NATS subjects using the same safe token rules
+  as the server `NatsEventBus`
+- Wake payload: `{ tenant, seq }`, where `seq` is the committed durable-log
+  position for the tenant
 
 **Examples:**
 ```
-dwn.events.did~dht~alice.Records.Write.a1b2c3d4.thread.reply
-dwn.events.did~dht~alice.Records.Delete.a1b2c3d4.thread.reply
-dwn.events.did~dht~bob.Protocols.Configure.e5f6g7h8._
-dwn.events.did~dht~carol.Records.Write.a1b2c3d4.post
+dwn.wakes.did~dht~alice
+dwn.wakes.did~dht~bob
+dwn.wakes.did~dht~carol
 ```
 
-**Subscription mapping (RecordsSubscribe filters → NATS subjects):**
+**Subscription mapping (RecordsSubscribe filters → durable log reads):**
 
-| Client subscription filter | NATS subject pattern |
+| Client subscription filter | NATS wake subject | Filtering source |
 |---|---|
-| `{protocol: "social/v1", protocolPath: "thread/reply"}` on `did:alice` | `dwn.events.did~dht~alice.Records.*.a1b2c3d4.thread.reply` |
-| `{protocol: "social/v1"}` on `did:alice` (all paths) | `dwn.events.did~dht~alice.Records.*.a1b2c3d4.>` |
-| All records for `did:bob` | `dwn.events.did~dht~bob.Records.>` |
-| All events for `did:carol` (MessagesSubscribe) | `dwn.events.did~dht~carol.>` |
+| `{protocol: "social/v1", protocolPath: "thread/reply"}` on `did:alice` | `dwn.wakes.did~dht~alice` | Tenant DO durable log, filtered by indexes |
+| `{protocol: "social/v1"}` on `did:alice` (all paths) | `dwn.wakes.did~dht~alice` | Tenant DO durable log, filtered by indexes |
+| All records for `did:bob` | `dwn.wakes.did~dht~bob` | Tenant DO durable log, filtered by indexes |
+| All events for `did:carol` (MessagesSubscribe) | `dwn.wakes.did~dht~carol` | Tenant DO durable log |
 
 **Server-side vs. client-side filtering:**
 
-NATS subject routing handles the high-discriminating, low-cardinality
-dimensions. Remaining filters are evaluated in the Connection DO after NATS
-delivers the event:
+NATS routes only by tenant. The Connection DO evaluates subscription filters
+against durable log entries after it drains the Tenant DO from the stored
+cursor:
 
 | Dimension | Filtering Layer | Why |
 |---|---|---|
-| `tenant` | NATS subject | Always scoped per-tenant |
-| `interface` | NATS subject | 5 values (Records, Protocols, etc.) |
-| `method` | NATS subject | ~8 values (Write, Delete, etc.) |
-| `protocol` | NATS subject | Medium cardinality, primary routing key |
-| `protocolPath` | NATS subject | Medium cardinality, supports `>` wildcard |
+| `tenant` | NATS wake subject + durable log | Wakes are tenant-scoped; replay validates against the tenant log |
+| `interface` | Connection DO / durable indexes | Read from the store entry, not from NATS |
+| `method` | Connection DO / durable indexes | Read from the store entry, not from NATS |
+| `protocol` | Connection DO / durable indexes | Medium cardinality, store-indexed |
+| `protocolPath` | Connection DO / durable indexes | Medium cardinality, store-indexed |
 | `recipient` | Connection DO | High cardinality (DID strings) |
 | `author` | Connection DO | High cardinality |
 | `contextId` | Connection DO | Prefix matching, high cardinality |
@@ -485,7 +503,7 @@ naturally to this infrastructure:
 |---|---|
 | **Direct** (`$delivery: "direct"`) | Tenant DO enqueues delivery task to `dwn-delivery` Queue. Consumer Worker resolves participant DIDs → provider endpoints, groups by provider, sends message once per provider via `processMessage()`. |
 | **Relay** (`$delivery: "relay"`) | Same as Direct, but Consumer Worker computes rendezvous hash to determine relay coordinator assignment. Sends to k coordinators who forward to their assigned providers. |
-| **Subscribe** (`$delivery: "subscribe"`) | Remote providers' Connection DOs subscribe to the origin tenant's NATS subjects. This is the firehose path — no Queue needed, events flow in real-time via NATS. Provider-grouped: one NATS subscription per remote provider (not per user). |
+| **Subscribe** (`$delivery: "subscribe"`) | Remote providers' Connection DOs subscribe to the origin tenant's NATS wake subject, then read from the origin provider's durable log/API as needed. This is the firehose wake path — no Queue needed, but payload and cursor authority stay out of NATS. Provider-grouped: one wake subscription per remote provider (not per user). |
 
 **SMT reconciliation backstop:** All three strategies are latency optimizations.
 The `StateIndex` (SMT) in each Tenant DO provides the correctness guarantee.
@@ -494,24 +512,23 @@ sync grants) detects and repairs any divergence.
 
 ---
 
-### 2.4 NATS Topology — Multi-Cloud Super-Cluster
+### 2.4 NATS Topology — Multi-Cloud Wake Super-Cluster
 
-NATS JetStream runs as a 3-region super-cluster colocated with existing
+NATS core pub/sub runs as a 3-region super-cluster colocated with existing
 infrastructure. Connection DOs and Tenant DOs connect via WebSocket
-(`@nats-io/nats-core` `wsconnect()`).
+(`@nats-io/nats-core` `wsconnect()`). NATS owns no durable replay state.
 
 ```
 ┌───────────────────────┐  gateways  ┌───────────────────────┐
 │  AWS us-east-1        │◄──────────►│  GCP europe-west1     │
 │  cluster: aws-east    │            │  cluster: gcp-eu      │
-│  3 NATS nodes (R=3)   │            │  3 NATS nodes (R=3)   │
-│  JetStream: file store│            │  JetStream: file store│
+│  3 NATS nodes         │            │  3 NATS nodes         │
+│  core pub/sub         │            │  core pub/sub         │
 │  unique_tag: az       │            │  unique_tag: az       │
 │                       │            │                       │
-│  streams:             │   mirror/  │  streams:             │
-│   events-east (R=3)   │───source──►│   events-east-mirror  │
-│   events-all (source) │            │   events-eu (R=3)     │
-│                       │◄──source───│   events-all (source) │
+│  subjects:            │  gateways  │  subjects:            │
+│   dwn.wakes.>         │◄──────────►│   dwn.wakes.>         │
+│                       │            │                       │
 └──────────┬────────────┘            └──────────┬────────────┘
            │ leaf connections                   │
       ┌────┴──────────┐                   ┌────┴──────────┐
@@ -529,52 +546,37 @@ infrastructure. Connection DOs and Tenant DOs connect via WebSocket
 
 **Key design:**
 
-- **Per-region write streams** (`events-east`, `events-eu`) with R=3 replication
-  within each cluster. Writes go to the local stream (nearest NATS cluster to
-  the publishing DO).
-- **Source-aggregated streams** (`events-all`) in each region, sourcing from all
-  regional write streams. Provides a unified view for subscribers.
+- **Tenant-scoped wake subjects** (`dwn.wakes.{tenant-token}`) carry only wake
+  metadata. Writes always commit to the local durable store before publishing a
+  wake.
 - **Interest-only gateways**: inter-region traffic flows only for subjects with
   active subscribers in the remote cluster. If no one in EU subscribes to a US
   tenant, zero cross-region traffic.
 - **Leaf nodes** for Fly.io: initiate outbound connections (no public gateway
-  ports needed). Separate JetStream domain for local caching.
+  ports needed).
 - **WebSocket listeners** enabled on all NATS nodes (port 443 with TLS) for
   Cloudflare DO connectivity.
 
-**Stream configuration:**
-
-```
-Stream: events-{region}
-  Subjects: dwn.events.>
-  Storage: File
-  Retention: Limits (MaxAge: 7d, MaxBytes: 50GB)
-  Replicas: 3
-  MaxMsgsPerSubject: 100,000
-  Discard: Old
-
-Stream: events-all
-  Sources: [events-east, events-eu, ...]
-  Storage: File
-  Retention: Limits (MaxAge: 7d)
-  Replicas: 3
-```
+**Wake contract:**
+- NATS wake delivery is best-effort and may be duplicated or dropped.
+- Subscribers resume from durable log cursors held by the Tenant DO/store.
+- NATS sequence numbers are never exposed as DWN replication cursors.
+- Idle re-drain from the durable log is the missed-wake backstop.
 
 **Failure modes:**
 
 | Failure | Impact | Recovery |
 |---|---|---|
-| 1 NATS node in cluster | None (R=3, quorum maintained with 2 of 3) | Auto-heal via RAFT |
-| Entire region cluster | Region's write stream unavailable. Other regions continue. Mirrors have data up to failure point. | Region recovery → RAFT self-heals → source streams catch up |
-| Network partition (inter-region) | Regions operate independently. Gateway traffic pauses. | Partition heals → gateways reconnect → interest propagates |
-| Cloudflare → NATS disconnect | DO reconnects from cursor on next wake. JetStream buffers events. | Reconnect → catch-up from stored sequence |
+| 1 NATS node in cluster | Wake fan-out continues through remaining nodes | Auto-heal through NATS clustering |
+| Entire region cluster | Local durable writes continue; cross-process wakes in that region are degraded | Region recovery → NATS reconnects; subscribers drain durable logs |
+| Network partition (inter-region) | Regions operate independently. Cross-region wakes pause. | Partition heals → gateways reconnect → interest propagates |
+| Cloudflare → NATS disconnect | DO misses wakes while disconnected | Reconnect or idle re-drain → catch up from durable log cursor |
 
 **NATS client library:**
 
 DOs use `@nats-io/nats-core` with `wsconnect()` (W3C WebSocket transport). This
 is the same NATS client used in browsers and Deno — no Node.js `net` module
-required. The JetStream API (`@nats-io/jetstream`) is runtime-agnostic and works
-identically over the WebSocket transport.
+required.
 
 ---
 
@@ -855,25 +857,26 @@ A user with endpoints at Cloudflare and AWS:
 }
 ```
 
-Both providers register the tenant. Writes to either endpoint propagate to
-the other via NATS (if both subscribe to the same super-cluster) or via the
-sync daemon (for providers not on the shared NATS).
+Both providers register the tenant. Writes to either endpoint propagate to the
+other through store-backed sync, with NATS used only as a low-latency wake when
+both providers are connected to the same super-cluster.
 
 ### 4.2 Sync Between Providers
 
-**Real-time (NATS-connected providers):**
+**Real-time wake path (NATS-connected providers):**
 
-When a write lands at the CF Tenant DO, it publishes to NATS. The AWS
-provider's DWN instances (subscribed to the same NATS super-cluster) receive
-the event and can pull the full message. This is the `$delivery: "subscribe"`
-path applied to same-tenant cross-provider sync.
+When a write lands at the CF Tenant DO, it commits to the durable log and then
+publishes a NATS wake. The AWS provider's DWN instances (subscribed to the same
+NATS super-cluster) receive the wake and pull from the durable source of truth.
+This is the `$delivery: "subscribe"` path applied to same-tenant
+cross-provider sync.
 
 **Fallback (non-NATS providers or network partitions):**
 
 The sync daemon (from `infra/multi-region-plan.md`) runs as a separate service,
-subscribes to local NATS `dwn.events.>`, resolves tenant DID endpoints, and
-pushes messages to peer providers via standard `processMessage()` over HTTPS.
-Loop prevention relies on DWN idempotency (duplicate `messageCid` returns 409).
+subscribes to local NATS wakes, resolves tenant DID endpoints, reads new rows
+from the local durable log, and pushes messages to peer providers via standard
+replicated DWN APIs over HTTPS. Loop prevention relies on DWN idempotency.
 
 **Correctness backstop:**
 
@@ -915,7 +918,7 @@ root hashes regardless of storage backend.
 | `DataStoreDOR2` | SQLite for refs, R2 for blobs. UnixFS importer with `fixedSize(262144)`. |
 | `StateIndexDOSql` | Port `StateIndexSql` + `SMTStoreSql` to DO SQLite. |
 | `ResumableTaskStoreDOSql` | Port `ResumableTaskStoreSql`. Simplified `grab()` (no transactions needed). |
-| `EventLogDOSql` | SQLite persistence + `mitt` for in-DO pub/sub. NATS publish deferred to Phase 2. |
+| `DurableEventLogDOSql` | Store-backed replay/cursors over DO SQLite plus `mitt` for in-DO pub/sub. NATS wake publish deferred to Phase 2. |
 | Tenant DO class | Instantiates `Dwn.create(config)` with DO stores. `fetch()` handler for JSON-RPC. |
 | Gateway Worker | HTTP routing, JSON-RPC parsing, tenant DID extraction, DO stub routing. |
 | DID resolution | `UniversalResolver` with `DidDht`, `DidJwk`, `DidKey` (all use `fetch()`). |
@@ -1037,10 +1040,10 @@ root hashes regardless of storage backend.
 |---|---|
 | `docs/architecture/aws-dwn-deployment.md` | Coexists as Provider 2/4. Shares NATS super-cluster. Users choose based on trust, region, or performance preferences. |
 | `docs/architecture/eu-confidential-dwn-deployment.md` | Coexists as Provider 3. CF provider does not offer TEE; users requiring confidential compute use OVHcloud. |
-| `infra/multi-region-plan.md` | NATS super-cluster replaces per-region independent NATS clusters. Sync daemon works unchanged — subscribes to NATS, pushes to peer endpoints. |
+| `infra/multi-region-plan.md` | NATS super-cluster replaces per-region independent NATS clusters. Sync daemon works unchanged — receives wakes, reads the durable log, pushes to peer endpoints. |
 | `proposals/dwn-delivery-and-sync.md` | Implements all three `$delivery` strategies: Direct and Relay via Queues, Subscribe via NATS + Connection DOs. |
 | `proposals/constrained-dwn-relay-cache.md` | Phase 5 implements relay/cache mode. IPFS fallback enables cache-mode DOs to serve reads without holding full dataset. |
-| `proposals/push-notifications.md` | Push notifications can hook into NATS events via a consumer worker — subscribe to `dwn.events.>`, match notification rules, fire APNs/FCM. |
+| `proposals/push-notifications.md` | Push notifications can hook into NATS wakes via a consumer worker — subscribe to `dwn.wakes.>`, read durable entries, match notification rules, fire APNs/FCM. |
 
 ---
 

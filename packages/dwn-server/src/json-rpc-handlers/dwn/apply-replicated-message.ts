@@ -6,9 +6,9 @@ import log from 'loglevel';
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
 import { v4 as uuidv4 } from 'uuid';
+import { Cid, DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder } from '@enbox/dwn-sdk-js';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { DataStream, DwnInterfaceName, DwnMethodName, Encoder } from '@enbox/dwn-sdk-js';
-import { enforceInboundDwnMessageLimits, validateInboundDwnMessageTransport } from './inbound-message.js';
+import { enforceQuota, enforceTenantRateLimit, validateInboundDwnMessageTransport } from './inbound-message.js';
 
 export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
   dwnRequest,
@@ -31,7 +31,13 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       return transportResult;
     }
 
-    const limitsResult = await enforceInboundDwnMessageLimits({ context, message, requestId, target });
+    const limitsResult = await enforceApplyReplicatedMessageLimits({
+      context,
+      hasInboundData: encodedData !== undefined || dataStream !== undefined,
+      message,
+      requestId,
+      target,
+    });
     if (limitsResult !== undefined) {
       return limitsResult;
     }
@@ -41,10 +47,15 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       return encodedDataResult;
     }
 
-    const dataStreamForApply = encodedData === undefined ? dataStream : DataStream.fromBytes(Encoder.base64UrlToBytes(encodedData));
+    const dataStreamForApply = getDataStreamForApply({ dataStream, encodedData, message });
     const result = await dwn.applyReplicatedMessage(target, message, {
       dataStream: dataStreamForApply,
     });
+    if (result.kind === 'Duplicate') {
+      await dataStreamForApply?.cancel().catch((): void => {
+        // Duplicate echoes do not need their inbound body; cancellation is best-effort.
+      });
+    }
     recordApplyActivity(target, message, result, context);
     if (result.kind === 'Applied') {
       invokeMessageProcessedHooks(context, target, message, appliedHookStatus(message, dataStreamForApply !== undefined));
@@ -65,6 +76,170 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
     };
   }
 };
+
+function getDataStreamForApply({
+  dataStream,
+  encodedData,
+  message,
+}: {
+  dataStream: ReadableStream<Uint8Array> | undefined;
+  encodedData: string | undefined;
+  message: GenericMessage;
+}): ReadableStream<Uint8Array> | undefined {
+  if (encodedData !== undefined) {
+    return DataStream.fromBytes(Encoder.base64UrlToBytes(encodedData));
+  }
+
+  if (dataStream === undefined) {
+    return undefined;
+  }
+
+  return capDataStreamAtDescriptorSize(message, dataStream);
+}
+
+function capDataStreamAtDescriptorSize(
+  message: GenericMessage,
+  dataStream: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  const descriptor = message.descriptor as { dataSize?: unknown; interface?: unknown; method?: unknown };
+  if (
+    descriptor.interface !== DwnInterfaceName.Records ||
+    descriptor.method !== DwnMethodName.Write ||
+    typeof descriptor.dataSize !== 'number'
+  ) {
+    return dataStream;
+  }
+
+  const dataSize = descriptor.dataSize;
+  const reader = dataStream.getReader();
+  let bytesRead = 0;
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller): Promise<void> {
+      const { done, value } = await reader.read();
+      if (done) {
+        controller.close();
+        reader.releaseLock();
+        return;
+      }
+
+      bytesRead += value.length;
+      if (bytesRead > dataSize) {
+        await reader.cancel().catch((): void => {
+          // The stream already exceeded the declared size; cancellation is best-effort.
+        });
+        reader.releaseLock();
+        controller.error(new DwnError(
+          DwnErrorCode.RecordsWriteDataSizeMismatch,
+          `actual data size exceeds descriptor dataSize ${dataSize}`,
+        ));
+        return;
+      }
+
+      controller.enqueue(value);
+    },
+    async cancel(reason): Promise<void> {
+      await reader.cancel(reason).catch((): void => {
+        // The caller is closing early; cancellation is best-effort.
+      });
+      reader.releaseLock();
+    },
+  });
+}
+
+async function enforceApplyReplicatedMessageLimits({
+  context,
+  hasInboundData,
+  message,
+  requestId,
+  target,
+}: {
+  context: Parameters<JsonRpcHandler>[1];
+  hasInboundData: boolean;
+  message: GenericMessage;
+  requestId: Parameters<typeof createJsonRpcErrorResponse>[0];
+  target: string;
+}): Promise<ReturnType<typeof validateInboundDwnMessageTransport>> {
+  const rateLimitResult = enforceTenantRateLimit({ context, message, requestId, target });
+  if (rateLimitResult !== undefined) {
+    return rateLimitResult;
+  }
+
+  if (await isFullyStoredDuplicate({ context, hasInboundData, message, target })) {
+    return undefined;
+  }
+
+  if (
+    context.config !== undefined &&
+    context.adminStore !== undefined &&
+    message.descriptor.interface === DwnInterfaceName.Records &&
+    message.descriptor.method === DwnMethodName.Write
+  ) {
+    return enforceQuota(target, message, context);
+  }
+
+  return undefined;
+}
+
+async function isFullyStoredDuplicate({
+  context,
+  hasInboundData,
+  message,
+  target,
+}: {
+  context: Parameters<JsonRpcHandler>[1];
+  hasInboundData: boolean;
+  message: GenericMessage;
+  target: string;
+}): Promise<boolean> {
+  const messageCid = await Cid.computeCid(message);
+  const existingMessage = await context.dwn.storage.messageStore.get(target, messageCid);
+  if (existingMessage === undefined) {
+    return false;
+  }
+
+  if (!hasInboundData) {
+    return true;
+  }
+
+  return await storedRecordsWriteHasData(context, target, existingMessage);
+}
+
+async function storedRecordsWriteHasData(
+  context: Parameters<JsonRpcHandler>[1],
+  tenant: string,
+  message: GenericMessage,
+): Promise<boolean> {
+  const descriptor = message.descriptor as {
+    dataCid?: unknown;
+    dataSize?: unknown;
+    interface?: unknown;
+    method?: unknown;
+  };
+  if (
+    descriptor.interface !== DwnInterfaceName.Records ||
+    descriptor.method !== DwnMethodName.Write ||
+    typeof descriptor.dataSize !== 'number' ||
+    descriptor.dataSize <= 0
+  ) {
+    return true;
+  }
+
+  if (typeof (message as { encodedData?: unknown }).encodedData === 'string') {
+    return true;
+  }
+
+  const recordId = (message as { recordId?: unknown }).recordId;
+  if (typeof recordId !== 'string' || typeof descriptor.dataCid !== 'string') {
+    return false;
+  }
+
+  const storedData = await context.dwn.storage.dataStore.get(tenant, recordId, descriptor.dataCid);
+  await storedData?.dataStream.cancel().catch((): void => {
+    // The existence probe is enough; cancellation is best-effort.
+  });
+  return storedData !== undefined;
+}
 
 function recordApplyActivity(
   target: string,

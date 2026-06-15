@@ -8,9 +8,9 @@ DWN server: (1) the in-memory-only `EventLog` cannot fan out events across
 processes, (2) the `InMemoryConnectionManager` pins WebSocket state to a single
 node, (3) the `DataStoreSql` buffers entire blobs in memory, and (4) there is no
 confidential-compute boundary for key material. The design introduces Aurora
-PostgreSQL for unified storage, NATS JetStream for distributed pub/sub, an
-ALB+ECS topology for horizontally-scaled web heads, and AWS Nitro Enclaves for
-cryptographic isolation.
+PostgreSQL for unified storage, NATS for cross-process durable-log wake
+notifications, an ALB+ECS topology for horizontally-scaled web heads, and AWS
+Nitro Enclaves for cryptographic isolation.
 
 ---
 
@@ -27,11 +27,10 @@ cryptographic isolation.
 | **StateIndex** | Non-transactional delete-then-insert upsert for SMT nodes | Race conditions under concurrent writes |
 | **EventLog Persistence** | Events stored in per-tenant `Map<number, StoredEntry>` | Volatile — all events lost on restart |
 
-The `EventLog` interface (`dwn-sdk-js/src/types/subscriptions.ts:162`) is
-explicitly designed for distributed backends — its JSDoc mentions NATS JetStream,
-Redis Streams, etc. The `DWN_EVENT_LOG_PLUGIN_PATH` env var + `PluginLoader`
-already support loading a custom implementation at runtime. This is the primary
-extension point.
+The durable replication log now lives in the `MessageStore`; NATS is used as an
+EventBus that wakes other server processes to drain that log. The
+`DWN_EVENT_BUS_PLUGIN_PATH` env var + `PluginLoader` support loading a custom
+wake bus implementation at runtime.
 
 ---
 
@@ -63,11 +62,11 @@ extension point.
               ┌────────────▼───────────────────▼────────────┐
               │                                             │
     ┌─────────▼─────────┐                    ┌──────────────▼──────────────┐
-    │  Aurora PostgreSQL │                    │  NATS JetStream Cluster     │
-    │  (writer + readers)│                    │  (3-node, persistent)       │
+    │  Aurora PostgreSQL │                    │  NATS Cluster               │
+    │  (writer + readers)│                    │  (3-node core pub/sub)      │
     │                    │                    │                             │
-    │  All 4 DWN stores  │                    │  Distributed EventLog       │
-    │  + tenant registry │                    │  dwn.events.{tenant}        │
+    │  All 4 DWN stores  │                    │  Wake EventBus              │
+    │  + tenant registry │                    │  dwn.wakes.{tenant}         │
     │  + admin store     │                    │  subjects                   │
     └────────────────────┘                    └─────────────────────────────┘
               │
@@ -160,144 +159,84 @@ DWN_STORAGE=postgres://dwn_app:****@writer.cluster-xxx.us-east-1.rds.amazonaws.c
 DWN_STORAGE_READ=postgres://dwn_app:****@reader.cluster-xxx.us-east-1.rds.amazonaws.com:5432/dwn
 ```
 
-### 3.2 NATS JetStream — Distributed EventLog
+### 3.2 NATS — Distributed Wake EventBus
 
-**Why NATS JetStream over alternatives:**
+**Why NATS core pub/sub over alternatives:**
 
 | Option | Pros | Cons |
 |---|---|---|
-| **PostgreSQL LISTEN/NOTIFY** | Zero additional infrastructure | No persistence, no replay, 8 KB payload limit, no consumer groups, no backpressure |
-| **Redis Streams** | Fast, supports consumer groups | Another stateful system to manage; no built-in clustering without Redis Cluster |
-| **Amazon SNS/SQS** | Managed | High latency (~50-100ms), not designed for per-tenant fan-out at this granularity |
-| **NATS JetStream** | Persistent streams, consumer groups, subject-based routing, cursor (sequence) native, <1ms latency, Helm chart for EKS/ECS | Additional infrastructure (3 nodes) |
+| **PostgreSQL LISTEN/NOTIFY** | Zero additional infrastructure | Coupled to the primary data plane, 8 KB payload limit, weaker operational isolation |
+| **Redis pub/sub** | Fast and simple | Another stateful system to manage; no protocol advantage over NATS for wake-only traffic |
+| **Amazon SNS/SQS** | Managed | Higher latency (~50-100ms), awkward for low-latency fan-out to long-lived WS workers |
+| **NATS core pub/sub** | Low latency, clustered, subject-based fan-out, simple client, no durable-state ownership | Additional infrastructure (3 nodes) |
 
-NATS JetStream is the best fit because:
-- The `EventLog` interface's cursor model maps directly to NATS stream sequences.
-- Subject-based routing (`dwn.events.<tenant-hash>`) provides natural tenant isolation.
-- JetStream consumers provide durable replay (catch-up from cursor) natively.
-- The EOSE pattern is implementable via consumer `DeliverPolicy.ByStartSequence`.
+The durable replication log lives in the `MessageStore`, not in NATS. Every
+write commits a monotonic per-tenant log row in Level/SQL storage, and
+`DurableEventLog` reads that store for replay, cursor validation, filtering, and
+EOSE. NATS is only a best-effort wake bus: after a write is durable, the writer
+publishes `{ tenant, seq }` so other server processes know to drain their own
+store-backed subscriptions.
+
+This split keeps the trust and recovery model simple:
+- Dropped or duplicated wakes do not lose data; subscribers resume from their
+  MessageStore cursor and idle re-drain bounds missed wakes.
+- NATS sequence numbers are not cursors. Progress tokens are derived from the
+  durable replication log.
+- NATS does not store payloads, message indexes, or per-subscription replay
+  state.
 
 **NATS topology:**
 
 | Component | Count | Instance | Purpose |
 |---|---|---|---|
-| NATS server | 3 | `c6g.large` or ECS tasks | JetStream cluster with R=3 replication |
-
-**Stream configuration:**
-```
-Stream: DWN_EVENTS
-  Subjects: dwn.events.>
-  Storage: File
-  Retention: Limits (MaxAge: 7d, MaxBytes: 50GB)
-  Replicas: 3
-  MaxMsgsPerSubject: 100,000   (per-tenant cap)
-  Discard: Old
-```
+| NATS server | 3 | `c6g.large` or ECS tasks | Core pub/sub cluster for wake fan-out |
 
 **Subject design:**
 ```
-dwn.events.{tenant-hash-prefix}.{tenant-did-base64url}
+dwn.wakes.{tenant-token}
 ```
-The `tenant-hash-prefix` (first 2 hex chars of SHA-256 of tenant DID) enables
-efficient wildcard subscriptions for admin monitoring (`dwn.events.a3.>`) and
-even subject-based partitioning if needed later.
+The tenant token is the tenant DID encoded for NATS subjects. The wake payload
+also contains the tenant DID, and `DurableEventLog` only drains subscriptions
+whose tenant matches the wake.
 
-**`NatsEventLog` implementation** (new — implements `EventLog` interface):
+**`NatsEventBus` implementation** (implements wake publication/subscription):
 
 ```typescript
-// packages/dwn-server/src/event-log-nats.ts
+// packages/dwn-server/src/plugins/event-bus-nats.ts
 
-import type { EventLog, EventLogReadOptions, EventLogReadResult,
-  EventLogSubscribeOptions, EventSubscription, MessageEvent,
-  SubscriptionListener } from '@enbox/dwn-sdk-js';
+import type { EventBus } from '@enbox/dwn-server';
+import type { Wake } from '@enbox/dwn-sdk-js';
 
-export class NatsEventLog implements EventLog {
-  // NATS JetStream connection + stream handle
-  private js: JetStream;
-  private jsm: JetStreamManager;
+export class NatsEventBus implements EventBus {
+  private listeners = new Set<(wake: Wake) => void>();
 
-  async emit(tenant: string, event: MessageEvent, indexes: KeyValues): Promise<string> {
-    const subject = this.tenantSubject(tenant);
-    const payload = encode({ event, indexes });  // CBOR or JSON
-    const ack = await this.js.publish(subject, payload);
-    return String(ack.seq);  // NATS sequence = cursor
+  async open(): Promise<void> {
+    this.nc = await connect({ servers: process.env.NATS_URL });
+    this.sub = this.nc.subscribe('dwn.wakes.>');
+    void this.consumeWakes(this.sub);
   }
 
-  async subscribe(
-    tenant: string, id: string, listener: SubscriptionListener,
-    options?: EventLogSubscribeOptions
-  ): Promise<EventSubscription> {
-    const subject = this.tenantSubject(tenant);
-    const consumerConfig = {
-      filterSubject : subject,
-      deliverPolicy : options?.cursor
-        ? DeliverPolicy.ByStartSequence
-        : DeliverPolicy.New,
-      optStartSeq   : options?.cursor ? Number(options.cursor) + 1 : undefined,
-      ackPolicy     : AckPolicy.Explicit,
-    };
-    const consumer = await this.jsm.consumers.add('DWN_EVENTS', consumerConfig);
-    const sub = await consumer.consume();
-
-    // Catch-up + EOSE + live delivery loop
-    (async () => {
-      let lastSeq: string | undefined;
-      let sentEose = false;
-      for await (const msg of sub) {
-        const { event, indexes } = decode(msg.data);
-        const cursor = String(msg.seq);
-
-        if (options?.filters && !matchAnyFilter(indexes, options.filters)) {
-          msg.ack();
-          continue;
-        }
-
-        // Detect transition from catch-up to live
-        if (!sentEose && msg.info.pending === 0) {
-          listener({ type: 'eose', cursor });
-          sentEose = true;
-        }
-
-        listener({ type: 'event', cursor, event });
-        lastSeq = cursor;
-        msg.ack();
-      }
-    })();
-
-    return {
-      id,
-      close: async () => {
-        await sub.drain();
-        await this.jsm.consumers.delete('DWN_EVENTS', consumer.name);
-      },
-    };
+  publish(wake: Wake): void {
+    this.notify(wake);
+    this.nc?.publish(`dwn.wakes.${tenantToSubjectToken(wake.tenant)}`, encodeWake(wake));
   }
 
-  async read(tenant: string, options?: EventLogReadOptions): Promise<EventLogReadResult> {
-    // Use ordered consumer for one-shot read
-    // ... fetch messages from cursor, apply filters, return batch
-  }
-
-  async trim(tenant: string, olderThan: number | string): Promise<void> {
-    // Use stream purge with subject filter
-    await this.jsm.streams.purge('DWN_EVENTS', {
-      filter: this.tenantSubject(tenant),
-      seq: /* convert olderThan to sequence */,
-    });
+  subscribe(listener: (wake: Wake) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 }
 ```
 
 **Key design notes:**
-- Each WebSocket subscription creates an **ephemeral NATS consumer** scoped to
-  the tenant's subject. This means node A can emit, and node B's consumer
-  receives the event — solving the cross-process fan-out problem.
-- The NATS sequence number is the cursor. This is monotonic, ordered, and
-  persistent — a direct fit for the `EventLog` cursor model.
-- EOSE detection uses `msg.info.pending === 0` (NATS tells you how many
-  messages remain in the consumer's replay queue).
-- Consumer lifecycle is tied to subscription lifecycle: created on subscribe,
-  deleted on close/disconnect.
+- A single process-level NATS subscription listens to `dwn.wakes.>` and fans
+  wakes into local `DurableEventLog` subscribers.
+- WebSocket subscriptions do not create NATS consumers. They keep local
+  subscription state and read pages from the durable log in the MessageStore.
+- EOSE and replay are computed from store reads, not from NATS pending counts.
+- Wake publication is best-effort by contract. If NATS is temporarily
+  unavailable, the write has already committed; subscribers catch up from the
+  durable log when another wake or idle re-drain occurs.
 
 ### 3.3 WebSocket Scaling — ALB Sticky Sessions + Split Services
 
@@ -351,7 +290,8 @@ Target Group: dwn-http
 - If the target is gone (scale-in, crash), ALB routes to a new target. The
   client's `JsonRpcSocket` auto-reconnect fires, `WebSocketDwnRpcClient`
   calls `resubscribeAll()` with `lastCursor`, and the new node creates fresh
-  NATS consumers that replay from the cursor. No events are lost.
+  store-backed subscriptions that replay from the durable log cursor. No events
+  are lost.
 
 **Graceful drain on scale-in:**
 - ECS sends `SIGTERM` to the DWN process.
@@ -377,7 +317,7 @@ Target Group: dwn-http
       { "name": "DS_WEBSOCKET_SERVER", "value": "false" },
       { "name": "DWN_STORAGE", "value": "postgres://..." },     // Aurora writer
       { "name": "DWN_STORAGE_READ", "value": "postgres://..." }, // Aurora reader
-      { "name": "DWN_EVENT_LOG_PLUGIN_PATH", "value": "/app/plugins/event-log-nats.js" },
+      { "name": "DWN_EVENT_BUS_PLUGIN_PATH", "value": "/app/plugins/event-bus-nats.js" },
       { "name": "NATS_URL", "value": "nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222" },
       { "name": "DWN_PG_POOL_MAX", "value": "20" },
       { "name": "MAX_RECORD_DATA_SIZE", "value": "1gb" }
@@ -605,7 +545,7 @@ records fast (inline PG read is ~1ms vs ~10ms for S3).
 │  ┌──── Private Subnets — Compute (10.0.128.0/20, 10.0.144.0/20) ──┐ │
 │  │  ECS: dwn-http (Fargate)                                        │ │
 │  │  ECS: dwn-ws (EC2 + Nitro)                                      │ │
-│  │  ECS: nats-jetstream (3 tasks)                                   │ │
+│  │  ECS: nats (3 tasks, core pub/sub)                                │ │
 │  └──────────────────────────────────────────────────────────────────┘ │
 │                                                                      │
 │  ┌──── Private Subnets — Data (10.0.192.0/20, 10.0.208.0/20) ─────┐ │
@@ -650,7 +590,8 @@ AWS Managed Prometheus (AMP).
 | `http_response_bucket{le="1"}` | < 95% | P95 latency above 1s |
 | Aurora `CPUUtilization` | > 70% sustained | Scale up or add readers |
 | Aurora `DatabaseConnections` | > 80% of max | Pool exhaustion risk |
-| NATS `jetstream_consumer_num_pending` | > 10,000 per consumer | Slow consumer backlog |
+| NATS connection health | Any disconnected DWN task | Cross-process wakes are degraded |
+| NATS publish error rate | > 1% sustained | Wake fan-out is unhealthy |
 | ECS `MemoryUtilization` | > 80% | Right-size or scale |
 
 ### 5.2 Logging
@@ -658,11 +599,13 @@ AWS Managed Prometheus (AMP).
 - Structured JSON logs via `loglevel` → CloudWatch Logs.
 - Log group per service: `/ecs/dwn-http`, `/ecs/dwn-ws`, `/ecs/nats`.
 - Correlation ID: propagate `JsonRpcRequest.id` through logs.
+- NATS wake logs should include only tenant hash/token and durable log position,
+  not message payloads.
 
 ### 5.3 Tracing
 
 - AWS X-Ray SDK or OpenTelemetry → X-Ray.
-- Trace spans: `ALB → DWN processMessage → PG query → NATS publish`.
+- Trace spans: `ALB → DWN processMessage → PG commit → NATS wake publish`.
 - Measure per-handler latency, per-store latency, enclave round-trip.
 
 ---
@@ -690,7 +633,7 @@ ECR Push (tagged with git SHA)
 CDK / Terraform Deploy
     ├── Aurora schema migration (if needed)
     ├── ECS service update (rolling, 1 at a time for dwn-ws)
-    ├── NATS stream/config update (idempotent)
+    ├── NATS service/config update (idempotent)
     └── ALB health check gates (healthy before proceeding)
 ```
 
@@ -708,13 +651,13 @@ CDK / Terraform Deploy
 | Dockerize dwn-server | `dwn-server` | Multi-stage Bun Dockerfile |
 | IaC scaffolding | `infra/` | CDK or Terraform for VPC, ALB, ECS, Aurora |
 
-### Phase 2: Distributed EventLog (Weeks 3-5)
+### Phase 2: Distributed Durable-Log Wakes (Weeks 3-5)
 
 | Task | Package | Description |
 |---|---|---|
-| `NatsEventLog` | `dwn-server` (plugin) | Implements `EventLog` interface over NATS JetStream |
-| NATS cluster | `infra/` | 3-node JetStream cluster in private subnets |
-| Integration tests | `dwn-server` | Test subscribe flow across two DWN instances sharing NATS |
+| `NatsEventBus` | `dwn-server` (plugin) | Publishes durable-log wakes over NATS |
+| NATS cluster | `infra/` | 3-node NATS cluster in private subnets |
+| Integration tests | `dwn-server` | Test subscribe flow across two DWN instances sharing SQL + NATS wakes |
 | Split HTTP/WS services | `dwn-server` | `DS_WEBSOCKET_SERVER=false` for HTTP fleet, `true` for WS fleet |
 
 ### Phase 3: Nitro Enclaves (Weeks 5-8)
@@ -748,7 +691,7 @@ CDK / Terraform Deploy
 | Aurora PostgreSQL | 1 writer `db.r6g.xlarge` + 2 readers `db.r6g.large` | ~$900 |
 | ECS Fargate (dwn-http) | 4 tasks, 1 vCPU / 2 GB each | ~$240 |
 | ECS EC2 (dwn-ws) | 2x `c5.xlarge` (Nitro-capable) | ~$250 |
-| NATS JetStream | 3x `c6g.large` (ECS or EC2) | ~$280 |
+| NATS core pub/sub | 3x `c6g.large` (ECS or EC2) | ~$280 |
 | ALB | 1 ALB + data transfer | ~$50 |
 | S3 | ~500 GB stored, moderate GET/PUT | ~$15 |
 | KMS | ~1M API calls/month | ~$10 |
@@ -800,9 +743,9 @@ partitions across shards.
 
 ## 11. Open Questions
 
-1. **NATS vs. self-managed**: Should NATS run as ECS tasks, or use a managed
-   alternative like Amazon MSK (Kafka) with a Kafka-backed EventLog? NATS is
-   simpler and lower-latency, but MSK is fully managed.
+1. **NATS vs. managed pub/sub**: Should NATS run as ECS tasks, or use a managed
+   alternative for wake fan-out? NATS is simpler and lower-latency, but a
+   managed service would reduce operational ownership.
 
 2. **Enclave language**: Rust for minimal attack surface and deterministic
    memory, or Bun for code sharing with the main DWN server? Rust is preferred
