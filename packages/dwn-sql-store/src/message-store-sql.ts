@@ -55,6 +55,9 @@ type MessageStoreIndexColumn = Exclude<keyof DwnDatabaseType['messageStoreMessag
 type MessageStoreRow = Selectable<DwnDatabaseType['messageStoreMessages']>;
 type MessageStoreExecutor = Kysely<DwnDatabaseType> | Transaction<DwnDatabaseType>;
 type PositionColumn = 'seq' | 'redeliverSeq';
+// Replication positions (`seq`/`redeliverSeq`) must be read through these text columns, populated by
+// `Dialect.bigIntColumnAsText` (`CAST(... AS CHAR/TEXT)`). Reading the raw bigint columns instead lets
+// the MySQL/SQLite drivers narrow them to a JS `number`, truncating positions above 2^53.
 type PositionTextColumns = {
   seqText: string | null;
   redeliverSeqText: string | null;
@@ -1100,6 +1103,9 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
   }
 
   private static requirePosition(row: MessageStoreRow & Partial<PositionTextColumns>, positionColumn: PositionColumn): bigint {
+    // Prefer the cast text column (BigInt-exact). The raw-column fallback is NOT safe above 2^53 —
+    // every position-bearing read (logRead/getHead/increment) selects the `*Text` columns, so the
+    // fallback should never carry a real position; it exists only for rows fetched without them.
     const textValue = positionColumn === 'seq' ? row.seqText : row.redeliverSeqText;
     const value = textValue ?? row[positionColumn];
     if (value === null || value === undefined) {

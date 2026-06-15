@@ -279,6 +279,11 @@ function runReplicationLogTests(dialect: Dialect): void {
       ]);
       expect(cursor!.position).toBe(expectedRedeliveryPosition.toString());
       expect(drained).toBe(true);
+
+      // logBounds reads the head via the cast getHead path — assert it also round-trips beyond 2^53.
+      const bounds = await messageStore.logBounds(alice.did);
+      expect(bounds!.oldest.position).toBe('0');
+      expect(bounds!.latest.position).toBe(expectedRedeliveryPosition.toString());
     });
 
     it('should page with high-water cursors and preserve zero-limit cursor semantics', async () => {
