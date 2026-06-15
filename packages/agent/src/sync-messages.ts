@@ -87,13 +87,6 @@ export class SyncPullAbortedError extends Error {
   }
 }
 
-class LocalDataSizeMismatchError extends Error {
-  constructor(dataSize: number) {
-    super(`SyncEngineLevel: local RecordsWrite data exceeded descriptor dataSize ${dataSize} while buffering push data.`);
-    this.name = 'LocalDataSizeMismatchError';
-  }
-}
-
 export class SyncDataSizeLimitExceededError extends Error {
   public constructor(dataSize: number) {
     super(`SyncEngineLevel: RecordsWrite data exceeded descriptor dataSize ${dataSize}.`);
@@ -198,9 +191,6 @@ async function bufferDataStream(entry: SyncMessageEntry, shouldContinue?: () => 
       assertShouldContinue(shouldContinue);
       totalSize += value.byteLength;
       if (totalSize > MAX_BUFFER_SIZE) {
-        if (isRecordsWriteMessage(entry.message)) {
-          throw new LocalDataSizeMismatchError((entry.message.descriptor as { dataSize: number }).dataSize);
-        }
         throw new Error('SyncEngineLevel: unexpected large stream while buffering push data.');
       }
       chunks.push(value);
@@ -530,7 +520,7 @@ class RemoteApplyPushContext {
     } catch (error: any) {
       const detail = error.message ?? String(error);
       console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
-      if (error instanceof LocalDataSizeMismatchError || error instanceof SyncDataSizeLimitExceededError) {
+      if (error instanceof SyncDataSizeLimitExceededError) {
         return {
           kind    : 'failed',
           failure : this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }),
