@@ -227,8 +227,8 @@ function createPermissionRequestForProtocol({ definition, permissions }: Protoco
     method    : DwnMethodName.Query,
   });
 
-  // A Messages.Read grant is a unified scope that covers MessagesRead, MessagesSync, and MessagesSubscribe.
-  // This single grant enables sync and real-time subscriptions for the protocol.
+  // A Messages.Read grant is a unified scope for protocol message feeds and
+  // real-time subscriptions.
   requests.push({
     protocol  : definition.protocol,
     interface : DwnInterfaceName.Messages,

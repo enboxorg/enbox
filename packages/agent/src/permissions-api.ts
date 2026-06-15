@@ -401,8 +401,8 @@ export class AgentPermissionsApi implements PermissionsApi {
     delegated: boolean = false
   ): Promise<PermissionGrantEntry | undefined> {
     // Two-pass matching: prefer exact scope matches over unified Messages.Read fallback.
-    // This ensures that if both a Messages.Sync grant and a Messages.Read grant exist,
-    // the specific Messages.Sync grant is returned for MessagesSync lookups.
+    // Messages.Read is the only valid Messages scope, but the exact-match path
+    // preserves normal behavior for non-Messages grants and MessagesRead itself.
     let unifiedFallback: PermissionGrantEntry | undefined;
 
     for (const entry of grants) {
@@ -445,12 +445,13 @@ export class AgentPermissionsApi implements PermissionsApi {
     const scope = grant.scope;
     const scopeMessageType = scope.interface + scope.method;
 
-    // Messages.Read is the only valid Messages scope and covers Read, Sync, and Subscribe operations.
+    // Messages.Read is the only valid Messages scope and covers Query, Read, Sync, and Subscribe operations.
     // Defensively require method === Read so malformed/legacy grants with method Sync/Subscribe
     // are rejected rather than treated as valid scopes.
     const isMessagesScopeMatch = scope.interface === 'Messages'
       ? scope.method === 'Read'
-        && (messageType === DwnInterface.MessagesRead
+        && (messageType === DwnInterface.MessagesQuery
+          || messageType === DwnInterface.MessagesRead
           || messageType === DwnInterface.MessagesSync
           || messageType === DwnInterface.MessagesSubscribe)
       : scopeMessageType === messageType;

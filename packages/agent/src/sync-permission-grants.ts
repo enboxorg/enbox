@@ -7,7 +7,7 @@ import { Jws, Message } from '@enbox/dwn-sdk-js';
 
 import { lexicographicalCompare } from './types/sync.js';
 
-export type MessagesSyncScopeResolution = {
+export type MessagesScopeResolution = {
   scope: SyncScope;
   permissionGrants: PermissionGrantEntry[];
 };
@@ -23,11 +23,11 @@ export function toMessagesPermissionGrantIds(permissionGrantIds: string[] | unde
 /**
  * Gets the active permission grant IDs that authorize a Messages operation.
  *
- * Owner-authored sync does not invoke grants. Delegate full sync requires at
- * least one active unscoped Messages.Read grant. Delegate protocol-set sync
- * requires each requested protocol root to be covered by an active
- * Messages.Read grant, then invokes every active grant that participates in
- * that root set. This keeps the authorization epoch tied to grant churn
+ * Owner-authored Messages feed access does not invoke grants. Delegate full
+ * scope requires at least one active unscoped Messages.Read grant. Delegate
+ * protocol-set scope requires each requested protocol root to be covered by an
+ * active Messages.Read grant, then invokes every active grant that participates
+ * in that root set. This keeps the authorization epoch tied to grant churn
  * without widening the CID set being compared.
  */
 export async function getMessagesPermissionGrantsForScope({
@@ -46,7 +46,7 @@ export async function getMessagesPermissionGrantsForScope({
   const requestedScope: SyncScope = protocols === undefined
     ? { kind: 'full' }
     : { kind: 'protocolSet', protocols };
-  const resolutions = await resolveMessagesSyncScopes({
+  const resolutions = await resolveMessagesScopes({
     did,
     delegateDid,
     requestedScope,
@@ -59,13 +59,12 @@ export async function getMessagesPermissionGrantsForScope({
 }
 
 /**
- * Resolves active Messages.Read grants into one or more sync targets.
+ * Resolves active Messages.Read grants into one or more Messages feed scopes.
  *
- * Full/protocol sync only compares StateIndex roots. Exact protocolPath and
- * contextId grants do not authorize those roots because they cover a strict
- * subset that this sync mechanism no longer tries to project.
+ * Exact protocolPath and contextId grants do not authorize root log scopes
+ * because they cover a strict subset of the messages in those scopes.
  */
-export async function resolveMessagesSyncScopes({
+export async function resolveMessagesScopes({
   did,
   delegateDid,
   requestedScope,
@@ -77,7 +76,7 @@ export async function resolveMessagesSyncScopes({
   requestedScope: SyncScope;
   messageType: DwnInterface;
   permissionsApi: PermissionsApi;
-}): Promise<MessagesSyncScopeResolution[]> {
+}): Promise<MessagesScopeResolution[]> {
   if (!delegateDid) {
     return [{ scope: requestedScope, permissionGrants: [] }];
   }
@@ -101,7 +100,7 @@ function resolveFullScope(
   permissionGrants: PermissionGrantEntry[],
   requestedScope: Extract<SyncScope, { kind: 'full' }>,
   messageType: DwnInterface,
-): MessagesSyncScopeResolution {
+): MessagesScopeResolution {
   const grants = permissionGrants
     .filter(grantMatchesFullRoot)
     .sort((a, b) => lexicographicalCompare(a.grant.id, b.grant.id));
@@ -116,7 +115,7 @@ function resolveProtocolSetScope(
   permissionGrants: PermissionGrantEntry[],
   requestedScope: Extract<SyncScope, { kind: 'protocolSet' }>,
   messageType: DwnInterface,
-): MessagesSyncScopeResolution {
+): MessagesScopeResolution {
   for (const protocol of requestedScope.protocols) {
     if (permissionGrants.some(entry => grantMatchesProtocolRoot(entry, protocol))) {
       continue;

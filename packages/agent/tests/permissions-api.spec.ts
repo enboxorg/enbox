@@ -1205,7 +1205,7 @@ describe('AgentPermissionsApi', () => {
       });
 
       // Messages.Read is the only valid Messages scope — one grant covers
-      // Read, Sync, and Subscribe operations.
+      // Query, Read, Sync, and Subscribe operations.
       const grant = await testHarness.agent.permissions.createGrant({
         author      : aliceDid.uri,
         grantedTo   : aliceDeviceX.did.uri,
@@ -1216,8 +1216,13 @@ describe('AgentPermissionsApi', () => {
 
       const grants = [ grant ];
 
-      // All three Messages operations match the same Read grant.
-      for (const messageType of [DwnInterface.MessagesRead, DwnInterface.MessagesSync, DwnInterface.MessagesSubscribe]) {
+      // All Messages feed operations match the same Read grant.
+      for (const messageType of [
+        DwnInterface.MessagesQuery,
+        DwnInterface.MessagesRead,
+        DwnInterface.MessagesSync,
+        DwnInterface.MessagesSubscribe,
+      ]) {
         const matched = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
           messageType,
         }, grants);
@@ -1232,7 +1237,7 @@ describe('AgentPermissionsApi', () => {
       expect(invalidGrant).toBeUndefined();
     });
 
-    it('Messages.Read unified scope covers Sync and Subscribe', async () => {
+    it('Messages.Read unified scope covers Query, Sync, and Subscribe', async () => {
       const aliceDeviceX = await testHarness.agent.identity.create({
         store     : true,
         metadata  : { name: 'Alice Device X' },
@@ -1258,6 +1263,12 @@ describe('AgentPermissionsApi', () => {
         messageType: DwnInterface.MessagesRead,
       }, readOnlyGrants);
       expect(matchedRead?.message.recordId).toBe(readGrant.message.recordId);
+
+      // Messages.Read also matches a MessagesQuery lookup
+      const matchedQuery = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType: DwnInterface.MessagesQuery,
+      }, readOnlyGrants);
+      expect(matchedQuery?.message.recordId).toBe(readGrant.message.recordId);
 
       // Messages.Read also matches a MessagesSync lookup
       const matchedSync = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
@@ -1306,7 +1317,12 @@ describe('AgentPermissionsApi', () => {
       };
 
       // The tampered grant should NOT match any Messages operation.
-      for (const messageType of [DwnInterface.MessagesRead, DwnInterface.MessagesSync, DwnInterface.MessagesSubscribe]) {
+      for (const messageType of [
+        DwnInterface.MessagesQuery,
+        DwnInterface.MessagesRead,
+        DwnInterface.MessagesSync,
+        DwnInterface.MessagesSubscribe,
+      ]) {
         const matched = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
           messageType,
         }, [tamperedEntry as any]);
@@ -1325,7 +1341,7 @@ describe('AgentPermissionsApi', () => {
       const otherProtocol = 'http://example.com/other-protocol';
 
       // Messages.Read is the only valid Messages scope — one grant per protocol
-      // covers Read, Sync, and Subscribe operations.
+      // covers Query, Read, Sync, and Subscribe operations.
       const protoGrant = await testHarness.agent.permissions.createGrant({
         author      : aliceDid.uri,
         grantedTo   : aliceDeviceX.did.uri,
@@ -1344,8 +1360,13 @@ describe('AgentPermissionsApi', () => {
 
       const deviceXMessageGrants = [ protoGrant, otherProtoGrant ];
 
-      // All three Messages operations match the same Read grant for the given protocol.
-      for (const messageType of [DwnInterface.MessagesRead, DwnInterface.MessagesSync, DwnInterface.MessagesSubscribe]) {
+      // All Messages feed operations match the same Read grant for the given protocol.
+      for (const messageType of [
+        DwnInterface.MessagesQuery,
+        DwnInterface.MessagesRead,
+        DwnInterface.MessagesSync,
+        DwnInterface.MessagesSubscribe,
+      ]) {
         const matched = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
           messageType,
           protocol,
@@ -1370,7 +1391,7 @@ describe('AgentPermissionsApi', () => {
       expect(otherMatch?.message.recordId).toBe(otherProtoGrant.message.recordId);
     });
 
-    it('Messages.Read unified scope covers Sync and Subscribe with protocol', async () => {
+    it('Messages.Read unified scope covers Query, Sync, and Subscribe with protocol', async () => {
       const aliceDeviceX = await testHarness.agent.identity.create({
         store     : true,
         metadata  : { name: 'Alice Device X' },
@@ -1393,6 +1414,13 @@ describe('AgentPermissionsApi', () => {
       });
 
       const readOnlyGrants = [ readGrant ];
+
+      // Matches MessagesQuery for the same protocol
+      const matchedQuery = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType: DwnInterface.MessagesQuery,
+        protocol
+      }, readOnlyGrants);
+      expect(matchedQuery?.message.recordId).toBe(readGrant.message.recordId);
 
       // Matches MessagesSync for the same protocol
       const matchedSync = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
@@ -1459,6 +1487,13 @@ describe('AgentPermissionsApi', () => {
         protocolPath : 'post'
       }, grants);
       expect(pathMatch?.message.recordId).toBe(pathGrant.message.recordId);
+
+      const queryPathMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType  : DwnInterface.MessagesQuery,
+        protocol,
+        protocolPath : 'post'
+      }, grants);
+      expect(queryPathMatch?.message.recordId).toBe(pathGrant.message.recordId);
 
       const childPathMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType  : DwnInterface.MessagesRead,
