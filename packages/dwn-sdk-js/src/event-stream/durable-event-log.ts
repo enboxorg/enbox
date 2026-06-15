@@ -278,7 +278,6 @@ export class DurableEventLog implements EventLog {
         return frozenCursor;
       }
 
-      readCursor = pageState.readCursor;
       const resultCursor = result.cursor ?? pageState.readCursor;
       if (DurableEventLog.isCatchUpComplete(pageState.reachedFrozenPosition, result, resultCursor, frozenPosition)) {
         DurableEventLog.finishCatchUp(subscription, frozenCursor);
