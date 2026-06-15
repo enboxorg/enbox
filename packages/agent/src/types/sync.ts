@@ -45,9 +45,9 @@ export type SyncMode = 'poll' | 'live';
 // ---------------------------------------------------------------------------
 
 /**
- * Root algorithm used by StateIndex full/protocol sync scopes.
+ * Root algorithm used by durable message-feed full/protocol sync scopes.
  */
-export const SYNC_PROJECTION_ROOT_VERSION = 'state-index-full-protocol-root-v1';
+export const SYNC_PROJECTION_ROOT_VERSION = 'replication-log-feed-v1';
 
 /**
  * Authorization-epoch algorithm used by delegated Messages.Read sync links.
