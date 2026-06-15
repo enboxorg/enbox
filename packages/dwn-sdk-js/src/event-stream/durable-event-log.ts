@@ -419,7 +419,7 @@ export class DurableEventLog implements EventLog {
       return event;
     }
 
-    const recordId = (event.message as { recordId?: string }).recordId;
+    const recordId = DurableEventLog.getRecordId(event.message);
     if (recordId === undefined) {
       return event;
     }
@@ -444,6 +444,16 @@ export class DurableEventLog implements EventLog {
 
     return message.descriptor.interface === DwnInterfaceName.Records &&
       message.descriptor.method === DwnMethodName.Delete;
+  }
+
+  private static getRecordId(message: GenericMessage): string | undefined {
+    const recordId = (message as { recordId?: unknown }).recordId;
+    if (typeof recordId === 'string') {
+      return recordId;
+    }
+
+    const descriptorRecordId = (message.descriptor as { recordId?: unknown }).recordId;
+    return typeof descriptorRecordId === 'string' ? descriptorRecordId : undefined;
   }
 
   private async buildToken(tenant: string, position: string, messageCid: string | undefined): Promise<ProgressToken> {

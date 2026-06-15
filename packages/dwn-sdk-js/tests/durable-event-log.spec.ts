@@ -388,6 +388,29 @@ describe('DurableEventLog', () => {
     expect(updateEntry!.event.initialWrite!.recordId).toBe(initial.message.recordId);
   });
 
+  it('should attach initial writes to RecordsDelete events', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
+    const recordsDelete = await TestDataGenerator.generateRecordsDelete({
+      author   : alice,
+      recordId : initial.message.recordId,
+    });
+
+    await messageStore.put(alice.did, initial.message, await initial.recordsWrite.constructIndexes(false));
+    const deletePut = await messageStore.put(
+      alice.did,
+      recordsDelete.message,
+      recordsDelete.recordsDelete.constructIndexes(initial.message, initial.message),
+    );
+
+    const result = await eventLog.read(alice.did);
+    const deleteEntry = result.events.find(entry => entry.messageCid === deletePut.position!.messageCid);
+
+    expect(deleteEntry).toBeDefined();
+    expect(deleteEntry!.event.initialWrite).toBeDefined();
+    expect(deleteEntry!.event.initialWrite!.recordId).toBe(initial.message.recordId);
+  });
+
   async function storeRecord(author: Persona): Promise<StoredRecord> {
     const record = await TestDataGenerator.generateRecordsWrite({ author });
     const indexes = await record.recordsWrite.constructIndexes(true);
