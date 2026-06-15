@@ -287,6 +287,11 @@ export class AdminStore {
     await this.db.deleteFrom('stateIndexRoots').where('tenant', '=', did).execute();
     await this.db.deleteFrom('stateIndexMeta').where('tenant', '=', did).execute();
 
+    // Delete derived replication fingerprints for the purged tenant. Keep the
+    // tenant's replication counter so stale high-water cursors cannot skip rows
+    // if the tenant is later repopulated.
+    await this.db.deleteFrom('replicationFingerprints').where('tenant', '=', did).execute();
+
     // Invalidate cache.
     this.cachedGlobalStats = undefined;
 
@@ -509,6 +514,17 @@ interface StateIndexMeta {
   protocol : string | null;
 }
 
+interface ReplicationCounters {
+  tenant : string;
+  seq : number | string | bigint;
+}
+
+interface ReplicationFingerprints {
+  tenant : string;
+  scope : string;
+  fingerprint : string;
+}
+
 interface AdminDatabase {
   messageStoreMessages : MessageStoreMessages;
   dataRefs : DataRefsRow;
@@ -516,4 +532,6 @@ interface AdminDatabase {
   stateIndexNodes : StateIndexNodes;
   stateIndexRoots : StateIndexRoots;
   stateIndexMeta : StateIndexMeta;
+  replicationCounters : ReplicationCounters;
+  replicationFingerprints : ReplicationFingerprints;
 }

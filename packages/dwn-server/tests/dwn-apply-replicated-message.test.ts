@@ -8,7 +8,7 @@ import { RateLimiter } from '../src/rate-limiter.js';
 import { v4 as uuidv4 } from 'uuid';
 import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { createRecordsWriteMessage, expectAppliedResultWithPosition } from './utils.js';
-import { DataStream, Encoder, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnErrorCode, Encoder, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { describe, expect, it, spyOn } from 'bun:test';
 
 describe('handleDwnApplyReplicatedMessage', () => {
@@ -389,6 +389,103 @@ describe('handleDwnApplyReplicatedMessage', () => {
 
     expect(duplicateApply.jsonRpcResponse.error).toBeUndefined();
     expect((duplicateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Duplicate');
+    await dwn.close();
+  });
+
+  it('should cancel a duplicate echo data stream without reading it', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([5, 6, 7, 8]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const firstApply = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(data),
+      },
+    );
+    expect(firstApply.jsonRpcResponse.error).toBeUndefined();
+
+    let pulls = 0;
+    let streamWasCanceled = false;
+    const duplicateStream = new ReadableStream<Uint8Array>({
+      pull(controller): void {
+        pulls++;
+        controller.enqueue(data);
+      },
+      cancel(): void {
+        streamWasCanceled = true;
+      },
+    });
+
+    const duplicateApply = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      {
+        dwn,
+        transport  : 'http',
+        dataStream : duplicateStream,
+      },
+    );
+
+    expect(duplicateApply.jsonRpcResponse.error).toBeUndefined();
+    expect((duplicateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Duplicate');
+    expect(pulls).toBeLessThan(3);
+    expect(streamWasCanceled).toBe(true);
+    await dwn.close();
+  });
+
+  it('should abort an octet-stream body when it exceeds descriptor dataSize', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    let streamWasCanceled = false;
+    let pulls = 0;
+    const overlongStream = new ReadableStream<Uint8Array>({
+      pull(controller): void {
+        pulls++;
+        if (pulls === 1) {
+          controller.enqueue(data);
+          return;
+        }
+
+        controller.enqueue(new Uint8Array([9]));
+      },
+      cancel(): void {
+        streamWasCanceled = true;
+      },
+    });
+
+    const apply = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      {
+        dwn,
+        transport  : 'http',
+        dataStream : overlongStream,
+      },
+    );
+
+    expect(apply.jsonRpcResponse.error).toBeUndefined();
+    const result = apply.jsonRpcResponse.result.result as ReplicationApplyResult;
+    expect(result.kind).toBe('Invalid');
+    if (result.kind !== 'Invalid') {
+      throw new Error(`expected Invalid replication result, received ${result.kind}`);
+    }
+    expect(result.reason).toContain(DwnErrorCode.RecordsWriteDataSizeMismatch);
+    expect(streamWasCanceled).toBe(true);
     await dwn.close();
   });
 

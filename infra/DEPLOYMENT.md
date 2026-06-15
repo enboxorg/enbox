@@ -87,3 +87,67 @@ terraform apply -var certificate_arn="..." -var dwn_image="..."
 ```
 
 State is stored in S3 (`enbox-terraform-state` bucket, `env/dev/terraform.tfstate` key) with DynamoDB locking (`enbox-terraform-locks` table).
+
+## Database Restore Runbook
+
+Use this only after restoring the DWN database from a backup or snapshot. Do not
+run the adoption-reset drop list during a restore; it deletes the data you just
+restored.
+
+After the database restore completes and before clients resume sync, rotate the
+replication epoch:
+
+```sql
+UPDATE "replicationMeta"
+SET "value" = gen_random_uuid()::text
+WHERE "key" = 'epoch';
+```
+
+For PostgreSQL environments where `gen_random_uuid()` is unavailable, generate a
+UUID outside the database and set it explicitly:
+
+```sql
+UPDATE "replicationMeta"
+SET "value" = '<fresh-random-uuid>'
+WHERE "key" = 'epoch';
+```
+
+The epoch is the store-generation marker used by replication cursors. Restored
+stores can have older rows under the same tenant high-water positions; rotating
+the epoch forces clients to discard stale cursors instead of validating them
+against the restored store and skipping or misreading rows.
+
+## Adoption Reset Runbook
+
+Use this only when intentionally resetting DWN message/storage state while
+preserving registration and admin state. This is not a database restore
+procedure.
+
+1. Bring up the new server build first and verify `/health`.
+2. Stop write traffic to the old server.
+3. Drop only the DWN store tables and migration metadata:
+
+```sql
+DROP TABLE IF EXISTS "messageStoreRecordsTags" CASCADE;
+DROP TABLE IF EXISTS "messageStoreMessages" CASCADE;
+DROP TABLE IF EXISTS "dataRefs" CASCADE;
+DROP TABLE IF EXISTS "dataBlocks" CASCADE;
+DROP TABLE IF EXISTS "dataStore" CASCADE;
+DROP TABLE IF EXISTS "stateIndexNodes" CASCADE;
+DROP TABLE IF EXISTS "stateIndexRoots" CASCADE;
+DROP TABLE IF EXISTS "stateIndexMeta" CASCADE;
+DROP TABLE IF EXISTS "resumableTasks" CASCADE;
+DROP TABLE IF EXISTS "replicationCounters" CASCADE;
+DROP TABLE IF EXISTS "replicationFingerprints" CASCADE;
+DROP TABLE IF EXISTS "replicationMeta" CASCADE;
+DROP TABLE IF EXISTS "kysely_migration" CASCADE;
+DROP TABLE IF EXISTS "kysely_migration_lock" CASCADE;
+```
+
+Do not drop registration or admin tables: `registeredTenants`, `tenantQuotas`,
+`adminAuditLog`, `adminWebhooks`, `adminPasskeys`, and `cacheEntries`.
+
+4. Start the new server so migrations recreate the DWN store schema.
+5. Verify health and registration/admin endpoints.
+6. Publish or switch the agent endpoint after the new server is serving the
+   reset store.

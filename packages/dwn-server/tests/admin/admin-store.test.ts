@@ -28,6 +28,8 @@ interface TestDatabase {
   messageStoreMessages: { tenant: string; dataSize: number | null };
   dataRefs: { tenant: string; recordId: string; dataCid: string; dataSize: number };
   dataBlocks: { rootDataCid: string; blockCid: string; data: Uint8Array };
+  replicationCounters: { tenant: string; seq: number | string | bigint };
+  replicationFingerprints: { tenant: string; scope: string; fingerprint: string };
 }
 
 describe('AdminStore', () => {
@@ -224,6 +226,58 @@ describe('AdminStore', () => {
       await adminStore.purgeTenantData(persona.did);
       const stats = await adminStore.getGlobalStats();
       expect(stats.tenantCount).toBeDefined();
+    });
+
+    it('should delete replication fingerprints and preserve replication counters', async () => {
+      const tenant = await TestDataGenerator.generateDidKeyPersona();
+      const otherTenant = await TestDataGenerator.generateDidKeyPersona();
+
+      await rawDb
+        .insertInto('replicationCounters')
+        .values([
+          { tenant: tenant.did, seq: 42 },
+          { tenant: otherTenant.did, seq: 7 },
+        ])
+        .execute();
+
+      await rawDb
+        .insertInto('replicationFingerprints')
+        .values([
+          { tenant: tenant.did, scope: 'global', fingerprint: '1'.repeat(64) },
+          { tenant: tenant.did, scope: 'protocol:example', fingerprint: '2'.repeat(64) },
+          { tenant: otherTenant.did, scope: 'global', fingerprint: '3'.repeat(64) },
+        ])
+        .execute();
+
+      await adminStore.purgeTenantData(tenant.did);
+
+      const tenantFingerprints = await rawDb
+        .selectFrom('replicationFingerprints')
+        .selectAll()
+        .where('tenant', '=', tenant.did)
+        .execute();
+      expect(tenantFingerprints).toHaveLength(0);
+
+      const tenantCounter = await rawDb
+        .selectFrom('replicationCounters')
+        .selectAll()
+        .where('tenant', '=', tenant.did)
+        .executeTakeFirst();
+      expect(tenantCounter?.seq).toBe(42);
+
+      const otherTenantFingerprints = await rawDb
+        .selectFrom('replicationFingerprints')
+        .selectAll()
+        .where('tenant', '=', otherTenant.did)
+        .execute();
+      expect(otherTenantFingerprints).toHaveLength(1);
+
+      const otherTenantCounter = await rawDb
+        .selectFrom('replicationCounters')
+        .selectAll()
+        .where('tenant', '=', otherTenant.did)
+        .executeTakeFirst();
+      expect(otherTenantCounter?.seq).toBe(7);
     });
   });
 
