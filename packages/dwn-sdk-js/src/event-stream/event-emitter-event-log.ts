@@ -10,6 +10,7 @@ import type {
   ProgressGapInfo,
   ProgressGapReason,
   ProgressToken,
+  SubscriptionEvent,
   SubscriptionListener,
 } from '../types/subscriptions.js';
 
@@ -271,6 +272,7 @@ export class EventEmitterEventLog implements EventLog {
 
       results.push({
         seq        : String(seq),
+        position   : String(seq),
         event      : entry.event,
         indexes    : entry.indexes,
         messageCid : entry.messageCid,
@@ -334,7 +336,7 @@ export class EventEmitterEventLog implements EventLog {
       const cursorSeq = EventEmitterEventLog.parsePosition(cursor.position);
 
       // Buffer live events that arrive during catch-up to avoid losing them.
-      type BufferedEvent = { event: MessageEvent; seq: number; messageCid: string };
+      type BufferedEvent = { event: MessageEvent; indexes: KeyValues; seq: number; messageCid: string };
       const pendingLiveEvents: BufferedEvent[] = [];
       let catchUpComplete = false;
 
@@ -345,10 +347,10 @@ export class EventEmitterEventLog implements EventLog {
         }
         if (catchUpComplete) {
           void tokenFromPayload(payload).then((token) => {
-            listener({ type: 'event', cursor: token, event: payload.event });
+            listener(EventEmitterEventLog.createSubscriptionEvent(token, payload.event, payload.indexes, payload.seq, payload.messageCid));
           });
         } else {
-          pendingLiveEvents.push({ event: payload.event, seq: payload.seq, messageCid: payload.messageCid });
+          pendingLiveEvents.push({ event: payload.event, indexes: payload.indexes, seq: payload.seq, messageCid: payload.messageCid });
         }
       };
 
@@ -367,21 +369,21 @@ export class EventEmitterEventLog implements EventLog {
       // any async yield, so eviction during read()'s buildToken() cannot lose it.
       for (const entry of readResult.events) {
         const token = await this.buildToken(tenant, EventEmitterEventLog.parsePosition(entry.seq), entry.messageCid);
-        listener({ type: 'event', cursor: token, event: entry.event });
+        listener(EventEmitterEventLog.createSubscriptionEvent(token, entry.event, entry.indexes, entry.seq, entry.messageCid));
       }
 
-      // Step 3: Deliver any live events that arrived during catch-up (with seq > lastCatchUpSeq).
+      // Step 3: Send EOSE marker at the catch-up high-water.
+      listener({ type: 'eose', cursor: eoseCursor });
+
+      // Step 4: Deliver any live events that arrived during catch-up (with seq > lastCatchUpSeq).
       // messageCid was captured at buffer time from the EmitterPayload.
       catchUpComplete = true;
       for (const liveEvent of pendingLiveEvents) {
         if (liveEvent.seq > lastCatchUpSeq) {
           const token = await this.buildToken(tenant, liveEvent.seq, liveEvent.messageCid);
-          listener({ type: 'event', cursor: token, event: liveEvent.event });
+          listener(EventEmitterEventLog.createSubscriptionEvent(token, liveEvent.event, liveEvent.indexes, liveEvent.seq, liveEvent.messageCid));
         }
       }
-
-      // Step 4: Send EOSE marker.
-      listener({ type: 'eose', cursor: eoseCursor });
 
       return {
         id,
@@ -396,7 +398,7 @@ export class EventEmitterEventLog implements EventLog {
         if (!FilterUtility.matchAnyFilter(payload.indexes, filters)) { return; }
       }
       void tokenFromPayload(payload).then((token) => {
-        listener({ type: 'event', cursor: token, event: payload.event });
+        listener(EventEmitterEventLog.createSubscriptionEvent(token, payload.event, payload.indexes, payload.seq, payload.messageCid));
       });
     };
 
@@ -450,5 +452,23 @@ export class EventEmitterEventLog implements EventLog {
         }
       }
     }
+  }
+
+  private static createSubscriptionEvent(
+    cursor: ProgressToken,
+    event: MessageEvent,
+    indexes: KeyValues,
+    seq: number | string,
+    messageCid: string | undefined,
+  ): SubscriptionEvent {
+    return {
+      type              : 'event',
+      cursor,
+      event,
+      seq               : String(seq),
+      messageCid,
+      isLatestBaseState : indexes.isLatestBaseState === true || indexes.isLatestBaseState === 'true',
+      protocol          : typeof indexes.protocol === 'string' ? indexes.protocol : undefined,
+    };
   }
 }

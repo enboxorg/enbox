@@ -1,4 +1,4 @@
-import type { SubscriptionMessage } from '../src/types/subscriptions.js';
+import type { EventLogReadOptions, EventLogReadResult, SubscriptionMessage } from '../src/types/subscriptions.js';
 
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 
@@ -147,7 +147,7 @@ describe('EventEmitterEventLog', () => {
       const tenant = 'did:example:alice';
       const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
 
-      await eventLog.emit(tenant, event, {}, cid(1));
+      await eventLog.emit(tenant, event, { isLatestBaseState: true, protocol: 'http://protocol' }, cid(1));
       await eventLog.emit(tenant, event, {}, cid(2));
       await eventLog.emit(tenant, event, {}, cid(3));
 
@@ -188,7 +188,7 @@ describe('EventEmitterEventLog', () => {
       const received: SubscriptionMessage[] = [];
       await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); });
 
-      await eventLog.emit(tenant, event, {}, cid(1));
+      await eventLog.emit(tenant, event, { isLatestBaseState: true, protocol: 'http://protocol' }, cid(1));
       await eventLog.emit(tenant, event, {}, cid(2));
 
       // Allow async token construction to settle.
@@ -200,6 +200,10 @@ describe('EventEmitterEventLog', () => {
       if (received[0].type === 'event') {
         expect(typeof received[0].cursor).toBe('object');
         expect(received[0].cursor.streamId.length).toBeGreaterThan(0);
+        expect(received[0].seq).toBe('1');
+        expect(received[0].messageCid).toBe(cid(1));
+        expect(received[0].isLatestBaseState).toBe(true);
+        expect(received[0].protocol).toBe('http://protocol');
       }
     });
 
@@ -335,6 +339,39 @@ describe('EventEmitterEventLog', () => {
       if (received[1].type === 'event') {
         expect(typeof received[1].cursor).toBe('object');
       }
+    });
+
+    it('should deliver live events buffered during catch-up after EOSE', async () => {
+      const tenant = 'did:example:alice';
+      const event = { message: { descriptor: { interface: 'Records', method: 'Write' } } as any };
+      const cursorBefore = await eventLog.emit(tenant, event, { idx: 'before' }, cid(1));
+      await eventLog.emit(tenant, event, { idx: 'catch-up' }, cid(2));
+      const received: SubscriptionMessage[] = [];
+      const originalRead = eventLog.read.bind(eventLog);
+      let emittedDuringRead = false;
+
+      eventLog.read = async (readTenant: string, options?: EventLogReadOptions): Promise<EventLogReadResult> => {
+        const result = await originalRead(readTenant, options);
+        if (!emittedDuringRead) {
+          emittedDuringRead = true;
+          await eventLog.emit(tenant, event, { isLatestBaseState: true, protocol: 'http://protocol' }, cid(3));
+        }
+
+        return result;
+      };
+
+      await eventLog.subscribe(tenant, 'sub-1', (msg) => { received.push(msg); }, { cursor: cursorBefore! });
+
+      expect(received.map(message => message.type)).toEqual(['event', 'eose', 'event']);
+      expect(received[0].cursor.position).toBe('2');
+      expect(received[1].cursor.position).toBe('2');
+      expect(received[2].cursor.position).toBe('3');
+      if (received[2].type !== 'event') {
+        throw new Error('expected buffered live event');
+      }
+      expect(received[2].messageCid).toBe(cid(3));
+      expect(received[2].isLatestBaseState).toBe(true);
+      expect(received[2].protocol).toBe('http://protocol');
     });
 
     it('should apply filters to both catch-up and live events', async () => {

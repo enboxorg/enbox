@@ -9,6 +9,7 @@ import { Encoder } from '../utils/encoder.js';
 import { hashToHex } from '../smt/smt-utils.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
+import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesSync } from '../interfaces/messages-sync.js';
 import { Records } from '../utils/records.js';
@@ -19,8 +20,6 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
  * {@link DwnConstant.maxDataSizeAllowedToBeEncoded} threshold.
  */
 const DEFAULT_MAX_INLINE_DATA_SIZE = DwnConstant.maxDataSizeAllowedToBeEncoded;
-
-type StoredMessageWithEncodedData = GenericMessage & { encodedData?: string };
 
 export class MessagesSyncHandler implements MethodHandler {
 
@@ -316,26 +315,18 @@ export class MessagesSyncHandler implements MethodHandler {
       return {};
     }
 
-    let inlineEncodedData: string | undefined;
-    if (MessagesSyncHandler.hasEncodedData(storedMessage)) {
-      inlineEncodedData = storedMessage.encodedData;
-      delete storedMessage.encodedData;
-    }
+    const { message, encodedData: inlineEncodedData } = Messages.detachEncodedData(storedMessage);
 
     let data: ReadableStream<Uint8Array> | undefined;
-    if (inlineEncodedData === undefined && Records.isRecordsWrite(storedMessage)) {
-      const { dataCid, dataSize } = storedMessage.descriptor;
+    if (inlineEncodedData === undefined && Records.isRecordsWrite(message)) {
+      const { dataCid, dataSize } = message.descriptor;
       if (dataSize <= DEFAULT_MAX_INLINE_DATA_SIZE && this.deps.dataStore) {
-        const dataResult = await this.deps.dataStore.get(tenant, storedMessage.recordId, dataCid);
+        const dataResult = await this.deps.dataStore.get(tenant, message.recordId, dataCid);
         data = dataResult?.dataStream;
       }
     }
 
-    return { message: storedMessage, encodedData: inlineEncodedData, data };
-  }
-
-  private static hasEncodedData(message: GenericMessage): message is StoredMessageWithEncodedData {
-    return 'encodedData' in message && typeof message.encodedData === 'string';
+    return { message, encodedData: inlineEncodedData, data };
   }
 
   private static async streamToBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {

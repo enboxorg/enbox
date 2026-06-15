@@ -7,6 +7,7 @@ import { testDeletedRecordScenarios } from './scenarios/deleted-record.spec.js';
 import { testDwnClass } from './dwn.spec.js';
 import { testEndToEndScenarios } from './scenarios/end-to-end-tests.spec.js';
 import { TestEventLog } from './test-event-stream.js';
+import { testMessagesQueryHandler } from './handlers/messages-query.spec.js';
 import { testMessagesReadHandler } from './handlers/messages-read.spec.js';
 import { testMessagesSubscribeHandler } from './handlers/messages-subscribe.spec.js';
 import { testMessagesSyncHandler } from './handlers/messages-sync.spec.js';
@@ -64,6 +65,7 @@ export class TestSuite {
     testMessageStore();
 
     // handler tests
+    testMessagesQueryHandler();
     testMessagesReadHandler();
     testMessagesSubscribeHandler();
     testMessagesSyncHandler();

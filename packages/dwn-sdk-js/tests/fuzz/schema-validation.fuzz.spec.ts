@@ -21,6 +21,7 @@ const messageSchemaNames = [
   'RecordsSubscribe',
   'ProtocolsConfigure',
   'ProtocolsQuery',
+  'MessagesQuery',
   'MessagesRead',
   'MessagesSubscribe',
   'MessagesSync',

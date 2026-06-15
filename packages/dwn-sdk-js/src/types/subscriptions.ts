@@ -95,6 +95,16 @@ export type SubscriptionEvent = {
   cursor : ProgressToken;
   /** The event payload (message + optional initialWrite). */
   event : MessageEvent;
+  /** Original row sequence for this message. Redelivery events keep the row's original sequence. */
+  seq? : string;
+  /** CID of the message that produced this event. */
+  messageCid? : string;
+  /** Whether this event's source row was latest base state at read time. */
+  isLatestBaseState? : boolean;
+  /** Protocol index value associated with the source row, when present. */
+  protocol? : string;
+  /** Base64url-encoded inline data carried beside the message payload. */
+  encodedData? : string;
 };
 
 /**
@@ -174,8 +184,17 @@ export type EventLogEntry = {
   /** Monotonic sequence number scoped to (instance, tenant), as a decimal string. */
   seq: string;
 
+  /**
+   * The actual delivered log position. This differs from `seq` for redelivery
+   * stamps, where the entry keeps the row's original `seq` but is delivered at
+   * the later redelivery position.
+   */
+  position?: string;
+
   /** The event payload. */
   event: MessageEvent;
+  /** Base64url-encoded inline data carried beside the message payload. */
+  encodedData?: string;
 
   /** Indexes associated with the event (used for filter matching). */
   indexes: KeyValues;
@@ -285,6 +304,10 @@ export type Wake = {
 
 export interface WakePublisher {
   publish(wake: Wake): void;
+}
+
+export interface WakeSubscriber {
+  subscribe(listener: (wake: Wake) => void): () => void;
 }
 
 export interface ReplicationFeedReader {

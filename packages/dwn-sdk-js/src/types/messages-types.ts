@@ -42,6 +42,40 @@ export type MessagesReadReply = GenericMessageReply & {
   entry?: MessagesReadReplyEntry;
 };
 
+export type MessagesQueryDescriptor = {
+  interface: DwnInterfaceName.Messages;
+  method: DwnMethodName.Query;
+  messageTimestamp: string;
+  filters: MessagesFilter[];
+  permissionGrantIds?: string[];
+  cursor?: ProgressToken;
+  limit?: number;
+  cidsOnly?: boolean;
+};
+
+export type MessagesQueryMessage = {
+  authorization: AuthorizationModel;
+  descriptor: MessagesQueryDescriptor;
+};
+
+export type MessagesQueryReplyEntry = {
+  seq: string;
+  messageCid: string;
+  isLatestBaseState: boolean;
+  protocol?: string;
+  message?: GenericMessage;
+  encodedData?: string;
+};
+
+export type MessagesQueryReply = GenericMessageReply & {
+  entries?: MessagesQueryReplyEntry[];
+  cursor?: ProgressToken;
+  drained?: boolean;
+  fingerprint?: string;
+  /** Present when status.code is 410 — structured gap metadata. */
+  error?: { code: 'ProgressGap' } & ProgressGapInfo;
+};
+
 export type MessagesSyncAction = 'root' | 'subtree' | 'leaves' | 'diff';
 
 export type MessagesSyncDescriptor = {

@@ -64,6 +64,8 @@ export enum DwnErrorCode {
   MessagePermissionGrantIdsNotCanonical = 'MessagePermissionGrantIdsNotCanonical',
   MessagePermissionGrantValidateInvocationAmbiguous = 'MessagePermissionGrantValidateInvocationAmbiguous',
   MessagesReadInvalidCid = 'MessagesReadInvalidCid',
+  MessagesQueryAuthorizationFailed = 'MessagesQueryAuthorizationFailed',
+  MessagesQueryReplicationFeedUnimplemented = 'MessagesQueryReplicationFeedUnimplemented',
   MessagesReadAuthorizationFailed = 'MessagesReadAuthorizationFailed',
   MessageGetInvalidCid = 'MessageGetInvalidCid',
   MessagesReadVerifyScopeFailed = 'MessagesReadVerifyScopeFailed',
