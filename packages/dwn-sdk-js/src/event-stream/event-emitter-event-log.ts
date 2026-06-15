@@ -271,6 +271,7 @@ export class EventEmitterEventLog implements EventLog {
 
       results.push({
         seq        : String(seq),
+        position   : String(seq),
         event      : entry.event,
         indexes    : entry.indexes,
         messageCid : entry.messageCid,
@@ -367,7 +368,15 @@ export class EventEmitterEventLog implements EventLog {
       // any async yield, so eviction during read()'s buildToken() cannot lose it.
       for (const entry of readResult.events) {
         const token = await this.buildToken(tenant, EventEmitterEventLog.parsePosition(entry.seq), entry.messageCid);
-        listener({ type: 'event', cursor: token, event: entry.event });
+        listener({
+          type              : 'event',
+          cursor            : token,
+          event             : entry.event,
+          seq               : entry.seq,
+          messageCid        : entry.messageCid,
+          isLatestBaseState : entry.indexes.isLatestBaseState === true || entry.indexes.isLatestBaseState === 'true',
+          protocol          : typeof entry.indexes.protocol === 'string' ? entry.indexes.protocol : undefined,
+        });
       }
 
       // Step 3: Deliver any live events that arrived during catch-up (with seq > lastCatchUpSeq).
@@ -376,7 +385,7 @@ export class EventEmitterEventLog implements EventLog {
       for (const liveEvent of pendingLiveEvents) {
         if (liveEvent.seq > lastCatchUpSeq) {
           const token = await this.buildToken(tenant, liveEvent.seq, liveEvent.messageCid);
-          listener({ type: 'event', cursor: token, event: liveEvent.event });
+          listener({ type: 'event', cursor: token, event: liveEvent.event, seq: String(liveEvent.seq), messageCid: liveEvent.messageCid });
         }
       }
 

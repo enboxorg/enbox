@@ -1,10 +1,14 @@
 import type { CoreProtocolRegistry } from '../core/core-protocol.js';
 import type { Filter } from '../types/query-types.js';
+import type { GenericMessage } from '../types/message-types.js';
 import type { MessagesFilter } from '../types/messages-types.js';
 
 import { FilterUtility } from './filter.js';
 import { normalizeProtocolUrl } from './url.js';
+import { Records } from './records.js';
 import { isEmptyObject, removeUndefinedProperties } from '@enbox/common';
+
+type StoredMessageWithEncodedData = GenericMessage & { encodedData?: string };
 
 
 /**
@@ -96,6 +100,22 @@ export class Messages {
   }
 
   /**
+   * Returns a copy of a RecordsWrite message without inline encodedData, and the
+   * detached encodedData value for wire surfaces that carry data beside the message.
+   */
+  public static detachEncodedData(message: GenericMessage): { message: GenericMessage; encodedData?: string } {
+    if (!Records.isRecordsWrite(message) || !Messages.hasEncodedData(message)) {
+      return { message };
+    }
+
+    const messageWithoutEncodedData: StoredMessageWithEncodedData = { ...message };
+    const { encodedData } = messageWithoutEncodedData;
+    delete messageWithoutEncodedData.encodedData;
+
+    return { message: messageWithoutEncodedData, encodedData };
+  }
+
+  /**
    * Converts an external-facing filter model into an internal-facing filer model used by data store.
    */
   private static convertFilter(filter: MessagesFilter): Filter {
@@ -131,5 +151,9 @@ export class Messages {
     }
 
     return filterCopy;
+  }
+
+  private static hasEncodedData(message: GenericMessage): message is StoredMessageWithEncodedData {
+    return 'encodedData' in message && typeof message.encodedData === 'string';
   }
 }

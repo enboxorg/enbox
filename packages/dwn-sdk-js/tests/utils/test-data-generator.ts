@@ -3,6 +3,7 @@ import type { DidResolutionResult } from '@enbox/dids';
 import type { Dwn } from '../../src/dwn.js';
 import type { GeneralJws } from '../../src/types/jws-types.js';
 import type { MessageSigner } from '../../src/types/signer.js';
+import type { MessagesQueryOptions } from '../../src/interfaces/messages-query.js';
 import type { MessagesReadOptions } from '../../src/interfaces/messages-read.js';
 import type { MessagesSubscribeOptions } from '../../src/interfaces/messages-subscribe.js';
 import type { PermissionGrantCreateOptions } from '../../src/protocols/permissions.js';
@@ -16,7 +17,7 @@ import type { RecordsSubscribeOptions } from '../../src/interfaces/records-subsc
 import type { AuthorizationModel, Pagination } from '../../src/types/message-types.js';
 import type { CreateFromOptions, EncryptionInput, KeyEncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
 import type { DataEncodedRecordsWriteMessage, DateSort, RecordsCountMessage, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsWriteTags } from '../../src/types/records-types.js';
-import type { MessagesFilter, MessagesReadMessage, MessagesSubscribeMessage } from '../../src/types/messages-types.js';
+import type { MessagesFilter, MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../../src/types/messages-types.js';
 import type { PermissionConditions, PermissionScope } from '../../src/types/permission-types.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, ProtocolsQueryMessage } from '../../src/types/protocols-types.js';
@@ -29,6 +30,7 @@ import { DidKey } from '@enbox/dids';
 import { ed25519 } from '../../src/jose/algorithms/signing/ed25519.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { Jws } from '../../src/utils/jws.js';
+import { MessagesQuery } from '../../src/interfaces/messages-query.js';
 import { MessagesRead } from '../../src/interfaces/messages-read.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
@@ -255,6 +257,22 @@ export type GenerateMessagesSubscribeOutput = {
   author: Persona;
   messagesSubscribe: MessagesSubscribe;
   message: MessagesSubscribeMessage;
+};
+
+export type GenerateMessagesQueryInput = {
+  author: Persona;
+  filters?: MessagesFilter[];
+  messageTimestamp?: string;
+  permissionGrantIds?: string[];
+  cursor?: ProgressToken;
+  limit?: number;
+  cidsOnly?: boolean;
+};
+
+export type GenerateMessagesQueryOutput = {
+  author: Persona;
+  messagesQuery: MessagesQuery;
+  message: MessagesQueryMessage;
 };
 
 export type GenerateMessagesReadInput = {
@@ -852,6 +870,34 @@ export class TestDataGenerator {
     return {
       author,
       messagesSubscribe,
+      message
+    };
+  }
+
+  /**
+   * Generates a MessagesQuery message for testing.
+   */
+  public static async generateMessagesQuery(input?: GenerateMessagesQueryInput): Promise<GenerateMessagesQueryOutput> {
+    const author = input?.author ?? await TestDataGenerator.generatePersona();
+    const signer = Jws.createSigner(author);
+
+    const options: MessagesQueryOptions = {
+      filters            : input?.filters,
+      messageTimestamp   : input?.messageTimestamp,
+      permissionGrantIds : input?.permissionGrantIds,
+      cursor             : input?.cursor,
+      limit              : input?.limit,
+      cidsOnly           : input?.cidsOnly,
+      signer,
+    };
+    removeUndefinedProperties(options);
+
+    const messagesQuery = await MessagesQuery.create(options);
+    const message = messagesQuery.message;
+
+    return {
+      author,
+      messagesQuery,
       message
     };
   }

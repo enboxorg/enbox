@@ -12,6 +12,8 @@ import type { EventLog, MessageEvent, SubscriptionListener } from './types/subsc
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from './types/method-handler.js';
 import type {
+  MessagesQueryMessage,
+  MessagesQueryReply,
   MessagesReadMessage,
   MessagesReadReply,
   MessagesSubscribeMessage,
@@ -45,6 +47,7 @@ import { DataStream } from './utils/data-stream.js';
 import { DwnConstant } from './core/dwn-constant.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
+import { MessagesQueryHandler } from './handlers/messages-query.js';
 import { MessagesReadHandler } from './handlers/messages-read.js';
 import { MessagesSubscribeHandler } from './handlers/messages-subscribe.js';
 import { MessagesSyncHandler } from './handlers/messages-sync.js';
@@ -152,6 +155,7 @@ export class Dwn {
 
     this.methodHandlers = {
       [DwnInterfaceName.Messages + DwnMethodName.Read]       : new MessagesReadHandler(deps),
+      [DwnInterfaceName.Messages + DwnMethodName.Query]      : new MessagesQueryHandler(deps),
       [DwnInterfaceName.Messages + DwnMethodName.Subscribe]  : new MessagesSubscribeHandler(deps),
       [DwnInterfaceName.Messages + DwnMethodName.Sync]       : new MessagesSyncHandler(deps),
       [DwnInterfaceName.Protocols + DwnMethodName.Configure] : new ProtocolsConfigureHandler(deps),
@@ -249,6 +253,7 @@ export class Dwn {
   public async processMessage(
     tenant: string, rawMessage: MessagesSubscribeMessage, options?: MessagesSubscribeMessageOptions): Promise<MessagesSubscribeReply>;
   public async processMessage(tenant: string, rawMessage: MessagesReadMessage): Promise<MessagesReadReply>;
+  public async processMessage(tenant: string, rawMessage: MessagesQueryMessage): Promise<MessagesQueryReply>;
   public async processMessage(tenant: string, rawMessage: MessagesSyncMessage): Promise<MessagesSyncReply>;
   public async processMessage(tenant: string, rawMessage: ProtocolsConfigureMessage): Promise<GenericMessageReply>;
   public async processMessage(tenant: string, rawMessage: ProtocolsQueryMessage): Promise<ProtocolsQueryReply>;

@@ -119,7 +119,7 @@ export class GrantAuthorization {
    * Verify that the `interface` and `method` grant scopes match the incoming message.
    *
    * For the Messages interface, a `Read` scope is treated as a unified scope that also authorizes
-   * `Subscribe` and `Sync` operations.
+   * `Query`, `Subscribe`, and `Sync` operations.
    *
    * @throws {DwnError} if the `interface` and `method` of the incoming message do not match the scope of the permission grant.
    */
@@ -136,7 +136,7 @@ export class GrantAuthorization {
       );
     }
 
-    // Messages.Read is the only valid Messages scope and covers Read, Subscribe, and Sync operations.
+    // Messages.Read is the only valid Messages scope and covers Read, Query, Subscribe, and Sync operations.
     // Reject any Messages grant with method !== Read.
     if (dwnInterface === DwnInterfaceName.Messages) {
       if (permissionGrant.scope.method !== DwnMethodName.Read) {
@@ -145,7 +145,7 @@ export class GrantAuthorization {
           `messages permission grant must have method 'Read', got '${permissionGrant.scope.method}' for grant ${permissionGrant.id}`
         );
       }
-      const allowedMethods = [DwnMethodName.Read, DwnMethodName.Subscribe, DwnMethodName.Sync];
+      const allowedMethods = [DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe, DwnMethodName.Sync];
       if (!allowedMethods.includes(dwnMethod as DwnMethodName)) {
         throw new DwnError(
           DwnErrorCode.GrantAuthorizationMethodMismatch,

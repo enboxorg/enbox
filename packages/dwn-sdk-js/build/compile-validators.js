@@ -27,6 +27,7 @@ import GeneralJws from '../json-schemas/general-jws.json' with { type: 'json' };
 import GenericSignaturePayload from '../json-schemas/signature-payloads/generic-signature-payload.json' with { type: 'json' };
 import JwkVerificationMethod from '../json-schemas/jwk-verification-method.json' with { type: 'json' };
 import MessagesFilter from '../json-schemas/interface-methods/messages-filter.json' with { type: 'json' };
+import MessagesQuery from '../json-schemas/interface-methods/messages-query.json' with { type: 'json' };
 import MessagesRead from '../json-schemas/interface-methods/messages-read.json' with { type: 'json' };
 import MessagesSubscribe from '../json-schemas/interface-methods/messages-subscribe.json' with { type: 'json' };
 import MessagesSync from '../json-schemas/interface-methods/messages-sync.json' with { type: 'json' };
@@ -71,6 +72,7 @@ const schemas = {
   GeneralJws,
   JwkVerificationMethod,
   MessagesFilter,
+  MessagesQuery,
   MessagesRead,
   MessagesSubscribe,
   MessagesSync,

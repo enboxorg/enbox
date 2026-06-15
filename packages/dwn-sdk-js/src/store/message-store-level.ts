@@ -715,7 +715,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     for await (const { position, entry } of this.mergePositionStreams(logIterator, redeliveryIterator, tenantLog)) {
       lastScannedPosition = position;
 
-      const event = await this.readEventFromLogEntry(tenantBlocks, entry, filters);
+      const event = await this.readEventFromLogEntry(tenantBlocks, position, entry, filters);
       if (event === undefined) {
         continue;
       }
@@ -741,6 +741,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
   private async readEventFromLogEntry(
     tenantBlocks: LevelWrapper<Uint8Array>,
+    position: bigint,
     entry: LogEntryValue | undefined,
     filters: Filter[] | undefined,
   ): Promise<EventLogEntry | undefined> {
@@ -764,6 +765,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     const message = decodedBlock.value as GenericMessage;
     return {
       seq        : entry.seq, // a redelivered entry carries the row's original seq
+      position   : position.toString(),
       event      : { message },
       indexes    : entry.indexes,
       messageCid : entry.messageCid,

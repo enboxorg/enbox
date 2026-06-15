@@ -1,6 +1,6 @@
 // export everything that we want to be consumable
 export type { DwnConfig } from './dwn.js';
-export type { EventListener, EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, MessageEvent, ProgressGapInfo, ProgressGapReason, ProgressToken, ReplicationFeedReader, SubscriptionEose, SubscriptionError, SubscriptionEvent, SubscriptionListener, SubscriptionMessage, SubscriptionReply, Wake, WakePublisher } from './types/subscriptions.js';
+export type { EventListener, EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, MessageEvent, ProgressGapInfo, ProgressGapReason, ProgressToken, ReplicationFeedReader, SubscriptionEose, SubscriptionError, SubscriptionEvent, SubscriptionListener, SubscriptionMessage, SubscriptionReply, Wake, WakePublisher, WakeSubscriber } from './types/subscriptions.js';
 export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSort, MessageSubscription, Pagination, QueryResultEntry, Status } from './types/message-types.js';
 export type { DependencyRef, ReplicationApplyOptions, ReplicationApplyResult, ReplicationApplyResultContext } from './core/replication-apply.js';
 export { replicationApplyResultFromReply } from './core/replication-apply.js';
@@ -8,7 +8,7 @@ export type { ValidationStateReader } from './types/validation-state-reader.js';
 export { StoreValidationStateReader } from './core/validation-state-reader.js';
 export type { RecordedValidationRead } from './core/recording-validation-state-reader.js';
 export { RecordingValidationStateReader } from './core/recording-validation-state-reader.js';
-export type { MessagesFilter, MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessagesSubscribeMessageOptions, MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
+export type { MessagesFilter, MessagesQueryDescriptor, MessagesQueryMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessagesSubscribeMessageOptions, MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
 export type { GT, LT, Filter, FilterValue, KeyValues, EqualFilter, OneOfFilter, RangeFilter, RangeCriterion, PaginationCursor, QueryOptions, RangeValue, StartsWithFilter } from './types/query-types.js';
 export type { ProtocolsConfigureDescriptor, ProtocolDefinition, ProtocolTypes, ProtocolRuleSet, ProtocolsQueryFilter, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply, ProtocolActionRule, ProtocolDeliveryStrategy, ProtocolPathEncryption, ProtocolsQueryDescriptor, ProtocolRecordLimitDefinition, ProtocolSizeDefinition, ProtocolTagsDefinition, ProtocolTagSchema, ProtocolType, ProtocolUses } from './types/protocols-types.js';
 export { ProtocolRecordLimitStrategy } from './types/protocols-types.js';
@@ -48,6 +48,8 @@ export type { KeyMaterial, PrivateKeyJwk, PublicKeyJwk, Jwk } from './types/jose
 export { Message } from './core/message.js';
 export { MessagesRead } from './interfaces/messages-read.js';
 export type { MessagesReadOptions } from './interfaces/messages-read.js';
+export { MessagesQuery } from './interfaces/messages-query.js';
+export type { MessagesQueryOptions } from './interfaces/messages-query.js';
 export { MessagesSync } from './interfaces/messages-sync.js';
 export type { MessagesSyncOptions } from './interfaces/messages-sync.js';
 export type { UnionMessageReply } from './core/message-reply.js';
@@ -100,6 +102,8 @@ export { ResumableTaskStoreLevel } from './store/resumable-task-store-level.js';
 export type { ResumableTaskStoreLevelConfig } from './store/resumable-task-store-level.js';
 export { EventEmitterEventLog } from './event-stream/event-emitter-event-log.js';
 export type { EventEmitterEventLogConfig } from './event-stream/event-emitter-event-log.js';
+export { DurableEventLog } from './event-stream/durable-event-log.js';
+export type { DurableEventLogConfig, DurableEventLogStore } from './event-stream/durable-event-log.js';
 
 // Sparse Merkle Tree and StateIndex
 export type { StateIndex } from './types/state-index.js';
@@ -111,6 +115,6 @@ export { SMTStoreMemory } from './smt/smt-store-memory.js';
 export type { Hash, SMTNode, SMTInternalNode, SMTLeafNode, SMTProof, SMTDiffResult, SMTNodeStore } from './types/smt-types.js';
 export { hashChildren, hashEquals, hashKey, hashLeaf, hashToHex, hexToHash, getBit, initDefaultHashes, getDefaultHashes, SMT_DEPTH, ZERO_HASH } from './smt/smt-utils.js';
 // test library exports
-export type { GenerateFromRecordsWriteInput, GenerateFromRecordsWriteOut, GenerateGrantCreateInput, GenerateGrantCreateOutput, GenerateMessagesReadInput, GenerateMessagesReadOutput, GenerateMessagesSubscribeInput, GenerateMessagesSubscribeOutput, GenerateProtocolsConfigureInput, GenerateProtocolsConfigureOutput, GenerateProtocolsQueryInput, GenerateProtocolsQueryOutput, GenerateRecordsCountInput, GenerateRecordsCountOutput, GenerateRecordsDeleteInput, GenerateRecordsDeleteOutput, GenerateRecordsQueryInput, GenerateRecordsQueryOutput, GenerateRecordsSubscribeInput, GenerateRecordsSubscribeOutput, GenerateRecordsWriteInput, GenerateRecordsWriteOutput, Persona } from '../tests/utils/test-data-generator.js';
+export type { GenerateFromRecordsWriteInput, GenerateFromRecordsWriteOut, GenerateGrantCreateInput, GenerateGrantCreateOutput, GenerateMessagesQueryInput, GenerateMessagesQueryOutput, GenerateMessagesReadInput, GenerateMessagesReadOutput, GenerateMessagesSubscribeInput, GenerateMessagesSubscribeOutput, GenerateProtocolsConfigureInput, GenerateProtocolsConfigureOutput, GenerateProtocolsQueryInput, GenerateProtocolsQueryOutput, GenerateRecordsCountInput, GenerateRecordsCountOutput, GenerateRecordsDeleteInput, GenerateRecordsDeleteOutput, GenerateRecordsQueryInput, GenerateRecordsQueryOutput, GenerateRecordsSubscribeInput, GenerateRecordsSubscribeOutput, GenerateRecordsWriteInput, GenerateRecordsWriteOutput, Persona } from '../tests/utils/test-data-generator.js';
 export { TestDataGenerator } from '../tests/utils/test-data-generator.js';
 export { Poller } from '../tests/utils/poller.js';

@@ -5,7 +5,7 @@ import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
 import type { ProtocolScope } from '../utils/permission-scope.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { DataEncodedRecordsWriteMessage, RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
-import type { MessagesReadMessage, MessagesSubscribeMessage, MessagesSyncMessage } from '../types/messages-types.js';
+import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage, MessagesSyncMessage } from '../types/messages-types.js';
 
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
 import { GrantAuthorization } from './grant-authorization.js';
@@ -62,11 +62,11 @@ export class MessagesGrantAuthorization {
   }
 
   /**
-   * Authorizes the scope of a permission grant for MessagesSubscribe or MessagesSync.
+   * Authorizes the scope of a permission grant for MessagesQuery, MessagesSubscribe, or MessagesSync.
    * @param validationStateReader Used to check if the grant has been revoked.
    */
   public static async authorizeSubscribeOrSync(input: {
-    incomingMessage: MessagesSubscribeMessage | MessagesSyncMessage,
+    incomingMessage: MessagesQueryMessage | MessagesSubscribeMessage | MessagesSyncMessage,
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrants: PermissionGrant[],
@@ -91,7 +91,7 @@ export class MessagesGrantAuthorization {
       return;
     }
 
-    MessagesGrantAuthorization.authorizeSubscribeScope(incomingMessage as MessagesSubscribeMessage, scopes);
+    MessagesGrantAuthorization.authorizeFilterScope(incomingMessage as MessagesQueryMessage | MessagesSubscribeMessage, scopes);
   }
 
   private static authorizeSyncScope(
@@ -120,11 +120,11 @@ export class MessagesGrantAuthorization {
     }
   }
 
-  private static authorizeSubscribeScope(
-    subscribeMessage: MessagesSubscribeMessage,
+  private static authorizeFilterScope(
+    messagesMessage: MessagesQueryMessage | MessagesSubscribeMessage,
     scopes: MessagesPermissionScope[]
   ): void {
-    const { filters } = subscribeMessage.descriptor;
+    const { filters } = messagesMessage.descriptor;
 
     if (filters.length === 0 && !MessagesGrantAuthorization.hasUnscopedGrant(scopes)) {
       throw new DwnError(
@@ -198,7 +198,7 @@ export class MessagesGrantAuthorization {
    * unresolved, revoked, expired, or interface/method-mismatched grants fail the request.
    */
   private static async performBaseValidationForGrantSet(input: {
-    incomingMessage: MessagesReadMessage | MessagesSubscribeMessage | MessagesSyncMessage,
+    incomingMessage: MessagesQueryMessage | MessagesReadMessage | MessagesSubscribeMessage | MessagesSyncMessage,
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrants: PermissionGrant[],
