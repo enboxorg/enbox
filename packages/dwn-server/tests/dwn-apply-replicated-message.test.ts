@@ -313,6 +313,85 @@ describe('handleDwnApplyReplicatedMessage', () => {
     }
   });
 
+  it('should enforce quota for a new replicated RecordsWrite before applying it', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([1, 2, 3, 4]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const requestId = uuidv4();
+    const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    const applySpy = spyOn(dwn, 'applyReplicatedMessage').mockImplementation(async () => ({ kind: 'Applied' }));
+    const context: RequestContext = {
+      dwn,
+      transport  : 'http',
+      dataStream : DataStream.fromBytes(data),
+      adminStore : {
+        getTenantMessageCount : async (): Promise<number> => 1,
+        getTenantStorageSize  : async (): Promise<number> => 0,
+      } as any,
+      config: {
+        quotaMaxMessages     : 1,
+        quotaMaxStorageBytes : 0,
+      } as any,
+    };
+
+    const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      context,
+    );
+
+    expect(jsonRpcResponse.error).toBeDefined();
+    expect(jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
+    expect(applySpy).toHaveBeenCalledTimes(0);
+    await dwn.close();
+  });
+
+  it('should skip quota for a fully stored replicated duplicate echo', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([5, 6, 7, 8]);
+    const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
+    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const firstApply = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(data),
+      },
+    );
+    expect(firstApply.jsonRpcResponse.error).toBeUndefined();
+
+    const duplicateApply = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      {
+        dwn,
+        transport  : 'http',
+        dataStream : DataStream.fromBytes(data),
+        adminStore : {
+          getTenantMessageCount : async (): Promise<number> => 1,
+          getTenantStorageSize  : async (): Promise<number> => 1_000,
+        } as any,
+        config: {
+          quotaMaxMessages     : 1,
+          quotaMaxStorageBytes : 1,
+        } as any,
+      },
+    );
+
+    expect(duplicateApply.jsonRpcResponse.error).toBeUndefined();
+    expect((duplicateApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Duplicate');
+    await dwn.close();
+  });
+
   it('returns an internal JSON-RPC error for unexpected thrown errors', async () => {
     const requestId = uuidv4();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {

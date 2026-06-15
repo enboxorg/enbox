@@ -1,14 +1,17 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 import type { DidResolver } from '@enbox/dids';
 import type { DwnServerConfig } from './config.js';
+import type { EventBus } from './event-bus.js';
 import type {
   DataStore,
   DwnConfig,
   EventLog,
   MessageStore,
+  ReplicationFeedReader,
   ResumableTaskStore,
   StateIndex,
   TenantGate,
+  WakePublisher,
 } from '@enbox/dwn-sdk-js';
 
 import * as fs from 'fs';
@@ -24,6 +27,7 @@ import { runServerMigrations } from './server-migration-runner.js';
 
 import {
   DataStoreLevel,
+  DurableEventLog,
   MessageStoreLevel,
   ResumableTaskStoreLevel,
   StateIndexLevel,
@@ -54,6 +58,20 @@ export enum BackendTypes {
 }
 
 export type DwnStore = DataStore | StateIndex | MessageStore | ResumableTaskStore;
+
+type GetDwnConfigOptions = {
+  didResolver? : DidResolver;
+  tenantGate? : TenantGate;
+  eventLog? : EventLog;
+  eventBus? : EventBus;
+  enableEventLog? : boolean;
+};
+
+type DurableMessageStore = MessageStore & ReplicationFeedReader;
+
+type WakePublisherAwareStore = {
+  setWakePublisher(wakePublisher: WakePublisher | undefined): void;
+};
 
 /**
  * Returns a (potentially cached) dialect for the given connection URL. For
@@ -100,13 +118,9 @@ function getOrCreateDialect(connectionUrl: URL, config: DwnServerConfig): Dialec
 
 export async function getDwnConfig(
   config : DwnServerConfig,
-  options : {
-    didResolver? : DidResolver,
-    tenantGate? : TenantGate,
-    eventLog? : EventLog,
-  }
+  options : GetDwnConfigOptions
 ): Promise<DwnConfig> {
-  const { tenantGate, eventLog, didResolver } = options;
+  const { tenantGate, didResolver } = options;
 
   // Run SQL schema migrations before creating stores. Uses the data store
   // connection to determine the dialect — all SQL stores typically share the
@@ -115,10 +129,35 @@ export async function getDwnConfig(
 
   const dataStore: DataStore = await getStore(config, config.dataStore, StoreType.DataStore);
   const stateIndex: StateIndex = await getStore(config, config.stateIndex, StoreType.StateIndex);
-  const messageStore: MessageStore = await getStore(config, config.messageStore, StoreType.MessageStore);
+  const messageStore: MessageStore = await getStore(config, config.messageStore, StoreType.MessageStore, options.eventBus);
   const resumableTaskStore: ResumableTaskStore = await getStore(config, config.resumableTaskStore, StoreType.ResumableTaskStore);
+  const eventLog = options.eventLog ?? createDurableEventLog(messageStore, options);
 
   return { didResolver, eventLog, stateIndex, dataStore, messageStore, resumableTaskStore, tenantGate };
+}
+
+function createDurableEventLog(messageStore: MessageStore, options: GetDwnConfigOptions): EventLog | undefined {
+  if (options.enableEventLog !== true) {
+    return undefined;
+  }
+
+  if (options.eventBus === undefined) {
+    throw new Error('DWN server misconfiguration: an EventBus is required when event log support is enabled.');
+  }
+
+  if (!isDurableMessageStore(messageStore)) {
+    throw new Error('DWN server misconfiguration: the configured MessageStore does not implement the durable replication feed.');
+  }
+
+  return new DurableEventLog(messageStore, options.eventBus);
+}
+
+function isDurableMessageStore(messageStore: MessageStore): messageStore is DurableMessageStore {
+  const candidate = messageStore as Partial<ReplicationFeedReader>;
+  return typeof candidate.logRead === 'function' &&
+    typeof candidate.logBounds === 'function' &&
+    typeof candidate.fingerprint === 'function' &&
+    typeof candidate.epoch === 'function';
 }
 
 /**
@@ -252,6 +291,7 @@ export async function runServerMigrationsIfNeeded(config: DwnServerConfig): Prom
 function getLevelStore(
   storeURI: URL,
   storeType: StoreType,
+  wakePublisher?: WakePublisher,
 ): DwnStore {
   switch (storeType) {
     case StoreType.DataStore:
@@ -261,6 +301,7 @@ function getLevelStore(
     case StoreType.MessageStore:
       return new MessageStoreLevel({
         location: storeURI.host + storeURI.pathname + '/MESSAGESTORE',
+        wakePublisher,
       });
     case StoreType.StateIndex:
       return new StateIndexLevel({
@@ -279,6 +320,7 @@ function getSqlStore(
   config: DwnServerConfig,
   connectionUrl: URL,
   storeType: StoreType,
+  wakePublisher?: WakePublisher,
 ): DwnStore {
   const dialect = getOrCreateDialect(connectionUrl, config);
 
@@ -286,7 +328,7 @@ function getSqlStore(
     case StoreType.DataStore:
       return new DataStoreSql(dialect);
     case StoreType.MessageStore:
-      return new MessageStoreSql(dialect);
+      return new MessageStoreSql(dialect, wakePublisher);
     case StoreType.StateIndex:
       return new StateIndexSql(dialect);
     case StoreType.ResumableTaskStore:
@@ -306,11 +348,21 @@ function isFilePath(configString: string): boolean {
 
 async function getStore(config: DwnServerConfig, storeString: string, storeType: StoreType.DataStore): Promise<DataStore>;
 async function getStore(config: DwnServerConfig, storeString: string, storeType: StoreType.StateIndex): Promise<StateIndex>;
-async function getStore(config: DwnServerConfig, storeString: string, storeType: StoreType.MessageStore): Promise<MessageStore>;
+async function getStore(
+  config: DwnServerConfig,
+  storeString: string,
+  storeType: StoreType.MessageStore,
+  wakePublisher?: WakePublisher,
+): Promise<MessageStore>;
 async function getStore(config: DwnServerConfig, storeString: string, storeType: StoreType.ResumableTaskStore): Promise<ResumableTaskStore>;
-async function getStore(config: DwnServerConfig, storeConfigString: string, storeType: StoreType): Promise<DwnStore> {
+async function getStore(
+  config: DwnServerConfig,
+  storeConfigString: string,
+  storeType: StoreType,
+  wakePublisher?: WakePublisher,
+): Promise<DwnStore> {
   if (isFilePath(storeConfigString)) {
-    return await loadStoreFromFilePath(storeConfigString, storeType);
+    return await loadStoreFromFilePath(storeConfigString, storeType, wakePublisher);
   }
   // else treat the `storeConfigString` as a connection string
 
@@ -318,12 +370,12 @@ async function getStore(config: DwnServerConfig, storeConfigString: string, stor
 
   switch (storeURI.protocol.slice(0, -1)) {
     case BackendTypes.LEVEL:
-      return getLevelStore(storeURI, storeType);
+      return getLevelStore(storeURI, storeType, wakePublisher);
 
     case BackendTypes.SQLITE:
     case BackendTypes.MYSQL:
     case BackendTypes.POSTGRES:
-      return getSqlStore(config, storeURI, storeType);
+      return getSqlStore(config, storeURI, storeType, wakePublisher);
 
     default:
       throw invalidStorageSchemeMessage(storeURI.protocol);
@@ -336,18 +388,34 @@ async function getStore(config: DwnServerConfig, storeConfigString: string, stor
 async function loadStoreFromFilePath(
   filePath: string,
   storeType: StoreType,
+  wakePublisher?: WakePublisher,
 ): Promise<DwnStore> {
+  let store: DwnStore;
   switch (storeType) {
     case StoreType.DataStore:
-      return await PluginLoader.loadPlugin<DataStore>(filePath);
+      store = await PluginLoader.loadPlugin<DataStore>(filePath);
+      break;
     case StoreType.StateIndex:
-      return await PluginLoader.loadPlugin<StateIndex>(filePath);
+      store = await PluginLoader.loadPlugin<StateIndex>(filePath);
+      break;
     case StoreType.MessageStore:
-      return await PluginLoader.loadPlugin<MessageStore>(filePath);
+      store = await PluginLoader.loadPlugin<MessageStore>(filePath);
+      setWakePublisherIfSupported(store, wakePublisher);
+      break;
     case StoreType.ResumableTaskStore:
-      return await PluginLoader.loadPlugin<ResumableTaskStore>(filePath);
+      store = await PluginLoader.loadPlugin<ResumableTaskStore>(filePath);
+      break;
     default:
       throw new Error(`Loading store for unsupported store type ${storeType} from path ${filePath}`);
+  }
+
+  return store;
+}
+
+function setWakePublisherIfSupported(store: DwnStore, wakePublisher: WakePublisher | undefined): void {
+  const maybeStore = store as Partial<WakePublisherAwareStore>;
+  if (typeof maybeStore.setWakePublisher === 'function') {
+    maybeStore.setWakePublisher(wakePublisher);
   }
 }
 

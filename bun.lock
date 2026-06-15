@@ -303,7 +303,6 @@
         "@enbox/dwn-clients": "workspace:*",
         "@enbox/dwn-sdk-js": "workspace:*",
         "@enbox/dwn-sql-store": "workspace:*",
-        "@nats-io/jetstream": "3.3.1",
         "@nats-io/transport-node": "3.3.1",
         "@simplewebauthn/server": "13.2.3",
         "bytes": "3.1.2",
@@ -849,8 +848,6 @@
     "@multiformats/base-x": ["@multiformats/base-x@4.0.1", "", {}, "sha512-eMk0b9ReBbV23xXU693TAIrLyeO5iTgBZGSJfpqriG8UkYvr/hC9u9pyMlAakDNHWmbhMZCDs6KQO0jzKD8OTw=="],
 
     "@multiformats/murmur3": ["@multiformats/murmur3@2.2.2", "", { "dependencies": { "multiformats": "^13.0.0" } }, "sha512-B37HsL4uqZpKzOPRNmpr9hR1lbywZfJR053sYgkQGnnbfNzM1Nw4SlL9I8hMAZRk1TOqr8q+PeaFeuNmKgi2YA=="],
-
-    "@nats-io/jetstream": ["@nats-io/jetstream@3.3.1", "", { "dependencies": { "@nats-io/nats-core": "3.3.1" } }, "sha512-oTIxM47pQfv4zCMlLN7FtARxSclMlUUPPn9I3VxRwMH+N2jkj1WCApu+tSL778KuljxfG8txi/MPwoWSXqbbQQ=="],
 
     "@nats-io/nats-core": ["@nats-io/nats-core@3.3.1", "", { "dependencies": { "@nats-io/nkeys": "2.0.3", "@nats-io/nuid": "2.0.3" } }, "sha512-myFXGTo4cCfKrsLDjkoEz7FjjjvSfBRjun7Qx3n3Z5OzW4JUY8Ou7VQsGAdXLQxHN3ae/XNXvmXxshDoFPex4w=="],
 

@@ -66,7 +66,7 @@ docker compose -f docker-compose.test.yaml up -d --wait
 | PostgreSQL 15 | `enbox-test-postgres` | `localhost:5433` | `dwn-server`, `dwn-sql-store` |
 | PostgreSQL 13 | `enbox-test-postgres-sdk` | `localhost:5432` | `dwn-sql-store` (SDK tests) |
 | MySQL 8 | `enbox-test-mysql` | `localhost:3306` | `dwn-sql-store` |
-| NATS JetStream | `enbox-test-nats` | `localhost:4222` | `dwn-server` (NatsEventLog) |
+| NATS | `enbox-test-nats` | `localhost:4222` | `dwn-server` (NatsEventBus) |
 | MinIO (S3) | `enbox-test-minio` | `localhost:9000` | `dwn-sql-store` (S3 data store) |
 
 ### Environment Variables
@@ -75,7 +75,7 @@ docker compose -f docker-compose.test.yaml up -d --wait
 # REQUIRED for did:dht tests (~115 agent, ~23 api, ~1 dids tests need this)
 export DID_DHT_GATEWAY_URI=http://localhost:7527
 
-# REQUIRED for dwn-server NatsEventLog tests
+# REQUIRED for dwn-server NatsEventBus tests
 export NATS_URL=nats://localhost:4222
 ```
 

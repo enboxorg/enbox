@@ -27,11 +27,10 @@ cryptographic isolation.
 | **StateIndex** | Non-transactional delete-then-insert upsert for SMT nodes | Race conditions under concurrent writes |
 | **EventLog Persistence** | Events stored in per-tenant `Map<number, StoredEntry>` | Volatile — all events lost on restart |
 
-The `EventLog` interface (`dwn-sdk-js/src/types/subscriptions.ts:162`) is
-explicitly designed for distributed backends — its JSDoc mentions NATS JetStream,
-Redis Streams, etc. The `DWN_EVENT_LOG_PLUGIN_PATH` env var + `PluginLoader`
-already support loading a custom implementation at runtime. This is the primary
-extension point.
+The durable replication log now lives in the `MessageStore`; NATS is used as an
+EventBus that wakes other server processes to drain that log. The
+`DWN_EVENT_BUS_PLUGIN_PATH` env var + `PluginLoader` support loading a custom
+wake bus implementation at runtime.
 
 ---
 
@@ -202,19 +201,15 @@ The `tenant-hash-prefix` (first 2 hex chars of SHA-256 of tenant DID) enables
 efficient wildcard subscriptions for admin monitoring (`dwn.events.a3.>`) and
 even subject-based partitioning if needed later.
 
-**`NatsEventLog` implementation** (new — implements `EventLog` interface):
+**`NatsEventBus` implementation** (implements wake publication/subscription):
 
 ```typescript
-// packages/dwn-server/src/event-log-nats.ts
+// packages/dwn-server/src/plugins/event-bus-nats.ts
 
-import type { EventLog, EventLogReadOptions, EventLogReadResult,
-  EventLogSubscribeOptions, EventSubscription, MessageEvent,
-  SubscriptionListener } from '@enbox/dwn-sdk-js';
+import type { EventBus } from '@enbox/dwn-server';
 
-export class NatsEventLog implements EventLog {
-  // NATS JetStream connection + stream handle
-  private js: JetStream;
-  private jsm: JetStreamManager;
+export class NatsEventBus implements EventBus {
+  // NATS connection + wake fan-out
 
   async emit(tenant: string, event: MessageEvent, indexes: KeyValues): Promise<string> {
     const subject = this.tenantSubject(tenant);
@@ -377,7 +372,7 @@ Target Group: dwn-http
       { "name": "DS_WEBSOCKET_SERVER", "value": "false" },
       { "name": "DWN_STORAGE", "value": "postgres://..." },     // Aurora writer
       { "name": "DWN_STORAGE_READ", "value": "postgres://..." }, // Aurora reader
-      { "name": "DWN_EVENT_LOG_PLUGIN_PATH", "value": "/app/plugins/event-log-nats.js" },
+      { "name": "DWN_EVENT_BUS_PLUGIN_PATH", "value": "/app/plugins/event-bus-nats.js" },
       { "name": "NATS_URL", "value": "nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222" },
       { "name": "DWN_PG_POOL_MAX", "value": "20" },
       { "name": "MAX_RECORD_DATA_SIZE", "value": "1gb" }
@@ -708,13 +703,13 @@ CDK / Terraform Deploy
 | Dockerize dwn-server | `dwn-server` | Multi-stage Bun Dockerfile |
 | IaC scaffolding | `infra/` | CDK or Terraform for VPC, ALB, ECS, Aurora |
 
-### Phase 2: Distributed EventLog (Weeks 3-5)
+### Phase 2: Distributed Durable-Log Wakes (Weeks 3-5)
 
 | Task | Package | Description |
 |---|---|---|
-| `NatsEventLog` | `dwn-server` (plugin) | Implements `EventLog` interface over NATS JetStream |
-| NATS cluster | `infra/` | 3-node JetStream cluster in private subnets |
-| Integration tests | `dwn-server` | Test subscribe flow across two DWN instances sharing NATS |
+| `NatsEventBus` | `dwn-server` (plugin) | Publishes durable-log wakes over NATS |
+| NATS cluster | `infra/` | 3-node NATS cluster in private subnets |
+| Integration tests | `dwn-server` | Test subscribe flow across two DWN instances sharing SQL + NATS wakes |
 | Split HTTP/WS services | `dwn-server` | `DS_WEBSOCKET_SERVER=false` for HTTP fleet, `true` for WS fleet |
 
 ### Phase 3: Nitro Enclaves (Weeks 5-8)

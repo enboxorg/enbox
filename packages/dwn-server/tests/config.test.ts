@@ -23,6 +23,7 @@ describe('config', () => {
       expect(config.maxRecordDataSize).toBeGreaterThan(0);
       expect(typeof config.maxInFlight).toBe('number');
       expect(typeof config.webSocketSupport).toBe('boolean');
+      expect(config.eventBusPluginPath === undefined || typeof config.eventBusPluginPath === 'string').toBe(true);
       expect(typeof config.logLevel).toBe('string');
       expect(typeof config.registrationProofOfWorkEnabled).toBe('boolean');
       expect(typeof config.adminActivityLogCapacity).toBe('number');

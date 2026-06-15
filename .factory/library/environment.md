@@ -12,7 +12,7 @@ Required env vars, external dependencies, and setup notes for the eager-send-dra
 | Var | Value | Why |
 |---|---|---|
 | `DID_DHT_GATEWAY_URI` | `http://localhost:7527` | Required by `@enbox/agent` tests (~115 tests fail without it: `DidError: internalError: Failed to put Pkarr record`). Points to the Pkarr relay in `docker-compose.test.yaml`. |
-| `NATS_URL` | `nats://localhost:4222` | Required by dwn-server NatsEventLog plugin tests. Not strictly needed for the agent tests this mission modifies, but set by `init.sh` for completeness. |
+| `NATS_URL` | `nats://localhost:4222` | Required by dwn-server NatsEventBus plugin tests. Not strictly needed for the agent tests this mission modifies, but set by `init.sh` for completeness. |
 
 ## DWN server on :3000
 

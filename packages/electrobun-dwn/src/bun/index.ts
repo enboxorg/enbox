@@ -75,7 +75,7 @@ function createDwnServerConfig(port: number): Partial<DwnServerConfig> {
     maxRecordDataSize : 1_073_741_824, // 1 GB
     webSocketSupport,
 
-    eventLogPluginPath : process.env['DWN_EVENT_LOG_PLUGIN_PATH'] || process.env['DWN_EVENT_STREAM_PLUGIN_PATH'],
+    eventBusPluginPath : process.env['DWN_EVENT_BUS_PLUGIN_PATH'],
     messageStore       : process.env['DWN_STORAGE_MESSAGES'] || process.env['DWN_STORAGE'] || 'level://data',
     dataStore          : process.env['DWN_STORAGE_DATA'] || process.env['DWN_STORAGE'] || 'level://data',
     stateIndex         : process.env['DWN_STORAGE_STATE_INDEX'] || process.env['DWN_STORAGE'] || 'level://data',

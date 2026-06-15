@@ -182,7 +182,7 @@ module "dwn_http" {
     DWN_S3_DATA_BUCKET        = local.s3_bucket_name
     MAX_RECORD_DATA_SIZE      = "1gb"
     NATS_URL                  = module.nats.nats_url
-    DWN_EVENT_LOG_PLUGIN_PATH = "/app/packages/dwn-server/dist/esm/src/plugins/event-log-nats.js"
+    DWN_EVENT_BUS_PLUGIN_PATH = "/app/packages/dwn-server/dist/esm/src/plugins/event-bus-nats.js"
     DWN_BASE_URL              = "https://dev.aws.dwn.enbox.id"
     DWN_PROVIDER_AUTH_ENABLED = "true"
   }
@@ -225,7 +225,7 @@ module "dwn_ws" {
     DWN_SERVER_LOG_LEVEL      = "INFO"
     DWN_MAX_IN_FLIGHT         = "64"
     NATS_URL                  = module.nats.nats_url
-    DWN_EVENT_LOG_PLUGIN_PATH = "/app/packages/dwn-server/dist/esm/src/plugins/event-log-nats.js"
+    DWN_EVENT_BUS_PLUGIN_PATH = "/app/packages/dwn-server/dist/esm/src/plugins/event-bus-nats.js"
     DWN_BASE_URL              = "https://dev.aws.dwn.enbox.id"
     DWN_PROVIDER_AUTH_ENABLED = "true"
   }
