@@ -31,6 +31,30 @@ describe('admitClosure', () => {
     return new Blob([bytes]).stream();
   }
 
+  async function readStreamBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+    const reader = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalLength = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) { break; }
+        chunks.push(value);
+        totalLength += value.length;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    const bytes = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return bytes;
+  }
+
   it('fetches a missing initial write and retries the root in dependency order', async () => {
     const protocol = 'https://example.com/protocol';
     const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
@@ -480,6 +504,55 @@ describe('admitClosure', () => {
       },
     });
     expect(agent.dwn.applyReplicatedMessage.secondCall.args[2].dataStream).toBeDefined();
+  });
+
+  it('fails admission when a record data dependency exceeds descriptor dataSize', async () => {
+    const protocol = 'https://example.com/protocol';
+    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const dataRecord = await TestDataGenerator.generateRecordsWrite({
+      data: new Uint8Array([4]),
+      protocol,
+    });
+    const rootCid = await Message.getCid(root.message);
+    const dataCid = dataRecord.message.descriptor.dataCid;
+    const agent = createMockAgent();
+
+    agent.rpc.sendDwnRequest.resolves({
+      status : { code: 200 },
+      entry  : {
+        recordsWrite : dataRecord.message,
+        data         : streamFromBytes(new Uint8Array([4, 5])),
+      },
+    });
+    agent.dwn.applyReplicatedMessage
+      .onFirstCall().resolves({
+        kind    : 'Incomplete',
+        missing : [{ type: 'RecordData', recordId: dataRecord.message.recordId, dataCid, protocol }],
+      })
+      .onSecondCall().callsFake(async (
+        _tenant: string,
+        _message: unknown,
+        options: { dataStream?: ReadableStream<Uint8Array> },
+      ): Promise<{ kind: 'Applied' }> => {
+        await readStreamBytes(options.dataStream!);
+        return { kind: 'Applied' };
+      });
+
+    const outcome = await admitClosure(rootCid, {
+      did        : 'did:example:alice',
+      dwnUrl     : 'https://dwn.example.com',
+      agent,
+      prefetched : [{ message: root.message }],
+    });
+
+    expect(outcome.kind).toBe('failed');
+    if (outcome.kind !== 'failed') {
+      throw new Error('expected admission to fail');
+    }
+    expect(outcome.rootCid).toBe(rootCid);
+    expect(outcome.reason).toBe('invalid');
+    expect(outcome.detail).toContain('RecordsWrite data exceeded descriptor dataSize');
+    expect(agent.dwn.applyReplicatedMessage.callCount).toBe(2);
   });
 
   it('fetches the newest tenant protocol config', async () => {

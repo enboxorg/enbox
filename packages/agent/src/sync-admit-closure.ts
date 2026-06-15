@@ -18,8 +18,15 @@ import { classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 import { topologicalSort } from './sync-topological-sort.js';
+
+import {
+  capRecordsWriteDataStream,
+  fetchRemoteMessages,
+  getMessageCid,
+  SyncDataSizeLimitExceededError,
+  SyncPullAbortedError,
+} from './sync-messages.js';
 import { DwnInterfaceName, DwnMethodName, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
-import { fetchRemoteMessages, getMessageCid, SyncPullAbortedError } from './sync-messages.js';
 
 export type AdmitOutcome =
   | { kind: 'admitted'; appliedCids: string[] }
@@ -128,7 +135,18 @@ class AdmitClosureContext {
       };
     }
 
-    return this.admissionResultFromApply(rootCid, entry, cid, await this.applyEntry(entry));
+    try {
+      return this.admissionResultFromApply(rootCid, entry, cid, await this.applyEntry(entry));
+    } catch (error: any) {
+      if (error instanceof SyncDataSizeLimitExceededError) {
+        return {
+          kind    : 'done',
+          outcome : { kind: 'failed', rootCid, reason: 'invalid', detail: error.message },
+        };
+      }
+
+      throw error;
+    }
   }
 
   private async admissionResultFromApply(
@@ -448,7 +466,7 @@ class AdmitClosureContext {
       return [];
     }
 
-    const entry = { message: recordsWrite, dataStream: reply.entry.data };
+    const entry = { message: recordsWrite, dataStream: capRecordsWriteDataStream(recordsWrite, reply.entry.data) };
     await this.rememberEntry(entry);
     return [entry];
   }
