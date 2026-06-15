@@ -1,7 +1,11 @@
 import type {
   DependencyRef,
   GenericMessage,
+  MessagesFilter,
+  MessagesQueryOptions,
+  MessagesQueryReply,
   MessagesReadReply,
+  ProgressToken,
   ProtocolsConfigureMessage,
   ProtocolsQueryReply,
   RecordsQueryReply,
@@ -39,6 +43,19 @@ export type SyncMessageEntry = {
   /** Buffered data bytes for retry — avoids re-fetching from remote when stream is consumed. */
   bufferedData?: Uint8Array;
 };
+
+export type MessageFeedQuery = {
+  did: string;
+  delegateDid?: string;
+  permissionGrantIds?: string[];
+  filters?: MessagesFilter[];
+  cursor?: ProgressToken;
+  limit?: number;
+  cidsOnly?: boolean;
+  agent: EnboxPlatformAgent;
+};
+
+type MessageFeedParams = Omit<MessageFeedQuery, 'did' | 'delegateDid' | 'agent'>;
 
 type FetchLocalMessageResult =
   | { kind: 'found'; entry: SyncMessageEntry }
@@ -171,6 +188,76 @@ function shouldBufferDataStream(entry: SyncMessageEntry): boolean {
 
   const dataSize = (entry.message.descriptor as { dataSize?: unknown }).dataSize;
   return typeof dataSize === 'number' && dataSize <= MAX_BUFFER_SIZE;
+}
+
+function buildMessageFeedParams({
+  filters,
+  cursor,
+  limit,
+  cidsOnly,
+  permissionGrantIds,
+}: MessageFeedParams): Omit<MessagesQueryOptions, 'signer'> {
+  return {
+    filters,
+    cursor,
+    limit,
+    cidsOnly,
+    permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantIds)
+  };
+}
+
+/**
+ * Queries a remote DWN's durable message feed using MessagesQuery.
+ */
+export async function queryRemoteMessageFeed({
+  did,
+  dwnUrl,
+  delegateDid,
+  permissionGrantIds,
+  filters,
+  cursor,
+  limit,
+  cidsOnly,
+  agent,
+}: MessageFeedQuery & { dwnUrl: string }): Promise<MessagesQueryReply> {
+  const messagesQuery = await agent.processDwnRequest({
+    store         : false,
+    author        : did,
+    target        : did,
+    messageType   : DwnInterface.MessagesQuery,
+    granteeDid    : delegateDid,
+    messageParams : buildMessageFeedParams({ filters, cursor, limit, cidsOnly, permissionGrantIds })
+  });
+
+  return await agent.rpc.sendDwnRequest({
+    dwnUrl,
+    targetDid : did,
+    message   : messagesQuery.message,
+  }) as MessagesQueryReply;
+}
+
+/**
+ * Queries the local DWN's durable message feed using MessagesQuery.
+ */
+export async function queryLocalMessageFeed({
+  did,
+  delegateDid,
+  permissionGrantIds,
+  filters,
+  cursor,
+  limit,
+  cidsOnly,
+  agent,
+}: MessageFeedQuery): Promise<MessagesQueryReply> {
+  const { reply } = await agent.dwn.processRequest({
+    author        : did,
+    target        : did,
+    messageType   : DwnInterface.MessagesQuery,
+    granteeDid    : delegateDid,
+    messageParams : buildMessageFeedParams({ filters, cursor, limit, cidsOnly, permissionGrantIds })
+  });
+
+  return reply;
 }
 
 /**

@@ -12,6 +12,8 @@ import {
   getLocalMessage,
   getMessageCid,
   pushMessages,
+  queryLocalMessageFeed,
+  queryRemoteMessageFeed,
 } from '../src/sync-messages.js';
 
 type LocalAgentFixture = {
@@ -159,6 +161,110 @@ describe('sync-messages', () => {
   // ---------------------------------------------------------------------------
   // fetchRemoteMessages
   // ---------------------------------------------------------------------------
+
+  describe('queryRemoteMessageFeed', () => {
+    it('should construct a MessagesQuery and send it to the requested remote endpoint', async () => {
+      const messagesQuery = { descriptor: { interface: 'Messages', method: 'Query' } };
+      const reply = {
+        status  : { code: 200 },
+        entries : [],
+        drained : true,
+      };
+      const processDwnRequest = sinon.stub().resolves({ message: messagesQuery });
+      const sendDwnRequest = sinon.stub().resolves(reply);
+      const cursor = {
+        streamId : 'stream-1',
+        epoch    : 'epoch-1',
+        position : '7',
+      };
+      const filters = [{ protocol: 'https://example.com/protocol' }];
+      const agent = {
+        processDwnRequest,
+        rpc: { sendDwnRequest },
+      } as any;
+
+      const result = await queryRemoteMessageFeed({
+        did                : 'did:example:alice',
+        dwnUrl             : 'https://dwn.example.com',
+        delegateDid        : 'did:example:device',
+        permissionGrantIds : ['grant-b', 'grant-a', 'grant-b'],
+        filters,
+        cursor,
+        limit              : 10,
+        cidsOnly           : true,
+        agent,
+      });
+
+      expect(result).toBe(reply);
+      expect(processDwnRequest.calledOnce).toBe(true);
+      expect(processDwnRequest.firstCall.args[0]).toEqual({
+        store         : false,
+        author        : 'did:example:alice',
+        target        : 'did:example:alice',
+        messageType   : DwnInterface.MessagesQuery,
+        granteeDid    : 'did:example:device',
+        messageParams : {
+          filters,
+          cursor,
+          limit              : 10,
+          cidsOnly           : true,
+          permissionGrantIds : ['grant-a', 'grant-b'],
+        },
+      });
+      expect(sendDwnRequest.calledOnce).toBe(true);
+      expect(sendDwnRequest.firstCall.args[0]).toEqual({
+        dwnUrl    : 'https://dwn.example.com',
+        targetDid : 'did:example:alice',
+        message   : messagesQuery,
+      });
+    });
+  });
+
+  describe('queryLocalMessageFeed', () => {
+    it('should query the local DWN with normalized Messages.Read grant IDs', async () => {
+      const reply = {
+        status  : { code: 200 },
+        entries : [{ seq: '1', messageCid: 'cid-1', isLatestBaseState: true }],
+        drained : false,
+      };
+      const processRequest = sinon.stub().resolves({ reply });
+      const cursor = {
+        streamId : 'stream-1',
+        epoch    : 'epoch-1',
+        position : '0',
+      };
+      const agent = {
+        dwn: { processRequest },
+      } as any;
+
+      const result = await queryLocalMessageFeed({
+        did                : 'did:example:alice',
+        delegateDid        : 'did:example:device',
+        permissionGrantIds : ['grant-b', 'grant-a', 'grant-b'],
+        filters            : [{ protocol: 'https://example.com/protocol' }],
+        cursor,
+        limit              : 1,
+        cidsOnly           : true,
+        agent,
+      });
+
+      expect(result).toBe(reply);
+      expect(processRequest.calledOnce).toBe(true);
+      expect(processRequest.firstCall.args[0]).toEqual({
+        author        : 'did:example:alice',
+        target        : 'did:example:alice',
+        messageType   : DwnInterface.MessagesQuery,
+        granteeDid    : 'did:example:device',
+        messageParams : {
+          filters            : [{ protocol: 'https://example.com/protocol' }],
+          cursor,
+          limit              : 1,
+          cidsOnly           : true,
+          permissionGrantIds : ['grant-a', 'grant-b'],
+        },
+      });
+    });
+  });
 
   describe('fetchRemoteMessages', () => {
     it('should fetch messages by CID from remote DWN', async () => {
