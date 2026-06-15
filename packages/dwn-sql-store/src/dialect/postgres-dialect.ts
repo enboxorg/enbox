@@ -6,12 +6,14 @@ import type {
   InsertObject,
   InsertQueryBuilder,
   Kysely,
+  RawBuilder,
   SelectExpression,
   Selection,
   Transaction } from 'kysely';
 
 import {
-  PostgresDialect as KyselyPostgresDialect
+  PostgresDialect as KyselyPostgresDialect,
+  sql,
 } from 'kysely';
 
 export class PostgresDialect extends KyselyPostgresDialect implements Dialect {
@@ -66,6 +68,29 @@ export class PostgresDialect extends KyselyPostgresDialect implements Dialect {
     returning: SE & `${string} as insertId`,
   ): InsertQueryBuilder<DB, TB & string, Selection<DB, TB & string, SE & `${string} as insertId`>> {
     return db.insertInto(table).values(values).returning(returning);
+  }
+
+  async lockReplicationCounter<DB>(tx: Transaction<DB>, tenant: string): Promise<void> {
+    await sql`
+      INSERT INTO ${sql.table('replicationCounters')} (tenant, seq)
+      VALUES (${tenant}, 0)
+      ON CONFLICT (tenant) DO UPDATE SET seq = ${sql.ref('replicationCounters.seq')}
+    `.execute(tx);
+  }
+
+  async incrementReplicationCounter<DB>(tx: Transaction<DB>, tenant: string): Promise<bigint> {
+    const result = await sql<{ seq: string }>`
+      UPDATE ${sql.table('replicationCounters')}
+      SET seq = seq + 1
+      WHERE tenant = ${tenant}
+      RETURNING CAST(seq AS TEXT) AS seq
+    `.execute(tx);
+
+    return BigInt(String(result.rows[0].seq));
+  }
+
+  bigIntColumnAsText(columnReference: string): RawBuilder<string | null> {
+    return sql<string | null>`CAST(${sql.ref(columnReference)} AS TEXT)`;
   }
 
 }

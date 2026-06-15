@@ -1,12 +1,13 @@
+import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { RequestContext } from '../src/lib/json-rpc-router.js';
 
-import { createRecordsWriteMessage } from './utils.js';
 import { DwnServerErrorCode } from '../src/dwn-error.js';
 import { getTestDwn } from './test-dwn.js';
 import { handleDwnApplyReplicatedMessage } from '../src/json-rpc-handlers/dwn/apply-replicated-message.js';
 import { RateLimiter } from '../src/rate-limiter.js';
 import { v4 as uuidv4 } from 'uuid';
 import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
+import { createRecordsWriteMessage, expectAppliedResultWithPosition } from './utils.js';
 import { DataStream, Encoder, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { describe, expect, it, spyOn } from 'bun:test';
 
@@ -30,7 +31,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     );
 
     expect(jsonRpcResponse.error).toBeUndefined();
-    expect(jsonRpcResponse.result.result).toEqual({ kind: 'Applied' });
+    await expectAppliedResultWithPosition(jsonRpcResponse.result.result as ReplicationApplyResult, alice.did, recordsWrite.toJSON());
     await dwn.close();
   });
 

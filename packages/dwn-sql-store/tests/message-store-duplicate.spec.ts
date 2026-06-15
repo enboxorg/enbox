@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { isDuplicateKeyError } from '../src/message-store-sql.js';
+import { isDuplicateKeyError, isMessageCidDuplicateKeyError } from '../src/message-store-sql.js';
 
 // ---------------------------------------------------------------------------
 // isDuplicateKeyError — unit tests for all dialect error shapes
@@ -63,6 +63,36 @@ describe('isDuplicateKeyError', () => {
     const err = new Error('NOT NULL constraint failed: table.column');
     (err as any).code = 'SQLITE_CONSTRAINT';
     expect(isDuplicateKeyError(err)).toBe(false);
+  });
+});
+
+describe('isMessageCidDuplicateKeyError', () => {
+  it('detects the message-store message CID unique index', () => {
+    const err = new Error('duplicate key value violates unique constraint "index_tenant_messageCid"');
+    (err as any).code = '23505';
+    (err as any).constraint = 'index_tenant_messageCid';
+
+    expect(isMessageCidDuplicateKeyError(err)).toBe(true);
+  });
+
+  it('detects PostgreSQL message CID unique indexes with unquoted lowercase names', () => {
+    const err = new Error('duplicate key value violates unique constraint "index_tenant_messagecid"');
+    (err as any).code = '23505';
+    (err as any).constraint = 'index_tenant_messagecid';
+
+    expect(isMessageCidDuplicateKeyError(err)).toBe(true);
+  });
+
+  it('does not match replication position unique indexes', () => {
+    const postgresSeqError = new Error('duplicate key value violates unique constraint "index_messageStoreMessages_tenant_seq"');
+    (postgresSeqError as any).code = '23505';
+    (postgresSeqError as any).constraint = 'index_messageStoreMessages_tenant_seq';
+
+    const sqliteRedeliveryError = new Error('UNIQUE constraint failed: messageStoreMessages.tenant, messageStoreMessages.redeliverSeq');
+    (sqliteRedeliveryError as any).code = 'SQLITE_CONSTRAINT_UNIQUE';
+
+    expect(isMessageCidDuplicateKeyError(postgresSeqError)).toBe(false);
+    expect(isMessageCidDuplicateKeyError(sqliteRedeliveryError)).toBe(false);
   });
 });
 

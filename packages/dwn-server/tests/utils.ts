@@ -1,15 +1,16 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 import type { JsonRpcResponse } from '@enbox/dwn-clients';
-import type { GenericMessage, Persona, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, Persona, ReplicationApplyResult, UnionMessageReply } from '@enbox/dwn-sdk-js';
 
 import { createJsonRpcRequest } from '@enbox/dwn-clients';
+import { expect } from 'bun:test';
 import { fileURLToPath } from 'url';
 import fs from 'node:fs';
 import { Kysely } from 'kysely';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
-import { Cid, DataStream, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { Cid, DataStream, Message, RecordsWrite, Replication } from '@enbox/dwn-sdk-js';
 import { createBunSqliteDatabase, SqliteDialect } from '@enbox/dwn-sql-store';
 
 import { getDialectFromUrl } from '../src/storage.js';
@@ -69,6 +70,24 @@ export async function createRecordsWriteMessage(
     recordsWrite,
     dataStream,
   };
+}
+
+export async function expectAppliedResultWithPosition(
+  result: ReplicationApplyResult,
+  tenant: string,
+  message: GenericMessage,
+): Promise<void> {
+  expect(result.kind).toBe('Applied');
+  if (result.kind !== 'Applied') {
+    throw new Error(`expected Applied replication result, received ${result.kind}`);
+  }
+
+  expect(result.position).toBeDefined();
+  expect(result.position!.streamId).toBe(await Replication.deriveStreamId(tenant));
+  expect(result.position!.position).toBe('2');
+  expect(result.position!.messageCid).toBe(await Message.getCid(message));
+  expect(typeof result.position!.epoch).toBe('string');
+  expect(result.position!.epoch.length).toBeGreaterThan(0);
 }
 
 export function randomBytes(length: number): Uint8Array {

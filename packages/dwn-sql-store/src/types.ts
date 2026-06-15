@@ -9,6 +9,9 @@ type MessageStoreTable = {
   messageCid: string;
   encodedMessageBytes: Uint8Array;
   encodedData: string | null;
+  seq: string | null;
+  redeliverSeq: string | null;
+  fingerprintScopes: string | null;
   // "indexes" start
   interface: string | null;
   method: string | null;
@@ -111,6 +114,22 @@ type ResumableTaskTable = {
   retryCount: number;
 };
 
+type ReplicationCounterTable = {
+  tenant: string;
+  seq: string;
+};
+
+type ReplicationFingerprintTable = {
+  tenant: string;
+  scope: string;
+  fingerprint: string;
+};
+
+type ReplicationMetaTable = {
+  key: string;
+  value: string;
+};
+
 export type DwnDatabaseType = {
   messageStoreMessages: MessageStoreTable;
   messageStoreRecordsTags: MessageStoreRecordsTagsTable;
@@ -121,4 +140,7 @@ export type DwnDatabaseType = {
   stateIndexNodes: StateIndexNodeTable;
   stateIndexRoots: StateIndexRootTable;
   stateIndexMeta: StateIndexMetaTable;
+  replicationCounters: ReplicationCounterTable;
+  replicationFingerprints: ReplicationFingerprintTable;
+  replicationMeta: ReplicationMetaTable;
 };

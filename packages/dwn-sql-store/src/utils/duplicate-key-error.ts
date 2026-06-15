@@ -40,3 +40,24 @@ export function isDuplicateKeyError(error: unknown): boolean {
 
   return false;
 }
+
+/**
+ * Detects the specific message-store uniqueness constraint used to make put()
+ * idempotent. Other unique violations must surface because they indicate index
+ * or replication-position corruption rather than a duplicate message write.
+ */
+export function isMessageCidDuplicateKeyError(error: unknown): boolean {
+  if (!isDuplicateKeyError(error)) {
+    return false;
+  }
+
+  const err = error as Record<string, unknown>;
+  const constraint = typeof err.constraint === 'string' ? err.constraint : '';
+  const message = typeof err.message === 'string' ? err.message : '';
+  const normalizedConstraint = constraint.toLowerCase();
+  const normalizedMessage = message.toLowerCase();
+
+  return normalizedConstraint === 'index_tenant_messagecid' ||
+    normalizedMessage.includes('index_tenant_messagecid') ||
+    normalizedMessage.includes('messagestoremessages.tenant, messagestoremessages.messagecid');
+}

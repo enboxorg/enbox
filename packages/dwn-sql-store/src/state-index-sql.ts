@@ -14,11 +14,15 @@ import type { DwnDatabaseType } from './types.js';
 import type { Hash } from '@enbox/dwn-sdk-js';
 import type { KeyValues } from '@enbox/dwn-sdk-js';
 import type { StateIndex } from '@enbox/dwn-sdk-js';
+import type { Kysely, Transaction } from 'kysely';
 
+import { executeWithTransaction } from './utils/transaction.js';
 import { initDefaultHashes } from '@enbox/dwn-sdk-js';
 import { SMTStoreSql } from './smt-store-sql.js';
 import { SparseMerkleTree } from '@enbox/dwn-sdk-js';
-import { Kysely, sql } from 'kysely';
+import { Kysely as KyselyDatabase, sql } from 'kysely';
+
+type StateIndexExecutor = Kysely<DwnDatabaseType> | Transaction<DwnDatabaseType>;
 
 export class StateIndexSql implements StateIndex {
   readonly #dialect: Dialect;
@@ -46,7 +50,7 @@ export class StateIndexSql implements StateIndex {
       return;
     }
 
-    this.#db = new Kysely<DwnDatabaseType>({ dialect: this.#dialect });
+    this.#db = new KyselyDatabase<DwnDatabaseType>({ dialect: this.#dialect });
 
     // Ensure default hashes are initialized for the SMT
     await initDefaultHashes();
@@ -60,10 +64,11 @@ export class StateIndexSql implements StateIndex {
    * Throws a clear error directing the caller to run migrations first.
    */
   async #assertTablesExist(): Promise<void> {
+    const db = this.requireDb('open');
     const tables = ['stateIndexNodes', 'stateIndexRoots', 'stateIndexMeta'] as const;
     for (const table of tables) {
       try {
-        await sql`SELECT 1 FROM ${sql.table(table)} LIMIT 0`.execute(this.#db!);
+        await sql`SELECT 1 FROM ${sql.table(table)} LIMIT 0`.execute(db);
       } catch {
         throw new Error(
           `StateIndexSql: table '${table}' does not exist. Run DWN store migrations before opening stores.`
@@ -93,31 +98,29 @@ export class StateIndexSql implements StateIndex {
   }
 
   async insert(tenant: string, messageCid: string, indexes: KeyValues): Promise<void> {
-    if (!this.#db) {
-      throw new Error('Connection to database not open. Call `open` before using `insert`.');
-    }
-
-    // Insert into the global tree
-    const globalSmt = await this.getGlobalTree(tenant);
-    await globalSmt.insert(messageCid);
-
-    // Insert into the protocol-scoped tree if the message has a protocol (e.g. RecordsWrite).
-    // Non-record messages like ProtocolsConfigure do not have a protocol.
+    const db = this.requireDb('insert');
     const protocol = indexes.protocol as string | undefined;
-    if (protocol !== undefined) {
-      const protoSmt = await this.getProtocolTree(tenant, protocol);
-      await protoSmt.insert(messageCid);
-    }
+    await executeWithTransaction(db, async (tx) => {
+      const globalSmt = await this.createTree(tenant, '', tx);
+      await globalSmt.insert(messageCid);
 
-    // Store reverse lookup metadata for deletion
-    await this.#db
-      .insertInto('stateIndexMeta')
-      .values({
-        tenant,
-        messageCid,
-        protocol: protocol ?? null,
-      })
-      .execute();
+      // Insert into the protocol-scoped tree if the message has a protocol (e.g. RecordsWrite).
+      // Non-record messages like ProtocolsConfigure do not have a protocol.
+      if (protocol !== undefined) {
+        const protoSmt = await this.createTree(tenant, protocol, tx);
+        await protoSmt.insert(messageCid);
+      }
+
+      // Store reverse lookup metadata for deletion
+      await tx
+        .insertInto('stateIndexMeta')
+        .values({
+          tenant,
+          messageCid,
+          protocol: protocol ?? null,
+        })
+        .execute();
+    });
   }
 
   async delete(tenant: string, messageCids: string[]): Promise<void> {
@@ -224,9 +227,14 @@ export class StateIndexSql implements StateIndex {
   /**
    * Create and initialize a new SparseMerkleTree backed by SQL via SMTStoreSql.
    */
-  private async createTree(tenant: string, scope: string): Promise<SparseMerkleTree> {
+  private async createTree(
+    tenant: string,
+    scope: string,
+    executor?: StateIndexExecutor,
+  ): Promise<SparseMerkleTree> {
+    const db = executor ?? this.requireDb('createTree');
     const store = new SMTStoreSql({
-      db: this.#db!,
+      db,
       tenant,
       scope,
     });
@@ -235,6 +243,14 @@ export class StateIndexSql implements StateIndex {
     return smt;
   }
 
+  private requireDb(operation: string): Kysely<DwnDatabaseType> {
+    if (!this.#db) {
+      throw new Error(
+        `Connection to database not open. Call \`open\` before using \`${operation}\`.`
+      );
+    }
+
+    return this.#db;
+  }
+
 }
-
-

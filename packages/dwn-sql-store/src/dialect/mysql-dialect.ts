@@ -7,12 +7,14 @@ import type {
   InsertObject,
   InsertQueryBuilder,
   Kysely,
+  RawBuilder,
   SelectExpression,
   Selection,
   Transaction } from 'kysely';
 
 import {
-  MysqlDialect as KyselyMysqlDialect
+  MysqlDialect as KyselyMysqlDialect,
+  sql,
 } from 'kysely';
 
 export class MysqlDialect extends KyselyMysqlDialect implements Dialect {
@@ -84,5 +86,31 @@ export class MysqlDialect extends KyselyMysqlDialect implements Dialect {
     _returning: SE & `${string} as insertId`,
   ): InsertQueryBuilder<DB, TB & string, Selection<DB, TB & string, SE & `${string} as insertId`>> {
     return db.insertInto(table).values(values);
+  }
+
+  async lockReplicationCounter<DB>(tx: Transaction<DB>, tenant: string): Promise<void> {
+    await sql`
+      INSERT INTO ${sql.table('replicationCounters')} (tenant, seq)
+      VALUES (${tenant}, 0)
+      ON DUPLICATE KEY UPDATE seq = seq
+    `.execute(tx);
+  }
+
+  async incrementReplicationCounter<DB>(tx: Transaction<DB>, tenant: string): Promise<bigint> {
+    await sql`
+      UPDATE ${sql.table('replicationCounters')}
+      SET seq = LAST_INSERT_ID(seq + 1)
+      WHERE tenant = ${tenant}
+    `.execute(tx);
+
+    const result = await sql<{ seq: string }>`
+      SELECT CAST(LAST_INSERT_ID() AS CHAR) AS seq
+    `.execute(tx);
+
+    return BigInt(String(result.rows[0].seq));
+  }
+
+  bigIntColumnAsText(columnReference: string): RawBuilder<string | null> {
+    return sql<string | null>`CAST(${sql.ref(columnReference)} AS CHAR)`;
   }
 }
