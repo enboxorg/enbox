@@ -14,6 +14,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { createLocalDwnRpc } from './utils/local-dwn-rpc-shim.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { queryRemoteMessageFeed } from '../src/sync-messages.js';
 import { TestAgent } from './utils/test-agent.js';
 
 /**
@@ -79,6 +80,46 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
   afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
+  });
+
+  it('should query the durable feed through the local RPC shim', async () => {
+    const { reply: protoReply } = await testHarness.agent.dwn.processRequest({
+      author        : tenant,
+      target        : tenant,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: testProtocol },
+    });
+    expect(protoReply.status.code).toBe(202);
+
+    const { messageCid: writeMessageCid, reply: writeReply } = await testHarness.agent.dwn.processRequest({
+      author        : tenant,
+      target        : tenant,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : testProtocol.protocol,
+        protocolPath : 'note',
+        dataFormat   : 'text/plain',
+        schema       : 'https://schemas.example.com/note',
+      },
+      dataStream: new Blob([new TextEncoder().encode('feed query through shim')]),
+    });
+    expect(writeReply.status.code).toBe(202);
+
+    const reply = await queryRemoteMessageFeed({
+      did      : tenant,
+      dwnUrl   : 'http://localhost:9999',
+      filters  : [{ protocol: testProtocol.protocol }],
+      limit    : 10,
+      cidsOnly : true,
+      agent    : testHarness.agent,
+    });
+
+    expect(reply.status.code).toBe(200);
+    expect(reply.entries?.some(entry => entry.messageCid === writeMessageCid)).toBe(true);
+    expect(reply.entries?.every(entry => entry.message === undefined)).toBe(true);
+    expect(reply.cursor?.position).toBeDefined();
+    expect(reply.drained).toBe(true);
+    expect(reply.fingerprint).toBeDefined();
   });
 
   it('should advance pull checkpoint after processing a live event through the real handler', async () => {

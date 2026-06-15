@@ -125,7 +125,7 @@ export interface DwnMessageDescriptor {
 }
 
 export interface DwnMessageParams {
-  [DwnInterface.MessagesQuery] : MessagesQueryOptions;
+  [DwnInterface.MessagesQuery] : Omit<MessagesQueryOptions, 'signer'>;
   [DwnInterface.MessagesRead] : RequireOnly<MessagesReadOptions, 'messageCid'>;
   [DwnInterface.MessagesSubscribe] : Partial<MessagesSubscribeOptions>;
   [DwnInterface.MessagesSync] : RequireOnly<MessagesSyncOptions, 'action'>;
