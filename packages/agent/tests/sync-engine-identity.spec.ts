@@ -211,7 +211,7 @@ describe('SyncEngineLevel — identity management', () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn1.example.com', 'https://dwn2.example.com']),
+          getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn1.example.com', 'https://dwn2.example.com']),
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
@@ -230,7 +230,7 @@ describe('SyncEngineLevel — identity management', () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+          getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
@@ -253,7 +253,7 @@ describe('SyncEngineLevel — identity management', () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+          getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
@@ -275,7 +275,7 @@ describe('SyncEngineLevel — identity management', () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+          getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
@@ -304,7 +304,7 @@ describe('SyncEngineLevel — identity management', () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+          getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
@@ -722,7 +722,7 @@ describe('SyncEngineLevel — identity management', () => {
     it('addIdentityToLiveSync should be a no-op when identity has no DWN endpoints', async () => {
       const engine = new SyncEngineLevel({ db });
       const mockAgent = {
-        dwn: { getDwnEndpointUrlsForTarget: sinon.stub().resolves([]) },
+        dwn: { getRemoteDwnEndpointUrls: sinon.stub().resolves([]) },
       };
       (engine as any)._agent = mockAgent;
 
@@ -738,7 +738,7 @@ describe('SyncEngineLevel — identity management', () => {
     it('addIdentityToLiveSync should create one protocol-set target when protocols are specified', async () => {
       const engine = new SyncEngineLevel({ db });
       const mockAgent = {
-        dwn: { getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']) },
+        dwn: { getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']) },
       };
       (engine as any)._agent = mockAgent;
 
@@ -777,7 +777,7 @@ describe('SyncEngineLevel — identity management', () => {
     it('addIdentityToLiveSync should create a full-tenant link when protocols is all', async () => {
       const engine = new SyncEngineLevel({ db });
       const mockAgent = {
-        dwn: { getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']) },
+        dwn: { getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']) },
       };
       (engine as any)._agent = mockAgent;
 
@@ -810,7 +810,7 @@ describe('SyncEngineLevel — identity management', () => {
     it('addIdentityToLiveSync should close pull subscription if push subscription fails', async () => {
       const engine = new SyncEngineLevel({ db });
       const mockAgent = {
-        dwn: { getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']) },
+        dwn: { getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']) },
       };
       (engine as any)._agent = mockAgent;
 

@@ -1742,7 +1742,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Hot-add a single identity to the active live sync session. */
   private async addIdentityToLiveSync(did: string, options: SyncIdentityOptions): Promise<Set<string>> {
-    const dwnEndpointUrls = await this.agent.dwn.getDwnEndpointUrlsForTarget(did);
+    const dwnEndpointUrls = await this.agent.dwn.getRemoteDwnEndpointUrls(did);
     if (dwnEndpointUrls.length === 0) { return new Set(); }
 
     const targets: SyncTarget[] = [];
@@ -4111,7 +4111,7 @@ export class SyncEngineLevel implements SyncEngine {
         continue;
       }
 
-      const dwnEndpointUrls = await this.agent.dwn.getDwnEndpointUrlsForTarget(did);
+      const dwnEndpointUrls = await this.agent.dwn.getRemoteDwnEndpointUrls(did);
       if (dwnEndpointUrls.length === 0) {
         anyTargetUnavailable = true;
         continue;

@@ -6,6 +6,7 @@ import {
   normalizeSyncProtocols,
   protocolsForSyncScope,
   singleProtocolForSyncScope,
+  SYNC_PROJECTION_ROOT_VERSION,
   syncScopeFromProtocols,
 } from '../src/types/sync.js';
 
@@ -23,6 +24,11 @@ describe('sync scope identity', () => {
 
   it('rejects empty protocol sets', () => {
     expect(() => normalizeSyncProtocols([])).toThrow('protocol-set scope requires at least one protocol');
+  });
+
+  it('uses the durable message-feed projection root version', () => {
+    expect(SYNC_PROJECTION_ROOT_VERSION).toBe('replication-log-feed-v1');
+    expect(SYNC_PROJECTION_ROOT_VERSION).not.toContain('state-index');
   });
 
   it('derives full and protocol-set scopes from identity options', () => {

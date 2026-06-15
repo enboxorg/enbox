@@ -469,7 +469,7 @@ describe('SyncEngineLevel — private methods', () => {
     it('should return empty array when no identities registered', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
-        dwn      : { getDwnEndpointUrlsForTarget: sinon.stub() },
+        dwn      : { getRemoteDwnEndpointUrls: sinon.stub() },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
 
@@ -481,7 +481,7 @@ describe('SyncEngineLevel — private methods', () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          getDwnEndpointUrlsForTarget: sinon.stub().resolves([]),
+          getRemoteDwnEndpointUrls: sinon.stub().resolves([]),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -495,7 +495,7 @@ describe('SyncEngineLevel — private methods', () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+          getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -508,11 +508,32 @@ describe('SyncEngineLevel — private methods', () => {
       expect(targets[0].protocol).toBeUndefined();
     });
 
+    it('should resolve sync targets from remote DID-document endpoints only', async () => {
+      const remoteEndpointLookupStub = sinon.stub().resolves(['https://remote.example.com']);
+      const localAwareEndpointLookupStub = sinon.stub().resolves(['http://127.0.0.1:3000']);
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        dwn      : {
+          getDwnEndpointUrlsForTarget : localAwareEndpointLookupStub,
+          getRemoteDwnEndpointUrls    : remoteEndpointLookupStub,
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      await engine.registerIdentity({ did: 'did:example:remote-only', options: { protocols: 'all' } });
+
+      const targets = await (engine as any).getSyncTargets();
+      expect(remoteEndpointLookupStub.callCount).toBe(1);
+      expect(remoteEndpointLookupStub.firstCall.args).toEqual(['did:example:remote-only']);
+      expect(localAwareEndpointLookupStub.callCount).toBe(0);
+      expect(targets).toHaveLength(1);
+      expect(targets[0].dwnUrl).toBe('https://remote.example.com');
+    });
+
     it('should produce one protocol-set target per DWN URL', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+          getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -530,11 +551,47 @@ describe('SyncEngineLevel — private methods', () => {
       expect(targets[0].authorization).toEqual({ kind: 'owner' });
     });
 
+    it('should hot-add live identities from remote DID-document endpoints only', async () => {
+      const remoteEndpointLookupStub = sinon.stub().resolves(['https://remote-live.example.com']);
+      const localAwareEndpointLookupStub = sinon.stub().resolves(['http://127.0.0.1:3000']);
+      const engine = createEngine({
+        db,
+        agent: {
+          agentDid : 'did:example:agent',
+          dwn      : {
+            getDwnEndpointUrlsForTarget : localAwareEndpointLookupStub,
+            getRemoteDwnEndpointUrls    : remoteEndpointLookupStub,
+          },
+        } as any,
+      });
+      const buildTargetStub = sinon.stub(engine as any, 'buildSyncTargetsForEndpoint').resolves([
+        syncTarget('did:example:live-remote-only', 'https://remote-live.example.com'),
+      ]);
+      sinon.stub(engine as any, 'initializeLinkTargetWithRetry').resolves({
+        durableLinkIdentityKey : 'did:example:live-remote-only^projection^authorization',
+        status                 : 'active',
+      });
+
+      const keys = await (engine as any).addIdentityToLiveSync(
+        'did:example:live-remote-only',
+        { protocols: 'all' },
+      );
+
+      expect(remoteEndpointLookupStub.callCount).toBe(1);
+      expect(remoteEndpointLookupStub.firstCall.args).toEqual(['did:example:live-remote-only']);
+      expect(localAwareEndpointLookupStub.callCount).toBe(0);
+      expect(buildTargetStub.firstCall.args.slice(0, 2)).toEqual([
+        'did:example:live-remote-only',
+        'https://remote-live.example.com',
+      ]);
+      expect(keys).toEqual(new Set(['did:example:live-remote-only^projection^authorization']));
+    });
+
     it('should include delegateDid from identity options', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+          getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -562,7 +619,7 @@ describe('SyncEngineLevel — private methods', () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+          getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -619,7 +676,7 @@ describe('SyncEngineLevel — private methods', () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
         dwn      : {
-          getDwnEndpointUrlsForTarget: sinon.stub().resolves(['https://dwn.example.com']),
+          getRemoteDwnEndpointUrls: sinon.stub().resolves(['https://dwn.example.com']),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -4930,7 +4987,7 @@ describe('SyncEngineLevel — private methods', () => {
         db,
         agent: {
           agentDid : 'did:example:agent',
-          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+          dwn      : { getRemoteDwnEndpointUrls: endpointLookupStub },
         } as any,
       });
       const ledger = (engine as any).ledger;
@@ -4965,7 +5022,7 @@ describe('SyncEngineLevel — private methods', () => {
         db,
         agent: {
           agentDid : 'did:example:agent',
-          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+          dwn      : { getRemoteDwnEndpointUrls: endpointLookupStub },
         } as any,
       });
       const ledger = (engine as any).ledger;
@@ -5009,7 +5066,7 @@ describe('SyncEngineLevel — private methods', () => {
         db,
         agent: {
           agentDid : 'did:example:agent',
-          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+          dwn      : { getRemoteDwnEndpointUrls: endpointLookupStub },
         } as any,
       });
       const grantE1 = messagesGrantEntry('grant-e1', { interface: 'Messages', method: 'Read', protocol }, {
@@ -5067,7 +5124,7 @@ describe('SyncEngineLevel — private methods', () => {
         db,
         agent: {
           agentDid : 'did:example:agent',
-          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+          dwn      : { getRemoteDwnEndpointUrls: endpointLookupStub },
         } as any,
       });
       const ledger = (engine as any).ledger;
@@ -5107,7 +5164,7 @@ describe('SyncEngineLevel — private methods', () => {
         db,
         agent: {
           agentDid : 'did:example:agent',
-          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+          dwn      : { getRemoteDwnEndpointUrls: endpointLookupStub },
         } as any,
       });
       const ledger = (engine as any).ledger;
@@ -5662,7 +5719,7 @@ describe('SyncEngineLevel — private methods', () => {
         db,
         agent: {
           agentDid : 'did:example:agent',
-          dwn      : { getDwnEndpointUrlsForTarget: endpointLookupStub },
+          dwn      : { getRemoteDwnEndpointUrls: endpointLookupStub },
         } as any,
       });
       const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
