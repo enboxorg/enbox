@@ -11,7 +11,7 @@
  */
 
 import type { DwnDatabaseType } from './types.js';
-import type { Kysely } from 'kysely';
+import type { Kysely, Transaction } from 'kysely';
 
 import type { Hash, SMTInternalNode, SMTLeafNode, SMTNode, SMTNodeStore } from '@enbox/dwn-sdk-js';
 
@@ -19,7 +19,7 @@ import { hashToHex, hexToHash } from '@enbox/dwn-sdk-js';
 
 export type SMTStoreSqlParams = {
   /** The shared Kysely database instance. */
-  db: Kysely<DwnDatabaseType>;
+  db: Kysely<DwnDatabaseType> | Transaction<DwnDatabaseType>;
   /** The tenant DID that owns this tree. */
   tenant: string;
   /** The scope key for this tree (e.g. '' for global, protocol URI for protocol-scoped). */
@@ -27,7 +27,7 @@ export type SMTStoreSqlParams = {
 };
 
 export class SMTStoreSql implements SMTNodeStore {
-  readonly #db: Kysely<DwnDatabaseType>;
+  readonly #db: Kysely<DwnDatabaseType> | Transaction<DwnDatabaseType>;
   readonly #tenant: string;
   readonly #scope: string;
 

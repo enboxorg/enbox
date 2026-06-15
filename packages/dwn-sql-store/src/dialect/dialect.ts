@@ -6,6 +6,7 @@ import type {
   InsertQueryBuilder,
   Kysely,
   Dialect as KyselyDialect,
+  RawBuilder,
   SelectExpression,
   Selection,
   Transaction,
@@ -73,4 +74,22 @@ export interface Dialect extends KyselyDialect {
     values: InsertObject<DB, TB & string>,
     returning: SE & `${string} as insertId`,
   ): InsertQueryBuilder<DB, TB & string, Selection<DB, TB & string, SE & `${string} as insertId`>>;
+
+  /**
+   * Ensures a replication counter row exists and takes the dialect-specific write lock for that
+   * tenant on the transaction connection. Call before reading or mutating tenant log/fingerprint
+   * state so same-tenant mutations are serialized in commit order.
+   */
+  lockReplicationCounter<DB>(tx: Transaction<DB>, tenant: string): Promise<void>;
+
+  /**
+   * Advances the locked tenant replication counter by one and returns the assigned position.
+   */
+  incrementReplicationCounter<DB>(tx: Transaction<DB>, tenant: string): Promise<bigint>;
+
+  /**
+   * Casts a bigint/integer column to text so database drivers cannot narrow
+   * replication positions to JavaScript numbers when reading rows.
+   */
+  bigIntColumnAsText(columnReference: string): RawBuilder<string | null>;
 }

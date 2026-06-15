@@ -14,8 +14,7 @@ import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
 import { WsApi } from '../src/ws-api.js';
 import { createJsonRpcAck, createJsonRpcRequest, createJsonRpcSubscriptionRequest, HttpDwnRpcClient, JsonRpcErrorCodes, JsonRpcSocket, WebSocketDwnRpcClient } from '@enbox/dwn-clients';
-import { createRecordsWriteMessage, sendHttpMessage, sendWsMessage, waitUntil } from './utils.js';
-
+import { createRecordsWriteMessage, expectAppliedResultWithPosition, sendHttpMessage, sendWsMessage, waitUntil } from './utils.js';
 
 describe('websocket api', function () {
   let httpApi: HttpApi;
@@ -120,7 +119,7 @@ describe('websocket api', function () {
       data      : dataStream,
     });
 
-    expect(result).toEqual({ kind: 'Applied' });
+    await expectAppliedResultWithPosition(result, alice.did, recordsWrite.toJSON());
 
     const recordsRead = await RecordsRead.create({
       signer : alice.signer,
@@ -151,7 +150,7 @@ describe('websocket api', function () {
       data      : dataStream,
     });
 
-    expect(result).toEqual({ kind: 'Applied' });
+    await expectAppliedResultWithPosition(result, alice.did, recordsWrite.toJSON());
 
     const recordsRead = await RecordsRead.create({
       signer : alice.signer,

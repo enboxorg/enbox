@@ -34,6 +34,7 @@ const READER_PREFIXES = /^\s*(SELECT|PRAGMA|EXPLAIN|WITH)\b/i;
  * These produce rows like a SELECT, so the statement must use `all()` not `run()`.
  */
 const HAS_RETURNING = /\bRETURNING\b/i;
+const SQLITE_BUSY_TIMEOUT_MS = 5_000;
 
 /**
  * Creates a Kysely-compatible SQLite database backed by `bun:sqlite`.
@@ -49,6 +50,11 @@ export function createBunSqliteDatabase(
   options?: { readonly?: boolean; create?: boolean },
 ): KyselySqliteDatabase {
   const db = new BunDatabase(path, options);
+  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+
+  if (options?.readonly !== true && path !== ':memory:') {
+    db.exec('PRAGMA journal_mode = WAL');
+  }
 
   return {
     close(): void {

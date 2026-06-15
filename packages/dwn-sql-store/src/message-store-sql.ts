@@ -1,6 +1,9 @@
 import type { Dialect } from './dialect/dialect.js';
 import type { DwnDatabaseType, KeyValues } from './types.js';
 import type {
+  EventLogEntry,
+  EventLogReadOptions,
+  EventLogReadResult,
   Filter,
   GenericMessage,
   MessageSort,
@@ -10,15 +13,20 @@ import type {
   MessageStorePutResult,
   Pagination,
   PaginationCursor,
+  ProgressGapInfo,
+  ProgressGapReason,
+  ProgressToken,
+  ReplicationFeedReader,
+  WakePublisher,
 } from '@enbox/dwn-sdk-js';
-import type { Transaction, UpdateObject } from 'kysely';
+import type { InsertObject, Kysely, Selectable, Transaction, UpdateObject } from 'kysely';
 
 import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
+
 import { executeWithTransaction } from './utils/transaction.js';
 import { extractTagsAndSanitizeIndexes } from './utils/sanitize.js';
 import { filterSelectQuery } from './utils/filter.js';
-import { isDuplicateKeyError } from './utils/duplicate-key-error.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { TagTables } from './utils/tags.js';
 import {
@@ -28,12 +36,32 @@ import {
   DwnMethodName,
   executeUnlessAborted,
   Message,
-  SortDirection
+  Replication,
+  SortDirection,
 } from '@enbox/dwn-sdk-js';
-import { Kysely, sql } from 'kysely';
+import { isDuplicateKeyError, isMessageCidDuplicateKeyError } from './utils/duplicate-key-error.js';
+import { Kysely as KyselyDatabase, sql } from 'kysely';
 
-type MessageStoreSystemColumn = 'id' | 'tenant' | 'messageCid' | 'encodedMessageBytes' | 'encodedData';
+type MessageStoreSystemColumn =
+  'id' |
+  'tenant' |
+  'messageCid' |
+  'encodedMessageBytes' |
+  'encodedData' |
+  'seq' |
+  'redeliverSeq' |
+  'fingerprintScopes';
 type MessageStoreIndexColumn = Exclude<keyof DwnDatabaseType['messageStoreMessages'], MessageStoreSystemColumn>;
+type MessageStoreRow = Selectable<DwnDatabaseType['messageStoreMessages']>;
+type MessageStoreExecutor = Kysely<DwnDatabaseType> | Transaction<DwnDatabaseType>;
+type PositionColumn = 'seq' | 'redeliverSeq';
+type PositionTextColumns = {
+  seqText: string | null;
+  redeliverSeqText: string | null;
+};
+type LogRow = MessageStoreRow & PositionTextColumns;
+
+const EPOCH_KEY = 'epoch';
 
 const MESSAGE_STORE_INDEX_COLUMN_COVERAGE = {
   interface         : true,
@@ -67,347 +95,144 @@ const NULLED_INDEX_COLUMNS = Object.fromEntries(
   MESSAGE_STORE_INDEX_COLUMNS.map((column) => [column, null])
 ) as Record<MessageStoreIndexColumn, null>;
 
-export class MessageStoreSql implements MessageStore {
+const BOOLEAN_INDEX_COLUMNS = new Set<MessageStoreIndexColumn>([
+  'isLatestBaseState',
+  'published',
+  'prune',
+  'squash',
+]);
+
+/**
+ * SQL-backed MessageStore with the durable replication feed embedded in the message table.
+ *
+ * Every mutating operation that can affect replay state takes the tenant counter lock before it
+ * reads or writes row/fingerprint state. This keeps tenant positions gap-free and serializes the
+ * fingerprint folds without requiring backend-specific advisory locks.
+ */
+export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
   readonly #dialect: Dialect;
   readonly #tags: TagTables;
   #db: Kysely<DwnDatabaseType> | null = null;
+  #epochPromise?: Promise<string>;
+  readonly #streamIdPromises = new Map<string, Promise<string>>();
+  #wakePublisher?: WakePublisher;
 
-  constructor(dialect: Dialect) {
+  public constructor(dialect: Dialect, wakePublisher?: WakePublisher) {
     this.#dialect = dialect;
     this.#tags = new TagTables(dialect);
+    this.#wakePublisher = wakePublisher;
   }
 
-  async open(): Promise<void> {
+  public setWakePublisher(wakePublisher: WakePublisher | undefined): void {
+    this.#wakePublisher = wakePublisher;
+  }
+
+  public async open(): Promise<void> {
     if (this.#db) {
       return;
     }
 
-    this.#db = new Kysely<DwnDatabaseType>({ dialect: this.#dialect });
+    this.#db = new KyselyDatabase<DwnDatabaseType>({ dialect: this.#dialect });
 
-    // Fail fast if migrations have not been run — tables must already exist.
-    await this.#assertTablesExist();
+    await this.assertTablesExist();
+    await this.assertNoPreSubstrateRows();
+    await this.epoch();
   }
 
-  /**
-   * Verifies that the required tables exist by executing a zero-row SELECT.
-   * Throws a clear error directing the caller to run migrations first.
-   */
-  async #assertTablesExist(): Promise<void> {
-    const tables = ['messageStoreMessages', 'messageStoreRecordsTags'] as const;
-    for (const table of tables) {
-      try {
-        await sql`SELECT 1 FROM ${sql.table(table)} LIMIT 0`.execute(this.#db!);
-      } catch {
-        throw new Error(
-          `MessageStoreSql: table '${table}' does not exist. Run DWN store migrations before opening stores.`
-        );
-      }
-    }
-  }
-
-  async close(): Promise<void> {
+  public async close(): Promise<void> {
     await this.#db?.destroy();
     this.#db = null;
+    this.#epochPromise = undefined;
+    this.#streamIdPromises.clear();
   }
 
-  async put(
+  public async put(
     tenant: string,
     message: GenericMessage,
     indexes: KeyValues,
     options?: MessageStoreOptions
   ): Promise<MessageStorePutResult> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `put`.'
-      );
-    }
-
+    const db = this.requireDb('put');
     options?.signal?.throwIfAborted();
 
-    // gets the encoded data and removes it from the message
-    // we remove it from the message as it would cause the `encodedMessageBytes` to be greater than the
-    // maximum bytes allowed by SQL
-    const getEncodedData = (message: GenericMessage): { message: GenericMessage, encodedData: string|null} => {
-      const messageToProcess = { ...message };
-      let encodedData: string|null = null;
-      if (messageToProcess.descriptor.interface === DwnInterfaceName.Records && messageToProcess.descriptor.method === DwnMethodName.Write) {
-        const data = messageToProcess.encodedData;
-        if (data) {
-          delete messageToProcess.encodedData;
-          encodedData = data;
-        }
-      }
-      return { message: messageToProcess, encodedData };
-    };
-
-    const { message: messageToProcess, encodedData } = getEncodedData(message);
-
+    const { messageToStore, encodedData } = MessageStoreSql.detachInlineData(message);
     const encodedMessageBlock = await executeUnlessAborted(
-      block.encode({ value: messageToProcess, codec: cbor, hasher: sha256 }),
+      block.encode({ value: messageToStore, codec: cbor, hasher: sha256 }),
       options?.signal
     );
 
     const messageCid = encodedMessageBlock.cid.toString();
     const encodedMessageBytes = Buffer.from(encodedMessageBlock.bytes);
 
-    // we execute the insert in a transaction as we are making multiple inserts into multiple tables.
-    // if any of these inserts would throw, the whole transaction would be rolled back.
-    // otherwise it is committed.
-    const putMessageOperation = this.constructPutMessageOperation({ tenant, messageCid, encodedMessageBytes, encodedData, indexes });
     try {
-      await executeWithTransaction(this.#db, putMessageOperation);
+      const position = await executeWithTransaction(db, async (tx) => {
+        await this.#dialect.lockReplicationCounter(tx, tenant);
+
+        const existing = await tx
+          .selectFrom('messageStoreMessages')
+          .select('id')
+          .where('tenant', '=', tenant)
+          .where('messageCid', '=', messageCid)
+          .executeTakeFirst();
+
+        if (existing !== undefined) {
+          return undefined;
+        }
+
+        const seq = await this.#dialect.incrementReplicationCounter(tx, tenant);
+        const fingerprintScopes = Replication.computeFingerprintScopes(message, indexes);
+        const { indexes: putIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
+
+        const messageIndexValues: InsertObject<DwnDatabaseType, 'messageStoreMessages'> = {
+          tenant,
+          messageCid,
+          encodedMessageBytes,
+          encodedData,
+          seq               : seq.toString(),
+          redeliverSeq      : null,
+          fingerprintScopes : JSON.stringify(fingerprintScopes),
+          ...putIndexes,
+        };
+
+        const result = await this.#dialect
+          .insertThenReturnId(tx, 'messageStoreMessages', messageIndexValues, 'id as insertId')
+          .executeTakeFirstOrThrow();
+
+        if (Object.keys(tags).length > 0) {
+          await this.#tags.executeTagsInsert(result.insertId, tags, tx);
+        }
+
+        await this.foldFingerprints(tx, tenant, messageCid, fingerprintScopes);
+        return seq;
+      });
+
+      if (position === undefined) {
+        return { status: 'duplicate' };
+      }
+
+      this.publishWake(tenant, position);
+      return {
+        status   : 'inserted',
+        position : await this.buildToken(tenant, position, messageCid),
+      };
     } catch (error: unknown) {
-      if (isDuplicateKeyError(error)) {
-        // Idempotent write — the exact same message already exists.
-        // This is expected when sync or protocol.send() re-delivers a
-        // message the DWN already has.  A race between the handler's
-        // duplicate-CID check and the actual insert makes this
-        // unavoidable in concurrent environments.
-        // NOTE: `position` is omitted until the SQL replication log lands (no seq column yet).
+      if (isMessageCidDuplicateKeyError(error) && await this.hasMessage(tenant, messageCid)) {
         return { status: 'duplicate' };
       }
       throw error;
     }
-
-    return { status: 'inserted' };
   }
 
-  /**
-   * Replaces the indexes of an existing message in place — a row UPDATE that also syncs the tag
-   * tables (tags are indexed only while `isLatestBaseState` is true, so an index flip must add or
-   * remove tag rows in the same transaction). The row — and its `encodedData` — is never deleted.
-   */
-  async updateIndexes(
-    tenant: string,
-    messageCid: string,
-    indexes: KeyValues,
-    options?: MessageStoreOptions
-  ): Promise<void> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `updateIndexes`.'
-      );
-    }
-
-    options?.signal?.throwIfAborted();
-
-    await this.replaceRowIndexes({
-      tenant,
-      messageCid,
-      indexes,
-      notFoundErrorCode: DwnErrorCode.MessageStoreUpdateIndexesMessageNotFound,
-    });
-  }
-
-  /**
-   * Replaces the same-CID row payload and indexes in place. This is used when an inline-data
-   * RecordsWrite is retained only for lineage/reconstruction and must no longer expose data.
-   */
-  async updateMessageAndIndexes(
-    tenant: string,
-    messageCid: string,
-    message: GenericMessage,
-    indexes: KeyValues,
-    options?: MessageStoreOptions
-  ): Promise<void> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `updateMessageAndIndexes`.'
-      );
-    }
-
-    options?.signal?.throwIfAborted();
-
-    const computedMessageCid = await Message.getCid(message);
-    if (computedMessageCid !== messageCid) {
-      throw new DwnError(
-        DwnErrorCode.MessageStoreUpdateMessageAndIndexesCidMismatch,
-        `replacement message CID ${computedMessageCid} does not match target CID ${messageCid}`
-      );
-    }
-
-    let encodedData: string | null = null;
-    const messageToProcess = { ...message };
-    if (messageToProcess.descriptor.interface === DwnInterfaceName.Records && messageToProcess.descriptor.method === DwnMethodName.Write) {
-      if (messageToProcess.encodedData !== undefined) {
-        encodedData = messageToProcess.encodedData;
-        delete messageToProcess.encodedData;
-      }
-    }
-
-    const encodedMessageBlock = await executeUnlessAborted(
-      block.encode({ value: messageToProcess, codec: cbor, hasher: sha256 }),
-      options?.signal
-    );
-
-    await this.replaceRowIndexes({
-      tenant,
-      messageCid,
-      indexes,
-      encodedMessageBytes : Buffer.from(encodedMessageBlock.bytes),
-      encodedData,
-      notFoundErrorCode   : DwnErrorCode.MessageStoreUpdateMessageAndIndexesMessageNotFound,
-    });
-  }
-
-  /**
-   * Completes a previously dataless row with its data: same CID, same row. Attaches the inline
-   * `encodedData` column when given and flips the row's indexes (syncing the tag tables).
-   *
-   * NOTE: redelivery stamping (`redeliverSeq` from the tenant counter) and the post-commit wake
-   * land with the SQL replication log; until then this store returns no `position`.
-   */
-  async completeData(
-    tenant: string,
-    messageCid: string,
-    indexes: KeyValues,
-    encodedData?: string,
-    options?: MessageStoreOptions
-  ): Promise<MessageStoreCompleteDataResult> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `completeData`.'
-      );
-    }
-
-    options?.signal?.throwIfAborted();
-
-    await this.replaceRowIndexes({
-      tenant,
-      messageCid,
-      indexes,
-      encodedData,
-      notFoundErrorCode    : DwnErrorCode.MessageStoreCompleteDataMessageNotFound,
-      rejectAlreadyStamped : true,
-    });
-
-    return {};
-  }
-
-  /**
-   * Shared row-UPDATE implementation for `updateIndexes` and `completeData`: nulls every index
-   * column, overlays the sanitized replacement indexes, optionally attaches `encodedData`, and
-   * rebuilds the row's tag table entries — all in one transaction.
-   */
-  private async replaceRowIndexes(input: {
-    tenant: string;
-    messageCid: string;
-    indexes: KeyValues;
-    encodedMessageBytes?: Buffer;
-    encodedData?: string | null;
-    notFoundErrorCode: DwnErrorCode;
-    rejectAlreadyStamped?: boolean;
-  }): Promise<void> {
-    const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, notFoundErrorCode, rejectAlreadyStamped } = input;
-    const db = this.#db;
-    if (!db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before replacing row indexes.'
-      );
-    }
-
-    // we extract the tag indexes into their own object to be inserted separately.
-    // we also sanitize the indexes to convert any `boolean` values to `number` representations.
-    const { indexes: replacementIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
-
-    await executeWithTransaction(db, async (tx) => {
-      const existingRow = await tx
-        .selectFrom('messageStoreMessages')
-        .select(['id', 'encodedData', 'isLatestBaseState'])
-        .where('tenant', '=', tenant)
-        .where('messageCid', '=', messageCid)
-        .executeTakeFirst();
-
-      if (existingRow === undefined) {
-        throw new DwnError(notFoundErrorCode, `no message found for tenant ${tenant} with CID ${messageCid}`);
-      }
-
-      if (rejectAlreadyStamped === true && (existingRow.encodedData !== null || Number(existingRow.isLatestBaseState) === 1)) {
-        throw new DwnError(
-          DwnErrorCode.MessageStoreCompleteDataAlreadyStamped,
-          `message ${messageCid} is already completed; the dataless-to-data transition cannot repeat`
-        );
-      }
-
-      const replacementColumns = {
-        ...NULLED_INDEX_COLUMNS,
-        ...replacementIndexes,
-        ...(encodedMessageBytes !== undefined && { encodedMessageBytes }),
-        ...(encodedData !== undefined && { encodedData }),
-      };
-
-      await tx
-        .updateTable('messageStoreMessages')
-        .set(replacementColumns as UpdateObject<DwnDatabaseType, 'messageStoreMessages'>)
-        .where('id', '=', existingRow.id)
-        .execute();
-
-      // rebuild the tag rows to mirror the replacement indexes
-      await tx
-        .deleteFrom('messageStoreRecordsTags')
-        .where('messageInsertId', '=', existingRow.id)
-        .execute();
-
-      if (Object.keys(tags).length > 0) {
-        await this.#tags.executeTagsInsert(existingRow.id, tags, tx);
-      }
-    });
-  }
-
-  /**
-   * Constructs the transactional operation to insert the given message into the database.
-   */
-  private constructPutMessageOperation(queryOptions: {
-    tenant: string;
-    messageCid: string;
-    encodedMessageBytes: Buffer;
-    encodedData: string | null;
-    indexes: KeyValues;
-  }): (tx: Transaction<DwnDatabaseType>) => Promise<void> {
-    const { tenant, messageCid, encodedMessageBytes, encodedData, indexes } = queryOptions;
-
-    // we extract the tag indexes into their own object to be inserted separately.
-    // we also sanitize the indexes to convert any `boolean` values to `text` representations.
-    const { indexes: putIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
-
-    return async (tx) => {
-
-      const messageIndexValues = {
-        tenant,
-        messageCid,
-        encodedMessageBytes,
-        encodedData,
-        ...putIndexes
-      };
-
-      // we use the dialect-specific `insertThenReturnId` in order to be able to extract the `insertId`
-      const result = await this.#dialect
-        .insertThenReturnId(tx, 'messageStoreMessages', messageIndexValues, 'id as insertId')
-        .executeTakeFirstOrThrow();
-
-      // if tags exist, we execute those within the transaction associating them with the `insertId`.
-      if (Object.keys(tags).length > 0) {
-        await this.#tags.executeTagsInsert(result.insertId, tags, tx);
-      }
-
-    };
-  }
-
-  async get(
+  public async get(
     tenant: string,
     cid: string,
     options?: MessageStoreOptions
   ): Promise<GenericMessage | undefined> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `get`.'
-      );
-    }
-
+    const db = this.requireDb('get');
     options?.signal?.throwIfAborted();
 
     const result = await executeUnlessAborted(
-      this.#db
+      db
         .selectFrom('messageStoreMessages')
         .selectAll()
         .where('tenant', '=', tenant)
@@ -423,27 +248,22 @@ export class MessageStoreSql implements MessageStore {
     return this.parseEncodedMessage(result.encodedMessageBytes, result.encodedData, options);
   }
 
-  async query(
+  public async query(
     tenant: string,
     filters: Filter[],
     messageSort?: MessageSort,
     pagination?: Pagination,
     options?: MessageStoreOptions
-  ): Promise<{ messages: GenericMessage[], cursor?: PaginationCursor}> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `query`.'
-      );
-    }
-
+  ): Promise<{ messages: GenericMessage[], cursor?: PaginationCursor }> {
+    const db = this.requireDb('query');
     options?.signal?.throwIfAborted();
 
-    // extract sort property and direction from the supplied messageSort
     const { property: sortProperty, direction: sortDirection } = this.extractSortProperties(messageSort);
+    const filtersIncludeTags = MessageStoreSql.filtersIncludeTags(filters);
 
-    let query = this.#db
+    let query = db
       .selectFrom('messageStoreMessages')
-      .leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id')
+      .$if(filtersIncludeTags, (qb) => qb.leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id'))
       .select('messageCid')
       .distinct()
       .select([
@@ -453,30 +273,24 @@ export class MessageStoreSql implements MessageStore {
       ])
       .where('tenant', '=', tenant);
 
-    // filter sanitization takes place within `filterSelectQuery`
     query = filterSelectQuery(filters, query);
 
     if (pagination?.cursor !== undefined) {
-      // currently the sort property is explicitly either `dateCreated` | `messageTimestamp` | `datePublished` which are all strings
-      // TODO: https://github.com/enboxorg/enbox/issues/664 to handle the edge case
       const cursorValue = pagination.cursor.value as string;
       const cursorMessageId = pagination.cursor.messageCid;
 
       query = query.where(({ eb, refTuple, tuple }) => {
         const direction = sortDirection === SortDirection.Ascending ? '>' : '<';
-        // https://kysely-org.github.io/kysely-apidoc/interfaces/ExpressionBuilder.html#refTuple
         return eb(refTuple(sortProperty, 'messageCid'), direction, tuple(cursorValue, cursorMessageId));
       });
     }
 
     const orderDirection = sortDirection === SortDirection.Ascending ? 'asc' : 'desc';
-    // sorting by the provided sort property, the tiebreak is always in ascending order regardless of sort
     query = query
       .orderBy(sortProperty, orderDirection)
       .orderBy('messageCid', orderDirection);
 
     if (pagination?.limit !== undefined && pagination?.limit > 0) {
-      // we query for one additional record to decide if we return a pagination cursor or not.
       query = query.limit(pagination.limit + 1);
     }
 
@@ -485,28 +299,22 @@ export class MessageStoreSql implements MessageStore {
       options?.signal
     );
 
-    // prunes the additional requested message, if it exists, and adds a cursor to the results.
-    // also parses the encoded message for each of the returned results.
     return this.processPaginationResults(results, sortProperty, pagination?.limit, options);
   }
 
-  async count(
+  public async count(
     tenant: string,
     filters: Filter[],
     messageSort?: MessageSort,
     options?: MessageStoreOptions
   ): Promise<number> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `count`.'
-      );
-    }
-
+    const db = this.requireDb('count');
     options?.signal?.throwIfAborted();
+    const filtersIncludeTags = MessageStoreSql.filtersIncludeTags(filters);
 
-    let query = this.#db
+    let query = db
       .selectFrom('messageStoreMessages')
-      .leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id')
+      .$if(filtersIncludeTags, (qb) => qb.leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id'))
       .select(sql<number>`count(distinct ${sql.ref('messageStoreMessages.messageCid')})`.as('count'))
       .where('tenant', '=', tenant);
 
@@ -517,39 +325,598 @@ export class MessageStoreSql implements MessageStore {
     return Number(result.count);
   }
 
-  async delete(
+  public async updateIndexes(
+    tenant: string,
+    messageCid: string,
+    indexes: KeyValues,
+    options?: MessageStoreOptions
+  ): Promise<void> {
+    this.requireDb('updateIndexes');
+    options?.signal?.throwIfAborted();
+
+    await this.replaceRowIndexes({
+      tenant,
+      messageCid,
+      indexes,
+      notFoundErrorCode: DwnErrorCode.MessageStoreUpdateIndexesMessageNotFound,
+    });
+  }
+
+  public async updateMessageAndIndexes(
+    tenant: string,
+    messageCid: string,
+    message: GenericMessage,
+    indexes: KeyValues,
+    options?: MessageStoreOptions
+  ): Promise<void> {
+    this.requireDb('updateMessageAndIndexes');
+    options?.signal?.throwIfAborted();
+
+    const computedMessageCid = await Message.getCid(message);
+    if (computedMessageCid !== messageCid) {
+      throw new DwnError(
+        DwnErrorCode.MessageStoreUpdateMessageAndIndexesCidMismatch,
+        `replacement message CID ${computedMessageCid} does not match target CID ${messageCid}`
+      );
+    }
+
+    const { messageToStore, encodedData } = MessageStoreSql.detachInlineData(message);
+    const encodedMessageBlock = await executeUnlessAborted(
+      block.encode({ value: messageToStore, codec: cbor, hasher: sha256 }),
+      options?.signal
+    );
+
+    await this.replaceRowIndexes({
+      tenant,
+      messageCid,
+      indexes,
+      messageForScopeCheck : message,
+      encodedMessageBytes  : Buffer.from(encodedMessageBlock.bytes),
+      encodedData,
+      notFoundErrorCode    : DwnErrorCode.MessageStoreUpdateMessageAndIndexesMessageNotFound,
+    });
+  }
+
+  public async completeData(
+    tenant: string,
+    messageCid: string,
+    indexes: KeyValues,
+    encodedData?: string,
+    options?: MessageStoreOptions
+  ): Promise<MessageStoreCompleteDataResult> {
+    this.requireDb('completeData');
+    options?.signal?.throwIfAborted();
+
+    const redeliverSeq = await this.replaceRowIndexes({
+      tenant,
+      messageCid,
+      indexes,
+      encodedData,
+      notFoundErrorCode : DwnErrorCode.MessageStoreCompleteDataMessageNotFound,
+      stampRedelivery   : true,
+    });
+
+    if (redeliverSeq === undefined) {
+      return {};
+    }
+
+    this.publishWake(tenant, redeliverSeq);
+    return { position: await this.buildToken(tenant, redeliverSeq, messageCid) };
+  }
+
+  public async delete(
     tenant: string,
     cid: string,
     options?: MessageStoreOptions
   ): Promise<void> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `delete`.'
-      );
+    const db = this.requireDb('delete');
+    options?.signal?.throwIfAborted();
+    if (options?.signal?.aborted === true) {
+      throw options.signal.reason;
     }
 
-    options?.signal?.throwIfAborted();
-
     await executeUnlessAborted(
-      this.#db
-        .deleteFrom('messageStoreMessages')
-        .where('tenant', '=', tenant)
-        .where('messageCid', '=', cid)
-        .execute(),
+      executeWithTransaction(db, async (tx) => {
+        await this.#dialect.lockReplicationCounter(tx, tenant);
+
+        const row = await tx
+          .selectFrom('messageStoreMessages')
+          .select(['id', 'messageCid', 'fingerprintScopes'])
+          .where('tenant', '=', tenant)
+          .where('messageCid', '=', cid)
+          .executeTakeFirst();
+
+        if (row === undefined) {
+          return;
+        }
+
+        await tx
+          .deleteFrom('messageStoreMessages')
+          .where('id', '=', row.id)
+          .execute();
+
+        await this.foldFingerprints(tx, tenant, row.messageCid, MessageStoreSql.parseFingerprintScopes(row.fingerprintScopes, row.messageCid));
+      }),
       options?.signal
     );
   }
 
-  async clear(): Promise<void> {
-    if (!this.#db) {
-      throw new Error(
-        'Connection to database not open. Call `open` before using `clear`.'
-      );
+  /**
+   * Deletes all message-store rows and rotates the replication epoch. This invalidates all cursors
+   * issued before the reset.
+   */
+  public async clear(): Promise<void> {
+    const db = this.requireDb('clear');
+
+    await executeWithTransaction(db, async (tx) => {
+      await tx
+        .deleteFrom('messageStoreRecordsTags')
+        .execute();
+
+      await tx
+        .deleteFrom('messageStoreMessages')
+        .execute();
+
+      await tx
+        .deleteFrom('replicationCounters')
+        .execute();
+
+      await tx
+        .deleteFrom('replicationFingerprints')
+        .execute();
+
+      await tx
+        .deleteFrom('replicationMeta')
+        .execute();
+    });
+
+    this.#epochPromise = undefined;
+    await this.epoch();
+  }
+
+  public async logRead(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
+    const db = this.requireDb('logRead');
+    const { cursor, limit, filters } = options;
+
+    const head = await this.getHead(db, tenant);
+    if (cursor !== undefined) {
+      await this.validateCursor(tenant, cursor, head);
     }
 
-    await this.#db
-      .deleteFrom('messageStoreMessages')
+    const startPosition = cursor === undefined ? 0n : BigInt(cursor.position);
+
+    if (head === 0n) {
+      return { events: [], cursor, drained: true };
+    }
+
+    const maxResults = limit ?? Number.MAX_SAFE_INTEGER;
+    if (maxResults <= 0) {
+      return { events: [], cursor, drained: startPosition >= head };
+    }
+
+    if (startPosition >= head) {
+      return { events: [], cursor, drained: true };
+    }
+
+    const [originalRows, redeliveryRows] = await Promise.all([
+      this.selectLogRows(db, tenant, 'seq', startPosition, head, filters, maxResults),
+      this.selectLogRows(db, tenant, 'redeliverSeq', startPosition, head, filters, maxResults),
+    ]);
+
+    const mergedRows = MessageStoreSql.mergeRowsByPosition(originalRows, redeliveryRows)
+      .slice(0, maxResults);
+
+    const events = await this.buildEventEntries(db, mergedRows);
+    const lastDelivered = events.at(-1);
+    const lastDeliveredPosition = lastDelivered === undefined ? undefined : BigInt(lastDelivered.position ?? lastDelivered.seq);
+    const lastScannedPosition = mergedRows.at(-1)?.position ?? startPosition;
+    const drained = events.length < maxResults || lastScannedPosition >= head;
+    const cursorPosition = drained ? head : lastScannedPosition;
+    const cursorMessageCid = lastDeliveredPosition === cursorPosition ? lastDelivered?.messageCid : undefined;
+
+    return {
+      events,
+      cursor: await this.buildToken(tenant, cursorPosition, cursorMessageCid),
+      drained,
+    };
+  }
+
+  public async logBounds(tenant: string): Promise<{ oldest: ProgressToken; latest: ProgressToken } | undefined> {
+    const db = this.requireDb('logBounds');
+    const head = await this.getHead(db, tenant);
+    if (head === 0n) {
+      return undefined;
+    }
+
+    const oldest = await this.buildToken(tenant, 0n);
+    const latest = await this.buildToken(tenant, head, await this.getMessageCidAtPosition(tenant, head));
+
+    return { oldest, latest };
+  }
+
+  public async fingerprint(tenant: string, scopes: string[]): Promise<string> {
+    const db = this.requireDb('fingerprint');
+
+    let composed = Replication.emptyFingerprint();
+    for (const scope of scopes) {
+      const row = await db
+        .selectFrom('replicationFingerprints')
+        .select('fingerprint')
+        .where('tenant', '=', tenant)
+        .where('scope', '=', scope)
+        .executeTakeFirst();
+
+      if (row !== undefined) {
+        composed = Replication.xorFingerprint(composed, Replication.hexToFingerprint(row.fingerprint));
+      }
+    }
+
+    return Replication.fingerprintToHex(composed);
+  }
+
+  public async epoch(): Promise<string> {
+    const db = this.requireDb('epoch');
+    this.#epochPromise ??= this.initializeEpoch(db).catch((error) => {
+      this.#epochPromise = undefined;
+      throw error;
+    });
+    return this.#epochPromise;
+  }
+
+  private async replaceRowIndexes(input: {
+    tenant: string;
+    messageCid: string;
+    indexes: KeyValues;
+    encodedMessageBytes?: Buffer;
+    encodedData?: string | null;
+    messageForScopeCheck?: GenericMessage;
+    notFoundErrorCode: DwnErrorCode;
+    stampRedelivery?: boolean;
+  }): Promise<bigint | undefined> {
+    const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, messageForScopeCheck, notFoundErrorCode, stampRedelivery } = input;
+    const db = this.requireDb('replaceRowIndexes');
+    const { indexes: replacementIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
+
+    return executeWithTransaction(db, async (tx) => {
+      await this.#dialect.lockReplicationCounter(tx, tenant);
+
+      const existingRow = await tx
+        .selectFrom('messageStoreMessages')
+        .selectAll()
+        .where('tenant', '=', tenant)
+        .where('messageCid', '=', messageCid)
+        .executeTakeFirst();
+
+      if (existingRow === undefined) {
+        throw new DwnError(notFoundErrorCode, `no message found for tenant ${tenant} with CID ${messageCid}`);
+      }
+
+      if (stampRedelivery === true && existingRow.redeliverSeq !== null) {
+        throw new DwnError(
+          DwnErrorCode.MessageStoreCompleteDataAlreadyStamped,
+          `message ${messageCid} is already stamped at position ${existingRow.redeliverSeq}; the dataless-to-data transition cannot repeat`
+        );
+      }
+
+      const message = messageForScopeCheck ?? await this.parseEncodedMessage(existingRow.encodedMessageBytes, existingRow.encodedData);
+      Replication.assertFingerprintScopesUntouched(
+        MessageStoreSql.parseFingerprintScopes(existingRow.fingerprintScopes, messageCid),
+        message,
+        messageCid,
+        indexes
+      );
+
+      const redeliverSeq = stampRedelivery === true ? await this.#dialect.incrementReplicationCounter(tx, tenant) : undefined;
+      const replacementColumns = {
+        ...NULLED_INDEX_COLUMNS,
+        ...replacementIndexes,
+        ...(encodedMessageBytes !== undefined && { encodedMessageBytes }),
+        ...(encodedData !== undefined && { encodedData }),
+        ...(redeliverSeq !== undefined && { redeliverSeq: redeliverSeq.toString() }),
+      };
+
+      await tx
+        .updateTable('messageStoreMessages')
+        .set(replacementColumns as UpdateObject<DwnDatabaseType, 'messageStoreMessages'>)
+        .where('id', '=', existingRow.id)
+        .execute();
+
+      await tx
+        .deleteFrom('messageStoreRecordsTags')
+        .where('messageInsertId', '=', existingRow.id)
+        .execute();
+
+      if (Object.keys(tags).length > 0) {
+        await this.#tags.executeTagsInsert(existingRow.id, tags, tx);
+      }
+
+      return redeliverSeq;
+    });
+  }
+
+  private async selectLogRows(
+    executor: MessageStoreExecutor,
+    tenant: string,
+    positionColumn: PositionColumn,
+    startPosition: bigint,
+    head: bigint,
+    filters: Filter[] | undefined,
+    maxResults: number,
+  ): Promise<Array<{ row: LogRow; position: bigint }>> {
+    let query = executor
+      .selectFrom('messageStoreMessages')
+      .leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id')
+      .selectAll('messageStoreMessages')
+      .select([
+        this.#dialect.bigIntColumnAsText('messageStoreMessages.seq').as('seqText'),
+        this.#dialect.bigIntColumnAsText('messageStoreMessages.redeliverSeq').as('redeliverSeqText'),
+      ])
+      .distinct()
+      .where('tenant', '=', tenant)
+      .where(positionColumn, '>', startPosition.toString())
+      .where(positionColumn, '<=', head.toString())
+      .orderBy(positionColumn, 'asc');
+
+    if (filters !== undefined && filters.length > 0) {
+      query = filterSelectQuery(filters, query);
+    }
+
+    if (maxResults < Number.MAX_SAFE_INTEGER) {
+      query = query.limit(maxResults);
+    }
+
+    const rows = await query.execute() as LogRow[];
+    return rows.map((row) => ({
+      row,
+      position: MessageStoreSql.requirePosition(row, positionColumn),
+    }));
+  }
+
+  private async buildEventEntries(
+    executor: MessageStoreExecutor,
+    positionedRows: Array<{ row: LogRow; position: bigint }>,
+  ): Promise<EventLogEntry[]> {
+    const tagMap = await this.fetchTagsByMessageIds(positionedRows.map(({ row }) => row.id), executor);
+    const entries: EventLogEntry[] = [];
+
+    for (const { row, position } of positionedRows) {
+      const message = await this.parseEncodedMessage(row.encodedMessageBytes, row.encodedData);
+      entries.push({
+        seq        : MessageStoreSql.requirePosition(row, 'seq').toString(),
+        position   : position.toString(),
+        event      : { message },
+        indexes    : MessageStoreSql.rowToIndexes(row, tagMap.get(row.id)),
+        messageCid : row.messageCid,
+      });
+    }
+
+    return entries;
+  }
+
+  private async fetchTagsByMessageIds(
+    messageInsertIds: number[],
+    executor: MessageStoreExecutor,
+  ): Promise<Map<number, KeyValues>> {
+    const tagsByMessageId = new Map<number, KeyValues>();
+    if (messageInsertIds.length === 0) {
+      return tagsByMessageId;
+    }
+
+    const rows = await executor
+      .selectFrom('messageStoreRecordsTags')
+      .select(['messageInsertId', 'tag', 'valueNumber', 'valueString'])
+      .where('messageInsertId', 'in', messageInsertIds)
       .execute();
+
+    for (const row of rows) {
+      const tags = tagsByMessageId.get(row.messageInsertId) ?? {};
+      const tagValue = row.valueString === null ? Number(row.valueNumber) : row.valueString;
+      const existing = tags[row.tag];
+      if (existing === undefined) {
+        tags[row.tag] = tagValue;
+      } else {
+        tags[row.tag] = MessageStoreSql.appendTagValue(existing, tagValue);
+      }
+      tagsByMessageId.set(row.messageInsertId, tags);
+    }
+
+    return tagsByMessageId;
+  }
+
+  private async foldFingerprints(
+    tx: Transaction<DwnDatabaseType>,
+    tenant: string,
+    messageCid: string,
+    scopes: string[],
+  ): Promise<void> {
+    const contribution = await Replication.hashMessageCid(messageCid);
+
+    for (const scope of scopes) {
+      const existing = await tx
+        .selectFrom('replicationFingerprints')
+        .select('fingerprint')
+        .where('tenant', '=', tenant)
+        .where('scope', '=', scope)
+        .executeTakeFirst();
+
+      const current = existing === undefined ? Replication.emptyFingerprint() : Replication.hexToFingerprint(existing.fingerprint);
+      const folded = Replication.fingerprintToHex(Replication.xorFingerprint(current, contribution));
+
+      if (existing === undefined) {
+        await tx
+          .insertInto('replicationFingerprints')
+          .values({ tenant, scope, fingerprint: folded })
+          .execute();
+      } else {
+        await tx
+          .updateTable('replicationFingerprints')
+          .set({ fingerprint: folded })
+          .where('tenant', '=', tenant)
+          .where('scope', '=', scope)
+          .execute();
+      }
+    }
+  }
+
+  private async validateCursor(tenant: string, cursor: ProgressToken, head: bigint): Promise<void> {
+    const expectedStreamId = await Replication.deriveStreamId(tenant);
+    const reason = await this.validateCursorPosition(tenant, cursor, head, expectedStreamId);
+    if (reason === undefined) {
+      return;
+    }
+
+    const bounds = await this.logBounds(tenant);
+    const gapInfo: ProgressGapInfo = {
+      requested       : cursor,
+      oldestAvailable : bounds?.oldest ?? cursor,
+      latestAvailable : bounds?.latest ?? cursor,
+      reason,
+    };
+
+    const error = Object.assign(new DwnError(
+      DwnErrorCode.EventLogProgressGap,
+      `progress token gap: ${reason}`
+    ), { gapInfo });
+    throw error;
+  }
+
+  private async validateCursorPosition(
+    tenant: string,
+    cursor: ProgressToken,
+    head: bigint,
+    expectedStreamId: string,
+  ): Promise<ProgressGapReason | undefined> {
+    if (cursor.streamId !== expectedStreamId) {
+      return 'stream_mismatch';
+    }
+
+    if (cursor.epoch !== await this.epoch()) {
+      return 'epoch_mismatch';
+    }
+
+    const cursorPosition = BigInt(cursor.position);
+    if (cursorPosition > head) {
+      return 'token_too_new';
+    }
+
+    if (cursor.messageCid === undefined) {
+      return undefined;
+    }
+
+    const positionMessageCid = await this.getMessageCidAtPosition(tenant, cursorPosition);
+    if (positionMessageCid !== undefined && positionMessageCid !== cursor.messageCid) {
+      return 'message_mismatch';
+    }
+
+    return undefined;
+  }
+
+  private async getMessageCidAtPosition(tenant: string, position: bigint): Promise<string | undefined> {
+    if (position <= 0n) {
+      return undefined;
+    }
+
+    const db = this.requireDb('getMessageCidAtPosition');
+    const positionString = position.toString();
+    const row = await db
+      .selectFrom('messageStoreMessages')
+      .select('messageCid')
+      .where('tenant', '=', tenant)
+      .where(({ eb, or }) => or([
+        eb('seq', '=', positionString),
+        eb('redeliverSeq', '=', positionString),
+      ]))
+      .executeTakeFirst();
+
+    return row?.messageCid;
+  }
+
+  private async getHead(executor: MessageStoreExecutor, tenant: string): Promise<bigint> {
+    const row = await executor
+      .selectFrom('replicationCounters')
+      .select(this.#dialect.bigIntColumnAsText('replicationCounters.seq').as('seq'))
+      .where('tenant', '=', tenant)
+      .executeTakeFirst();
+
+    return row?.seq === undefined || row.seq === null ? 0n : BigInt(row.seq);
+  }
+
+  private async hasMessage(tenant: string, messageCid: string): Promise<boolean> {
+    const db = this.requireDb('hasMessage');
+    const existing = await db
+      .selectFrom('messageStoreMessages')
+      .select('id')
+      .where('tenant', '=', tenant)
+      .where('messageCid', '=', messageCid)
+      .executeTakeFirst();
+
+    return existing !== undefined;
+  }
+
+  private async initializeEpoch(db: Kysely<DwnDatabaseType>): Promise<string> {
+    const existing = await db
+      .selectFrom('replicationMeta')
+      .select('value')
+      .where('key', '=', EPOCH_KEY)
+      .executeTakeFirst();
+
+    if (existing !== undefined) {
+      return existing.value;
+    }
+
+    const epoch = crypto.randomUUID();
+    try {
+      await db
+        .insertInto('replicationMeta')
+        .values({ key: EPOCH_KEY, value: epoch })
+        .execute();
+      return epoch;
+    } catch (error: unknown) {
+      if (!isDuplicateKeyError(error)) {
+        throw error;
+      }
+
+      const row = await db
+        .selectFrom('replicationMeta')
+        .select('value')
+        .where('key', '=', EPOCH_KEY)
+        .executeTakeFirstOrThrow();
+
+      return row.value;
+    }
+  }
+
+  private async buildToken(tenant: string, position: bigint, messageCid?: string): Promise<ProgressToken> {
+    const token: ProgressToken = {
+      streamId : await this.getStreamId(tenant),
+      epoch    : await this.epoch(),
+      position : position.toString(),
+    };
+
+    if (messageCid !== undefined) {
+      token.messageCid = messageCid;
+    }
+
+    return token;
+  }
+
+  private getStreamId(tenant: string): Promise<string> {
+    let streamIdPromise = this.#streamIdPromises.get(tenant);
+    if (streamIdPromise !== undefined) {
+      return streamIdPromise;
+    }
+
+    streamIdPromise = Replication.deriveStreamId(tenant);
+    this.#streamIdPromises.set(tenant, streamIdPromise);
+    return streamIdPromise;
+  }
+
+  private publishWake(tenant: string, position: bigint): void {
+    try {
+      this.#wakePublisher?.publish({ tenant, seq: position.toString() });
+    } catch {
+      // A lost wake only delays delivery; consumers' idle re-drain bounds the latency.
+    }
   }
 
   private async parseEncodedMessage(
@@ -562,38 +929,22 @@ export class MessageStoreSql implements MessageStore {
     const decodedBlock = await block.decode({
       bytes  : encodedMessageBytes,
       codec  : cbor,
-      hasher : sha256
+      hasher : sha256,
     });
 
     const message = decodedBlock.value as GenericMessage;
-    // If encodedData is stored within the MessageStore we include it in the response.
-    // We store encodedData when the data is below a certain threshold.
-    // https://github.com/enboxorg/enbox/pull/456
     if (message !== undefined && encodedData !== undefined && encodedData !== null) {
       message.encodedData = encodedData;
     }
     return message;
   }
 
-  /**
-   * Processes the paginated query results.
-   * Builds a pagination cursor if there are additional messages to paginate.
-   * Accepts more messages than the limit, as we query for additional records to check if we should paginate.
-   *
-   * @param messages a list of messages, potentially larger than the provided limit.
-   * @param limit the maximum number of messages to be returned
-   *
-   * @returns the pruned message results and an optional pagination cursor
-   */
   private async processPaginationResults(
     results: any[],
     sortProperty: string,
     limit?: number,
     options?: MessageStoreOptions,
-  ): Promise<{ messages: GenericMessage[], cursor?: PaginationCursor}> {
-    // we queried for one additional message to determine if there are any additional messages beyond the limit
-    // we now check if the returned results are greater than the limit, if so we pluck the last item out of the result set
-    // the cursor is always the last item in the *returned* result so we use the last item in the remaining result set to build a cursor
+  ): Promise<{ messages: GenericMessage[], cursor?: PaginationCursor }> {
     let cursor: PaginationCursor | undefined;
     if (limit !== undefined && results.length > limit) {
       results = results.slice(0, limit);
@@ -602,17 +953,15 @@ export class MessageStoreSql implements MessageStore {
       cursor = { messageCid: lastMessage.messageCid, value: cursorValue };
     }
 
-    // extracts the full encoded message from the stored blob for each result item.
-    const messages: Promise<GenericMessage>[] = results.map(r => this.parseEncodedMessage(r.encodedMessageBytes, r.encodedData, options));
+    const messages: Promise<GenericMessage>[] = results.map(
+      (result): Promise<GenericMessage> => this.parseEncodedMessage(result.encodedMessageBytes, result.encodedData, options)
+    );
     return { messages: await Promise.all(messages), cursor };
   }
 
-  /**
-   * Extracts the appropriate sort property and direction given a MessageSort object.
-   */
   private extractSortProperties(
     messageSort?: MessageSort
-  ):{ property: 'dateCreated' | 'datePublished' | 'messageTimestamp', direction: SortDirection } {
+  ): { property: 'dateCreated' | 'datePublished' | 'messageTimestamp', direction: SortDirection } {
     if (messageSort?.dateCreated !== undefined) {
       return { property: 'dateCreated', direction: messageSort.dateCreated };
     } else if (messageSort?.datePublished !== undefined) {
@@ -623,6 +972,164 @@ export class MessageStoreSql implements MessageStore {
       return { property: 'messageTimestamp', direction: messageSort.messageTimestamp };
     }
   }
+
+  private async assertTablesExist(): Promise<void> {
+    const tables = [
+      'messageStoreMessages',
+      'messageStoreRecordsTags',
+      'replicationCounters',
+      'replicationFingerprints',
+      'replicationMeta',
+    ] as const;
+
+    for (const table of tables) {
+      try {
+        await sql`SELECT 1 FROM ${sql.table(table)} LIMIT 0`.execute(this.#db!);
+      } catch {
+        throw new Error(
+          `MessageStoreSql: table '${table}' does not exist. Run DWN store migrations before opening stores.`
+        );
+      }
+    }
+  }
+
+  private async assertNoPreSubstrateRows(): Promise<void> {
+    const row = await this.#db!
+      .selectFrom('messageStoreMessages')
+      .select('messageCid')
+      .where(({ eb, or }) => or([
+        eb('seq', 'is', null),
+        eb('fingerprintScopes', 'is', null),
+      ]))
+      .executeTakeFirst();
+
+    if (row !== undefined) {
+      throw new DwnError(
+        DwnErrorCode.MessageStorePreSubstrateLayout,
+        'messageStoreMessages contains rows without replication log metadata; reset the SQL store before opening it'
+      );
+    }
+  }
+
+  private requireDb(operation: string): Kysely<DwnDatabaseType> {
+    if (!this.#db) {
+      throw new Error(
+        `Connection to database not open. Call \`open\` before using \`${operation}\`.`
+      );
+    }
+
+    return this.#db;
+  }
+
+  private static detachInlineData(message: GenericMessage): {
+    messageToStore: GenericMessage;
+    encodedData: string | null;
+  } {
+    const messageToStore = { ...message };
+    let encodedData: string | null = null;
+
+    if (messageToStore.descriptor.interface === DwnInterfaceName.Records && messageToStore.descriptor.method === DwnMethodName.Write) {
+      const data = messageToStore.encodedData;
+      if (data !== undefined) {
+        delete messageToStore.encodedData;
+        encodedData = data;
+      }
+    }
+
+    return { messageToStore, encodedData };
+  }
+
+  private static mergeRowsByPosition<TRow extends MessageStoreRow>(
+    originalRows: Array<{ row: TRow; position: bigint }>,
+    redeliveryRows: Array<{ row: TRow; position: bigint }>,
+  ): Array<{ row: TRow; position: bigint }> {
+    const rows = [...originalRows, ...redeliveryRows];
+    rows.sort((left, right) => {
+      if (left.position === right.position) {
+        return 0;
+      }
+      return left.position < right.position ? -1 : 1;
+    });
+    return rows;
+  }
+
+  private static rowToIndexes(row: MessageStoreRow, tags: KeyValues = {}): KeyValues {
+    const indexes: KeyValues = {};
+
+    for (const column of MESSAGE_STORE_INDEX_COLUMNS) {
+      const value = row[column];
+      if (value === null || value === undefined) {
+        continue;
+      }
+
+      indexes[column] = BOOLEAN_INDEX_COLUMNS.has(column) ? MessageStoreSql.toBooleanIndex(value) : value as string | number;
+    }
+
+    for (const [tag, value] of Object.entries(tags)) {
+      indexes[`tag.${tag}`] = value;
+    }
+
+    return indexes;
+  }
+
+  private static toBooleanIndex(value: unknown): boolean {
+    return value === true || value === 1 || value === '1';
+  }
+
+  private static appendTagValue(
+    existing: string | number | boolean | string[] | number[],
+    tagValue: string | number,
+  ): string[] | number[] {
+    if (Array.isArray(existing)) {
+      if (existing.every((value) => typeof value === 'number') && typeof tagValue === 'number') {
+        return [...existing, tagValue] as number[];
+      }
+
+      return [...existing.map(String), String(tagValue)];
+    }
+
+    if (typeof existing === 'number' && typeof tagValue === 'number') {
+      return [existing, tagValue];
+    }
+
+    return [String(existing), String(tagValue)];
+  }
+
+  private static filtersIncludeTags(filters: Filter[]): boolean {
+    return filters.some((filter) => Object.keys(filter).some((key) => key.startsWith('tag.')));
+  }
+
+  private static requirePosition(row: MessageStoreRow & Partial<PositionTextColumns>, positionColumn: PositionColumn): bigint {
+    const textValue = positionColumn === 'seq' ? row.seqText : row.redeliverSeqText;
+    const value = textValue ?? row[positionColumn];
+    if (value === null || value === undefined) {
+      throw new DwnError(
+        DwnErrorCode.MessageStorePreSubstrateLayout,
+        `message ${row.messageCid} is missing replication position ${positionColumn}`
+      );
+    }
+
+    return BigInt(String(value));
+  }
+
+  private static parseFingerprintScopes(scopes: string | null, messageCid: string): string[] {
+    if (scopes === null) {
+      throw new DwnError(
+        DwnErrorCode.MessageStorePreSubstrateLayout,
+        `message ${messageCid} is missing persisted fingerprint scopes`
+      );
+    }
+
+    const parsed = JSON.parse(scopes);
+    if (!Array.isArray(parsed) || parsed.some((scope) => typeof scope !== 'string')) {
+      throw new DwnError(
+        DwnErrorCode.MessageStoreFingerprintScopeMutation,
+        `message ${messageCid} has invalid persisted fingerprint scopes`
+      );
+    }
+
+    return parsed;
+  }
 }
 
-export { isDuplicateKeyError } from './utils/duplicate-key-error.js';
+export { isDuplicateKeyError, isMessageCidDuplicateKeyError } from './utils/duplicate-key-error.js';
