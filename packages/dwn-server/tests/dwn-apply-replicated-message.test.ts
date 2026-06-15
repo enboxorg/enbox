@@ -392,6 +392,49 @@ describe('handleDwnApplyReplicatedMessage', () => {
     await dwn.close();
   });
 
+  it('should enforce quota when replicated data completes a dataless stored write', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const data = new Uint8Array([9, 10, 11, 12]);
+    const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
+    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.applyReplicatedMessage', {
+      message : recordsWrite.toJSON(),
+      target  : alice.did,
+    });
+    const { dwn } = await getTestDwn();
+    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+    const datalessApply = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      {
+        dwn,
+        transport: 'http',
+      },
+    );
+    expect(datalessApply.jsonRpcResponse.error).toBeUndefined();
+    expect((datalessApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Applied');
+
+    const completingApply = await handleDwnApplyReplicatedMessage(
+      dwnRequest,
+      {
+        dwn,
+        transport  : 'http',
+        dataStream,
+        adminStore : {
+          getTenantMessageCount : async (): Promise<number> => 1,
+          getTenantStorageSize  : async (): Promise<number> => 0,
+        } as any,
+        config: {
+          quotaMaxMessages     : 1,
+          quotaMaxStorageBytes : 0,
+        } as any,
+      },
+    );
+
+    expect(completingApply.jsonRpcResponse.error).toBeDefined();
+    expect(completingApply.jsonRpcResponse.error.message).toContain(DwnServerErrorCode.TenantMessageQuotaExceeded);
+    await dwn.close();
+  });
+
   it('returns an internal JSON-RPC error for unexpected thrown errors', async () => {
     const requestId = uuidv4();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {

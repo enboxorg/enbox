@@ -57,9 +57,6 @@ services:
     image: nats:2.10-alpine
     container_name: enbox-test-nats
     command:
-      - "-js"
-      - "-sd"
-      - "/data"
       - "-m"
       - "8222"
     ports:
@@ -70,9 +67,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    tmpfs:
-      - /data
-
   minio:
     image: minio/minio:latest
     container_name: enbox-test-minio

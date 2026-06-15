@@ -297,6 +297,38 @@ describe('DurableEventLog', () => {
     await scriptedLog.close();
   });
 
+  it('should ignore wakes for tenants without a matching subscription', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const bob = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const firstEntry = await createLogEntry(alice, '1');
+    const secondEntry = await createLogEntry(alice, '2');
+    const scriptedStore = new ScriptedFeedStore(alice.did, [firstEntry], localWakePublisher);
+    const scriptedLog = new DurableEventLog(scriptedStore, localWakePublisher, { idleRedrainIntervalMs: 0 });
+    const received: SubscriptionMessage[] = [];
+
+    await scriptedLog.open();
+    await scriptedLog.subscribe(alice.did, 'cross-tenant-wake', (message): void => {
+      received.push(message);
+    });
+
+    scriptedStore.append(secondEntry);
+    localWakePublisher.publish({ tenant: bob.did, seq: '2' });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(received).toHaveLength(0);
+
+    localWakePublisher.publish({ tenant: alice.did, seq: '2' });
+    await Poller.pollUntilSuccessOrTimeout(async () => {
+      expect(received).toHaveLength(1);
+    });
+    expect(received[0]).toEqual(expect.objectContaining({
+      type : 'event',
+      seq  : '2',
+    }));
+
+    await scriptedLog.close();
+  });
+
   it('should stop delivering the current page after a subscription closes', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const localWakePublisher = new EventEmitterWakePublisher();
@@ -409,6 +441,33 @@ describe('DurableEventLog', () => {
     expect(deleteEntry).toBeDefined();
     expect(deleteEntry!.event.initialWrite).toBeDefined();
     expect(deleteEntry!.event.initialWrite!.recordId).toBe(initial.message.recordId);
+  });
+
+  it('should leave events readable when the initial write is no longer queryable', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const localWakePublisher = new EventEmitterWakePublisher();
+    const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
+    const update = await TestDataGenerator.generateFromRecordsWrite({
+      author        : alice,
+      existingWrite : initial.recordsWrite,
+    });
+    const indexes = await update.recordsWrite.constructIndexes(true);
+    const scriptedStore = new ScriptedFeedStore(alice.did, [{
+      seq        : '1',
+      position   : '1',
+      event      : { message: update.message },
+      indexes,
+      messageCid : await Message.getCid(update.message),
+    }], localWakePublisher);
+    const scriptedLog = new DurableEventLog(scriptedStore, localWakePublisher, { idleRedrainIntervalMs: 0 });
+
+    await scriptedLog.open();
+    const result = await scriptedLog.read(alice.did);
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].event.message).toEqual(update.message);
+    expect(result.events[0].event.initialWrite).toBeUndefined();
+    await scriptedLog.close();
   });
 
   async function storeRecord(author: Persona): Promise<StoredRecord> {

@@ -424,11 +424,8 @@ export class DurableEventLog implements EventLog {
       return event;
     }
 
-    const { messages } = await this.store.query(tenant, [{
-      interface: DwnInterfaceName.Records,
-      recordId,
-    }]);
-    const initialWrite = await RecordsWrite.getInitialWrite(messages);
+    const { messages } = await this.store.query(tenant, [{ entryId: recordId }]);
+    const initialWrite = messages[0] as RecordsWriteMessage | undefined;
     if (initialWrite === undefined) {
       return event;
     }

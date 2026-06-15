@@ -244,9 +244,9 @@ export type EventLogReadResult = {
  * that enable cursor-based resume after disconnects.
  *
  * The interface is intentionally transport-agnostic — implementations can be
- * backed by LevelDB (embedded), SQL, NATS JetStream, Redis Streams, etc.
- * Each implementation owns the catch-up + live transition strategy appropriate
- * to its backend (e.g., NATS pull consumers, Redis XREAD, in-memory buffering).
+ * backed by an embedded store, SQL, or another durable ordered feed. Each
+ * implementation owns the catch-up + live transition strategy appropriate to
+ * its backend.
  */
 export interface EventLog {
   /**
