@@ -3,6 +3,9 @@ import type { RequireOnly } from '@enbox/common';
 
 import type {
   GenericMessageReply,
+  MessagesQueryMessage,
+  MessagesQueryOptions,
+  MessagesQueryReply,
   MessagesReadMessage,
   MessagesReadOptions,
   MessagesReadReply,
@@ -37,6 +40,7 @@ import type { MessagesSyncOptions } from '@enbox/dwn-sdk-js';
 import {
   DwnInterfaceName,
   DwnMethodName,
+  MessagesQuery,
   MessagesRead,
   MessagesSubscribe,
   MessagesSync,
@@ -75,6 +79,7 @@ import {
 export interface DwnDidService extends DidService {}
 
 export enum DwnInterface {
+  MessagesQuery = DwnInterfaceName.Messages + DwnMethodName.Query,
   MessagesRead = DwnInterfaceName.Messages + DwnMethodName.Read,
   MessagesSubscribe = DwnInterfaceName.Messages + DwnMethodName.Subscribe,
   MessagesSync = DwnInterfaceName.Messages + DwnMethodName.Sync,
@@ -92,6 +97,7 @@ export type DwnRecordsInterfaces =
   | DwnInterface.RecordsSubscribe | DwnInterface.RecordsWrite;
 
 export interface DwnMessage {
+  [DwnInterface.MessagesQuery] : MessagesQueryMessage;
   [DwnInterface.MessagesRead] : MessagesReadMessage;
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeMessage;
   [DwnInterface.MessagesSync] : MessagesSyncMessage;
@@ -105,6 +111,7 @@ export interface DwnMessage {
 }
 
 export interface DwnMessageDescriptor {
+  [DwnInterface.MessagesQuery] : MessagesQueryMessage['descriptor'];
   [DwnInterface.MessagesRead] : MessagesReadMessage['descriptor'];
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeMessage['descriptor'];
   [DwnInterface.MessagesSync] : MessagesSyncMessage['descriptor'];
@@ -118,6 +125,7 @@ export interface DwnMessageDescriptor {
 }
 
 export interface DwnMessageParams {
+  [DwnInterface.MessagesQuery] : MessagesQueryOptions;
   [DwnInterface.MessagesRead] : RequireOnly<MessagesReadOptions, 'messageCid'>;
   [DwnInterface.MessagesSubscribe] : Partial<MessagesSubscribeOptions>;
   [DwnInterface.MessagesSync] : RequireOnly<MessagesSyncOptions, 'action'>;
@@ -131,6 +139,7 @@ export interface DwnMessageParams {
 }
 
 export interface DwnMessageReply {
+  [DwnInterface.MessagesQuery] : MessagesQueryReply;
   [DwnInterface.MessagesRead] : MessagesReadReply;
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeReply;
   [DwnInterface.MessagesSync] : MessagesSyncReply;
@@ -148,6 +157,7 @@ export interface MessageHandler {
   [DwnInterface.RecordsSubscribe] : SubscriptionListener;
 
   // define all of them individually as undefined
+  [DwnInterface.MessagesQuery] : undefined;
   [DwnInterface.MessagesRead] : undefined;
   [DwnInterface.MessagesSync] : undefined;
   [DwnInterface.ProtocolsConfigure] : undefined;
@@ -218,6 +228,7 @@ export interface DwnMessageConstructor<T extends DwnInterface> {
 }
 
 export const dwnMessageConstructors: { [T in DwnInterface]: DwnMessageConstructor<T> } = {
+  [DwnInterface.MessagesQuery]      : MessagesQuery,
   [DwnInterface.MessagesRead]       : MessagesRead,
   [DwnInterface.MessagesSubscribe]  : MessagesSubscribe,
   [DwnInterface.MessagesSync]       : MessagesSync,
@@ -231,6 +242,7 @@ export const dwnMessageConstructors: { [T in DwnInterface]: DwnMessageConstructo
 };
 
 export interface DwnMessageInstance {
+  [DwnInterface.MessagesQuery] : MessagesQuery;
   [DwnInterface.MessagesRead] : MessagesRead;
   [DwnInterface.MessagesSubscribe] : MessagesSubscribe;
   [DwnInterface.MessagesSync] : MessagesSync;

@@ -9,7 +9,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import { ReplicationLedger } from '../src/sync-replication-ledger.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncPullAbortedError } from '../src/sync-messages.js';
-import { getMessagesPermissionGrantsForScope, resolveMessagesSyncScopes } from '../src/sync-permission-grants.js';
+import { getMessagesPermissionGrantsForScope, resolveMessagesScopes } from '../src/sync-permission-grants.js';
 
 describe('SyncEngineLevel — private methods', () => {
   let db: Level<string, string>;
@@ -381,7 +381,7 @@ describe('SyncEngineLevel — private methods', () => {
         ]),
       };
 
-      await expect(resolveMessagesSyncScopes({
+      await expect(resolveMessagesScopes({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
         requestedScope : { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
@@ -402,7 +402,7 @@ describe('SyncEngineLevel — private methods', () => {
         ]),
       };
 
-      await expect(resolveMessagesSyncScopes({
+      await expect(resolveMessagesScopes({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
         requestedScope : { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
@@ -428,7 +428,7 @@ describe('SyncEngineLevel — private methods', () => {
         ]),
       };
 
-      await expect(resolveMessagesSyncScopes({
+      await expect(resolveMessagesScopes({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
         requestedScope : {

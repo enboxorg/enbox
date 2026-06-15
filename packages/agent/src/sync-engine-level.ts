@@ -28,7 +28,7 @@ import { topologicalSort } from './sync-topological-sort.js';
 import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, getMessageCid, pushMessages, SyncPullAbortedError } from './sync-messages.js';
 import { partitionRemoteEntries, SyncLinkReconciler } from './sync-link-reconciler.js';
-import { permissionGrantIdsFromEntries, resolveMessagesSyncScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
+import { permissionGrantIdsFromEntries, resolveMessagesScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
 export type SyncEngineLevelParams = {
   agent?: EnboxPlatformAgent;
@@ -381,7 +381,7 @@ export class SyncEngineLevel implements SyncEngine {
       }];
     }
 
-    const resolvedScopes = await resolveMessagesSyncScopes({
+    const resolvedScopes = await resolveMessagesScopes({
       did,
       delegateDid,
       requestedScope,

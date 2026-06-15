@@ -603,6 +603,35 @@ describe('AgentDwnApi', () => {
       await testHarness.clearStorage();
     });
 
+    it('handles MessagesQuery through the generic request path', async () => {
+      const dataBytes = Convert.string('MessagesQuery write').toUint8Array();
+      const { messageCid: writeMessageCid, reply: { status: writeStatus } } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'text/plain',
+          protocol     : freeForAllProtocolDefinition.protocol,
+          protocolPath : 'post'
+        },
+        dataStream: new Blob([dataBytes as BlobPart])
+      });
+      expect(writeStatus.code).toBe(202);
+
+      const { reply } = await testHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.MessagesQuery,
+        messageParams : { cidsOnly: true },
+      });
+
+      expect(reply.status.code).toBe(200);
+      expect(reply.entries?.some(entry => entry.messageCid === writeMessageCid)).toBe(true);
+      expect(reply.entries?.every(entry => entry.message === undefined)).toBe(true);
+      expect(reply.cursor?.position).toBeDefined();
+      expect(reply.drained).toBe(true);
+    });
+
     it('handles MessageSubscription', async () => {
       const receivedMessages: string[] = [];
       const subscriptionHandler = async (msg): Promise<void> => {
