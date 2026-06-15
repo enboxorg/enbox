@@ -4729,6 +4729,27 @@ describe('SyncEngineLevel — private methods', () => {
       expect(pullEvent).toBeUndefined();
     });
 
+    it('should emit checkpoint:pull-advance for high-water tokens without messageCid', () => {
+      const engine = createEngine({ db });
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      const link = {
+        tenantDid      : 'did:example:alice',
+        remoteEndpoint : 'https://dwn.example.com',
+        pull           : {
+          contiguousAppliedToken: { streamId: 's', epoch: 'e', position: '42' },
+        },
+      } as any;
+
+      (engine as any).emitPullCheckpointAdvance(link);
+
+      const pullEvent = events.find(e => e.type === 'checkpoint:pull-advance');
+      expect(pullEvent).toBeDefined();
+      expect(pullEvent.position).toBe('42');
+      expect(pullEvent.messageCid).toBeUndefined();
+    });
+
     it('should return an unsubscribe function from on()', () => {
       const engine = createEngine({ db });
       const events: any[] = [];

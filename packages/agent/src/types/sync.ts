@@ -402,7 +402,7 @@ type SyncEventBase = {
 export type SyncEvent =
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
-  | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid: string }
+  | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid?: string }
   /** Emitted when set reconciliation admits remote messages outside the live pull checkpoint stream. */
   | SyncEventBase & { type: 'reconcile:applied'; messageCids: string[] }
   | SyncEventBase & { type: 'reconcile:needed'; reason: string }

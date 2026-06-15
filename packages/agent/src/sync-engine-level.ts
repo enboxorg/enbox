@@ -2301,19 +2301,25 @@ export class SyncEngineLevel implements SyncEngine {
 
   private emitPullCheckpointAdvance(link: ReplicationLinkState): void {
     const token = link.pull.contiguousAppliedToken;
-    if (token?.messageCid === undefined) {
+    if (token === undefined) {
       return;
     }
 
-    // Emit after durable save — "advanced" means persisted.
-    this.emitEvent({
+    const event: SyncEvent = {
       type           : 'checkpoint:pull-advance',
       tenantDid      : link.tenantDid,
       remoteEndpoint : link.remoteEndpoint,
       ...syncEventScope(link.scope),
       position       : token.position,
-      messageCid     : token.messageCid,
-    });
+    };
+
+    // Emit after durable save — "advanced" means persisted.
+    if (token.messageCid === undefined) {
+      this.emitEvent(event);
+      return;
+    }
+
+    this.emitEvent({ ...event, messageCid: token.messageCid });
   }
 
   private async handleLivePullProcessingError(
