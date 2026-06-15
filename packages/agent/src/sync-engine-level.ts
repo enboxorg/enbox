@@ -2305,15 +2305,21 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    // Emit after durable save — "advanced" means persisted.
-    this.emitEvent({
+    const event: SyncEvent = {
       type           : 'checkpoint:pull-advance',
       tenantDid      : link.tenantDid,
       remoteEndpoint : link.remoteEndpoint,
       ...syncEventScope(link.scope),
       position       : token.position,
-      ...(token.messageCid !== undefined ? { messageCid: token.messageCid } : {}),
-    });
+    };
+
+    // Emit after durable save — "advanced" means persisted.
+    if (token.messageCid === undefined) {
+      this.emitEvent(event);
+      return;
+    }
+
+    this.emitEvent({ ...event, messageCid: token.messageCid });
   }
 
   private async handleLivePullProcessingError(
