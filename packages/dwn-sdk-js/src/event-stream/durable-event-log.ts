@@ -59,6 +59,11 @@ type DurableSubscription = {
   redrainRequested: boolean;
 };
 
+type CatchUpPageState = {
+  readCursor : ProgressToken;
+  reachedFrozenPosition : boolean;
+};
+
 const DEFAULT_READ_LIMIT = 100;
 const DEFAULT_IDLE_REDRAIN_INTERVAL_MS = 30_000;
 
@@ -262,50 +267,30 @@ export class DurableEventLog implements EventLog {
     let readCursor = cursor;
     subscription.cursor = cursor;
 
-    for (;;) {
-      if (subscription.closed) {
-        return frozenCursor;
-      }
-
-      if (BigInt(readCursor.position) >= frozenPosition) {
-        subscription.cursor = frozenCursor;
-        return frozenCursor;
-      }
-
+    while (!subscription.closed && BigInt(readCursor.position) < frozenPosition) {
       const result = await this.read(subscription.tenant, {
         cursor  : readCursor,
         filters : subscription.filters,
         limit   : this.readLimit,
       });
-
-      let reachedFrozenPosition = false;
-      for (const entry of result.events) {
-        const entryPosition = BigInt(DurableEventLog.getEntryPosition(entry));
-        if (entryPosition > frozenPosition) {
-          reachedFrozenPosition = true;
-          break;
-        }
-
-        const deliveredCursor = await this.deliverEntry(subscription, entry);
-        if (subscription.closed) {
-          return frozenCursor;
-        }
-
-        if (deliveredCursor !== undefined) {
-          readCursor = deliveredCursor;
-          subscription.cursor = deliveredCursor;
-        }
+      const pageState = await this.deliverCatchUpPage(subscription, result.events, readCursor, frozenPosition);
+      if (subscription.closed) {
+        return frozenCursor;
       }
 
-      const resultCursor = result.cursor ?? readCursor;
-      if (reachedFrozenPosition || result.drained || BigInt(resultCursor.position) >= frozenPosition) {
-        subscription.cursor = frozenCursor;
+      readCursor = pageState.readCursor;
+      const resultCursor = result.cursor ?? pageState.readCursor;
+      if (DurableEventLog.isCatchUpComplete(pageState.reachedFrozenPosition, result, resultCursor, frozenPosition)) {
+        DurableEventLog.finishCatchUp(subscription, frozenCursor);
         return frozenCursor;
       }
 
       readCursor = resultCursor;
       subscription.cursor = resultCursor;
     }
+
+    DurableEventLog.finishCatchUp(subscription, frozenCursor);
+    return frozenCursor;
   }
 
   private async getCatchUpHighWater(tenant: string, cursor: ProgressToken): Promise<ProgressToken> {
@@ -314,6 +299,31 @@ export class DurableEventLog implements EventLog {
 
     await this.read(tenant, { cursor, limit: 0 });
     return frozenCursor;
+  }
+
+  private async deliverCatchUpPage(
+    subscription: DurableSubscription,
+    entries: EventLogEntry[],
+    readCursor: ProgressToken,
+    frozenPosition: bigint,
+  ): Promise<CatchUpPageState> {
+    let nextCursor = readCursor;
+
+    for (const entry of entries) {
+      if (BigInt(DurableEventLog.getEntryPosition(entry)) > frozenPosition) {
+        return { readCursor: nextCursor, reachedFrozenPosition: true };
+      }
+
+      const deliveredCursor = await this.deliverEntry(subscription, entry);
+      if (subscription.closed) {
+        return { readCursor: nextCursor, reachedFrozenPosition: false };
+      }
+
+      nextCursor = deliveredCursor ?? nextCursor;
+      subscription.cursor = nextCursor;
+    }
+
+    return { readCursor: nextCursor, reachedFrozenPosition: false };
   }
 
   private async drainSubscription(subscription: DurableSubscription): Promise<void> {
@@ -462,6 +472,19 @@ export class DurableEventLog implements EventLog {
     }
 
     return gapInfo;
+  }
+
+  private static isCatchUpComplete(
+    reachedFrozenPosition: boolean,
+    result: EventLogReadResult,
+    resultCursor: ProgressToken,
+    frozenPosition: bigint,
+  ): boolean {
+    return reachedFrozenPosition || result.drained || BigInt(resultCursor.position) >= frozenPosition;
+  }
+
+  private static finishCatchUp(subscription: DurableSubscription, frozenCursor: ProgressToken): void {
+    subscription.cursor = frozenCursor;
   }
 
   private static isLatestBaseState(entry: EventLogEntry): boolean {
