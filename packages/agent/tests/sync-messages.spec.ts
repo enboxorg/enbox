@@ -14,6 +14,7 @@ import {
   pushMessages,
   queryLocalMessageFeed,
   queryRemoteMessageFeed,
+  SyncDataSizeLimitExceededError,
 } from '../src/sync-messages.js';
 
 type LocalAgentFixture = {
@@ -354,6 +355,32 @@ describe('sync-messages', () => {
       expect(result[0].dataStream).toBe(mockStream);
     });
 
+    it('should cap RecordsWrite data streams at the descriptor dataSize', async () => {
+      const write = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([7]) });
+      const mockAgent = {
+        processDwnRequest : sinon.stub().resolves({ message: {} }),
+        rpc               : {
+          sendDwnRequest: sinon.stub().resolves({
+            status : { code: 200 },
+            entry  : {
+              message : write.message,
+              data    : streamFromBytes(new Uint8Array([7, 8])),
+            },
+          }),
+        },
+      } as any;
+
+      const result = await fetchRemoteMessages({
+        did         : write.author.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : ['cid-1'],
+        agent       : mockAgent,
+      });
+
+      expect(result).toHaveLength(1);
+      await expect(readStreamBytes(result[0].dataStream!)).rejects.toThrow(SyncDataSizeLimitExceededError);
+    });
+
     it('should not include dataStream for non-RecordsWrite messages', async () => {
       const mockAgent = {
         processDwnRequest : sinon.stub().resolves({ message: {} }),
@@ -602,8 +629,8 @@ describe('sync-messages', () => {
       expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.MessagesRead })).callCount).toBe(1);
     });
 
-    it('should convert deterministic local data size mismatches into terminal failures', async () => {
-      const payload = new Uint8Array(1_048_577);
+    it('should convert local RecordsWrite data overruns into terminal failures', async () => {
+      const payload = new Uint8Array([1, 2]);
       const write = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1]) });
       const messageCid = await Message.getCid(write.message);
       const { agent, applyStub } = createLocalAgentFixture({
@@ -624,7 +651,7 @@ describe('sync-messages', () => {
       expect(result.failed[0].cid).toBe(messageCid);
       expect(result.failed[0].kind).toBe('Invalid');
       expect(result.failed[0].terminal).toBe(true);
-      expect(result.failed[0].detail).toContain('local RecordsWrite data exceeded descriptor dataSize');
+      expect(result.failed[0].detail).toContain('RecordsWrite data exceeded descriptor dataSize');
       expect(applyStub.called).toBe(false);
     });
 

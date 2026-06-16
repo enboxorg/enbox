@@ -87,10 +87,10 @@ export class SyncPullAbortedError extends Error {
   }
 }
 
-class LocalDataSizeMismatchError extends Error {
-  constructor(dataSize: number) {
-    super(`SyncEngineLevel: local RecordsWrite data exceeded descriptor dataSize ${dataSize} while buffering push data.`);
-    this.name = 'LocalDataSizeMismatchError';
+export class SyncDataSizeLimitExceededError extends Error {
+  public constructor(dataSize: number) {
+    super(`SyncEngineLevel: RecordsWrite data exceeded descriptor dataSize ${dataSize}.`);
+    this.name = 'SyncDataSizeLimitExceededError';
   }
 }
 
@@ -118,6 +118,40 @@ function dataStreamFromBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
       controller.close();
     }
   });
+}
+
+export function capRecordsWriteDataStream(
+  message: GenericMessage,
+  dataStream: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  if (!isRecordsWriteMessage(message)) {
+    return dataStream;
+  }
+
+  const dataSize = message.descriptor.dataSize;
+  if (typeof dataSize !== 'number') {
+    return dataStream;
+  }
+
+  return capDataStream(dataStream, dataSize);
+}
+
+function capDataStream(
+  dataStream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): ReadableStream<Uint8Array> {
+  let totalBytes = 0;
+
+  return dataStream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller): void {
+      totalBytes += chunk.byteLength;
+      if (totalBytes > maxBytes) {
+        throw new SyncDataSizeLimitExceededError(maxBytes);
+      }
+
+      controller.enqueue(chunk);
+    },
+  }));
 }
 
 /**
@@ -157,9 +191,6 @@ async function bufferDataStream(entry: SyncMessageEntry, shouldContinue?: () => 
       assertShouldContinue(shouldContinue);
       totalSize += value.byteLength;
       if (totalSize > MAX_BUFFER_SIZE) {
-        if (isRecordsWriteMessage(entry.message)) {
-          throw new LocalDataSizeMismatchError((entry.message.descriptor as { dataSize: number }).dataSize);
-        }
         throw new Error('SyncEngineLevel: unexpected large stream while buffering push data.');
       }
       chunks.push(value);
@@ -312,7 +343,7 @@ export async function fetchRemoteMessages({ did, dwnUrl, delegateDid, permission
       const replyEntry = reply.entry;
       let dataStream: ReadableStream<Uint8Array> | undefined;
       if (isRecordsWrite(replyEntry) && replyEntry.data) {
-        dataStream = replyEntry.data;
+        dataStream = capRecordsWriteDataStream(replyEntry.message, replyEntry.data);
       }
 
       return { message: replyEntry.message, dataStream };
@@ -396,7 +427,7 @@ async function readLocalMessage({ author, delegateDid, permissionGrantIds, messa
   };
 
   if (isRecordsWrite(messageEntry) && messageEntry.data) {
-    result.dataStream = messageEntry.data;
+    result.dataStream = capRecordsWriteDataStream(messageEntry.message, messageEntry.data);
     result.dataStreamFactory = async (): Promise<ReadableStream<Uint8Array> | undefined> => {
       const refreshed = await readLocalMessage({ author, delegateDid, permissionGrantIds, messageCid, agent });
       return refreshed.kind === 'found' ? refreshed.entry.dataStream : undefined;
@@ -489,7 +520,7 @@ class RemoteApplyPushContext {
     } catch (error: any) {
       const detail = error.message ?? String(error);
       console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
-      if (error instanceof LocalDataSizeMismatchError) {
+      if (error instanceof SyncDataSizeLimitExceededError) {
         return {
           kind    : 'failed',
           failure : this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }),
@@ -509,6 +540,9 @@ class RemoteApplyPushContext {
     } catch (error: any) {
       const detail = error.message ?? String(error);
       console.error(`SyncEngineLevel: push error for ${cid}: ${detail}`);
+      if (error instanceof SyncDataSizeLimitExceededError) {
+        return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }) };
+      }
       if (error instanceof DwnRpcError && error.terminal) {
         return { kind: 'failed', failure: this.terminalFailure(rootCid, cid, detail, { kind: 'Invalid', reason: detail }) };
       }
@@ -798,7 +832,7 @@ class RemoteApplyPushContext {
 
     const entry: SyncMessageEntry = {
       message           : recordsWrite,
-      dataStream        : recordsReply.entry.data,
+      dataStream        : capRecordsWriteDataStream(recordsWrite, recordsReply.entry.data),
       dataStreamFactory : async (): Promise<ReadableStream<Uint8Array> | undefined> => {
         const refreshed = await this.fetchRecordData(ref);
         return refreshed.kind === 'fetched' ? refreshed.entries[0]?.dataStream : undefined;
