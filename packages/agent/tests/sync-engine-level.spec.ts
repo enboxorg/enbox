@@ -1017,9 +1017,7 @@ describe('SyncEngineLevel', () => {
         )).toBe(true);
       });
 
-      it('logs an error when push fails due to missing permissions on the remote DWN', async () => {
-        // The batched diff sends a MessagesSync 'diff' request to the remote DWN.
-        // Without the proper grant on the remote, the diff (and therefore push) will fail.
+      it('pushes a missing delegate grant dependency before a scoped local record', async () => {
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
         const protocolFoo: ProtocolDefinition = {
@@ -1100,20 +1098,25 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        // spy on console.error to check if the error message is logged
-        const consoleErrorSpy = sinon.stub(console, 'error').resolves();
-
         await syncEngine.sync('push');
-        // The sync should log an error because the diff or push to the remote DWN failed.
-        // The error may come from the SMT sync path ("Error syncing") or the push-on-write
-        // path ("Push-on-write failed") depending on timing and cursor state.
-        expect(consoleErrorSpy.called).toBe(true);
-        const errorMsg = consoleErrorSpy.args[0][0] as string;
-        expect(
-          errorMsg.includes('SyncEngineLevel: Error syncing') ||
-          errorMsg.includes('SyncEngineLevel: Push-on-write failed') ||
-          errorMsg.includes('SyncEngineLevel: push failed')
-        ).toBe(true);
+
+        const grantQuery = await testHarness.agent.dwn.sendRequest({
+          author        : aliceSync.did.uri,
+          target        : aliceSync.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: messagesSyncGrant.message.recordId } },
+        });
+        expect(grantQuery.reply.status.code).toBe(200);
+        expect(grantQuery.reply.entries).toHaveLength(1);
+
+        const recordQuery = await testHarness.agent.dwn.sendRequest({
+          author        : aliceSync.did.uri,
+          target        : aliceSync.did.uri,
+          messageType   : DwnInterface.RecordsQuery,
+          messageParams : { filter: { recordId: record1.message!.recordId } },
+        });
+        expect(recordQuery.reply.status.code).toBe(200);
+        expect(recordQuery.reply.entries).toHaveLength(1);
       });
 
       it('synchronizes records for 1 identity from local DWN to remote DWN', async () => {
@@ -1730,6 +1733,9 @@ describe('SyncEngineLevel', () => {
         const pullRemoteFeedStub = sinon.stub(SyncEngineLevel.prototype as any, 'pullRemoteFeedForSyncTarget');
         pullRemoteFeedStub.resolves({});
 
+        const pushLocalFeedStub = sinon.stub(SyncEngineLevel.prototype as any, 'pushLocalFeedForSyncTarget');
+        pushLocalFeedStub.resolves({});
+
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
         testHarness.agent.sync.startSync({ interval: '500ms' });
@@ -1755,6 +1761,7 @@ describe('SyncEngineLevel', () => {
         getLocalRootStub.restore();
         getRemoteRootStub.restore();
         pullRemoteFeedStub.restore();
+        pushLocalFeedStub.restore();
         clock.restore();
       });
 
