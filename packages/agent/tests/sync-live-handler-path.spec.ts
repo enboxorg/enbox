@@ -169,8 +169,8 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
 
     await waitFor(() => {
       const link = getLink();
-      return link?.pull?.contiguousAppliedToken?.position !== undefined;
-    });
+      return link?.pull?.contiguousAppliedToken?.position !== undefined && link.status === 'live';
+    }, 5000);
 
     const activeLink = getLink();
     expect(activeLink).toBeDefined();

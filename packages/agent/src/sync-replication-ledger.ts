@@ -97,6 +97,7 @@ export class ReplicationLedger {
       status             : 'initializing',
       connectivity       : 'unknown',
       pull               : {},
+      push               : {},
       needsReconcile     : false,
       delegateDid        : params.delegateDid,
     };

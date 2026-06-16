@@ -56,11 +56,14 @@ describe('SyncEngineLevel — private methods', () => {
   const createdEngines: SyncEngineLevel[] = [];
   const createEngine = (
     params: ConstructorParameters<typeof SyncEngineLevel>[0],
-    options: { stubFeedPull?: boolean } = {},
+    options: { stubFeedPull?: boolean; stubFeedPush?: boolean } = {},
   ): SyncEngineLevel => {
     const engine = new SyncEngineLevel(params);
     if (options.stubFeedPull !== false) {
       sinon.stub(engine as any, 'pullRemoteFeedForSyncTarget').resolves({});
+    }
+    if (options.stubFeedPush !== false) {
+      sinon.stub(engine as any, 'pushLocalFeedForSyncTarget').resolves({});
     }
     createdEngines.push(engine);
     return engine;
@@ -1161,6 +1164,274 @@ describe('SyncEngineLevel — private methods', () => {
       expect(appliedEvent).toBeDefined();
       expect(appliedEvent.messageCids).toEqual(['cid-applied']);
       expect(reconcileStub.called).toBe(false);
+    });
+
+    it('should push a local MessagesQuery page and persist the push checkpoint', async () => {
+      const protocol = 'https://example.com/feed-push';
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const configure = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : {
+          protocol,
+          published : true,
+          types     : {
+            post: { schema: 'https://example.com/post', dataFormats: ['text/plain'] },
+          },
+          structure: { post: {} },
+        },
+      });
+      const configureCid = await Message.getCid(configure.message);
+      const cursor = {
+        streamId   : 'local-stream-1',
+        epoch      : 'local-epoch-1',
+        position   : '1',
+        messageCid : configureCid,
+      };
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        did      : { dereference: sinon.stub() },
+        dwn      : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [{
+                seq               : '1',
+                messageCid        : configureCid,
+                isLatestBaseState : true,
+                protocol,
+                message           : configure.message,
+              }],
+              cursor,
+              drained: true,
+            },
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+      const target = syncTarget(alice.did, 'https://dwn.example.com', {
+        scope: { kind: 'protocolSet', protocols: [protocol] },
+      });
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [configureCid], failed: [] });
+      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({});
+
+      await engine.sync('push');
+
+      expect(mockAgent.dwn.processRequest.firstCall.args[0]).toMatchObject({
+        author        : alice.did,
+        target        : alice.did,
+        messageType   : DwnInterface.MessagesQuery,
+        messageParams : {
+          filters : [{ protocol }],
+          limit   : 100,
+        },
+      });
+      expect(pushStub.calledOnce).toBe(true);
+      expect(pushStub.firstCall.args[0]).toMatchObject({
+        did         : alice.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [configureCid],
+      });
+
+      const links = await (engine as any).ledger.getLinksForTenant(alice.did);
+      expect(links).toHaveLength(1);
+      expect(links[0].push.contiguousAppliedToken).toEqual(cursor);
+
+      const pushEvent = events.find(event => event.type === 'checkpoint:push-advance');
+      expect(pushEvent).toMatchObject({
+        messageCid : configureCid,
+        position   : '1',
+      });
+    });
+
+    it('should skip recently pulled local feed entries and still advance the push checkpoint', async () => {
+      const did = 'did:example:feed-push-echo';
+      const dwnUrl = 'https://dwn.example.com';
+      const cursor = {
+        streamId   : 'local-stream-1',
+        epoch      : 'local-epoch-1',
+        position   : '1',
+        messageCid : 'cid-echo',
+      };
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        did      : { dereference: sinon.stub() },
+        dwn      : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [{
+                seq               : '1',
+                messageCid        : 'cid-echo',
+                isLatestBaseState : true,
+              }],
+              cursor,
+              drained: true,
+            },
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: ['cid-echo'], failed: [] });
+      const recentlyPulled = (engine as any)._recentlyPulledCids as Map<string, number>;
+      recentlyPulled.set(`cid-echo|${dwnUrl}`, Date.now() + 60_000);
+      const target = syncTarget(did, dwnUrl);
+
+      const result = await (engine as any).pushLocalFeedForSyncTarget(target);
+
+      expect(pushStub.called).toBe(false);
+      expect(result.hasActionableDiffs).toBe(false);
+      expect(result.ignoredLocalCids).toEqual([]);
+      expect(result.pushFailures).toEqual([]);
+      const links = await (engine as any).ledger.getLinksForTenant(did);
+      expect(links[0].push.contiguousAppliedToken).toEqual(cursor);
+    });
+
+    it('should reset a stale push checkpoint once after a local MessagesQuery progress gap', async () => {
+      const did = 'did:example:feed-push-reset';
+      const staleCursor = {
+        streamId : 'local-stream-1',
+        epoch    : 'local-epoch-1',
+        position : '9',
+      };
+      const resetCursor = {
+        streamId : 'local-stream-2',
+        epoch    : 'local-epoch-2',
+        position : '1',
+      };
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        did      : { dereference: sinon.stub() },
+        dwn      : {
+          processRequest: sinon.stub()
+            .onFirstCall().resolves({
+              reply: {
+                status: { code: 410, detail: 'Progress gap' },
+              },
+            })
+            .onSecondCall().resolves({
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [],
+                cursor  : resetCursor,
+                drained : true,
+              },
+            }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
+      const target = syncTarget(did, 'https://dwn.example.com');
+      const link = await (engine as any).getOrCreateReplicationLink(target);
+      ReplicationLedger.commitContiguousToken(link.push, staleCursor);
+      await (engine as any).ledger.saveLink(link);
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
+
+      const result = await (engine as any).pushLocalFeedForSyncTarget(target);
+
+      expect(mockAgent.dwn.processRequest.callCount).toBe(2);
+      expect(mockAgent.dwn.processRequest.secondCall.args[0].messageParams.cursor).toBeUndefined();
+      expect(pushStub.called).toBe(false);
+      expect(result.pushFailures).toEqual([]);
+      const links = await (engine as any).ledger.getLinksForTenant(did);
+      expect(links[0].push.contiguousAppliedToken).toEqual(resetCursor);
+    });
+
+    it('should not advance the push checkpoint when a local feed push is retryable', async () => {
+      const did = 'did:example:feed-push-retry';
+      const cursor = {
+        streamId   : 'local-stream-1',
+        epoch      : 'local-epoch-1',
+        position   : '1',
+        messageCid : 'cid-retry',
+      };
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        did      : { dereference: sinon.stub() },
+        dwn      : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [{
+                seq               : '1',
+                messageCid        : 'cid-retry',
+                isLatestBaseState : true,
+              }],
+              cursor,
+              drained: true,
+            },
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
+      sinon.stub(engine as any, 'pushMessages').resolves({
+        succeeded : [],
+        failed    : [{ cid: 'cid-retry', detail: 'temporary remote failure' }],
+      });
+      const target = syncTarget(did, 'https://dwn.example.com');
+
+      const result = await (engine as any).pushLocalFeedForSyncTarget(target);
+
+      expect(result.pushFailures).toEqual([{ cid: 'cid-retry', detail: 'temporary remote failure' }]);
+      const links = await (engine as any).ledger.getLinksForTenant(did);
+      expect(links[0].push.contiguousAppliedToken).toBeUndefined();
+    });
+
+    it('should dead-letter a terminal local feed push and advance the push checkpoint', async () => {
+      const did = 'did:example:feed-push-terminal';
+      const cursor = {
+        streamId   : 'local-stream-1',
+        epoch      : 'local-epoch-1',
+        position   : '1',
+        messageCid : 'cid-terminal',
+      };
+      const mockAgent = {
+        agentDid : 'did:example:agent',
+        did      : { dereference: sinon.stub() },
+        dwn      : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [{
+                seq               : '1',
+                messageCid        : 'cid-terminal',
+                isLatestBaseState : true,
+              }],
+              cursor,
+              drained: true,
+            },
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
+      sinon.stub(engine as any, 'pushMessages').resolves({
+        succeeded : [],
+        failed    : [{
+          cid      : 'cid-terminal',
+          detail   : 'invalid remote admission',
+          kind     : 'Invalid',
+          terminal : true,
+        }],
+      });
+      const target = syncTarget(did, 'https://dwn.example.com');
+
+      const result = await (engine as any).pushLocalFeedForSyncTarget(target);
+
+      expect(result.pushFailures).toEqual([]);
+      expect(result.ignoredLocalCids).toEqual(['cid-terminal']);
+      const links = await (engine as any).ledger.getLinksForTenant(did);
+      expect(links[0].push.contiguousAppliedToken).toEqual(cursor);
+      const failedMessages = await engine.getFailedMessages(did);
+      expect(failedMessages).toHaveLength(1);
+      expect(failedMessages[0]).toMatchObject({
+        messageCid     : 'cid-terminal',
+        remoteEndpoint : 'https://dwn.example.com',
+        category       : 'admit-failed',
+        errorCode      : 'Invalid',
+        errorDetail    : 'invalid remote admission',
+      });
     });
 
     it('should walk tree diff and pull/push when roots differ', async () => {
@@ -4644,17 +4915,17 @@ describe('SyncEngineLevel — private methods', () => {
       expect(scheduleStub.calledOnceWith(linkKey, 30_000)).toBe(true);
     });
 
-    it('should not have push checkpoint on ReplicationLinkState', () => {
-      // Verify the type change — link should not have a push property.
+    it('should keep a push checkpoint on ReplicationLinkState', () => {
       const link = {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
         status         : 'live',
         pull           : {},
+        push           : {},
         needsReconcile : false,
       } as any;
 
-      expect(link.push).toBeUndefined();
+      expect(link.push).toEqual({});
     });
   });
 

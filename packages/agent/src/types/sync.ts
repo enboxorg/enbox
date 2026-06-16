@@ -286,6 +286,9 @@ export type ReplicationLinkState = {
   /** Pull-direction replication checkpoint (remote → local). */
   pull: DirectionCheckpoint;
 
+  /** Push-direction replication checkpoint (local → remote). */
+  push: DirectionCheckpoint;
+
   /**
    * Whether this link needs SMT reconciliation. Set when push fails after
    * retry exhaustion, when the link reconnects after an outage, or when
@@ -403,6 +406,7 @@ export type SyncEvent =
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
   | SyncEventBase & { type: 'link:connectivity-change'; from: SyncConnectivityState; to: SyncConnectivityState }
   | SyncEventBase & { type: 'checkpoint:pull-advance'; position: string; messageCid?: string }
+  | SyncEventBase & { type: 'checkpoint:push-advance'; position: string; messageCid?: string }
   /** Emitted when set reconciliation admits remote messages outside the live pull checkpoint stream. */
   | SyncEventBase & { type: 'reconcile:applied'; messageCids: string[] }
   | SyncEventBase & { type: 'reconcile:needed'; reason: string }
