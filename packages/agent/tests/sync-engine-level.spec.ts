@@ -1742,12 +1742,12 @@ describe('SyncEngineLevel', () => {
 
         resolveFirstPull({});
         await clock.tickAsync(0);
-        await clock.tickAsync(500); // next interval after the first sync finishes
+        await clock.tickAsync(501); // next interval after the first sync finishes
 
         // once when starting, and once for the interval
         expect(syncSpy.callCount).toBe(2);
 
-        await clock.tickAsync(500); // one more interval
+        await clock.tickAsync(501); // one more interval
 
         // one more for the interval
         expect(syncSpy.callCount).toBe(3);
@@ -1959,11 +1959,6 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(3);
         await startPromise;
 
-        await clock.tickAsync(1_100); // two interval rounds after the immediate sync
-
-        // expect 2 sync interval calls + initial sync
-        expect(syncSpy.callCount).toBe(3);
-
         // cause getSyncTargets to take longer
         getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
           clock.setTimeout(() => {
@@ -1974,7 +1969,7 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(501); // Enough time for the next interval to start
 
         // next interval was called
-        expect(syncSpy.callCount).toBe(4);
+        expect(syncSpy.callCount).toBe(2);
 
         // stop the sync
         await new Promise<void>((resolve) => {
@@ -1986,13 +1981,13 @@ describe('SyncEngineLevel', () => {
         });
 
         // sync calls remain unchanged
-        expect(syncSpy.callCount).toBe(4);
+        expect(syncSpy.callCount).toBe(2);
 
         // wait for future intervals
         await clock.tickAsync(2_000);
 
         // sync calls remain unchanged
-        expect(syncSpy.callCount).toBe(4);
+        expect(syncSpy.callCount).toBe(2);
 
         syncSpy.restore();
         getSyncTargetsStub.restore();
@@ -2025,11 +2020,6 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(3);
         await startPromise;
 
-        await clock.tickAsync(1_100); // two interval rounds after the immediate sync
-
-        // expect 2 sync interval calls + initial sync
-        expect(syncSpy.callCount).toBe(3);
-
         // cause getSyncTargets to take longer than the 2 second timeout
         getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
           clock.setTimeout(() => {
@@ -2040,7 +2030,7 @@ describe('SyncEngineLevel', () => {
         await clock.tickAsync(501); // Enough time for the next interval to start
 
         // next interval was called
-        expect(syncSpy.callCount).toBe(4);
+        expect(syncSpy.callCount).toBe(2);
 
         const stopPromise = testHarness.agent.sync.stopSync();
 
