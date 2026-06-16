@@ -1230,6 +1230,73 @@ describe('SyncEngineLevel — private methods', () => {
       expect(appliedEvent.messageCids).toEqual(['cid-applied']);
     });
 
+    it('should dead-letter expired deferred pull entries and continue the page before advancing', async () => {
+      const did = 'did:example:feed-expired-deferred';
+      const dwnUrl = 'https://dwn.example.com';
+      const deferredCid = 'cid-deferred-expired';
+      const tailCid = 'cid-tail-after-deferred';
+      const cursor = {
+        streamId : 'stream-1',
+        epoch    : 'epoch-1',
+        position : '2',
+      };
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [
+              { seq: '1', messageCid: deferredCid, protocol: 'https://example.com/chat' },
+              { seq: '2', messageCid: tailCid, protocol: 'https://example.com/chat' },
+            ],
+            cursor,
+            drained: true,
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPull: false });
+      const target = syncTarget(did, dwnUrl);
+      const deferredKey = `${did}|${deferredCid}|${dwnUrl}`;
+      await (engine as any)._deferredPulls.put(deferredKey, JSON.stringify({
+        attempts        : 1,
+        detail          : 'dependency unavailable',
+        firstDeferredAt : new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+        lastDeferredAt  : new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+      }));
+      const admitStub = sinon.stub(engine as any, 'admitRemoteFeedEntry').callsFake(async (_target: any, entry: any): Promise<any> => {
+        return entry.messageCid === deferredCid
+          ? { kind: 'deferred', detail: 'dependency unavailable' }
+          : { kind: 'admitted', appliedCids: [entry.messageCid] };
+      });
+
+      const result = await (engine as any).pullRemoteFeedForSyncTarget(target);
+
+      expect(admitStub.callCount).toBe(2);
+      expect(result.admittedCids).toEqual([tailCid]);
+      const [link] = await (engine as any).ledger.getLinksForTenant(did);
+      expect(link.pull.contiguousAppliedToken).toEqual(cursor);
+      const failedMessages = await engine.getFailedMessages(did);
+      expect(failedMessages).toHaveLength(1);
+      expect(failedMessages[0]).toMatchObject({
+        messageCid     : deferredCid,
+        remoteEndpoint : dwnUrl,
+        protocol       : 'https://example.com/chat',
+        category       : 'admit-failed',
+        errorCode      : 'Deferred',
+      });
+    });
+
     it('should push a local MessagesQuery page and persist the push checkpoint', async () => {
       const protocol = 'https://example.com/feed-push';
       const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -1493,7 +1560,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       expect(pushStub.called).toBe(false);
       expect(result.hasActionableDiffs).toBe(false);
-      expect(result.ignoredLocalCids).toEqual([]);
       expect(result.pushFailures).toEqual([]);
       const links = await (engine as any).ledger.getLinksForTenant(did);
       expect(links[0].push.contiguousAppliedToken).toEqual(cursor);
@@ -1653,7 +1719,6 @@ describe('SyncEngineLevel — private methods', () => {
       const result = await (engine as any).pushLocalFeedForSyncTarget(target);
 
       expect(result.pushFailures).toEqual([]);
-      expect(result.ignoredLocalCids).toEqual(['cid-terminal']);
       const links = await (engine as any).ledger.getLinksForTenant(did);
       expect(links[0].push.contiguousAppliedToken).toEqual(cursor);
       const failedMessages = await engine.getFailedMessages(did);
@@ -1859,6 +1924,51 @@ describe('SyncEngineLevel — private methods', () => {
       expect(scheduleStub.calledOnceWith(linkKey, 0)).toBe(true);
     });
 
+    it('should transition repeated fingerprint divergence without dead letters to terminal-incomplete', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const target = syncTarget('did:example:no-dead-letter-divergence', 'https://dwn.example.com');
+      const link = await (engine as any).getOrCreateReplicationLink(target);
+      const linkKey = (engine as any).getReplicationLinkKey(target, link);
+      const token = {
+        streamId   : 'tenant-stream',
+        epoch      : 'epoch-1',
+        position   : '10',
+        messageCid : 'cid-10',
+      };
+      link.status = 'live';
+      link.pull = { contiguousAppliedToken: token, receivedToken: token };
+      link.push = { contiguousAppliedToken: token, receivedToken: token };
+      link.needsReconcile = false;
+      await (engine as any).ledger.saveLink(link);
+      (engine as any)._activeLinks.set(linkKey, link);
+      sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+      ((engine as any).verifyFeedConvergence).resolves({
+        converged         : false,
+        localFingerprint  : 'local-fingerprint',
+        remoteFingerprint : 'remote-fingerprint',
+        pushFailures      : [],
+      });
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      await engine.sync(undefined, { verifyConvergence: true });
+      await engine.sync(undefined, { verifyConvergence: true });
+      await engine.sync(undefined, { verifyConvergence: true });
+
+      const [finalLink] = await (engine as any).ledger.getLinksForTenant(target.did);
+      expect(finalLink.status).toBe('terminal_incomplete');
+      expect(finalLink.needsReconcile).toBe(false);
+      expect(scheduleStub.callCount).toBe(2);
+      expect(events.some(event =>
+        event.type === 'link:status-change' &&
+        event.tenantDid === target.did &&
+        event.remoteEndpoint === target.dwnUrl &&
+        event.to === 'terminal_incomplete'
+      )).toBe(true);
+    });
+
     it('should not treat dead-letter divergence as converged', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -1888,7 +1998,6 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
       ((engine as any).pushLocalFeedForSyncTarget).resolves({
         hasActionableDiffs : false,
-        ignoredLocalCids   : ['cid-terminal'],
         pushFailures       : [],
       });
       ((engine as any).verifyFeedConvergence).resolves({
@@ -1999,7 +2108,7 @@ describe('SyncEngineLevel — private methods', () => {
       });
 
       const initialPush = await (engine as any).pushLocalFeedForSyncTarget(target);
-      expect(initialPush.ignoredLocalCids).toEqual([terminalCid]);
+      expect(initialPush.pushFailures).toEqual([]);
       expect(pushMessagesStub.calledOnce).toBe(true);
 
       const link = (await (engine as any).ledger.getLinksForTenant(did))[0];
@@ -5165,7 +5274,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       ((engine as any).pushLocalFeedForSyncTarget).resolves({
         hasActionableDiffs : false,
-        ignoredLocalCids   : ['local-dead'],
         pushFailures       : [],
       });
       ((engine as any).verifyFeedConvergence).resolves({

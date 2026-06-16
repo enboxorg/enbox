@@ -113,7 +113,6 @@ type SyncReconcileResult = {
   admittedCids?: string[];
   converged?: boolean;
   hasActionableDiffs?: boolean;
-  ignoredLocalCids?: string[];
   localFingerprint?: string;
   pushFailures?: PushFailure[];
   remoteFingerprint?: string;
@@ -122,6 +121,13 @@ type SyncReconcileResult = {
 type FeedConvergenceFailureState = {
   attempts: number;
   signature: string;
+};
+
+type DeferredPullState = {
+  attempts: number;
+  detail?: string;
+  firstDeferredAt: string;
+  lastDeferredAt: string;
 };
 
 type FeedPageAdmissionResult =
@@ -139,14 +145,13 @@ type FeedCursorAdvanceResult =
 
 type FeedPushEntryResult =
   | { kind: 'pushed' }
-  | { kind: 'ignored' }
   | { kind: 'skipped' }
   | { kind: 'failed'; failures: PushFailure[] };
 
 type FeedPagePushResult =
   | { kind: 'aborted' }
-  | { kind: 'failed'; failures: PushFailure[]; hasActionableDiffs: boolean; ignoredLocalCids: string[] }
-  | { kind: 'processed'; hasActionableDiffs: boolean; ignoredLocalCids: string[] };
+  | { kind: 'failed'; failures: PushFailure[]; hasActionableDiffs: boolean }
+  | { kind: 'processed'; hasActionableDiffs: boolean };
 
 type PermissionGrantBootstrapResult =
   | { kind: 'aborted' }
@@ -461,6 +466,11 @@ export class SyncEngineLevel implements SyncEngine {
   /** LevelDB sublevel for permanently failed messages (dead letters). */
   private get _deadLetters(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
     return this._db.sublevel('deadLetters') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
+  }
+
+  /** LevelDB sublevel for pull entries that are temporarily deferred. */
+  private get _deferredPulls(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
+    return this._db.sublevel('deferredPulls') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
   }
 
   /**
@@ -956,8 +966,11 @@ export class SyncEngineLevel implements SyncEngine {
   /** Maximum consecutive repair attempts before falling back to degraded_poll. */
   private static readonly MAX_REPAIR_ATTEMPTS = 3;
 
-  /** Maximum repeated verified dead-letter mismatches before pausing the link as terminal-incomplete. */
-  private static readonly MAX_FEED_CONVERGENCE_DEAD_LETTER_ATTEMPTS = 3;
+  /** Maximum repeated verified feed mismatches before pausing the link as terminal-incomplete. */
+  private static readonly MAX_FEED_CONVERGENCE_ATTEMPTS = 3;
+
+  /** Maximum age for a repeatedly deferred pull entry before it is dead-lettered and skipped. */
+  private static readonly DEFERRED_PULL_DEAD_LETTER_AFTER_MS = 24 * 60 * 60 * 1000;
 
   /** Per-link degraded-poll interval timers. */
   private readonly _degradedPollTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
@@ -2790,12 +2803,7 @@ export class SyncEngineLevel implements SyncEngine {
     linkKey: string;
   }): Promise<void> {
     const deadLetterCids = await this.getAdmissionDeadLetterCidsForTarget(target);
-    if (deadLetterCids.length > 0) {
-      await this.handleFeedConvergenceMismatchWithDeadLetters(target, result, deadLetterCids, active);
-      return;
-    }
-
-    await this.handleFeedConvergenceMismatch(target, 'feed-fingerprint-mismatch', active);
+    await this.handleRepeatedFeedConvergenceMismatch(target, result, deadLetterCids, active);
   }
 
   private async clearFeedConvergenceFailure(target: SyncTarget, active?: {
@@ -2811,7 +2819,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._feedConvergenceFailures.delete(this.getReplicationLinkKey(target, link));
   }
 
-  private async handleFeedConvergenceMismatchWithDeadLetters(
+  private async handleRepeatedFeedConvergenceMismatch(
     target: SyncTarget,
     result: SyncReconcileResult,
     deadLetterCids: string[],
@@ -2834,7 +2842,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     this._feedConvergenceFailures.set(linkKey, { attempts, signature });
 
-    if (attempts >= SyncEngineLevel.MAX_FEED_CONVERGENCE_DEAD_LETTER_ATTEMPTS) {
+    if (attempts >= SyncEngineLevel.MAX_FEED_CONVERGENCE_ATTEMPTS) {
       link.needsReconcile = false;
       await this.transitionToTerminalIncomplete(linkKey, link);
       return;
@@ -3004,7 +3012,6 @@ export class SyncEngineLevel implements SyncEngine {
       admittedCids       : [],
       ...(options?.verifyConvergence === true ? { converged: true } : {}),
       hasActionableDiffs : false,
-      ignoredLocalCids   : [],
       pushFailures       : [],
     };
   }
@@ -3016,7 +3023,6 @@ export class SyncEngineLevel implements SyncEngine {
   ): void {
     target.aborted ||= source.aborted;
     target.admittedCids?.push(...(source.admittedCids ?? []));
-    target.ignoredLocalCids?.push(...(source.ignoredLocalCids ?? []));
     target.pushFailures?.push(...(source.pushFailures ?? []));
     target.hasActionableDiffs ||= source.hasActionableDiffs === true;
     target.localFingerprint = source.localFingerprint ?? target.localFingerprint;
@@ -3238,7 +3244,6 @@ export class SyncEngineLevel implements SyncEngine {
       return this.pushLocalFeedDiffWithRemoteInventory(target, link, shouldContinue);
     }
 
-    const ignoredLocalCids: string[] = [];
     let hasActionableDiffs = false;
     let cursor: ProgressToken | undefined = link.push.contiguousAppliedToken;
 
@@ -3268,14 +3273,13 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
-      ignoredLocalCids.push(...pageResult.ignoredLocalCids);
       if (pageResult.kind === 'failed') {
-        return { hasActionableDiffs, ignoredLocalCids, pushFailures: pageResult.failures };
+        return { hasActionableDiffs, pushFailures: pageResult.failures };
       }
 
       const cursorAdvance = await this.advanceFeedPushCursor(link, cursor, reply, target);
       if (cursorAdvance.drained) {
-        return { hasActionableDiffs, ignoredLocalCids, localFingerprint: reply.fingerprint, pushFailures: [] };
+        return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
       }
 
       cursor = cursorAdvance.cursor;
@@ -3330,7 +3334,6 @@ export class SyncEngineLevel implements SyncEngine {
     remoteCids: Set<string>,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
-    const ignoredLocalCids: string[] = [];
     let hasActionableDiffs = false;
     let cursor: ProgressToken | undefined;
     let resetAfterProgressGap = false;
@@ -3356,9 +3359,8 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
-      ignoredLocalCids.push(...pageResult.ignoredLocalCids);
       if (pageResult.kind === 'failed') {
-        return { hasActionableDiffs, ignoredLocalCids, pushFailures: pageResult.failures };
+        return { hasActionableDiffs, pushFailures: pageResult.failures };
       }
       for (const entry of missingEntries) {
         remoteCids.add(entry.messageCid);
@@ -3366,7 +3368,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       const cursorAdvance = await this.advanceFeedPushCursor(link, cursor, reply, target);
       if (cursorAdvance.drained) {
-        return { hasActionableDiffs, ignoredLocalCids, localFingerprint: reply.fingerprint, pushFailures: [] };
+        return { hasActionableDiffs, localFingerprint: reply.fingerprint, pushFailures: [] };
       }
 
       cursor = cursorAdvance.cursor;
@@ -3590,7 +3592,6 @@ export class SyncEngineLevel implements SyncEngine {
     entries: MessagesQueryReplyEntry[],
     shouldContinue?: () => boolean,
   ): Promise<FeedPagePushResult> {
-    const ignoredLocalCids: string[] = [];
     let hasActionableDiffs = false;
 
     for (const entry of entries) {
@@ -3600,16 +3601,14 @@ export class SyncEngineLevel implements SyncEngine {
 
       const result = await this.pushLocalFeedEntry(target, entry);
       if (result.kind === 'failed') {
-        return { kind: 'failed', failures: result.failures, hasActionableDiffs, ignoredLocalCids };
+        return { kind: 'failed', failures: result.failures, hasActionableDiffs };
       }
       if (result.kind === 'pushed') {
         hasActionableDiffs = true;
-      } else if (result.kind === 'ignored') {
-        ignoredLocalCids.push(entry.messageCid);
       }
     }
 
-    return { kind: 'processed', hasActionableDiffs, ignoredLocalCids };
+    return { kind: 'processed', hasActionableDiffs };
   }
 
   private async pushLocalFeedEntry(
@@ -3617,7 +3616,7 @@ export class SyncEngineLevel implements SyncEngine {
     entry: MessagesQueryReplyEntry,
   ): Promise<FeedPushEntryResult> {
     if (await this.hasAdmissionDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
-      return { kind: 'ignored' };
+      return { kind: 'skipped' };
     }
 
     if (this.isRecentlyPulled(entry.messageCid, target.dwnUrl)) {
@@ -3644,7 +3643,7 @@ export class SyncEngineLevel implements SyncEngine {
     const retryableFailures = await this.recordTerminalSyncPushFailures(target, failed);
     return retryableFailures > 0
       ? { kind: 'failed', failures: failed }
-      : { kind: 'ignored' };
+      : { kind: 'skipped' };
   }
 
   private async resetFeedPullAfterProgressGap(
@@ -3707,23 +3706,86 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       if (outcome.kind === 'deferred') {
-        return { kind: 'deferred', admittedCids, detail: outcome.detail, hasActionableDiffs, messageCid: entry.messageCid };
+        if (!await this.deadLetterExpiredDeferredPull(target, entry, outcome.detail)) {
+          return { kind: 'deferred', admittedCids, detail: outcome.detail, hasActionableDiffs, messageCid: entry.messageCid };
+        }
+        hasActionableDiffs = true;
+        continue;
       }
 
       hasActionableDiffs = true;
       if (outcome.kind === 'admitted') {
         admittedCids.push(...outcome.appliedCids);
-        this.trackRemoteFeedAppliedCids(outcome.appliedCids, target.dwnUrl);
+        this.trackRemoteFeedAppliedCids(outcome.appliedCids, target);
       }
     }
 
     return { kind: 'processed', admittedCids, hasActionableDiffs };
   }
 
-  private trackRemoteFeedAppliedCids(messageCids: string[], dwnUrl: string): void {
+  private trackRemoteFeedAppliedCids(messageCids: string[], target: SyncTarget): void {
     for (const cid of messageCids) {
-      this.trackRecentlyPulledMessage(cid, dwnUrl);
-      void this.clearFailedMessage(cid, dwnUrl).catch(() => { /* teardown race */ });
+      this.trackRecentlyPulledMessage(cid, target.dwnUrl);
+      void this.clearFailedMessage(cid, target.dwnUrl).catch(() => { /* teardown race */ });
+      void this.clearDeferredPull(target.did, target.dwnUrl, cid).catch(() => { /* teardown race */ });
+    }
+  }
+
+  private async deadLetterExpiredDeferredPull(
+    target: SyncTarget,
+    entry: MessagesQueryReplyEntry,
+    detail: string | undefined,
+  ): Promise<boolean> {
+    const state = await this.recordDeferredPull(target, entry.messageCid, detail);
+    const firstDeferredAt = Date.parse(state.firstDeferredAt);
+    if (!Number.isFinite(firstDeferredAt) || Date.now() - firstDeferredAt < SyncEngineLevel.DEFERRED_PULL_DEAD_LETTER_AFTER_MS) {
+      return false;
+    }
+
+    await this.recordDeadLetter({
+      messageCid     : entry.messageCid,
+      tenantDid      : target.did,
+      remoteEndpoint : target.dwnUrl,
+      protocol       : entry.protocol ?? SyncEngineLevel.protocolFromDescriptor(entry.message?.descriptor),
+      category       : 'admit-failed',
+      errorCode      : 'Deferred',
+      errorDetail    : detail ?? 'pull admission deferred beyond retry window',
+    });
+    await this.clearDeferredPull(target.did, target.dwnUrl, entry.messageCid);
+    return true;
+  }
+
+  private async recordDeferredPull(target: SyncTarget, messageCid: string, detail: string | undefined): Promise<DeferredPullState> {
+    const key = SyncEngineLevel.deadLetterKey(target.did, messageCid, target.dwnUrl);
+    const now = new Date().toISOString();
+    let previous: DeferredPullState | undefined;
+    try {
+      previous = JSON.parse(await this._deferredPulls.get(key)) as DeferredPullState;
+    } catch (error) {
+      const e = error as { code?: string };
+      if (e.code !== 'LEVEL_NOT_FOUND') {
+        throw error;
+      }
+    }
+
+    const state: DeferredPullState = {
+      attempts        : (previous?.attempts ?? 0) + 1,
+      detail,
+      firstDeferredAt : previous?.firstDeferredAt ?? now,
+      lastDeferredAt  : now,
+    };
+    await this._deferredPulls.put(key, JSON.stringify(state));
+    return state;
+  }
+
+  private async clearDeferredPull(tenantDid: string, dwnUrl: string, messageCid: string): Promise<void> {
+    try {
+      await this._deferredPulls.del(SyncEngineLevel.deadLetterKey(tenantDid, messageCid, dwnUrl));
+    } catch (error) {
+      const e = error as { code?: string };
+      if (e.code !== 'LEVEL_NOT_FOUND') {
+        throw error;
+      }
     }
   }
 
