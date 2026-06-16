@@ -1700,19 +1700,16 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        // Stub a feed phase so the real sync() manages _syncLock, while the
-        // slow part is a shared promise created BEFORE the interval. The
-        // shared promise means the first sync takes ~750ms, but subsequent
-        // syncs complete instantly (the promise is already resolved).
-        //
-        // The first sync resolves between interval ticks, avoiding fake-clock
-        // ordering races between promise resolution and interval callbacks.
+        let resolveFirstPull!: (result: object) => void;
+        const firstPull = new Promise<object>((resolve) => {
+          resolveFirstPull = resolve;
+        });
+
+        // Stub a feed phase so the real sync() manages _syncLock, while the first
+        // sync remains pending until the test explicitly releases it.
         const pullRemoteFeedStub = sinon.stub(SyncEngineLevel.prototype as any, 'pullRemoteFeedForSyncTarget');
-        pullRemoteFeedStub.returns(new Promise((resolve) => {
-          clock.setTimeout(() => {
-            resolve({});
-          }, 750);
-        }));
+        pullRemoteFeedStub.onFirstCall().returns(firstPull);
+        pullRemoteFeedStub.resolves({});
 
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
         getSyncTargetsStub.resolves([{
@@ -1733,17 +1730,19 @@ describe('SyncEngineLevel', () => {
 
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
-        await clock.tickAsync(700); // less time than the first sync
+        await clock.tickAsync(0);
 
         // only once for when starting the sync
         expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(200); // the first sync has finished, but the next interval has not fired
+        await clock.tickAsync(500); // first interval fires while the first sync is still running
 
         // still only once because the interval at 500ms was skipped while sync was running
         expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(200); // one interval after the first sync finishes
+        resolveFirstPull({});
+        await clock.tickAsync(0);
+        await clock.tickAsync(500); // next interval after the first sync finishes
 
         // once when starting, and once for the interval
         expect(syncSpy.callCount).toBe(2);
