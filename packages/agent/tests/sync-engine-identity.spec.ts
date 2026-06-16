@@ -1,7 +1,7 @@
 import sinon from 'sinon';
 
 import { Level } from 'level';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
@@ -23,6 +23,10 @@ describe('SyncEngineLevel — identity management', () => {
   beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-engine-identity-spec');
     syncEngine = new SyncEngineLevel({ db });
+  });
+
+  beforeEach(() => {
+    sinon.stub(SyncEngineLevel.prototype as any, 'validateSyncScopeClosure').resolves();
   });
 
   afterEach(async () => {

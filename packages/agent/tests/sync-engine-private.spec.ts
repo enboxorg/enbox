@@ -2,7 +2,7 @@ import sinon from 'sinon';
 
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
-import { Message, Replication, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Message, Replication, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { computeAuthorizationEpoch } from '../src/types/sync.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -45,6 +45,41 @@ describe('SyncEngineLevel — private methods', () => {
     message: {},
   });
 
+  const protocolDefinition = (
+    protocol: string,
+    overrides: Record<string, unknown> = {},
+  ): any => ({
+    protocol,
+    published : true,
+    types     : {},
+    structure : {},
+    ...overrides,
+  });
+
+  const localProtocolHistoryAgent = (definitionsByProtocol: Map<string, any[]>): any => ({
+    dwn: {
+      processRequest: sinon.stub().callsFake(async (request: any): Promise<any> => {
+        const filter = request.messageParams.filters[0];
+        const definitions = definitionsByProtocol.get(filter.protocol) ?? [];
+        return {
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            drained : true,
+            entries : definitions.map(definition => ({
+              message: {
+                descriptor: {
+                  interface : DwnInterfaceName.Protocols,
+                  method    : DwnMethodName.Configure,
+                  definition,
+                },
+              },
+            })),
+          },
+        };
+      }),
+    },
+  });
+
   const fingerprintFromCids = async (messageCids: string[]): Promise<string> => {
     let fingerprint = Replication.emptyFingerprint();
     for (const messageCid of messageCids) {
@@ -63,9 +98,12 @@ describe('SyncEngineLevel — private methods', () => {
   const createdEngines: SyncEngineLevel[] = [];
   const createEngine = (
     params: ConstructorParameters<typeof SyncEngineLevel>[0],
-    options: { stubFeedPull?: boolean; stubFeedPush?: boolean; stubFeedVerify?: boolean } = {},
+    options: { stubFeedPull?: boolean; stubFeedPush?: boolean; stubFeedVerify?: boolean; stubScopeClosure?: boolean } = {},
   ): SyncEngineLevel => {
     const engine = new SyncEngineLevel(params);
+    if (options.stubScopeClosure !== false) {
+      sinon.stub(engine as any, 'validateSyncScopeClosure').resolves();
+    }
     if (options.stubFeedPull !== false) {
       sinon.stub(engine as any, 'pullRemoteFeedForSyncTarget').resolves({});
     }
@@ -449,6 +487,166 @@ describe('SyncEngineLevel — private methods', () => {
         protocols      : ['https://example.com/profile', 'https://example.com/social'],
         permissionsApi : permissionsApi as any,
       })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesSync: https://example.com/social');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // sync scope closure validation
+  // ---------------------------------------------------------------------------
+
+  describe('sync scope closure validation', () => {
+    const profileProtocol = 'https://example.com/profile';
+    const socialProtocol = 'https://example.com/social';
+
+    it('should reject delegated registration when a retained config uses a protocol without a Messages.Read grant', async () => {
+      const engine = createEngine({
+        db,
+        agent: localProtocolHistoryAgent(new Map([
+          [profileProtocol, [protocolDefinition(profileProtocol, {
+            uses: { social: socialProtocol },
+          })]],
+        ])),
+      }, { stubScopeClosure: false });
+      (engine as any)._permissionsApi = {
+        fetchGrants: sinon.stub().resolves([
+          messagesGrantEntry('grant-profile', {
+            interface : 'Messages',
+            method    : 'Read',
+            protocol  : profileProtocol,
+          }, {
+            grantor : 'did:example:alice',
+            grantee : 'did:example:delegate',
+          }),
+        ]),
+      };
+
+      await expect(engine.registerIdentity({
+        did     : 'did:example:alice',
+        options : { delegateDid: 'did:example:delegate', protocols: [profileProtocol] },
+      })).rejects.toThrow(`closure protocols: ${socialProtocol}`);
+    });
+
+    it('should reject registration that splits a cross-protocol parent dependency', async () => {
+      const engine = createEngine({
+        db,
+        agent: localProtocolHistoryAgent(new Map([
+          [profileProtocol, [protocolDefinition(profileProtocol, {
+            uses      : { social: socialProtocol },
+            structure : {
+              thread: {
+                $ref: 'social:thread',
+              },
+            },
+          })]],
+        ])),
+      }, { stubScopeClosure: false });
+
+      await expect(engine.registerIdentity({
+        did     : 'did:example:alice',
+        options : { protocols: [profileProtocol] },
+      })).rejects.toThrow(`${profileProtocol} -> ${socialProtocol}`);
+    });
+
+    it('should reject registration that splits a cross-protocol role dependency', async () => {
+      const engine = createEngine({
+        db,
+        agent: localProtocolHistoryAgent(new Map([
+          [profileProtocol, [protocolDefinition(profileProtocol, {
+            uses      : { social: socialProtocol },
+            structure : {
+              post: {
+                $actions: [{ role: 'social:admin', can: ['create'] }],
+              },
+            },
+          })]],
+        ])),
+      }, { stubScopeClosure: false });
+
+      await expect(engine.registerIdentity({
+        did     : 'did:example:alice',
+        options : { protocols: [profileProtocol] },
+      })).rejects.toThrow(`${profileProtocol} -> ${socialProtocol}`);
+    });
+
+    it('should reject delegated registration that grants but does not co-scope a cross-protocol of dependency', async () => {
+      const engine = createEngine({
+        db,
+        agent: localProtocolHistoryAgent(new Map([
+          [profileProtocol, [protocolDefinition(profileProtocol, {
+            uses      : { social: socialProtocol },
+            structure : {
+              post: {
+                $actions: [{ who: 'author', of: 'social:profile', can: ['read'] }],
+              },
+            },
+          })]],
+          [socialProtocol, []],
+        ])),
+      }, { stubScopeClosure: false });
+      (engine as any)._permissionsApi = {
+        fetchGrants: sinon.stub().resolves([
+          messagesGrantEntry('grant-profile', {
+            interface : 'Messages',
+            method    : 'Read',
+            protocol  : profileProtocol,
+          }, {
+            grantor : 'did:example:alice',
+            grantee : 'did:example:delegate',
+          }),
+          messagesGrantEntry('grant-social', {
+            interface : 'Messages',
+            method    : 'Read',
+            protocol  : socialProtocol,
+          }, {
+            grantor : 'did:example:alice',
+            grantee : 'did:example:delegate',
+          }),
+        ]),
+      };
+
+      await expect(engine.registerIdentity({
+        did     : 'did:example:alice',
+        options : { delegateDid: 'did:example:delegate', protocols: [profileProtocol] },
+      })).rejects.toThrow(`${profileProtocol} -> ${socialProtocol}`);
+    });
+
+    it('should allow delegated registration when transitive uses protocols have grant coverage', async () => {
+      const agent = localProtocolHistoryAgent(new Map([
+        [profileProtocol, [protocolDefinition(profileProtocol, {
+          uses: { social: socialProtocol },
+        })]],
+        [socialProtocol, []],
+      ]));
+      const engine = createEngine({ db, agent }, { stubScopeClosure: false });
+      (engine as any)._permissionsApi = {
+        fetchGrants: sinon.stub().resolves([
+          messagesGrantEntry('grant-profile', {
+            interface : 'Messages',
+            method    : 'Read',
+            protocol  : profileProtocol,
+          }, {
+            grantor : 'did:example:alice',
+            grantee : 'did:example:delegate',
+          }),
+          messagesGrantEntry('grant-social', {
+            interface : 'Messages',
+            method    : 'Read',
+            protocol  : socialProtocol,
+          }, {
+            grantor : 'did:example:alice',
+            grantee : 'did:example:delegate',
+          }),
+        ]),
+      };
+
+      await engine.registerIdentity({
+        did     : 'did:example:alice',
+        options : { delegateDid: 'did:example:delegate', protocols: [profileProtocol] },
+      });
+
+      const options = await engine.getIdentityOptions('did:example:alice');
+      expect(options).toEqual({ delegateDid: 'did:example:delegate', protocols: [profileProtocol] });
+      expect(agent.dwn.processRequest.callCount).toBe(2);
     });
   });
 
