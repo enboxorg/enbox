@@ -40,6 +40,11 @@ function testServerInfo(maxFileSize = 100 * 1024 * 1024): ServerInfo {
   };
 }
 
+function connectionKeyForDwnUrl(dwnUrl: string): string {
+  const normalized = new URL(dwnUrl).toString();
+  return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
+}
+
 /** Installs the default test protocol on the remote DWN for the given persona. */
 async function installDefaultTestProtocolViaHttp(httpClient: HttpDwnRpcClient, dwnUrl: string, persona: Persona): Promise<void> {
   const protocolsConfigure = await ProtocolsConfigure.create({
@@ -143,6 +148,7 @@ describe('WebSocketDwnRpcClient', () => {
     });
 
     it('rejects invalid connection', async () => {
+      const invalidDwnUrl = 'ws://127.0.0.1:10';
 
       // create a generic records query
       const { message } = await TestDataGenerator.generateRecordsQuery({
@@ -157,13 +163,13 @@ describe('WebSocketDwnRpcClient', () => {
 
       try {
         await client.sendDwnRequest({
-          dwnUrl    : 'ws://127.0.0.1:10', // invalid host
+          dwnUrl    : invalidDwnUrl, // invalid host
           targetDid : alice.did,
           message,
         }, { connectTimeout: 5 }); // set a short connect timeout
         throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).toContain('Error connecting to 127.0.0.1:10');
+        expect(error.message).toContain(`Error connecting to ${connectionKeyForDwnUrl(invalidDwnUrl)}`);
       }
     });
 
@@ -345,8 +351,8 @@ describe('WebSocketDwnRpcClient', () => {
             };
           },
         };
-        const host = new URL(socketDwnUrl).host;
-        (WebSocketDwnRpcClient as any)['connections'].set(host, {
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
+        (WebSocketDwnRpcClient as any)['connections'].set(connectionKey, {
           socket,
           subscriptions : new Map(),
           url           : socketDwnUrl,
@@ -471,8 +477,8 @@ describe('WebSocketDwnRpcClient', () => {
             result  : { result: { kind: 'Incomplete', missing: [{ type: 'Parent', recordId: 'parent-without-protocol' }] } },
           }),
         };
-        const host = new URL(socketDwnUrl).host;
-        (WebSocketDwnRpcClient as any)['connections'].set(host, {
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
+        (WebSocketDwnRpcClient as any)['connections'].set(connectionKey, {
           socket,
           subscriptions : new Map(),
           url           : socketDwnUrl,
@@ -657,8 +663,8 @@ describe('WebSocketDwnRpcClient', () => {
         expect(receivedMessages.length).toBeGreaterThanOrEqual(1);
 
         // check that the connection tracks the subscription with a cursor
-        const host = new URL(socketDwnUrl).host;
-        const connection = (WebSocketDwnRpcClient as any)['connections'].get(host);
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
+        const connection = (WebSocketDwnRpcClient as any)['connections'].get(connectionKey);
         expect(connection).toBeDefined();
 
         // at least one tracked subscription should exist
@@ -748,8 +754,8 @@ describe('WebSocketDwnRpcClient', () => {
         expect(subscribeResponse.status.code).toBe(200);
 
         // Get the connection's socket and spy on send
-        const host = new URL(socketDwnUrl).host;
-        const connection = (WebSocketDwnRpcClient as any)['connections'].get(host);
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
+        const connection = (WebSocketDwnRpcClient as any)['connections'].get(connectionKey);
         const sendSpy = spyOn(connection.socket, 'send');
 
         // write a record to trigger a subscription event with a cursor
@@ -785,7 +791,7 @@ describe('WebSocketDwnRpcClient', () => {
     });
 
     describe('connection reuse', () => {
-      it('should reuse existing connection for same host', async () => {
+      it('should reuse existing connection for the same endpoint URL', async () => {
         const { message: msg1 } = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : { schema: 'foo/bar' }
@@ -798,12 +804,12 @@ describe('WebSocketDwnRpcClient', () => {
           message   : msg1,
         });
 
-        const host = new URL(socketDwnUrl).host;
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
         const connections = (WebSocketDwnRpcClient as any)['connections'];
-        expect(connections.has(host)).toBe(true);
-        const firstConnection = connections.get(host);
+        expect(connections.has(connectionKey)).toBe(true);
+        const firstConnection = connections.get(connectionKey);
 
-        // Second request to same host — should reuse the same connection
+        // Second request to same endpoint — should reuse the same connection
         const { message: msg2 } = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : { schema: 'baz/qux' }
@@ -815,8 +821,128 @@ describe('WebSocketDwnRpcClient', () => {
           message   : msg2,
         });
 
-        const secondConnection = connections.get(host);
+        const secondConnection = connections.get(connectionKey);
         expect(secondConnection).toBe(firstConnection);
+      });
+
+      it('should not reuse a connection for a different path on the same host', async () => {
+        const baseUrl = new URL(socketDwnUrl);
+        baseUrl.pathname = '/tenant-a';
+        const firstUrl = baseUrl.toString();
+
+        const secondUrl = new URL(socketDwnUrl);
+        secondUrl.pathname = '/tenant-b';
+
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+        const socket = {
+          request: async (request: any): Promise<any> => ({
+            jsonrpc : '2.0',
+            id      : request.id,
+            result  : {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [],
+              },
+            },
+          }),
+        };
+        const createConnectionStub = sinon.stub(WebSocketDwnRpcClient as any, 'createConnection').callsFake(async (url: URL): Promise<any> => {
+          return { socket, subscriptions: new Map(), url: url.toString() };
+        });
+
+        await client.sendDwnRequest({ dwnUrl: firstUrl, targetDid: alice.did, message });
+        await client.sendDwnRequest({ dwnUrl: secondUrl.toString(), targetDid: alice.did, message });
+
+        expect(createConnectionStub.callCount).toBe(2);
+        expect(createConnectionStub.firstCall.args[0].toString()).toBe(firstUrl);
+        expect(createConnectionStub.secondCall.args[0].toString()).toBe(secondUrl.toString());
+
+        const connections = (WebSocketDwnRpcClient as any)['connections'];
+        expect(connections.has(connectionKeyForDwnUrl(firstUrl))).toBe(true);
+        expect(connections.has(connectionKeyForDwnUrl(secondUrl.toString()))).toBe(true);
+      });
+
+      it('should reuse a connection for the same path with or without a trailing slash', async () => {
+        const firstUrl = new URL(socketDwnUrl);
+        firstUrl.pathname = '/tenant-a';
+
+        const secondUrl = new URL(socketDwnUrl);
+        secondUrl.pathname = '/tenant-a/';
+
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+        const socket = {
+          request: async (request: any): Promise<any> => ({
+            jsonrpc : '2.0',
+            id      : request.id,
+            result  : {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : [],
+              },
+            },
+          }),
+        };
+        const createConnectionStub = sinon.stub(WebSocketDwnRpcClient as any, 'createConnection').callsFake(async (url: URL): Promise<any> => {
+          return { socket, subscriptions: new Map(), url: url.toString() };
+        });
+
+        await client.sendDwnRequest({ dwnUrl: firstUrl.toString(), targetDid: alice.did, message });
+        await client.sendDwnRequest({ dwnUrl: secondUrl.toString(), targetDid: alice.did, message });
+
+        expect(createConnectionStub.callCount).toBe(1);
+
+        const connections = (WebSocketDwnRpcClient as any)['connections'];
+        expect(connections.has(connectionKeyForDwnUrl(firstUrl.toString()))).toBe(true);
+        expect(connections.has(connectionKeyForDwnUrl(secondUrl.toString()))).toBe(true);
+      });
+
+      it('should not deduplicate pending first-use connections for different paths on the same host', async () => {
+        const firstUrl = new URL(socketDwnUrl);
+        firstUrl.pathname = '/tenant-a';
+
+        const secondUrl = new URL(socketDwnUrl);
+        secondUrl.pathname = '/tenant-b';
+
+        const { message } = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { schema: 'foo/bar' },
+        });
+        const createConnectionStub = sinon.stub(WebSocketDwnRpcClient as any, 'createConnection').callsFake(async (url: URL): Promise<any> => {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          return {
+            socket: {
+              request: async (request: any): Promise<any> => ({
+                jsonrpc : '2.0',
+                id      : request.id,
+                result  : {
+                  reply: {
+                    status  : { code: 200, detail: 'OK' },
+                    entries : [],
+                  },
+                },
+              }),
+            },
+            subscriptions : new Map(),
+            url           : url.toString(),
+          };
+        });
+
+        await Promise.all([
+          client.sendDwnRequest({ dwnUrl: firstUrl.toString(), targetDid: alice.did, message }),
+          client.sendDwnRequest({ dwnUrl: secondUrl.toString(), targetDid: alice.did, message }),
+        ]);
+
+        expect(createConnectionStub.callCount).toBe(2);
+
+        const connections = (WebSocketDwnRpcClient as any)['connections'];
+        expect(connections.has(connectionKeyForDwnUrl(firstUrl.toString()))).toBe(true);
+        expect(connections.has(connectionKeyForDwnUrl(secondUrl.toString()))).toBe(true);
       });
     });
 
@@ -834,18 +960,18 @@ describe('WebSocketDwnRpcClient', () => {
           message,
         });
 
-        const host = new URL(socketDwnUrl).host;
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
         const connections = (WebSocketDwnRpcClient as any)['connections'];
-        expect(connections.has(host)).toBe(true);
+        expect(connections.has(connectionKey)).toBe(true);
 
-        const connection = connections.get(host);
+        const connection = connections.get(connectionKey);
 
         // Close the underlying socket — this triggers the onclose handler
         connection.socket.close();
         await sleepWhileWaitingForEvents(50);
 
         // Connection should be removed from the map
-        expect(connections.has(host)).toBe(false);
+        expect(connections.has(connectionKey)).toBe(false);
       });
 
       it('should notify subscription handlers of disconnection on close', async () => {
@@ -871,8 +997,8 @@ describe('WebSocketDwnRpcClient', () => {
         expect(subscribeResponse.status.code).toBe(200);
 
         // Close the underlying socket to trigger disconnection
-        const host = new URL(socketDwnUrl).host;
-        const connection = (WebSocketDwnRpcClient as any)['connections'].get(host);
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
+        const connection = (WebSocketDwnRpcClient as any)['connections'].get(connectionKey);
         connection.socket.close();
         await sleepWhileWaitingForEvents(50);
 
@@ -900,10 +1026,10 @@ describe('WebSocketDwnRpcClient', () => {
           }
         );
 
-        // Clear any existing connection for this host.
-        const host = new URL(socketDwnUrl).host;
+        // Clear any existing connection for this endpoint.
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
         const connections = (WebSocketDwnRpcClient as any)['connections'] as Map<string, any>;
-        connections.delete(host);
+        connections.delete(connectionKey);
 
         // Trigger createConnection via sendDwnRequest.
         const { message } = await TestDataGenerator.generateRecordsQuery({
@@ -923,18 +1049,18 @@ describe('WebSocketDwnRpcClient', () => {
         expect(typeof capturedOptions.onreconnected).toBe('function');
 
         // Verify the connection is in the map.
-        expect(connections.has(host)).toBe(true);
+        expect(connections.has(connectionKey)).toBe(true);
 
         // Test onclose: should delete from connections map.
         capturedOptions.onclose();
-        expect(connections.has(host)).toBe(false);
+        expect(connections.has(connectionKey)).toBe(false);
 
         // Test onreconnected: should re-register in the map.
         capturedOptions.onreconnected();
-        expect(connections.has(host)).toBe(true);
+        expect(connections.has(connectionKey)).toBe(true);
 
         connectStub.restore();
-        connections.delete(host);
+        connections.delete(connectionKey);
       });
 
       it('should notify subscription handlers during onclose and onreconnecting', async () => {
@@ -958,9 +1084,9 @@ describe('WebSocketDwnRpcClient', () => {
           }
         );
 
-        const host = new URL(socketDwnUrl).host;
+        const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
         const connections = (WebSocketDwnRpcClient as any)['connections'] as Map<string, any>;
-        connections.delete(host);
+        connections.delete(connectionKey);
 
         const { message } = await TestDataGenerator.generateRecordsQuery({
           author : alice,
@@ -974,7 +1100,7 @@ describe('WebSocketDwnRpcClient', () => {
         });
 
         // Manually inject a tracked subscription into the connection's subscriptions map.
-        const conn = connections.get(host);
+        const conn = connections.get(connectionKey);
         conn.subscriptions.set('test-sub-1', {
           subscription : { id: 'test-sub-1', close: async (): Promise<void> => {} },
           target       : alice.did,
@@ -996,7 +1122,7 @@ describe('WebSocketDwnRpcClient', () => {
         expect((reconnectingMsgs[0] as any).attempt).toBe(1);
 
         connectStub.restore();
-        connections.delete(host);
+        connections.delete(connectionKey);
       });
     });
 

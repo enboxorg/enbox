@@ -61,6 +61,14 @@ interface SocketConnection {
   url: string;
 }
 
+function connectionCacheKey(url: URL): string {
+  return stripTrailingSlash(url.toString());
+}
+
+function stripTrailingSlash(url: string): string {
+  return url.endsWith('/') ? url.slice(0, -1) : url;
+}
+
 function shouldReplaceLastCursor(current: ProgressToken | undefined, candidate: ProgressToken): boolean {
   if (current === undefined) {
     return true;
@@ -75,7 +83,7 @@ function shouldReplaceLastCursor(current: ProgressToken | undefined, candidate: 
 
 export class WebSocketDwnRpcClient implements DwnRpc {
   public get transportProtocols(): string[] { return ['ws:', 'wss:']; }
-  // a map of dwn host to WebSocket connection
+  // a map of normalized DWN WebSocket endpoint URLs to WebSocket connections
   private static readonly connections = new Map<string, SocketConnection>();
   private static readonly pendingConnections = new Map<string, Promise<SocketConnection>>();
 
@@ -130,25 +138,26 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       throw new Error(`Invalid websocket protocol ${url.protocol}`);
     }
 
-    const existing = WebSocketDwnRpcClient.connections.get(url.host);
+    const key = connectionCacheKey(url);
+    const existing = WebSocketDwnRpcClient.connections.get(key);
     if (existing !== undefined) {
       return existing;
     }
 
-    let pending = WebSocketDwnRpcClient.pendingConnections.get(url.host);
+    let pending = WebSocketDwnRpcClient.pendingConnections.get(key);
     if (pending === undefined) {
       pending = WebSocketDwnRpcClient.createConnection(url)
         .then((connection) => {
-          WebSocketDwnRpcClient.connections.set(url.host, connection);
+          WebSocketDwnRpcClient.connections.set(key, connection);
           return connection;
         })
         .catch((error: unknown) => {
-          throw new Error(`Error connecting to ${url.host}: ${(error as Error).message}`);
+          throw new Error(`Error connecting to ${key}: ${(error as Error).message}`);
         })
         .finally(() => {
-          WebSocketDwnRpcClient.pendingConnections.delete(url.host);
+          WebSocketDwnRpcClient.pendingConnections.delete(key);
         });
-      WebSocketDwnRpcClient.pendingConnections.set(url.host, pending);
+      WebSocketDwnRpcClient.pendingConnections.set(key, pending);
     }
 
     return pending;
@@ -158,13 +167,13 @@ export class WebSocketDwnRpcClient implements DwnRpc {
    * Creates a new `SocketConnection` with lifecycle wiring for reconnection.
    */
   private static async createConnection(url: URL): Promise<SocketConnection> {
-    const host = url.host;
+    const key = connectionCacheKey(url);
     const subscriptions = new Map<string, TrackedSubscription>();
 
     const socket = await JsonRpcSocket.connect(url.toString(), {
       onclose: (): void => {
         // Remove the stale connection from the map so new requests create a fresh one.
-        WebSocketDwnRpcClient.connections.delete(host);
+        WebSocketDwnRpcClient.connections.delete(key);
 
         // Notify all subscription handlers of disconnection.
         for (const tracked of subscriptions.values()) {
@@ -181,7 +190,7 @@ export class WebSocketDwnRpcClient implements DwnRpc {
       onreconnected: (): void => {
         // Re-register this connection in the map (it was deleted on close).
         const conn = { socket, subscriptions, url: url.toString() };
-        WebSocketDwnRpcClient.connections.set(host, conn);
+        WebSocketDwnRpcClient.connections.set(key, conn);
 
         // Resubscribe all tracked subscriptions with their last known cursor.
         WebSocketDwnRpcClient.resubscribeAll(conn);

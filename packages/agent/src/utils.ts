@@ -4,6 +4,8 @@ import type { PaginationCursor, RecordsDeleteMessage, RecordsWrite, RecordsWrite
 import { utils as didUtils } from '@enbox/dids';
 import { DateSort, DwnInterfaceName, DwnMethodName, Jws, Message } from '@enbox/dwn-sdk-js';
 
+import { normalizeBaseUrl } from './local-dwn.js';
+
 export async function getDwnServiceEndpointUrls(didUri: string, dereferencer: DidUrlDereferencer): Promise<string[]> {
   // Attempt to dereference the DID service with ID fragment #dwn.
   const dereferencingResult = await dereferencer.dereference(`${didUri}#dwn`);
@@ -24,12 +26,20 @@ export async function getDwnServiceEndpointUrls(didUri: string, dereferencer: Di
         : [];
 
     if (serviceEndpointUrls.length > 0) {
-      return serviceEndpointUrls;
+      return [...new Set(serviceEndpointUrls.map(normalizeDwnServiceEndpointUrl))];
     }
   }
 
   // If the DID service with ID fragment #dwn was not found or is not valid, return an empty array.
   return [];
+}
+
+function normalizeDwnServiceEndpointUrl(endpoint: string): string {
+  try {
+    return normalizeBaseUrl(new URL(endpoint).toString());
+  } catch {
+    return normalizeBaseUrl(endpoint);
+  }
 }
 
 export function getRecordAuthor(record: RecordsWriteMessage | RecordsDeleteMessage): string | undefined {

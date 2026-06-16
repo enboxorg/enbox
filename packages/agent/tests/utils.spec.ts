@@ -252,6 +252,32 @@ describe('Utils', () => {
       expect(urls).toEqual(['https://dwn.example.com']);
     });
 
+    it('should normalize and deduplicate service endpoint URLs', async () => {
+      const mockDereferencer = {
+        dereference: mock(() => Promise.resolve({
+          dereferencingMetadata : {},
+          contentStream         : {
+            id              : 'did:example:alice#dwn',
+            type            : 'DecentralizedWebNode',
+            serviceEndpoint : [
+              'https://DWN.EXAMPLE.com/dwn/',
+              'https://dwn.example.com/dwn',
+              'https://dwn.example.com/DWN/',
+              'https://dwn.example.com:443/root/',
+              'https://dwn.example.com/root',
+            ],
+          },
+        })),
+      };
+
+      const urls = await getDwnServiceEndpointUrls('did:example:alice', mockDereferencer as any);
+      expect(urls).toEqual([
+        'https://dwn.example.com/dwn',
+        'https://dwn.example.com/DWN',
+        'https://dwn.example.com/root',
+      ]);
+    });
+
     it('should return empty array when service endpoint is empty', async () => {
       const mockDereferencer = {
         dereference: mock(() => Promise.resolve({
