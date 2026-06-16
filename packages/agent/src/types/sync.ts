@@ -64,9 +64,9 @@ export type NonEmptyStringArray = [string, ...string[]];
 /**
  * Describes the primary CID set a replication link syncs.
  *
- * Full and protocol-set sync use the existing StateIndex roots. Narrow
- * protocolPath/contextId sync is not represented here; a delegate must have
- * grant coverage for every full protocol root in the protocol set.
+ * Full and protocol-set sync use durable message-feed filters and replication
+ * fingerprints. Narrow protocolPath/contextId sync is not represented here; a
+ * delegate must have grant coverage for every full protocol in the protocol set.
  */
 export type SyncScope = {
   /** Full-tenant scope. Valid only for owner sync or unscoped delegated grants. */
@@ -322,6 +322,8 @@ export type PushFailureKind = 'Invalid' | 'Deferred' | 'Incomplete';
 export type PushFailure = {
   /** Requested root CID whose push did not converge. */
   cid: string;
+  /** Root protocol URI, when known from the local feed entry. */
+  protocol?: string;
   /** Non-root dependency CID that caused this root to fail, when applicable. */
   dependencyCid?: string;
   /** Structured remote apply result kind that produced the failure. */
@@ -411,7 +413,6 @@ export type SyncEvent =
   | SyncEventBase & { type: 'reconcile:applied'; messageCids: string[] }
   | SyncEventBase & { type: 'reconcile:needed'; reason: string }
   | SyncEventBase & { type: 'reconcile:completed' }
-  | SyncEventBase & { type: 'reconcile:settled-with-failures'; failedMessageCount: number }
   | SyncEventBase & { type: 'repair:started'; attempt: number }
   | SyncEventBase & { type: 'repair:completed' }
   | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
@@ -437,8 +438,6 @@ export type DeadLetterEntry = {
   remoteEndpoint?: string;
   /** The protocol URI, if applicable. */
   protocol?: string;
-  /** The sync scope whose admission/push attempt produced this failure. */
-  scope?: SyncScope;
   /** What kind of failure occurred. */
   category: DeadLetterCategory;
   /** Machine-readable error code (for example, an HTTP status or admission reason). */

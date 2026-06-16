@@ -1,18 +1,16 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProgressToken, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
 import { Level } from 'level';
 import { sleep } from '@enbox/common';
-import { DwnInterfaceName, DwnMethodName, Encoder, hashToHex, initDefaultHashes, Message, Replication } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
 
-import type { DwnMessageParams } from './types/dwn.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
-import type { ReconcileOutcome } from './sync-link-reconciler.js';
 import type { SyncMessageEntry } from './sync-messages.js';
 import type { DeadLetterCategory, DeadLetterEntry, DirectionCheckpoint, NonEmptyStringArray, PushFailure, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
@@ -26,8 +24,7 @@ import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
-import { fetchRemoteMessages, getMessageCid, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
-import { partitionRemoteEntries, SyncLinkReconciler } from './sync-link-reconciler.js';
+import { fetchRemoteMessages, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
 import { permissionGrantIdsFromEntries, resolveMessagesScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
 export type SyncEngineLevelParams = {
@@ -35,21 +32,6 @@ export type SyncEngineLevelParams = {
   dataPath?: string;
   db?: AbstractLevel<string | Buffer | Uint8Array>;
 };
-
-/**
- * Maximum bit prefix depth for the per-node tree walk fallback.
- * At depth 16, each subtree covers ~1/65536 of the key space.
- */
-const MAX_DIFF_DEPTH = 16;
-
-/**
- * Bit depth for the batched diff protocol.
- * Lower than MAX_DIFF_DEPTH because the batched diff sends all subtree hashes
- * in a single request — fine granularity comes from the server-side leaf
- * enumeration, not from deeper prefixes. Depth 8 = 256 buckets, which is
- * a good balance between hash map size and leaf-set resolution.
- */
-const BATCHED_DIFF_DEPTH = 8;
 
 /**
  * Debounce window for batching writes that arrive while a push is in flight.
@@ -132,28 +114,14 @@ type SyncReconcileResult = {
   converged?: boolean;
   hasActionableDiffs?: boolean;
   ignoredLocalCids?: string[];
-  ignoredRemoteCids?: string[];
   localFingerprint?: string;
   pushFailures?: PushFailure[];
   remoteFingerprint?: string;
 };
 
-type DeadLetterSettlement =
-  | { settled: false }
-  | { failedMessageCount: number; settled: true };
-
-type SingleProtocolReconcileAccumulator = {
-  admittedCids: string[];
-  converged: boolean;
-  hasActionableDiffs: boolean;
-  ignoredLocalCids: string[];
-  ignoredRemoteCids: string[];
-  pushFailures: PushFailure[];
-};
-
-type SyncDiffResult = {
-  onlyRemote: MessagesSyncDiffEntry[];
-  onlyLocal: string[];
+type FeedConvergenceFailureState = {
+  attempts: number;
+  signature: string;
 };
 
 type FeedPageAdmissionResult =
@@ -175,20 +143,6 @@ type FeedPagePushResult =
   | { kind: 'aborted' }
   | { kind: 'failed'; failures: PushFailure[]; hasActionableDiffs: boolean; ignoredLocalCids: string[] }
   | { kind: 'processed'; hasActionableDiffs: boolean; ignoredLocalCids: string[] };
-
-type ProtocolSetReconcileContext = {
-  did: string;
-  dwnUrl: string;
-  delegateDid?: string;
-  scope: SyncScope;
-  permissionGrantIds?: NonEmptyStringArray;
-  protocols: NonEmptyStringArray;
-  shouldContinue?: () => boolean;
-};
-
-type ProtocolSetDiffCollectionResult =
-  | { aborted: true }
-  | { aborted: false; diffs: SyncDiffResult[] };
 
 // ---------------------------------------------------------------------------
 // Per-link in-memory delivery-order tracking (not persisted to ledger)
@@ -328,13 +282,6 @@ export class SyncEngineLevel implements SyncEngine {
    * re-delivered events.
    */
   private readonly _linkRuntimes: Map<string, LinkRuntimeState> = new Map();
-
-  /**
-   * Hex-encoded default hashes for empty subtrees at each depth, keyed by depth.
-   * Lazily initialized on first use. Used by `walkTreeDiff` to detect empty subtrees
-   * and short-circuit the recursive walk instead of descending all the way to MAX_DIFF_DEPTH.
-   */
-  private _defaultHashHex?: Map<number, string>;
 
   // ---------------------------------------------------------------------------
   // Live sync state
@@ -731,8 +678,12 @@ export class SyncEngineLevel implements SyncEngine {
                 throw new Error(`SyncEngineLevel: reconciliation push failed for ${retryableFailures} retryable message(s).`);
               }
             }
-            if (options?.verifyConvergence === true && result.converged === false) {
-              await this.handleVerifiedFeedDivergence(target, result);
+            if (options?.verifyConvergence === true) {
+              if (result.converged === false) {
+                await this.handleVerifiedFeedDivergence(target, result);
+              } else if (result.converged === true) {
+                await this.clearFeedConvergenceFailure(target);
+              }
             }
           } catch (error: any) {
             // Skip remaining targets for this DWN endpoint.
@@ -977,6 +928,9 @@ export class SyncEngineLevel implements SyncEngine {
   /** Maximum consecutive repair attempts before falling back to degraded_poll. */
   private static readonly MAX_REPAIR_ATTEMPTS = 3;
 
+  /** Maximum repeated verified dead-letter mismatches before pausing the link as terminal-incomplete. */
+  private static readonly MAX_FEED_CONVERGENCE_DEAD_LETTER_ATTEMPTS = 3;
+
   /** Per-link degraded-poll interval timers. */
   private readonly _degradedPollTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
 
@@ -988,6 +942,9 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Per-link retry timers for failed repairs below max attempts. */
   private readonly _repairRetryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+  /** Repeated feed fingerprint mismatches explained by durable dead letters. */
+  private readonly _feedConvergenceFailures: Map<string, FeedConvergenceFailureState> = new Map();
 
   /** Backoff schedule for repair retries (milliseconds). */
   private static readonly REPAIR_BACKOFF_MS = [1_000, 3_000, 10_000];
@@ -1582,6 +1539,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
     this._repairRetryTimers.clear();
     this._repairContext.clear();
+    this._feedConvergenceFailures.clear();
 
     // Clear reconcile timers and in-flight operations.
     for (const timer of this._reconcileTimers.values()) {
@@ -2266,7 +2224,6 @@ export class SyncEngineLevel implements SyncEngine {
       tenantDid      : context.did,
       remoteEndpoint : context.dwnUrl,
       protocol       : (event.message.descriptor as Record<string, unknown>).protocol as string | undefined,
-      scope          : context.link?.scope,
       category       : 'admit-failed',
       errorCode      : outcome.reason,
       errorDetail    : outcome.detail ?? 'replicated message admission failed',
@@ -2717,8 +2674,7 @@ export class SyncEngineLevel implements SyncEngine {
         messageCid     : failure.cid,
         tenantDid      : target.did,
         remoteEndpoint : target.dwnUrl,
-        protocol       : singleProtocolForSyncScope(target.scope),
-        scope          : target.scope,
+        protocol       : failure.protocol ?? singleProtocolForSyncScope(target.scope),
         category       : 'admit-failed',
         errorCode      : failure.kind ?? 'Invalid',
         errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
@@ -2793,7 +2749,6 @@ export class SyncEngineLevel implements SyncEngine {
         tenantDid      : pending.did,
         remoteEndpoint : pending.dwnUrl,
         protocol       : pending.protocol,
-        scope          : pending.scope,
         category       : 'admit-failed',
         errorCode      : failure.kind ?? 'Invalid',
         errorDetail    : failure.detail ?? 'terminal push failure',
@@ -2802,52 +2757,62 @@ export class SyncEngineLevel implements SyncEngine {
     return retryableEntries;
   }
 
-  private async handleVerifiedFeedDivergence(target: SyncTarget, result: SyncReconcileResult): Promise<void> {
-    const settlement = await this.feedConvergenceDeadLetterSettlement(target, result);
-    if (settlement.settled) {
-      await this.handleFeedConvergenceSettledWithFailures(target, settlement.failedMessageCount);
+  private async handleVerifiedFeedDivergence(target: SyncTarget, result: SyncReconcileResult, active?: {
+    link: ReplicationLinkState;
+    linkKey: string;
+  }): Promise<void> {
+    const deadLetterCids = await this.getAdmissionDeadLetterCidsForTarget(target);
+    if (deadLetterCids.length > 0) {
+      await this.handleFeedConvergenceMismatchWithDeadLetters(target, result, deadLetterCids, active);
       return;
     }
 
-    await this.handleFeedConvergenceMismatch(target, 'feed-fingerprint-mismatch');
+    await this.handleFeedConvergenceMismatch(target, 'feed-fingerprint-mismatch', active);
   }
 
-  private async feedConvergenceDeadLetterSettlement(
+  private async clearFeedConvergenceFailure(target: SyncTarget, active?: {
+    link: ReplicationLinkState;
+    linkKey: string;
+  }): Promise<void> {
+    if (active !== undefined) {
+      this._feedConvergenceFailures.delete(active.linkKey);
+      return;
+    }
+
+    const link = await this.getOrCreateReplicationLink(target);
+    this._feedConvergenceFailures.delete(this.getReplicationLinkKey(target, link));
+  }
+
+  private async handleFeedConvergenceMismatchWithDeadLetters(
     target: SyncTarget,
     result: SyncReconcileResult,
-  ): Promise<DeadLetterSettlement> {
-    if (result.converged === true || (result.pushFailures?.length ?? 0) > 0) {
-      return { settled: false };
+    deadLetterCids: string[],
+    active?: {
+      link: ReplicationLinkState;
+      linkKey: string;
+    },
+  ): Promise<void> {
+    const ledgerLink = active?.link ?? await this.getOrCreateReplicationLink(target);
+    const linkKey = active?.linkKey ?? this.getReplicationLinkKey(target, ledgerLink);
+    const activeLink = this._activeLinks.get(linkKey);
+    if (activeLink !== undefined && activeLink !== ledgerLink) {
+      activeLink.pull = ledgerLink.pull;
+      activeLink.push = ledgerLink.push;
+    }
+    const link = activeLink ?? ledgerLink;
+    const signature = SyncEngineLevel.feedConvergenceFailureSignature(result, deadLetterCids);
+    const previous = this._feedConvergenceFailures.get(linkKey);
+    const attempts = previous?.signature === signature ? previous.attempts + 1 : 1;
+
+    this._feedConvergenceFailures.set(linkKey, { attempts, signature });
+
+    if (attempts >= SyncEngineLevel.MAX_FEED_CONVERGENCE_DEAD_LETTER_ATTEMPTS) {
+      link.needsReconcile = false;
+      await this.transitionToTerminalIncomplete(linkKey, link);
+      return;
     }
 
-    const deadLetterCids = new Set(await this.getAdmissionDeadLetterCidsForTarget(target));
-    for (const messageCid of result.ignoredLocalCids ?? []) {
-      deadLetterCids.add(messageCid);
-    }
-    for (const messageCid of result.ignoredRemoteCids ?? []) {
-      deadLetterCids.add(messageCid);
-    }
-
-    if (deadLetterCids.size === 0) {
-      return { settled: false };
-    }
-
-    const localFingerprint = SyncEngineLevel.parseFingerprint(result.localFingerprint);
-    const remoteFingerprint = SyncEngineLevel.parseFingerprint(result.remoteFingerprint);
-    if (localFingerprint === undefined || remoteFingerprint === undefined) {
-      return SyncEngineLevel.isReconcileSettledByDeadLetters(result)
-        ? { failedMessageCount: deadLetterCids.size, settled: true }
-        : { settled: false };
-    }
-
-    const normalizedDelta = await SyncEngineLevel.foldCidsIntoFingerprintDelta(
-      Replication.xorFingerprint(localFingerprint, remoteFingerprint),
-      [...deadLetterCids],
-    );
-
-    return SyncEngineLevel.isEmptyFingerprint(normalizedDelta)
-      ? { failedMessageCount: deadLetterCids.size, settled: true }
-      : { settled: false };
+    await this.handleFeedConvergenceMismatch(target, 'feed-fingerprint-mismatch', { link, linkKey });
   }
 
   private async getAdmissionDeadLetterCidsForTarget(target: SyncTarget): Promise<string[]> {
@@ -2858,72 +2823,28 @@ export class SyncEngineLevel implements SyncEngine {
         entry.tenantDid === target.did &&
         entry.remoteEndpoint === target.dwnUrl &&
         entry.category === 'admit-failed' &&
-        SyncEngineLevel.deadLetterMatchesScope(entry, target.scope)
+        SyncEngineLevel.deadLetterMatchesTarget(entry, target.scope)
       ) {
         messageCids.add(entry.messageCid);
       }
     }
 
-    return [...messageCids];
+    return [...messageCids].sort();
   }
 
-  private static deadLetterMatchesScope(entry: DeadLetterEntry, scope: SyncScope): boolean {
+  private static deadLetterMatchesTarget(entry: DeadLetterEntry, scope: SyncScope): boolean {
     if (scope.kind === 'full') {
       return true;
     }
 
-    if (entry.scope !== undefined) {
-      return SyncEngineLevel.syncScopesEqual(entry.scope, scope);
-    }
-
-    return entry.protocol !== undefined && scope.protocols.includes(entry.protocol);
+    return entry.protocol === undefined || scope.protocols.includes(entry.protocol);
   }
 
-  private static syncScopesEqual(left: SyncScope, right: SyncScope): boolean {
-    if (left.kind === 'full' || right.kind === 'full') {
-      return left.kind === right.kind;
-    }
-
-    return left.protocols.length === right.protocols.length &&
-      left.protocols.every(protocol => right.protocols.includes(protocol));
-  }
-
-  private static async foldCidsIntoFingerprintDelta(delta: Uint8Array, messageCids: string[]): Promise<Uint8Array> {
-    let normalized = delta;
-    for (const messageCid of messageCids) {
-      normalized = Replication.xorFingerprint(normalized, await Replication.hashMessageCid(messageCid));
-    }
-    return normalized;
-  }
-
-  private static parseFingerprint(fingerprint: string | undefined): Uint8Array | undefined {
-    if (fingerprint === undefined || !/^[0-9a-fA-F]{64}$/.test(fingerprint)) {
-      return undefined;
-    }
-
-    return Replication.hexToFingerprint(fingerprint);
-  }
-
-  private static isEmptyFingerprint(fingerprint: Uint8Array): boolean {
-    return fingerprint.every(byte => byte === 0);
-  }
-
-  private async handleFeedConvergenceSettledWithFailures(target: SyncTarget, failedMessageCount: number, active?: {
-    link: ReplicationLinkState;
-    linkKey: string;
-  }): Promise<void> {
-    const ledgerLink = active?.link ?? await this.getOrCreateReplicationLink(target);
-    const linkKey = active?.linkKey ?? this.getReplicationLinkKey(target, ledgerLink);
-    const activeLink = this._activeLinks.get(linkKey);
-    const link = activeLink ?? ledgerLink;
-
-    await this.ledger.clearNeedsReconcile(link);
-    this.emitEvent({
-      type               : 'reconcile:settled-with-failures',
-      tenantDid          : target.did,
-      remoteEndpoint     : target.dwnUrl,
-      failedMessageCount : failedMessageCount,
-      ...syncEventScope(target.scope),
+  private static feedConvergenceFailureSignature(result: SyncReconcileResult, deadLetterCids: string[]): string {
+    return JSON.stringify({
+      deadLetterCids,
+      localFingerprint  : result.localFingerprint,
+      remoteFingerprint : result.remoteFingerprint,
     });
   }
 
@@ -3003,29 +2924,6 @@ export class SyncEngineLevel implements SyncEngine {
     this.scheduleReconcile(linkKey, delayMs);
   }
 
-  private createLinkReconciler(shouldContinue?: () => boolean): SyncLinkReconciler {
-    return new SyncLinkReconciler({
-      getLocalRoot: async (did, delegateDid, protocol, permissionGrantIds) =>
-        this.getLocalRoot(did, delegateDid, protocol, permissionGrantIds),
-      getRemoteRoot: async (did, dwnUrl, delegateDid, protocol, permissionGrantIds) =>
-        this.getRemoteRoot(did, dwnUrl, delegateDid, protocol, permissionGrantIds),
-      diffWithRemote         : async (target) => this.diffWithRemote(target),
-      admitRemoteMessages    : async (params) => this.admitRemoteMessages(params),
-      pushMessages           : async (params) => this.pushMessages(params),
-      filterAdmitMessageCids : async (params) => this.filterAdmittableRemoteCids(
-        params.did,
-        params.dwnUrl,
-        params.messageCids,
-      ),
-      filterPushMessageCids: async (params) => this.filterPushableLocalCids(
-        params.did,
-        params.dwnUrl,
-        params.messageCids,
-      ),
-      shouldContinue,
-    });
-  }
-
   private getAuthorizationGrantIds(authorization: SyncAuthorization): NonEmptyStringArray | undefined {
     return authorization.kind === 'delegate' ? authorization.permissionGrantIds : undefined;
   }
@@ -3036,6 +2934,11 @@ export class SyncEngineLevel implements SyncEngine {
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
     const result = SyncEngineLevel.emptySyncReconcileResult(options);
+    const link = await this.getOrCreateReplicationLink(target);
+    if (link.status === 'terminal_incomplete') {
+      return result;
+    }
+
     const feedPullResult = await this.pullRemoteFeedForSyncTarget(target, options, shouldContinue);
     SyncEngineLevel.mergeSyncReconcileResult(result, feedPullResult, options);
     if (SyncEngineLevel.shouldStopAfterFeedResult(result, feedPullResult)) {
@@ -3067,7 +2970,6 @@ export class SyncEngineLevel implements SyncEngine {
       ...(options?.verifyConvergence === true ? { converged: true } : {}),
       hasActionableDiffs : false,
       ignoredLocalCids   : [],
-      ignoredRemoteCids  : [],
       pushFailures       : [],
     };
   }
@@ -3080,7 +2982,6 @@ export class SyncEngineLevel implements SyncEngine {
     target.aborted ||= source.aborted;
     target.admittedCids?.push(...(source.admittedCids ?? []));
     target.ignoredLocalCids?.push(...(source.ignoredLocalCids ?? []));
-    target.ignoredRemoteCids?.push(...(source.ignoredRemoteCids ?? []));
     target.pushFailures?.push(...(source.pushFailures ?? []));
     target.hasActionableDiffs ||= source.hasActionableDiffs === true;
     target.localFingerprint = source.localFingerprint ?? target.localFingerprint;
@@ -3335,14 +3236,18 @@ export class SyncEngineLevel implements SyncEngine {
       messageCids        : [entry.messageCid],
     });
     this.clearSucceededPushFailures(result.succeeded, target.dwnUrl);
+    const failed = result.failed.map((failure): PushFailure => ({
+      ...failure,
+      protocol: failure.protocol ?? entry.protocol,
+    }));
 
-    if (result.failed.length === 0) {
+    if (failed.length === 0) {
       return { kind: 'pushed' };
     }
 
-    const retryableFailures = await this.recordTerminalSyncPushFailures(target, result.failed);
+    const retryableFailures = await this.recordTerminalSyncPushFailures(target, failed);
     return retryableFailures > 0
-      ? { kind: 'failed', failures: result.failed }
+      ? { kind: 'failed', failures: failed }
       : { kind: 'ignored' };
   }
 
@@ -3539,7 +3444,6 @@ export class SyncEngineLevel implements SyncEngine {
       tenantDid      : target.did,
       remoteEndpoint : target.dwnUrl,
       protocol       : SyncEngineLevel.protocolFromFeedEntry(entry, prefetched),
-      scope          : target.scope,
       category       : 'admit-failed',
       errorCode      : outcome.reason,
       errorDetail    : outcome.detail ?? 'replicated message admission failed',
@@ -3629,302 +3533,8 @@ export class SyncEngineLevel implements SyncEngine {
       typeof descriptor.dataCid === 'string';
   }
 
-  private async reconcileSyncTarget(
-    target: SyncReconcileTarget,
-    options?: SyncReconcileOptions,
-    shouldContinue?: () => boolean,
-  ): Promise<SyncReconcileResult> {
-    const protocols = protocolsForSyncScope(target.scope);
-    if (protocols && protocols.length > 1) {
-      return this.reconcileProtocolSetSyncTarget(target, protocols, options, shouldContinue);
-    }
-
-    const accumulator = SyncEngineLevel.createSingleProtocolReconcileAccumulator();
-    const permissionGrantIds = this.getAuthorizationGrantIds(target.authorization);
-    const reconciler = this.createLinkReconciler(shouldContinue);
-
-    for (const protocol of protocols ?? [undefined]) {
-      const outcome = await reconciler.reconcile({
-        did         : target.did,
-        dwnUrl      : target.dwnUrl,
-        delegateDid : target.delegateDid,
-        protocol,
-        permissionGrantIds,
-      }, options);
-      if (outcome.aborted) {
-        return { aborted: true };
-      }
-      SyncEngineLevel.recordSingleProtocolReconcileOutcome(accumulator, outcome, options);
-    }
-
-    return SyncEngineLevel.singleProtocolReconcileResultFromAccumulator(accumulator, options);
-  }
-
-  private static createSingleProtocolReconcileAccumulator(): SingleProtocolReconcileAccumulator {
-    return {
-      admittedCids       : [],
-      converged          : true,
-      hasActionableDiffs : false,
-      ignoredLocalCids   : [],
-      ignoredRemoteCids  : [],
-      pushFailures       : [],
-    };
-  }
-
-  private static recordSingleProtocolReconcileOutcome(
-    accumulator: SingleProtocolReconcileAccumulator,
-    outcome: ReconcileOutcome,
-    options?: SyncReconcileOptions,
-  ): void {
-    const pushFailures = outcome.pushResult?.failed ?? [];
-
-    accumulator.admittedCids.push(...(outcome.admittedCids ?? []));
-    accumulator.ignoredLocalCids.push(...(outcome.ignoredLocalCids ?? []));
-    accumulator.ignoredRemoteCids.push(...(outcome.ignoredRemoteCids ?? []));
-    accumulator.pushFailures.push(...pushFailures);
-    accumulator.hasActionableDiffs ||= outcome.hasActionableDiffs === true;
-
-    if ((options?.verifyConvergence === true && outcome.converged !== true) || pushFailures.length > 0) {
-      accumulator.converged = false;
-    }
-  }
-
-  private static singleProtocolReconcileResultFromAccumulator(
-    accumulator: SingleProtocolReconcileAccumulator,
-    options?: SyncReconcileOptions,
-  ): SyncReconcileResult {
-    const result = {
-      admittedCids       : accumulator.admittedCids,
-      hasActionableDiffs : accumulator.hasActionableDiffs,
-      ignoredLocalCids   : accumulator.ignoredLocalCids,
-      ignoredRemoteCids  : accumulator.ignoredRemoteCids,
-      pushFailures       : accumulator.pushFailures,
-    };
-
-    return options?.verifyConvergence === true
-      ? { ...result, converged: accumulator.converged }
-      : result;
-  }
-
-  private async reconcileProtocolSetSyncTarget(
-    target: SyncReconcileTarget,
-    protocols: NonEmptyStringArray,
-    options?: SyncReconcileOptions,
-    shouldContinue?: () => boolean,
-  ): Promise<SyncReconcileResult> {
-    const context = this.createProtocolSetReconcileContext(target, protocols, shouldContinue);
-    const diffResult = await this.collectProtocolSetDiffs(context);
-    if (diffResult.aborted) {
-      return { aborted: true };
-    }
-
-    const pullResult = await this.applyProtocolSetRemoteDiffs(context, diffResult.diffs, options);
-    if (pullResult?.aborted) {
-      return pullResult;
-    }
-
-    const pushResult = await this.applyProtocolSetLocalDiffs(context, diffResult.diffs, options);
-    if (pushResult?.aborted) {
-      return pushResult;
-    }
-
-    const admittedCids = pullResult?.admittedCids ?? [];
-    const pushFailures = pushResult?.pushFailures ?? [];
-    const ignoredLocalCids = pushResult?.ignoredLocalCids ?? [];
-    const ignoredRemoteCids = pullResult?.ignoredRemoteCids ?? [];
-    const hasActionableDiffs = pullResult?.hasActionableDiffs === true || pushResult?.hasActionableDiffs === true;
-
-    if (options?.verifyConvergence !== true) {
-      return { admittedCids, hasActionableDiffs, ignoredLocalCids, ignoredRemoteCids, pushFailures };
-    }
-
-    const convergence = await this.verifyProtocolSetConvergence(context);
-    return {
-      ...convergence,
-      admittedCids,
-      converged: pushFailures.length > 0 ? false : convergence.converged,
-      hasActionableDiffs,
-      ignoredLocalCids,
-      ignoredRemoteCids,
-      pushFailures,
-    };
-  }
-
-  private createProtocolSetReconcileContext(
-    target: SyncReconcileTarget,
-    protocols: NonEmptyStringArray,
-    shouldContinue?: () => boolean,
-  ): ProtocolSetReconcileContext {
-    return {
-      did                : target.did,
-      dwnUrl             : target.dwnUrl,
-      delegateDid        : target.delegateDid,
-      scope              : target.scope,
-      permissionGrantIds : this.getAuthorizationGrantIds(target.authorization),
-      protocols,
-      shouldContinue,
-    };
-  }
-
   private static shouldAbortReconcile(shouldContinue?: () => boolean): boolean {
     return shouldContinue?.() === false;
-  }
-
-  private async collectProtocolSetDiffs(
-    context: ProtocolSetReconcileContext,
-  ): Promise<ProtocolSetDiffCollectionResult> {
-    const diffs: SyncDiffResult[] = [];
-
-    for (const protocol of context.protocols) {
-      const localRoot = await this.getLocalRoot(
-        context.did,
-        context.delegateDid,
-        protocol,
-        context.permissionGrantIds,
-      );
-      if (SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)) {
-        return { aborted: true };
-      }
-
-      const remoteRoot = await this.getRemoteRoot(
-        context.did,
-        context.dwnUrl,
-        context.delegateDid,
-        protocol,
-        context.permissionGrantIds,
-      );
-      if (SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)) {
-        return { aborted: true };
-      }
-      if (localRoot === remoteRoot) {
-        continue;
-      }
-
-      diffs.push(await this.diffWithRemote({
-        did                : context.did,
-        dwnUrl             : context.dwnUrl,
-        delegateDid        : context.delegateDid,
-        protocol,
-        permissionGrantIds : context.permissionGrantIds,
-      }));
-      if (SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)) {
-        return { aborted: true };
-      }
-    }
-
-    return { aborted: false, diffs };
-  }
-
-  private async applyProtocolSetRemoteDiffs(
-    context: ProtocolSetReconcileContext,
-    diffs: SyncDiffResult[],
-    options?: SyncReconcileOptions,
-  ): Promise<SyncReconcileResult | undefined> {
-    const onlyRemote = diffs.flatMap(diff => diff.onlyRemote);
-    if (options?.direction === 'push' || onlyRemote.length === 0) {
-      return undefined;
-    }
-
-    const { ignoredCids: ignoredRemoteCids, entries } = await this.filterAdmittableRemoteEntries(
-      context.did,
-      context.dwnUrl,
-      onlyRemote,
-    );
-    if (entries.length === 0) {
-      return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
-        ? { aborted: true }
-        : { admittedCids: [], hasActionableDiffs: false, ignoredRemoteCids };
-    }
-
-    const { prefetched, needsFetchCids } = partitionRemoteEntries(entries);
-    let admittedCids: string[];
-    try {
-      admittedCids = await this.admitRemoteMessages({
-        did                : context.did,
-        dwnUrl             : context.dwnUrl,
-        delegateDid        : context.delegateDid,
-        scope              : context.scope,
-        permissionGrantIds : context.permissionGrantIds,
-        messageCids        : needsFetchCids,
-        prefetched,
-        shouldContinue     : context.shouldContinue,
-      });
-    } catch (error) {
-      if (error instanceof SyncPullAbortedError) {
-        return { aborted: true };
-      }
-      throw error;
-    }
-
-    return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
-      ? { aborted: true }
-      : { admittedCids, hasActionableDiffs: true, ignoredRemoteCids };
-  }
-
-  private async applyProtocolSetLocalDiffs(
-    context: ProtocolSetReconcileContext,
-    diffs: SyncDiffResult[],
-    options?: SyncReconcileOptions,
-  ): Promise<SyncReconcileResult | undefined> {
-    const onlyLocal = [...new Set(diffs.flatMap(diff => diff.onlyLocal))];
-    if (options?.direction === 'pull' || onlyLocal.length === 0) {
-      return undefined;
-    }
-
-    const { ignoredCids: ignoredLocalCids, messageCids } = await this.filterPushableLocalCids(
-      context.did,
-      context.dwnUrl,
-      onlyLocal,
-    );
-    if (messageCids.length === 0) {
-      return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
-        ? { aborted: true }
-        : { hasActionableDiffs: false, ignoredLocalCids, pushFailures: [] };
-    }
-
-    const pushResult = await this.pushMessages({
-      did                : context.did,
-      dwnUrl             : context.dwnUrl,
-      delegateDid        : context.delegateDid,
-      permissionGrantIds : context.permissionGrantIds,
-      messageCids,
-    });
-
-    return SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)
-      ? { aborted: true }
-      : { hasActionableDiffs: true, ignoredLocalCids, pushFailures: pushResult.failed };
-  }
-
-  private async verifyProtocolSetConvergence(
-    context: ProtocolSetReconcileContext,
-  ): Promise<SyncReconcileResult> {
-    for (const protocol of context.protocols) {
-      const postLocalRoot = await this.getLocalRoot(
-        context.did,
-        context.delegateDid,
-        protocol,
-        context.permissionGrantIds,
-      );
-      if (SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)) {
-        return { aborted: true };
-      }
-
-      const postRemoteRoot = await this.getRemoteRoot(
-        context.did,
-        context.dwnUrl,
-        context.delegateDid,
-        protocol,
-        context.permissionGrantIds,
-      );
-      if (SyncEngineLevel.shouldAbortReconcile(context.shouldContinue)) {
-        return { aborted: true };
-      }
-      if (postLocalRoot !== postRemoteRoot) {
-        return { converged: false };
-      }
-    }
-
-    return { converged: true };
   }
 
   // ---------------------------------------------------------------------------
@@ -4047,20 +3657,15 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       if (reconcileOutcome.converged) {
+        this._feedConvergenceFailures.delete(linkKey);
         await this.ledger.clearNeedsReconcile(link);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
       } else {
-        const settlement = await this.feedConvergenceDeadLetterSettlement(reconcileTarget, reconcileOutcome);
-        if (settlement.settled) {
-          await this.handleFeedConvergenceSettledWithFailures(reconcileTarget, settlement.failedMessageCount, { link, linkKey });
-          return;
-        }
-
         // Feed fingerprints still differ — retry after a delay. This can
         // happen when push retries were exhausted, remote admission partially
         // failed, or new writes arrived during reconciliation.
         if (!isStaleLink()) {
-          await this.handleFeedConvergenceMismatch(reconcileTarget, 'feed-fingerprint-mismatch', { link, linkKey });
+          await this.handleVerifiedFeedDivergence(reconcileTarget, reconcileOutcome, { link, linkKey });
         }
       }
     } catch (error: any) {
@@ -4107,495 +3712,6 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private buildLinkKey(did: string, dwnUrl: string, projectionId: string, authorizationEpoch: string): string {
     return buildLinkId(did, dwnUrl, projectionId, authorizationEpoch);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Default Hash Cache
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Returns the hex-encoded default (empty-subtree) hash for a given depth.
-   * Lazily initializes the cache on first call.
-   */
-  private async getDefaultHashHex(depth: number): Promise<string> {
-    if (this._defaultHashHex === undefined) {
-      const defaults = await initDefaultHashes();
-      const map = new Map<number, string>();
-      // Pre-compute hex strings for depths 0 through MAX_DIFF_DEPTH (inclusive).
-      for (let d = 0; d <= MAX_DIFF_DEPTH; d++) {
-        map.set(d, hashToHex(defaults[d]));
-      }
-      this._defaultHashHex = map;
-    }
-    return this._defaultHashHex.get(depth) ?? '';
-  }
-
-  /**
-   * Parse a bit prefix string (e.g. "0110101") into a boolean array
-   * for the StateIndex API. Each '1' maps to `true` (right child),
-   * each '0' maps to `false` (left child).
-   */
-  private static parseBitPrefix(prefix: string): boolean[] {
-    return Array.from(prefix, (ch): boolean => ch === '1');
-  }
-
-  // ---------------------------------------------------------------------------
-  // SMT Root Comparison
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Access the local DWN's StateIndex directly, bypassing the `processMessage`
-   * pipeline. The sync engine runs in the same process as the local DWN, so
-   * there is no need for message signing, schema validation, or authentication
-   * when querying our own state.
-   *
-   * Returns `undefined` in remote mode (no in-process DWN). The local methods
-   * fall back to `processRequest` in that case, routing through RPC to the
-   * local DWN server.
-   */
-  private get stateIndex(): StateIndex | undefined {
-    if (this.agent.dwn.isRemoteMode) {
-      return undefined;
-    }
-    return this.agent.dwn.node.storage.stateIndex;
-  }
-
-  /**
-   * Get the SMT root hash from the local DWN.
-   *
-   * In local mode: queries the StateIndex directly (fast, no processMessage overhead).
-   * In remote mode: constructs a signed MessagesSync message and routes through RPC.
-   *
-   * Returns a hex-encoded root hash string.
-   */
-  private async getLocalRoot(
-    did: string,
-    delegateDid?: string,
-    protocol?: string,
-    permissionGrantIds?: string[],
-  ): Promise<string> {
-    const si = this.stateIndex;
-    if (si) {
-      const rootHash = protocol === undefined
-        ? await si.getRoot(did)
-        : await si.getProtocolRoot(did, protocol);
-      return hashToHex(rootHash);
-    }
-
-    // Remote mode fallback: go through processRequest → RPC.
-    const response = await this.agent.dwn.processRequest({
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.MessagesSync,
-      granteeDid    : delegateDid,
-      messageParams : {
-        action             : 'root',
-        protocol,
-        permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantIds),
-      }
-    });
-    const reply = response.reply as MessagesSyncReply;
-    return reply.root ?? '';
-  }
-
-  /**
-   * Get the SMT root hash from a remote DWN via a MessagesSync 'root' action.
-   * Returns a hex-encoded root hash string.
-   */
-  private async getRemoteRoot(
-    did: string,
-    dwnUrl: string,
-    delegateDid?: string,
-    protocol?: string,
-    permissionGrantIds?: string[],
-  ): Promise<string> {
-    const syncMessage = await this.agent.dwn.processRequest({
-      store         : false,
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.MessagesSync,
-      granteeDid    : delegateDid,
-      messageParams : {
-        action             : 'root',
-        protocol,
-        permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantIds)
-      }
-    });
-
-    const reply = await this.agent.rpc.sendDwnRequest({
-      dwnUrl,
-      targetDid : did,
-      message   : syncMessage.message,
-    }) as MessagesSyncReply;
-
-    return reply.root ?? '';
-  }
-
-  // ---------------------------------------------------------------------------
-  // Batched Diff — single round-trip set reconciliation
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Compute the diff between local and remote in a single HTTP round-trip.
-   *
-   * 1. Walk the local SMT directly (no processMessage) to collect subtree
-   *    hashes at `MAX_DIFF_DEPTH`.
-   * 2. Send a single `MessagesSync action:'diff'` to the remote with all
-   *    non-empty subtree hashes.
-   * 3. The remote compares and returns `onlyRemote` (with inline messages)
-   *    and `onlyLocal` prefixes.
-   * 4. Enumerate local leaves for the `onlyLocal` prefixes directly.
-   *
-   * This replaces `walkTreeDiff()` which required one HTTP call per tree node.
-   */
-  private async diffWithRemote({ did, dwnUrl, delegateDid, protocol, permissionGrantIds }: {
-    did: string;
-    dwnUrl: string;
-    delegateDid?: string;
-    protocol?: string;
-    permissionGrantIds?: string[];
-  }): Promise<SyncDiffResult> {
-    // Step 1: Collect local subtree hashes at BATCHED_DIFF_DEPTH directly from StateIndex.
-    const localHashes = await this.collectLocalSubtreeHashes(did, protocol, BATCHED_DIFF_DEPTH, permissionGrantIds);
-
-    // Step 2: Send a single 'diff' request to the remote with our hashes.
-    const messageParams: DwnMessageParams[DwnInterface.MessagesSync] = {
-      action             : 'diff',
-      protocol,
-      hashes             : localHashes,
-      depth              : BATCHED_DIFF_DEPTH,
-      permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantIds),
-    };
-
-    // Step 3: Enumerate local leaves for prefixes the remote reported as onlyLocal.
-    // Reuse the same grant set from step 2.
-    return this.diffRemoteMessages(
-      { did, dwnUrl, delegateDid },
-      messageParams,
-      prefix => this.getLocalLeaves(did, prefix, delegateDid, protocol, permissionGrantIds),
-      'diff',
-    );
-  }
-
-  private async diffRemoteMessages(
-    target: Pick<SyncReconcileTarget, 'did' | 'dwnUrl' | 'delegateDid'>,
-    messageParams: DwnMessageParams[DwnInterface.MessagesSync],
-    getLocalLeavesForPrefix: (prefix: string) => Promise<string[]>,
-    operationName: string,
-  ): Promise<SyncDiffResult> {
-    const syncMessage = await this.agent.dwn.processRequest({
-      store       : false,
-      author      : target.did,
-      target      : target.did,
-      messageType : DwnInterface.MessagesSync,
-      granteeDid  : target.delegateDid,
-      messageParams,
-    });
-
-    const reply = await this.agent.rpc.sendDwnRequest({
-      dwnUrl    : target.dwnUrl,
-      targetDid : target.did,
-      message   : syncMessage.message,
-    }) as MessagesSyncReply;
-
-    if (reply.status.code !== 200) {
-      throw new Error(`SyncEngineLevel: ${operationName} failed with ${reply.status.code}: ${reply.status.detail}`);
-    }
-
-    const onlyLocalCids: string[] = [];
-    for (const prefix of reply.onlyLocal ?? []) {
-      const leaves = await getLocalLeavesForPrefix(prefix);
-      onlyLocalCids.push(...leaves);
-    }
-
-    return {
-      onlyRemote : reply.onlyRemote ?? [],
-      onlyLocal  : onlyLocalCids,
-    };
-  }
-
-  /**
-   * Walk the local SMT to a given depth and collect non-empty subtree hashes.
-   * Returns a `{ prefix: hexHash }` map. Empty subtrees (matching the default
-   * hash) are omitted.
-   *
-   * Uses direct StateIndex access in local mode. In remote mode, falls back
-   * to `getLocalSubtreeHash` which routes through RPC.
-   */
-  private async collectLocalSubtreeHashes(
-    did: string,
-    protocol: string | undefined,
-    depth: number,
-    permissionGrantIds?: string[],
-  ): Promise<Record<string, string>> {
-    const result: Record<string, string> = {};
-    const defaultHash = await this.getDefaultHashHex(depth);
-    const si = this.stateIndex;
-
-    const walk = async (prefix: string, currentDepth: number): Promise<void> => {
-      let hexHash: string;
-
-      if (si) {
-        // Fast path: direct StateIndex access (local mode).
-        const bitPath = SyncEngineLevel.parseBitPrefix(prefix);
-        const hash = protocol === undefined
-          ? await si.getSubtreeHash(did, bitPath)
-          : await si.getProtocolSubtreeHash(did, protocol, bitPath);
-        hexHash = hashToHex(hash);
-      } else {
-        // Remote mode fallback.
-        hexHash = await this.getLocalSubtreeHash(did, prefix, undefined, protocol, permissionGrantIds);
-      }
-
-      if (hexHash === defaultHash) {
-        // Empty subtree — omit from the map.
-        return;
-      }
-
-      if (currentDepth >= depth) {
-        result[prefix] = hexHash;
-        return;
-      }
-
-      // Recurse into children.
-      await Promise.all([
-        walk(prefix + '0', currentDepth + 1),
-        walk(prefix + '1', currentDepth + 1),
-      ]);
-    };
-
-    await walk('', 0);
-    return result;
-  }
-
-  /**
-   * Get the subtree hash at a given bit prefix from the local DWN.
-   *
-   * In local mode: queries the StateIndex directly.
-   * In remote mode: constructs a signed MessagesSync message and routes through RPC.
-   */
-  private async getLocalSubtreeHash(
-    did: string, prefix: string, delegateDid?: string, protocol?: string, permissionGrantIds?: string[]
-  ): Promise<string> {
-    const si = this.stateIndex;
-    if (si) {
-      const bitPath = SyncEngineLevel.parseBitPrefix(prefix);
-      const hash = protocol === undefined
-        ? await si.getSubtreeHash(did, bitPath)
-        : await si.getProtocolSubtreeHash(did, protocol, bitPath);
-      return hashToHex(hash);
-    }
-
-    // Remote mode fallback.
-    const response = await this.agent.dwn.processRequest({
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.MessagesSync,
-      granteeDid    : delegateDid,
-      messageParams : {
-        action             : 'subtree',
-        prefix,
-        protocol,
-        permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantIds)
-      }
-    });
-    const reply = response.reply as MessagesSyncReply;
-    return reply.hash ?? '';
-  }
-
-  /**
-   * Get all leaf messageCids under a given prefix from the local DWN.
-   *
-   * In local mode: queries the StateIndex directly.
-   * In remote mode: constructs a signed MessagesSync message and routes through RPC.
-   */
-  private async getLocalLeaves(
-    did: string, prefix: string, delegateDid?: string, protocol?: string, permissionGrantIds?: string[]
-  ): Promise<string[]> {
-    const si = this.stateIndex;
-    if (si) {
-      const bitPath = SyncEngineLevel.parseBitPrefix(prefix);
-      return protocol === undefined
-        ? await si.getLeaves(did, bitPath)
-        : await si.getProtocolLeaves(did, protocol, bitPath);
-    }
-
-    // Remote mode fallback.
-    const response = await this.agent.dwn.processRequest({
-      author        : did,
-      target        : did,
-      messageType   : DwnInterface.MessagesSync,
-      granteeDid    : delegateDid,
-      messageParams : {
-        action             : 'leaves',
-        prefix,
-        protocol,
-        permissionGrantIds : toMessagesPermissionGrantIds(permissionGrantIds)
-      }
-    });
-    const reply = response.reply as MessagesSyncReply;
-    return reply.entries ?? [];
-  }
-
-  // ---------------------------------------------------------------------------
-  // Remote admission / push
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Fetches missing messages from the remote DWN and processes them locally
-   * in dependency order (topological sort).
-   *
-   * Prefetched diff entries and fetched CID entries are merged before choosing
-   * roots so updates, deletes, and their initial writes can be admitted in one
-   * cross-root dependency order.
-   */
-  private async admitRemoteMessages({
-    did,
-    dwnUrl,
-    delegateDid,
-    protocol,
-    scope,
-    permissionGrantIds,
-    messageCids,
-    prefetched,
-    shouldContinue,
-  }: {
-    did: string;
-    dwnUrl: string;
-    delegateDid?: string;
-    protocol?: string;
-    scope?: SyncScope;
-    permissionGrantIds?: string[];
-    messageCids: string[];
-    prefetched?: MessagesSyncDiffEntry[];
-    shouldContinue?: () => boolean;
-  }): Promise<string[]> {
-    const admissionScope: SyncScope = scope ?? (protocol === undefined
-      ? { kind: 'full' }
-      : { kind: 'protocolSet', protocols: [protocol] });
-    const requestedRootCids = [
-      ...(prefetched ?? []).map(entry => entry.messageCid),
-      ...messageCids,
-    ];
-    const rootCidsToAdmit: string[] = [];
-    const rootCidSet = new Set<string>();
-    for (const rootCid of requestedRootCids) {
-      if (rootCidSet.has(rootCid) || await this.hasAdmissionDeadLetter(did, dwnUrl, rootCid)) {
-        continue;
-      }
-      rootCidSet.add(rootCid);
-      rootCidsToAdmit.push(rootCid);
-    }
-
-    const prefetchedEntries = [
-      ...SyncEngineLevel.syncEntriesFromPrefetchedDiff(prefetched),
-      ...await fetchRemoteMessages({
-        did,
-        dwnUrl,
-        delegateDid,
-        permissionGrantIds,
-        messageCids : messageCids.filter(cid => rootCidSet.has(cid)),
-        agent       : this.agent,
-      }),
-    ];
-    const rootCids = await SyncEngineLevel.orderedRootCids(prefetchedEntries, rootCidsToAdmit);
-    const admittedCids: string[] = [];
-
-    for (const rootCid of rootCids) {
-      if (await this.hasAdmissionDeadLetter(did, dwnUrl, rootCid)) {
-        continue;
-      }
-
-      if (shouldContinue?.() === false) {
-        throw new SyncPullAbortedError();
-      }
-
-      const outcome = await admitClosure(rootCid, {
-        did,
-        dwnUrl,
-        delegateDid,
-        permissionGrantIds,
-        scope          : admissionScope,
-        agent          : this.agent,
-        permissionsApi : this._permissionsApi,
-        prefetched     : prefetchedEntries,
-        shouldContinue,
-      });
-
-      if (outcome.kind === 'failed') {
-        await this.recordDeadLetter({
-          messageCid     : rootCid,
-          tenantDid      : did,
-          remoteEndpoint : dwnUrl,
-          protocol,
-          scope          : admissionScope,
-          category       : 'admit-failed',
-          errorCode      : outcome.reason,
-          errorDetail    : outcome.detail ?? 'replicated message admission failed',
-        });
-      } else if (outcome.kind === 'admitted') {
-        admittedCids.push(...outcome.appliedCids);
-      }
-    }
-
-    return admittedCids;
-  }
-
-  private static syncEntriesFromPrefetchedDiff(prefetched?: MessagesSyncDiffEntry[]): SyncMessageEntry[] {
-    if (prefetched === undefined) {
-      return [];
-    }
-
-    const entries: SyncMessageEntry[] = [];
-    for (const entry of prefetched) {
-      if (entry.message === undefined) {
-        continue;
-      }
-
-      const messageWithInitialWrite: GenericMessage & { initialWrite?: GenericMessage } = entry.message;
-      const {
-        encodedData: messageEncodedData,
-        initialWrite,
-        ...message
-      } = messageWithInitialWrite;
-      if (initialWrite !== undefined) {
-        entries.push({ message: initialWrite });
-      }
-
-      const syncEntry: SyncMessageEntry = { message };
-      if (entry.encodedData !== undefined) {
-        syncEntry.bufferedData = Encoder.base64UrlToBytes(entry.encodedData);
-      } else if (messageEncodedData !== undefined) {
-        syncEntry.bufferedData = Encoder.base64UrlToBytes(messageEncodedData);
-      }
-      entries.push(syncEntry);
-    }
-    return entries;
-  }
-
-  private static async orderedRootCids(entries: SyncMessageEntry[], requestedCids: string[]): Promise<string[]> {
-    const requested = new Set(requestedCids);
-    const ordered: string[] = [];
-    const orderedSet = new Set<string>();
-    const pushOrdered = (cid: string): void => {
-      if (!orderedSet.has(cid)) {
-        orderedSet.add(cid);
-        ordered.push(cid);
-      }
-    };
-
-    for (const entry of topologicalSort(entries)) {
-      const cid = await getMessageCid(entry.message);
-      if (requested.has(cid)) {
-        pushOrdered(cid);
-      }
-    }
-
-    for (const cid of requestedCids) {
-      pushOrdered(cid);
-    }
-
-    return ordered;
   }
 
   // ---------------------------------------------------------------------------
@@ -4662,58 +3778,6 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  private async filterPushableLocalCids(
-    tenantDid: string,
-    remoteEndpoint: string,
-    messageCids: string[],
-  ): Promise<{ ignoredCids: string[]; messageCids: string[] }> {
-    return this.filterDeadLetteredMessageCids(tenantDid, remoteEndpoint, messageCids);
-  }
-
-  private async filterAdmittableRemoteCids(
-    tenantDid: string,
-    remoteEndpoint: string,
-    messageCids: string[],
-  ): Promise<{ ignoredCids: string[]; messageCids: string[] }> {
-    return this.filterDeadLetteredMessageCids(tenantDid, remoteEndpoint, messageCids);
-  }
-
-  private async filterAdmittableRemoteEntries(
-    tenantDid: string,
-    remoteEndpoint: string,
-    entries: MessagesSyncDiffEntry[],
-  ): Promise<{ ignoredCids: string[]; entries: MessagesSyncDiffEntry[] }> {
-    const { ignoredCids, messageCids } = await this.filterAdmittableRemoteCids(
-      tenantDid,
-      remoteEndpoint,
-      entries.map(entry => entry.messageCid),
-    );
-    const messageCidSet = new Set(messageCids);
-    return {
-      entries: entries.filter(entry => messageCidSet.has(entry.messageCid)),
-      ignoredCids,
-    };
-  }
-
-  private async filterDeadLetteredMessageCids(
-    tenantDid: string,
-    remoteEndpoint: string,
-    messageCids: string[],
-  ): Promise<{ ignoredCids: string[]; messageCids: string[] }> {
-    const ignoredCids: string[] = [];
-    const remainingCids: string[] = [];
-
-    for (const messageCid of messageCids) {
-      if (await this.hasAdmissionDeadLetter(tenantDid, remoteEndpoint, messageCid)) {
-        ignoredCids.push(messageCid);
-      } else {
-        remainingCids.push(messageCid);
-      }
-    }
-
-    return { ignoredCids, messageCids: remainingCids };
-  }
-
   // ---------------------------------------------------------------------------
   // Dependency-aware topological sort — delegates to sync-topological-sort.ts
   // ---------------------------------------------------------------------------
@@ -4740,22 +3804,11 @@ export class SyncEngineLevel implements SyncEngine {
     return `${tenantDid}|${messageCid}|${remoteEndpoint ?? ''}`;
   }
 
-  private static isReconcileSettledByDeadLetters(result: SyncReconcileResult): boolean {
-    const ignoredLocalCount = result.ignoredLocalCids?.length ?? 0;
-    const ignoredRemoteCount = result.ignoredRemoteCids?.length ?? 0;
-
-    return result.converged !== true &&
-      result.hasActionableDiffs !== true &&
-      ignoredLocalCount + ignoredRemoteCount > 0 &&
-      (result.pushFailures === undefined || result.pushFailures.length === 0);
-  }
-
   public async recordDeadLetter(params: {
     messageCid : string;
     tenantDid : string;
     remoteEndpoint? : string;
     protocol? : string;
-    scope? : SyncScope;
     category : DeadLetterCategory;
     errorCode? : string;
     errorDetail : string;

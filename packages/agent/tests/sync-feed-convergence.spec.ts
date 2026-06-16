@@ -162,12 +162,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
     await expectLocalRecordCount(recordId, 0);
     await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [notesProtocol.protocol] } });
 
-    const getLocalRootSpy = sinon.spy(syncEngine as any, 'getLocalRoot');
-    const getRemoteRootSpy = sinon.spy(syncEngine as any, 'getRemoteRoot');
     await syncEngine.sync('pull');
 
-    expect(getLocalRootSpy.notCalled).toBe(true);
-    expect(getRemoteRootSpy.notCalled).toBe(true);
     expect(await readLocalRecordText(recordId)).toBe(remoteText);
     expect(await localFingerprint()).toBe(await remoteFingerprint());
   });
@@ -200,12 +196,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
     await expectRemoteRecordCount(recordId, 0);
     await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [notesProtocol.protocol] } });
 
-    const getLocalRootSpy = sinon.spy(syncEngine as any, 'getLocalRoot');
-    const getRemoteRootSpy = sinon.spy(syncEngine as any, 'getRemoteRoot');
     await syncEngine.sync('push');
 
-    expect(getLocalRootSpy.notCalled).toBe(true);
-    expect(getRemoteRootSpy.notCalled).toBe(true);
     expect(await readRemoteRecordText(recordId)).toBe(localText);
     expect(await remoteFingerprint()).toBe(await localFingerprint());
   });
