@@ -2855,7 +2855,7 @@ export class SyncEngineLevel implements SyncEngine {
     let cursor = link.pull.contiguousAppliedToken;
     let resetAfterProgressGap = false;
 
-    for (;;) {
+    while (true) {
       if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
         return { aborted: true };
       }
