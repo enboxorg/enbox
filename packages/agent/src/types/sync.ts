@@ -35,8 +35,8 @@ export type SyncIdentityOptions = {
 export type SyncConnectivityState = 'online' | 'offline' | 'unknown';
 
 /**
- * Describes the sync mode: `'poll'` for periodic SMT reconciliation,
- * `'live'` for `MessagesSubscribe`-based real-time sync with SMT fallback.
+ * Describes the sync mode: `'poll'` for periodic durable feed reconciliation,
+ * `'live'` for `MessagesSubscribe`-based real-time sync with feed repair.
  */
 export type SyncMode = 'poll' | 'live';
 
@@ -248,8 +248,8 @@ export type DirectionCheckpoint = {
  *
  * - `initializing` — link created, no subscriptions open yet.
  * - `live` — actively receiving events via subscription.
- * - `polling` — current link is reconciled by periodic SMT sync; live subscription is not supported for its scope.
- * - `repairing` — gap detected or pending overflow; running SMT reconciliation.
+ * - `polling` — current link is reconciled by periodic durable feed sync; live subscription is not supported for its scope.
+ * - `repairing` — gap detected or pending overflow; running durable feed repair.
  * - `degraded_poll` — subscription failed; polling at reduced frequency.
  * - `terminal_incomplete` — admission failed with a terminal dependency error; requires a new scope/authorization epoch.
  * - `paused` — explicitly paused by the application.
@@ -290,7 +290,7 @@ export type ReplicationLinkState = {
   push: DirectionCheckpoint;
 
   /**
-   * Whether this link needs SMT reconciliation. Set when push fails after
+   * Whether this link needs durable feed reconciliation. Set when push fails after
    * retry exhaustion, when the link reconnects after an outage, or when
    * the remote epoch changes. Cleared after successful reconciliation.
    * Persisted so recovery survives app/browser restart.
@@ -360,10 +360,10 @@ export type StartSyncParams = {
    *
    * - `'live'`: Opens `MessagesSubscribe` WebSocket subscriptions to remote
    *   DWNs for real-time pull, and listens to the local EventLog for immediate
-   *   push. Falls back to SMT reconciliation on cold start or long disconnect.
-   *   An infrequent SMT integrity check still runs at `interval`.
+   *   push. Falls back to durable feed reconciliation on cold start or long
+   *   disconnect. An infrequent durable feed settle check still runs at `interval`.
    *
-   * - `'poll'`: Performs a full SMT set-reconciliation sync on a
+   * - `'poll'`: Performs durable feed reconciliation on a
    *   fixed interval. No WebSocket subscriptions are used.
    */
   mode?: SyncMode;
@@ -372,7 +372,7 @@ export type StartSyncParams = {
    * The interval at which the sync operation should be performed.
    * Accepts any value recognised by `ms()`, e.g. `'30s'`, `'2m'`, `'10m'`.
    *
-   * In `'live'` mode this controls the frequency of the SMT integrity check.
+   * In `'live'` mode this controls the frequency of the durable feed settle check.
    * In `'poll'` mode this controls the polling frequency.
    *
    * Default: `'2m'` (in poll mode), `'5m'` (in live mode).
@@ -437,6 +437,8 @@ export type DeadLetterEntry = {
   remoteEndpoint?: string;
   /** The protocol URI, if applicable. */
   protocol?: string;
+  /** The sync scope whose admission/push attempt produced this failure. */
+  scope?: SyncScope;
   /** What kind of failure occurred. */
   category: DeadLetterCategory;
   /** Machine-readable error code (for example, an HTTP status or admission reason). */
@@ -536,8 +538,8 @@ export interface SyncEngine {
    */
   sync(direction?: 'push' | 'pull'): Promise<void>;
   /**
-   * Starts sync. In `'live'` mode opens real-time subscriptions with SMT
-   * fallback; in `'poll'` mode uses periodic SMT reconciliation.
+   * Starts sync. In `'live'` mode opens real-time subscriptions with durable
+   * feed repair; in `'poll'` mode uses periodic durable feed reconciliation.
    *
    * Subsequent calls update the mode/interval. Calling with a different mode
    * tears down the previous mode's resources before starting the new one.

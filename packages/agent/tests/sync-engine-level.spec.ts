@@ -1700,18 +1700,17 @@ describe('SyncEngineLevel', () => {
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 
-        // Replicate the pattern from the old pull/push test: stub an internal
-        // method so the real sync() manages _syncLock, while the slow part is
-        // a shared promise created BEFORE the interval.  The shared promise
-        // means the first sync takes ~1500ms, but subsequent syncs complete
-        // instantly (the promise is already resolved).
+        // Stub a feed phase so the real sync() manages _syncLock, while the
+        // slow part is a shared promise created BEFORE the interval. The
+        // shared promise means the first sync takes ~1500ms, but subsequent
+        // syncs complete instantly (the promise is already resolved).
         //
         // The setTimeout is created before startSync, so at t=1500 it fires
         // before the interval callback — this avoids timer-ordering races.
-        const diffWithRemoteStub = sinon.stub(SyncEngineLevel.prototype as any, 'diffWithRemote');
-        diffWithRemoteStub.returns(new Promise<{ onlyLocal: string[]; onlyRemote: unknown[] }>((resolve) => {
+        const pullRemoteFeedStub = sinon.stub(SyncEngineLevel.prototype as any, 'pullRemoteFeedForSyncTarget');
+        pullRemoteFeedStub.returns(new Promise((resolve) => {
           clock.setTimeout(() => {
-            resolve({ onlyLocal: [], onlyRemote: [] });
+            resolve({});
           }, 1_500);
         }));
 
@@ -1724,17 +1723,11 @@ describe('SyncEngineLevel', () => {
           authorizationEpoch : 'test-owner-epoch',
         }]);
 
-        const getLocalRootStub = sinon.stub(SyncEngineLevel.prototype as any, 'getLocalRoot');
-        getLocalRootStub.resolves('aaa');
-
-        const getRemoteRootStub = sinon.stub(SyncEngineLevel.prototype as any, 'getRemoteRoot');
-        getRemoteRootStub.resolves('bbb');
-
-        const pullRemoteFeedStub = sinon.stub(SyncEngineLevel.prototype as any, 'pullRemoteFeedForSyncTarget');
-        pullRemoteFeedStub.resolves({});
-
         const pushLocalFeedStub = sinon.stub(SyncEngineLevel.prototype as any, 'pushLocalFeedForSyncTarget');
         pushLocalFeedStub.resolves({});
+
+        const verifyFeedConvergenceStub = sinon.stub(SyncEngineLevel.prototype as any, 'verifyFeedConvergence');
+        verifyFeedConvergenceStub.resolves({ converged: true });
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
@@ -1756,10 +1749,8 @@ describe('SyncEngineLevel', () => {
         expect(syncSpy.callCount).toBe(3);
 
         syncSpy.restore();
-        diffWithRemoteStub.restore();
+        verifyFeedConvergenceStub.restore();
         getSyncTargetsStub.restore();
-        getLocalRootStub.restore();
-        getRemoteRootStub.restore();
         pullRemoteFeedStub.restore();
         pushLocalFeedStub.restore();
         clock.restore();
@@ -2865,8 +2856,8 @@ describe('SyncEngineLevel', () => {
         await syncEngine.sync();
         expect(syncEngine.connectivityState).toBe('online');
 
-        // Now stub getLocalRoot to throw, simulating a failure.
-        const getLocalRootStub = sinon.stub(syncEngine as any, 'getLocalRoot').rejects(new Error('simulated failure'));
+        // Now stub feed pull to throw, simulating a failure.
+        const pullRemoteFeedStub = sinon.stub(syncEngine as any, 'pullRemoteFeedForSyncTarget').rejects(new Error('simulated failure'));
 
         // Suppress console.error for the expected error.
         const consoleErrorStub = sinon.stub(console, 'error');
@@ -2874,7 +2865,7 @@ describe('SyncEngineLevel', () => {
         await syncEngine.sync();
         expect(syncEngine.connectivityState).toBe('offline');
 
-        getLocalRootStub.restore();
+        pullRemoteFeedStub.restore();
         consoleErrorStub.restore();
       });
 
@@ -2892,13 +2883,13 @@ describe('SyncEngineLevel', () => {
         expect(syncEngine.connectivityState).toBe('online');
 
         // Failing sync -> offline.
-        const getLocalRootStub = sinon.stub(syncEngine as any, 'getLocalRoot').rejects(new Error('simulated failure'));
+        const pullRemoteFeedStub = sinon.stub(syncEngine as any, 'pullRemoteFeedForSyncTarget').rejects(new Error('simulated failure'));
         const consoleErrorStub = sinon.stub(console, 'error');
         await syncEngine.sync();
         expect(syncEngine.connectivityState).toBe('offline');
 
         // Restore and sync successfully -> back to online.
-        getLocalRootStub.restore();
+        pullRemoteFeedStub.restore();
         consoleErrorStub.restore();
         await syncEngine.sync();
         expect(syncEngine.connectivityState).toBe('online');
@@ -2924,11 +2915,11 @@ describe('SyncEngineLevel', () => {
         await syncEngine.registerIdentity({ did: alice2.did.uri, options: { protocols: 'all' } });
         await syncEngine.registerIdentity({ did: bob2.did.uri, options: { protocols: 'all' } });
 
-        // Stub getLocalRoot to fail for the first target.
+        // Stub feed pull to fail for the first target.
         const consoleErrorStub = sinon.stub(console, 'error');
-        const getLocalRootStub = sinon.stub(syncEngine as any, 'getLocalRoot');
-        getLocalRootStub.onFirstCall().rejects(new Error('DWN unreachable'));
-        getLocalRootStub.callThrough(); // subsequent calls succeed
+        const pullRemoteFeedStub = sinon.stub(syncEngine as any, 'pullRemoteFeedForSyncTarget');
+        pullRemoteFeedStub.onFirstCall().rejects(new Error('DWN unreachable'));
+        pullRemoteFeedStub.onSecondCall().resolves({});
 
         await syncEngine.sync();
 
@@ -2938,11 +2929,11 @@ describe('SyncEngineLevel', () => {
         // Since both identities share the same DWN URL, the first failure should
         // add it to the errored set, and the second identity's sync for that URL
         // should be skipped (no additional error for it).
-        // We can verify by checking the number of getLocalRoot calls:
+        // We can verify by checking the number of feed-pull calls:
         // only 1 call (the first target), not 2.
-        expect(getLocalRootStub.callCount).toBe(1);
+        expect(pullRemoteFeedStub.callCount).toBe(1);
 
-        getLocalRootStub.restore();
+        pullRemoteFeedStub.restore();
         consoleErrorStub.restore();
       });
     });
@@ -3209,23 +3200,19 @@ describe('SyncEngineLevel', () => {
           originalLink.needsReconcile = true;
           syncEngine['_activeLinks'].set(linkKey, originalLink);
 
-          // Stub createLinkReconciler to capture the shouldContinue callback.
+          // Stub the feed reconcile path to capture the shouldContinue callback.
           let capturedShouldContinue: (() => boolean) | undefined;
-          sinon.stub(syncEngine as any, 'createLinkReconciler').callsFake((sc?: () => boolean) => {
+          sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').callsFake((_target: unknown, _options: unknown, sc?: () => boolean) => {
             capturedShouldContinue = sc;
-            return {
-              reconcile: async (): Promise<{ aborted: boolean; converged: boolean }> => {
-                // Simulate: during reconciliation, the link gets removed and re-added.
-                const newLink = { ...originalLink };
-                syncEngine['_activeLinks'].set(linkKey, newLink);
+            // Simulate: during reconciliation, the link gets removed and re-added.
+            const newLink = { ...originalLink };
+            syncEngine['_activeLinks'].set(linkKey, newLink);
 
-                // shouldContinue should now return false.
-                if (capturedShouldContinue && !capturedShouldContinue()) {
-                  return { aborted: true, converged: false };
-                }
-                return { aborted: false, converged: true };
-              },
-            };
+            // shouldContinue should now return false.
+            if (capturedShouldContinue && !capturedShouldContinue()) {
+              return { aborted: true, converged: false };
+            }
+            return { aborted: false, converged: true };
           });
 
           await syncEngine['doReconcileLink'](linkKey);
@@ -3257,20 +3244,16 @@ describe('SyncEngineLevel', () => {
           sinon.stub(syncEngine as any, 'closeLinkSubscriptions').resolves();
 
           let capturedShouldContinue: (() => boolean) | undefined;
-          sinon.stub(syncEngine as any, 'createLinkReconciler').callsFake((sc?: () => boolean) => {
+          sinon.stub(syncEngine as any, 'syncTargetWithDurableFeeds').callsFake((_target: unknown, _options: unknown, sc?: () => boolean) => {
             capturedShouldContinue = sc;
-            return {
-              reconcile: async (): Promise<{ aborted: boolean }> => {
-                // Mid-repair: replace the link in _activeLinks.
-                const newLink = { ...link };
-                syncEngine['_activeLinks'].set(linkKey, newLink);
+            // Mid-repair: replace the link in _activeLinks.
+            const newLink = { ...link };
+            syncEngine['_activeLinks'].set(linkKey, newLink);
 
-                if (capturedShouldContinue && !capturedShouldContinue()) {
-                  return { aborted: true };
-                }
-                return { aborted: false };
-              },
-            };
+            if (capturedShouldContinue && !capturedShouldContinue()) {
+              return { aborted: true };
+            }
+            return { aborted: false };
           });
 
           await syncEngine['doRepairLink'](linkKey);
