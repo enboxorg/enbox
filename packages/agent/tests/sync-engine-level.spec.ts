@@ -1728,29 +1728,24 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
 
         await clock.tickAsync(0);
 
         // only once for when starting the sync
         expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(500); // first interval fires while the first sync is still running
+        await clock.tickAsync(2_000); // multiple intervals fire while the first sync is still running
 
-        // still only once because the interval at 500ms was skipped while sync was running
+        // still only once because interval ticks are skipped while sync is running
         expect(syncSpy.callCount).toBe(1);
 
         resolveFirstPull({});
         await clock.tickAsync(0);
-        await clock.tickAsync(501); // next interval after the first sync finishes
+        await startPromise;
 
-        // once when starting, and once for the interval
-        expect(syncSpy.callCount).toBe(2);
-
-        await clock.tickAsync(501); // one more interval
-
-        // one more for the interval
-        expect(syncSpy.callCount).toBe(3);
+        // completing the first sync does not retroactively run skipped intervals
+        expect(syncSpy.callCount).toBe(1);
 
         syncSpy.restore();
         verifyFeedConvergenceStub.restore();
