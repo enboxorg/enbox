@@ -135,8 +135,16 @@ class AdmitClosureContext {
       };
     }
 
+    const dataStream = await replayableDataStream(entry);
+    if (entryRequiresDataBeforeApply(entry) && dataStream === undefined) {
+      return {
+        kind    : 'done',
+        outcome : { kind: 'failed', rootCid, reason: 'terminal', detail: 'latest records write data is unavailable' },
+      };
+    }
+
     try {
-      return this.admissionResultFromApply(rootCid, entry, cid, await this.applyEntry(entry));
+      return this.admissionResultFromApply(rootCid, entry, cid, await this.applyEntry(entry, dataStream));
     } catch (error: any) {
       if (error instanceof SyncDataSizeLimitExceededError) {
         return {
@@ -255,9 +263,12 @@ class AdmitClosureContext {
     );
   }
 
-  private async applyEntry(entry: SyncMessageEntry): Promise<ReplicationApplyResult> {
+  private async applyEntry(
+    entry: SyncMessageEntry,
+    dataStream: ReadableStream<Uint8Array> | undefined,
+  ): Promise<ReplicationApplyResult> {
     return this.deps.agent.dwn.applyReplicatedMessage(this.deps.did, entry.message, {
-      dataStream: await replayableDataStream(entry),
+      dataStream,
     });
   }
 
@@ -575,6 +586,21 @@ async function replayableDataStream(entry: SyncMessageEntry): Promise<ReadableSt
       controller.close();
     }
   });
+}
+
+function entryRequiresDataBeforeApply(entry: SyncMessageEntry): boolean {
+  return entry.isLatestBaseState === true && recordsWriteRequiresData(entry.message);
+}
+
+function recordsWriteRequiresData(message: GenericMessage): boolean {
+  if (
+    message.descriptor.interface !== DwnInterfaceName.Records ||
+    message.descriptor.method !== DwnMethodName.Write
+  ) {
+    return false;
+  }
+
+  return typeof (message.descriptor as { dataCid?: unknown }).dataCid === 'string';
 }
 
 async function dedupeEntries(entries: SyncMessageEntry[]): Promise<SyncMessageEntry[]> {

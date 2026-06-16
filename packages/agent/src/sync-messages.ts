@@ -40,6 +40,8 @@ export type SyncMessageEntry = {
   dataStream?: ReadableStream<Uint8Array>;
   dataStreamConsumed?: boolean;
   dataStreamFactory?: () => Promise<ReadableStream<Uint8Array> | undefined>;
+  /** Source feed attestation. Latest RecordsWrite entries must carry data before apply. */
+  isLatestBaseState?: boolean;
   /** Buffered data bytes for retry — avoids re-fetching from remote when stream is consumed. */
   bufferedData?: Uint8Array;
 };

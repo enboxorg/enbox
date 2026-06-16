@@ -555,6 +555,33 @@ describe('admitClosure', () => {
     expect(agent.dwn.applyReplicatedMessage.callCount).toBe(2);
   });
 
+  it('does not admit a source-latest RecordsWrite when its data is unavailable', async () => {
+    const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+      data     : new Uint8Array([1, 2, 3]),
+      protocol : 'https://example.com/protocol',
+    });
+    const rootCid = await Message.getCid(recordsWrite.message);
+    const agent = createMockAgent();
+
+    const outcome = await admitClosure(rootCid, {
+      did        : 'did:example:alice',
+      dwnUrl     : 'https://dwn.example.com',
+      agent,
+      prefetched : [{
+        message           : recordsWrite.message,
+        isLatestBaseState : true,
+      }],
+    });
+
+    expect(outcome).toEqual({
+      kind    : 'failed',
+      rootCid : rootCid,
+      reason  : 'terminal',
+      detail  : 'latest records write data is unavailable',
+    });
+    expect(agent.dwn.applyReplicatedMessage.called).toBe(false);
+  });
+
   it('fetches the newest tenant protocol config', async () => {
     const protocol = 'https://example.com/protocol';
     const definition = {

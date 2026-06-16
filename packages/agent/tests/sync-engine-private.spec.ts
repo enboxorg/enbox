@@ -54,8 +54,14 @@ describe('SyncEngineLevel — private methods', () => {
   // fire after teardown, triggering unhandled `LEVEL_DATABASE_NOT_OPEN`
   // rejections when `ledger.saveLink()` hits the closed DB.
   const createdEngines: SyncEngineLevel[] = [];
-  const createEngine = (params: ConstructorParameters<typeof SyncEngineLevel>[0]): SyncEngineLevel => {
+  const createEngine = (
+    params: ConstructorParameters<typeof SyncEngineLevel>[0],
+    options: { stubFeedPull?: boolean } = {},
+  ): SyncEngineLevel => {
     const engine = new SyncEngineLevel(params);
+    if (options.stubFeedPull !== false) {
+      sinon.stub(engine as any, 'pullRemoteFeedForSyncTarget').resolves({});
+    }
     createdEngines.push(engine);
     return engine;
   };
@@ -710,6 +716,125 @@ describe('SyncEngineLevel — private methods', () => {
       await engine.sync();
 
       expect(diffStub.called).toBe(false);
+    });
+
+    it('should pull a remote MessagesQuery page and persist the pull checkpoint', async () => {
+      const protocol = 'https://example.com/feed-pull';
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const configure = await TestDataGenerator.generateProtocolsConfigure({
+        author             : alice,
+        protocolDefinition : {
+          protocol,
+          published : true,
+          types     : {
+            post: { schema: 'https://example.com/post', dataFormats: ['text/plain'] },
+          },
+          structure: { post: {} },
+        },
+      });
+      const configureCid = await Message.getCid(configure.message);
+      const cursor = {
+        streamId   : 'stream-1',
+        epoch      : 'epoch-1',
+        position   : '1',
+        messageCid : configureCid,
+      };
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
+          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [{
+              seq               : '1',
+              messageCid        : configureCid,
+              isLatestBaseState : true,
+              protocol,
+              message           : configure.message,
+            }],
+            cursor  : cursor,
+            drained : true,
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPull: false });
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([
+        syncTarget(alice.did, 'https://dwn.example.com', {
+          scope: { kind: 'protocolSet', protocols: [protocol] },
+        }),
+      ]);
+      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({});
+
+      await engine.sync('pull');
+
+      expect(mockAgent.processDwnRequest.firstCall.args[0]).toMatchObject({
+        author        : alice.did,
+        target        : alice.did,
+        messageType   : DwnInterface.MessagesQuery,
+        messageParams : {
+          filters : [{ protocol }],
+          limit   : 100,
+        },
+      });
+      expect(mockAgent.rpc.sendDwnRequest.firstCall.args[0]).toMatchObject({
+        dwnUrl    : 'https://dwn.example.com',
+        targetDid : alice.did,
+      });
+      expect(mockAgent.dwn.applyReplicatedMessage.calledOnce).toBe(true);
+      expect(mockAgent.dwn.applyReplicatedMessage.firstCall.args[1]).toEqual(configure.message);
+
+      const links = await (engine as any).ledger.getLinksForTenant(alice.did);
+      expect(links).toHaveLength(1);
+      expect(links[0].pull.contiguousAppliedToken).toEqual(cursor);
+
+      const appliedEvent = events.find(event => event.type === 'reconcile:applied');
+      expect(appliedEvent.messageCids).toEqual([configureCid]);
+    });
+
+    it('should accept a drained feed page that returns the existing cursor', async () => {
+      const did = 'did:example:feed-caught-up';
+      const cursor = {
+        streamId : 'stream-1',
+        epoch    : 'epoch-1',
+        position : '7',
+      };
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
+          applyReplicatedMessage: sinon.stub(),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            cursor,
+            drained : true,
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPull: false });
+      const target = syncTarget(did, 'https://dwn.example.com');
+      const link = await (engine as any).getOrCreateReplicationLink(target);
+      ReplicationLedger.commitContiguousToken(link.pull, cursor);
+      await (engine as any).ledger.saveLink(link);
+
+      sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({});
+
+      await engine.sync('pull');
+
+      expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
+      const links = await (engine as any).ledger.getLinksForTenant(did);
+      expect(links[0].pull.contiguousAppliedToken).toEqual(cursor);
     });
 
     it('should walk tree diff and pull/push when roots differ', async () => {
