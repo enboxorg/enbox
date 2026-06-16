@@ -14,6 +14,7 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
+import { Convert } from '@enbox/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { X25519 } from '@enbox/crypto';
@@ -213,7 +214,7 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       const rawMessage = grant.message;
       const encodedData = rawMessage.encodedData;
       const dataBytes = encodedData
-        ? Uint8Array.from(atob(encodedData), (c: string): number => c.charCodeAt(0))
+        ? Convert.base64Url(encodedData).toUint8Array()
         : new Uint8Array(0);
 
       // Delegate partition
@@ -855,7 +856,7 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       const grantMsg = grant.message;
       const grantData = grantMsg.encodedData;
       const grantBytes = grantData
-        ? Uint8Array.from(atob(grantData), (c: string): number => c.charCodeAt(0))
+        ? Convert.base64Url(grantData).toUint8Array()
         : new Uint8Array(0);
       await delegateHarness.agent.dwn.processRawMessage(
         ownerDid, grantMsg as any,

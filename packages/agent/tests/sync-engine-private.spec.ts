@@ -2,13 +2,12 @@ import sinon from 'sinon';
 
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
-import { Message, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { Message, Replication, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { computeAuthorizationEpoch } from '../src/types/sync.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { ReplicationLedger } from '../src/sync-replication-ledger.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
-import { SyncPullAbortedError } from '../src/sync-messages.js';
 import { getMessagesPermissionGrantsForScope, resolveMessagesScopes } from '../src/sync-permission-grants.js';
 
 describe('SyncEngineLevel — private methods', () => {
@@ -46,6 +45,14 @@ describe('SyncEngineLevel — private methods', () => {
     message: {},
   });
 
+  const fingerprintFromCids = async (messageCids: string[]): Promise<string> => {
+    let fingerprint = Replication.emptyFingerprint();
+    for (const messageCid of messageCids) {
+      fingerprint = Replication.xorFingerprint(fingerprint, await Replication.hashMessageCid(messageCid));
+    }
+    return Replication.fingerprintToHex(fingerprint);
+  };
+
   // Track every SyncEngineLevel created in this suite so `afterEach` can
   // clear any pending timers before the next test (and before `afterAll`
   // closes the shared Level DB). Tests that exercise code paths which
@@ -56,7 +63,7 @@ describe('SyncEngineLevel — private methods', () => {
   const createdEngines: SyncEngineLevel[] = [];
   const createEngine = (
     params: ConstructorParameters<typeof SyncEngineLevel>[0],
-    options: { stubFeedPull?: boolean; stubFeedPush?: boolean } = {},
+    options: { stubFeedPull?: boolean; stubFeedPush?: boolean; stubFeedVerify?: boolean } = {},
   ): SyncEngineLevel => {
     const engine = new SyncEngineLevel(params);
     if (options.stubFeedPull !== false) {
@@ -65,8 +72,20 @@ describe('SyncEngineLevel — private methods', () => {
     if (options.stubFeedPush !== false) {
       sinon.stub(engine as any, 'pushLocalFeedForSyncTarget').resolves({});
     }
+    if (options.stubFeedVerify !== false) {
+      sinon.stub(engine as any, 'verifyFeedConvergence').resolves({
+        converged         : true,
+        localFingerprint  : 'fingerprint',
+        remoteFingerprint : 'fingerprint',
+        pushFailures      : [],
+      });
+    }
     createdEngines.push(engine);
     return engine;
+  };
+
+  const overrideLedger = (engine: SyncEngineLevel, methods: Record<string, unknown>): void => {
+    Object.assign((engine as any).ledger, methods);
   };
 
   const clearEngineTimers = (engine: SyncEngineLevel): void => {
@@ -225,43 +244,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       // Verify the stream yields the original data.
       expect(await readStreamText(stream)).toBe(originalData);
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // ---------------------------------------------------------------------------
-  // getDefaultHashHex
-  // ---------------------------------------------------------------------------
-
-  describe('getDefaultHashHex', () => {
-    it('should return hex-encoded default hash for depth 0', async () => {
-      const engine = createEngine({ db });
-      const hash = await (engine as any).getDefaultHashHex(0);
-      expect(typeof hash).toBe('string');
-      expect(hash.length).toBeGreaterThan(0);
-    });
-
-    it('should return different hashes for different depths', async () => {
-      const engine = createEngine({ db });
-      const hash0 = await (engine as any).getDefaultHashHex(0);
-      const hash1 = await (engine as any).getDefaultHashHex(1);
-      expect(hash0).not.toBe(hash1);
-    });
-
-    it('should return empty string for depth beyond MAX_DIFF_DEPTH (16)', async () => {
-      const engine = createEngine({ db });
-      const hash = await (engine as any).getDefaultHashHex(17);
-      expect(hash).toBe('');
-    });
-
-    it('should cache results after first call', async () => {
-      const engine = createEngine({ db });
-      expect((engine as any)._defaultHashHex).toBeUndefined();
-      await (engine as any).getDefaultHashHex(0);
-      expect((engine as any)._defaultHashHex).toBeDefined();
-      // Second call should use cache
-      const hash = await (engine as any).getDefaultHashHex(0);
-      expect(typeof hash).toBe('string');
     });
   });
 
@@ -701,26 +683,10 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // sync() — SMT tree comparison
+  // sync() — durable feed cycle
   // ---------------------------------------------------------------------------
 
-  describe('sync() — SMT tree comparison', () => {
-    it('should skip targets where local root matches remote root', async () => {
-      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      sinon.stub(engine as any, 'getSyncTargets').resolves([
-        syncTarget('did:example:1', 'https://dwn.example.com'),
-      ]);
-      sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('aabbcc');
-      const diffStub = sinon.stub(engine as any, 'diffWithRemote');
-
-      await engine.sync();
-
-      expect(diffStub.called).toBe(false);
-    });
-
+  describe('sync() — durable feed cycle', () => {
     it('should pull a remote MessagesQuery page and persist the pull checkpoint', async () => {
       const protocol = 'https://example.com/feed-pull';
       const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -747,7 +713,14 @@ describe('SyncEngineLevel — private methods', () => {
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
         dwn               : {
-          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
+          processRequest         : sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
         },
         rpc: {
           sendDwnRequest: sinon.stub().resolves({
@@ -773,8 +746,6 @@ describe('SyncEngineLevel — private methods', () => {
           scope: { kind: 'protocolSet', protocols: [protocol] },
         }),
       ]);
-      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({});
-
       await engine.sync('pull');
 
       expect(mockAgent.processDwnRequest.firstCall.args[0]).toMatchObject({
@@ -813,7 +784,14 @@ describe('SyncEngineLevel — private methods', () => {
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
         dwn               : {
-          applyReplicatedMessage: sinon.stub(),
+          applyReplicatedMessage : sinon.stub(),
+          processRequest         : sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
         },
         rpc: {
           sendDwnRequest: sinon.stub().resolves({
@@ -831,8 +809,6 @@ describe('SyncEngineLevel — private methods', () => {
       await (engine as any).ledger.saveLink(link);
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
-      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({});
-
       await engine.sync('pull');
 
       expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
@@ -857,7 +833,14 @@ describe('SyncEngineLevel — private methods', () => {
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
         dwn               : {
-          applyReplicatedMessage: sinon.stub(),
+          applyReplicatedMessage : sinon.stub(),
+          processRequest         : sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
         },
         rpc: {
           sendDwnRequest: sinon.stub()
@@ -879,14 +862,78 @@ describe('SyncEngineLevel — private methods', () => {
       await (engine as any).ledger.saveLink(link);
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
-      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({});
-
       await engine.sync('pull');
 
       expect(mockAgent.rpc.sendDwnRequest.callCount).toBe(2);
       expect(mockAgent.processDwnRequest.secondCall.args[0].messageParams.cursor).toBeUndefined();
       const links = await (engine as any).ledger.getLinksForTenant(did);
       expect(links[0].pull.contiguousAppliedToken).toEqual(resetCursor);
+    });
+
+    it('should enumerate remote CIDs and pull only missing bodies for a cursorless non-empty local scope', async () => {
+      const did = 'did:example:feed-pull-diff';
+      const protocol = 'https://example.com/feed-pull-diff';
+      const localCursor = {
+        streamId   : 'local-stream-1',
+        epoch      : 'local-epoch-1',
+        position   : '1',
+        messageCid : 'cid-existing',
+      };
+      const remoteCursor = {
+        streamId   : 'remote-stream-1',
+        epoch      : 'remote-epoch-1',
+        position   : '2',
+        messageCid : 'cid-missing',
+      };
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [{ seq: '1', messageCid: 'cid-existing', protocol }],
+              cursor  : localCursor,
+              drained : true,
+            },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [
+              { seq: '1', messageCid: 'cid-existing', protocol },
+              { seq: '2', messageCid: 'cid-missing', protocol },
+            ],
+            cursor  : remoteCursor,
+            drained : true,
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPull: false });
+      const admitStub = sinon.stub(engine as any, 'admitRemoteFeedEntry').resolves({ kind: 'admitted', appliedCids: ['cid-missing'] });
+      const target = syncTarget(did, 'https://dwn.example.com', {
+        scope: { kind: 'protocolSet', protocols: [protocol] },
+      });
+
+      const result = await (engine as any).pullRemoteFeedForSyncTarget(target);
+
+      expect(mockAgent.dwn.processRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly : true,
+        filters  : [{ protocol }],
+        limit    : 100,
+      });
+      expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly : true,
+        filters  : [{ protocol }],
+        limit    : 100,
+      });
+      expect(admitStub.calledOnce).toBe(true);
+      expect(admitStub.firstCall.args[1].messageCid).toBe('cid-missing');
+      expect(result.admittedCids).toEqual(['cid-missing']);
+      const [link] = await (engine as any).ledger.getLinksForTenant(did);
+      expect(link.pull.contiguousAppliedToken).toEqual(remoteCursor);
     });
 
     it('should reject a remote feed cursor that moves backwards', async () => {
@@ -952,7 +999,14 @@ describe('SyncEngineLevel — private methods', () => {
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
         dwn               : {
-          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Invalid', reason: 'bad configure' }),
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Invalid', reason: 'bad configure' }),
+          processRequest         : sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
         },
         rpc: {
           sendDwnRequest: sinon.stub().resolves({
@@ -973,8 +1027,6 @@ describe('SyncEngineLevel — private methods', () => {
       const target = syncTarget(alice.did, 'https://dwn.example.com');
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
-      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({});
-
       await engine.sync('pull');
 
       const failedMessages = await engine.getFailedMessages(alice.did);
@@ -1081,7 +1133,14 @@ describe('SyncEngineLevel — private methods', () => {
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
         dwn               : {
-          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
+          processRequest         : sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
         },
         rpc: {
           sendDwnRequest: sinon.stub()
@@ -1113,8 +1172,6 @@ describe('SyncEngineLevel — private methods', () => {
       const target = syncTarget(alice.did, 'https://dwn.example.com');
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
-      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({});
-
       await engine.sync('pull');
 
       expect(mockAgent.processDwnRequest.secondCall.args[0].messageParams.cursor).toEqual(cursor1);
@@ -1134,7 +1191,16 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid          : 'did:example:agent',
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
-        rpc               : {
+        dwn               : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
+        },
+        rpc: {
           sendDwnRequest: sinon.stub().resolves({
             status  : { code: 200, detail: 'OK' },
             entries : [
@@ -1152,7 +1218,6 @@ describe('SyncEngineLevel — private methods', () => {
       const target = syncTarget(did, 'https://dwn.example.com');
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
-      const reconcileStub = sinon.stub(engine as any, 'reconcileSyncTarget').resolves({});
       sinon.stub(engine as any, 'admitRemoteFeedEntry')
         .onFirstCall().resolves({ kind: 'admitted', appliedCids: ['cid-applied'] })
         .onSecondCall().resolves({ kind: 'deferred', detail: 'dependency unavailable' });
@@ -1163,7 +1228,73 @@ describe('SyncEngineLevel — private methods', () => {
       const appliedEvent = events.find(event => event.type === 'reconcile:applied');
       expect(appliedEvent).toBeDefined();
       expect(appliedEvent.messageCids).toEqual(['cid-applied']);
-      expect(reconcileStub.called).toBe(false);
+    });
+
+    it('should dead-letter expired deferred pull entries and continue the page before advancing', async () => {
+      const did = 'did:example:feed-expired-deferred';
+      const dwnUrl = 'https://dwn.example.com';
+      const deferredCid = 'cid-deferred-expired';
+      const tailCid = 'cid-tail-after-deferred';
+      const cursor = {
+        streamId : 'stream-1',
+        epoch    : 'epoch-1',
+        position : '2',
+      };
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [
+              { seq: '1', messageCid: deferredCid, protocol: 'https://example.com/chat' },
+              { seq: '2', messageCid: tailCid, protocol: 'https://example.com/chat' },
+            ],
+            cursor,
+            drained: true,
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPull: false });
+      const target = syncTarget(did, dwnUrl);
+      const deferredKey = `${did}|${deferredCid}|${dwnUrl}`;
+      await (engine as any)._deferredPulls.put(deferredKey, JSON.stringify({
+        attempts        : 1,
+        detail          : 'dependency unavailable',
+        firstDeferredAt : new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+        lastDeferredAt  : new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+      }));
+      const admitStub = sinon.stub(engine as any, 'admitRemoteFeedEntry').callsFake(async (_target: any, entry: any): Promise<any> => {
+        return entry.messageCid === deferredCid
+          ? { kind: 'deferred', detail: 'dependency unavailable' }
+          : { kind: 'admitted', appliedCids: [entry.messageCid] };
+      });
+
+      const result = await (engine as any).pullRemoteFeedForSyncTarget(target);
+
+      expect(admitStub.callCount).toBe(2);
+      expect(result.admittedCids).toEqual([tailCid]);
+      const [link] = await (engine as any).ledger.getLinksForTenant(did);
+      expect(link.pull.contiguousAppliedToken).toEqual(cursor);
+      const failedMessages = await engine.getFailedMessages(did);
+      expect(failedMessages).toHaveLength(1);
+      expect(failedMessages[0]).toMatchObject({
+        messageCid     : deferredCid,
+        remoteEndpoint : dwnUrl,
+        protocol       : 'https://example.com/chat',
+        category       : 'admit-failed',
+        errorCode      : 'Deferred',
+      });
     });
 
     it('should push a local MessagesQuery page and persist the push checkpoint', async () => {
@@ -1188,9 +1319,10 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid : configureCid,
       };
       const mockAgent = {
-        agentDid : 'did:example:agent',
-        did      : { dereference: sinon.stub() },
-        dwn      : {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
           processRequest: sinon.stub().resolves({
             reply: {
               status  : { code: 200, detail: 'OK' },
@@ -1206,6 +1338,13 @@ describe('SyncEngineLevel — private methods', () => {
             },
           }),
         },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
+          }),
+        },
       } as any;
       const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
       const events: any[] = [];
@@ -1216,8 +1355,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
       const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [configureCid], failed: [] });
-      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({});
-
       await engine.sync('push');
 
       expect(mockAgent.dwn.processRequest.firstCall.args[0]).toMatchObject({
@@ -1225,9 +1362,15 @@ describe('SyncEngineLevel — private methods', () => {
         target        : alice.did,
         messageType   : DwnInterface.MessagesQuery,
         messageParams : {
-          filters : [{ protocol }],
-          limit   : 100,
+          cidsOnly : true,
+          filters  : [{ protocol }],
+          limit    : 100,
         },
+      });
+      expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly : true,
+        filters  : [{ protocol }],
+        limit    : 100,
       });
       expect(pushStub.calledOnce).toBe(true);
       expect(pushStub.firstCall.args[0]).toMatchObject({
@@ -1247,6 +1390,131 @@ describe('SyncEngineLevel — private methods', () => {
       });
     });
 
+    it('should enumerate local CIDs and push only messages missing from a cursorless remote scope', async () => {
+      const did = 'did:example:feed-push-diff';
+      const protocol = 'https://example.com/feed-push-diff';
+      const remoteCursor = {
+        streamId   : 'remote-stream-1',
+        epoch      : 'remote-epoch-1',
+        position   : '1',
+        messageCid : 'cid-existing',
+      };
+      const localCursor = {
+        streamId   : 'local-stream-1',
+        epoch      : 'local-epoch-1',
+        position   : '2',
+        messageCid : 'cid-missing',
+      };
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [
+                { seq: '1', messageCid: 'cid-existing', protocol },
+                { seq: '2', messageCid: 'cid-missing', protocol },
+              ],
+              cursor  : localCursor,
+              drained : true,
+            },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [{ seq: '1', messageCid: 'cid-existing', protocol }],
+            cursor  : remoteCursor,
+            drained : true,
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: ['cid-missing'], failed: [] });
+      const target = syncTarget(did, 'https://dwn.example.com', {
+        scope: { kind: 'protocolSet', protocols: [protocol] },
+      });
+
+      const result = await (engine as any).pushLocalFeedForSyncTarget(target);
+
+      expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly : true,
+        filters  : [{ protocol }],
+        limit    : 100,
+      });
+      expect(mockAgent.dwn.processRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly : true,
+        filters  : [{ protocol }],
+        limit    : 100,
+      });
+      expect(pushStub.calledOnce).toBe(true);
+      expect(pushStub.firstCall.args[0].messageCids).toEqual(['cid-missing']);
+      expect(result.pushFailures).toEqual([]);
+      const [link] = await (engine as any).ledger.getLinksForTenant(did);
+      expect(link.push.contiguousAppliedToken).toEqual(localCursor);
+    });
+
+    it('should push delegated permission grants before cursorless remote feed enumeration', async () => {
+      const did = 'did:example:feed-push-grant-bootstrap';
+      const delegateDid = 'did:example:delegate';
+      const grant = await TestDataGenerator.generateRecordsWrite();
+      const grantCid = await Message.getCid(grant.message);
+      const processRequestStub = sinon.stub().callsFake(async (params: any): Promise<any> => {
+        if (params.messageType === DwnInterface.RecordsQuery) {
+          return {
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [grant.message],
+            },
+          };
+        }
+
+        return {
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
+          },
+        };
+      });
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : { processRequest: processRequestStub },
+        rpc               : {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [grantCid], failed: [] });
+      const target = syncTarget(did, 'https://dwn.example.com', {
+        delegateDid,
+        permissionGrantIds: [grant.message.recordId],
+      });
+
+      const result = await (engine as any).pushLocalFeedForSyncTarget(target);
+
+      expect(pushStub.calledOnce).toBe(true);
+      expect(pushStub.firstCall.args[0]).toEqual({
+        did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [grantCid],
+      });
+      expect(pushStub.calledBefore(mockAgent.rpc.sendDwnRequest)).toBe(true);
+      expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly           : true,
+        permissionGrantIds : [grant.message.recordId],
+      });
+      expect(result.pushFailures).toEqual([]);
+    });
+
     it('should skip recently pulled local feed entries and still advance the push checkpoint', async () => {
       const did = 'did:example:feed-push-echo';
       const dwnUrl = 'https://dwn.example.com';
@@ -1257,9 +1525,10 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid : 'cid-echo',
       };
       const mockAgent = {
-        agentDid : 'did:example:agent',
-        did      : { dereference: sinon.stub() },
-        dwn      : {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
           processRequest: sinon.stub().resolves({
             reply: {
               status  : { code: 200, detail: 'OK' },
@@ -1273,6 +1542,13 @@ describe('SyncEngineLevel — private methods', () => {
             },
           }),
         },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
+          }),
+        },
       } as any;
       const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
       const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: ['cid-echo'], failed: [] });
@@ -1284,7 +1560,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       expect(pushStub.called).toBe(false);
       expect(result.hasActionableDiffs).toBe(false);
-      expect(result.ignoredLocalCids).toEqual([]);
       expect(result.pushFailures).toEqual([]);
       const links = await (engine as any).ledger.getLinksForTenant(did);
       expect(links[0].push.contiguousAppliedToken).toEqual(cursor);
@@ -1303,9 +1578,10 @@ describe('SyncEngineLevel — private methods', () => {
         position : '1',
       };
       const mockAgent = {
-        agentDid : 'did:example:agent',
-        did      : { dereference: sinon.stub() },
-        dwn      : {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
           processRequest: sinon.stub()
             .onFirstCall().resolves({
               reply: {
@@ -1320,6 +1596,13 @@ describe('SyncEngineLevel — private methods', () => {
                 drained : true,
               },
             }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
+          }),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
@@ -1348,9 +1631,10 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid : 'cid-retry',
       };
       const mockAgent = {
-        agentDid : 'did:example:agent',
-        did      : { dereference: sinon.stub() },
-        dwn      : {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
           processRequest: sinon.stub().resolves({
             reply: {
               status  : { code: 200, detail: 'OK' },
@@ -1362,6 +1646,13 @@ describe('SyncEngineLevel — private methods', () => {
               cursor,
               drained: true,
             },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
           }),
         },
       } as any;
@@ -1388,9 +1679,10 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid : 'cid-terminal',
       };
       const mockAgent = {
-        agentDid : 'did:example:agent',
-        did      : { dereference: sinon.stub() },
-        dwn      : {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
           processRequest: sinon.stub().resolves({
             reply: {
               status  : { code: 200, detail: 'OK' },
@@ -1402,6 +1694,13 @@ describe('SyncEngineLevel — private methods', () => {
               cursor,
               drained: true,
             },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
           }),
         },
       } as any;
@@ -1420,7 +1719,6 @@ describe('SyncEngineLevel — private methods', () => {
       const result = await (engine as any).pushLocalFeedForSyncTarget(target);
 
       expect(result.pushFailures).toEqual([]);
-      expect(result.ignoredLocalCids).toEqual(['cid-terminal']);
       const links = await (engine as any).ledger.getLinksForTenant(did);
       expect(links[0].push.contiguousAppliedToken).toEqual(cursor);
       const failedMessages = await engine.getFailedMessages(did);
@@ -1434,109 +1732,505 @@ describe('SyncEngineLevel — private methods', () => {
       });
     });
 
-    it('should walk tree diff and pull/push when roots differ', async () => {
+    it('should run durable feed pull and push during a full sync', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });
+      const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
+      const pushStub = (engine as any).pushLocalFeedForSyncTarget;
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
-      sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
-      sinon.stub(engine as any, 'diffWithRemote').resolves({
-        onlyLocal  : ['cid-local-1'],
-        onlyRemote : [{ messageCid: 'cid-remote-1' }],
-      });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
 
       await engine.sync();
 
-      expect(admitStub.calledOnce).toBe(true);
       expect(pushStub.calledOnce).toBe(true);
+      expect(pullStub.calledOnce).toBe(true);
     });
 
-    it('should only pull when direction is "pull"', async () => {
+    it('should pass pull direction through the durable feed cycle', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });
+      const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
+      const pushStub = (engine as any).pushLocalFeedForSyncTarget;
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
-      sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
-      sinon.stub(engine as any, 'diffWithRemote').resolves({
-        onlyLocal  : ['cid-local-1'],
-        onlyRemote : [{ messageCid: 'cid-remote-1' }],
-      });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
 
       await engine.sync('pull');
 
-      expect(admitStub.calledOnce).toBe(true);
-      expect(pushStub.called).toBe(false);
+      expect(pullStub.firstCall.args[1]).toMatchObject({ direction: 'pull' });
+      expect(pushStub.firstCall.args[1]).toMatchObject({ direction: 'pull' });
     });
 
-    it('should only push when direction is "push"', async () => {
+    it('should pass push direction through the durable feed cycle', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });
+      const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
+      const pushStub = (engine as any).pushLocalFeedForSyncTarget;
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
-      sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
-      sinon.stub(engine as any, 'diffWithRemote').resolves({
-        onlyLocal  : ['cid-local-1'],
-        onlyRemote : [{ messageCid: 'cid-remote-1' }],
-      });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
 
       await engine.sync('push');
 
-      expect(admitStub.called).toBe(false);
-      expect(pushStub.calledOnce).toBe(true);
+      expect(pullStub.firstCall.args[1]).toMatchObject({ direction: 'push' });
+      expect(pushStub.firstCall.args[1]).toMatchObject({ direction: 'push' });
     });
 
-    it('should skip when diff has empty onlyRemote for pull', async () => {
+    it('should abort the durable feed cycle before push when the link is no longer current after pull', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });
+      const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
+      const pushStub = (engine as any).pushLocalFeedForSyncTarget;
+
+      const result = await (engine as any).syncTargetWithDurableFeeds(
+        syncTarget('did:example:1', 'https://dwn.example.com'),
+        {},
+        () => false,
+      );
+
+      expect(result.aborted).toBe(true);
+      expect(pullStub.calledOnce).toBe(true);
+      expect(pushStub.called).toBe(false);
+    });
+
+    it('should abort the durable feed cycle before convergence verification when the link changes after push', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const pushStub = (engine as any).pushLocalFeedForSyncTarget;
+      const verifyStub = (engine as any).verifyFeedConvergence;
+      const shouldContinue = sinon.stub();
+      shouldContinue.onFirstCall().returns(true);
+      shouldContinue.onSecondCall().returns(false);
+
+      const result = await (engine as any).syncTargetWithDurableFeeds(
+        syncTarget('did:example:1', 'https://dwn.example.com'),
+        { verifyConvergence: true },
+        shouldContinue,
+      );
+
+      expect(result.aborted).toBe(true);
+      expect(pushStub.calledOnce).toBe(true);
+      expect(verifyStub.called).toBe(false);
+    });
+
+    it('should verify feed convergence with fresh local and remote feed fingerprints', async () => {
+      const localReply = {
+        drained     : true,
+        fingerprint : 'feed-fingerprint',
+        status      : { code: 200, detail: 'OK' },
+      };
+      const remoteReply = {
+        drained     : true,
+        fingerprint : 'feed-fingerprint',
+        status      : { code: 200, detail: 'OK' },
+      };
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : { processRequest: sinon.stub().resolves({ reply: localReply }) },
+        rpc               : { sendDwnRequest: sinon.stub().resolves(remoteReply) },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedVerify: false });
+      const target = syncTarget('did:example:alice', 'https://dwn.example.com', {
+        scope: { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
+      });
+
+      const result = await (engine as any).syncTargetWithDurableFeeds(target, { verifyConvergence: true });
+
+      expect(result.converged).toBe(true);
+      expect(result.localFingerprint).toBe('feed-fingerprint');
+      expect(result.remoteFingerprint).toBe('feed-fingerprint');
+      expect(mockAgent.dwn.processRequest.firstCall.args[0]).toMatchObject({
+        author        : 'did:example:alice',
+        target        : 'did:example:alice',
+        messageType   : DwnInterface.MessagesQuery,
+        messageParams : {
+          cidsOnly : true,
+          filters  : [{ protocol: 'https://example.com/profile' }],
+          limit    : 1,
+        },
+      });
+      expect(mockAgent.processDwnRequest.firstCall.args[0]).toMatchObject({
+        author        : 'did:example:alice',
+        target        : 'did:example:alice',
+        messageType   : DwnInterface.MessagesQuery,
+        messageParams : {
+          cidsOnly : true,
+          filters  : [{ protocol: 'https://example.com/profile' }],
+          limit    : 1,
+        },
+      });
+      expect(mockAgent.rpc.sendDwnRequest.firstCall.args[0]).toMatchObject({
+        dwnUrl    : 'https://dwn.example.com',
+        targetDid : 'did:example:alice',
+      });
+    });
+
+    it('should treat push failures and mismatched fingerprints as non-converged', () => {
+      expect((SyncEngineLevel as any).feedFingerprintsConverged({
+        localFingerprint  : 'fingerprint',
+        remoteFingerprint : 'fingerprint',
+        pushFailures      : [],
+      })).toBe(true);
+      expect((SyncEngineLevel as any).feedFingerprintsConverged({
+        localFingerprint  : 'local-fingerprint',
+        remoteFingerprint : 'remote-fingerprint',
+        pushFailures      : [],
+      })).toBe(false);
+      expect((SyncEngineLevel as any).feedFingerprintsConverged({
+        localFingerprint  : 'fingerprint',
+        remoteFingerprint : 'fingerprint',
+        pushFailures      : [{ cid: 'cid-1', detail: 'retry later' }],
+      })).toBe(false);
+    });
+
+    it('should reset feed checkpoints and mark a live link for reconcile when verified fingerprints diverge', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const target = syncTarget('did:example:1', 'https://dwn.example.com');
+      const link = await (engine as any).getOrCreateReplicationLink(target);
+      const linkKey = (engine as any).getReplicationLinkKey(target, link);
+      const token = {
+        streamId   : 'tenant-stream',
+        epoch      : 'epoch-1',
+        position   : '10',
+        messageCid : 'cid-10',
+      };
+      link.status = 'live';
+      link.pull = { contiguousAppliedToken: token, receivedToken: token };
+      link.push = { contiguousAppliedToken: token, receivedToken: token };
+      link.needsReconcile = false;
+      (engine as any)._activeLinks.set(linkKey, link);
+      sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+      ((engine as any).verifyFeedConvergence).resolves({
+        converged         : false,
+        localFingerprint  : 'local-fingerprint',
+        remoteFingerprint : 'remote-fingerprint',
+        pushFailures      : [],
+      });
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
+
+      await engine.sync(undefined, { verifyConvergence: true });
+
+      expect(link.pull.contiguousAppliedToken).toBeUndefined();
+      expect(link.pull.receivedToken).toBeUndefined();
+      expect(link.push.contiguousAppliedToken).toBeUndefined();
+      expect(link.push.receivedToken).toBeUndefined();
+      expect(link.needsReconcile).toBe(true);
+      expect(scheduleStub.calledOnceWith(linkKey, 0)).toBe(true);
+    });
+
+    it('should transition repeated fingerprint divergence without dead letters to terminal-incomplete', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const target = syncTarget('did:example:no-dead-letter-divergence', 'https://dwn.example.com');
+      const link = await (engine as any).getOrCreateReplicationLink(target);
+      const linkKey = (engine as any).getReplicationLinkKey(target, link);
+      const token = {
+        streamId   : 'tenant-stream',
+        epoch      : 'epoch-1',
+        position   : '10',
+        messageCid : 'cid-10',
+      };
+      link.status = 'live';
+      link.pull = { contiguousAppliedToken: token, receivedToken: token };
+      link.push = { contiguousAppliedToken: token, receivedToken: token };
+      link.needsReconcile = false;
+      await (engine as any).ledger.saveLink(link);
+      (engine as any)._activeLinks.set(linkKey, link);
+      sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+      ((engine as any).verifyFeedConvergence).resolves({
+        converged         : false,
+        localFingerprint  : 'local-fingerprint',
+        remoteFingerprint : 'remote-fingerprint',
+        pushFailures      : [],
+      });
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+
+      await engine.sync(undefined, { verifyConvergence: true });
+      await engine.sync(undefined, { verifyConvergence: true });
+      await engine.sync(undefined, { verifyConvergence: true });
+
+      const [finalLink] = await (engine as any).ledger.getLinksForTenant(target.did);
+      expect(finalLink.status).toBe('terminal_incomplete');
+      expect(finalLink.needsReconcile).toBe(false);
+      expect(scheduleStub.callCount).toBe(2);
+      expect(events.some(event =>
+        event.type === 'link:status-change' &&
+        event.tenantDid === target.did &&
+        event.remoteEndpoint === target.dwnUrl &&
+        event.to === 'terminal_incomplete'
+      )).toBe(true);
+    });
+
+    it('should not treat dead-letter divergence as converged', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const target = syncTarget('did:example:1', 'https://dwn.example.com');
+      const link = await (engine as any).getOrCreateReplicationLink(target);
+      const linkKey = (engine as any).getReplicationLinkKey(target, link);
+      const token = {
+        streamId   : 'tenant-stream',
+        epoch      : 'epoch-1',
+        position   : '10',
+        messageCid : 'cid-10',
+      };
+      link.status = 'live';
+      link.pull = { contiguousAppliedToken: token, receivedToken: token };
+      link.push = { contiguousAppliedToken: token, receivedToken: token };
+      link.needsReconcile = false;
+      (engine as any)._activeLinks.set(linkKey, link);
+      const localFingerprint = await fingerprintFromCids(['cid-terminal']);
+      const remoteFingerprint = await fingerprintFromCids([]);
+      await engine.recordDeadLetter({
+        messageCid     : 'cid-terminal',
+        tenantDid      : target.did,
+        remoteEndpoint : target.dwnUrl,
+        category       : 'admit-failed',
+        errorDetail    : 'terminal push failure',
+      });
+      sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+      ((engine as any).pushLocalFeedForSyncTarget).resolves({
+        hasActionableDiffs : false,
+        pushFailures       : [],
+      });
+      ((engine as any).verifyFeedConvergence).resolves({
+        converged         : false,
+        localFingerprint  : localFingerprint,
+        remoteFingerprint : remoteFingerprint,
+        pushFailures      : [],
+      });
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
+
+      await engine.sync(undefined, { verifyConvergence: true });
+
+      expect(link.pull.contiguousAppliedToken).toBeUndefined();
+      expect(link.pull.receivedToken).toBeUndefined();
+      expect(link.push.contiguousAppliedToken).toBeUndefined();
+      expect(link.push.receivedToken).toBeUndefined();
+      expect(link.needsReconcile).toBe(true);
+      expect(scheduleStub.calledOnceWith(linkKey, 0)).toBe(true);
+    });
+
+    it('should transition repeated dead-letter divergence to terminal-incomplete without replaying forever', async () => {
+      const did = 'did:example:feed-push-terminal-steady';
+      const dwnUrl = 'https://dwn.example.com';
+      const terminalCid = 'cid-terminal-steady';
+      const authorizationEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
+      const pushCursor = {
+        streamId   : 'local-stream-1',
+        epoch      : 'local-epoch-1',
+        position   : '1',
+        messageCid : terminalCid,
+      };
+      const pullCursor = {
+        streamId   : 'remote-stream-1',
+        epoch      : 'remote-epoch-1',
+        position   : '8',
+        messageCid : 'remote-cid-8',
+      };
+      const localFingerprint = await fingerprintFromCids([terminalCid]);
+      const remoteFingerprint = await fingerprintFromCids([]);
+      let feedQueriesFromStart = 0;
+      const processRequestStub = sinon.stub().callsFake(async (params: any): Promise<any> => {
+        if (params.messageParams.cidsOnly === true && params.messageParams.limit === 1) {
+          return {
+            reply: {
+              status      : { code: 200, detail: 'OK' },
+              drained     : true,
+              fingerprint : localFingerprint,
+            },
+          };
+        }
+
+        if (params.messageParams.cidsOnly === true && params.messageParams.cursor === undefined) {
+          feedQueriesFromStart++;
+          return {
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [{
+                seq               : '1',
+                messageCid        : terminalCid,
+                isLatestBaseState : true,
+              }],
+              cursor  : pushCursor,
+              drained : true,
+            },
+          };
+        }
+
+        return {
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
+          },
+        };
+      });
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        dwn               : { processRequest: processRequestStub },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        rpc               : {
+          sendDwnRequest: sinon.stub().resolves({
+            status      : { code: 200, detail: 'OK' },
+            drained     : true,
+            fingerprint : remoteFingerprint,
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false, stubFeedVerify: false });
+      await (engine as any)._db.sublevel('registeredIdentities').put(did, JSON.stringify({
+        protocols: ['https://example.com/chat', 'https://example.com/profile'],
+      }));
+      const pushMessagesStub = sinon.stub(engine as any, 'pushMessages').resolves({
+        succeeded : [],
+        failed    : [{
+          cid      : terminalCid,
+          detail   : 'invalid remote admission',
+          kind     : 'Invalid',
+          terminal : true,
+        }],
+      });
+      const target = syncTarget(did, dwnUrl, {
+        authorizationEpoch,
+        scope: {
+          kind      : 'protocolSet',
+          protocols : ['https://example.com/chat', 'https://example.com/profile'],
+        },
+      });
+
+      const initialPush = await (engine as any).pushLocalFeedForSyncTarget(target);
+      expect(initialPush.pushFailures).toEqual([]);
+      expect(pushMessagesStub.calledOnce).toBe(true);
+
+      const link = (await (engine as any).ledger.getLinksForTenant(did))[0];
+      const linkKey = (engine as any).getReplicationLinkKey(target, link);
+      link.status = 'live';
+      link.pull = { contiguousAppliedToken: pullCursor, receivedToken: pullCursor };
+      link.needsReconcile = false;
+      await (engine as any).ledger.saveLink(link);
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      const events: any[] = [];
+      engine.on((event) => { events.push(event); });
+      sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
+
+      await engine.sync(undefined, { verifyConvergence: true });
+      await engine.sync(undefined, { verifyConvergence: true });
+      await engine.sync(undefined, { verifyConvergence: true });
+      const feedQueriesAtTerminal = feedQueriesFromStart;
+      await engine.sync(undefined, { verifyConvergence: true });
+
+      const [finalLink] = await (engine as any).ledger.getLinksForTenant(did);
+      expect(finalLink.status).toBe('terminal_incomplete');
+      expect(finalLink.pull.contiguousAppliedToken).toBeUndefined();
+      expect(finalLink.pull.receivedToken).toBeUndefined();
+      expect(finalLink.push.contiguousAppliedToken).toEqual(pushCursor);
+      expect(finalLink.push.receivedToken).toEqual(pushCursor);
+      expect(finalLink.needsReconcile).toBe(false);
+      expect(pushMessagesStub.calledOnce).toBe(true);
+      expect(feedQueriesFromStart).toBe(feedQueriesAtTerminal);
+      expect(scheduleStub.callCount).toBe(2);
+      expect(events.some(event =>
+        event.type === 'link:status-change' &&
+        event.tenantDid === did &&
+        event.remoteEndpoint === dwnUrl &&
+        event.to === 'terminal_incomplete'
+      )).toBe(true);
+
+      const health = await engine.getSyncHealth();
+      expect(health.failedMessageCount).toBe(1);
+      expect(health.degradedLinkCount).toBe(1);
+      expect(health.syncHealthy).toBe(false);
+    });
+
+    it('should not let a stale dead letter poison matching feed fingerprints', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const target = syncTarget('did:example:stale-dead-letter', 'https://dwn.example.com');
+      const link = await (engine as any).getOrCreateReplicationLink(target);
+      const linkKey = (engine as any).getReplicationLinkKey(target, link);
+      const token = {
+        streamId   : 'tenant-stream',
+        epoch      : 'epoch-1',
+        position   : '10',
+        messageCid : 'cid-10',
+      };
+      const fingerprint = await fingerprintFromCids([]);
+
+      await engine.recordDeadLetter({
+        messageCid     : 'cid-superseded-dead-letter',
+        tenantDid      : target.did,
+        remoteEndpoint : target.dwnUrl,
+        category       : 'admit-failed',
+        errorDetail    : 'terminal push failure',
+      });
+      link.status = 'live';
+      link.pull = { contiguousAppliedToken: token, receivedToken: token };
+      link.push = { contiguousAppliedToken: token, receivedToken: token };
+      link.needsReconcile = false;
+      await (engine as any).ledger.saveLink(link);
+      (engine as any)._activeLinks.set(linkKey, link);
+      sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
+      ((engine as any).verifyFeedConvergence).resolves({
+        converged         : true,
+        localFingerprint  : fingerprint,
+        remoteFingerprint : fingerprint,
+        pushFailures      : [],
+      });
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
+
+      await engine.sync(undefined, { verifyConvergence: true });
+
+      const [storedLink] = await (engine as any).ledger.getLinksForTenant(target.did);
+      expect(storedLink.status).toBe('live');
+      expect(storedLink.pull.contiguousAppliedToken).toEqual(token);
+      expect(storedLink.push.contiguousAppliedToken).toEqual(token);
+      expect(storedLink.needsReconcile).toBe(false);
+      expect(scheduleStub.called).toBe(false);
+    });
+
+    it('should skip durable feed push after a pull failure', async () => {
+      const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
+      const engine = createEngine({ db, agent: mockAgent });
+      const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
+      const pushStub = (engine as any).pushLocalFeedForSyncTarget;
+      pullStub.rejects(new Error('remote feed unavailable'));
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
-      sinon.stub(engine as any, 'getLocalRoot').resolves('aabbcc');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('ddeeff');
-      sinon.stub(engine as any, 'diffWithRemote').resolves({
-        onlyLocal  : [],
-        onlyRemote : [],
-      });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
+      sinon.stub(console, 'error');
 
       await engine.sync();
 
-      expect(admitStub.called).toBe(false);
       expect(pushStub.called).toBe(false);
     });
 
     it('should skip remaining targets for a DWN URL that errored', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });
+      const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
+      pullStub.rejects(new Error('network error'));
 
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com'),
         syncTarget('did:example:2', 'https://dwn.example.com'),
       ]);
-      const getLocalRootStub = sinon.stub(engine as any, 'getLocalRoot').rejects(new Error('network error'));
       const consoleStub = sinon.stub(console, 'error');
 
       await engine.sync(); // should not throw
 
-      // getLocalRoot should only be called once — second target has same errored dwnUrl
-      expect(getLocalRootStub.calledOnce).toBe(true);
+      expect(pullStub.calledOnce).toBe(true);
       expect(consoleStub.called).toBe(true);
     });
 
@@ -1547,8 +2241,6 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
-      sinon.stub(engine as any, 'getLocalRoot').resolves('same');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('same');
 
       await engine.sync();
 
@@ -1565,7 +2257,7 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
-      sinon.stub(engine as any, 'getLocalRoot').rejects(new Error('timeout'));
+      ((engine as any).pullRemoteFeedForSyncTarget).rejects(new Error('timeout'));
       sinon.stub(console, 'error');
 
       await engine.sync();
@@ -1582,9 +2274,8 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
-      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({
-        admittedCids : [],
-        pushFailures : [{ cid: 'cid-1', detail: 'network unavailable' }],
+      ((engine as any).pushLocalFeedForSyncTarget).resolves({
+        pushFailures: [{ cid: 'cid-1', detail: 'network unavailable' }],
       });
       sinon.stub(console, 'error');
 
@@ -1602,9 +2293,8 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
-      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({
-        admittedCids : [],
-        pushFailures : [{ cid: 'cid-terminal', kind: 'Invalid', terminal: true, detail: 'bad request' }],
+      ((engine as any).pushLocalFeedForSyncTarget).resolves({
+        pushFailures: [{ cid: 'cid-terminal', kind: 'Invalid', terminal: true, detail: 'bad request' }],
       });
 
       await engine.sync();
@@ -1630,9 +2320,8 @@ describe('SyncEngineLevel — private methods', () => {
           scope: { kind: 'protocolSet', protocols: [profileProtocol] },
         }),
       ]);
-      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({
-        admittedCids : ['cid-protocol', 'cid-profile'],
-        pushFailures : [],
+      ((engine as any).pullRemoteFeedForSyncTarget).resolves({
+        admittedCids: ['cid-protocol', 'cid-profile'],
       });
 
       await engine.sync();
@@ -1645,56 +2334,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(appliedEvent.messageCids).toEqual(['cid-protocol', 'cid-profile']);
     });
 
-    it('should emit reconcile:applied for CIDs admitted by the real one-shot admission path', async () => {
-      const profileProtocol = 'https://example.com/profile-real-admission';
-      const alice = await TestDataGenerator.generateDidKeyPersona();
-      const write = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : profileProtocol,
-        protocolPath : 'profile',
-      });
-      const writeCid = await Message.getCid(write.message);
-      const mockAgent = {
-        agentDid          : 'did:example:agent',
-        did               : { dereference: sinon.stub() },
-        processDwnRequest : sinon.stub().resolves({ message: {} }),
-        dwn               : {
-          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
-        },
-        rpc: {
-          sendDwnRequest: sinon.stub().resolves({
-            status : { code: 200 },
-            entry  : { message: write.message },
-          }),
-        },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      const events: any[] = [];
-      engine.on((event) => { events.push(event); });
-
-      sinon.stub(engine as any, 'getSyncTargets').resolves([
-        syncTarget(alice.did, 'https://dwn.example.com', {
-          scope: { kind: 'protocolSet', protocols: [profileProtocol] },
-        }),
-      ]);
-      sinon.stub(engine as any, 'getLocalRoot').resolves('local-root');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('remote-root');
-      sinon.stub(engine as any, 'diffWithRemote').resolves({
-        onlyLocal  : [],
-        onlyRemote : [{ messageCid: writeCid, message: write.message }],
-      });
-
-      await engine.sync('pull');
-
-      const appliedEvent = events.find(e => e.type === 'reconcile:applied');
-      expect(appliedEvent).toBeDefined();
-      expect(appliedEvent.tenantDid).toBe(alice.did);
-      expect(appliedEvent.remoteEndpoint).toBe('https://dwn.example.com');
-      expect(appliedEvent.protocol).toBe(profileProtocol);
-      expect(appliedEvent.messageCids).toEqual([writeCid]);
-      expect(mockAgent.dwn.applyReplicatedMessage.calledOnce).toBe(true);
-    });
-
     it('should not dead-letter Deferred push failures during one-shot sync', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });
@@ -1703,9 +2342,8 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
-      sinon.stub(engine as any, 'reconcileSyncTarget').resolves({
-        admittedCids : [],
-        pushFailures : [{ cid: 'cid-deferred', kind: 'Deferred', reason: 'storage', detail: 'storage unavailable' }],
+      ((engine as any).pushLocalFeedForSyncTarget).resolves({
+        pushFailures: [{ cid: 'cid-deferred', kind: 'Deferred', reason: 'storage', detail: 'storage unavailable' }],
       });
       sinon.stub(console, 'error');
 
@@ -1716,7 +2354,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(engine.connectivityState).toBe('offline');
     });
 
-    it('should reconcile different dwnUrl groups concurrently', async () => {
+    it('should sync different dwnUrl groups concurrently', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });
 
@@ -1726,16 +2364,13 @@ describe('SyncEngineLevel — private methods', () => {
         syncTarget('did:example:2', 'https://fast.example.com'),
       ]);
 
-      // Track call order to prove overlap.
       const callLog: string[] = [];
-      sinon.stub(engine as any, 'createLinkReconciler').returns({
-        reconcile: async (target: any) => {
-          callLog.push(`start:${target.dwnUrl}`);
-          const delay = target.dwnUrl.includes('slow') ? 200 : 10;
-          await new Promise(r => setTimeout(r, delay));
-          callLog.push(`end:${target.dwnUrl}`);
-          return { changed: false, didPull: false, didPush: false };
-        },
+      ((engine as any).pullRemoteFeedForSyncTarget).callsFake(async (target: any): Promise<Record<string, never>> => {
+        callLog.push(`start:${target.dwnUrl}`);
+        const delay = target.dwnUrl.includes('slow') ? 200 : 10;
+        await new Promise(r => setTimeout(r, delay));
+        callLog.push(`end:${target.dwnUrl}`);
+        return {};
       });
 
       const start = Date.now();
@@ -1763,13 +2398,11 @@ describe('SyncEngineLevel — private methods', () => {
         syncTarget('did:example:2', 'https://down.example.com'),
       ]);
 
-      sinon.stub(engine as any, 'createLinkReconciler').returns({
-        reconcile: async (target: any) => {
-          if (target.dwnUrl.includes('down')) {
-            throw new Error('connection refused');
-          }
-          return { changed: false, didPull: false, didPush: false };
-        },
+      ((engine as any).pullRemoteFeedForSyncTarget).callsFake(async (target: any): Promise<Record<string, never>> => {
+        if (target.dwnUrl.includes('down')) {
+          throw new Error('connection refused');
+        }
+        return {};
       });
       sinon.stub(console, 'error');
 
@@ -1824,7 +2457,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
 
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = { setStatus: setStatusStub };
+      overrideLedger(engine, { setStatus: setStatusStub });
       sinon.stub(engine as any, 'repairLink').resolves();
 
       await (engine as any).transitionToRepairing(linkKey, link);
@@ -1841,8 +2474,6 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'getSyncTargets').resolves([
         syncTarget('did:example:1', 'https://dwn.example.com'),
       ]);
-      sinon.stub(engine as any, 'getLocalRoot').resolves('same');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('same');
 
       await engine.sync();
 
@@ -2502,151 +3133,6 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // getLocalRoot / getRemoteRoot
-  // ---------------------------------------------------------------------------
-
-  describe('getLocalRoot / getRemoteRoot', () => {
-    it('getLocalRoot should query StateIndex directly for the root hash', async () => {
-      // The local root method now accesses the StateIndex directly (no processMessage).
-      const fakeHash = new Uint8Array(32);
-      fakeHash[0] = 0xaa; fakeHash[1] = 0xbb;
-      const mockStateIndex = {
-        getRoot         : sinon.stub().resolves(fakeHash),
-        getProtocolRoot : sinon.stub().resolves(fakeHash),
-      };
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
-
-      const root = await (engine as any).getLocalRoot('did:example:alice');
-
-      expect(root).toBeTruthy();
-      expect(mockStateIndex.getRoot.calledOnce).toBe(true);
-      expect(mockStateIndex.getRoot.firstCall.args[0]).toBe('did:example:alice');
-    });
-
-    it('getLocalRoot should use getProtocolRoot when protocol is specified', async () => {
-      const fakeHash = new Uint8Array(32);
-      const mockStateIndex = {
-        getRoot         : sinon.stub().resolves(fakeHash),
-        getProtocolRoot : sinon.stub().resolves(fakeHash),
-      };
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
-
-      await (engine as any).getLocalRoot('did:example:alice', undefined, 'https://proto.example.com');
-
-      expect(mockStateIndex.getProtocolRoot.calledOnce).toBe(true);
-      expect(mockStateIndex.getProtocolRoot.firstCall.args[1]).toBe('https://proto.example.com');
-    });
-
-    it('getRemoteRoot should send to remote and return root hash', async () => {
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          processRequest: sinon.stub().resolves({
-            message : { descriptor: { action: 'root' } },
-            reply   : { status: { code: 200 } },
-          }),
-        },
-        rpc: {
-          sendDwnRequest: sinon.stub().resolves({
-            status : { code: 200 },
-            root   : 'remotehash',
-          }),
-        },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
-
-      const root = await (engine as any).getRemoteRoot('did:example:alice', 'https://dwn.example.com');
-      expect(root).toBe('remotehash');
-    });
-
-  });
-
-  // ---------------------------------------------------------------------------
-  // getLocalSubtreeHash / getRemoteSubtreeHash / getLocalLeaves / getRemoteLeaves
-  // ---------------------------------------------------------------------------
-
-  describe('subtree hash and leaf methods', () => {
-    it('getLocalSubtreeHash should query StateIndex directly', async () => {
-      const fakeHash = new Uint8Array(32);
-      fakeHash[0] = 0xab;
-      const mockStateIndex = {
-        getSubtreeHash         : sinon.stub().resolves(fakeHash),
-        getProtocolSubtreeHash : sinon.stub().resolves(fakeHash),
-      };
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      const hash = await (engine as any).getLocalSubtreeHash('did:example:alice', '01');
-      expect(hash).toBeTruthy();
-      expect(mockStateIndex.getSubtreeHash.calledOnce).toBe(true);
-    });
-
-    it('getLocalSubtreeHash should return default hash hex for empty subtree', async () => {
-      // Empty subtrees return the default hash (all zeros at the leaf level)
-      const emptyHash = new Uint8Array(32); // all zeros
-      const mockStateIndex = {
-        getSubtreeHash         : sinon.stub().resolves(emptyHash),
-        getProtocolSubtreeHash : sinon.stub().resolves(emptyHash),
-      };
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      const hash = await (engine as any).getLocalSubtreeHash('did:example:alice', '01');
-      // The hash should be a hex string (even if it's the default/empty hash)
-      expect(typeof hash).toBe('string');
-    });
-
-    it('getLocalLeaves should query StateIndex directly and return CIDs', async () => {
-      const mockStateIndex = {
-        getLeaves         : sinon.stub().resolves(['cid-a', 'cid-b']),
-        getProtocolLeaves : sinon.stub().resolves(['cid-a', 'cid-b']),
-      };
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      const leaves = await (engine as any).getLocalLeaves('did:example:alice', '01');
-      expect(leaves).toEqual(['cid-a', 'cid-b']);
-      expect(mockStateIndex.getLeaves.calledOnce).toBe(true);
-    });
-
-    it('getLocalLeaves should return empty array when no entries', async () => {
-      const mockStateIndex = {
-        getLeaves         : sinon.stub().resolves([]),
-        getProtocolLeaves : sinon.stub().resolves([]),
-      };
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : { node: { storage: { stateIndex: mockStateIndex } } },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      const leaves = await (engine as any).getLocalLeaves('did:example:alice', '01');
-      expect(leaves).toEqual([]);
-    });
-
-  });
-
-  // ---------------------------------------------------------------------------
   // clear / close
   // ---------------------------------------------------------------------------
 
@@ -2688,7 +3174,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       // Sync succeeds on first call (immediate), then fails on second (interval callback)
       let callCount = 0;
-      sinon.stub(engine, 'sync').callsFake(async (): Promise<void> => {
+      const syncStub = sinon.stub(engine, 'sync').callsFake(async (): Promise<void> => {
         callCount++;
         if (callCount >= 2) {
           (engine as any)._consecutiveFailures = 2;
@@ -2703,6 +3189,8 @@ describe('SyncEngineLevel — private methods', () => {
         await clock.tickAsync(150);
 
         expect(callCount).toBeGreaterThanOrEqual(2);
+        expect(syncStub.firstCall.args[1]).toMatchObject({ verifyConvergence: true });
+        expect(syncStub.secondCall.args[1]).toMatchObject({ verifyConvergence: true });
 
         await engine.stopSync();
       } finally {
@@ -2721,6 +3209,7 @@ describe('SyncEngineLevel — private methods', () => {
         // Start poll with very short interval
         await engine.startSync({ mode: 'poll', interval: '50ms' });
         expect(syncStub.calledOnce).toBe(true);
+        expect(syncStub.firstCall.args[1]).toMatchObject({ verifyConvergence: true });
 
         // Set lock — interval callbacks should skip
         (engine as any)._syncLock = true;
@@ -2757,6 +3246,7 @@ describe('SyncEngineLevel — private methods', () => {
         await clock.tickAsync(150);
 
         expect(consoleStub.called).toBe(true);
+        expect(syncStub.secondCall.args[1]).toMatchObject({ verifyConvergence: true });
 
         await engine.stopSync();
       } finally {
@@ -2776,7 +3266,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       let syncCallCount = 0;
       const consoleStub = sinon.stub(console, 'error');
-      sinon.stub(engine, 'sync').callsFake(async (): Promise<void> => {
+      const syncStub = sinon.stub(engine, 'sync').callsFake(async (): Promise<void> => {
         syncCallCount++;
         // First call succeeds (initial catch-up), second fails (integrity check)
         if (syncCallCount >= 2) {
@@ -2793,6 +3283,8 @@ describe('SyncEngineLevel — private methods', () => {
         await clock.tickAsync(150);
 
         expect(syncCallCount).toBeGreaterThanOrEqual(2);
+        expect(syncStub.firstCall.args[1]).toBeUndefined();
+        expect(syncStub.secondCall.args[1]).toMatchObject({ verifyConvergence: true });
         expect(consoleStub.called).toBe(true);
 
         await engine.stopSync();
@@ -2958,7 +3450,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any).getOrCreateRuntime(linkKey);
 
       const saveStub = sinon.stub().resolves();
-      (engine as any)._ledger = { saveLink: saveStub };
+      overrideLedger(engine, { saveLink: saveStub });
 
       await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
 
@@ -2992,7 +3484,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any).getOrCreateRuntime(linkKey);
 
       const saveStub = sinon.stub().resolves();
-      (engine as any)._ledger = { saveLink: saveStub };
+      overrideLedger(engine, { saveLink: saveStub });
 
       await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
 
@@ -3027,7 +3519,7 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
-      (engine as any)._ledger = { saveLink: sinon.stub().resolves() };
+      overrideLedger(engine, { saveLink: sinon.stub().resolves() });
 
       await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
 
@@ -3070,7 +3562,7 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
-      (engine as any)._ledger = { saveLink: sinon.stub().resolves() };
+      overrideLedger(engine, { saveLink: sinon.stub().resolves() });
 
       await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
 
@@ -3105,9 +3597,9 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
-      (engine as any)._ledger = {
+      overrideLedger(engine, {
         setStatus: sinon.stub().callsFake(async (targetLink: any, status: string) => { targetLink.status = status; }),
-      };
+      });
 
       await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
 
@@ -3141,10 +3633,10 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
-      (engine as any)._ledger = {
+      overrideLedger(engine, {
         saveLink  : sinon.stub().resolves(),
         setStatus : sinon.stub().callsFake(async (targetLink: any, status: string): Promise<void> => { targetLink.status = status; }),
-      };
+      });
       sinon.stub(engine as any, 'repairLink').resolves();
 
       await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
@@ -3178,7 +3670,7 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
-      (engine as any)._ledger = { saveLink: sinon.stub().resolves() };
+      overrideLedger(engine, { saveLink: sinon.stub().resolves() });
       const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
 
       await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
@@ -3230,9 +3722,9 @@ describe('SyncEngineLevel — private methods', () => {
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
-      (engine as any)._ledger = {
+      overrideLedger(engine, {
         setStatus: sinon.stub().callsFake(async (targetLink: any, status: string): Promise<void> => { targetLink.status = status; }),
-      };
+      });
       sinon.stub(engine as any, 'repairLink').resolves();
 
       await (engine as any).openLivePullSubscription(syncTarget('did:example:alice', 'https://dwn.example.com', { linkKey }));
@@ -3426,7 +3918,7 @@ describe('SyncEngineLevel — private methods', () => {
       const engine = createEngine({ db, agent: mockAgent });
       sinon.stub(engine as any, 'scheduleReconcile').returns(undefined);
       const saveLinkStub = sinon.stub().resolves();
-      (engine as any)._ledger = { saveLink: saveLinkStub };
+      overrideLedger(engine, { saveLink: saveLinkStub });
       const pushLinkKey = 'did:example:alice^https://dwn.example.com';
       const link = {
         tenantDid      : 'did:example:alice',
@@ -3515,442 +4007,7 @@ describe('SyncEngineLevel — private methods', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Protocol-set reconciliation
-  // ---------------------------------------------------------------------------
-
-  describe('protocol-set reconciliation', () => {
-    it('reconciles protocol-set roots in one dependency-sorted batch', async () => {
-      const profileProtocol = 'https://example.com/profile';
-      const socialProtocol = 'https://example.com/social';
-      const scope = { kind: 'protocolSet', protocols: [profileProtocol, socialProtocol] };
-      const profileEntry = {
-        messageCid : 'cid-profile',
-        message    : {
-          descriptor: {
-            interface        : 'Protocols',
-            method           : 'Configure',
-            messageTimestamp : '2026-01-01T00:00:00.000000Z',
-            definition       : {
-              protocol : profileProtocol,
-              uses     : { social: socialProtocol },
-            },
-          },
-        },
-      };
-      const socialEntry = {
-        messageCid : 'cid-social',
-        message    : {
-          descriptor: {
-            interface        : 'Protocols',
-            method           : 'Configure',
-            messageTimestamp : '2026-01-01T00:00:00.000000Z',
-            definition       : { protocol: socialProtocol },
-          },
-        },
-      };
-      const engine = createEngine({ db, agent: {} as any });
-      const getLocalRoot = sinon.stub(engine as any, 'getLocalRoot')
-        .callsFake(async (_did: string, _delegateDid: string | undefined, protocol: string) => `local-${protocol}`);
-      const getRemoteRoot = sinon.stub(engine as any, 'getRemoteRoot')
-        .callsFake(async (_did: string, _dwnUrl: string, _delegateDid: string | undefined, protocol: string) => `remote-${protocol}`);
-      const diffWithRemote = sinon.stub(engine as any, 'diffWithRemote')
-        .callsFake(async ({ protocol }: { protocol: string }) => protocol === profileProtocol
-          ? { onlyRemote: [profileEntry], onlyLocal: ['local-profile'] }
-          : { onlyRemote: [socialEntry], onlyLocal: ['local-social'] });
-      const admitRemoteMessagesStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-      const pushMessagesStub = sinon.stub(engine as any, 'pushMessages')
-        .resolves({ succeeded: [], failed: [] });
-
-      await (engine as any).reconcileSyncTarget({
-        did           : 'did:example:alice',
-        dwnUrl        : 'https://dwn.example.com',
-        scope,
-        authorization : { kind: 'owner' },
-      });
-
-      expect(getLocalRoot.callCount).toBe(2);
-      expect(getRemoteRoot.callCount).toBe(2);
-      expect(diffWithRemote.callCount).toBe(2);
-      expect(diffWithRemote.firstCall.args[0].protocol).toBe(profileProtocol);
-      expect(diffWithRemote.secondCall.args[0].protocol).toBe(socialProtocol);
-      expect(admitRemoteMessagesStub.callCount).toBe(1);
-      expect(pushMessagesStub.callCount).toBe(1);
-
-      const admitArgs = admitRemoteMessagesStub.firstCall.args[0];
-      expect(admitArgs.protocol).toBeUndefined();
-      expect(admitArgs.scope).toEqual(scope);
-      expect(admitArgs.messageCids).toEqual([]);
-      expect(admitArgs.prefetched.map((entry: { messageCid: string }) => entry.messageCid))
-        .toEqual(['cid-profile', 'cid-social']);
-
-      expect(pushMessagesStub.firstCall.args[0].protocol).toBeUndefined();
-      expect(pushMessagesStub.firstCall.args[0].messageCids).toEqual(['local-profile', 'local-social']);
-    });
-
-    it('returns protocol-set push failures from reconciliation', async () => {
-      const profileProtocol = 'https://example.com/profile';
-      const socialProtocol = 'https://example.com/social';
-      const scope = { kind: 'protocolSet', protocols: [profileProtocol, socialProtocol] };
-      const pushFailure = { cid: 'local-profile', kind: 'Invalid', terminal: true, detail: 'bad request' };
-      const engine = createEngine({ db, agent: {} as any });
-      sinon.stub(engine as any, 'getLocalRoot')
-        .callsFake(async (_did: string, _delegateDid: string | undefined, protocol: string) => `local-${protocol}`);
-      sinon.stub(engine as any, 'getRemoteRoot')
-        .callsFake(async (_did: string, _dwnUrl: string, _delegateDid: string | undefined, protocol: string) => `remote-${protocol}`);
-      sinon.stub(engine as any, 'diffWithRemote')
-        .callsFake(async ({ protocol }: { protocol: string }) => protocol === profileProtocol
-          ? { onlyRemote: [], onlyLocal: ['local-profile'] }
-          : { onlyRemote: [], onlyLocal: [] });
-      const pushMessagesStub = sinon.stub(engine as any, 'pushMessages')
-        .resolves({ succeeded: [], failed: [pushFailure] });
-
-      const result = await (engine as any).reconcileSyncTarget({
-        did           : 'did:example:alice',
-        dwnUrl        : 'https://dwn.example.com',
-        scope,
-        authorization : { kind: 'owner' },
-      });
-
-      expect(pushMessagesStub.calledOnce).toBe(true);
-      expect(result.pushFailures).toEqual([pushFailure]);
-    });
-
-    it('skips dead-lettered local protocol-set roots during reconciliation', async () => {
-      const profileProtocol = 'https://example.com/profile';
-      const socialProtocol = 'https://example.com/social';
-      const scope = { kind: 'protocolSet', protocols: [profileProtocol, socialProtocol] };
-      const engine = createEngine({ db, agent: {} as any });
-      await engine.recordDeadLetter({
-        messageCid     : 'local-dead',
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example.com',
-        category       : 'admit-failed',
-        errorDetail    : 'terminal push failure',
-      });
-      sinon.stub(engine as any, 'getLocalRoot')
-        .callsFake(async (_did: string, _delegateDid: string | undefined, protocol: string) => `local-${protocol}`);
-      sinon.stub(engine as any, 'getRemoteRoot')
-        .callsFake(async (_did: string, _dwnUrl: string, _delegateDid: string | undefined, protocol: string) => `remote-${protocol}`);
-      sinon.stub(engine as any, 'diffWithRemote')
-        .callsFake(async ({ protocol }: { protocol: string }) => protocol === profileProtocol
-          ? { onlyRemote: [], onlyLocal: ['local-dead'] }
-          : { onlyRemote: [], onlyLocal: [] });
-      const pushMessagesStub = sinon.stub(engine as any, 'pushMessages')
-        .resolves({ succeeded: [], failed: [] });
-
-      const result = await (engine as any).reconcileSyncTarget({
-        did           : 'did:example:alice',
-        dwnUrl        : 'https://dwn.example.com',
-        scope,
-        authorization : { kind: 'owner' },
-      });
-
-      expect(pushMessagesStub.called).toBe(false);
-      expect(result.ignoredLocalCids).toEqual(['local-dead']);
-    });
-
-    it('skips dead-lettered remote protocol-set roots during reconciliation', async () => {
-      const profileProtocol = 'https://example.com/profile';
-      const socialProtocol = 'https://example.com/social';
-      const scope = { kind: 'protocolSet', protocols: [profileProtocol, socialProtocol] };
-      const engine = createEngine({ db, agent: {} as any });
-      await engine.recordDeadLetter({
-        messageCid     : 'remote-dead',
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example.com',
-        category       : 'admit-failed',
-        errorDetail    : 'terminal pull failure',
-      });
-      sinon.stub(engine as any, 'getLocalRoot')
-        .callsFake(async (_did: string, _delegateDid: string | undefined, protocol: string) => `local-${protocol}`);
-      sinon.stub(engine as any, 'getRemoteRoot')
-        .callsFake(async (_did: string, _dwnUrl: string, _delegateDid: string | undefined, protocol: string) => `remote-${protocol}`);
-      sinon.stub(engine as any, 'diffWithRemote')
-        .callsFake(async ({ protocol }: { protocol: string }) => protocol === profileProtocol
-          ? { onlyRemote: [{ messageCid: 'remote-dead' }], onlyLocal: [] }
-          : { onlyRemote: [], onlyLocal: [] });
-      const admitRemoteMessagesStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-
-      const result = await (engine as any).reconcileSyncTarget({
-        did           : 'did:example:alice',
-        dwnUrl        : 'https://dwn.example.com',
-        scope,
-        authorization : { kind: 'owner' },
-      });
-
-      expect(admitRemoteMessagesStub.called).toBe(false);
-      expect(result.ignoredRemoteCids).toEqual(['remote-dead']);
-      expect(result.hasActionableDiffs).toBe(false);
-    });
-  });
-
-  describe('replicated pull admission / push delegate wrappers', () => {
-    const profileProtocol = 'https://example.com/profile';
-    const socialProtocol = 'https://example.com/social';
-
-    it('applies fetched roots through replicated admission', async () => {
-      const fetchedMessage = { descriptor: { interface: 'Protocols', method: 'Configure' } };
-      const mockAgent = {
-        agentDid          : 'did:example:agent',
-        processDwnRequest : sinon.stub().resolves({ message: {} }),
-        dwn               : {
-          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
-        },
-        rpc: {
-          sendDwnRequest: sinon.stub().resolves({
-            status : { code: 200 },
-            entry  : { message: fetchedMessage },
-          }),
-        },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      (engine as any)._permissionsApi = { getPermissionForRequest: sinon.stub(), clear: sinon.stub() };
-
-      // Should not throw
-      await (engine as any).admitRemoteMessages({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        messageCids : [await Message.getCid(fetchedMessage)],
-      });
-
-      expect(mockAgent.dwn.applyReplicatedMessage.calledOnce).toBe(true);
-    });
-
-    it('does not record dead letters when the stale-target guard aborts', async () => {
-      const shouldContinue = sinon.stub()
-        .onFirstCall().returns(true)
-        .onSecondCall().returns(false);
-      const mockAgent = {
-        agentDid          : 'did:example:agent',
-        processDwnRequest : sinon.stub().resolves({ message: {} }),
-        dwn               : {
-          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
-        },
-        rpc: {
-          sendDwnRequest: sinon.stub().resolves({
-            status : { code: 200 },
-            entry  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
-          }),
-        },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-
-      await expect((engine as any).admitRemoteMessages({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        messageCids : ['cid-1'],
-        shouldContinue,
-      })).rejects.toThrow(SyncPullAbortedError);
-
-      expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
-      expect(await engine.getFailedMessages()).toHaveLength(0);
-    });
-
-    it('rejects prefetched entries outside the requested protocol', async () => {
-      sinon.stub(console, 'warn');
-      const mockAgent = {
-        agentDid          : 'did:example:agent',
-        processDwnRequest : sinon.stub().resolves({ message: {} }),
-        dwn               : {
-          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
-        },
-        rpc: {
-          sendDwnRequest: sinon.stub(),
-        },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      const outOfScopeMessage = {
-        descriptor: {
-          interface        : 'Records',
-          method           : 'Write',
-          protocol         : 'https://example.com/social',
-          protocolPath     : 'profile',
-          dateCreated      : '2026-01-01T00:00:00.000000Z',
-          messageTimestamp : '2026-01-01T00:00:00.000000Z',
-        },
-        recordId: 'record-1',
-      } as any;
-
-      const messageCid = await Message.getCid(outOfScopeMessage);
-
-      await (engine as any).admitRemoteMessages({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        protocol    : 'https://example.com/profile',
-        messageCids : [],
-        prefetched  : [{ messageCid, message: outOfScopeMessage }],
-      });
-
-      const failedMessages = await engine.getFailedMessages();
-      expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
-      expect(failedMessages).toHaveLength(1);
-      expect(failedMessages[0].category).toBe('admit-failed');
-      expect(failedMessages[0].errorCode).toBe('terminal');
-      expect(failedMessages[0].protocol).toBe('https://example.com/profile');
-      expect(failedMessages[0].remoteEndpoint).toBe('https://dwn.example.com');
-    });
-
-    it('skips roots that already have an admission dead letter for the remote', async () => {
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
-        },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      const messageCid = 'bafy-admission-deadletter';
-
-      await engine.recordDeadLetter({
-        messageCid,
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example.com',
-        category       : 'admit-failed',
-        errorDetail    : 'terminal dependency',
-      });
-
-      await (engine as any).admitRemoteMessages({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        messageCids : [messageCid],
-      });
-
-      expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
-      expect(await engine.getFailedMessages('did:example:alice')).toHaveLength(1);
-    });
-
-    it('classifies a pulled delete from an in-scope batch initial write', async () => {
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          isRemoteMode           : true,
-          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
-        },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      const recordsWrite = await TestDataGenerator.generateRecordsWrite({ protocol: profileProtocol });
-      const recordsDelete = await TestDataGenerator.generateRecordsDelete({
-        author   : recordsWrite.author,
-        recordId : recordsWrite.message.recordId,
-      });
-
-      await (engine as any).admitRemoteMessages({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        protocol    : profileProtocol,
-        messageCids : [],
-        prefetched  : [
-          { messageCid: await Message.getCid(recordsWrite.message), message: recordsWrite.message },
-          { messageCid: await Message.getCid(recordsDelete.message), message: recordsDelete.message },
-        ],
-      });
-
-      expect(mockAgent.dwn.applyReplicatedMessage.callCount).toBe(2);
-      expect(mockAgent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(recordsDelete.message);
-      expect(await engine.getFailedMessages()).toHaveLength(0);
-    });
-
-    it('rejects a pulled delete from an out-of-scope batch initial write', async () => {
-      sinon.stub(console, 'warn');
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          isRemoteMode           : true,
-          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
-        },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      const recordsWrite = await TestDataGenerator.generateRecordsWrite({ protocol: socialProtocol });
-      const recordsDelete = await TestDataGenerator.generateRecordsDelete({
-        author   : recordsWrite.author,
-        recordId : recordsWrite.message.recordId,
-      });
-      const deleteCid = await Message.getCid(recordsDelete.message);
-
-      await (engine as any).admitRemoteMessages({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        protocol    : profileProtocol,
-        messageCids : [],
-        prefetched  : [
-          { messageCid: await Message.getCid(recordsWrite.message), message: recordsWrite.message },
-          { messageCid: deleteCid, message: recordsDelete.message },
-        ],
-      });
-
-      const failedMessages = await engine.getFailedMessages();
-      const deleteFailure = failedMessages.find(entry => entry.messageCid === deleteCid);
-      expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
-      expect(deleteFailure?.category).toBe('admit-failed');
-      expect(deleteFailure?.errorCode).toBe('terminal');
-    });
-
-    it('classifies a pulled delete from the local initial write', async () => {
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          isRemoteMode           : false,
-          node                   : { storage: { messageStore: {} } },
-          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
-        },
-      } as any;
-      const engine = createEngine({ db, agent: mockAgent });
-      const recordsWrite = await TestDataGenerator.generateRecordsWrite({ protocol: profileProtocol });
-      const recordsDelete = await TestDataGenerator.generateRecordsDelete({
-        author   : recordsWrite.author,
-        recordId : recordsWrite.message.recordId,
-      });
-      const fetchInitialStub = sinon.stub(RecordsWrite, 'fetchInitialRecordsWriteMessage').resolves(recordsWrite.message);
-
-      await (engine as any).admitRemoteMessages({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        protocol    : profileProtocol,
-        messageCids : [],
-        prefetched  : [{ messageCid: await Message.getCid(recordsDelete.message), message: recordsDelete.message }],
-      });
-
-      expect(fetchInitialStub.calledOnce).toBe(true);
-      expect(mockAgent.dwn.applyReplicatedMessage.calledOnce).toBe(true);
-      expect(mockAgent.dwn.applyReplicatedMessage.firstCall.args[1]).toEqual(recordsDelete.message);
-      expect(await engine.getFailedMessages()).toHaveLength(0);
-    });
-
-    it('fails closed for an unknown pulled delete in remote mode', async () => {
-      sinon.stub(console, 'warn');
-      const fetchInitialStub = sinon.stub(RecordsWrite, 'fetchInitialRecordsWriteMessage');
-      const mockAgent = {
-        agentDid : 'did:example:agent',
-        dwn      : {
-          isRemoteMode           : true,
-          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
-        },
-      } as any;
-      Object.defineProperty(mockAgent.dwn, 'node', {
-        get: (): never => {
-          throw new Error('remote mode node access should not happen');
-        },
-      });
-      const engine = createEngine({ db, agent: mockAgent });
-      const recordsDelete = await TestDataGenerator.generateRecordsDelete();
-
-      await (engine as any).admitRemoteMessages({
-        did         : 'did:example:alice',
-        dwnUrl      : 'https://dwn.example.com',
-        protocol    : profileProtocol,
-        messageCids : [],
-        prefetched  : [{ messageCid: await Message.getCid(recordsDelete.message), message: recordsDelete.message }],
-      });
-
-      const failedMessages = await engine.getFailedMessages();
-      expect(fetchInitialStub.called).toBe(false);
-      expect(mockAgent.dwn.applyReplicatedMessage.called).toBe(false);
-      expect(failedMessages).toHaveLength(1);
-      expect(failedMessages[0].category).toBe('admit-failed');
-      expect(failedMessages[0].errorCode).toBe('terminal');
-
-    });
-
+  describe('push delegate wrapper', () => {
     it('pushMessages should delegate to sync-messages pushMessages', async () => {
       const mockAgent = {
         agentDid : 'did:example:agent',
@@ -4156,7 +4213,7 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('repairLink', () => {
-    it('should transition link from repairing to live after successful SMT reconciliation', async () => {
+    it('should transition link from repairing to live after successful feed catch-up', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
@@ -4168,16 +4225,13 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
 
-      // Stub everything doRepairLink needs (called in order).
       sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
-      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-a');
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
 
       const saveStub = sinon.stub().resolves();
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+      overrideLedger(engine, { setStatus: setStatusStub, saveLink: saveStub });
 
       await (engine as any).repairLink(linkKey);
 
@@ -4196,12 +4250,12 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
 
       sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
-      sinon.stub(engine as any, 'getLocalRoot').rejects(new Error('network error'));
+      ((engine as any).pullRemoteFeedForSyncTarget).rejects(new Error('network error'));
       sinon.stub(console, 'error');
       sinon.stub(console, 'warn');
 
       const saveStub = sinon.stub().resolves();
-      (engine as any)._ledger = { saveLink: saveStub, setStatus: sinon.stub().resolves() };
+      overrideLedger(engine, { saveLink: saveStub, setStatus: sinon.stub().resolves() });
 
       const enterDegradedStub = sinon.stub(engine as any, 'enterDegradedPoll').resolves();
 
@@ -4314,7 +4368,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
 
       const setStatusStub = sinon.stub();
-      (engine as any)._ledger = { setStatus: setStatusStub };
+      overrideLedger(engine, { setStatus: setStatusStub });
 
       await (engine as any).enterDegradedPoll(linkKey);
 
@@ -4343,13 +4397,13 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any).getOrCreateRuntime(linkKey);
 
       sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
-      sinon.stub(engine as any, 'getLocalRoot').rejects(new Error('network error'));
+      ((engine as any).pullRemoteFeedForSyncTarget).rejects(new Error('network error'));
       sinon.stub(console, 'error');
       sinon.stub(console, 'warn');
 
       const saveStub = sinon.stub().resolves();
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+      overrideLedger(engine, { setStatus: setStatusStub, saveLink: saveStub });
 
       await (engine as any).transitionToRepairing(linkKey, link);
 
@@ -4389,7 +4443,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       // Stub ledger and repair to capture the context.
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = { setStatus: setStatusStub };
+      overrideLedger(engine, { setStatus: setStatusStub });
       sinon.stub(engine as any, 'repairLink').resolves();
 
       await (engine as any).transitionToRepairing(linkKey, link, { resumeToken });
@@ -4417,14 +4471,12 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._repairContext.set(linkKey, { resumeToken });
 
       sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
-      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-a');
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
 
       const saveStub = sinon.stub().resolves();
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+      overrideLedger(engine, { setStatus: setStatusStub, saveLink: saveStub });
 
       await (engine as any).doRepairLink(linkKey);
 
@@ -4451,14 +4503,12 @@ describe('SyncEngineLevel — private methods', () => {
       // No repair context — this is a non-gap repair (e.g., domain mismatch).
 
       sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
-      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-a');
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
 
       const saveStub = sinon.stub().resolves();
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+      overrideLedger(engine, { setStatus: setStatusStub, saveLink: saveStub });
 
       await (engine as any).doRepairLink(linkKey);
 
@@ -4480,8 +4530,6 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any).getOrCreateRuntime(linkKey);
 
       sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
-      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-a');
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
 
       // Capture the args passed to openLocalPushSubscription.
@@ -4489,7 +4537,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       const saveStub = sinon.stub().resolves();
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+      overrideLedger(engine, { setStatus: setStatusStub, saveLink: saveStub });
 
       await (engine as any).doRepairLink(linkKey);
 
@@ -4513,25 +4561,23 @@ describe('SyncEngineLevel — private methods', () => {
 
       const closeStub = sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
 
-      // Stub getLocalRoot to simulate an async operation during which teardown occurs.
-      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
-        // Simulate teardown by incrementing the generation.
+      ((engine as any).pullRemoteFeedForSyncTarget).callsFake(async (): Promise<Record<string, never>> => {
         (engine as any)._engineGeneration++;
-        return 'root-a';
+        return {};
       });
 
       const openPullStub = sinon.stub(engine as any, 'openLivePullSubscription').resolves();
 
       const saveStub = sinon.stub().resolves();
       const setStatusStub = sinon.stub().resolves();
-      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+      overrideLedger(engine, { setStatus: setStatusStub, saveLink: saveStub });
 
       await (engine as any).doRepairLink(linkKey);
 
       // closeLinkSubscriptions should have been called (before the generation check).
       expect(closeStub.calledOnce).toBe(true);
 
-      // But subscriptions should NOT be reopened — repair bailed after getLocalRoot.
+      // But subscriptions should NOT be reopened — repair bailed after feed catch-up.
       expect(openPullStub.called).toBe(false);
 
       // Link should NOT have been set to live.
@@ -4552,14 +4598,12 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any).getOrCreateRuntime(linkKey);
 
       sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
-      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-a');
       sinon.stub(engine as any, 'openLivePullSubscription').resolves();
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
 
       const saveStub = sinon.stub().resolves();
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+      overrideLedger(engine, { setStatus: setStatusStub, saveLink: saveStub });
 
       // Run repair through the repairLink() wrapper (not doRepairLink directly)
       // so _activeRepairs lifecycle is exercised.
@@ -4594,26 +4638,21 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any).getOrCreateRuntime(linkKey);
 
       sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
-      sinon.stub(engine as any, 'getLocalRoot').resolves('root-a');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-b');
-      sinon.stub(engine as any, 'diffWithRemote').resolves({
-        onlyRemote : [{ messageCid: 'remote-cid-1' }],
-        onlyLocal  : [],
-      });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').callsFake(async (): Promise<string[]> => {
+      const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
+      pullStub.callsFake(async (): Promise<Record<string, never>> => {
         link.status = 'degraded_poll';
-        return [];
+        return {};
       });
       const openPullStub = sinon.stub(engine as any, 'openLivePullSubscription').resolves();
       const openPushStub = sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
 
       const saveStub = sinon.stub().resolves();
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = { setStatus: setStatusStub, saveLink: saveStub };
+      overrideLedger(engine, { setStatus: setStatusStub, saveLink: saveStub });
 
       await (engine as any).doRepairLink(linkKey);
 
-      expect(admitStub.calledOnce).toBe(true);
+      expect(pullStub.calledOnce).toBe(true);
       expect(openPullStub.calledOnce).toBe(true);
       expect(openPushStub.calledOnce).toBe(true);
       expect(link.status).toBe('live');
@@ -4752,10 +4791,10 @@ describe('SyncEngineLevel — private methods', () => {
           needsReconcile     : false,
         };
       });
-      (engine as any)._ledger = {
+      overrideLedger(engine, {
         getOrCreateLink : getOrCreateStub,
         setStatus       : setStatusStub,
-      };
+      });
 
       await engine.startSync({ mode: 'live', interval: '10s' });
 
@@ -4789,7 +4828,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       let capturedScope: any;
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = {
+      overrideLedger(engine, {
         getOrCreateLink: sinon.stub().callsFake(async (params: any) => {
           capturedScope = params.scope;
           return {
@@ -4806,7 +4845,7 @@ describe('SyncEngineLevel — private methods', () => {
           };
         }),
         setStatus: setStatusStub,
-      };
+      });
 
       await engine.startSync({ mode: 'live', interval: '10s' });
 
@@ -4836,7 +4875,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
 
       const saveStub = sinon.stub().resolves();
-      (engine as any)._ledger = { saveLink: saveStub };
+      overrideLedger(engine, { saveLink: saveStub });
       const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
 
       await (engine as any).requeueOrReconcile(linkKey, {
@@ -4887,7 +4926,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
 
       const saveStub = sinon.stub().resolves();
-      (engine as any)._ledger = { saveLink: saveStub };
+      overrideLedger(engine, { saveLink: saveStub });
       const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
       const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
 
@@ -4944,32 +4983,20 @@ describe('SyncEngineLevel — private methods', () => {
         scope              : { kind: 'full' },
         status             : 'live',
         pull               : {},
+        push               : {},
         needsReconcile     : true,
         ...overrides,
       };
     }
 
-    it('should clear needsReconcile when roots converge after reconciliation', async () => {
+    it('should clear needsReconcile when feed fingerprints converge after reconciliation', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
 
-      // Roots initially differ, then converge after diff+pull+push.
-      let rootCallCount = 0;
-      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
-        rootCallCount++;
-        return rootCallCount <= 1 ? 'root-A' : 'root-converged';
-      });
-      sinon.stub(engine as any, 'getRemoteRoot').callsFake(async () => {
-        return rootCallCount <= 1 ? 'root-B' : 'root-converged';
-      });
-      sinon.stub(engine as any, 'diffWithRemote').resolves({ onlyRemote: [], onlyLocal: [] });
-      sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-      sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
-
       const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
 
       const events: any[] = [];
       engine.on((event) => { events.push(event); });
@@ -4989,22 +5016,12 @@ describe('SyncEngineLevel — private methods', () => {
       });
       (engine as any)._activeLinks.set(linkKey, link);
 
-      let localRootCalls = 0;
-      let remoteRootCalls = 0;
-      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
-        localRootCalls++;
-        return localRootCalls === 1 ? 'local-before' : 'root-converged';
+      ((engine as any).pullRemoteFeedForSyncTarget).resolves({
+        admittedCids: ['cid-protocol', 'cid-profile'],
       });
-      sinon.stub(engine as any, 'getRemoteRoot').callsFake(async () => {
-        remoteRootCalls++;
-        return remoteRootCalls === 1 ? 'remote-before' : 'root-converged';
-      });
-      sinon.stub(engine as any, 'diffWithRemote').resolves({ onlyRemote: [{ messageCid: 'cid-profile' }], onlyLocal: [] });
-      sinon.stub(engine as any, 'admitRemoteMessages').resolves(['cid-protocol', 'cid-profile']);
-      sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
 
       const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
 
       const events: any[] = [];
       engine.on((event) => { events.push(event); });
@@ -5017,29 +5034,47 @@ describe('SyncEngineLevel — private methods', () => {
       expect(appliedEvent.protocol).toBe('https://example.com/profile');
     });
 
-    it('should NOT clear needsReconcile when roots still differ after reconciliation', async () => {
+    it('should NOT clear needsReconcile when feed fingerprints still differ after reconciliation', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
 
-      // Roots always differ — simulates push retry exhaustion.
-      sinon.stub(engine as any, 'getLocalRoot').resolves('root-local');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-remote');
-      sinon.stub(engine as any, 'diffWithRemote').resolves({ onlyRemote: [], onlyLocal: ['cid-1'] });
-      sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-      sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
+      ((engine as any).verifyFeedConvergence).resolves({
+        converged         : false,
+        localFingerprint  : 'local-fingerprint',
+        remoteFingerprint : 'remote-fingerprint',
+        pushFailures      : [],
+      });
 
       const clearStub = sinon.stub().resolves();
-      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
 
       await (engine as any).doReconcileLink(linkKey);
 
-      // Flag should NOT be cleared since roots still diverge.
       expect(link.needsReconcile).toBe(true);
       expect(clearStub.called).toBe(false);
 
-      // A retry reconcile should be scheduled.
+      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(true);
+      clearTimeout((engine as any)._reconcileTimers.get(linkKey));
+    });
+
+    it('reconcileLink should schedule a retry after fingerprint mismatch once in-flight clears', async () => {
+      const engine = createEngine({ db });
+      const linkKey = 'did:example:alice^https://dwn.example.com';
+      const link = makeLiveLink();
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      ((engine as any).verifyFeedConvergence).resolves({
+        converged         : false,
+        localFingerprint  : 'local-fingerprint',
+        remoteFingerprint : 'remote-fingerprint',
+        pushFailures      : [],
+      });
+      overrideLedger(engine, { clearNeedsReconcile: sinon.stub().resolves(), saveLink: sinon.stub().resolves() });
+
+      await (engine as any).reconcileLink(linkKey);
+
       expect((engine as any)._reconcileTimers.has(linkKey)).toBe(true);
       clearTimeout((engine as any)._reconcileTimers.get(linkKey));
     });
@@ -5050,12 +5085,11 @@ describe('SyncEngineLevel — private methods', () => {
       const link = makeLiveLink({ status: 'repairing' });
       (engine as any)._activeLinks.set(linkKey, link);
 
-      const getLocalRootStub = sinon.stub(engine as any, 'getLocalRoot');
+      const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
 
       await (engine as any).doReconcileLink(linkKey);
 
-      // Should have bailed before any root computation.
-      expect(getLocalRootStub.called).toBe(false);
+      expect(pullStub.called).toBe(false);
     });
 
     it('should skip reconciliation when _activeRepairs contains the link', async () => {
@@ -5065,32 +5099,24 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any)._activeRepairs.set(linkKey, Promise.resolve());
 
-      const getLocalRootStub = sinon.stub(engine as any, 'getLocalRoot');
+      const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
 
       await (engine as any).doReconcileLink(linkKey);
 
-      expect(getLocalRootStub.called).toBe(false);
+      expect(pullStub.called).toBe(false);
     });
 
-    it('should skip reconciliation when roots already match (short-circuit)', async () => {
+    it('should clear needsReconcile when feed fingerprints already match', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
 
-      // Roots match from the start — no diff needed.
-      sinon.stub(engine as any, 'getLocalRoot').resolves('same-root');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('same-root');
-      const diffStub = sinon.stub(engine as any, 'diffWithRemote');
-
       const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
 
       await (engine as any).doReconcileLink(linkKey);
 
-      // diff should not have been called (roots matched).
-      expect(diffStub.called).toBe(false);
-      // But needsReconcile should still be cleared (convergence confirmed).
       expect(link.needsReconcile).toBe(false);
     });
 
@@ -5100,18 +5126,16 @@ describe('SyncEngineLevel — private methods', () => {
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
 
-      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
+      ((engine as any).pullRemoteFeedForSyncTarget).callsFake(async (): Promise<Record<string, never>> => {
         (engine as any)._engineGeneration++;
-        return 'root-A';
+        return {};
       });
 
-      const getRemoteRootStub = sinon.stub(engine as any, 'getRemoteRoot');
+      const pushStub = (engine as any).pushLocalFeedForSyncTarget;
 
       await (engine as any).doReconcileLink(linkKey);
 
-      // Should have bailed after getLocalRoot incremented generation.
-      expect(getRemoteRootStub.called).toBe(false);
-      // needsReconcile should still be set (not cleared due to bail).
+      expect(pushStub.called).toBe(false);
       expect(link.needsReconcile).toBe(true);
     });
 
@@ -5121,7 +5145,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
 
-      sinon.stub(engine as any, 'getLocalRoot').rejects(new Error('network error'));
+      ((engine as any).pullRemoteFeedForSyncTarget).rejects(new Error('network error'));
       sinon.stub(console, 'error');
 
       await (engine as any).doReconcileLink(linkKey);
@@ -5190,40 +5214,22 @@ describe('SyncEngineLevel — private methods', () => {
       expect((engine as any)._reconcileTimers.has(linkKey)).toBe(false);
     });
 
-    it('doReconcileLink should pull onlyRemote and push onlyLocal', async () => {
+    it('doReconcileLink should run feed pull and feed push', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
 
-      let rootCallCount = 0;
-      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
-        rootCallCount++;
-        return rootCallCount <= 1 ? 'root-A' : 'root-converged';
-      });
-      sinon.stub(engine as any, 'getRemoteRoot').callsFake(async () => {
-        return rootCallCount <= 1 ? 'root-B' : 'root-converged';
-      });
-
-      const diffStub = sinon.stub(engine as any, 'diffWithRemote').resolves({
-        onlyRemote : [{ messageCid: 'remote-cid-1' }],
-        onlyLocal  : ['local-cid-1'],
-      });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
+      const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
+      const pushStub = (engine as any).pushLocalFeedForSyncTarget;
 
       const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
 
       await (engine as any).doReconcileLink(linkKey);
 
-      expect(diffStub.calledOnce).toBe(true);
-      expect(admitStub.calledOnce).toBe(true);
+      expect(pullStub.calledOnce).toBe(true);
       expect(pushStub.calledOnce).toBe(true);
-
-      // Verify push was called with the onlyLocal CIDs.
-      const pushArgs = pushStub.firstCall.args[0];
-      expect(pushArgs.messageCids).toEqual(['local-cid-1']);
     });
 
     it('doReconcileLink should dead-letter terminal reconcile push failures immediately', async () => {
@@ -5232,20 +5238,12 @@ describe('SyncEngineLevel — private methods', () => {
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
 
-      sinon.stub(engine as any, 'getLocalRoot').resolves('root-local');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-remote');
-      sinon.stub(engine as any, 'diffWithRemote').resolves({
-        onlyRemote : [],
-        onlyLocal  : ['local-cid-1'],
-      });
-      sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-      sinon.stub(engine as any, 'pushMessages').resolves({
-        succeeded : [],
-        failed    : [{ cid: 'local-cid-1', kind: 'Invalid', terminal: true, detail: 'bad request' }],
+      ((engine as any).pushLocalFeedForSyncTarget).resolves({
+        pushFailures: [{ cid: 'local-cid-1', kind: 'Invalid', terminal: true, detail: 'bad request' }],
       });
 
       const clearStub = sinon.stub().resolves();
-      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
       const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
 
       await (engine as any).doReconcileLink(linkKey);
@@ -5257,7 +5255,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
     });
 
-    it('doReconcileLink should clear needsReconcile when only dead-lettered local roots differ', async () => {
+    it('doReconcileLink should keep needsReconcile when dead-lettered local feed entries still diverge', async () => {
       const engine = createEngine({ db });
       const events: any[] = [];
       engine.on((event) => { events.push(event); });
@@ -5271,69 +5269,28 @@ describe('SyncEngineLevel — private methods', () => {
         category       : 'admit-failed',
         errorDetail    : 'terminal push failure',
       });
+      const localFingerprint = await fingerprintFromCids(['local-dead']);
+      const remoteFingerprint = await fingerprintFromCids([]);
 
-      sinon.stub(engine as any, 'getLocalRoot').resolves('root-local');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-remote');
-      sinon.stub(engine as any, 'diffWithRemote').resolves({
-        onlyRemote : [],
-        onlyLocal  : ['local-dead'],
+      ((engine as any).pushLocalFeedForSyncTarget).resolves({
+        hasActionableDiffs : false,
+        pushFailures       : [],
       });
-      sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
+      ((engine as any).verifyFeedConvergence).resolves({
+        converged         : false,
+        localFingerprint  : localFingerprint,
+        remoteFingerprint : remoteFingerprint,
+        pushFailures      : [],
+      });
 
       const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
 
       await (engine as any).doReconcileLink(linkKey);
 
-      expect(pushStub.called).toBe(false);
-      expect(clearStub.calledOnce).toBe(true);
-      expect(link.needsReconcile).toBe(false);
-      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(false);
+      expect(clearStub.called).toBe(false);
+      expect(link.needsReconcile).toBe(true);
       expect(events.some(event => event.type === 'reconcile:completed')).toBe(false);
-      const settledEvent = events.find(event => event.type === 'reconcile:settled-with-failures');
-      expect(settledEvent).toBeDefined();
-      expect(settledEvent.failedMessageCount).toBe(1);
-    });
-
-    it('doReconcileLink should clear needsReconcile when only dead-lettered remote roots differ', async () => {
-      const engine = createEngine({ db });
-      const events: any[] = [];
-      engine.on((event) => { events.push(event); });
-      const linkKey = 'did:example:alice^https://dwn.example.com';
-      const link = makeLiveLink();
-      (engine as any)._activeLinks.set(linkKey, link);
-      await engine.recordDeadLetter({
-        messageCid     : 'remote-dead',
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example.com',
-        category       : 'admit-failed',
-        errorDetail    : 'terminal pull failure',
-      });
-
-      sinon.stub(engine as any, 'getLocalRoot').resolves('root-local');
-      sinon.stub(engine as any, 'getRemoteRoot').resolves('root-remote');
-      sinon.stub(engine as any, 'diffWithRemote').resolves({
-        onlyRemote : [{ messageCid: 'remote-dead' }],
-        onlyLocal  : [],
-      });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').resolves([]);
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
-
-      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
-
-      await (engine as any).doReconcileLink(linkKey);
-
-      expect(admitStub.called).toBe(false);
-      expect(pushStub.called).toBe(false);
-      expect(clearStub.calledOnce).toBe(true);
-      expect(link.needsReconcile).toBe(false);
-      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(false);
-      expect(events.some(event => event.type === 'reconcile:completed')).toBe(false);
-      const settledEvent = events.find(event => event.type === 'reconcile:settled-with-failures');
-      expect(settledEvent).toBeDefined();
-      expect(settledEvent.failedMessageCount).toBe(1);
     });
 
     it('doReconcileLink should abort if the active link epoch changes during pull', async () => {
@@ -5342,30 +5299,20 @@ describe('SyncEngineLevel — private methods', () => {
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
 
-      let rootCallCount = 0;
-      sinon.stub(engine as any, 'getLocalRoot').callsFake(async () => {
-        rootCallCount++;
-        return rootCallCount <= 1 ? 'root-A' : 'root-converged';
-      });
-      sinon.stub(engine as any, 'getRemoteRoot').callsFake(async () => {
-        return rootCallCount <= 1 ? 'root-B' : 'root-converged';
-      });
-      sinon.stub(engine as any, 'diffWithRemote').resolves({
-        onlyRemote : [{ messageCid: 'remote-cid-1' }],
-        onlyLocal  : ['local-cid-1'],
-      });
-      const admitStub = sinon.stub(engine as any, 'admitRemoteMessages').callsFake(async (params: any) => {
-        expect(params.shouldContinue()).toBe(true);
+      const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
+      pullStub.callsFake(async (_target: any, _options: any, shouldContinue: () => boolean): Promise<Record<string, never>> => {
+        expect(shouldContinue()).toBe(true);
         (engine as any)._activeLinks.delete(linkKey);
-        expect(params.shouldContinue()).toBe(false);
+        expect(shouldContinue()).toBe(false);
+        return {};
       });
-      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [], failed: [] });
+      const pushStub = (engine as any).pushLocalFeedForSyncTarget;
       const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      (engine as any)._ledger = { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() };
+      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
 
       await (engine as any).doReconcileLink(linkKey);
 
-      expect(admitStub.calledOnce).toBe(true);
+      expect(pullStub.calledOnce).toBe(true);
       expect(pushStub.called).toBe(false);
       expect(clearStub.called).toBe(false);
       expect(link.needsReconcile).toBe(true);
@@ -5398,7 +5345,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
 
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = { setStatus: setStatusStub };
+      overrideLedger(engine, { setStatus: setStatusStub });
       sinon.stub(engine as any, 'repairLink').resolves();
 
       await (engine as any).transitionToRepairing(linkKey, link);
@@ -5434,7 +5381,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._activeLinks.set(linkKey, link);
 
       const setStatusStub = sinon.stub().callsFake(async (l: any, s: string): Promise<void> => { l.status = s; });
-      (engine as any)._ledger = { setStatus: setStatusStub };
+      overrideLedger(engine, { setStatus: setStatusStub });
       sinon.stub(engine as any, 'repairLink').resolves();
 
       await (engine as any).transitionToRepairing(linkKey, link);
@@ -6434,6 +6381,32 @@ describe('SyncEngineLevel — private methods', () => {
       const health = await engine.getSyncHealth();
       expect(health.reconcileNeededCount).toBe(1);
       expect(health.syncHealthy).toBe(false);
+    });
+
+    it('should scope admission dead-letter scans to the active tenant', async () => {
+      const engine = createEngine({ db });
+      const iteratorOptions: any[] = [];
+      const fakeStore = {
+        async *iterator(options: any): AsyncGenerator<[string, string]> {
+          iteratorOptions.push(options);
+          yield ['did:example:alice|cid-a|https://dwn.example.com', JSON.stringify({
+            messageCid     : 'cid-a',
+            tenantDid      : 'did:example:alice',
+            remoteEndpoint : 'https://dwn.example.com',
+            category       : 'admit-failed',
+            errorDetail    : 'invalid',
+          })];
+        },
+      };
+      Object.defineProperty(engine, '_deadLetters', { get: () => fakeStore });
+
+      const result = await (engine as any).getAdmissionDeadLetterCidsForTarget(syncTarget('did:example:alice', 'https://dwn.example.com'));
+
+      expect(iteratorOptions).toEqual([{
+        gte : 'did:example:alice|',
+        lte : 'did:example:alice|\xff',
+      }]);
+      expect(result).toEqual(['cid-a']);
     });
 
     it('should auto-clear dead letter when same CID later succeeds on push', async () => {

@@ -232,7 +232,7 @@ export class ReplicationLedger {
   // ---------------------------------------------------------------------------
 
   /**
-   * Mark a link as needing SMT reconciliation and persist.
+   * Mark a link as needing durable feed reconciliation and persist.
    * Idempotent — no-op if already set.
    */
   public async markNeedsReconcile(link: ReplicationLinkState, _reason?: string): Promise<void> {
@@ -243,7 +243,7 @@ export class ReplicationLedger {
   }
 
   /**
-   * Clear the reconciliation flag after successful SMT reconciliation.
+   * Clear the reconciliation flag after successful durable feed reconciliation.
    */
   public async clearNeedsReconcile(link: ReplicationLinkState): Promise<void> {
     if (link.needsReconcile) {
