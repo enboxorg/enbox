@@ -366,7 +366,7 @@ export class SyncEngineLevel implements SyncEngine {
       did,
       delegateDid,
       requestedScope,
-      messageType    : DwnInterface.MessagesSync,
+      messageType    : DwnInterface.MessagesQuery,
       permissionsApi : this._permissionsApi,
     });
 
