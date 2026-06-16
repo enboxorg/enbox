@@ -1471,6 +1471,30 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._liveSubscriptions = [];
     });
 
+    it('should ignore transport resume cursor and resubscribe from the durable checkpoint', async () => {
+      const { agent, processRequestStub, rpcStub } = createPullMockAgent();
+      const engine = createEngine({ db, agent });
+      const durableCursor = { streamId: 's1', epoch: 'e1', position: '42', messageCid: 'cid-42' };
+      const deliveredCursor = { streamId: 's1', epoch: 'e1', position: '45', messageCid: 'cid-45' };
+
+      const linkKey = 'did:example:alice^https://dwn.example.com^projection-test^authorization-test';
+      const link = {
+        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
+        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test',
+        authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
+        pull               : { contiguousAppliedToken: durableCursor },
+      } as any;
+      (engine as any)._activeLinks.set(linkKey, link);
+
+      await (engine as any).openLivePullSubscription(fullPullTarget({ linkKey }));
+
+      const resubscribeFactory = rpcStub.firstCall.args[0].subscription.resubscribeFactory;
+      await resubscribeFactory(deliveredCursor);
+
+      expect(processRequestStub.secondCall.args[0].messageParams.cursor).toEqual(durableCursor);
+      (engine as any)._liveSubscriptions = [];
+    });
+
   });
 
   // ---------------------------------------------------------------------------

@@ -1899,10 +1899,11 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Build a resubscribe factory so the WebSocket client can resume with
     // a fresh cursor-stamped message after reconnection.
-    const resubscribeFactory: ResubscribeFactory = async (resumeCursor?: ProgressToken) => {
-      // On reconnect, use the latest durable checkpoint position if available.
-      // Discard tokens with empty fields to avoid schema validation failures.
-      let effectiveCursor = resumeCursor ?? link?.pull.contiguousAppliedToken ?? cursor;
+    const resubscribeFactory: ResubscribeFactory = async () => {
+      // On reconnect, resume from the latest durable applied checkpoint, not
+      // the transport's last-delivered cursor. The transport may have delivered
+      // an event that has not been locally applied yet.
+      let effectiveCursor = link?.pull.contiguousAppliedToken ?? cursor;
       if (effectiveCursor && (!effectiveCursor.streamId || !effectiveCursor.epoch || !effectiveCursor.position)) {
         effectiveCursor = undefined;
       }
