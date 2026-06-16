@@ -3447,7 +3447,6 @@ export class SyncEngineLevel implements SyncEngine {
       author,
       target        : target.did,
       messageType   : DwnInterface.RecordsQuery,
-      store         : false,
       messageParams : { filter: { recordId: permissionGrantId } },
     });
     const recordsReply = reply as RecordsQueryReply;
