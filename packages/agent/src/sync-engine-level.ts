@@ -659,45 +659,16 @@ export class SyncEngineLevel implements SyncEngine {
         group.push(target);
       }
 
+      const results = await Promise.allSettled([...byUrl.entries()].map(([dwnUrl, targets]) =>
+        this.syncTargetGroup(dwnUrl, targets, direction, options)
+      ));
+
       let groupsSucceeded = 0;
       let groupsFailed = 0;
-
-      const results = await Promise.allSettled([...byUrl.entries()].map(async ([dwnUrl, targets]) => {
-        for (const target of targets) {
-          try {
-            const result = await this.syncTargetWithDurableFeeds(target, {
-              direction,
-              verifyConvergence: options?.verifyConvergence,
-            });
-            if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
-              this.emitReconcileApplied(target, result.admittedCids);
-            }
-            if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
-              const retryableFailures = await this.recordTerminalSyncPushFailures(target, result.pushFailures);
-              if (retryableFailures > 0) {
-                throw new Error(`SyncEngineLevel: reconciliation push failed for ${retryableFailures} retryable message(s).`);
-              }
-            }
-            if (options?.verifyConvergence === true) {
-              if (result.converged === false) {
-                await this.handleVerifiedFeedDivergence(target, result);
-              } else if (result.converged === true) {
-                await this.clearFeedConvergenceFailure(target);
-              }
-            }
-          } catch (error: any) {
-            // Skip remaining targets for this DWN endpoint.
-            groupsFailed++;
-            console.error(`SyncEngineLevel: Error syncing ${target.did} with ${dwnUrl}`, error);
-            return;
-          }
-        }
-        groupsSucceeded++;
-      }));
-
-      // Check for unexpected rejections (should not happen given inner try/catch).
       for (const result of results) {
-        if (result.status === 'rejected') {
+        if (result.status === 'fulfilled' && result.value) {
+          groupsSucceeded++;
+        } else {
           groupsFailed++;
         }
       }
@@ -719,6 +690,55 @@ export class SyncEngineLevel implements SyncEngine {
       }
     } finally {
       this._syncLock = false;
+    }
+  }
+
+  private async syncTargetGroup(
+    dwnUrl: string,
+    targets: SyncTarget[],
+    direction: 'push' | 'pull' | undefined,
+    options: SyncRunOptions | undefined,
+  ): Promise<boolean> {
+    for (const target of targets) {
+      try {
+        await this.syncSingleTarget(target, direction, options);
+      } catch (error: any) {
+        // Skip remaining targets for this DWN endpoint.
+        console.error(`SyncEngineLevel: Error syncing ${target.did} with ${dwnUrl}`, error);
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private async syncSingleTarget(
+    target: SyncTarget,
+    direction: 'push' | 'pull' | undefined,
+    options: SyncRunOptions | undefined,
+  ): Promise<void> {
+    const result = await this.syncTargetWithDurableFeeds(target, {
+      direction,
+      verifyConvergence: options?.verifyConvergence,
+    });
+
+    if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
+      this.emitReconcileApplied(target, result.admittedCids);
+    }
+
+    if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
+      const retryableFailures = await this.recordTerminalSyncPushFailures(target, result.pushFailures);
+      if (retryableFailures > 0) {
+        throw new Error(`SyncEngineLevel: reconciliation push failed for ${retryableFailures} retryable message(s).`);
+      }
+    }
+
+    if (options?.verifyConvergence === true) {
+      if (result.converged === false) {
+        await this.handleVerifiedFeedDivergence(target, result);
+      } else if (result.converged === true) {
+        await this.clearFeedConvergenceFailure(target);
+      }
     }
   }
 
@@ -2829,7 +2849,7 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    return [...messageCids].sort();
+    return [...messageCids].sort((a, b) => a.localeCompare(b));
   }
 
   private static deadLetterMatchesTarget(entry: DeadLetterEntry, scope: SyncScope): boolean {
@@ -2861,7 +2881,7 @@ export class SyncEngineLevel implements SyncEngine {
     ReplicationLedger.resetCheckpoint(link.push);
     await this.ledger.saveLink(link);
 
-    if (activeLink !== undefined && activeLink.status === 'live') {
+    if (activeLink?.status === 'live') {
       await this.persistLinkNeedsReconcile(linkKey, activeLink, reason, 0);
     }
   }
@@ -3660,13 +3680,11 @@ export class SyncEngineLevel implements SyncEngine {
         this._feedConvergenceFailures.delete(linkKey);
         await this.ledger.clearNeedsReconcile(link);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
-      } else {
+      } else if (!isStaleLink()) {
         // Feed fingerprints still differ — retry after a delay. This can
         // happen when push retries were exhausted, remote admission partially
         // failed, or new writes arrived during reconciliation.
-        if (!isStaleLink()) {
-          await this.handleVerifiedFeedDivergence(reconcileTarget, reconcileOutcome, { link, linkKey });
-        }
+        await this.handleVerifiedFeedDivergence(reconcileTarget, reconcileOutcome, { link, linkKey });
       }
     } catch (error: any) {
       if (isStaleLink()) { return; }

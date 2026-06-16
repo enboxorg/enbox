@@ -1702,16 +1702,16 @@ describe('SyncEngineLevel', () => {
 
         // Stub a feed phase so the real sync() manages _syncLock, while the
         // slow part is a shared promise created BEFORE the interval. The
-        // shared promise means the first sync takes ~1500ms, but subsequent
+        // shared promise means the first sync takes ~1250ms, but subsequent
         // syncs complete instantly (the promise is already resolved).
         //
-        // The setTimeout is created before startSync, so at t=1500 it fires
-        // before the interval callback — this avoids timer-ordering races.
+        // The first sync resolves between interval ticks, avoiding fake-clock
+        // ordering races between promise resolution and interval callbacks.
         const pullRemoteFeedStub = sinon.stub(SyncEngineLevel.prototype as any, 'pullRemoteFeedForSyncTarget');
         pullRemoteFeedStub.returns(new Promise((resolve) => {
           clock.setTimeout(() => {
             resolve({});
-          }, 1_500);
+          }, 1_250);
         }));
 
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
@@ -1733,12 +1733,12 @@ describe('SyncEngineLevel', () => {
 
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
-        await clock.tickAsync(1_400); // less time than the sync
+        await clock.tickAsync(1_400); // the first sync has finished, but the next interval has not fired
 
         // only once for when starting the sync
         expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(200); //remaining time and one interval
+        await clock.tickAsync(200); // one interval after the first sync finishes
 
         // once when starting, and once for the interval
         expect(syncSpy.callCount).toBe(2);
@@ -1822,15 +1822,15 @@ describe('SyncEngineLevel', () => {
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // two intervals
-        await clock.tickAsync(1_001);
+        await clock.tickAsync(1_101);
 
-        // this should equal 3, once for the initial call and once for each interval call
+        // this should equal 3: once for the initial call and once for each completed interval round
         expect(syncSpy.callCount).toBe(3);
 
         syncSpy.resetHistory();
         testHarness.agent.sync.startSync({ interval: '200ms' });
 
-        await clock.tickAsync(401); // two intervals
+        await clock.tickAsync(501); // two interval rounds including sync duration
 
         // one for the initial 'startSync' call and one for each interval call
         expect(syncSpy.callCount).toBe(3);
@@ -1869,7 +1869,7 @@ describe('SyncEngineLevel', () => {
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // three intervals
-        await clock.tickAsync(1_500);
+        await clock.tickAsync(1_601);
 
         // this should equal 4, once for the initial call and once for each interval call
         expect(syncSpy.callCount).toBe(4);
@@ -1904,13 +1904,15 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
 
+        await clock.tickAsync(3);
+        await startPromise;
 
-        await clock.tickAsync(1_300); // just under 3 intervals
+        await clock.tickAsync(1_100); // two interval rounds after the immediate sync
 
         // expect 2 sync interval calls + initial sync
         expect(syncSpy.callCount).toBe(3);
@@ -1945,12 +1947,15 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(1_300); // just under 3 intervals
+        await clock.tickAsync(3);
+        await startPromise;
+
+        await clock.tickAsync(1_100); // two interval rounds after the immediate sync
 
         // expect 2 sync interval calls + initial sync
         expect(syncSpy.callCount).toBe(3);
@@ -1962,7 +1967,7 @@ describe('SyncEngineLevel', () => {
           }, 1_000);
         }));
 
-        await clock.tickAsync(201); // Enough time for the next interval to start
+        await clock.tickAsync(501); // Enough time for the next interval to start
 
         // next interval was called
         expect(syncSpy.callCount).toBe(4);
@@ -2008,12 +2013,15 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
 
-        await clock.tickAsync(1_300); // just under 3 intervals
+        await clock.tickAsync(3);
+        await startPromise;
+
+        await clock.tickAsync(1_100); // two interval rounds after the immediate sync
 
         // expect 2 sync interval calls + initial sync
         expect(syncSpy.callCount).toBe(3);
@@ -2025,7 +2033,7 @@ describe('SyncEngineLevel', () => {
           }, 2_700); // longer than the 2 seconds
         }));
 
-        await clock.tickAsync(201); // Enough time for the next interval to start
+        await clock.tickAsync(501); // Enough time for the next interval to start
 
         // next interval was called
         expect(syncSpy.callCount).toBe(4);
