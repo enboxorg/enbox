@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReplyEntry, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
@@ -132,10 +132,6 @@ type SyncReconcileResult = {
   pushFailures?: PushFailure[];
 };
 
-type RecordsWriteDescriptorLike = GenericMessage['descriptor'] & {
-  dataCid?: unknown;
-};
-
 type SingleProtocolReconcileAccumulator = {
   admittedCids: string[];
   converged: boolean;
@@ -149,6 +145,15 @@ type SyncDiffResult = {
   onlyRemote: MessagesSyncDiffEntry[];
   onlyLocal: string[];
 };
+
+type FeedPageAdmissionResult =
+  | { kind: 'aborted' }
+  | { kind: 'deferred'; admittedCids: string[]; detail?: string; hasActionableDiffs: boolean; messageCid: string }
+  | { kind: 'processed'; admittedCids: string[]; hasActionableDiffs: boolean };
+
+type FeedCursorAdvanceResult =
+  | { drained: true }
+  | { cursor: ProgressToken; drained: false };
 
 type ProtocolSetReconcileContext = {
   did: string;
@@ -2866,64 +2871,116 @@ export class SyncEngineLevel implements SyncEngine {
         agent              : this.agent,
       });
 
-      if (reply.status.code === 410 && !resetAfterProgressGap) {
+      if (await this.resetFeedPullAfterProgressGap(reply, link, resetAfterProgressGap)) {
         resetAfterProgressGap = true;
-        ReplicationLedger.resetCheckpoint(link.pull);
-        await this.ledger.saveLink(link);
         cursor = undefined;
         continue;
       }
 
-      if (reply.status.code !== 200) {
-        throw new Error(`SyncEngineLevel: MessagesQuery failed for ${target.did} -> ${target.dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
+      SyncEngineLevel.assertFeedPullSucceeded(reply, target);
+      const pageResult = await this.admitRemoteFeedPage(target, reply.entries ?? [], shouldContinue);
+      if (pageResult.kind === 'aborted') {
+        return { aborted: true };
       }
 
-      for (const entry of reply.entries ?? []) {
-        if (await this.hasAdmissionDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
-          continue;
+      admittedCids.push(...pageResult.admittedCids);
+      hasActionableDiffs ||= pageResult.hasActionableDiffs;
+      if (pageResult.kind === 'deferred') {
+        if (admittedCids.length > 0) {
+          this.emitReconcileApplied(target, admittedCids);
         }
-
-        const outcome = await this.admitRemoteFeedEntry(target, entry, shouldContinue);
-        if (outcome.kind === 'aborted') {
-          return { aborted: true };
-        }
-
-        if (outcome.kind === 'deferred') {
-          if (admittedCids.length > 0) {
-            this.emitReconcileApplied(target, admittedCids);
-          }
-          throw new Error(`SyncEngineLevel: pull deferred for ${entry.messageCid}: ${outcome.detail ?? 'dependency unavailable'}`);
-        }
-
-        hasActionableDiffs = true;
-        if (outcome.kind === 'admitted') {
-          admittedCids.push(...outcome.appliedCids);
-          for (const cid of outcome.appliedCids) {
-            this.trackRecentlyPulledMessage(cid, target.dwnUrl);
-            void this.clearFailedMessage(cid, target.dwnUrl).catch(() => { /* teardown race */ });
-          }
-        }
+        throw new Error(`SyncEngineLevel: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`);
       }
 
-      if (reply.cursor === undefined) {
-        if (reply.drained === true) {
-          return { admittedCids, hasActionableDiffs };
-        }
-        throw new Error(`SyncEngineLevel: MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`);
-      }
-
-      this.assertFeedCursorProgress(link, cursor, reply.cursor, reply.drained === true, target.dwnUrl);
-      ReplicationLedger.setReceivedToken(link.pull, reply.cursor);
-      ReplicationLedger.commitContiguousToken(link.pull, reply.cursor);
-      await this.ledger.saveLink(link);
-      this.emitPullCheckpointAdvance(link);
-
-      if (reply.drained === true) {
+      const cursorAdvance = await this.advanceFeedPullCursor(link, cursor, reply, target);
+      if (cursorAdvance.drained) {
         return { admittedCids, hasActionableDiffs };
       }
 
-      cursor = reply.cursor;
+      cursor = cursorAdvance.cursor;
     }
+  }
+
+  private async resetFeedPullAfterProgressGap(
+    reply: MessagesQueryReply,
+    link: ReplicationLinkState,
+    alreadyReset: boolean,
+  ): Promise<boolean> {
+    if (reply.status.code !== 410 || alreadyReset) {
+      return false;
+    }
+
+    ReplicationLedger.resetCheckpoint(link.pull);
+    await this.ledger.saveLink(link);
+    return true;
+  }
+
+  private static assertFeedPullSucceeded(reply: MessagesQueryReply, target: SyncTarget): void {
+    if (reply.status.code !== 200) {
+      throw new Error(`SyncEngineLevel: MessagesQuery failed for ${target.did} -> ${target.dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
+    }
+  }
+
+  private async admitRemoteFeedPage(
+    target: SyncTarget,
+    entries: MessagesQueryReplyEntry[],
+    shouldContinue?: () => boolean,
+  ): Promise<FeedPageAdmissionResult> {
+    const admittedCids: string[] = [];
+    let hasActionableDiffs = false;
+
+    for (const entry of entries) {
+      if (await this.hasAdmissionDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
+        continue;
+      }
+
+      const outcome = await this.admitRemoteFeedEntry(target, entry, shouldContinue);
+      if (outcome.kind === 'aborted') {
+        return { kind: 'aborted' };
+      }
+
+      if (outcome.kind === 'deferred') {
+        return { kind: 'deferred', admittedCids, detail: outcome.detail, hasActionableDiffs, messageCid: entry.messageCid };
+      }
+
+      hasActionableDiffs = true;
+      if (outcome.kind === 'admitted') {
+        admittedCids.push(...outcome.appliedCids);
+        this.trackRemoteFeedAppliedCids(outcome.appliedCids, target.dwnUrl);
+      }
+    }
+
+    return { kind: 'processed', admittedCids, hasActionableDiffs };
+  }
+
+  private trackRemoteFeedAppliedCids(messageCids: string[], dwnUrl: string): void {
+    for (const cid of messageCids) {
+      this.trackRecentlyPulledMessage(cid, dwnUrl);
+      void this.clearFailedMessage(cid, dwnUrl).catch(() => { /* teardown race */ });
+    }
+  }
+
+  private async advanceFeedPullCursor(
+    link: ReplicationLinkState,
+    previousCursor: ProgressToken | undefined,
+    reply: MessagesQueryReply,
+    target: SyncTarget,
+  ): Promise<FeedCursorAdvanceResult> {
+    const drained = reply.drained === true;
+    if (reply.cursor === undefined) {
+      if (drained) {
+        return { drained: true };
+      }
+      throw new Error(`SyncEngineLevel: MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`);
+    }
+
+    this.assertFeedCursorProgress(link, previousCursor, reply.cursor, drained, target.dwnUrl);
+    ReplicationLedger.setReceivedToken(link.pull, reply.cursor);
+    ReplicationLedger.commitContiguousToken(link.pull, reply.cursor);
+    await this.ledger.saveLink(link);
+    this.emitPullCheckpointAdvance(link);
+
+    return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
   }
 
   private assertFeedCursorProgress(
@@ -3017,7 +3074,9 @@ export class SyncEngineLevel implements SyncEngine {
       }));
     }
 
-    const { encodedData: messageEncodedData, ...message } = entry.message as GenericMessage & { encodedData?: string };
+    const message = { ...entry.message };
+    const messageEncodedData = message.encodedData;
+    delete message.encodedData;
     const syncEntry: SyncMessageEntry = {
       message,
       isLatestBaseState: entry.isLatestBaseState,
@@ -3058,14 +3117,23 @@ export class SyncEngineLevel implements SyncEngine {
       return entry.protocol;
     }
 
-    const protocol = (entry.message?.descriptor ?? prefetched[0]?.message.descriptor) as { protocol?: unknown } | undefined;
-    return typeof protocol?.protocol === 'string' ? protocol.protocol : undefined;
+    return SyncEngineLevel.protocolFromDescriptor(entry.message?.descriptor) ??
+      SyncEngineLevel.protocolFromDescriptor(prefetched[0]?.message.descriptor);
+  }
+
+  private static protocolFromDescriptor(descriptor: GenericMessage['descriptor'] | undefined): string | undefined {
+    if (descriptor === undefined || !('protocol' in descriptor) || typeof descriptor.protocol !== 'string') {
+      return undefined;
+    }
+
+    return descriptor.protocol;
   }
 
   private static recordsWriteRequiresRemoteData(message: GenericMessage): boolean {
-    const descriptor = message.descriptor as RecordsWriteDescriptorLike;
+    const { descriptor } = message;
     return descriptor.interface === DwnInterfaceName.Records &&
       descriptor.method === DwnMethodName.Write &&
+      'dataCid' in descriptor &&
       typeof descriptor.dataCid === 'string';
   }
 
