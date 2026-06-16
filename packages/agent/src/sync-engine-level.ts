@@ -7,7 +7,7 @@ import ms from 'ms';
 
 import { Level } from 'level';
 import { sleep } from '@enbox/common';
-import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
 
 import type { DwnMessageParams } from './types/dwn.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -130,6 +130,10 @@ type SyncReconcileResult = {
   ignoredLocalCids?: string[];
   ignoredRemoteCids?: string[];
   pushFailures?: PushFailure[];
+};
+
+type RecordsWriteDescriptorLike = GenericMessage['descriptor'] & {
+  dataCid?: unknown;
 };
 
 type SingleProtocolReconcileAccumulator = {
@@ -542,6 +546,16 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  private emitReconcileApplied(target: Pick<SyncTarget, 'did' | 'dwnUrl' | 'scope'>, messageCids: string[]): void {
+    this.emitEvent({
+      type           : 'reconcile:applied',
+      tenantDid      : target.did,
+      remoteEndpoint : target.dwnUrl,
+      ...syncEventScope(target.scope),
+      messageCids,
+    });
+  }
+
   public async clear(): Promise<void> {
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
@@ -679,24 +693,12 @@ export class SyncEngineLevel implements SyncEngine {
           try {
             const feedPullResult = await this.pullRemoteFeedForSyncTarget(target, { direction });
             if (feedPullResult.admittedCids !== undefined && feedPullResult.admittedCids.length > 0) {
-              this.emitEvent({
-                type           : 'reconcile:applied',
-                tenantDid      : target.did,
-                remoteEndpoint : target.dwnUrl,
-                ...syncEventScope(target.scope),
-                messageCids    : feedPullResult.admittedCids,
-              });
+              this.emitReconcileApplied(target, feedPullResult.admittedCids);
             }
 
             const result = await this.reconcileSyncTarget(target, { direction });
             if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
-              this.emitEvent({
-                type           : 'reconcile:applied',
-                tenantDid      : target.did,
-                remoteEndpoint : target.dwnUrl,
-                ...syncEventScope(target.scope),
-                messageCids    : result.admittedCids,
-              });
+              this.emitReconcileApplied(target, result.admittedCids);
             }
             if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
               const retryableFailures = await this.recordTerminalSyncPushFailures(target, result.pushFailures);
@@ -2887,6 +2889,9 @@ export class SyncEngineLevel implements SyncEngine {
         }
 
         if (outcome.kind === 'deferred') {
+          if (admittedCids.length > 0) {
+            this.emitReconcileApplied(target, admittedCids);
+          }
           throw new Error(`SyncEngineLevel: pull deferred for ${entry.messageCid}: ${outcome.detail ?? 'dependency unavailable'}`);
         }
 
@@ -3058,8 +3063,10 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private static recordsWriteRequiresRemoteData(message: GenericMessage): boolean {
-    return isRecordsWrite(message) &&
-      typeof (message.descriptor as { dataCid?: unknown }).dataCid === 'string';
+    const descriptor = message.descriptor as RecordsWriteDescriptorLike;
+    return descriptor.interface === DwnInterfaceName.Records &&
+      descriptor.method === DwnMethodName.Write &&
+      typeof descriptor.dataCid === 'string';
   }
 
   private async reconcileSyncTarget(

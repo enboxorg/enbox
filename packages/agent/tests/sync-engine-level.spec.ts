@@ -1529,16 +1529,19 @@ describe('SyncEngineLevel', () => {
         // Second sync — trees are already converged, should short-circuit.
         await syncEngine.sync();
 
-        // The only RPC calls should be the root comparisons (one per DWN URL).
-        // There should be no MessagesRead or MessagesSync subtree/leaves calls
-        // beyond the root check.  With a single DWN URL, we expect exactly 1
-        // root call for pull + 1 for push = 2 calls total.
-        // Each call is a MessagesSync with action: 'root'.
-        const rpcCalls = sendDwnRequestSpy.args;
-        for (const call of rpcCalls) {
-          const message = call[0]?.message as any;
-          expect(message?.descriptor?.action).toBe('root');
-        }
+        const rpcMessages = sendDwnRequestSpy.args.map(call => call[0]?.message as any);
+        const messagesReadCalls = rpcMessages.filter(message =>
+          message?.descriptor?.interface === DwnInterfaceName.Messages &&
+          message?.descriptor?.method === DwnMethodName.Read
+        );
+        const messagesSyncCalls = rpcMessages.filter(message =>
+          message?.descriptor?.interface === DwnInterfaceName.Messages &&
+          message?.descriptor?.method === DwnMethodName.Sync
+        );
+        const nonRootSyncCalls = messagesSyncCalls.filter(message => message?.descriptor?.action !== 'root');
+
+        expect(messagesReadCalls).toHaveLength(0);
+        expect(nonRootSyncCalls).toHaveLength(0);
 
         sendDwnRequestSpy.restore();
       });
@@ -1724,6 +1727,9 @@ describe('SyncEngineLevel', () => {
         const getRemoteRootStub = sinon.stub(SyncEngineLevel.prototype as any, 'getRemoteRoot');
         getRemoteRootStub.resolves('bbb');
 
+        const pullRemoteFeedStub = sinon.stub(SyncEngineLevel.prototype as any, 'pullRemoteFeedForSyncTarget');
+        pullRemoteFeedStub.resolves({});
+
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
         testHarness.agent.sync.startSync({ interval: '500ms' });
@@ -1748,6 +1754,7 @@ describe('SyncEngineLevel', () => {
         getSyncTargetsStub.restore();
         getLocalRootStub.restore();
         getRemoteRootStub.restore();
+        pullRemoteFeedStub.restore();
         clock.restore();
       });
 
