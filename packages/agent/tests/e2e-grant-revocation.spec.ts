@@ -11,6 +11,7 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
+import { Convert } from '@enbox/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
@@ -377,7 +378,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       dwnUrl    : testDwnUrl,
       targetDid : ownerDid,
       message   : sgRaw as any,
-      data      : new Blob([Uint8Array.from(atob(sgEncoded), (c: string): number => c.charCodeAt(0))]),
+      data      : new Blob([Convert.base64Url(sgEncoded).toUint8Array()]),
     });
 
     // Revocation grant — stored locally ONLY (simulate fanout failure)
@@ -697,7 +698,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       for (const grantMsg of [sessionGrant.message, revGrant.message]) {
         const { encodedData, ...rawMsg } = grantMsg;
         const dataBytes = encodedData
-          ? Uint8Array.from(atob(encodedData), (c: string): number => c.charCodeAt(0))
+          ? Convert.base64Url(encodedData).toUint8Array()
           : new Uint8Array(0);
         await delegateHarness.agent.dwn.processRawMessage(
           ownerDid, rawMsg as any,
@@ -930,7 +931,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       for (const grantMsg of [sessionGrant.message, revGrant.message]) {
         const { encodedData, ...rawMsg } = grantMsg;
         const dataBytes = encodedData
-          ? Uint8Array.from(atob(encodedData), (c: string): number => c.charCodeAt(0))
+          ? Convert.base64Url(encodedData).toUint8Array()
           : new Uint8Array(0);
         await delegateHarness.agent.dwn.processRawMessage(
           ownerDid, rawMsg as any,
@@ -1114,7 +1115,7 @@ describe('e2e: grant revocation stops future delivery', () => {
     for (const grantMsg of [sessionGrant.message, revGrant.message]) {
       const { encodedData, ...rawMsg } = grantMsg;
       const dataBytes = encodedData
-        ? Uint8Array.from(atob(encodedData), (c: string): number => c.charCodeAt(0))
+        ? Convert.base64Url(encodedData).toUint8Array()
         : new Uint8Array(0);
       await ownerHarness.agent.rpc.sendDwnRequest({
         dwnUrl    : testDwnUrl,
@@ -1159,7 +1160,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       for (const grantMsg of [sessionGrant.message, revGrant.message]) {
         const { encodedData, ...rawMsg } = grantMsg;
         const dataBytes = encodedData
-          ? Uint8Array.from(atob(encodedData), (c: string): number => c.charCodeAt(0))
+          ? Convert.base64Url(encodedData).toUint8Array()
           : new Uint8Array(0);
         await delegateHarness.agent.dwn.processRawMessage(
           ownerDid, rawMsg as any,
