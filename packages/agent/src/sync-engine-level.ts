@@ -2837,7 +2837,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async getAdmissionDeadLetterCidsForTarget(target: SyncTarget): Promise<string[]> {
     const messageCids = new Set<string>();
-    for await (const [, value] of this._deadLetters.iterator()) {
+    for await (const [, value] of this._deadLetters.iterator(SyncEngineLevel.deadLetterTenantRange(target.did))) {
       const entry = JSON.parse(value) as DeadLetterEntry;
       if (
         entry.tenantDid === target.did &&
@@ -2850,6 +2850,13 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return [...messageCids].sort((a, b) => a.localeCompare(b));
+  }
+
+  private static deadLetterTenantRange(tenantDid: string): { gte: string; lte: string } {
+    return {
+      gte : `${tenantDid}|`,
+      lte : `${tenantDid}|\xff`,
+    };
   }
 
   private static deadLetterMatchesTarget(entry: DeadLetterEntry, scope: SyncScope): boolean {
@@ -3093,9 +3100,19 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
+    if (link.pull.contiguousAppliedToken === undefined) {
+      const localCids = await this.collectLocalFeedCids(target, shouldContinue);
+      if (localCids === undefined) {
+        return { aborted: true };
+      }
+      if (localCids.size > 0) {
+        return this.pullRemoteFeedDiffPages(target, link, localCids, shouldContinue);
+      }
+    }
+
     const admittedCids: string[] = [];
     let hasActionableDiffs = false;
-    let cursor = link.pull.contiguousAppliedToken;
+    let cursor: ProgressToken | undefined = link.pull.contiguousAppliedToken;
     let resetAfterProgressGap = false;
 
     while (true) {
@@ -3117,6 +3134,13 @@ export class SyncEngineLevel implements SyncEngine {
       if (await this.resetFeedPullAfterProgressGap(reply, link, resetAfterProgressGap)) {
         resetAfterProgressGap = true;
         cursor = undefined;
+        const localCids = await this.collectLocalFeedCids(target, shouldContinue);
+        if (localCids === undefined) {
+          return { aborted: true };
+        }
+        if (localCids.size > 0) {
+          return this.pullRemoteFeedDiffPages(target, link, localCids, shouldContinue);
+        }
         continue;
       }
 
@@ -3127,6 +3151,58 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       admittedCids.push(...pageResult.admittedCids);
+      hasActionableDiffs ||= pageResult.hasActionableDiffs;
+      if (pageResult.kind === 'deferred') {
+        if (admittedCids.length > 0) {
+          this.emitReconcileApplied(target, admittedCids);
+        }
+        throw new Error(`SyncEngineLevel: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`);
+      }
+
+      const cursorAdvance = await this.advanceFeedPullCursor(link, cursor, reply, target);
+      if (cursorAdvance.drained) {
+        return { admittedCids, hasActionableDiffs, remoteFingerprint: reply.fingerprint };
+      }
+
+      cursor = cursorAdvance.cursor;
+    }
+  }
+
+  private async pullRemoteFeedDiffPages(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    localCids: Set<string>,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncReconcileResult> {
+    const admittedCids: string[] = [];
+    let hasActionableDiffs = false;
+    let cursor: ProgressToken | undefined;
+    let resetAfterProgressGap = false;
+
+    while (true) {
+      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
+        return { aborted: true };
+      }
+
+      const reply = await this.queryFeedCidsPage(target, 'remote', cursor);
+
+      if (await this.resetFeedPullAfterProgressGap(reply, link, resetAfterProgressGap)) {
+        resetAfterProgressGap = true;
+        cursor = undefined;
+        continue;
+      }
+
+      SyncEngineLevel.assertFeedPullSucceeded(reply, target);
+      const missingEntries = SyncEngineLevel.feedEntriesMissingFrom(localCids, reply.entries ?? []);
+      const pageResult = await this.admitRemoteFeedPage(target, missingEntries, shouldContinue);
+      if (pageResult.kind === 'aborted') {
+        return { aborted: true };
+      }
+
+      admittedCids.push(...pageResult.admittedCids);
+      for (const messageCid of pageResult.admittedCids) {
+        localCids.add(messageCid);
+      }
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
       if (pageResult.kind === 'deferred') {
         if (admittedCids.length > 0) {
@@ -3162,9 +3238,17 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
+    if (link.push.contiguousAppliedToken === undefined) {
+      const remoteCids = await this.collectRemoteFeedCids(target, shouldContinue);
+      if (remoteCids === undefined) {
+        return { aborted: true };
+      }
+      return this.pushLocalFeedDiffPages(target, link, remoteCids, shouldContinue);
+    }
+
     const ignoredLocalCids: string[] = [];
     let hasActionableDiffs = false;
-    let cursor = link.push.contiguousAppliedToken;
+    let cursor: ProgressToken | undefined = link.push.contiguousAppliedToken;
     let resetAfterProgressGap = false;
 
     while (true) {
@@ -3185,7 +3269,11 @@ export class SyncEngineLevel implements SyncEngine {
       if (await this.resetFeedPushAfterProgressGap(reply, link, resetAfterProgressGap)) {
         resetAfterProgressGap = true;
         cursor = undefined;
-        continue;
+        const remoteCids = await this.collectRemoteFeedCids(target, shouldContinue);
+        if (remoteCids === undefined) {
+          return { aborted: true };
+        }
+        return this.pushLocalFeedDiffPages(target, link, remoteCids, shouldContinue);
       }
 
       SyncEngineLevel.assertFeedPushSucceeded(reply, target);
@@ -3207,6 +3295,140 @@ export class SyncEngineLevel implements SyncEngine {
 
       cursor = cursorAdvance.cursor;
     }
+  }
+
+  private async pushLocalFeedDiffPages(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    remoteCids: Set<string>,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncReconcileResult> {
+    const ignoredLocalCids: string[] = [];
+    let hasActionableDiffs = false;
+    let cursor: ProgressToken | undefined;
+    let resetAfterProgressGap = false;
+
+    while (true) {
+      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
+        return { aborted: true };
+      }
+
+      const reply = await this.queryFeedCidsPage(target, 'local', cursor);
+
+      if (await this.resetFeedPushAfterProgressGap(reply, link, resetAfterProgressGap)) {
+        resetAfterProgressGap = true;
+        cursor = undefined;
+        continue;
+      }
+
+      SyncEngineLevel.assertFeedPushSucceeded(reply, target);
+      const missingEntries = SyncEngineLevel.feedEntriesMissingFrom(remoteCids, reply.entries ?? []);
+      const pageResult = await this.pushLocalFeedPage(target, missingEntries, shouldContinue);
+      if (pageResult.kind === 'aborted') {
+        return { aborted: true };
+      }
+
+      hasActionableDiffs ||= pageResult.hasActionableDiffs;
+      ignoredLocalCids.push(...pageResult.ignoredLocalCids);
+      if (pageResult.kind === 'failed') {
+        return { hasActionableDiffs, ignoredLocalCids, pushFailures: pageResult.failures };
+      }
+      for (const entry of missingEntries) {
+        remoteCids.add(entry.messageCid);
+      }
+
+      const cursorAdvance = await this.advanceFeedPushCursor(link, cursor, reply, target);
+      if (cursorAdvance.drained) {
+        return { hasActionableDiffs, ignoredLocalCids, localFingerprint: reply.fingerprint, pushFailures: [] };
+      }
+
+      cursor = cursorAdvance.cursor;
+    }
+  }
+
+  private async collectLocalFeedCids(target: SyncTarget, shouldContinue?: () => boolean): Promise<Set<string> | undefined> {
+    return this.collectFeedCids(target, 'local', shouldContinue);
+  }
+
+  private async collectRemoteFeedCids(target: SyncTarget, shouldContinue?: () => boolean): Promise<Set<string> | undefined> {
+    return this.collectFeedCids(target, 'remote', shouldContinue);
+  }
+
+  private async collectFeedCids(
+    target: SyncTarget,
+    source: 'local' | 'remote',
+    shouldContinue?: () => boolean,
+  ): Promise<Set<string> | undefined> {
+    const cids = new Set<string>();
+    let cursor: ProgressToken | undefined;
+
+    while (true) {
+      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
+        return undefined;
+      }
+
+      const reply = await this.queryFeedCidsPage(target, source, cursor);
+      if (source === 'local') {
+        SyncEngineLevel.assertFeedPushSucceeded(reply, target);
+      } else {
+        SyncEngineLevel.assertFeedPullSucceeded(reply, target);
+      }
+      for (const entry of reply.entries ?? []) {
+        cids.add(entry.messageCid);
+      }
+
+      const advance = this.nextFeedEnumerationCursor(reply, target, source);
+      if (advance.drained) {
+        return cids;
+      }
+
+      cursor = advance.cursor;
+    }
+  }
+
+  private async queryFeedCidsPage(
+    target: SyncTarget,
+    source: 'local' | 'remote',
+    cursor: ProgressToken | undefined,
+  ): Promise<MessagesQueryReply> {
+    const params = {
+      did                : target.did,
+      delegateDid        : target.delegateDid,
+      permissionGrantIds : target.permissionGrantIds,
+      filters            : SyncEngineLevel.messageFeedFiltersForScope(target.scope),
+      cursor,
+      cidsOnly           : true,
+      limit              : FEED_PAGE_LIMIT,
+      agent              : this.agent,
+    };
+
+    return source === 'local'
+      ? queryLocalMessageFeed(params)
+      : queryRemoteMessageFeed({ ...params, dwnUrl: target.dwnUrl });
+  }
+
+  private nextFeedEnumerationCursor(
+    reply: MessagesQueryReply,
+    target: SyncTarget,
+    source: 'local' | 'remote',
+  ): FeedCursorAdvanceResult {
+    const drained = reply.drained === true;
+    if (reply.cursor === undefined) {
+      if (drained) {
+        return { drained: true };
+      }
+      throw new Error(`SyncEngineLevel: ${source} MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`);
+    }
+
+    if (!this.isValidProgressToken(reply.cursor)) {
+      throw new Error(`SyncEngineLevel: ${source} MessagesQuery returned an invalid cursor for ${target.did} -> ${target.dwnUrl}`);
+    }
+
+    return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
+  }
+
+  private static feedEntriesMissingFrom(knownCids: Set<string>, entries: MessagesQueryReplyEntry[]): MessagesQueryReplyEntry[] {
+    return entries.filter(entry => !knownCids.has(entry.messageCid));
   }
 
   private async pushLocalFeedPage(

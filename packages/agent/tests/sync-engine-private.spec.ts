@@ -713,7 +713,14 @@ describe('SyncEngineLevel — private methods', () => {
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
         dwn               : {
-          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
+          processRequest         : sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
         },
         rpc: {
           sendDwnRequest: sinon.stub().resolves({
@@ -777,7 +784,14 @@ describe('SyncEngineLevel — private methods', () => {
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
         dwn               : {
-          applyReplicatedMessage: sinon.stub(),
+          applyReplicatedMessage : sinon.stub(),
+          processRequest         : sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
         },
         rpc: {
           sendDwnRequest: sinon.stub().resolves({
@@ -819,7 +833,14 @@ describe('SyncEngineLevel — private methods', () => {
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
         dwn               : {
-          applyReplicatedMessage: sinon.stub(),
+          applyReplicatedMessage : sinon.stub(),
+          processRequest         : sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
         },
         rpc: {
           sendDwnRequest: sinon.stub()
@@ -847,6 +868,72 @@ describe('SyncEngineLevel — private methods', () => {
       expect(mockAgent.processDwnRequest.secondCall.args[0].messageParams.cursor).toBeUndefined();
       const links = await (engine as any).ledger.getLinksForTenant(did);
       expect(links[0].pull.contiguousAppliedToken).toEqual(resetCursor);
+    });
+
+    it('should enumerate remote CIDs and pull only missing bodies for a cursorless non-empty local scope', async () => {
+      const did = 'did:example:feed-pull-diff';
+      const protocol = 'https://example.com/feed-pull-diff';
+      const localCursor = {
+        streamId   : 'local-stream-1',
+        epoch      : 'local-epoch-1',
+        position   : '1',
+        messageCid : 'cid-existing',
+      };
+      const remoteCursor = {
+        streamId   : 'remote-stream-1',
+        epoch      : 'remote-epoch-1',
+        position   : '2',
+        messageCid : 'cid-missing',
+      };
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [{ seq: '1', messageCid: 'cid-existing', protocol }],
+              cursor  : localCursor,
+              drained : true,
+            },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [
+              { seq: '1', messageCid: 'cid-existing', protocol },
+              { seq: '2', messageCid: 'cid-missing', protocol },
+            ],
+            cursor  : remoteCursor,
+            drained : true,
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPull: false });
+      const admitStub = sinon.stub(engine as any, 'admitRemoteFeedEntry').resolves({ kind: 'admitted', appliedCids: ['cid-missing'] });
+      const target = syncTarget(did, 'https://dwn.example.com', {
+        scope: { kind: 'protocolSet', protocols: [protocol] },
+      });
+
+      const result = await (engine as any).pullRemoteFeedForSyncTarget(target);
+
+      expect(mockAgent.dwn.processRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly : true,
+        filters  : [{ protocol }],
+        limit    : 100,
+      });
+      expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly : true,
+        filters  : [{ protocol }],
+        limit    : 100,
+      });
+      expect(admitStub.calledOnce).toBe(true);
+      expect(admitStub.firstCall.args[1].messageCid).toBe('cid-missing');
+      expect(result.admittedCids).toEqual(['cid-missing']);
+      const [link] = await (engine as any).ledger.getLinksForTenant(did);
+      expect(link.pull.contiguousAppliedToken).toEqual(remoteCursor);
     });
 
     it('should reject a remote feed cursor that moves backwards', async () => {
@@ -912,7 +999,14 @@ describe('SyncEngineLevel — private methods', () => {
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
         dwn               : {
-          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Invalid', reason: 'bad configure' }),
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Invalid', reason: 'bad configure' }),
+          processRequest         : sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
         },
         rpc: {
           sendDwnRequest: sinon.stub().resolves({
@@ -1039,7 +1133,14 @@ describe('SyncEngineLevel — private methods', () => {
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
         dwn               : {
-          applyReplicatedMessage: sinon.stub().resolves({ kind: 'Applied' }),
+          applyReplicatedMessage : sinon.stub().resolves({ kind: 'Applied' }),
+          processRequest         : sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
         },
         rpc: {
           sendDwnRequest: sinon.stub()
@@ -1090,7 +1191,16 @@ describe('SyncEngineLevel — private methods', () => {
         agentDid          : 'did:example:agent',
         did               : { dereference: sinon.stub() },
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
-        rpc               : {
+        dwn               : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [],
+              drained : true,
+            },
+          }),
+        },
+        rpc: {
           sendDwnRequest: sinon.stub().resolves({
             status  : { code: 200, detail: 'OK' },
             entries : [
@@ -1142,9 +1252,10 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid : configureCid,
       };
       const mockAgent = {
-        agentDid : 'did:example:agent',
-        did      : { dereference: sinon.stub() },
-        dwn      : {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
           processRequest: sinon.stub().resolves({
             reply: {
               status  : { code: 200, detail: 'OK' },
@@ -1158,6 +1269,13 @@ describe('SyncEngineLevel — private methods', () => {
               cursor,
               drained: true,
             },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
           }),
         },
       } as any;
@@ -1177,9 +1295,15 @@ describe('SyncEngineLevel — private methods', () => {
         target        : alice.did,
         messageType   : DwnInterface.MessagesQuery,
         messageParams : {
-          filters : [{ protocol }],
-          limit   : 100,
+          cidsOnly : true,
+          filters  : [{ protocol }],
+          limit    : 100,
         },
+      });
+      expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly : true,
+        filters  : [{ protocol }],
+        limit    : 100,
       });
       expect(pushStub.calledOnce).toBe(true);
       expect(pushStub.firstCall.args[0]).toMatchObject({
@@ -1199,6 +1323,72 @@ describe('SyncEngineLevel — private methods', () => {
       });
     });
 
+    it('should enumerate local CIDs and push only messages missing from a cursorless remote scope', async () => {
+      const did = 'did:example:feed-push-diff';
+      const protocol = 'https://example.com/feed-push-diff';
+      const remoteCursor = {
+        streamId   : 'remote-stream-1',
+        epoch      : 'remote-epoch-1',
+        position   : '1',
+        messageCid : 'cid-existing',
+      };
+      const localCursor = {
+        streamId   : 'local-stream-1',
+        epoch      : 'local-epoch-1',
+        position   : '2',
+        messageCid : 'cid-missing',
+      };
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
+          processRequest: sinon.stub().resolves({
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [
+                { seq: '1', messageCid: 'cid-existing', protocol },
+                { seq: '2', messageCid: 'cid-missing', protocol },
+              ],
+              cursor  : localCursor,
+              drained : true,
+            },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [{ seq: '1', messageCid: 'cid-existing', protocol }],
+            cursor  : remoteCursor,
+            drained : true,
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: ['cid-missing'], failed: [] });
+      const target = syncTarget(did, 'https://dwn.example.com', {
+        scope: { kind: 'protocolSet', protocols: [protocol] },
+      });
+
+      const result = await (engine as any).pushLocalFeedForSyncTarget(target);
+
+      expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly : true,
+        filters  : [{ protocol }],
+        limit    : 100,
+      });
+      expect(mockAgent.dwn.processRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly : true,
+        filters  : [{ protocol }],
+        limit    : 100,
+      });
+      expect(pushStub.calledOnce).toBe(true);
+      expect(pushStub.firstCall.args[0].messageCids).toEqual(['cid-missing']);
+      expect(result.pushFailures).toEqual([]);
+      const [link] = await (engine as any).ledger.getLinksForTenant(did);
+      expect(link.push.contiguousAppliedToken).toEqual(localCursor);
+    });
+
     it('should skip recently pulled local feed entries and still advance the push checkpoint', async () => {
       const did = 'did:example:feed-push-echo';
       const dwnUrl = 'https://dwn.example.com';
@@ -1209,9 +1399,10 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid : 'cid-echo',
       };
       const mockAgent = {
-        agentDid : 'did:example:agent',
-        did      : { dereference: sinon.stub() },
-        dwn      : {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
           processRequest: sinon.stub().resolves({
             reply: {
               status  : { code: 200, detail: 'OK' },
@@ -1223,6 +1414,13 @@ describe('SyncEngineLevel — private methods', () => {
               cursor,
               drained: true,
             },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
           }),
         },
       } as any;
@@ -1255,9 +1453,10 @@ describe('SyncEngineLevel — private methods', () => {
         position : '1',
       };
       const mockAgent = {
-        agentDid : 'did:example:agent',
-        did      : { dereference: sinon.stub() },
-        dwn      : {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
           processRequest: sinon.stub()
             .onFirstCall().resolves({
               reply: {
@@ -1272,6 +1471,13 @@ describe('SyncEngineLevel — private methods', () => {
                 drained : true,
               },
             }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
+          }),
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
@@ -1300,9 +1506,10 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid : 'cid-retry',
       };
       const mockAgent = {
-        agentDid : 'did:example:agent',
-        did      : { dereference: sinon.stub() },
-        dwn      : {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
           processRequest: sinon.stub().resolves({
             reply: {
               status  : { code: 200, detail: 'OK' },
@@ -1314,6 +1521,13 @@ describe('SyncEngineLevel — private methods', () => {
               cursor,
               drained: true,
             },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
           }),
         },
       } as any;
@@ -1340,9 +1554,10 @@ describe('SyncEngineLevel — private methods', () => {
         messageCid : 'cid-terminal',
       };
       const mockAgent = {
-        agentDid : 'did:example:agent',
-        did      : { dereference: sinon.stub() },
-        dwn      : {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : {
           processRequest: sinon.stub().resolves({
             reply: {
               status  : { code: 200, detail: 'OK' },
@@ -1354,6 +1569,13 @@ describe('SyncEngineLevel — private methods', () => {
               cursor,
               drained: true,
             },
+          }),
+        },
+        rpc: {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
           }),
         },
       } as any;
@@ -1649,7 +1871,7 @@ describe('SyncEngineLevel — private methods', () => {
       const remoteFingerprint = await fingerprintFromCids([]);
       let feedQueriesFromStart = 0;
       const processRequestStub = sinon.stub().callsFake(async (params: any): Promise<any> => {
-        if (params.messageParams.cidsOnly === true) {
+        if (params.messageParams.cidsOnly === true && params.messageParams.limit === 1) {
           return {
             reply: {
               status      : { code: 200, detail: 'OK' },
@@ -1659,7 +1881,7 @@ describe('SyncEngineLevel — private methods', () => {
           };
         }
 
-        if (params.messageParams.cursor === undefined) {
+        if (params.messageParams.cidsOnly === true && params.messageParams.cursor === undefined) {
           feedQueriesFromStart++;
           return {
             reply: {
@@ -5992,6 +6214,32 @@ describe('SyncEngineLevel — private methods', () => {
       const health = await engine.getSyncHealth();
       expect(health.reconcileNeededCount).toBe(1);
       expect(health.syncHealthy).toBe(false);
+    });
+
+    it('should scope admission dead-letter scans to the active tenant', async () => {
+      const engine = createEngine({ db });
+      const iteratorOptions: any[] = [];
+      const fakeStore = {
+        async *iterator(options: any): AsyncGenerator<[string, string]> {
+          iteratorOptions.push(options);
+          yield ['did:example:alice|cid-a|https://dwn.example.com', JSON.stringify({
+            messageCid     : 'cid-a',
+            tenantDid      : 'did:example:alice',
+            remoteEndpoint : 'https://dwn.example.com',
+            category       : 'admit-failed',
+            errorDetail    : 'invalid',
+          })];
+        },
+      };
+      Object.defineProperty(engine, '_deadLetters', { get: () => fakeStore });
+
+      const result = await (engine as any).getAdmissionDeadLetterCidsForTarget(syncTarget('did:example:alice', 'https://dwn.example.com'));
+
+      expect(iteratorOptions).toEqual([{
+        gte : 'did:example:alice|',
+        lte : 'did:example:alice|\xff',
+      }]);
+      expect(result).toEqual(['cid-a']);
     });
 
     it('should auto-clear dead letter when same CID later succeeds on push', async () => {
