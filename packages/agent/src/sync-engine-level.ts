@@ -1,13 +1,13 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, MessagesSyncDiffEntry, MessagesSyncReply, ProgressToken, StateIndex, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
 import { Level } from 'level';
 import { sleep } from '@enbox/common';
-import { Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Encoder, hashToHex, initDefaultHashes, Message } from '@enbox/dwn-sdk-js';
 
 import type { DwnMessageParams } from './types/dwn.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
@@ -26,7 +26,7 @@ import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
-import { fetchRemoteMessages, getMessageCid, pushMessages, SyncPullAbortedError } from './sync-messages.js';
+import { fetchRemoteMessages, getMessageCid, pushMessages, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
 import { partitionRemoteEntries, SyncLinkReconciler } from './sync-link-reconciler.js';
 import { permissionGrantIdsFromEntries, resolveMessagesScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
@@ -58,6 +58,9 @@ const BATCHED_DIFF_DEPTH = 8;
  * once the in-flight push completes.
  */
 const PUSH_DEBOUNCE_MS = 100;
+
+/** Default durable-feed page size for engine pull replay. */
+const FEED_PULL_PAGE_LIMIT = 100;
 
 /** Tracks a live subscription to a remote DWN for one sync target. */
 type LiveSubscription = {
@@ -142,6 +145,15 @@ type SyncDiffResult = {
   onlyRemote: MessagesSyncDiffEntry[];
   onlyLocal: string[];
 };
+
+type FeedPageAdmissionResult =
+  | { kind: 'aborted' }
+  | { kind: 'deferred'; admittedCids: string[]; detail?: string; hasActionableDiffs: boolean; messageCid: string }
+  | { kind: 'processed'; admittedCids: string[]; hasActionableDiffs: boolean };
+
+type FeedCursorAdvanceResult =
+  | { drained: true }
+  | { cursor: ProgressToken; drained: false };
 
 type ProtocolSetReconcileContext = {
   did: string;
@@ -539,6 +551,16 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  private emitReconcileApplied(target: Pick<SyncTarget, 'did' | 'dwnUrl' | 'scope'>, messageCids: string[]): void {
+    this.emitEvent({
+      type           : 'reconcile:applied',
+      tenantDid      : target.did,
+      remoteEndpoint : target.dwnUrl,
+      ...syncEventScope(target.scope),
+      messageCids,
+    });
+  }
+
   public async clear(): Promise<void> {
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
@@ -674,15 +696,14 @@ export class SyncEngineLevel implements SyncEngine {
       const results = await Promise.allSettled([...byUrl.entries()].map(async ([dwnUrl, targets]) => {
         for (const target of targets) {
           try {
+            const feedPullResult = await this.pullRemoteFeedForSyncTarget(target, { direction });
+            if (feedPullResult.admittedCids !== undefined && feedPullResult.admittedCids.length > 0) {
+              this.emitReconcileApplied(target, feedPullResult.admittedCids);
+            }
+
             const result = await this.reconcileSyncTarget(target, { direction });
             if (result.admittedCids !== undefined && result.admittedCids.length > 0) {
-              this.emitEvent({
-                type           : 'reconcile:applied',
-                tenantDid      : target.did,
-                remoteEndpoint : target.dwnUrl,
-                ...syncEventScope(target.scope),
-                messageCids    : result.admittedCids,
-              });
+              this.emitReconcileApplied(target, result.admittedCids);
             }
             if (result.pushFailures !== undefined && result.pushFailures.length > 0) {
               const retryableFailures = await this.recordTerminalSyncPushFailures(target, result.pushFailures);
@@ -2085,14 +2106,13 @@ export class SyncEngineLevel implements SyncEngine {
     context: LivePullContext,
     subMessage: Extract<SubscriptionMessage, { type: 'event' }>,
   ): Promise<void> {
-    const event = subMessage.event;
     if (await this.shouldSkipLivePullEvent(context, subMessage)) {
       return;
     }
 
     const delivery = this.startPullDelivery(context, subMessage.cursor);
     try {
-      const result = await this.processLivePullEvent(context, event);
+      const result = await this.processLivePullEvent(context, subMessage);
       if (!result) { return; }
 
       if (result.admitted) {
@@ -2167,12 +2187,20 @@ export class SyncEngineLevel implements SyncEngine {
     return { runtime, ordinal };
   }
 
-  private async processLivePullEvent(context: LivePullContext, event: MessageEvent): Promise<LivePullProcessResult | undefined> {
+  private async processLivePullEvent(
+    context: LivePullContext,
+    subMessage: Extract<SubscriptionMessage, { type: 'event' }>,
+  ): Promise<LivePullProcessResult | undefined> {
+    const event = subMessage.event;
     const dataStreamFactory = await this.createLivePullDataStreamFactory(context, event);
     const rootCid = await Message.getCid(event.message);
-    const prefetched: SyncMessageEntry[] = [{ message: event.message, dataStreamFactory }];
+    const prefetched: SyncMessageEntry[] = [{
+      message           : event.message,
+      dataStreamFactory : dataStreamFactory,
+      isLatestBaseState : subMessage.isLatestBaseState,
+    }];
     if (event.initialWrite !== undefined) {
-      prefetched.push({ message: event.initialWrite });
+      prefetched.push({ message: event.initialWrite, isLatestBaseState: false });
     }
 
     const outcome = await admitClosure(rootCid, {
@@ -2802,6 +2830,311 @@ export class SyncEngineLevel implements SyncEngine {
 
   private getAuthorizationGrantIds(authorization: SyncAuthorization): NonEmptyStringArray | undefined {
     return authorization.kind === 'delegate' ? authorization.permissionGrantIds : undefined;
+  }
+
+  private async pullRemoteFeedForSyncTarget(
+    target: SyncTarget,
+    options?: SyncReconcileOptions,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncReconcileResult> {
+    if (options?.direction === 'push') {
+      return {};
+    }
+
+    const link = await this.getOrCreateReplicationLink(target);
+    return this.pullRemoteFeedPages(target, link, shouldContinue);
+  }
+
+  private async pullRemoteFeedPages(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncReconcileResult> {
+    const admittedCids: string[] = [];
+    let hasActionableDiffs = false;
+    let cursor = link.pull.contiguousAppliedToken;
+    let resetAfterProgressGap = false;
+
+    while (true) {
+      if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
+        return { aborted: true };
+      }
+
+      const reply = await queryRemoteMessageFeed({
+        did                : target.did,
+        dwnUrl             : target.dwnUrl,
+        delegateDid        : target.delegateDid,
+        permissionGrantIds : target.permissionGrantIds,
+        filters            : SyncEngineLevel.messageFeedFiltersForScope(target.scope),
+        cursor,
+        limit              : FEED_PULL_PAGE_LIMIT,
+        agent              : this.agent,
+      });
+
+      if (await this.resetFeedPullAfterProgressGap(reply, link, resetAfterProgressGap)) {
+        resetAfterProgressGap = true;
+        cursor = undefined;
+        continue;
+      }
+
+      SyncEngineLevel.assertFeedPullSucceeded(reply, target);
+      const pageResult = await this.admitRemoteFeedPage(target, reply.entries ?? [], shouldContinue);
+      if (pageResult.kind === 'aborted') {
+        return { aborted: true };
+      }
+
+      admittedCids.push(...pageResult.admittedCids);
+      hasActionableDiffs ||= pageResult.hasActionableDiffs;
+      if (pageResult.kind === 'deferred') {
+        if (admittedCids.length > 0) {
+          this.emitReconcileApplied(target, admittedCids);
+        }
+        throw new Error(`SyncEngineLevel: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`);
+      }
+
+      const cursorAdvance = await this.advanceFeedPullCursor(link, cursor, reply, target);
+      if (cursorAdvance.drained) {
+        return { admittedCids, hasActionableDiffs };
+      }
+
+      cursor = cursorAdvance.cursor;
+    }
+  }
+
+  private async resetFeedPullAfterProgressGap(
+    reply: MessagesQueryReply,
+    link: ReplicationLinkState,
+    alreadyReset: boolean,
+  ): Promise<boolean> {
+    if (reply.status.code !== 410 || alreadyReset) {
+      return false;
+    }
+
+    ReplicationLedger.resetCheckpoint(link.pull);
+    await this.ledger.saveLink(link);
+    return true;
+  }
+
+  private static assertFeedPullSucceeded(reply: MessagesQueryReply, target: SyncTarget): void {
+    if (reply.status.code !== 200) {
+      throw new Error(`SyncEngineLevel: MessagesQuery failed for ${target.did} -> ${target.dwnUrl}: ${reply.status.code} ${reply.status.detail}`);
+    }
+  }
+
+  private async admitRemoteFeedPage(
+    target: SyncTarget,
+    entries: MessagesQueryReplyEntry[],
+    shouldContinue?: () => boolean,
+  ): Promise<FeedPageAdmissionResult> {
+    const admittedCids: string[] = [];
+    let hasActionableDiffs = false;
+
+    for (const entry of entries) {
+      if (await this.hasAdmissionDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
+        continue;
+      }
+
+      const outcome = await this.admitRemoteFeedEntry(target, entry, shouldContinue);
+      if (outcome.kind === 'aborted') {
+        return { kind: 'aborted' };
+      }
+
+      if (outcome.kind === 'deferred') {
+        return { kind: 'deferred', admittedCids, detail: outcome.detail, hasActionableDiffs, messageCid: entry.messageCid };
+      }
+
+      hasActionableDiffs = true;
+      if (outcome.kind === 'admitted') {
+        admittedCids.push(...outcome.appliedCids);
+        this.trackRemoteFeedAppliedCids(outcome.appliedCids, target.dwnUrl);
+      }
+    }
+
+    return { kind: 'processed', admittedCids, hasActionableDiffs };
+  }
+
+  private trackRemoteFeedAppliedCids(messageCids: string[], dwnUrl: string): void {
+    for (const cid of messageCids) {
+      this.trackRecentlyPulledMessage(cid, dwnUrl);
+      void this.clearFailedMessage(cid, dwnUrl).catch(() => { /* teardown race */ });
+    }
+  }
+
+  private async advanceFeedPullCursor(
+    link: ReplicationLinkState,
+    previousCursor: ProgressToken | undefined,
+    reply: MessagesQueryReply,
+    target: SyncTarget,
+  ): Promise<FeedCursorAdvanceResult> {
+    const drained = reply.drained === true;
+    if (reply.cursor === undefined) {
+      if (drained) {
+        return { drained: true };
+      }
+      throw new Error(`SyncEngineLevel: MessagesQuery for ${target.did} -> ${target.dwnUrl} returned no cursor before drain`);
+    }
+
+    this.assertFeedCursorProgress(link, previousCursor, reply.cursor, drained, target.dwnUrl);
+    ReplicationLedger.setReceivedToken(link.pull, reply.cursor);
+    ReplicationLedger.commitContiguousToken(link.pull, reply.cursor);
+    await this.ledger.saveLink(link);
+    this.emitPullCheckpointAdvance(link);
+
+    return drained ? { drained: true } : { cursor: reply.cursor, drained: false };
+  }
+
+  private assertFeedCursorProgress(
+    link: ReplicationLinkState,
+    previousCursor: ProgressToken | undefined,
+    nextCursor: ProgressToken,
+    drained: boolean,
+    dwnUrl: string,
+  ): void {
+    if (!this.isValidProgressToken(nextCursor)) {
+      throw new Error(`SyncEngineLevel: MessagesQuery returned an invalid cursor for ${link.tenantDid} -> ${dwnUrl}`);
+    }
+
+    if (!ReplicationLedger.validateTokenDomain(link.pull, nextCursor)) {
+      throw new Error(`SyncEngineLevel: MessagesQuery token domain mismatch for ${link.tenantDid} -> ${dwnUrl}`);
+    }
+
+    if (previousCursor === undefined) {
+      return;
+    }
+
+    const comparison = ReplicationLedger.comparePosition(nextCursor, previousCursor);
+    if (comparison < 0 || (comparison === 0 && !drained)) {
+      throw new Error(`SyncEngineLevel: MessagesQuery cursor did not advance for ${link.tenantDid} -> ${dwnUrl}`);
+    }
+  }
+
+  private async admitRemoteFeedEntry(
+    target: SyncTarget,
+    entry: MessagesQueryReplyEntry,
+    shouldContinue?: () => boolean,
+  ): Promise<
+    | { kind: 'aborted' }
+    | { kind: 'admitted'; appliedCids: string[] }
+    | { kind: 'dead-lettered' }
+    | { kind: 'deferred'; detail?: string }
+  > {
+    if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
+      return { kind: 'aborted' };
+    }
+
+    const prefetched = await this.syncEntriesFromFeedEntry(target, entry);
+    const outcome = await admitClosure(entry.messageCid, {
+      did                : target.did,
+      dwnUrl             : target.dwnUrl,
+      delegateDid        : target.delegateDid,
+      permissionGrantIds : target.permissionGrantIds,
+      scope              : target.scope,
+      agent              : this.agent,
+      permissionsApi     : this._permissionsApi,
+      prefetched,
+      shouldContinue,
+    });
+
+    if (outcome.kind === 'admitted') {
+      return { kind: 'admitted', appliedCids: outcome.appliedCids };
+    }
+
+    if (outcome.kind === 'deferred') {
+      return { kind: 'deferred', detail: outcome.detail };
+    }
+
+    await this.recordDeadLetter({
+      messageCid     : entry.messageCid,
+      tenantDid      : target.did,
+      remoteEndpoint : target.dwnUrl,
+      protocol       : SyncEngineLevel.protocolFromFeedEntry(entry, prefetched),
+      category       : 'admit-failed',
+      errorCode      : outcome.reason,
+      errorDetail    : outcome.detail ?? 'replicated message admission failed',
+    });
+    return { kind: 'dead-lettered' };
+  }
+
+  private async syncEntriesFromFeedEntry(
+    target: SyncTarget,
+    entry: MessagesQueryReplyEntry,
+  ): Promise<SyncMessageEntry[]> {
+    if (entry.message === undefined) {
+      const fetched = await fetchRemoteMessages({
+        did                : target.did,
+        dwnUrl             : target.dwnUrl,
+        delegateDid        : target.delegateDid,
+        permissionGrantIds : target.permissionGrantIds,
+        messageCids        : [entry.messageCid],
+        agent              : this.agent,
+      });
+      return fetched.map((fetchedEntry): SyncMessageEntry => ({
+        ...fetchedEntry,
+        isLatestBaseState: entry.isLatestBaseState,
+      }));
+    }
+
+    const message = { ...entry.message };
+    const messageEncodedData = message.encodedData;
+    delete message.encodedData;
+    const syncEntry: SyncMessageEntry = {
+      message,
+      isLatestBaseState: entry.isLatestBaseState,
+    };
+    const encodedData = entry.encodedData ?? messageEncodedData;
+    if (encodedData !== undefined) {
+      syncEntry.bufferedData = Encoder.base64UrlToBytes(encodedData);
+    } else if (SyncEngineLevel.recordsWriteRequiresRemoteData(message)) {
+      syncEntry.dataStreamFactory = async (): Promise<ReadableStream<Uint8Array> | undefined> => {
+        const fetched = await fetchRemoteMessages({
+          did                : target.did,
+          dwnUrl             : target.dwnUrl,
+          delegateDid        : target.delegateDid,
+          permissionGrantIds : target.permissionGrantIds,
+          messageCids        : [entry.messageCid],
+          agent              : this.agent,
+        });
+        return fetched[0]?.dataStream;
+      };
+    }
+
+    return [syncEntry];
+  }
+
+  private static messageFeedFiltersForScope(scope: SyncScope): MessagesFilter[] | undefined {
+    if (scope.kind === 'full') {
+      return undefined;
+    }
+
+    return scope.protocols.map(protocol => ({ protocol }));
+  }
+
+  private static protocolFromFeedEntry(
+    entry: MessagesQueryReplyEntry,
+    prefetched: SyncMessageEntry[],
+  ): string | undefined {
+    if (entry.protocol !== undefined) {
+      return entry.protocol;
+    }
+
+    return SyncEngineLevel.protocolFromDescriptor(entry.message?.descriptor) ??
+      SyncEngineLevel.protocolFromDescriptor(prefetched[0]?.message.descriptor);
+  }
+
+  private static protocolFromDescriptor(descriptor: GenericMessage['descriptor'] | undefined): string | undefined {
+    if (descriptor === undefined || !('protocol' in descriptor) || typeof descriptor.protocol !== 'string') {
+      return undefined;
+    }
+
+    return descriptor.protocol;
+  }
+
+  private static recordsWriteRequiresRemoteData(message: GenericMessage): boolean {
+    const { descriptor } = message;
+    return descriptor.interface === DwnInterfaceName.Records &&
+      descriptor.method === DwnMethodName.Write &&
+      'dataCid' in descriptor &&
+      typeof descriptor.dataCid === 'string';
   }
 
   private async reconcileSyncTarget(
