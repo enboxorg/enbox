@@ -1702,7 +1702,7 @@ describe('SyncEngineLevel', () => {
 
         // Stub a feed phase so the real sync() manages _syncLock, while the
         // slow part is a shared promise created BEFORE the interval. The
-        // shared promise means the first sync takes ~1250ms, but subsequent
+        // shared promise means the first sync takes ~750ms, but subsequent
         // syncs complete instantly (the promise is already resolved).
         //
         // The first sync resolves between interval ticks, avoiding fake-clock
@@ -1711,7 +1711,7 @@ describe('SyncEngineLevel', () => {
         pullRemoteFeedStub.returns(new Promise((resolve) => {
           clock.setTimeout(() => {
             resolve({});
-          }, 1_250);
+          }, 750);
         }));
 
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
@@ -1733,9 +1733,14 @@ describe('SyncEngineLevel', () => {
 
         testHarness.agent.sync.startSync({ interval: '500ms' });
 
-        await clock.tickAsync(1_400); // the first sync has finished, but the next interval has not fired
+        await clock.tickAsync(700); // less time than the first sync
 
         // only once for when starting the sync
+        expect(syncSpy.callCount).toBe(1);
+
+        await clock.tickAsync(200); // the first sync has finished, but the next interval has not fired
+
+        // still only once because the interval at 500ms was skipped while sync was running
         expect(syncSpy.callCount).toBe(1);
 
         await clock.tickAsync(200); // one interval after the first sync finishes
