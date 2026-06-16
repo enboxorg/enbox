@@ -79,17 +79,17 @@ import {
 export interface DwnDidService extends DidService {}
 
 export enum DwnInterface {
-  MessagesQuery = DwnInterfaceName.Messages + DwnMethodName.Query,
-  MessagesRead = DwnInterfaceName.Messages + DwnMethodName.Read,
-  MessagesSubscribe = DwnInterfaceName.Messages + DwnMethodName.Subscribe,
-  MessagesSync = DwnInterfaceName.Messages + DwnMethodName.Sync,
-  ProtocolsConfigure = DwnInterfaceName.Protocols + DwnMethodName.Configure,
-  ProtocolsQuery = DwnInterfaceName.Protocols + DwnMethodName.Query,
-  RecordsDelete = DwnInterfaceName.Records + DwnMethodName.Delete,
-  RecordsQuery = DwnInterfaceName.Records + DwnMethodName.Query,
-  RecordsRead = DwnInterfaceName.Records + DwnMethodName.Read,
-  RecordsSubscribe = DwnInterfaceName.Records + DwnMethodName.Subscribe,
-  RecordsWrite = DwnInterfaceName.Records + DwnMethodName.Write
+  MessagesQuery = 'MessagesQuery',
+  MessagesRead = 'MessagesRead',
+  MessagesSubscribe = 'MessagesSubscribe',
+  MessagesSync = 'MessagesSync',
+  ProtocolsConfigure = 'ProtocolsConfigure',
+  ProtocolsQuery = 'ProtocolsQuery',
+  RecordsDelete = 'RecordsDelete',
+  RecordsQuery = 'RecordsQuery',
+  RecordsRead = 'RecordsRead',
+  RecordsSubscribe = 'RecordsSubscribe',
+  RecordsWrite = 'RecordsWrite'
 }
 
 export type DwnRecordsInterfaces =
