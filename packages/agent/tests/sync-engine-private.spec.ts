@@ -1389,6 +1389,65 @@ describe('SyncEngineLevel — private methods', () => {
       expect(link.push.contiguousAppliedToken).toEqual(localCursor);
     });
 
+    it('should push delegated permission grants before cursorless remote feed enumeration', async () => {
+      const did = 'did:example:feed-push-grant-bootstrap';
+      const delegateDid = 'did:example:delegate';
+      const grant = await TestDataGenerator.generateRecordsWrite();
+      const grantCid = await Message.getCid(grant.message);
+      const processRequestStub = sinon.stub().callsFake(async (params: any): Promise<any> => {
+        if (params.messageType === DwnInterface.RecordsQuery) {
+          return {
+            reply: {
+              status  : { code: 200, detail: 'OK' },
+              entries : [grant.message],
+            },
+          };
+        }
+
+        return {
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
+          },
+        };
+      });
+      const mockAgent = {
+        agentDid          : 'did:example:agent',
+        did               : { dereference: sinon.stub() },
+        processDwnRequest : sinon.stub().resolves({ message: { descriptor: { interface: 'Messages', method: 'Query' } } }),
+        dwn               : { processRequest: processRequestStub },
+        rpc               : {
+          sendDwnRequest: sinon.stub().resolves({
+            status  : { code: 200, detail: 'OK' },
+            entries : [],
+            drained : true,
+          }),
+        },
+      } as any;
+      const engine = createEngine({ db, agent: mockAgent }, { stubFeedPush: false });
+      const pushStub = sinon.stub(engine as any, 'pushMessages').resolves({ succeeded: [grantCid], failed: [] });
+      const target = syncTarget(did, 'https://dwn.example.com', {
+        delegateDid,
+        permissionGrantIds: [grant.message.recordId],
+      });
+
+      const result = await (engine as any).pushLocalFeedForSyncTarget(target);
+
+      expect(pushStub.calledOnce).toBe(true);
+      expect(pushStub.firstCall.args[0]).toEqual({
+        did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [grantCid],
+      });
+      expect(pushStub.calledBefore(mockAgent.rpc.sendDwnRequest)).toBe(true);
+      expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams).toMatchObject({
+        cidsOnly           : true,
+        permissionGrantIds : [grant.message.recordId],
+      });
+      expect(result.pushFailures).toEqual([]);
+    });
+
     it('should skip recently pulled local feed entries and still advance the push checkpoint', async () => {
       const did = 'did:example:feed-push-echo';
       const dwnUrl = 'https://dwn.example.com';
