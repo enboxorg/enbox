@@ -129,6 +129,10 @@ type FeedPageAdmissionResult =
   | { kind: 'deferred'; admittedCids: string[]; detail?: string; hasActionableDiffs: boolean; messageCid: string }
   | { kind: 'processed'; admittedCids: string[]; hasActionableDiffs: boolean };
 
+type TrackedFeedPageAdmissionResult =
+  | { kind: 'aborted' }
+  | { kind: 'processed'; hasActionableDiffs: boolean };
+
 type FeedCursorAdvanceResult =
   | { drained: true }
   | { cursor: ProgressToken; drained: false };
@@ -3105,12 +3109,9 @@ export class SyncEngineLevel implements SyncEngine {
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
     if (link.pull.contiguousAppliedToken === undefined) {
-      const localCids = await this.collectLocalFeedCids(target, shouldContinue);
-      if (localCids === undefined) {
-        return { aborted: true };
-      }
-      if (localCids.size > 0) {
-        return this.pullRemoteFeedDiffPages(target, link, localCids, shouldContinue);
+      const result = await this.pullRemoteFeedDiffWhenUseful(target, link, shouldContinue);
+      if (result !== undefined) {
+        return result;
       }
     }
 
@@ -3138,30 +3139,25 @@ export class SyncEngineLevel implements SyncEngine {
       if (await this.resetFeedPullAfterProgressGap(reply, link, resetAfterProgressGap)) {
         resetAfterProgressGap = true;
         cursor = undefined;
-        const localCids = await this.collectLocalFeedCids(target, shouldContinue);
-        if (localCids === undefined) {
-          return { aborted: true };
-        }
-        if (localCids.size > 0) {
-          return this.pullRemoteFeedDiffPages(target, link, localCids, shouldContinue);
+        const result = await this.pullRemoteFeedDiffWhenUseful(target, link, shouldContinue);
+        if (result !== undefined) {
+          return result;
         }
         continue;
       }
 
       SyncEngineLevel.assertFeedPullSucceeded(reply, target);
-      const pageResult = await this.admitRemoteFeedPage(target, reply.entries ?? [], shouldContinue);
+      const pageResult = await this.admitRemoteFeedPageAndTrack({
+        target         : target,
+        entries        : reply.entries ?? [],
+        admittedCids   : admittedCids,
+        shouldContinue : shouldContinue,
+      });
       if (pageResult.kind === 'aborted') {
         return { aborted: true };
       }
 
-      admittedCids.push(...pageResult.admittedCids);
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
-      if (pageResult.kind === 'deferred') {
-        if (admittedCids.length > 0) {
-          this.emitReconcileApplied(target, admittedCids);
-        }
-        throw new Error(`SyncEngineLevel: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`);
-      }
 
       const cursorAdvance = await this.advanceFeedPullCursor(link, cursor, reply, target);
       if (cursorAdvance.drained) {
@@ -3198,22 +3194,18 @@ export class SyncEngineLevel implements SyncEngine {
 
       SyncEngineLevel.assertFeedPullSucceeded(reply, target);
       const missingEntries = SyncEngineLevel.feedEntriesMissingFrom(localCids, reply.entries ?? []);
-      const pageResult = await this.admitRemoteFeedPage(target, missingEntries, shouldContinue);
+      const pageResult = await this.admitRemoteFeedPageAndTrack({
+        target         : target,
+        entries        : missingEntries,
+        admittedCids   : admittedCids,
+        knownCids      : localCids,
+        shouldContinue : shouldContinue,
+      });
       if (pageResult.kind === 'aborted') {
         return { aborted: true };
       }
 
-      admittedCids.push(...pageResult.admittedCids);
-      for (const messageCid of pageResult.admittedCids) {
-        localCids.add(messageCid);
-      }
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
-      if (pageResult.kind === 'deferred') {
-        if (admittedCids.length > 0) {
-          this.emitReconcileApplied(target, admittedCids);
-        }
-        throw new Error(`SyncEngineLevel: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`);
-      }
 
       const cursorAdvance = await this.advanceFeedPullCursor(link, cursor, reply, target);
       if (cursorAdvance.drained) {
@@ -3243,28 +3235,12 @@ export class SyncEngineLevel implements SyncEngine {
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
     if (link.push.contiguousAppliedToken === undefined) {
-      const grantBootstrap = await this.bootstrapRemotePermissionGrants(target, shouldContinue);
-      if (grantBootstrap.kind === 'aborted') {
-        return { aborted: true };
-      }
-      if (grantBootstrap.failures.length > 0) {
-        return { hasActionableDiffs: grantBootstrap.hasActionableDiffs, pushFailures: grantBootstrap.failures };
-      }
-      const remoteCids = await this.collectRemoteFeedCids(target, shouldContinue);
-      if (remoteCids === undefined) {
-        return { aborted: true };
-      }
-      const result = await this.pushLocalFeedDiffPages(target, link, remoteCids, shouldContinue);
-      if (result.aborted === true) {
-        return result;
-      }
-      return { ...result, hasActionableDiffs: result.hasActionableDiffs === true || grantBootstrap.hasActionableDiffs };
+      return this.pushLocalFeedDiffWithRemoteInventory(target, link, shouldContinue);
     }
 
     const ignoredLocalCids: string[] = [];
     let hasActionableDiffs = false;
     let cursor: ProgressToken | undefined = link.push.contiguousAppliedToken;
-    let resetAfterProgressGap = false;
 
     while (true) {
       if (SyncEngineLevel.shouldAbortReconcile(shouldContinue)) {
@@ -3281,25 +3257,8 @@ export class SyncEngineLevel implements SyncEngine {
         agent              : this.agent,
       });
 
-      if (await this.resetFeedPushAfterProgressGap(reply, link, resetAfterProgressGap)) {
-        resetAfterProgressGap = true;
-        cursor = undefined;
-        const grantBootstrap = await this.bootstrapRemotePermissionGrants(target, shouldContinue);
-        if (grantBootstrap.kind === 'aborted') {
-          return { aborted: true };
-        }
-        if (grantBootstrap.failures.length > 0) {
-          return { hasActionableDiffs: grantBootstrap.hasActionableDiffs, pushFailures: grantBootstrap.failures };
-        }
-        const remoteCids = await this.collectRemoteFeedCids(target, shouldContinue);
-        if (remoteCids === undefined) {
-          return { aborted: true };
-        }
-        const result = await this.pushLocalFeedDiffPages(target, link, remoteCids, shouldContinue);
-        if (result.aborted === true) {
-          return result;
-        }
-        return { ...result, hasActionableDiffs: result.hasActionableDiffs === true || grantBootstrap.hasActionableDiffs };
+      if (await this.resetFeedPushAfterProgressGap(reply, link, false)) {
+        return this.pushLocalFeedDiffWithRemoteInventory(target, link, shouldContinue);
       }
 
       SyncEngineLevel.assertFeedPushSucceeded(reply, target);
@@ -3321,6 +3280,48 @@ export class SyncEngineLevel implements SyncEngine {
 
       cursor = cursorAdvance.cursor;
     }
+  }
+
+  private async pullRemoteFeedDiffWhenUseful(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncReconcileResult | undefined> {
+    const localCids = await this.collectLocalFeedCids(target, shouldContinue);
+    if (localCids === undefined) {
+      return { aborted: true };
+    }
+    if (localCids.size === 0) {
+      return undefined;
+    }
+
+    return this.pullRemoteFeedDiffPages(target, link, localCids, shouldContinue);
+  }
+
+  private async pushLocalFeedDiffWithRemoteInventory(
+    target: SyncTarget,
+    link: ReplicationLinkState,
+    shouldContinue?: () => boolean,
+  ): Promise<SyncReconcileResult> {
+    const grantBootstrap = await this.bootstrapRemotePermissionGrants(target, shouldContinue);
+    if (grantBootstrap.kind === 'aborted') {
+      return { aborted: true };
+    }
+    if (grantBootstrap.failures.length > 0) {
+      return { hasActionableDiffs: grantBootstrap.hasActionableDiffs, pushFailures: grantBootstrap.failures };
+    }
+
+    const remoteCids = await this.collectRemoteFeedCids(target, shouldContinue);
+    if (remoteCids === undefined) {
+      return { aborted: true };
+    }
+
+    const result = await this.pushLocalFeedDiffPages(target, link, remoteCids, shouldContinue);
+    if (result.aborted === true) {
+      return result;
+    }
+
+    return { ...result, hasActionableDiffs: result.hasActionableDiffs === true || grantBootstrap.hasActionableDiffs };
   }
 
   private async pushLocalFeedDiffPages(
@@ -3549,6 +3550,39 @@ export class SyncEngineLevel implements SyncEngine {
 
   private static feedEntriesMissingFrom(knownCids: Set<string>, entries: MessagesQueryReplyEntry[]): MessagesQueryReplyEntry[] {
     return entries.filter(entry => !knownCids.has(entry.messageCid));
+  }
+
+  private async admitRemoteFeedPageAndTrack({
+    target,
+    entries,
+    admittedCids,
+    knownCids,
+    shouldContinue,
+  }: {
+    target: SyncTarget;
+    entries: MessagesQueryReplyEntry[];
+    admittedCids: string[];
+    knownCids?: Set<string>;
+    shouldContinue?: () => boolean;
+  }): Promise<TrackedFeedPageAdmissionResult> {
+    const pageResult = await this.admitRemoteFeedPage(target, entries, shouldContinue);
+    if (pageResult.kind === 'aborted') {
+      return { kind: 'aborted' };
+    }
+
+    admittedCids.push(...pageResult.admittedCids);
+    for (const messageCid of pageResult.admittedCids) {
+      knownCids?.add(messageCid);
+    }
+
+    if (pageResult.kind === 'deferred') {
+      if (admittedCids.length > 0) {
+        this.emitReconcileApplied(target, admittedCids);
+      }
+      throw new Error(`SyncEngineLevel: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`);
+    }
+
+    return { kind: 'processed', hasActionableDiffs: pageResult.hasActionableDiffs };
   }
 
   private async pushLocalFeedPage(
