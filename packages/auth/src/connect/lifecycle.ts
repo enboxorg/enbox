@@ -274,9 +274,9 @@ export function resolveIdentityDids(
 /**
  * Derive the sync protocol scope from a set of parsed permission grants.
  *
- * Only `Messages.Read` grants authorize sync operations. Other grant types
+ * Only `Messages.Read` grants authorize feed sync operations. Other grant types
  * (Records.Write, Protocols.Query, etc.) are ignored even if they contain a
- * `protocol` field — they do not authorize `MessagesSync`.
+ * `protocol` field — they do not authorize message-feed reads.
  *
  * - Unscoped `Messages.Read` (no `protocol`) → `'all'` (full replica)
  * - Scoped `Messages.Read` grants → collected protocol URIs

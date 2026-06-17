@@ -24,7 +24,7 @@ export type UnionMessageReply = GenericMessageReply & {
 
   /**
    * Resulting message entries or events returned from the invocation of the corresponding message.
-   * e.g. the resulting messages from a RecordsQuery, or array of messageCid strings for MessagesSync
+   * e.g. the resulting messages from a RecordsQuery or MessagesQuery.
    * Mutually exclusive with `record`.
    */
   entries?: QueryResultEntry[] | ProtocolsConfigureMessage[] | MessagesQueryReplyEntry[] | string[];

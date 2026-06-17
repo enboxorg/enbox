@@ -80,8 +80,8 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [ query ]);
 
     // If the exact same message already exists, return 409 immediately.
-    // This prevents duplicate key violations in the MessageStore and StateIndex
-    // when sync pushes a message that the remote already has.
+    // This prevents duplicate key violations in the MessageStore when sync pushes
+    // a message that the remote already has.
     const incomingCid = await Message.getCid(message);
     for (const existing of existingMessages) {
       if (await Message.getCid(existing) === incomingCid) {
@@ -106,7 +106,6 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       const putResult = await this.deps.messageStore.put(tenant, message, indexes);
       position = putResult.position;
       const messageCid = await Message.getCid(message);
-      await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
 
       // only emit if the event log is set
       if (this.deps.eventLog !== undefined) {
@@ -123,8 +122,6 @@ export class ProtocolsConfigureHandler implements MethodHandler {
 
       const putResult = await this.deps.messageStore.put(tenant, message, indexes);
       position = putResult.position;
-      const messageCid = await Message.getCid(message);
-      await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
 
       messageReply = {
         status: { code: 202, detail: 'Accepted' },
@@ -189,8 +186,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
 
   private async purgeRecordsInvalidatedByProtocolConfig(tenant: string, protocol: string): Promise<void> {
     const dataStore = this.deps.dataStore;
-    const stateIndex = this.deps.stateIndex;
-    if (dataStore === undefined || stateIndex === undefined) {
+    if (dataStore === undefined) {
       return;
     }
 
@@ -232,7 +228,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       // record. Descendants are evaluated independently so valid child records are not
       // destroyed as collateral.
       await StorageController.purgeRecordMessages(
-        tenant, recordMessages, this.deps.messageStore, dataStore, stateIndex
+        tenant, recordMessages, this.deps.messageStore, dataStore
       );
     }
   }

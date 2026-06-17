@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore } from '../../src/index.js';
 
 import sinon from 'sinon';
 
@@ -30,7 +30,6 @@ export function testRecordsCountHandler(): void {
       let messageStore: MessageStore;
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
-      let stateIndex: StateIndex;
       let eventLog: EventLog;
       let dwn: Dwn;
 
@@ -41,17 +40,15 @@ export function testRecordsCountHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        stateIndex = stores.stateIndex;
         eventLog = TestEventLog.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
       });
 
       beforeEach(async () => {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await stateIndex.clear();
       });
 
       afterAll(async () => {

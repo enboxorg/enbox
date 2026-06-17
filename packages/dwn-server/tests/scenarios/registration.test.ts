@@ -41,10 +41,6 @@ describe('Registration scenarios', () => {
     dwnServerConfig.messageStore = 'sqlite://',
     dwnServerConfig.dataStore = 'sqlite://',
     dwnServerConfig.resumableTaskStore = 'sqlite://',
-    dwnServerConfig.stateIndex = 'sqlite://',
-
-    // registration config
-    dwnServerConfig.registrationStoreUrl = 'sqlite://';
     dwnServerConfig.registrationProofOfWorkEnabled = true;
     dwnServerConfig.termsOfServiceFilePath = './tests/fixtures/terms-of-service.txt';
     dwnServerConfig.registrationProofOfWorkInitialMaxHash = '0FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'; // 1 in 16 chance of solving

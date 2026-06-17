@@ -177,7 +177,7 @@ describe('E2E Multi-Agent Sync', () => {
 
   /** Grants from Alice → aliceDevice. */
   let messagesReadGrant: { grant: any; message: any };
-  let messagesSyncGrant: { grant: any; message: any };
+  let messagesQueryGrant: { grant: any; message: any };
   let recordsQueryGrant: { grant: any; message: any };
 
   beforeAll(async () => {
@@ -245,8 +245,8 @@ describe('E2E Multi-Agent Sync', () => {
       scope   : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
     });
 
-    // MessagesSync grant.
-    messagesSyncGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
+    // MessagesQuery grant.
+    messagesQueryGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
       grantor : alice,
       grantee : aliceDevice,
       scope   : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
@@ -287,7 +287,6 @@ describe('E2E Multi-Agent Sync', () => {
 
       // Clear device DWN stores fully — it uses memory stores so keys survive.
       await deviceHarness.dwnDataStore.clear();
-      await deviceHarness.dwnStateIndex.clear();
       await deviceHarness.dwnMessageStore.clear();
       await deviceHarness.dwnResumableTaskStore.clear();
       await deviceHarness.syncStore.clear();
@@ -297,7 +296,7 @@ describe('E2E Multi-Agent Sync', () => {
       // Re-distribute grants to device agent after its store clear.
       // Each grant must be stored on BOTH the device's own tenant (for
       // getPermissionForRequest) AND Alice's tenant (for DWN authorization).
-      for (const g of [messagesReadGrant, messagesSyncGrant, recordsQueryGrant]) {
+      for (const g of [messagesReadGrant, messagesQueryGrant, recordsQueryGrant]) {
         const data = g.grant.message.encodedData;
         const dataBlob = (): Blob => new Blob([Convert.base64Url(data).toUint8Array()]);
         await deviceHarness.agent.processDwnRequest({
@@ -472,7 +471,6 @@ describe('E2E Multi-Agent Sync', () => {
 
       // Clear device DWN stores fully — it uses memory stores so keys survive.
       await deviceHarness.dwnDataStore.clear();
-      await deviceHarness.dwnStateIndex.clear();
       await deviceHarness.dwnMessageStore.clear();
       await deviceHarness.dwnResumableTaskStore.clear();
       await deviceHarness.syncStore.clear();
@@ -482,7 +480,7 @@ describe('E2E Multi-Agent Sync', () => {
       // Re-distribute grants to device agent after its store clear.
       // Each grant must be stored on BOTH the device's own tenant (for
       // getPermissionForRequest) AND Alice's tenant (for DWN authorization).
-      for (const g of [messagesReadGrant, messagesSyncGrant, recordsQueryGrant]) {
+      for (const g of [messagesReadGrant, messagesQueryGrant, recordsQueryGrant]) {
         const data = g.grant.message.encodedData;
         const dataBlob = (): Blob => new Blob([Convert.base64Url(data).toUint8Array()]);
         await deviceHarness.agent.processDwnRequest({

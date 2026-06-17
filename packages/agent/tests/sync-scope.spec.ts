@@ -29,7 +29,6 @@ describe('sync scope identity', () => {
 
   it('uses the durable message-feed projection root version', () => {
     expect(SYNC_PROJECTION_ROOT_VERSION).toBe('replication-log-feed-v1');
-    expect(SYNC_PROJECTION_ROOT_VERSION).not.toContain('state-index');
   });
 
   it('derives full and protocol-set scopes from identity options', () => {

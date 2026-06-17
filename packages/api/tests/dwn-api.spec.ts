@@ -63,7 +63,6 @@ describe('DwnApi', () => {
     sinon.restore();
     await testHarness.syncStore.clear();
     await testHarness.dwnDataStore.clear();
-    await testHarness.dwnStateIndex.clear();
     await testHarness.dwnMessageStore.clear();
     await testHarness.dwnResumableTaskStore.clear();
     await testHarness.agent.permissions.clear();
@@ -115,7 +114,6 @@ describe('DwnApi', () => {
       sinon.restore();
       await delegateHarness.syncStore.clear();
       await delegateHarness.dwnDataStore.clear();
-      await delegateHarness.dwnStateIndex.clear();
       await delegateHarness.dwnMessageStore.clear();
       await delegateHarness.dwnResumableTaskStore.clear();
       await testHarness.agent.permissions.clear();

@@ -4,7 +4,6 @@ import type {
   DataStore,
   MessageStore,
   ResumableTaskStore,
-  StateIndex,
 } from '../../src/index.js';
 
 import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
@@ -12,7 +11,6 @@ import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.jso
 import sinon from 'sinon';
 
 import { DwnInterfaceName } from '../../src/enums/dwn-interface-method.js';
-import { Message } from '../../src/core/message.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -27,7 +25,6 @@ export function testRecordsPrune(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
     let dwn: Dwn;
 
@@ -40,10 +37,9 @@ export function testRecordsPrune(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      stateIndex = stores.stateIndex;
       eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -53,7 +49,6 @@ export function testRecordsPrune(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await stateIndex.clear();
     });
 
     afterAll(async () => {
@@ -159,11 +154,6 @@ export function testRecordsPrune(): void {
       const queryResult = await messageStore.query(alice.did, queryFilter);
       expect(queryResult.messages.length).toBe(8); // 2 foos, 2 bars, 2 bazes x 2 messages each
 
-      // sanity test events are inserted in state index
-      // NOTE: getLeaves returns ALL messageCids (including ProtocolsConfigure), so count is 9 not 8
-      const events = await stateIndex.getLeaves(alice.did, []);
-      expect(events.length).toBe(9);
-
       // sanity test data is inserted in data store
       const bar1DataGetResult = await dataStore.get(alice.did, bar1.message.recordId, bar1.message.descriptor.dataCid);
       const bar2DataGetResult = await dataStore.get(alice.did, bar2.message.recordId, bar2.message.descriptor.dataCid);
@@ -186,15 +176,6 @@ export function testRecordsPrune(): void {
       expect(queryResult2.messages[0]).toEqual(expect.objectContaining(foo1.message));
       expect(queryResult2.messages[1]).toEqual(expect.objectContaining(foo2.message));
       expect(queryResult2.messages[2]).toEqual(expect.objectContaining(foo1Delete.message));
-
-      // verify all bar and baz events are permanently deleted
-      // NOTE: getLeaves returns ALL messageCids (including ProtocolsConfigure), so count is 4 not 3
-      const events2 = await stateIndex.getLeaves(alice.did, []);
-      expect(events2.length).toBe(4);
-      const foo1RecordsWriteCid = await Message.getCid(foo1.message);
-      const foo2RecordsWriteCid = await Message.getCid(foo2.message);
-      const foo2RecordsDeleteCid = await Message.getCid(foo1Delete.message);
-      expect(events2).toEqual(expect.arrayContaining([foo1RecordsWriteCid, foo2RecordsWriteCid, foo2RecordsDeleteCid]));
 
       // verify all bar data are permanently deleted
       const bar1DataGetResult2 = await dataStore.get(alice.did, bar1.message.recordId, bar1.message.descriptor.dataCid);

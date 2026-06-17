@@ -5,7 +5,7 @@ import type { GenerateFromRecordsWriteOut } from '../utils/test-data-generator.j
 import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
 import type { PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { RecordsQueryReplyEntry } from '../../src/types/records-types.js';
-import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
 import anyoneCollaborateProtocolDefinition from '../vectors/protocol-definitions/anyone-collaborate.json' with { type: 'json' };
 import authorCanProtocolDefinition from '../vectors/protocol-definitions/author-can.json' with { type: 'json' };
@@ -57,7 +57,6 @@ export function testRecordsWriteHandler(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
     let dwn: Dwn;
 
@@ -76,11 +75,10 @@ export function testRecordsWriteHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        stateIndex = stores.stateIndex;
         eventLog = TestEventLog.get();
         eventLog = TestEventLog.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -88,7 +86,6 @@ export function testRecordsWriteHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await stateIndex.clear();
       });
 
       afterAll(async () => {
@@ -1082,8 +1079,8 @@ export function testRecordsWriteHandler(): void {
           expect(reply.status.detail).toContain('does not match deterministic contextId');
         });
 
-        describe('state index', () => {
-          it('should add an entry to the state index on initial write', async () => {
+        describe('retained record messages', () => {
+          it('should add an entry to the message store on initial write', async () => {
             const author = await TestDataGenerator.generatePersona();
             TestStubGenerator.stubDidResolver(didResolver, [author]);
             await TestDataGenerator.installDefaultTestProtocol(dwn, author);
@@ -1092,11 +1089,8 @@ export function testRecordsWriteHandler(): void {
             const reply = await dwn.processMessage(author.did, message, { dataStream });
             expect(reply.status.code).toBe(202);
 
-            const events = await stateIndex.getLeaves(author.did, []);
-            expect(events.length).toBe(2); // 1 for protocol configure + 1 for record write
-
             const messageCid = await Message.getCid(message);
-            expect(events).toContain(messageCid);
+            expect(await messageStore.get(author.did, messageCid)).toBeDefined();
           });
 
           it('should only keep first write and latest write when subsequent writes happen', async () => {
@@ -1126,16 +1120,12 @@ export function testRecordsWriteHandler(): void {
             const newestWriteReply = await dwn.processMessage(author.did, newestWrite.message);
             expect(newestWriteReply.status.code).toBe(202);
 
-            const events = await stateIndex.getLeaves(author.did, []);
-            expect(events.length).toBe(3); // 1 for protocol configure + 2 for record writes (first + latest)
-
             const deletedMessageCid = await Message.getCid(newWrite.message);
+            const { messages } = await messageStore.query(author.did, [{ recordId: message.recordId }]);
+            expect(messages.length).toBe(2); // first write + latest write
 
-            for (const messageCid of events) {
-              if (messageCid === deletedMessageCid ) {
-                throw new Error(`${messageCid} should not exist`);
-              }
-            }
+            const retainedCids = await Promise.all(messages.map((storedMessage) => Message.getCid(storedMessage)));
+            expect(retainedCids).not.toContain(deletedMessageCid);
           });
         });
       });
@@ -3156,7 +3146,7 @@ export function testRecordsWriteHandler(): void {
         message.encryption!.iv = Encoder.stringToBase64Url('any value which will result in a different CID');
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
@@ -4542,7 +4532,6 @@ export function testRecordsWriteHandler(): void {
           didResolver,
           messageStore          : messageStoreStub,
           dataStore             : dataStoreStub,
-          stateIndex,
           coreProtocols         : new CoreProtocolRegistry(),
           eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
@@ -4574,7 +4563,6 @@ export function testRecordsWriteHandler(): void {
           didResolver,
           messageStore          : messageStoreStub,
           dataStore             : dataStoreStub,
-          stateIndex,
           coreProtocols         : new CoreProtocolRegistry(),
           eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
@@ -4604,7 +4592,6 @@ export function testRecordsWriteHandler(): void {
           didResolver,
           messageStore          : messageStoreStub,
           dataStore             : dataStoreStub,
-          stateIndex,
           coreProtocols         : new CoreProtocolRegistry(),
           eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
@@ -4631,7 +4618,6 @@ export function testRecordsWriteHandler(): void {
           didResolver,
           messageStore          : messageStoreStub,
           dataStore             : dataStoreStub,
-          stateIndex,
           coreProtocols         : new CoreProtocolRegistry(),
           eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
@@ -4672,7 +4658,6 @@ export function testRecordsWriteHandler(): void {
           didResolver,
           messageStore          : messageStoreStub,
           dataStore             : dataStoreStub,
-          stateIndex,
           coreProtocols         : new CoreProtocolRegistry(),
           eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
@@ -4689,7 +4674,7 @@ export function testRecordsWriteHandler(): void {
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [alice, bob] });
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
@@ -4707,7 +4692,7 @@ export function testRecordsWriteHandler(): void {
         message.attestation = anotherWrite.message.attestation;
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
@@ -4727,7 +4712,7 @@ export function testRecordsWriteHandler(): void {
         message.attestation = attestationNotReferencedByAuthorization;
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
@@ -4757,7 +4742,7 @@ export function testRecordsWriteHandler(): void {
 
         const recordsWriteHandler = new RecordsWriteHandler({
           didResolver           : didResolverStub, messageStore          : messageStoreStub,
-          dataStore             : dataStoreStub, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          dataStore             : dataStoreStub, coreProtocols         : new CoreProtocolRegistry(), eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
 

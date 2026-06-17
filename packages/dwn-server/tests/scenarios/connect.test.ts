@@ -16,19 +16,19 @@ describe('Connect scenarios', () => {
   const dwnServerConfig = { ...config, port: 0 }; // not touching the original config
 
   beforeAll(async () => {
-
     // NOTE: using SQL to workaround an issue where multiple instances of DwnServer cannot be started using LevelDB in the same test run,
     // and dwn-server.spec.ts already uses LevelDB.
-    dwnServerConfig.messageStore = 'sqlite://',
-    dwnServerConfig.dataStore = 'sqlite://',
-    dwnServerConfig.resumableTaskStore = 'sqlite://',
-    dwnServerConfig.stateIndex = 'sqlite://',
+    dwnServerConfig.messageStore = 'sqlite://';
+    dwnServerConfig.dataStore = 'sqlite://';
+    dwnServerConfig.resumableTaskStore = 'sqlite://';
 
     dwnServer = new DwnServer({ config: dwnServerConfig });
   });
 
   afterAll(async () => {
-    await dwnServer.stop();
+    if (dwnServer !== undefined) {
+      await dwnServer.stop();
+    }
   });
 
   beforeEach(async () => {

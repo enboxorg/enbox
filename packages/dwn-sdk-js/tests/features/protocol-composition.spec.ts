@@ -1,7 +1,7 @@
 import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, RecordsCountReply, RecordsReadReply, RecordsSubscribeReply, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, RecordsCountReply, RecordsReadReply, RecordsSubscribeReply, ResumableTaskStore } from '../../src/index.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
 
@@ -32,7 +32,6 @@ export function testProtocolComposition(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
     let dwn: Dwn;
 
@@ -43,10 +42,9 @@ export function testProtocolComposition(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      stateIndex = stores.stateIndex;
       eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -54,7 +52,6 @@ export function testProtocolComposition(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await stateIndex.clear();
     });
 
     afterAll(async () => {

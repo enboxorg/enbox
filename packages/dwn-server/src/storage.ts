@@ -9,7 +9,6 @@ import type {
   MessageStore,
   ReplicationFeedReader,
   ResumableTaskStore,
-  StateIndex,
   TenantGate,
   WakePublisher,
 } from '@enbox/dwn-sdk-js';
@@ -30,7 +29,6 @@ import {
   DurableEventLog,
   MessageStoreLevel,
   ResumableTaskStoreLevel,
-  StateIndexLevel,
 } from '@enbox/dwn-sdk-js';
 import {
   DataStoreSql,
@@ -40,13 +38,11 @@ import {
   ResumableTaskStoreSql,
   runDwnStoreMigrations,
   SqliteDialect,
-  StateIndexSql,
 } from '@enbox/dwn-sql-store';
 
 export enum StoreType {
   DataStore,
   MessageStore,
-  StateIndex,
   ResumableTaskStore,
 }
 
@@ -57,7 +53,7 @@ export enum BackendTypes {
   POSTGRES = 'postgres',
 }
 
-export type DwnStore = DataStore | StateIndex | MessageStore | ResumableTaskStore;
+export type DwnStore = DataStore | MessageStore | ResumableTaskStore;
 
 type GetDwnConfigOptions = {
   didResolver? : DidResolver;
@@ -128,12 +124,11 @@ export async function getDwnConfig(
   await runSqlMigrationsIfNeeded(config);
 
   const dataStore: DataStore = await getStore(config, config.dataStore, StoreType.DataStore);
-  const stateIndex: StateIndex = await getStore(config, config.stateIndex, StoreType.StateIndex);
   const messageStore: MessageStore = await getStore(config, config.messageStore, StoreType.MessageStore, options.eventBus);
   const resumableTaskStore: ResumableTaskStore = await getStore(config, config.resumableTaskStore, StoreType.ResumableTaskStore);
   const eventLog = options.eventLog ?? createDurableEventLog(messageStore, options);
 
-  return { didResolver, eventLog, stateIndex, dataStore, messageStore, resumableTaskStore, tenantGate };
+  return { didResolver, eventLog, dataStore, messageStore, resumableTaskStore, tenantGate };
 }
 
 function createDurableEventLog(messageStore: MessageStore, options: GetDwnConfigOptions): EventLog | undefined {
@@ -303,10 +298,6 @@ function getLevelStore(
         location: storeURI.host + storeURI.pathname + '/MESSAGESTORE',
         wakePublisher,
       });
-    case StoreType.StateIndex:
-      return new StateIndexLevel({
-        location: storeURI.host + storeURI.pathname + '/STATEINDEX',
-      });
     case StoreType.ResumableTaskStore:
       return new ResumableTaskStoreLevel({
         location: storeURI.host + storeURI.pathname + '/RESUMABLE-TASK-STORE',
@@ -329,8 +320,6 @@ function getSqlStore(
       return new DataStoreSql(dialect);
     case StoreType.MessageStore:
       return new MessageStoreSql(dialect, wakePublisher);
-    case StoreType.StateIndex:
-      return new StateIndexSql(dialect);
     case StoreType.ResumableTaskStore:
       return new ResumableTaskStoreSql(dialect);
     default:
@@ -347,7 +336,6 @@ function isFilePath(configString: string): boolean {
 }
 
 async function getStore(config: DwnServerConfig, storeString: string, storeType: StoreType.DataStore): Promise<DataStore>;
-async function getStore(config: DwnServerConfig, storeString: string, storeType: StoreType.StateIndex): Promise<StateIndex>;
 async function getStore(
   config: DwnServerConfig,
   storeString: string,
@@ -394,9 +382,6 @@ async function loadStoreFromFilePath(
   switch (storeType) {
     case StoreType.DataStore:
       store = await PluginLoader.loadPlugin<DataStore>(filePath);
-      break;
-    case StoreType.StateIndex:
-      store = await PluginLoader.loadPlugin<StateIndex>(filePath);
       break;
     case StoreType.MessageStore:
       store = await PluginLoader.loadPlugin<MessageStore>(filePath);

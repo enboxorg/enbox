@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { GenericMessageReply } from '../../src/types/message-types.js';
-import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 import type { RecordsQueryReply, RecordsReadReply } from '../../src/types/records-types.js';
 
 import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
@@ -45,7 +45,6 @@ describe('processMessage parity', () => {
   let messageStore: MessageStore;
   let dataStore: DataStore;
   let resumableTaskStore: ResumableTaskStore;
-  let stateIndex: StateIndex;
   let eventLog: EventLog;
   let dwn: Dwn;
 
@@ -56,16 +55,14 @@ describe('processMessage parity', () => {
     messageStore = stores.messageStore;
     dataStore = stores.dataStore;
     resumableTaskStore = stores.resumableTaskStore;
-    stateIndex = stores.stateIndex;
     eventLog = TestEventLog.get();
 
-    dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+    dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
   });
 
   beforeEach(async () => {
     await messageStore.clear();
     await dataStore.clear();
-    await stateIndex.clear();
     await resumableTaskStore.clear();
   });
 

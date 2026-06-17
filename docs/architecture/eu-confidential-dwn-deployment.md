@@ -358,7 +358,6 @@ DWN stores with a shared connection pool.
 ```bash
 DWN_STORAGE_MESSAGES=postgres://dwn:${PG_PASS}@pg-primary.vrak:5432/dwn
 DWN_STORAGE_DATA=postgres://dwn:${PG_PASS}@pg-primary.vrak:5432/dwn
-DWN_STORAGE_STATE_INDEX=postgres://dwn:${PG_PASS}@pg-primary.vrak:5432/dwn
 DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn:${PG_PASS}@pg-primary.vrak:5432/dwn
 DWN_TTL_CACHE_URL=postgres://dwn:${PG_PASS}@pg-primary.vrak:5432/dwn
 DWN_REGISTRATION_STORE_URL=postgres://dwn:${PG_PASS}@pg-primary.vrak:5432/dwn

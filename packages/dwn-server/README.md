@@ -169,7 +169,6 @@ All configuration is via environment variables:
 | `DWN_STORAGE_MESSAGES`                            | Message store URL (overrides `DWN_STORAGE`)                                                                                    | value of `DWN_STORAGE` |
 | `DWN_STORAGE_DATA`                                | Data store URL (overrides `DWN_STORAGE`)                                                                                       | value of `DWN_STORAGE` |
 | `DWN_STORAGE_RESUMABLE_TASKS`                     | Resumable task store URL                                                                                                       | value of `DWN_STORAGE` |
-| `DWN_STORAGE_STATE_INDEX`                         | State index store URL                                                                                                          | value of `DWN_STORAGE` |
 | `DWN_EVENT_BUS_PLUGIN_PATH`                       | Path to custom EventBus plugin for cross-process durable-log wakes                                                              | unset                  |
 | `DWN_REGISTRATION_STORE_URL`                      | URL for registered DID storage. Unset = open for all                                                                           | unset                  |
 | `DWN_REGISTRATION_PROOF_OF_WORK_ENABLED`          | Require proof-of-work for registration                                                                                         | `false`                |
@@ -189,7 +188,7 @@ All configuration is via environment variables:
 
 ### Plugins
 
-Custom implementations of `DataStore`, `MessageStore`, `ResumableDataStore`, `StateIndex`, or `EventStream` can be loaded by pointing the corresponding env var to the absolute path of a `.js` file. The file must default-export a class with a no-arg constructor.
+Custom implementations of `DataStore`, `MessageStore`, `ResumableTaskStore`, or `EventBus` can be loaded by pointing the corresponding env var to the absolute path of a `.js` file. The file must default-export a class with a no-arg constructor.
 
 ## Hosting Your Own DWN Server
 

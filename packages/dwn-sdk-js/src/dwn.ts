@@ -1,14 +1,12 @@
 import type { CoreProtocol } from './core/core-protocol.js';
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
-import type { KeyValues } from './types/query-types.js';
 import type { MessageStore } from './types/message-store.js';
 import type { ResumableTaskStore } from './types/resumable-task-store.js';
-import type { StateIndex } from './types/state-index.js';
 import type { TenantGate } from './core/tenant-gate.js';
 import type { UnionMessageReply } from './core/message-reply.js';
 import type { ValidationStateReader } from './types/validation-state-reader.js';
-import type { EventLog, MessageEvent, SubscriptionListener } from './types/subscriptions.js';
+import type { EventLog, SubscriptionListener } from './types/subscriptions.js';
 import type { GenericMessage, GenericMessageReply } from './types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from './types/method-handler.js';
 import type {
@@ -19,8 +17,6 @@ import type {
   MessagesSubscribeMessage,
   MessagesSubscribeMessageOptions,
   MessagesSubscribeReply,
-  MessagesSyncMessage,
-  MessagesSyncReply
 } from './types/messages-types.js';
 import type { ProtocolDefinition, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
 import type {
@@ -50,9 +46,7 @@ import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesQueryHandler } from './handlers/messages-query.js';
 import { MessagesReadHandler } from './handlers/messages-read.js';
 import { MessagesSubscribeHandler } from './handlers/messages-subscribe.js';
-import { MessagesSyncHandler } from './handlers/messages-sync.js';
 import { PermissionsProtocol } from './protocols/permissions.js';
-import { ProtocolsConfigure } from './interfaces/protocols-configure.js';
 import { ProtocolsConfigureHandler } from './handlers/protocols-configure.js';
 import { ProtocolsQueryHandler } from './handlers/protocols-query.js';
 import { Records } from './utils/records.js';
@@ -92,7 +86,6 @@ type ReplicationApplyProtocolDefinitionLookup = {
 type DwnStorage = {
   dataStore: DataStore;
   messageStore: MessageStore;
-  stateIndex: StateIndex;
   eventLog: EventLog | undefined;
 };
 
@@ -102,7 +95,6 @@ export class Dwn {
   private readonly messageStore: MessageStore;
   private readonly dataStore: DataStore;
   private readonly resumableTaskStore: ResumableTaskStore;
-  private readonly stateIndex: StateIndex;
   private readonly tenantGate: TenantGate;
   private readonly eventLog?: EventLog;
   private readonly storageController: StorageController;
@@ -120,14 +112,12 @@ export class Dwn {
     this.messageStore = config.messageStore;
     this.dataStore = config.dataStore;
     this.resumableTaskStore = config.resumableTaskStore;
-    this.stateIndex = config.stateIndex;
 
     this.eventLog = config.eventLog;
 
     this.storageController = new StorageController({
       messageStore : this.messageStore,
       dataStore    : this.dataStore,
-      stateIndex   : this.stateIndex,
       eventLog     : this.eventLog
     });
     this.resumableTaskManager = new ResumableTaskManager(
@@ -154,7 +144,6 @@ export class Dwn {
       messageStore          : this.messageStore,
       validationStateReader : this.validationStateReader,
       dataStore             : this.dataStore,
-      stateIndex            : this.stateIndex,
       resumableTaskManager  : this.resumableTaskManager,
       coreProtocols         : this._coreProtocols,
       eventLog              : this.eventLog,
@@ -164,7 +153,6 @@ export class Dwn {
       [DwnInterfaceName.Messages + DwnMethodName.Read]       : new MessagesReadHandler(deps),
       [DwnInterfaceName.Messages + DwnMethodName.Query]      : new MessagesQueryHandler(deps),
       [DwnInterfaceName.Messages + DwnMethodName.Subscribe]  : new MessagesSubscribeHandler(deps),
-      [DwnInterfaceName.Messages + DwnMethodName.Sync]       : new MessagesSyncHandler(deps),
       [DwnInterfaceName.Protocols + DwnMethodName.Configure] : new ProtocolsConfigureHandler(deps),
       [DwnInterfaceName.Protocols + DwnMethodName.Query]     : new ProtocolsQueryHandler(deps),
       [DwnInterfaceName.Records + DwnMethodName.Count]       : new RecordsCountHandler(deps),
@@ -210,7 +198,6 @@ export class Dwn {
     await this.messageStore.open();
     await this.dataStore.open();
     await this.resumableTaskStore.open();
-    await this.stateIndex.open();
     await this.eventLog?.open();
 
     await this.resumableTaskManager.resumeTasksAndWaitForCompletion();
@@ -221,7 +208,6 @@ export class Dwn {
     await this.messageStore.close();
     await this.dataStore.close();
     await this.resumableTaskStore.close();
-    await this.stateIndex.close();
 
     // Close the resolver's cache if the DWN owns it.
     const lifecycleResolver = this.didResolver as Partial<LifecycleResolver>;
@@ -249,7 +235,6 @@ export class Dwn {
     return {
       dataStore    : this.dataStore,
       messageStore : this.messageStore,
-      stateIndex   : this.stateIndex,
       eventLog     : this.eventLog,
     };
   }
@@ -262,7 +247,6 @@ export class Dwn {
     tenant: string, rawMessage: MessagesSubscribeMessage, options?: MessagesSubscribeMessageOptions): Promise<MessagesSubscribeReply>;
   public async processMessage(tenant: string, rawMessage: MessagesReadMessage): Promise<MessagesReadReply>;
   public async processMessage(tenant: string, rawMessage: MessagesQueryMessage): Promise<MessagesQueryReply>;
-  public async processMessage(tenant: string, rawMessage: MessagesSyncMessage): Promise<MessagesSyncReply>;
   public async processMessage(tenant: string, rawMessage: ProtocolsConfigureMessage): Promise<GenericMessageReply>;
   public async processMessage(tenant: string, rawMessage: ProtocolsQueryMessage): Promise<ProtocolsQueryReply>;
   public async processMessage(tenant: string, rawMessage: RecordsCountMessage): Promise<RecordsCountReply>;
@@ -314,7 +298,7 @@ export class Dwn {
       return { kind: 'Invalid', reason: integrityError.status.detail };
     }
 
-    if (await this.replicatedMessageAlreadyStored(tenant, rawMessage, options)) {
+    if (await this.replicatedMessageAlreadyStored(tenant, rawMessage)) {
       return { kind: 'Duplicate' };
     }
 
@@ -377,10 +361,8 @@ export class Dwn {
     const recordsWrite = await RecordsWrite.parse(message);
     const storedWriteMessage: RecordsWriteMessage & { encodedData?: string } = { ...message };
     delete storedWriteMessage.encodedData;
-    const recordsWriteCid = await Message.getCid(storedWriteMessage);
     const recordsWriteIndexes = await recordsWrite.constructIndexes(false);
     await this.messageStore.put(tenant, storedWriteMessage, recordsWriteIndexes);
-    await this.stateIndex.insert(tenant, recordsWriteCid, recordsWriteIndexes);
 
     const recordsDelete = await RecordsDelete.parse(existingDelete);
     const visibilitySourceWrite = await Records.getNewestRecordsWrite([...existingMessages, storedWriteMessage]) ?? initialWrite;
@@ -563,7 +545,6 @@ export class Dwn {
   private async replicatedMessageAlreadyStored(
     tenant: string,
     message: GenericMessage,
-    options: ReplicationApplyOptions,
   ): Promise<boolean> {
     const existingMessages = await this.getExistingMessagesForReplicationDedup(tenant, message);
     if (existingMessages.length === 0) {
@@ -576,11 +557,6 @@ export class Dwn {
         continue;
       }
 
-      if (options.dataStream !== undefined && await this.existingReplicatedWriteIsDatalessInitial(tenant, existing, message)) {
-        return false;
-      }
-
-      await this.repairReplicationIndexesForDuplicate(tenant, message, existingMessages, incomingCid);
       return true;
     }
 
@@ -633,174 +609,6 @@ export class Dwn {
     }
 
     return [];
-  }
-
-  private async existingReplicatedWriteIsDatalessInitial(
-    tenant: string,
-    existing: GenericMessage,
-    incoming: GenericMessage,
-  ): Promise<boolean> {
-    if (
-      incoming.descriptor.interface !== DwnInterfaceName.Records ||
-      incoming.descriptor.method !== DwnMethodName.Write ||
-      existing.descriptor.interface !== DwnInterfaceName.Records ||
-      existing.descriptor.method !== DwnMethodName.Write
-    ) {
-      return false;
-    }
-
-    const existingWrite = existing as RecordsWriteMessage & { encodedData?: string };
-    if (!await RecordsWrite.isInitialWrite(existingWrite)) {
-      return false;
-    }
-
-    if (existingWrite.encodedData !== undefined) {
-      return false;
-    }
-
-    const storedData = await this.dataStore.get(tenant, existingWrite.recordId, existingWrite.descriptor.dataCid);
-    return storedData === undefined;
-  }
-
-  private async repairReplicationIndexesForDuplicate(
-    tenant: string,
-    message: GenericMessage,
-    existingMessages: GenericMessage[],
-    messageCid: string,
-  ): Promise<void> {
-    const leaves = await this.stateIndex.getLeaves(tenant, []);
-    const stateIndexHasMessage = leaves.includes(messageCid);
-    if (stateIndexHasMessage && this.eventLog === undefined) {
-      return;
-    }
-
-    const repair = await this.constructReplicationIndexRepair(tenant, message, existingMessages);
-    if (repair === undefined) {
-      return;
-    }
-
-    if (!stateIndexHasMessage) {
-      await this.stateIndex.insert(tenant, messageCid, repair.indexes);
-    }
-    if (repair.emitEvent && !await this.eventLogHasMessage(tenant, messageCid, repair.indexes)) {
-      await this.eventLog?.emit(tenant, repair.event, repair.indexes, messageCid);
-    }
-  }
-
-  private async eventLogHasMessage(tenant: string, messageCid: string, indexes: KeyValues): Promise<boolean> {
-    if (this.eventLog === undefined) {
-      return true;
-    }
-
-    const { events } = await this.eventLog.read(tenant, { filters: [indexes] });
-    for (const event of events) {
-      if (event.messageCid === messageCid || await Message.getCid(event.event.message) === messageCid) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private async constructReplicationIndexRepair(
-    tenant: string,
-    message: GenericMessage,
-    existingMessages: GenericMessage[],
-  ): Promise<{ indexes: KeyValues; event: MessageEvent; emitEvent: boolean } | undefined> {
-    const { descriptor } = message;
-
-    if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Write) {
-      const isLatest = await Records.getNewestRecordsDelete(existingMessages) === undefined &&
-        await Dwn.isNewestStoredMessage(message, existingMessages);
-      const eventMessage = await Dwn.getStoredMessageForCid(existingMessages, await Message.getCid(message)) ?? message;
-      const recordsWrite = await RecordsWrite.parse(eventMessage as RecordsWriteMessage);
-      const indexes = await recordsWrite.constructIndexes(isLatest);
-      const initialWrite = await this.getInitialWriteForReplicationEvent(tenant, eventMessage as RecordsWriteMessage);
-      return {
-        indexes,
-        event     : { message: eventMessage, initialWrite },
-        emitEvent : isLatest && Dwn.replicatedWriteHasQueryableData(eventMessage),
-      };
-    }
-
-    if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Delete) {
-      const initialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(
-        this.messageStore,
-        tenant,
-        (message as RecordsDeleteMessage).descriptor.recordId,
-      );
-      if (initialWrite === undefined) {
-        return undefined;
-      }
-
-      const recordsDelete = await RecordsDelete.parse(message as RecordsDeleteMessage);
-      const isLatest = await Dwn.isNewestStoredMessage(message, existingMessages);
-
-      // the duplicate delete is already stored, so the tombstone's mutable `tag.*`/`published`/
-      // `datePublished` visibility facts come from the newest retained RecordsWrite among the
-      // OTHER stored messages for the record, falling back to the initial write.
-      const deleteCid = await Message.getCid(message);
-      const preDeleteMessages: GenericMessage[] = [];
-      for (const existingMessage of existingMessages) {
-        if (await Message.getCid(existingMessage) !== deleteCid) {
-          preDeleteMessages.push(existingMessage);
-        }
-      }
-      const newestPreDeleteWrite = await Records.getNewestRecordsWrite(preDeleteMessages) ?? initialWrite;
-
-      return {
-        indexes   : recordsDelete.constructIndexes(initialWrite, newestPreDeleteWrite),
-        event     : { message, initialWrite },
-        emitEvent : isLatest,
-      };
-    }
-
-    if (descriptor.interface === DwnInterfaceName.Protocols && descriptor.method === DwnMethodName.Configure) {
-      const protocolsConfigure = await ProtocolsConfigure.parse(message as ProtocolsConfigureMessage);
-      const isLatest = await Dwn.isNewestStoredMessage(message, existingMessages);
-      return {
-        indexes   : ProtocolsConfigureHandler.constructIndexes(protocolsConfigure, isLatest),
-        event     : { message },
-        emitEvent : isLatest,
-      };
-    }
-
-    return undefined;
-  }
-
-  private static async isNewestStoredMessage(
-    message: GenericMessage,
-    existingMessages: GenericMessage[],
-  ): Promise<boolean> {
-    const newestMessage = await Message.getNewestMessage(existingMessages);
-    return newestMessage !== undefined && await Message.getCid(newestMessage) === await Message.getCid(message);
-  }
-
-  private static async getStoredMessageForCid(existingMessages: GenericMessage[], messageCid: string): Promise<GenericMessage | undefined> {
-    for (const existingMessage of existingMessages) {
-      if (await Message.getCid(existingMessage) === messageCid) {
-        return existingMessage;
-      }
-    }
-  }
-
-  private async getInitialWriteForReplicationEvent(
-    tenant: string,
-    message: RecordsWriteMessage,
-  ): Promise<RecordsWriteMessage | undefined> {
-    if (await RecordsWrite.isInitialWrite(message)) {
-      return message;
-    }
-
-    return RecordsWrite.fetchInitialRecordsWriteMessage(this.messageStore, tenant, message.recordId);
-  }
-
-  private static replicatedWriteHasQueryableData(message: GenericMessage): boolean {
-    if (message.descriptor.interface !== DwnInterfaceName.Records || message.descriptor.method !== DwnMethodName.Write) {
-      return false;
-    }
-
-    return (message as { encodedData?: unknown }).encodedData !== undefined ||
-      (message as RecordsWriteMessage).descriptor.dateCreated !== (message as RecordsWriteMessage).descriptor.messageTimestamp;
   }
 
   /**
@@ -887,6 +695,5 @@ export type DwnConfig = {
 
   messageStore: MessageStore;
   dataStore: DataStore;
-  stateIndex: StateIndex;
   resumableTaskStore: ResumableTaskStore;
 };

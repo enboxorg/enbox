@@ -90,7 +90,7 @@ export type ProtocolPermissionScope = {
  * Permission scope for the Messages interface.
  *
  * `Read` is the only valid method and acts as a unified scope that authorizes
- * `MessagesRead`, `MessagesSubscribe`, and `MessagesSync` operations.
+ * `MessagesRead`, `MessagesQuery`, and `MessagesSubscribe` operations.
  */
 export type MessagesPermissionScope = {
   interface: DwnInterfaceName.Messages;

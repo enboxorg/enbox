@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
-import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
 import sinon from 'sinon';
 
@@ -24,7 +24,6 @@ export function testProtocolCreateAction(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
     let dwn: Dwn;
 
@@ -37,10 +36,9 @@ export function testProtocolCreateAction(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      stateIndex = stores.stateIndex;
       eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -50,7 +48,6 @@ export function testProtocolCreateAction(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await stateIndex.clear();
     });
 
     afterAll(async () => {

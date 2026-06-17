@@ -2,7 +2,7 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../src/types/subscriptions.js';
 import type { Persona } from './utils/test-data-generator.js';
 import type { ActiveTenantCheckResult, TenantGate } from '../src/index.js';
-import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../src/index.js';
+import type { DataStore, MessageStore, ResumableTaskStore } from '../src/index.js';
 import type { ProtocolDefinition, ReplicationApplyResult } from '../src/index.js';
 
 import sinon from 'sinon';
@@ -27,7 +27,6 @@ import {
   RecordsRead,
   RecordsWrite,
   ResumableTaskStoreLevel,
-  StateIndexLevel,
   Time
 } from '../src/index.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from './utils/test-data-generator.js';
@@ -39,7 +38,6 @@ export function testDwnClass(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
     let dwn: Dwn;
 
@@ -52,11 +50,10 @@ export function testDwnClass(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      stateIndex = stores.stateIndex;
 
       eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -128,7 +125,6 @@ export function testDwnClass(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
         const resumableTaskStoreStub = sinon.createStubInstance(ResumableTaskStoreLevel);
-        const stateIndexStub = sinon.createStubInstance(StateIndexLevel);
         const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
 
         const dwnWithConfig = await Dwn.create({
@@ -136,7 +132,6 @@ export function testDwnClass(): void {
           messageStore       : messageStoreStub,
           dataStore          : dataStoreStub,
           resumableTaskStore : resumableTaskStoreStub,
-          stateIndex         : stateIndexStub,
           eventLog           : eventLogStub
         });
 
@@ -161,7 +156,6 @@ export function testDwnClass(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
         const resumableTaskStoreStub = sinon.createStubInstance(ResumableTaskStoreLevel);
-        const stateIndexStub = sinon.createStubInstance(StateIndexLevel);
         const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
 
         const dwnWithConfig = await Dwn.create({
@@ -169,7 +163,6 @@ export function testDwnClass(): void {
           messageStore       : messageStoreStub,
           dataStore          : dataStoreStub,
           resumableTaskStore : resumableTaskStoreStub,
-          stateIndex         : stateIndexStub,
           eventLog           : eventLogStub
         });
 
@@ -185,7 +178,7 @@ export function testDwnClass(): void {
     });
 
     describe('applyReplicatedMessage()', () => {
-      it('returns Duplicate and repairs the state index for an exact replay already in the message store', async () => {
+      it('returns Duplicate for an exact replay already in the message store', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -193,36 +186,9 @@ export function testDwnClass(): void {
         const initialReply = await dwn.processMessage(alice.did, message, { dataStream });
         expect(initialReply.status.code).toBe(202);
 
-        const messageCid = await Message.getCid(message);
-        await stateIndex.delete(alice.did, [messageCid]);
-        expect(await stateIndex.getLeaves(alice.did, [])).not.toContain(messageCid);
-
         const result = await dwn.applyReplicatedMessage(alice.did, message);
 
         expect(result).toEqual({ kind: 'Duplicate' });
-        expect(await stateIndex.getLeaves(alice.did, [])).toContain(messageCid);
-      });
-
-      it('returns Duplicate and repairs the event log for an exact replay already in the message store and state index', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-        const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
-
-        const initialReply = await dwn.processMessage(alice.did, message, { dataStream });
-        expect(initialReply.status.code).toBe(202);
-
-        const messageCid = await Message.getCid(message);
-        expect(await stateIndex.getLeaves(alice.did, [])).toContain(messageCid);
-
-        await eventLog.close();
-        await eventLog.open();
-        expect((await eventLog.read(alice.did)).events).toEqual([]);
-
-        const result = await dwn.applyReplicatedMessage(alice.did, message);
-
-        expect(result).toEqual({ kind: 'Duplicate' });
-        const { events } = await eventLog.read(alice.did);
-        expect(events.map(event => event.messageCid)).toContain(messageCid);
       });
 
       it('returns resolved cross-protocol role dependencies for replicated role-authorized queries', async () => {
@@ -445,13 +411,11 @@ export function testDwnClass(): void {
           location: 'TEST-MESSAGESTORE-DELETEWINS',
         });
         const dataStoreB = new DataStoreLevel({ blockstoreLocation: 'TEST-DATASTORE-DELETEWINS' });
-        const stateIndexB = new StateIndexLevel({ location: 'TEST-STATEINDEX-DELETEWINS' });
         const resumableTaskStoreB = new ResumableTaskStoreLevel({ location: 'TEST-RESUMABLE-TASK-STORE-DELETEWINS' });
         const dwnB = await Dwn.create({
           didResolver,
           messageStore       : messageStoreB,
           dataStore          : dataStoreB,
-          stateIndex         : stateIndexB,
           eventLog           : new EventEmitterEventLog(),
           resumableTaskStore : resumableTaskStoreB,
         });
@@ -459,7 +423,6 @@ export function testDwnClass(): void {
         try {
           await messageStoreB.clear();
           await dataStoreB.clear();
-          await stateIndexB.clear();
           await resumableTaskStoreB.clear();
 
           expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
@@ -471,7 +434,7 @@ export function testDwnClass(): void {
             alice.did, update.message, { dataStream: DataStream.fromBytes(updateDataBytes) },
           )).toEqual({ kind: 'Superseded' });
 
-          // both replicas read the record as deleted, retain the update-derived tombstone visibility, and report identical state roots
+          // both replicas read the record as deleted and retain the update-derived tombstone visibility
           const readA = await RecordsRead.create({
             signer : Jws.createSigner(alice),
             filter : { recordId: initialWrite.message.recordId },
@@ -495,8 +458,6 @@ export function testDwnClass(): void {
           expect(tombstonesB.length).toBe(1);
           expect(await Message.getCid(tombstonesA[0])).toBe(await Message.getCid(recordsDelete.message));
           expect(await Message.getCid(tombstonesB[0])).toBe(await Message.getCid(recordsDelete.message));
-
-          expect(await stateIndexB.getRoot(alice.did)).toEqual(await stateIndex.getRoot(alice.did));
         } finally {
           await dwnB.close();
         }
@@ -660,7 +621,7 @@ export function testDwnClass(): void {
 
         // replaying the beaten delete through the task path must be a no-op — the same lattice
         // gate as admission — leaving the canonical tombstone as the record's newest message
-        const storageController = new StorageController({ messageStore, dataStore, stateIndex, eventLog });
+        const storageController = new StorageController({ messageStore, dataStore, eventLog });
         await storageController.performRecordsDelete({ tenant: alice.did, message: staleDelete.message });
 
         const tombstoneCid = await Message.getCid(recordsDelete.message);
@@ -702,13 +663,11 @@ export function testDwnClass(): void {
           location: 'TEST-MESSAGESTORE-DELETEWINS',
         });
         const dataStoreB = new DataStoreLevel({ blockstoreLocation: 'TEST-DATASTORE-DELETEWINS' });
-        const stateIndexB = new StateIndexLevel({ location: 'TEST-STATEINDEX-DELETEWINS' });
         const resumableTaskStoreB = new ResumableTaskStoreLevel({ location: 'TEST-RESUMABLE-TASK-STORE-DELETEWINS' });
         const dwnB = await Dwn.create({
           didResolver,
           messageStore       : messageStoreB,
           dataStore          : dataStoreB,
-          stateIndex         : stateIndexB,
           eventLog           : new EventEmitterEventLog(),
           resumableTaskStore : resumableTaskStoreB,
         });
@@ -716,7 +675,6 @@ export function testDwnClass(): void {
         try {
           await messageStoreB.clear();
           await dataStoreB.clear();
-          await stateIndexB.clear();
           await resumableTaskStoreB.clear();
 
           expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
@@ -726,14 +684,13 @@ export function testDwnClass(): void {
           expect(await dwnB.applyReplicatedMessage(alice.did, d2.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
           expect(await dwnB.applyReplicatedMessage(alice.did, d1.message)).toEqual({ kind: 'Superseded' });
 
-          // both replicas hold d2 as the canonical tombstone and identical state roots
+          // both replicas hold d2 as the canonical tombstone
           const d1Cid = await Message.getCid(d1.message);
           const d2Cid = await Message.getCid(d2.message);
           expect(await messageStore.get(alice.did, d2Cid)).toBeDefined();
           expect(await messageStore.get(alice.did, d1Cid)).toBeUndefined();
           expect(await messageStoreB.get(alice.did, d2Cid)).toBeDefined();
           expect(await messageStoreB.get(alice.did, d1Cid)).toBeUndefined();
-          expect(await stateIndexB.getRoot(alice.did)).toEqual(await stateIndex.getRoot(alice.did));
         } finally {
           await dwnB.close();
         }
@@ -791,13 +748,11 @@ export function testDwnClass(): void {
           location: 'TEST-MESSAGESTORE-DELETEWINS',
         });
         const dataStoreB = new DataStoreLevel({ blockstoreLocation: 'TEST-DATASTORE-DELETEWINS' });
-        const stateIndexB = new StateIndexLevel({ location: 'TEST-STATEINDEX-DELETEWINS' });
         const resumableTaskStoreB = new ResumableTaskStoreLevel({ location: 'TEST-RESUMABLE-TASK-STORE-DELETEWINS' });
         const dwnB = await Dwn.create({
           didResolver,
           messageStore       : messageStoreB,
           dataStore          : dataStoreB,
-          stateIndex         : stateIndexB,
           eventLog           : new EventEmitterEventLog(),
           resumableTaskStore : resumableTaskStoreB,
         });
@@ -805,7 +760,6 @@ export function testDwnClass(): void {
         try {
           await messageStoreB.clear();
           await dataStoreB.clear();
-          await stateIndexB.clear();
           await resumableTaskStoreB.clear();
 
           expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
@@ -818,11 +772,10 @@ export function testDwnClass(): void {
           expect(await dwnB.applyReplicatedMessage(alice.did, plainDelete.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
           expect(await dwnB.applyReplicatedMessage(alice.did, prune.message)).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
-          // the child is purged on both replicas and the state roots agree
+          // the child is purged on both replicas
           const barCid = await Message.getCid(bar.message);
           expect(await messageStore.get(alice.did, barCid)).toBeUndefined();
           expect(await messageStoreB.get(alice.did, barCid)).toBeUndefined();
-          expect(await stateIndexB.getRoot(alice.did)).toEqual(await stateIndex.getRoot(alice.did));
         } finally {
           await dwnB.close();
         }

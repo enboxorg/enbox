@@ -121,7 +121,7 @@ Published / primary packages live under `packages/`. Root `package.json` lists a
 | `@enbox/crypto` | Cryptographic primitives and JWE |
 | `@enbox/dids` | DID creation, resolution, `did:dht` (Pkarr gateway required for tests) |
 | `@enbox/dwn-sdk-js` | DWN protocol implementation (style reference for TS/ESLint) |
-| `@enbox/dwn-sql-store` | SQL MessageStore/DataStore/StateIndex + **DWN** Kysely migrations |
+| `@enbox/dwn-sql-store` | SQL MessageStore/DataStore + **DWN** Kysely migrations |
 | `@enbox/dwn-clients` | DWN JSON-RPC / client transport |
 | `@enbox/dwn-server` | Runnable DWN server; **server** Kysely migrations separate from DWN store migrations |
 | `@enbox/agent` | `EnboxUserAgent`, vault, DWN data stores, sync |

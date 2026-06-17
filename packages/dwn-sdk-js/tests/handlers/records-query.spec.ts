@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, EventLog, GenericMessage, MessageStore, ProtocolDefinition, RecordsWriteMessage, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, EventLog, GenericMessage, MessageStore, ProtocolDefinition, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
 import type { RecordsQueryReply, RecordsQueryReplyEntry, RecordsWriteDescriptor } from '../../src/types/records-types.js';
 
 import sinon from 'sinon';
@@ -45,7 +45,6 @@ export function testRecordsQueryHandler(): void {
       let messageStore: MessageStore;
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
-      let stateIndex: StateIndex;
       let eventLog: EventLog;
       let dwn: Dwn;
 
@@ -58,11 +57,10 @@ export function testRecordsQueryHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        stateIndex = stores.stateIndex;
         eventLog = TestEventLog.get();
         eventLog = TestEventLog.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -70,7 +68,6 @@ export function testRecordsQueryHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await stateIndex.clear();
       });
 
       afterAll(async () => {
@@ -2417,7 +2414,7 @@ export function testRecordsQueryHandler(): void {
         ];
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, stateIndex, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
 
@@ -2426,7 +2423,6 @@ export function testRecordsQueryHandler(): void {
           const indexes = await recordsWrite.constructIndexes(true);
           const processedMessage = await recordsWriteHandler.cloneAndAddEncodedData(message, dataBytes!);
           await messageStore.put(alice.did, processedMessage, indexes);
-          await stateIndex.insert(alice.did, await Message.getCid(processedMessage), indexes);
           messages.push(processedMessage);
         }
 

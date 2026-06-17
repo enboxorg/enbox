@@ -224,7 +224,7 @@ describe('topologicalSort', () => {
       message: makeAuthorizedMessage(
         {
           interface          : DwnInterfaceName.Messages,
-          method             : DwnMethodName.Sync,
+          method             : DwnMethodName.Query,
           permissionGrantIds : ['grant-rec-id'],
         },
         { permissionGrantIds: ['grant-rec-id'] },

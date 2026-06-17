@@ -29,7 +29,6 @@ import {
   Protocols,
   Records,
   ResumableTaskStoreLevel,
-  StateIndexLevel,
 } from '@enbox/dwn-sdk-js';
 import { Convert, TtlCache } from '@enbox/common';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
@@ -476,7 +475,7 @@ export class AgentDwnApi {
   }
 
   public static async createDwn({
-    dataPath, dataStore, didResolver, stateIndex, eventLog, messageStore, tenantGate, resumableTaskStore
+    dataPath, dataStore, didResolver, eventLog, messageStore, tenantGate, resumableTaskStore
   }: DwnApiCreateDwnParams): Promise<Dwn> {
     dataStore ??= new DataStoreLevel({ blockstoreLocation: `${dataPath}/DWN_DATASTORE` });
 
@@ -484,8 +483,6 @@ export class AgentDwnApi {
       didResolvers : [DidDht, DidJwk],
       cache        : new DidResolverCacheLevel({ location: `${dataPath}/DID_RESOLVERCACHE` }),
     });
-
-    stateIndex ??= new StateIndexLevel({ location: `${dataPath}/DWN_STATEINDEX` });
 
     messageStore ??= new MessageStoreLevel(({
       location: `${dataPath}/DWN_MESSAGESTORE`
@@ -495,7 +492,7 @@ export class AgentDwnApi {
 
     eventLog ??= new EventEmitterEventLog();
 
-    return await Dwn.create({ dataStore, didResolver, stateIndex, eventLog, messageStore, tenantGate, resumableTaskStore });
+    return await Dwn.create({ dataStore, didResolver, eventLog, messageStore, tenantGate, resumableTaskStore });
   }
 
   public async processRequest<T extends DwnInterface>(

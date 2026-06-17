@@ -5,7 +5,6 @@ import type {
   MessagesReadReply,
   MessageStore,
   ResumableTaskStore,
-  StateIndex,
 } from '../../src/index.js';
 
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
@@ -27,7 +26,6 @@ export function testMessagesReadHandler(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
 
     // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -39,10 +37,9 @@ export function testMessagesReadHandler(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      stateIndex = stores.stateIndex;
       eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -50,7 +47,6 @@ export function testMessagesReadHandler(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await stateIndex.clear();
 
       sinon.restore(); // wipe all previous stubs/spies/mocks/fakes
     });

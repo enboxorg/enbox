@@ -51,7 +51,6 @@ describe('RecordsWrite', () => {
         messageStore          : messageStoreStub,
         validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub }),
         dataStore             : {} as any,
-        stateIndex            : {} as any,
       });
       await (handler as any).authorizeRecordsWrite(alice.did, recordsWrite);
     });

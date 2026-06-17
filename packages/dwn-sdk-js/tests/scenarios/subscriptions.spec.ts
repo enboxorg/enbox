@@ -5,7 +5,6 @@ import type {
   EventLog,
   MessageStore,
   ResumableTaskStore,
-  StateIndex,
 } from '../../src/index.js';
 
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
@@ -35,7 +34,6 @@ export function testSubscriptionScenarios(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
     let dwn: Dwn;
     // important to follow the `beforeAll` and `afterAll` pattern to initialize and clean the stores in tests
@@ -47,10 +45,9 @@ export function testSubscriptionScenarios(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      stateIndex = stores.stateIndex;
       eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -58,7 +55,6 @@ export function testSubscriptionScenarios(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await stateIndex.clear();
     });
 
     afterAll(async () => {

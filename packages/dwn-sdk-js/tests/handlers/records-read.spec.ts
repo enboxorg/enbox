@@ -2,7 +2,7 @@ import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EncryptionInput } from '../../src/interfaces/records-write.js';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ProtocolsConfigureMessage, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ProtocolsConfigureMessage, ResumableTaskStore } from '../../src/index.js';
 
 import chatProtocolDefinition from '../vectors/protocol-definitions/chat.json' with { type: 'json' };
 import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
@@ -38,7 +38,6 @@ export function testRecordsReadHandler(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
     let dwn: Dwn;
 
@@ -57,10 +56,9 @@ export function testRecordsReadHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        stateIndex = stores.stateIndex;
         eventLog = TestEventLog.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -68,7 +66,6 @@ export function testRecordsReadHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await stateIndex.clear();
       });
 
       afterAll(async () => {

@@ -10,7 +10,6 @@ import {
   MessageStoreSql,
   ResumableTaskStoreSql,
   runDwnStoreMigrations,
-  StateIndexSql,
 } from '@enbox/dwn-sql-store';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { Dwn, TestDataGenerator } from '@enbox/dwn-sdk-js';
@@ -55,7 +54,6 @@ describe('AdminStore', () => {
 
     const dataStore = new DataStoreSql(sharedDialect);
     const messageStore = new MessageStoreSql(sharedDialect);
-    const stateIndex = new StateIndexSql(sharedDialect);
     const resumableTaskStore = new ResumableTaskStoreSql(sharedDialect);
 
     const didResolver = new UniversalResolver({ didResolvers: [DidKey] });
@@ -63,7 +61,6 @@ describe('AdminStore', () => {
     dwn = await Dwn.create({
       dataStore,
       messageStore,
-      stateIndex,
       resumableTaskStore,
       didResolver,
     });

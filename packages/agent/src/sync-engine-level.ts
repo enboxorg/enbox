@@ -730,6 +730,20 @@ export class SyncEngineLevel implements SyncEngine {
     return this._db.sublevel('deferredPulls') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
   }
 
+  private async clearSyncDb(): Promise<void> {
+    const sublevelNames = [
+      'deadLetters',
+      'deferredPulls',
+      'registeredIdentities',
+      'replicationLinks',
+    ];
+
+    for (const sublevelName of sublevelNames) {
+      await this._db.sublevel(sublevelName).clear();
+    }
+    await this._db.clear();
+  }
+
   /**
    * Retrieves the `EnboxPlatformAgent` execution context.
    *
@@ -811,7 +825,7 @@ export class SyncEngineLevel implements SyncEngine {
     await this.teardownLiveSync();
     this._syncMode = undefined;
     await this._permissionsApi.clear();
-    await this._db.clear();
+    await this.clearSyncDb();
   }
 
   public async close(): Promise<void> {

@@ -17,7 +17,6 @@ function testConfig(overrides: Partial<DwnServerConfig> = {}): DwnServerConfig {
     ...config,
     messageStore       : 'sqlite://',
     dataStore          : 'sqlite://',
-    stateIndex         : 'sqlite://',
     resumableTaskStore : 'sqlite://',
     ...overrides,
   };
@@ -61,7 +60,6 @@ describe('storage — coverage', () => {
       const cfg = testConfig({
         dataStore          : 'sqlite://',
         messageStore       : 'sqlite://',
-        stateIndex         : 'sqlite://',
         resumableTaskStore : 'sqlite://',
       });
 
@@ -69,7 +67,6 @@ describe('storage — coverage', () => {
 
       expect(dwnConfig.dataStore).toBeDefined();
       expect(dwnConfig.messageStore).toBeDefined();
-      expect(dwnConfig.stateIndex).toBeDefined();
       expect(dwnConfig.resumableTaskStore).toBeDefined();
     });
 
@@ -77,7 +74,6 @@ describe('storage — coverage', () => {
       const cfg = testConfig({
         dataStore          : 'level://test-data-store',
         messageStore       : 'level://test-message-store',
-        stateIndex         : 'level://test-state-index',
         resumableTaskStore : 'level://test-task-store',
       });
 
@@ -85,7 +81,6 @@ describe('storage — coverage', () => {
 
       expect(dwnConfig.dataStore).toBeDefined();
       expect(dwnConfig.messageStore).toBeDefined();
-      expect(dwnConfig.stateIndex).toBeDefined();
       expect(dwnConfig.resumableTaskStore).toBeDefined();
     });
 
@@ -93,7 +88,6 @@ describe('storage — coverage', () => {
       const cfg = testConfig({
         dataStore          : 'redis://localhost:6379',
         messageStore       : 'sqlite://',
-        stateIndex         : 'sqlite://',
         resumableTaskStore : 'sqlite://',
       });
 
@@ -118,7 +112,6 @@ describe('storage — coverage', () => {
       const cfg = testConfig({
         dataStore          : 'level://migration-skip-data',
         messageStore       : 'level://migration-skip-msg',
-        stateIndex         : 'level://migration-skip-state',
         resumableTaskStore : 'level://migration-skip-task',
       });
 
@@ -195,7 +188,6 @@ describe('storage — coverage', () => {
       const cfg = testConfig({
         dataStore          : 'redis://localhost',
         messageStore       : 'sqlite://',
-        stateIndex         : 'sqlite://',
         resumableTaskStore : 'sqlite://',
       });
 

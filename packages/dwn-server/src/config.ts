@@ -68,7 +68,6 @@ export const config = {
   // where to store persistent data
   messageStore       : process.env.DWN_STORAGE_MESSAGES || process.env.DWN_STORAGE || 'level://data',
   dataStore          : process.env.DWN_STORAGE_DATA || process.env.DWN_STORAGE || 'level://data',
-  stateIndex         : process.env.DWN_STORAGE_STATE_INDEX || process.env.DWN_STORAGE || 'level://data',
   resumableTaskStore : process.env.DWN_STORAGE_RESUMABLE_TASKS || process.env.DWN_STORAGE || 'level://data',
 
   /**

@@ -4,7 +4,7 @@ import type { Jwk } from '@enbox/crypto';
 import { Convert } from '@enbox/common';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { DidDht, DidJwk } from '@enbox/dids';
-import { Encoder, Message, PrivateKeySigner, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { Encoder, PrivateKeySigner, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
@@ -274,10 +274,9 @@ describe('KeyStore', () => {
           signer,
           data         : keyBytes,
         });
-        const { messageStore, stateIndex } = testHarness.agent.dwn.node.storage;
+        const { messageStore } = testHarness.agent.dwn.node.storage;
         const indexes = await recordsWrite.constructIndexes(true);
         await messageStore.put(tenant, recordsWrite.message, indexes);
-        await stateIndex.insert(tenant, await Message.getCid(recordsWrite.message), indexes);
 
         try {
           await keyStore.list({ agent: testHarness.agent });
@@ -725,13 +724,12 @@ describe('KeyStore', () => {
           signer,
           data         : legacyBytes,
         });
-        const { messageStore, stateIndex } = testHarness.agent.dwn.node.storage;
+        const { messageStore } = testHarness.agent.dwn.node.storage;
         const legacyIndexes = await legacyWrite.constructIndexes(true);
         // Inline encodedData so the record is returned with data in query results.
         const legacyMessage = legacyWrite.message as any;
         legacyMessage.encodedData = Encoder.bytesToBase64Url(legacyBytes);
         await messageStore.put(tenant, legacyMessage, legacyIndexes);
-        await stateIndex.insert(tenant, await Message.getCid(legacyWrite.message), legacyIndexes);
 
         // Step 2: Write an encrypted record through the store API.
         const encryptedKeyUri = await testHarness.agent.keyManager.generateKey({

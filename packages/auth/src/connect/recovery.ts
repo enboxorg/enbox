@@ -89,8 +89,8 @@ export async function recoverIdentitiesFromRemote(params: {
 
   // Register each recovered identity DID as a DWN tenant. Register for sync
   // only when the application supplied an explicit identity protocol scope.
-  // Tenant registration must come first — sync('pull') issues
-  // MessagesSync which requires the DID to be a recognised tenant.
+  // Tenant registration must come first — sync('pull') reads the durable
+  // MessagesQuery feed, which requires the DID to be a recognised tenant.
   let registeredIdentityForSync = false;
   for (const identity of identities) {
     const did = identity.metadata.connectedDid ?? identity.did.uri;

@@ -18,7 +18,6 @@ import {
   RecordsDelete,
   RecordsWrite,
   ResumableTaskStoreLevel,
-  StateIndexLevel,
 } from '@enbox/dwn-sdk-js';
 
 import { AgentDwnApi } from '../src/dwn-api.js';
@@ -91,7 +90,6 @@ type RemoteDwnStores = {
   eventLog: EventEmitterEventLog;
   messageStore: MessageStoreLevel;
   resumableTaskStore: ResumableTaskStoreLevel;
-  stateIndex: StateIndexLevel;
 };
 
 describe('SyncEngineLevel durable feed convergence', () => {
@@ -475,7 +473,6 @@ async function createRemoteDwnStores(
   const eventLog = new EventEmitterEventLog();
   const messageStore = new MessageStoreLevel({ location: testDataPath('DWN_MESSAGESTORE') });
   const resumableTaskStore = new ResumableTaskStoreLevel({ location: testDataPath('DWN_RESUMABLETASKSTORE') });
-  const stateIndex = new StateIndexLevel({ location: testDataPath('DWN_STATEINDEX') });
   const dwn = await AgentDwnApi.createDwn({
     dataPath    : testDataLocation,
     dataStore,
@@ -483,17 +480,15 @@ async function createRemoteDwnStores(
     eventLog,
     messageStore,
     resumableTaskStore,
-    stateIndex,
   });
 
-  return { dataStore, dwn, eventLog, messageStore, resumableTaskStore, stateIndex };
+  return { dataStore, dwn, eventLog, messageStore, resumableTaskStore };
 }
 
 async function clearRemoteDwnStores(stores: RemoteDwnStores): Promise<void> {
   await stores.dataStore.clear();
   await stores.messageStore.clear();
   await stores.resumableTaskStore.clear();
-  await stores.stateIndex.clear();
   await stores.eventLog.close();
   await stores.eventLog.open();
 }
@@ -507,7 +502,6 @@ async function closeRemoteDwnStores(stores: RemoteDwnStores | undefined): Promis
   await stores.dataStore.close();
   await stores.messageStore.close();
   await stores.resumableTaskStore.close();
-  await stores.stateIndex.close();
 }
 
 async function textFromDataStream(dataStream: ReadableStream<Uint8Array>): Promise<string> {

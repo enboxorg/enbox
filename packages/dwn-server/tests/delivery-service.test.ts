@@ -325,7 +325,6 @@ describe('DeliveryService', () => {
         deliveryEnabled    : false,
         messageStore       : 'sqlite://',
         dataStore          : 'sqlite://',
-        stateIndex         : 'sqlite://',
         resumableTaskStore : 'sqlite://',
         packageJsonPath    : './package.json',
       };
@@ -350,7 +349,6 @@ describe('DeliveryService', () => {
         deliveryEnabled    : true,
         messageStore       : 'sqlite://',
         dataStore          : 'sqlite://',
-        stateIndex         : 'sqlite://',
         resumableTaskStore : 'sqlite://',
         packageJsonPath    : './package.json',
       };
@@ -373,7 +371,6 @@ describe('DeliveryService', () => {
         deliveryEnabled    : false,
         messageStore       : 'sqlite://',
         dataStore          : 'sqlite://',
-        stateIndex         : 'sqlite://',
         resumableTaskStore : 'sqlite://',
         packageJsonPath    : './package.json',
       };

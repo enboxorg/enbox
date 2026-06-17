@@ -139,51 +139,5 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
         .on('resumableTasks').column('timeout').execute();
     }
 
-    // ─── stateIndexNodes ────────────────────────────────────────────────
-    if (!(await dialect.hasTable(db, 'stateIndexNodes'))) {
-      await db.schema
-        .createTable('stateIndexNodes')
-        .ifNotExists()
-        .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
-        .addColumn('scope', 'varchar(200)', (col) => col.notNull())
-        .addColumn('nodeHash', 'varchar(64)', (col) => col.notNull())
-        .addColumn('nodeType', 'varchar(10)', (col) => col.notNull())
-        .addColumn('leftHash', 'varchar(64)')
-        .addColumn('rightHash', 'varchar(64)')
-        .addColumn('leafKeyHash', 'varchar(64)')
-        .addColumn('leafValueCid', 'varchar(60)')
-        .execute();
-
-      await db.schema.createIndex('index_stateIndexNodes_tenant_scope_nodeHash')
-        .on('stateIndexNodes').columns(['tenant', 'scope', 'nodeHash']).execute();
-    }
-
-    // ─── stateIndexRoots ────────────────────────────────────────────────
-    if (!(await dialect.hasTable(db, 'stateIndexRoots'))) {
-      await db.schema
-        .createTable('stateIndexRoots')
-        .ifNotExists()
-        .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
-        .addColumn('scope', 'varchar(200)', (col) => col.notNull())
-        .addColumn('rootHash', 'varchar(64)', (col) => col.notNull())
-        .execute();
-
-      await db.schema.createIndex('index_stateIndexRoots_tenant_scope')
-        .on('stateIndexRoots').columns(['tenant', 'scope']).execute();
-    }
-
-    // ─── stateIndexMeta ─────────────────────────────────────────────────
-    if (!(await dialect.hasTable(db, 'stateIndexMeta'))) {
-      await db.schema
-        .createTable('stateIndexMeta')
-        .ifNotExists()
-        .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
-        .addColumn('messageCid', 'varchar(60)', (col) => col.notNull())
-        .addColumn('protocol', 'varchar(200)')
-        .execute();
-
-      await db.schema.createIndex('index_stateIndexMeta_tenant_messageCid')
-        .on('stateIndexMeta').columns(['tenant', 'messageCid']).execute();
-    }
   },
 });

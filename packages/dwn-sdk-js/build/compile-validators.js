@@ -30,7 +30,6 @@ import MessagesFilter from '../json-schemas/interface-methods/messages-filter.js
 import MessagesQuery from '../json-schemas/interface-methods/messages-query.json' with { type: 'json' };
 import MessagesRead from '../json-schemas/interface-methods/messages-read.json' with { type: 'json' };
 import MessagesSubscribe from '../json-schemas/interface-methods/messages-subscribe.json' with { type: 'json' };
-import MessagesSync from '../json-schemas/interface-methods/messages-sync.json' with { type: 'json' };
 import NumberRangeFilter from '../json-schemas/interface-methods/number-range-filter.json' with { type: 'json' };
 import PaginationCursor from '../json-schemas/interface-methods/pagination-cursor.json' with { type: 'json' };
 import ProgressToken from '../json-schemas/interface-methods/progress-token.json' with { type: 'json' };
@@ -75,7 +74,6 @@ const schemas = {
   MessagesQuery,
   MessagesRead,
   MessagesSubscribe,
-  MessagesSync,
   NumberRangeFilter,
   PaginationCursor,
   ProgressToken,

@@ -20,12 +20,12 @@ bun add @enbox/dwn-sdk-js
 
 ```ts
 import { Dwn, DataStream, Jws, RecordsWrite } from '@enbox/dwn-sdk-js';
-import { DataStoreLevel, MessageStoreLevel, StateIndexLevel } from '@enbox/dwn-sdk-js';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js';
 
 const messageStore = new MessageStoreLevel();
 const dataStore = new DataStoreLevel();
-const stateIndex = new StateIndexLevel();
-const dwn = await Dwn.create({ messageStore, dataStore, stateIndex });
+const resumableTaskStore = new ResumableTaskStoreLevel();
+const dwn = await Dwn.create({ messageStore, dataStore, resumableTaskStore });
 
 // Create and process a RecordsWrite message
 const data = new TextEncoder().encode('Hello, World!');
@@ -57,7 +57,7 @@ class CustomTenantGate implements TenantGate {
   }
 }
 
-const dwn = await Dwn.create({ messageStore, dataStore, stateIndex, tenantGate: new CustomTenantGate() });
+const dwn = await Dwn.create({ messageStore, dataStore, resumableTaskStore, tenantGate: new CustomTenantGate() });
 ```
 
 ### Custom Signer

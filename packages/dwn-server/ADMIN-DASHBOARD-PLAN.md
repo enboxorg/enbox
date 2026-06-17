@@ -54,7 +54,7 @@ The only tools available today are raw SQL queries against the database and a Pr
                                      │
                         ┌────────────▼─────────────────────────────┐
                         │          Shared Storage Layer             │
-                        │  MessageStore │ DataStore │ StateIndex    │
+                        │  MessageStore │ DataStore │ EventLog      │
                         │  RegistrationStore │ EventLog             │
                         └──────────────────────────────────────────┘
 ```
@@ -193,7 +193,7 @@ Query params:
 
 **Implementation**:
 1. Remove from `registeredTenants`.
-2. If purge: delete from `messageStoreMessages`, `dataStore`, `stateIndexNodes/Roots/Meta` where `tenant = ?`.
+2. If purge: delete from tenant-scoped message, data, and replication fingerprint tables while preserving replication counters.
 
 #### `POST /admin/api/tenants/:did/suspend`
 
@@ -266,7 +266,6 @@ export class AdminStore {
   "checks": {
     "messageStore": { "status": "healthy", "latencyMs": 2 },
     "dataStore": { "status": "healthy", "latencyMs": 1 },
-    "stateIndex": { "status": "healthy", "latencyMs": 3 },
     "database": { "status": "healthy", "latencyMs": 5 },
     "webSocket": { "status": "healthy", "activeConnections": 12 }
   }

@@ -6,7 +6,7 @@ import type { Dwn } from '../../src/dwn.js';
 
 import { Dwn as DwnClass } from '../../src/dwn.js';
 import { arbitraryJsonObject, arbitraryMessage, semiValidMessage } from './arbitraries/dwn-message.arbitrary.js';
-import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel, StateIndexLevel } from '../../src/index.js';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../../src/index.js';
 
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 200;
 
@@ -22,7 +22,6 @@ describe('Dwn.processMessage — fuzz', () => {
     dwn = await DwnClass.create({
       messageStore,
       dataStore          : new DataStoreLevel({ blockstoreLocation: `${testDataPath}/data/blocks` }),
-      stateIndex         : new StateIndexLevel({ location: `${testDataPath}/state-index` }),
       resumableTaskStore : new ResumableTaskStoreLevel({ location: `${testDataPath}/resumable-tasks` }),
     });
   });

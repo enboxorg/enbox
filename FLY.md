@@ -48,7 +48,6 @@ fly secrets set \
   DWN_TTL_CACHE_URL="<DATABASE_URL>" \
   DWN_STORAGE_MESSAGES="<DATABASE_URL>" \
   DWN_STORAGE_DATA="<DATABASE_URL>" \
-  DWN_STORAGE_STATE_INDEX="<DATABASE_URL>" \
   DWN_STORAGE_RESUMABLE_TASKS="<DATABASE_URL>" \
   -a enbox-dwn
 ```
@@ -94,7 +93,6 @@ curl https://enbox-dwn.fly.dev/health
 | `DWN_TTL_CACHE_URL` | PostgreSQL URL for TTL cache |
 | `DWN_STORAGE_MESSAGES` | PostgreSQL URL for message storage |
 | `DWN_STORAGE_DATA` | PostgreSQL URL for data storage |
-| `DWN_STORAGE_STATE_INDEX` | PostgreSQL URL for state index (sync state) |
 | `DWN_STORAGE_RESUMABLE_TASKS` | PostgreSQL URL for resumable task storage |
 
 ### Fly.io Auto-Provided Variables
@@ -181,7 +179,6 @@ DWN_BASE_URL=http://localhost:3000 \
 DWN_TTL_CACHE_URL=postgres://user:pass@localhost:15432/db \
 DWN_STORAGE_MESSAGES=postgres://user:pass@localhost:15432/db \
 DWN_STORAGE_DATA=postgres://user:pass@localhost:15432/db \
-DWN_STORAGE_STATE_INDEX=postgres://user:pass@localhost:15432/db \
 DWN_STORAGE_RESUMABLE_TASKS=postgres://user:pass@localhost:15432/db \
 bun run server
 ```
