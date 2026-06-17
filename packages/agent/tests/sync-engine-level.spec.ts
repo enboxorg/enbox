@@ -7,7 +7,7 @@ import sinon from 'sinon';
 import { AbstractLevel } from 'abstract-level';
 import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
@@ -1655,6 +1655,16 @@ describe('SyncEngineLevel', () => {
     });
 
     describe('startSync()', () => {
+      let rebuildDerivedProtocolReferencesStub: sinon.SinonStub;
+
+      beforeEach(() => {
+        rebuildDerivedProtocolReferencesStub = sinon.stub(SyncEngineLevel.prototype as any, 'rebuildDerivedProtocolReferences').resolves();
+      });
+
+      afterEach(() => {
+        rebuildDerivedProtocolReferencesStub.restore();
+      });
+
       it('calls sync() in each interval', async () => {
         await testHarness.agent.sync.registerIdentity({
           did     : alice.did.uri,
@@ -1868,6 +1878,16 @@ describe('SyncEngineLevel', () => {
     });
 
     describe('stopSync()', () => {
+      let rebuildDerivedProtocolReferencesStub: sinon.SinonStub;
+
+      beforeEach(() => {
+        rebuildDerivedProtocolReferencesStub = sinon.stub(SyncEngineLevel.prototype as any, 'rebuildDerivedProtocolReferences').resolves();
+      });
+
+      afterEach(() => {
+        rebuildDerivedProtocolReferencesStub.restore();
+      });
+
       it('stops the sync interval', async () => {
         await testHarness.agent.sync.registerIdentity({
           did     : alice.did.uri,
@@ -3491,6 +3511,16 @@ describe('SyncEngineLevel', () => {
   });
 
   describe('startSync with mode parameter', () => {
+    let rebuildDerivedProtocolReferencesStub: sinon.SinonStub;
+
+    beforeEach(() => {
+      rebuildDerivedProtocolReferencesStub = sinon.stub(SyncEngineLevel.prototype as any, 'rebuildDerivedProtocolReferences').resolves();
+    });
+
+    afterEach(() => {
+      rebuildDerivedProtocolReferencesStub.restore();
+    });
+
     it('should accept poll mode with interval and default to poll', async () => {
       // The existing `startSync({ interval })` signature should default to poll mode.
       const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
