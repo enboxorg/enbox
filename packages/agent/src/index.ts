@@ -8,7 +8,6 @@ export type * from './types/sync.js';
 export {
   computeAuthorizationEpoch,
   computeProjectionId,
-  MAX_PENDING_TOKENS,
   normalizeSyncProtocols,
   protocolsForSyncScope,
   singleProtocolForSyncScope,

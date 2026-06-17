@@ -3,7 +3,7 @@ import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import { describe, expect, it } from 'bun:test';
 import { DwnInterfaceName, DwnMethodName, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
-import { topologicalSort } from '../src/sync-topological-sort.js';
+import { orderMessagesForAdmission } from '../src/sync-admission-order.js';
 
 type SortEntry = { message: GenericMessage };
 
@@ -36,15 +36,15 @@ function makeAuthorizedMessage(
   } as unknown as GenericMessage;
 }
 
-describe('topologicalSort', () => {
+describe('orderMessagesForAdmission', () => {
   it('should return empty array for empty input', () => {
-    const result = topologicalSort([]);
+    const result = orderMessagesForAdmission([]);
     expect(result).toEqual([]);
   });
 
   it('should return single-element array unchanged', () => {
     const msg: SortEntry = { message: makeMessage() };
-    const result = topologicalSort([msg]);
+    const result = orderMessagesForAdmission([msg]);
     expect(result).toEqual([msg]);
   });
 
@@ -67,7 +67,7 @@ describe('topologicalSort', () => {
     };
 
     // Input order: records first, protocol second — sort should reverse.
-    const result = topologicalSort([recordsWriteMsg, configureMsg]);
+    const result = orderMessagesForAdmission([recordsWriteMsg, configureMsg]);
     expect(result[0]).toBe(configureMsg);
     expect(result[1]).toBe(recordsWriteMsg);
   });
@@ -104,7 +104,7 @@ describe('topologicalSort', () => {
       } as unknown as GenericMessage,
     };
 
-    const result = topologicalSort([profileRecord, profileConfigure, socialConfigure]);
+    const result = orderMessagesForAdmission([profileRecord, profileConfigure, socialConfigure]);
     expect(result[0]).toBe(socialConfigure);
     expect(result[1]).toBe(profileConfigure);
     expect(result[2]).toBe(profileRecord);
@@ -130,7 +130,7 @@ describe('topologicalSort', () => {
       } as unknown as GenericMessage,
     };
 
-    const result = topologicalSort([updateWrite, initialWrite]);
+    const result = orderMessagesForAdmission([updateWrite, initialWrite]);
     expect(result[0]).toBe(initialWrite);
     expect(result[1]).toBe(updateWrite);
   });
@@ -156,7 +156,7 @@ describe('topologicalSort', () => {
       } as unknown as GenericMessage,
     };
 
-    const result = topologicalSort([child, parent]);
+    const result = orderMessagesForAdmission([child, parent]);
     expect(result[0]).toBe(parent);
     expect(result[1]).toBe(child);
   });
@@ -179,7 +179,7 @@ describe('topologicalSort', () => {
       }),
     };
 
-    const result = topologicalSort([deleteMsg, initialWrite]);
+    const result = orderMessagesForAdmission([deleteMsg, initialWrite]);
     expect(result[0]).toBe(initialWrite);
     expect(result[1]).toBe(deleteMsg);
   });
@@ -203,7 +203,7 @@ describe('topologicalSort', () => {
       ),
     };
 
-    const result = topologicalSort([dependentMsg, grantMsg]);
+    const result = orderMessagesForAdmission([dependentMsg, grantMsg]);
     expect(result[0]).toBe(grantMsg);
     expect(result[1]).toBe(dependentMsg);
   });
@@ -231,7 +231,7 @@ describe('topologicalSort', () => {
       ),
     };
 
-    const result = topologicalSort([dependentMsg, grantMsg]);
+    const result = orderMessagesForAdmission([dependentMsg, grantMsg]);
     expect(result[0]).toBe(grantMsg);
     expect(result[1]).toBe(dependentMsg);
   });
@@ -267,7 +267,7 @@ describe('topologicalSort', () => {
       } as unknown as GenericMessage,
     };
 
-    const result = topologicalSort([dependentMsg, roleMsg]);
+    const result = orderMessagesForAdmission([dependentMsg, roleMsg]);
     expect(result[0]).toBe(roleMsg);
     expect(result[1]).toBe(dependentMsg);
   });
@@ -320,7 +320,7 @@ describe('topologicalSort', () => {
       } as unknown as GenericMessage,
     };
 
-    const result = topologicalSort([dependentMsg, otherRole, matchingRole]);
+    const result = orderMessagesForAdmission([dependentMsg, otherRole, matchingRole]);
     expect(result.indexOf(matchingRole)).toBeLessThan(result.indexOf(dependentMsg));
     expect(result.includes(otherRole)).toBe(true);
   });
@@ -338,7 +338,7 @@ describe('topologicalSort', () => {
       } as unknown as GenericMessage,
     };
 
-    const result = topologicalSort([selfRef]);
+    const result = orderMessagesForAdmission([selfRef]);
     expect(result.length).toBe(1);
     expect(result[0]).toBe(selfRef);
   });
@@ -379,7 +379,7 @@ describe('topologicalSort', () => {
       } as unknown as GenericMessage,
     };
 
-    const result = topologicalSort([msgA, msgB, independent]);
+    const result = orderMessagesForAdmission([msgA, msgB, independent]);
     // The independent node should be first; the cycle nodes appended at the end.
     expect(result.length).toBe(3);
     expect(result[0]).toBe(independent);
@@ -393,7 +393,7 @@ describe('topologicalSort', () => {
     const msg2: SortEntry = { message: makeMessage({ interface: DwnInterfaceName.Protocols, method: DwnMethodName.Query }) };
     const msg3: SortEntry = { message: makeMessage({ interface: DwnInterfaceName.Protocols, method: DwnMethodName.Query }) };
 
-    const result = topologicalSort([msg1, msg2, msg3]);
+    const result = orderMessagesForAdmission([msg1, msg2, msg3]);
     expect(result.length).toBe(3);
   });
 });

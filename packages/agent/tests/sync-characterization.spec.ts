@@ -76,7 +76,6 @@ describe('SyncEngineLevel — characterization tests', () => {
     status             : 'initializing',
     pull               : {},
     connectivity       : 'unknown',
-    needsReconcile     : false,
     ...overrides,
   });
 
@@ -165,36 +164,6 @@ describe('SyncEngineLevel — characterization tests', () => {
     expect((engine as any)._pushRuntimes.size).toBe(0);
   });
 
-  it('schedules reconciliation on startup when a link is already marked needsReconcile', async () => {
-    const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
-    const { agent } = createLiveMockAgent();
-    const engine = new SyncEngineLevel({ db, agent });
-
-    const link = makeLink({ needsReconcile: true });
-
-    sinon.stub(engine, 'sync').resolves();
-    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
-    sinon.stub(engine as any, 'openLivePullSubscription').resolves();
-    sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
-    const reconcileStub = sinon.stub(engine as any, 'reconcileLink').resolves();
-    (engine as any)._ledger = {
-      getOrCreateLink : sinon.stub().resolves(link),
-      setStatus       : sinon.stub().callsFake(async (l: any, status: string): Promise<void> => {
-        l.status = status;
-      }),
-      saveLink: sinon.stub().resolves(),
-    };
-
-    await engine.startSync({ mode: 'live', interval: '30s' });
-    await clock.tickAsync(1_000);
-
-    expect(reconcileStub.calledOnce).toBe(true);
-    expect(reconcileStub.firstCall.args[0]).toBe(linkKey);
-
-    await engine.stopSync();
-    clock.restore();
-  });
-
   it('routes ProgressGap startup failures into repair using projection authorization link identity', async () => {
     const { agent } = createLiveMockAgent();
     const engine = new SyncEngineLevel({ db, agent });
@@ -221,39 +190,4 @@ describe('SyncEngineLevel — characterization tests', () => {
     expect(transitionStub.firstCall.args[1]).toBe(link);
   });
 
-  it('schedules reconciliation when EOSE arrives for a live dirty link', async () => {
-    const { agent, getRemoteHandler } = createLiveMockAgent();
-    const engine = new SyncEngineLevel({ db, agent });
-
-    const link = makeLink({ status: 'live', needsReconcile: true });
-
-    const saveLinkStub = sinon.stub().resolves();
-    sinon.stub(engine as any, 'scheduleReconcile').callsFake((): void => {});
-    sinon.stub(engine, 'sync').resolves();
-    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
-    sinon.stub(engine as any, 'openLocalPushSubscription').resolves();
-    (engine as any)._ledger = {
-      getOrCreateLink : sinon.stub().resolves(link),
-      saveLink        : saveLinkStub,
-      setStatus       : sinon.stub().callsFake(async (l: any, status: string): Promise<void> => {
-        l.status = status;
-      }),
-    };
-
-    await engine.startSync({ mode: 'live', interval: '30s' });
-
-    const handler = getRemoteHandler();
-    expect(handler).toBeDefined();
-
-    await handler!({
-      type   : 'eose',
-      cursor : { streamId: 's1', epoch: 'e1', position: '5', messageCid: 'cid-5' },
-    });
-
-    expect((engine as any).scheduleReconcile.called).toBe(true);
-    expect((engine as any).scheduleReconcile.lastCall.args[0]).toBe(linkKey);
-    expect((engine as any).scheduleReconcile.lastCall.args[1]).toBe(500);
-
-    await engine.stopSync();
-  });
 });

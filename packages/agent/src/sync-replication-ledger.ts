@@ -98,7 +98,6 @@ export class ReplicationLedger {
       connectivity       : 'unknown',
       pull               : {},
       push               : {},
-      needsReconcile     : false,
       delegateDid        : params.delegateDid,
     };
 
@@ -227,28 +226,4 @@ export class ReplicationLedger {
     checkpoint.receivedToken = token;
   }
 
-  // ---------------------------------------------------------------------------
-  // Reconciliation helpers
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Mark a link as needing durable feed reconciliation and persist.
-   * Idempotent — no-op if already set.
-   */
-  public async markNeedsReconcile(link: ReplicationLinkState, _reason?: string): Promise<void> {
-    if (!link.needsReconcile) {
-      link.needsReconcile = true;
-      await this.saveLink(link);
-    }
-  }
-
-  /**
-   * Clear the reconciliation flag after successful durable feed reconciliation.
-   */
-  public async clearNeedsReconcile(link: ReplicationLinkState): Promise<void> {
-    if (link.needsReconcile) {
-      link.needsReconcile = false;
-      await this.saveLink(link);
-    }
-  }
 }

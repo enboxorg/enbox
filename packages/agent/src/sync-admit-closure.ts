@@ -17,7 +17,7 @@ import type { SyncScope } from './types/sync.js';
 import { classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
 import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
-import { topologicalSort } from './sync-topological-sort.js';
+import { orderMessagesForAdmission } from './sync-admission-order.js';
 
 import {
   capRecordsWriteDataStream,
@@ -108,7 +108,7 @@ class AdmitClosureContext {
     const retry: SyncMessageEntry[] = [];
     const appliedCids: string[] = [];
 
-    for (const entry of topologicalSort(pending)) {
+    for (const entry of orderMessagesForAdmission(pending)) {
       this.assertShouldContinue();
       const result = await this.admitEntry(rootCid, entry);
       switch (result.kind) {

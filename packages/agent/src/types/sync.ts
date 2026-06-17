@@ -208,14 +208,6 @@ export async function computeAuthorizationEpoch(input:
 // ---------------------------------------------------------------------------
 
 /**
- * Maximum number of in-flight deliveries (runtime ordinals) a link may
- * accumulate before transitioning to `repairing`. This is the overflow
- * threshold for the engine's in-memory delivery tracker, not for durable
- * checkpoint state. Normative per the sync redesign RFC.
- */
-export const MAX_PENDING_TOKENS = 100;
-
-/**
  * Tracks directional (pull or push) replay progression for a single
  * replication link. All tokens belong to the same `(streamId, epoch)`.
  *
@@ -250,11 +242,10 @@ export type DirectionCheckpoint = {
  * - `live` — actively receiving events via subscription.
  * - `polling` — current link is reconciled by periodic durable feed sync; live subscription is not supported for its scope.
  * - `repairing` — gap detected or pending overflow; running durable feed repair.
- * - `degraded_poll` — subscription failed; polling at reduced frequency.
  * - `terminal_incomplete` — admission failed with a terminal dependency error; requires a new scope/authorization epoch.
  * - `paused` — explicitly paused by the application.
  */
-export type LinkStatus = 'initializing' | 'live' | 'polling' | 'repairing' | 'degraded_poll' | 'terminal_incomplete' | 'paused';
+export type LinkStatus = 'initializing' | 'live' | 'polling' | 'repairing' | 'terminal_incomplete' | 'paused';
 
 /**
  * Durable state of a single replication link. Persisted to LevelDB and
@@ -288,14 +279,6 @@ export type ReplicationLinkState = {
 
   /** Push-direction replication checkpoint (local → remote). */
   push: DirectionCheckpoint;
-
-  /**
-   * Whether this link needs durable feed reconciliation. Set when push fails after
-   * retry exhaustion, when the link reconnects after an outage, or when
-   * the remote epoch changes. Cleared after successful reconciliation.
-   * Persisted so recovery survives app/browser restart.
-   */
-  needsReconcile?: boolean;
 
   /** Per-link connectivity state. Used to compute the aggregate engine-level state. */
   connectivity: SyncConnectivityState;
@@ -416,7 +399,6 @@ export type SyncEvent =
   | SyncEventBase & { type: 'repair:started'; attempt: number }
   | SyncEventBase & { type: 'repair:completed' }
   | SyncEventBase & { type: 'repair:failed'; attempt: number; error: string }
-  | SyncEventBase & { type: 'degraded-poll:entered' }
   | SyncEventBase & { type: 'gap:detected'; reason: string };
 
 export type SyncEventListener = (event: SyncEvent) => void;
@@ -469,11 +451,9 @@ export type SyncHealthSummary = {
    * to callers.
    */
   admissionFailureCount: number;
-  /** Number of current sync links in 'repairing', 'degraded_poll', or terminal-incomplete status. */
+  /** Number of current sync links in `repairing` or `terminal_incomplete` status. */
   degradedLinkCount: number;
-  /** Number of current sync links waiting for reconciliation. */
-  reconcileNeededCount: number;
-  /** True only when there are no failed messages, degraded links, or pending reconciliations. */
+  /** True only when there are no failed messages or degraded links. */
   syncHealthy: boolean;
 };
 
@@ -555,7 +535,7 @@ export interface SyncEngine {
   /**
    * Subscribe to sync engine events. Returns an unsubscribe function.
    * Events are emitted at key state transitions: checkpoint advancement,
-   * link status changes, repair, degraded_poll, gap detection.
+   * link status changes, repair, gap detection.
    */
   on(listener: SyncEventListener): () => void;
 

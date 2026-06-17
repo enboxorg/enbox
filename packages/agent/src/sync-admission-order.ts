@@ -173,7 +173,7 @@ function getInvokedRoleKey(
 
 /**
  * Builds a dependency graph from the fetched messages and returns them in
- * topological order so that dependencies are processed before dependents.
+ * dependency order so that dependencies are processed before dependents.
  *
  * Dependencies:
  * - ProtocolsConfigure must come before any RecordsWrite using that protocol
@@ -182,7 +182,7 @@ function getInvokedRoleKey(
  * - Initial write must come before update writes (same recordId, not initial)
  * - Permission grants must come before messages that invoke them
  */
-export function topologicalSort<T extends { message: GenericMessage }>(
+export function orderMessagesForAdmission<T extends { message: GenericMessage }>(
   messages: T[]
 ): T[] {
   return buildMessageDependencyGraph(messages).sorted;
