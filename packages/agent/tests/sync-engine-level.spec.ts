@@ -83,7 +83,6 @@ describe('SyncEngineLevel', () => {
       await syncEngine.clear();
       await testHarness.syncStore.clear();
       await testHarness.dwnDataStore.clear();
-      await testHarness.dwnStateIndex.clear();
       await testHarness.dwnMessageStore.clear();
       await testHarness.dwnResumableTaskStore.clear();
       await testHarness.agent.permissions.clear();
@@ -527,10 +526,10 @@ describe('SyncEngineLevel', () => {
         })).rejects.toThrow('lacks Messages.Read grants for closure protocols: https://protocol.xyz/foo');
       });
 
-      it('succeeds with only a MessagesSync grant when messages are inlined in the diff response', async () => {
+      it('succeeds with only a MessagesQuery grant when messages are inlined in the diff response', async () => {
         // The batched diff protocol bundles small messages directly in the diff response,
         // so a MessagesRead grant is only needed for large payloads that can't be inlined.
-        // This test verifies that sync works with ONLY a MessagesSync grant.
+        // This test verifies that sync works with ONLY a MessagesQuery grant.
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
         const protocolFoo: ProtocolDefinition = {
@@ -579,8 +578,8 @@ describe('SyncEngineLevel', () => {
           metadata  : { name: 'Alice Delegate', connectedDid: aliceSync.did.uri }
         });
 
-        // write ONLY a MessagesSync permission grant — no MessagesRead grant
-        const messagesSyncGrant = await testHarness.agent.permissions.createGrant({
+        // write ONLY a MessagesQuery permission grant — no MessagesRead grant
+        const messagesQueryGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
           author      : aliceSync.did.uri,
           grantedTo   : delegateDid.did.uri,
@@ -592,14 +591,14 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        const { encodedData: messagesSyncGrantData, ...messagesSyncGrantMessage } = messagesSyncGrant.message;
+        const { encodedData: messagesQueryGrantData, ...messagesQueryGrantMessage } = messagesQueryGrant.message;
         // send to the remote node
         const sendGrant = await testHarness.agent.sendDwnRequest({
           author      : aliceSync.did.uri,
           target      : aliceSync.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesSyncGrantMessage,
-          dataStream  : new Blob([ Convert.base64Url(messagesSyncGrantData).toUint8Array() ]),
+          rawMessage  : messagesQueryGrantMessage,
+          dataStream  : new Blob([ Convert.base64Url(messagesQueryGrantData).toUint8Array() ]),
         });
         expect(sendGrant.reply.status.code).toBe(202);
 
@@ -608,8 +607,8 @@ describe('SyncEngineLevel', () => {
           author      : delegateDid.did.uri,
           target      : delegateDid.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesSyncGrantMessage,
-          dataStream  : new Blob([ Convert.base64Url(messagesSyncGrantData).toUint8Array() ]),
+          rawMessage  : messagesQueryGrantMessage,
+          dataStream  : new Blob([ Convert.base64Url(messagesQueryGrantData).toUint8Array() ]),
           signAsOwner : true
         });
         expect(processGrant.reply.status.code).toBe(202);
@@ -1050,8 +1049,8 @@ describe('SyncEngineLevel', () => {
           metadata  : { name: 'Alice Delegate', connectedDid: aliceSync.did.uri }
         });
 
-        // write a MessagesSync permission grant — store locally only (NOT on remote)
-        const messagesSyncGrant = await testHarness.agent.permissions.createGrant({
+        // write a MessagesQuery permission grant — store locally only (NOT on remote)
+        const messagesQueryGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
           author      : aliceSync.did.uri,
           grantedTo   : delegateDid.did.uri,
@@ -1063,13 +1062,13 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        const { encodedData: messagesSyncGrantData, ...messagesSyncGrantMessage } = messagesSyncGrant.message;
+        const { encodedData: messagesQueryGrantData, ...messagesQueryGrantMessage } = messagesQueryGrant.message;
         const processGrant = await testHarness.agent.processDwnRequest({
           author      : delegateDid.did.uri,
           target      : delegateDid.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesSyncGrantMessage,
-          dataStream  : new Blob([ Convert.base64Url(messagesSyncGrantData).toUint8Array() ]),
+          rawMessage  : messagesQueryGrantMessage,
+          dataStream  : new Blob([ Convert.base64Url(messagesQueryGrantData).toUint8Array() ]),
           signAsOwner : true
         });
         expect(processGrant.reply.status.code).toBe(202);
@@ -1088,7 +1087,7 @@ describe('SyncEngineLevel', () => {
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
           messageType   : DwnInterface.RecordsQuery,
-          messageParams : { filter: { recordId: messagesSyncGrant.message.recordId } },
+          messageParams : { filter: { recordId: messagesQueryGrant.message.recordId } },
         });
         expect(grantQuery.reply.status.code).toBe(200);
         expect(grantQuery.reply.entries).toHaveLength(1);
@@ -1513,7 +1512,8 @@ describe('SyncEngineLevel', () => {
         // Spy on sendDwnRequest to count RPC calls during the second sync.
         const sendDwnRequestSpy = sinon.spy(testHarness.agent.rpc, 'sendDwnRequest');
 
-        // Second sync — trees are already converged, should short-circuit.
+        // Second sync — feeds are already converged, so it should only issue
+        // lightweight fingerprint probes and avoid body replay.
         await syncEngine.sync();
 
         const rpcMessages = sendDwnRequestSpy.args.map(call => call[0]?.message as any);
@@ -1521,14 +1521,17 @@ describe('SyncEngineLevel', () => {
           message?.descriptor?.interface === DwnInterfaceName.Messages &&
           message?.descriptor?.method === DwnMethodName.Read
         );
-        const messagesSyncCalls = rpcMessages.filter(message =>
+        const messagesQueryCalls = rpcMessages.filter(message =>
           message?.descriptor?.interface === DwnInterfaceName.Messages &&
-          message?.descriptor?.method === DwnMethodName.Sync
+          message?.descriptor?.method === DwnMethodName.Query
         );
-        const nonRootSyncCalls = messagesSyncCalls.filter(message => message?.descriptor?.action !== 'root');
+        const uncursoredBodyFeedQueries = messagesQueryCalls.filter(message =>
+          message?.descriptor?.cidsOnly !== true &&
+          message?.descriptor?.cursor === undefined
+        );
 
         expect(messagesReadCalls).toHaveLength(0);
-        expect(nonRootSyncCalls).toHaveLength(0);
+        expect(uncursoredBodyFeedQueries).toHaveLength(0);
 
         sendDwnRequestSpy.restore();
       });
@@ -2616,7 +2619,7 @@ describe('SyncEngineLevel', () => {
           scope       : { protocol: protocolFoo.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read }
         });
 
-        const messagesSyncGrant = await testHarness.agent.permissions.createGrant({
+        const messagesQueryGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
           author      : alice.did.uri,
           grantedTo   : aliceDeviceX.did.uri,
@@ -2653,35 +2656,35 @@ describe('SyncEngineLevel', () => {
         });
         expect(processMessagesReadGrant.reply.status.code).toBe(202);
 
-        const { encodedData: syncGrantData, ... messagesSyncGrantMessage } = messagesSyncGrant.message;
-        const processMessagesSyncGrantAsOwner = await aliceDeviceXHarness.agent.processDwnRequest({
+        const { encodedData: syncGrantData, ... messagesQueryGrantMessage } = messagesQueryGrant.message;
+        const processMessagesQueryGrantAsOwner = await aliceDeviceXHarness.agent.processDwnRequest({
           author      : aliceDeviceX.did.uri,
           target      : aliceDeviceX.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesSyncGrantMessage,
+          rawMessage  : messagesQueryGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(syncGrantData).toUint8Array() ]),
           signAsOwner : true
         });
-        expect(processMessagesSyncGrantAsOwner.reply.status.code).toBe(202);
+        expect(processMessagesQueryGrantAsOwner.reply.status.code).toBe(202);
 
-        const processMessagesSyncGrant = await aliceDeviceXHarness.agent.processDwnRequest({
+        const processMessagesQueryGrant = await aliceDeviceXHarness.agent.processDwnRequest({
           author      : aliceDeviceX.did.uri,
           target      : alice.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesSyncGrantMessage,
+          rawMessage  : messagesQueryGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(syncGrantData).toUint8Array() ]),
         });
-        expect(processMessagesSyncGrant.reply.status.code).toBe(202);
+        expect(processMessagesQueryGrant.reply.status.code).toBe(202);
 
         // send the grants to the remote DWN
-        const remoteMessagesSyncGrant = await testHarness.agent.sendDwnRequest({
+        const remoteMessagesQueryGrant = await testHarness.agent.sendDwnRequest({
           author      : alice.did.uri,
           target      : alice.did.uri,
           messageType : DwnInterface.RecordsWrite,
-          rawMessage  : messagesSyncGrantMessage,
+          rawMessage  : messagesQueryGrantMessage,
           dataStream  : new Blob([ Convert.base64Url(syncGrantData).toUint8Array() ]),
         });
-        expect(remoteMessagesSyncGrant.reply.status.code).toBe(202);
+        expect(remoteMessagesQueryGrant.reply.status.code).toBe(202);
 
         const remoteMessagesReadGrant = await testHarness.agent.sendDwnRequest({
           author      : alice.did.uri,

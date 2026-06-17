@@ -8,7 +8,6 @@ import { DwnServer } from '../../src/dwn-server.js';
 import EventBusInMemory from '../plugins/event-bus-in-memory.js';
 import MessageStoreSqlite from '../plugins/message-store-sqlite.js';
 import ResumableTaskStoreSqlite from '../plugins/resumable-task-store-sqlite.js';
-import StateIndexSqlite from '../plugins/state-index-sqlite.js';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
 
@@ -53,7 +52,6 @@ describe('Dynamic DWN plugin loading', () => {
     const customMessageStoreConstructorSpy = sinon.spy(MessageStoreSqlite, 'spyingTheConstructor');
     const customDataStoreConstructorSpy = sinon.spy(DataStoreSqlite, 'spyingTheConstructor');
     const customResumableTaskStoreConstructorSpy = sinon.spy(ResumableTaskStoreSqlite, 'spyingTheConstructor');
-    const customStateIndexConstructorSpy = sinon.spy(StateIndexSqlite, 'spyingTheConstructor');
     const customEventBusConstructorSpy = sinon.spy(EventBusInMemory, 'spyingTheConstructor');
 
     // 1. Configure DWN to load a custom data store plugin.
@@ -66,7 +64,6 @@ describe('Dynamic DWN plugin loading', () => {
     dwnServerConfigCopy.messageStore = '../tests/plugins/message-store-sqlite.js';
     dwnServerConfigCopy.dataStore = '../tests/plugins/data-store-sqlite.js';
     dwnServerConfigCopy.resumableTaskStore = '../tests/plugins/resumable-task-store-sqlite.js';
-    dwnServerConfigCopy.stateIndex = '../tests/plugins/state-index-sqlite.js';
     dwnServerConfigCopy.eventBusPluginPath = '../tests/plugins/event-bus-in-memory.js';
 
     // 2. Validate that the constructor of the plugin is called.
@@ -83,7 +80,6 @@ describe('Dynamic DWN plugin loading', () => {
     expect(customMessageStoreConstructorSpy.calledOnce).toBe(true);
     expect(customDataStoreConstructorSpy.calledOnce).toBe(true);
     expect(customResumableTaskStoreConstructorSpy.calledOnce).toBe(true);
-    expect(customStateIndexConstructorSpy.calledOnce).toBe(true);
     expect(customEventBusConstructorSpy.calledOnce).toBe(true);
     expect(dwnServer.dwn?.storage.eventLog).toBeInstanceOf(DurableEventLog);
 

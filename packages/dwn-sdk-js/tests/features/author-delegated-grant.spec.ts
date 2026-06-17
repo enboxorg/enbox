@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { RecordsWriteMessage } from '../../src/types/records-types.js';
-import type { DataStore, MessageStore, PermissionScope, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, PermissionScope, ResumableTaskStore } from '../../src/index.js';
 import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
 
 import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
@@ -31,7 +31,6 @@ export function testAuthorDelegatedGrant(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
     let dwn: Dwn;
 
@@ -44,10 +43,9 @@ export function testAuthorDelegatedGrant(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      stateIndex = stores.stateIndex;
       eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -57,7 +55,6 @@ export function testAuthorDelegatedGrant(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await stateIndex.clear();
     });
 
     afterAll(async () => {

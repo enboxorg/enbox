@@ -9,7 +9,6 @@ import {
   ResumableTaskStoreSql,
   runDwnStoreMigrations,
   SqliteDialect,
-  StateIndexSql,
 } from '@enbox/dwn-sql-store';
 import { DidDht, DidIon, DidKey, UniversalResolver } from '@enbox/dids';
 import { Dwn, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
@@ -45,7 +44,6 @@ export async function getTestDwn(options: {
   await runServerMigrations(migrationDb, dialect);
 
   const dataStore = new DataStoreSql(dialect);
-  const stateIndex = new StateIndexSql(dialect);
   const messageStore = new MessageStoreSql(dialect);
   const resumableTaskStore = new ResumableTaskStoreSql(dialect);
   const eventLog = withEvents ? new EventEmitterEventLog() : undefined;
@@ -56,7 +54,6 @@ export async function getTestDwn(options: {
   });
 
   const dwn = await Dwn.create({
-    stateIndex,
     dataStore,
     messageStore,
     resumableTaskStore,

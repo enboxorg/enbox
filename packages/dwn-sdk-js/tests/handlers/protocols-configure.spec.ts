@@ -7,7 +7,6 @@ import type {
   ProtocolDefinition,
   ProtocolsConfigureDescriptor,
   ResumableTaskStore,
-  StateIndex,
 } from '../../src/index.js';
 
 import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
@@ -33,7 +32,6 @@ export function testProtocolsConfigureHandler(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
     let dwn: Dwn;
 
@@ -48,10 +46,9 @@ export function testProtocolsConfigureHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        stateIndex = stores.stateIndex;
         eventLog = TestEventLog.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -61,7 +58,6 @@ export function testProtocolsConfigureHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await stateIndex.clear();
       });
 
       afterAll(async () => {
@@ -1123,22 +1119,19 @@ export function testProtocolsConfigureHandler(): void {
         });
       });
 
-      describe('state index', () => {
-        it('should add event for ProtocolsConfigure', async () => {
+      describe('retained protocol history', () => {
+        it('should add ProtocolsConfigure to the message store', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const { message } = await TestDataGenerator.generateProtocolsConfigure({ author: alice });
 
           const reply = await dwn.processMessage(alice.did, message);
           expect(reply.status.code).toBe(202);
 
-          const events = await stateIndex.getLeaves(alice.did, []);
-          expect(events.length).toBe(1);
-
           const messageCid = await Message.getCid(message);
-          expect(events[0]).toBe(messageCid);
+          expect(await messageStore.get(alice.did, messageCid)).toBeDefined();
         });
 
-        it('should retain all ProtocolsConfigure events for protocol versioning', async () => {
+        it('should retain all ProtocolsConfigure messages for protocol versioning', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const oldestWrite = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: minimalProtocolDefinition });
           await Time.minimalSleep();
@@ -1150,13 +1143,16 @@ export function testProtocolsConfigureHandler(): void {
           reply = await dwn.processMessage(alice.did, newestWrite.message);
           expect(reply.status.code).toBe(202);
 
-          const events = await stateIndex.getLeaves(alice.did, []);
-          expect(events.length).toBe(2);
-
           const oldestMessageCid = await Message.getCid(oldestWrite.message);
           const newestMessageCid = await Message.getCid(newestWrite.message);
-          expect(events).toContain(oldestMessageCid);
-          expect(events).toContain(newestMessageCid);
+          const { messages } = await messageStore.query(alice.did, [{
+            interface : DwnInterfaceName.Protocols,
+            method    : DwnMethodName.Configure,
+            protocol  : minimalProtocolDefinition.protocol,
+          }]);
+          const retainedCids = await Promise.all(messages.map((storedMessage) => Message.getCid(storedMessage)));
+          expect(retainedCids).toContain(oldestMessageCid);
+          expect(retainedCids).toContain(newestMessageCid);
         });
       });
 

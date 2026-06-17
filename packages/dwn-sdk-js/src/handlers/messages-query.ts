@@ -91,7 +91,7 @@ export class MessagesQueryHandler implements MethodHandler {
         this.deps.validationStateReader,
         permissionGrantIds
       );
-      await MessagesGrantAuthorization.authorizeSubscribeOrSync({
+      await MessagesGrantAuthorization.authorizeQueryOrSubscribe({
         incomingMessage       : messagesQuery.message,
         expectedGrantor       : tenant,
         expectedGrantee       : messagesQuery.author,

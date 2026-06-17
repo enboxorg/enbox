@@ -5,11 +5,10 @@ import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
 import type { ProtocolScope } from '../utils/permission-scope.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { DataEncodedRecordsWriteMessage, RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
-import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage, MessagesSyncMessage } from '../types/messages-types.js';
+import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
 
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
 import { GrantAuthorization } from './grant-authorization.js';
-import { isRecordsPrimaryProjectionExcludedProtocol } from './constants.js';
 import { PermissionScopeMatcher } from '../utils/permission-scope.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { Records } from '../utils/records.js';
@@ -62,11 +61,11 @@ export class MessagesGrantAuthorization {
   }
 
   /**
-   * Authorizes the scope of a permission grant for MessagesQuery, MessagesSubscribe, or MessagesSync.
+   * Authorizes the scope of a permission grant for MessagesQuery or MessagesSubscribe.
    * @param validationStateReader Used to check if the grant has been revoked.
    */
-  public static async authorizeSubscribeOrSync(input: {
-    incomingMessage: MessagesQueryMessage | MessagesSubscribeMessage | MessagesSyncMessage,
+  public static async authorizeQueryOrSubscribe(input: {
+    incomingMessage: MessagesQueryMessage | MessagesSubscribeMessage,
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrants: PermissionGrant[],
@@ -86,38 +85,7 @@ export class MessagesGrantAuthorization {
 
     const scopes = permissionGrants.map(permissionGrant => permissionGrant.scope as MessagesPermissionScope);
 
-    if ('action' in incomingMessage.descriptor) {
-      MessagesGrantAuthorization.authorizeSyncScope(incomingMessage as MessagesSyncMessage, scopes);
-      return;
-    }
-
-    MessagesGrantAuthorization.authorizeFilterScope(incomingMessage as MessagesQueryMessage | MessagesSubscribeMessage, scopes);
-  }
-
-  private static authorizeSyncScope(
-    syncMessage: MessagesSyncMessage,
-    scopes: MessagesPermissionScope[]
-  ): void {
-    MessagesGrantAuthorization.authorizeProtocolSyncScope(scopes, syncMessage.descriptor.protocol);
-  }
-
-  private static authorizeProtocolSyncScope(
-    scopes: MessagesPermissionScope[],
-    protocol: string | undefined
-  ): void {
-    if (isRecordsPrimaryProjectionExcludedProtocol(protocol)) {
-      throw new DwnError(
-        DwnErrorCode.MessagesGrantAuthorizationProtocolSyncInfrastructureProtocol,
-        `Protocol-scoped MessagesSync cannot authorize infrastructure protocol ${protocol}`
-      );
-    }
-
-    if (!MessagesGrantAuthorization.someScopeMatches(scopes, { protocol })) {
-      throw new DwnError(
-        DwnErrorCode.MessagesGrantAuthorizationMismatchedProtocol,
-        `No permission grant scope matches protocol ${protocol}`
-      );
-    }
+    MessagesGrantAuthorization.authorizeFilterScope(incomingMessage, scopes);
   }
 
   private static authorizeFilterScope(
@@ -184,7 +152,7 @@ export class MessagesGrantAuthorization {
       },
     };
 
-    await MessagesGrantAuthorization.authorizeSubscribeOrSync({
+    await MessagesGrantAuthorization.authorizeQueryOrSubscribe({
       incomingMessage: deliveryMessage,
       expectedGrantor,
       expectedGrantee,
@@ -198,7 +166,7 @@ export class MessagesGrantAuthorization {
    * unresolved, revoked, expired, or interface/method-mismatched grants fail the request.
    */
   private static async performBaseValidationForGrantSet(input: {
-    incomingMessage: MessagesQueryMessage | MessagesReadMessage | MessagesSubscribeMessage | MessagesSyncMessage,
+    incomingMessage: MessagesQueryMessage | MessagesReadMessage | MessagesSubscribeMessage,
     expectedGrantor: string,
     expectedGrantee: string,
     permissionGrants: PermissionGrant[],

@@ -69,7 +69,6 @@ Storage URLs use a scheme prefix to select the backend:
 | `DWN_STORAGE` | `level://data` | Default storage URL for all stores |
 | `DWN_STORAGE_MESSAGES` | `DWN_STORAGE` | Override for the message store |
 | `DWN_STORAGE_DATA` | `DWN_STORAGE` | Override for the data (blob) store |
-| `DWN_STORAGE_STATE_INDEX` | `DWN_STORAGE` | Override for the state/event index |
 | `DWN_STORAGE_RESUMABLE_TASKS` | `DWN_STORAGE` | Override for resumable task storage |
 | `DWN_TTL_CACHE_URL` | `sqlite://` | TTL cache (session/state). SQL only. |
 
@@ -200,12 +199,11 @@ docker run -d \
 
 ### Split storage
 
-Store messages and state in PostgreSQL, but keep large binary data on the filesystem:
+Store messages in PostgreSQL, but keep large binary data on the filesystem:
 
 ```bash
 DWN_STORAGE_MESSAGES=postgres://dwn:secret@db:5432/dwn
 DWN_STORAGE_DATA=level:///mnt/blobs
-DWN_STORAGE_STATE_INDEX=postgres://dwn:secret@db:5432/dwn
 ```
 
 ### Health checks

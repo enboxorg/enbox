@@ -8,7 +8,6 @@ import { MessageStoreSql } from '../src/message-store-sql.js';
 import { ResumableTaskStoreSql } from '../src/resumable-task-store-sql.js';
 import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { SqliteDialect } from '../src/dialect/sqlite-dialect.js';
-import { StateIndexSql } from '../src/state-index-sql.js';
 import { describe, expect, it } from 'bun:test';
 
 /**
@@ -114,30 +113,6 @@ describe('Store guards — db not open', () => {
       await freshStore.open();
       await freshStore.open(); // second call should be a no-op
       await freshStore.close();
-    });
-  });
-
-  // ─── StateIndexSql ────────────────────────────────────────────────────
-
-  describe('StateIndexSql', () => {
-    const store = new StateIndexSql(dialect);
-
-    it('should throw on insert() without open()', async () => {
-      await expect(store.insert('tenant', 'cid-1', {})).rejects.toThrow(
-        'Connection to database not open'
-      );
-    });
-
-    it('should throw on delete() without open()', async () => {
-      await expect(store.delete('tenant', ['cid-1'])).rejects.toThrow(
-        'Connection to database not open'
-      );
-    });
-
-    it('should throw on clear() without open()', async () => {
-      await expect(store.clear()).rejects.toThrow(
-        'Connection to database not open'
-      );
     });
   });
 

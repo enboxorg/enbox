@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import { type DataStore, DataStream, type MessageStore, type ProtocolDefinition, type ResumableTaskStore, type StateIndex } from '../../src/index.js';
+import { type DataStore, DataStream, type MessageStore, type ProtocolDefinition, type ResumableTaskStore } from '../../src/index.js';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -25,7 +25,6 @@ describe('Aggregator Model', () => {
   let messageStore: MessageStore;
   let dataStore: DataStore;
   let resumableTaskStore: ResumableTaskStore;
-  let stateIndex: StateIndex;
   let eventLog: EventLog;
   let dwn: Dwn;
 
@@ -83,10 +82,9 @@ describe('Aggregator Model', () => {
     messageStore = stores.messageStore;
     dataStore = stores.dataStore;
     resumableTaskStore = stores.resumableTaskStore;
-    stateIndex = stores.stateIndex;
     eventLog = TestEventLog.get();
 
-    dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+    dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
   });
 
   beforeEach(async () => {
@@ -96,7 +94,6 @@ describe('Aggregator Model', () => {
     await messageStore.clear();
     await dataStore.clear();
     await resumableTaskStore.clear();
-    await stateIndex.clear();
   });
 
   afterAll(async () => {

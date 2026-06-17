@@ -229,8 +229,7 @@ export class PermissionsProtocol implements CoreProtocol {
    *
    * Deletion order is deliberate to avoid orphaned data in case of crash:
    *   1. data store  (large blobs first)
-   *   2. state index (SMT entries)
-   *   3. message store
+   *   2. message store
    */
   public async postProcessWrite(
     tenant: string,
@@ -263,11 +262,9 @@ export class PermissionsProtocol implements CoreProtocol {
       }
     }
 
-    // 2. Compute CIDs and delete from state index before message store to avoid orphaned state entries.
     const messageCids = await Promise.all(grantAuthorizedMessages.map((message): Promise<string> => Message.getCid(message)));
-    await stores.stateIndex.delete(tenant, messageCids);
 
-    // 3. Finally delete all messages from the message store.
+    // 2. Finally delete all messages from the message store.
     await Promise.all(messageCids.map((cid): Promise<void> => stores.messageStore.delete(tenant, cid)));
   }
 

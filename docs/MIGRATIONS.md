@@ -15,7 +15,7 @@ The monorepo has two independent migration sets that may target the **same** dat
 
 | Domain | Package | Tables | Tracking table | Runner |
 |---|---|---|---|---|
-| **DWN stores** | `@enbox/dwn-sql-store` | `messageStoreMessages`, `dataRefs`, `dataBlocks`, `stateIndexMessages`, `resumableTaskMessages` | `kysely_migration` (default) | `runDwnStoreMigrations(db, dialect)` |
+| **DWN stores** | `@enbox/dwn-sql-store` | `messageStoreMessages`, `messageStoreRecordsTags`, `dataRefs`, `dataBlocks`, `resumableTasks`, `replicationCounters`, `replicationFingerprints`, `replicationMeta` | `kysely_migration` (default) | `runDwnStoreMigrations(db, dialect)` |
 | **Server stores** | `@enbox/dwn-server` | `registeredTenants`, `tenantQuotas`, `adminAuditLog`, `adminWebhooks`, `adminPasskeys`, `cacheEntries` | `dwn_server_migration` (custom) | `runServerMigrations(db, dialect)` |
 
 Server migrations use custom table names (`dwn_server_migration`, `dwn_server_migration_lock`) to avoid collisions when both domains share a database.

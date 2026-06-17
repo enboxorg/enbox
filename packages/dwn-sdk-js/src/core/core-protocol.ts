@@ -5,7 +5,6 @@ import type { MessageStore } from '../types/message-store.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
-import type { StateIndex } from '../types/state-index.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 
 /**
@@ -14,7 +13,6 @@ import type { ValidationStateReader } from '../types/validation-state-reader.js'
 export type CoreProtocolStores = {
   messageStore : MessageStore;
   dataStore : DataStore;
-  stateIndex : StateIndex;
 };
 
 /**

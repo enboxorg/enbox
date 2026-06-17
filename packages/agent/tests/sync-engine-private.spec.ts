@@ -88,6 +88,14 @@ describe('SyncEngineLevel — private methods', () => {
     return Replication.fingerprintToHex(fingerprint);
   };
 
+  const collectSublevelKeys = async (store: Level<string, string>, sublevelName: string): Promise<string[]> => {
+    const keys: string[] = [];
+    for await (const [key] of store.sublevel(sublevelName).iterator()) {
+      keys.push(String(key));
+    }
+    return keys;
+  };
+
   // Track every SyncEngineLevel created in this suite so `afterEach` can
   // clear any pending timers before the next test (and before `afterAll`
   // closes the shared Level DB). Tests that exercise code paths which
@@ -310,7 +318,7 @@ describe('SyncEngineLevel — private methods', () => {
 
       const result = await getMessagesPermissionGrantsForScope({
         did            : 'did:example:alice',
-        messageType    : DwnInterface.MessagesSync,
+        messageType    : DwnInterface.MessagesQuery,
         permissionsApi : permissionsApi as any,
       });
       expect(result).toEqual([]);
@@ -334,7 +342,7 @@ describe('SyncEngineLevel — private methods', () => {
       const result = await getMessagesPermissionGrantsForScope({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
-        messageType    : DwnInterface.MessagesSync,
+        messageType    : DwnInterface.MessagesQuery,
         permissionsApi : permissionsApi as any,
       });
 
@@ -355,9 +363,9 @@ describe('SyncEngineLevel — private methods', () => {
       await expect(getMessagesPermissionGrantsForScope({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
-        messageType    : DwnInterface.MessagesSync,
+        messageType    : DwnInterface.MessagesQuery,
         permissionsApi : permissionsApi as any,
-      })).rejects.toThrow('No active Messages.Read permission found for MessagesSync: all protocols');
+      })).rejects.toThrow('No active Messages.Read permission found for MessagesQuery: all protocols');
     });
 
     it('should return all active grants that participate in a protocol-set root', async () => {
@@ -390,7 +398,7 @@ describe('SyncEngineLevel — private methods', () => {
       const result = await getMessagesPermissionGrantsForScope({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
-        messageType    : DwnInterface.MessagesSync,
+        messageType    : DwnInterface.MessagesQuery,
         protocols      : ['https://example.com/social', 'https://example.com/profile'],
         permissionsApi : permissionsApi as any,
       });
@@ -414,9 +422,9 @@ describe('SyncEngineLevel — private methods', () => {
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
         requestedScope : { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
-        messageType    : DwnInterface.MessagesSync,
+        messageType    : DwnInterface.MessagesQuery,
         permissionsApi : permissionsApi as any,
-      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesSync: https://example.com/profile');
+      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesQuery: https://example.com/profile');
     });
 
     it('should reject contextId grants for protocol-root sync', async () => {
@@ -435,9 +443,9 @@ describe('SyncEngineLevel — private methods', () => {
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
         requestedScope : { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
-        messageType    : DwnInterface.MessagesSync,
+        messageType    : DwnInterface.MessagesQuery,
         permissionsApi : permissionsApi as any,
-      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesSync: https://example.com/profile');
+      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesQuery: https://example.com/profile');
     });
 
     it('should reject protocol-set sync when a requested protocol only has narrow grant coverage', async () => {
@@ -464,9 +472,9 @@ describe('SyncEngineLevel — private methods', () => {
           kind      : 'protocolSet',
           protocols : ['https://example.com/profile', 'https://example.com/social'],
         },
-        messageType    : DwnInterface.MessagesSync,
+        messageType    : DwnInterface.MessagesQuery,
         permissionsApi : permissionsApi as any,
-      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesSync: https://example.com/profile');
+      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesQuery: https://example.com/profile');
     });
 
     it('should reject protocol-set sync when any requested protocol lacks coverage', async () => {
@@ -483,10 +491,10 @@ describe('SyncEngineLevel — private methods', () => {
       await expect(getMessagesPermissionGrantsForScope({
         did            : 'did:example:alice',
         delegateDid    : 'did:example:delegate',
-        messageType    : DwnInterface.MessagesSync,
+        messageType    : DwnInterface.MessagesQuery,
         protocols      : ['https://example.com/profile', 'https://example.com/social'],
         permissionsApi : permissionsApi as any,
-      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesSync: https://example.com/social');
+      })).rejects.toThrow('No active protocol-root Messages.Read permission found for MessagesQuery: https://example.com/social');
     });
   });
 
@@ -3342,10 +3350,16 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._permissionsApi = { clear: sinon.stub().resolves() };
 
       await engine.registerIdentity({ did: 'did:example:test', options: { protocols: 'all' } });
+      await clearDb.sublevel('deadLetters').put('dead-letter', '{}');
+      await clearDb.sublevel('deferredPulls').put('deferred-pull', '{}');
+      await clearDb.sublevel('replicationLinks').put('replication-link', '{}');
       expect(await engine.getIdentityOptions('did:example:test')).toBeDefined();
 
       await engine.clear();
       expect(await engine.getIdentityOptions('did:example:test')).toBeUndefined();
+      expect(await collectSublevelKeys(clearDb, 'deadLetters')).toHaveLength(0);
+      expect(await collectSublevelKeys(clearDb, 'deferredPulls')).toHaveLength(0);
+      expect(await collectSublevelKeys(clearDb, 'replicationLinks')).toHaveLength(0);
       expect((engine as any)._permissionsApi.clear.calledOnce).toBe(true);
 
       await clearDb.close();

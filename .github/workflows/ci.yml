@@ -477,7 +477,6 @@ jobs:
           export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
-          export DWN_STORAGE_STATE_INDEX=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DID_DHT_GATEWAY_URI=http://localhost:7527
           # The DWN server itself talks to the local Pkarr relay; opt in to private gateways for
@@ -608,7 +607,6 @@ jobs:
           export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
-          export DWN_STORAGE_STATE_INDEX=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
           export DID_DHT_GATEWAY_URI=http://localhost:7527
           export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
@@ -1277,21 +1275,20 @@ jobs:
           path: |
             ~/.cache/ms-playwright
             ~/playwright-apt-cache
-          # v3 suffix busts stale v1/v2 caches that included unrelated
-          # system .deb files (openjdk, libasound2, glib, etc.).
-          key: ${{ runner.os }}-playwright-v3-${{ matrix.browser }}-${{ hashFiles('package.json') }}
+          # v4 suffix busts stale caches after Ubuntu runner package revs
+          # created exact-version Mesa dependency skew for WebKit.
+          key: ${{ runner.os }}-playwright-v4-${{ matrix.browser }}-${{ hashFiles('package.json') }}
 
       - name: Install Playwright system deps (from cache)
         # On cache hit the .deb files are already saved in ~/playwright-apt-cache.
         # Install them directly with dpkg — no network needed, takes ~5s.
-        # --force-all covers dependency issues, breaks/conflicts, and version
-        # skew between the cached .debs and the runner's pre-installed packages.
-        # This is safe: these are ephemeral CI runners, not production systems.
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: |
           if [ -d ~/playwright-apt-cache ] && ls ~/playwright-apt-cache/*.deb 1>/dev/null 2>&1; then
             echo "Installing $(ls ~/playwright-apt-cache/*.deb | wc -l) cached .deb packages"
-            sudo dpkg --force-all -i ~/playwright-apt-cache/*.deb || true
+            sudo dpkg -i ~/playwright-apt-cache/*.deb || true
+            sudo apt-get update -qq
+            sudo apt-get install -f -y
           fi
 
       - name: Install Playwright system deps (fresh)
@@ -1347,7 +1344,7 @@ jobs:
             attempt=1
             pkg_passed=false
             while [ $attempt -le $max_attempts ]; do
-              if bun run --filter "$pkg" test:browser:coverage; then
+              if bun run --filter "$pkg" test:browser:coverage -- --browser.connectTimeout=120000; then
                 pkg_passed=true
                 break
               fi

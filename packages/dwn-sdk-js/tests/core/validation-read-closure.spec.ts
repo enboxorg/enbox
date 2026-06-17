@@ -2,7 +2,7 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
 import type { RecordingValidationStateReader } from '../../src/core/recording-validation-state-reader.js';
-import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
 import freeForAllProtocolDefinition from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
@@ -58,7 +58,6 @@ describe('validation read closure', () => {
   let messageStore: MessageStore;
   let dataStore: DataStore;
   let resumableTaskStore: ResumableTaskStore;
-  let stateIndex: StateIndex;
   let eventLog: EventLog;
   let dwn: Dwn;
   let recorder: RecordingValidationStateReader;
@@ -70,11 +69,10 @@ describe('validation read closure', () => {
     messageStore = stores.messageStore;
     dataStore = stores.dataStore;
     resumableTaskStore = stores.resumableTaskStore;
-    stateIndex = stores.stateIndex;
     eventLog = TestEventLog.get();
 
     dwn = await Dwn.create({
-      didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore,
+      didResolver, messageStore, dataStore, eventLog, resumableTaskStore,
       instrumentValidationStateReader: (validationStateReader): RecordingValidationStateReader => {
         recorder = new RecordingReader(validationStateReader);
         return recorder;
@@ -92,7 +90,6 @@ describe('validation read closure', () => {
     const clearStores = async (): Promise<void> => {
       await messageStore.clear();
       await dataStore.clear();
-      await stateIndex.clear();
       await resumableTaskStore.clear();
     };
 
@@ -489,9 +486,9 @@ describe('validation read closure', () => {
       });
       expect((await dwn.applyReplicatedMessage(alice.did, stubMessage)).kind).toBe('Applied');
 
-      // same-CID retry with data is not a completion mechanism; fetch-first sync applies once.
+      // same-CID retry with data is an idempotent replay; fetch-first sync applies once.
       const retryResult = await dwn.applyReplicatedMessage(alice.did, stubMessage, { dataStream: DataStream.fromBytes(stubDataBytes!) });
-      expect(retryResult.kind).toBe('Superseded');
+      expect(retryResult.kind).toBe('Duplicate');
 
       snapshot('replicated: same-CID data retry of dataless stub');
     }

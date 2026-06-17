@@ -24,7 +24,6 @@ Nitro Enclaves for cryptographic isolation.
 | **Connection Pool** | 4 separate `pg.Pool` instances (one per store), each defaulting to 10 connections | 40 connections per web head; untunable without code changes |
 | **Schema Management** | Imperative `CREATE TABLE IF NOT EXISTS` in `open()` | No migrations, no version tracking, no `ALTER TABLE` |
 | **Tenant Isolation** | Shared tables with `WHERE tenant = ?` | No RLS, no partitioning; a bug leaks cross-tenant data |
-| **StateIndex** | Non-transactional delete-then-insert upsert for SMT nodes | Race conditions under concurrent writes |
 | **EventLog Persistence** | Events stored in per-tenant `Map<number, StoredEntry>` | Volatile — all events lost on restart |
 
 The durable replication log now lives in the `MessageStore`; NATS is used as an

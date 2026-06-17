@@ -136,7 +136,7 @@ export class GrantAuthorization {
       );
     }
 
-    // Messages.Read is the only valid Messages scope and covers Read, Query, Subscribe, and Sync operations.
+    // Messages.Read is the only valid Messages scope and covers Read, Query, and Subscribe operations.
     // Reject any Messages grant with method !== Read.
     if (dwnInterface === DwnInterfaceName.Messages) {
       if (permissionGrant.scope.method !== DwnMethodName.Read) {
@@ -145,7 +145,7 @@ export class GrantAuthorization {
           `messages permission grant must have method 'Read', got '${permissionGrant.scope.method}' for grant ${permissionGrant.id}`
         );
       }
-      const allowedMethods = [DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe, DwnMethodName.Sync];
+      const allowedMethods = [DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe];
       if (!allowedMethods.includes(dwnMethod as DwnMethodName)) {
         throw new DwnError(
           DwnErrorCode.GrantAuthorizationMethodMismatch,

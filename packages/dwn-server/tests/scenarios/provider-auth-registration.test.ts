@@ -57,7 +57,6 @@ describe('Provider auth registration scenarios', () => {
     dwnServerConfig.messageStore = 'sqlite://';
     dwnServerConfig.dataStore = 'sqlite://';
     dwnServerConfig.resumableTaskStore = 'sqlite://';
-    dwnServerConfig.stateIndex = 'sqlite://';
     dwnServerConfig.packageJsonPath = './package.json';
 
     // Registration config — enable both PoW and provider auth.

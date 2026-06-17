@@ -11,6 +11,5 @@ export enum DwnMethodName {
   Query = 'Query',
   Read = 'Read',
   Subscribe = 'Subscribe',
-  Sync = 'Sync',
   Write = 'Write'
 }

@@ -94,7 +94,6 @@ describe('TypedProtocol API', () => {
     sinon.restore();
     await testHarness.syncStore.clear();
     await testHarness.dwnDataStore.clear();
-    await testHarness.dwnStateIndex.clear();
     await testHarness.dwnMessageStore.clear();
     await testHarness.dwnResumableTaskStore.clear();
     await testHarness.agent.permissions.clear();

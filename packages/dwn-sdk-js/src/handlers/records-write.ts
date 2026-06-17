@@ -163,7 +163,6 @@ export class RecordsWriteHandler implements MethodHandler {
       const messageCid = await Message.getCid(message);
       const putResult = await this.deps.messageStore.put(tenant, messageWithOptionalEncodedData, indexes);
       position = putResult.position;
-      await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
 
       // NOTE: We only emit a `RecordsWrite` when the message is the latest base state.
       // Because we allow a `RecordsWrite` which is not the latest state to be written, but not queried, we shouldn't emit it either.
@@ -205,7 +204,7 @@ export class RecordsWriteHandler implements MethodHandler {
 
     // displace every other message for this record, retaining only the initial write as non-latest state
     await StorageController.deleteDisplacedMessagesAndRetainWrites(
-      tenant, existingMessages, newestMessage, this.deps.messageStore, this.deps.dataStore!, this.deps.stateIndex!, []
+      tenant, existingMessages, newestMessage, this.deps.messageStore, this.deps.dataStore!, []
     );
 
     // Squash processing: if the incoming write is a squash, delete all older sibling records
@@ -224,7 +223,6 @@ export class RecordsWriteHandler implements MethodHandler {
       await coreProtocol.postProcessWrite(tenant, recordsWrite, {
         messageStore : this.deps.messageStore,
         dataStore    : this.deps.dataStore!,
-        stateIndex   : this.deps.stateIndex!,
       });
     }
 

@@ -31,8 +31,8 @@ export default defineConfig({
     alias: {
       'bun:test' : resolve(__dirname, '../../testing/bun-test-shim.ts'),
       // Polyfill Node events module for transitive dependencies that may use it.
-      // EventEmitterStream now uses mitt directly, but browser-level or other
-      // packages in the dependency tree may still reference Node's events module.
+      // EventEmitterStream now uses mitt directly, but packages in the
+      // dependency tree may still reference Node's events module.
       'events'   : 'eventemitter3',
     },
   },
@@ -51,7 +51,6 @@ export default defineConfig({
     include: [
       // --- CJS packages imported directly from src/ or tests/ ---
       'abstract-level',
-      'browser-level',
       'ajv',
       'ajv/dist/2020.js',
       'ajv/dist/runtime/ucs2length.js',
@@ -136,7 +135,6 @@ export default defineConfig({
       'tests/core/message.spec.ts',
       'tests/core/protocol-authorization.spec.ts',
       'tests/jose/jws/general.spec.ts',
-      'tests/smt/sparse-merkle-tree.spec.ts',
       'tests/store/blockstore-mock.spec.ts',
       'tests/interfaces/messages-get.spec.ts',
       'tests/interfaces/messages-subscribe.spec.ts',
@@ -154,8 +152,7 @@ export default defineConfig({
       'tests/scenarios/aggregator.spec.ts',
 
       // Store-dependent tests: 29 handler/feature/scenario test functions run via
-      // the TestSuite orchestrator. Stores resolve to IndexedDB (browser-level)
-      // automatically through level's "browser" package.json field.
+      // the TestSuite orchestrator using level's browser package resolution.
       'tests/store-dependent-tests.spec.ts',
     ],
     testTimeout : 30_000,

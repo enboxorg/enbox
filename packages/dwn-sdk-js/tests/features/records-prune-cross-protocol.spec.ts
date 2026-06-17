@@ -5,7 +5,6 @@ import type {
   DataStore,
   MessageStore,
   ResumableTaskStore,
-  StateIndex,
 } from '../../src/index.js';
 
 import sinon from 'sinon';
@@ -61,7 +60,6 @@ export function testRecordsPruneCrossProtocol(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
     let dwn: Dwn;
 
@@ -148,10 +146,9 @@ export function testRecordsPruneCrossProtocol(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      stateIndex = stores.stateIndex;
       eventLog = TestEventLog.get();
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
     });
 
     beforeEach(async () => {
@@ -160,7 +157,6 @@ export function testRecordsPruneCrossProtocol(): void {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await stateIndex.clear();
     });
 
     afterAll(async () => {
@@ -502,10 +498,9 @@ export function testRecordsPruneCrossProtocol(): void {
         await dataStore.get(alice.did, commentWrite.message.recordId, commentWrite.message.descriptor.dataCid),
       ).toBeUndefined();
 
-      // State index: no messageCid for the comment's RecordsWrite remains.
+      // Message store: no messageCid for the comment's RecordsWrite remains.
       const commentRecordsWriteCid = await Message.getCid(commentWrite.message);
-      const allStateIndexCids = await stateIndex.getLeaves(alice.did, []);
-      expect(allStateIndexCids).not.toContain(commentRecordsWriteCid);
+      expect(await messageStore.get(alice.did, commentRecordsWriteCid)).toBeUndefined();
     });
 
     it('should leave cross-protocol composing children untouched on soft delete (prune omitted)', async () => {

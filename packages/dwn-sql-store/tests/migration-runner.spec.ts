@@ -27,9 +27,6 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           'dataBlocks',
           'dataStore',
           'resumableTasks',
-          'stateIndexNodes',
-          'stateIndexRoots',
-          'stateIndexMeta',
           'replicationCounters',
           'replicationFingerprints',
           'replicationMeta',
@@ -54,9 +51,6 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           'dataBlocks',
           'dataStore',
           'resumableTasks',
-          'stateIndexNodes',
-          'stateIndexRoots',
-          'stateIndexMeta',
           'replicationCounters',
           'replicationFingerprints',
           'replicationMeta',
@@ -103,9 +97,6 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
         expect(await dialect.hasTable(db, 'messageStoreMessages')).toBe(true);
         expect(await dialect.hasTable(db, 'messageStoreRecordsTags')).toBe(true);
         expect(await dialect.hasTable(db, 'resumableTasks')).toBe(true);
-        expect(await dialect.hasTable(db, 'stateIndexNodes')).toBe(true);
-        expect(await dialect.hasTable(db, 'stateIndexRoots')).toBe(true);
-        expect(await dialect.hasTable(db, 'stateIndexMeta')).toBe(true);
         expect(await dialect.hasTable(db, 'replicationCounters')).toBe(true);
         expect(await dialect.hasTable(db, 'replicationFingerprints')).toBe(true);
         expect(await dialect.hasTable(db, 'replicationMeta')).toBe(true);

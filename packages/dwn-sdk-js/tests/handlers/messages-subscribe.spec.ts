@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore } from '../../src/index.js';
 import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
 import type { GenerateGrantCreateOutput, GenerateRecordsWriteOutput, Persona } from '../utils/test-data-generator.js';
 
@@ -32,7 +32,6 @@ export function testMessagesSubscribeHandler(): void {
       let messageStore: MessageStore;
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
-      let stateIndex: StateIndex;
       let dwn: Dwn;
 
       // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
@@ -44,14 +43,12 @@ export function testMessagesSubscribeHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        stateIndex = stores.stateIndex;
 
         dwn = await Dwn.create({
           didResolver,
           messageStore,
           dataStore,
           resumableTaskStore,
-          stateIndex,
         });
 
       });
@@ -64,7 +61,6 @@ export function testMessagesSubscribeHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await stateIndex.clear();
       });
 
       afterAll(async () => {
@@ -73,7 +69,7 @@ export function testMessagesSubscribeHandler(): void {
 
       it('should respond with a 501 if subscriptions are not supported', async () => {
         await dwn.close(); // close the original dwn instance
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore }); // leave out eventLog
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, resumableTaskStore }); // leave out eventLog
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         // attempt to subscribe
@@ -89,7 +85,6 @@ export function testMessagesSubscribeHandler(): void {
       let messageStore: MessageStore;
       let dataStore: DataStore;
       let resumableTaskStore: ResumableTaskStore;
-      let stateIndex: StateIndex;
       let eventLog: EventLog;
       let dwn: Dwn;
 
@@ -102,8 +97,6 @@ export function testMessagesSubscribeHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        stateIndex = stores.stateIndex;
-        eventLog = TestEventLog.get();
         eventLog = TestEventLog.get();
 
         dwn = await Dwn.create({
@@ -111,7 +104,6 @@ export function testMessagesSubscribeHandler(): void {
           messageStore,
           dataStore,
           resumableTaskStore,
-          stateIndex,
           eventLog,
         });
 
@@ -124,7 +116,6 @@ export function testMessagesSubscribeHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await stateIndex.clear();
       });
 
       afterAll(async () => {
@@ -175,11 +166,6 @@ export function testMessagesSubscribeHandler(): void {
         const writeReply = await dwn.processMessage(alice.did, messageWrite.message, { dataStream: messageWrite.dataStream });
         expect(writeReply.status.code).toBe(202);
         const messageCid = await Message.getCid(messageWrite.message);
-
-        // control: ensure that the event exists
-        const events = await stateIndex.getLeaves(alice.did, []);
-        expect(events.length).toBe(2);
-        expect(events).toContain(messageCid);
 
         // await the event
         const resolvedCid = await messageSubscriptionPromise;

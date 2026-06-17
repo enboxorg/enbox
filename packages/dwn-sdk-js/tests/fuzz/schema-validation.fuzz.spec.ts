@@ -24,7 +24,6 @@ const messageSchemaNames = [
   'MessagesQuery',
   'MessagesRead',
   'MessagesSubscribe',
-  'MessagesSync',
 ];
 
 /**

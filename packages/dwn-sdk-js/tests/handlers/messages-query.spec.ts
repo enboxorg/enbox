@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, MessageStore, ProtocolDefinition, ReplicationFeedReader, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ReplicationFeedReader, ResumableTaskStore } from '../../src/index.js';
 
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 
@@ -29,7 +29,6 @@ export function testMessagesQueryHandler(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let dwn: Dwn;
 
     beforeAll(async () => {
@@ -39,16 +38,14 @@ export function testMessagesQueryHandler(): void {
       messageStore = stores.messageStore;
       dataStore = stores.dataStore;
       resumableTaskStore = stores.resumableTaskStore;
-      stateIndex = stores.stateIndex;
 
-      dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, resumableTaskStore });
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, resumableTaskStore });
     });
 
     beforeEach(async () => {
       await messageStore.clear();
       await dataStore.clear();
       await resumableTaskStore.clear();
-      await stateIndex.clear();
     });
 
     afterAll(async () => {

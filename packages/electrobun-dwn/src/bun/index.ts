@@ -78,7 +78,6 @@ function createDwnServerConfig(port: number): Partial<DwnServerConfig> {
     eventBusPluginPath : process.env['DWN_EVENT_BUS_PLUGIN_PATH'],
     messageStore       : process.env['DWN_STORAGE_MESSAGES'] || process.env['DWN_STORAGE'] || 'level://data',
     dataStore          : process.env['DWN_STORAGE_DATA'] || process.env['DWN_STORAGE'] || 'level://data',
-    stateIndex         : process.env['DWN_STORAGE_STATE_INDEX'] || process.env['DWN_STORAGE'] || 'level://data',
     resumableTaskStore : process.env['DWN_STORAGE_RESUMABLE_TASKS'] || process.env['DWN_STORAGE'] || 'level://data',
 
     registrationStoreUrl                  : process.env['DWN_REGISTRATION_STORE_URL'] || process.env['DWN_STORAGE'],
@@ -155,7 +154,6 @@ function resetDwnStorageIfRequested(portCandidates: number[]): void {
   const storageTargets = [
     config.messageStore,
     config.dataStore,
-    config.stateIndex,
     config.resumableTaskStore,
     config.registrationStoreUrl,
   ];

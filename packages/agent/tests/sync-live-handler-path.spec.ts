@@ -123,7 +123,16 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
   });
 
   it('should advance pull checkpoint after processing a live event through the real handler', async () => {
-    // Install protocol.
+    const syncEngine = testHarness.agent.sync as SyncEngineLevel;
+    await syncEngine.registerIdentity({
+      did     : tenant,
+      options : { protocols: 'all' },
+    });
+
+    // Start live sync FIRST — this opens real subscriptions via the shim.
+    // Without a prior cursor, the subscription is live-only (no catch-up).
+    await syncEngine.startSync({ mode: 'live', interval: '30s' });
+
     const { reply: protoReply } = await testHarness.agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
@@ -131,16 +140,6 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
       messageParams : { definition: testProtocol },
     });
     expect(protoReply.status.code).toBe(202);
-
-    const syncEngine = testHarness.agent.sync as SyncEngineLevel;
-    await syncEngine.registerIdentity({
-      did     : tenant,
-      options : { protocols: [testProtocol.protocol] },
-    });
-
-    // Start live sync FIRST — this opens real subscriptions via the shim.
-    // Without a prior cursor, the subscription is live-only (no catch-up).
-    await syncEngine.startSync({ mode: 'live', interval: '30s' });
 
     // Write a record AFTER sync starts — this triggers a live event
     // through the EventLog subscription, delivered to the pull handler.
@@ -163,8 +162,7 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     const links = (): any[] => [...(syncEngine as any)._activeLinks.values()];
     const getLink = (): any => links().find((link: any) =>
       link.tenantDid === tenant &&
-      link.scope?.kind === 'protocolSet' &&
-      link.scope.protocols.includes(testProtocol.protocol)
+      link.scope?.kind === 'full'
     );
 
     await waitFor(() => {
@@ -188,22 +186,21 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
   });
 
   it('should populate echo-suppression cache after pull handler processes an event', async () => {
-    // Install protocol.
+    const syncEngine = testHarness.agent.sync as SyncEngineLevel;
+    await syncEngine.registerIdentity({
+      did     : tenant,
+      options : { protocols: 'all' },
+    });
+
+    // Start sync first, then write — so the event fires as a live event.
+    await syncEngine.startSync({ mode: 'live', interval: '30s' });
+
     await testHarness.agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition: testProtocol },
     });
-
-    const syncEngine = testHarness.agent.sync as SyncEngineLevel;
-    await syncEngine.registerIdentity({
-      did     : tenant,
-      options : { protocols: [testProtocol.protocol] },
-    });
-
-    // Start sync first, then write — so the event fires as a live event.
-    await syncEngine.startSync({ mode: 'live', interval: '30s' });
 
     await testHarness.agent.dwn.processRequest({
       author        : tenant,

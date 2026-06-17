@@ -46,31 +46,6 @@ type MessageStoreRecordsTagsTable = {
   valueNumber: number | null;
 };
 
-// ─── StateIndex SMT tables ────────────────────────────────────────────────
-
-type StateIndexNodeTable = {
-  tenant: string;
-  scope: string;
-  nodeHash: string;
-  nodeType: string;
-  leftHash: string | null;
-  rightHash: string | null;
-  leafKeyHash: string | null;
-  leafValueCid: string | null;
-};
-
-type StateIndexRootTable = {
-  tenant: string;
-  scope: string;
-  rootHash: string;
-};
-
-type StateIndexMetaTable = {
-  tenant: string;
-  messageCid: string;
-  protocol: string | null;
-};
-
 // ─── DataStore tables (legacy + content-addressed) ────────────────────────
 
 /**
@@ -136,9 +111,6 @@ export type DwnDatabaseType = {
   dataRefs: DataRefsTable;
   dataBlocks: DataBlocksTable;
   resumableTasks: ResumableTaskTable;
-  stateIndexNodes: StateIndexNodeTable;
-  stateIndexRoots: StateIndexRootTable;
-  stateIndexMeta: StateIndexMetaTable;
   replicationCounters: ReplicationCounterTable;
   replicationFingerprints: ReplicationFingerprintTable;
   replicationMeta: ReplicationMetaTable;

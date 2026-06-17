@@ -158,7 +158,6 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
     // Clear dapp stores between tests.
     await dappHarness.syncStore.clear();
     await dappHarness.dwnDataStore.clear();
-    await dappHarness.dwnStateIndex.clear();
     await dappHarness.dwnMessageStore.clear();
     await dappHarness.dwnResumableTaskStore.clear();
     await dappHarness.agent.permissions.clear();
@@ -167,7 +166,6 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
     // Also reset wallet stores to isolate each test.
     await walletHarness.syncStore.clear();
     await walletHarness.dwnDataStore.clear();
-    await walletHarness.dwnStateIndex.clear();
     await walletHarness.dwnMessageStore.clear();
     await walletHarness.dwnResumableTaskStore.clear();
     await walletHarness.agent.permissions.clear();

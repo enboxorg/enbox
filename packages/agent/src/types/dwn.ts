@@ -12,8 +12,6 @@ import type {
   MessagesSubscribeMessage,
   MessagesSubscribeOptions,
   MessagesSubscribeReply,
-  MessagesSyncMessage,
-  MessagesSyncReply,
   ProtocolsConfigureMessage,
   ProtocolsConfigureOptions,
   ProtocolsQueryMessage,
@@ -35,15 +33,12 @@ import type {
   SubscriptionListener,
 } from '@enbox/dwn-sdk-js';
 
-import type { MessagesSyncOptions } from '@enbox/dwn-sdk-js';
-
 import {
   DwnInterfaceName,
   DwnMethodName,
   MessagesQuery,
   MessagesRead,
   MessagesSubscribe,
-  MessagesSync,
   ProtocolsConfigure,
   ProtocolsQuery,
   RecordsDelete,
@@ -82,7 +77,6 @@ export enum DwnInterface {
   MessagesQuery = DwnInterfaceName.Messages + DwnMethodName.Query,
   MessagesRead = DwnInterfaceName.Messages + DwnMethodName.Read,
   MessagesSubscribe = DwnInterfaceName.Messages + DwnMethodName.Subscribe,
-  MessagesSync = DwnInterfaceName.Messages + DwnMethodName.Sync,
   ProtocolsConfigure = DwnInterfaceName.Protocols + DwnMethodName.Configure,
   ProtocolsQuery = DwnInterfaceName.Protocols + DwnMethodName.Query,
   RecordsDelete = DwnInterfaceName.Records + DwnMethodName.Delete,
@@ -100,7 +94,6 @@ export interface DwnMessage {
   [DwnInterface.MessagesQuery] : MessagesQueryMessage;
   [DwnInterface.MessagesRead] : MessagesReadMessage;
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeMessage;
-  [DwnInterface.MessagesSync] : MessagesSyncMessage;
   [DwnInterface.ProtocolsConfigure] : ProtocolsConfigureMessage;
   [DwnInterface.ProtocolsQuery] : ProtocolsQueryMessage;
   [DwnInterface.RecordsDelete] : RecordsDeleteMessage;
@@ -114,7 +107,6 @@ export interface DwnMessageDescriptor {
   [DwnInterface.MessagesQuery] : MessagesQueryMessage['descriptor'];
   [DwnInterface.MessagesRead] : MessagesReadMessage['descriptor'];
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeMessage['descriptor'];
-  [DwnInterface.MessagesSync] : MessagesSyncMessage['descriptor'];
   [DwnInterface.ProtocolsConfigure] : ProtocolsConfigureMessage['descriptor'];
   [DwnInterface.ProtocolsQuery] : ProtocolsQueryMessage['descriptor'];
   [DwnInterface.RecordsDelete] : RecordsDeleteMessage['descriptor'];
@@ -128,7 +120,6 @@ export interface DwnMessageParams {
   [DwnInterface.MessagesQuery] : Omit<MessagesQueryOptions, 'signer'>;
   [DwnInterface.MessagesRead] : RequireOnly<MessagesReadOptions, 'messageCid'>;
   [DwnInterface.MessagesSubscribe] : Partial<MessagesSubscribeOptions>;
-  [DwnInterface.MessagesSync] : RequireOnly<MessagesSyncOptions, 'action'>;
   [DwnInterface.ProtocolsConfigure] : RequireOnly<ProtocolsConfigureOptions, 'definition'>;
   [DwnInterface.ProtocolsQuery] : ProtocolsQueryOptions;
   [DwnInterface.RecordsDelete] : RequireOnly<RecordsDeleteOptions, 'recordId'>;
@@ -142,7 +133,6 @@ export interface DwnMessageReply {
   [DwnInterface.MessagesQuery] : MessagesQueryReply;
   [DwnInterface.MessagesRead] : MessagesReadReply;
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeReply;
-  [DwnInterface.MessagesSync] : MessagesSyncReply;
   [DwnInterface.ProtocolsConfigure] : GenericMessageReply;
   [DwnInterface.ProtocolsQuery] : ProtocolsQueryReply;
   [DwnInterface.RecordsDelete] : GenericMessageReply;
@@ -159,7 +149,6 @@ export interface MessageHandler {
   // define all of them individually as undefined
   [DwnInterface.MessagesQuery] : undefined;
   [DwnInterface.MessagesRead] : undefined;
-  [DwnInterface.MessagesSync] : undefined;
   [DwnInterface.ProtocolsConfigure] : undefined;
   [DwnInterface.ProtocolsQuery] : undefined;
   [DwnInterface.RecordsDelete] : undefined;
@@ -231,7 +220,6 @@ export const dwnMessageConstructors: { [T in DwnInterface]: DwnMessageConstructo
   [DwnInterface.MessagesQuery]      : MessagesQuery,
   [DwnInterface.MessagesRead]       : MessagesRead,
   [DwnInterface.MessagesSubscribe]  : MessagesSubscribe,
-  [DwnInterface.MessagesSync]       : MessagesSync,
   [DwnInterface.ProtocolsConfigure] : ProtocolsConfigure,
   [DwnInterface.ProtocolsQuery]     : ProtocolsQuery,
   [DwnInterface.RecordsDelete]      : RecordsDelete,
@@ -245,7 +233,6 @@ export interface DwnMessageInstance {
   [DwnInterface.MessagesQuery] : MessagesQuery;
   [DwnInterface.MessagesRead] : MessagesRead;
   [DwnInterface.MessagesSubscribe] : MessagesSubscribe;
-  [DwnInterface.MessagesSync] : MessagesSync;
   [DwnInterface.ProtocolsConfigure] : ProtocolsConfigure;
   [DwnInterface.ProtocolsQuery] : ProtocolsQuery;
   [DwnInterface.RecordsDelete] : RecordsDelete;

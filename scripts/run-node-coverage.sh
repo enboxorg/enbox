@@ -88,7 +88,6 @@ export DWN_BASE_URL=http://localhost:3000
 export DWN_TTL_CACHE_URL=postgres://dwn_user:dwn_password@localhost:5433/dwn
 export DWN_STORAGE_MESSAGES=postgres://dwn_user:dwn_password@localhost:5433/dwn
 export DWN_STORAGE_DATA=postgres://dwn_user:dwn_password@localhost:5433/dwn
-export DWN_STORAGE_STATE_INDEX=postgres://dwn_user:dwn_password@localhost:5433/dwn
 export DWN_STORAGE_RESUMABLE_TASKS=postgres://dwn_user:dwn_password@localhost:5433/dwn
 export DWN_RATE_LIMIT_REQUESTS_PER_SECOND=0
 export DWN_RATE_LIMIT_TENANT_REQUESTS_PER_SECOND=0

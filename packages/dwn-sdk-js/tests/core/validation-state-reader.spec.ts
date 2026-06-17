@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
-import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../../src/index.js';
+import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
 import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
 import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
@@ -27,7 +27,6 @@ describe('validation-state reader admission parity', () => {
   let messageStore: MessageStore;
   let dataStore: DataStore;
   let resumableTaskStore: ResumableTaskStore;
-  let stateIndex: StateIndex;
   let eventLog: EventLog;
   let dwn: Dwn;
 
@@ -38,16 +37,14 @@ describe('validation-state reader admission parity', () => {
     messageStore = stores.messageStore;
     dataStore = stores.dataStore;
     resumableTaskStore = stores.resumableTaskStore;
-    stateIndex = stores.stateIndex;
     eventLog = TestEventLog.get();
 
-    dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+    dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
   });
 
   beforeEach(async () => {
     await messageStore.clear();
     await dataStore.clear();
-    await stateIndex.clear();
     await resumableTaskStore.clear();
   });
 

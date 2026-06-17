@@ -225,8 +225,8 @@ export async function restoreSession(
   // scope from grants; local sessions are updated only when the caller provides
   // an explicit identity sync scope.
   // Previous versions registered delegates with protocols: [] (global sync),
-  // which causes the sync engine to attempt syncing the permissions protocol
-  // and fail with "No permissions found for MessagesSync".
+  // which causes the sync engine to attempt reading permission feed entries
+  // outside the delegate's grant scope.
   // Always repair regardless of sync state — a stale registration persists
   // on disk and would take effect if sync is later enabled.
   let syncRepairFailed = false;

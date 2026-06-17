@@ -1,4 +1,4 @@
-import type { DataStore, EventLog, MessageStore, ResumableTaskStore, StateIndex } from '../src/index.js';
+import type { DataStore, EventLog, MessageStore, ResumableTaskStore } from '../src/index.js';
 
 import { beforeAll } from 'bun:test';
 
@@ -10,7 +10,6 @@ import { TestEventLog } from './test-event-stream.js';
 import { testMessagesQueryHandler } from './handlers/messages-query.spec.js';
 import { testMessagesReadHandler } from './handlers/messages-read.spec.js';
 import { testMessagesSubscribeHandler } from './handlers/messages-subscribe.spec.js';
-import { testMessagesSyncHandler } from './handlers/messages-sync.spec.js';
 import { testMessageStore } from './store/message-store.spec.js';
 import { testNestedRoleScenarios } from './scenarios/nested-roles.spec.js';
 import { testOwnerDelegatedGrant } from './features/owner-delegated-grant.spec.js';
@@ -51,7 +50,6 @@ export class TestSuite {
   public static runInjectableDependentTests(overrides?: {
     messageStore?: MessageStore,
     dataStore?: DataStore,
-    stateIndex?: StateIndex,
     eventLog?: EventLog,
     resumableTaskStore?: ResumableTaskStore,
   }): void {
@@ -68,7 +66,6 @@ export class TestSuite {
     testMessagesQueryHandler();
     testMessagesReadHandler();
     testMessagesSubscribeHandler();
-    testMessagesSyncHandler();
     testProtocolsConfigureHandler();
     testProtocolsQueryHandler();
     testRecordsCountHandler();

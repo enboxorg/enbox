@@ -167,7 +167,6 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     // Clear local DWN stores (simulating a fresh device), but keep the agent
     // DID and sync registration intact.
     await testHarness.dwnDataStore.clear();
-    await testHarness.dwnStateIndex.clear();
     await testHarness.dwnMessageStore.clear();
     await testHarness.dwnResumableTaskStore.clear();
     testHarness.dwnStores.clear();

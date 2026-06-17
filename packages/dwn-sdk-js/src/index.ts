@@ -8,7 +8,7 @@ export type { ValidationStateReader } from './types/validation-state-reader.js';
 export { StoreValidationStateReader } from './core/validation-state-reader.js';
 export type { RecordedValidationRead } from './core/recording-validation-state-reader.js';
 export { RecordingValidationStateReader } from './core/recording-validation-state-reader.js';
-export type { MessagesFilter, MessagesQueryDescriptor, MessagesQueryMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessagesSubscribeMessageOptions, MessagesSyncAction, MessagesSyncDescriptor, MessagesSyncDiffEntry, MessagesSyncMessage, MessagesSyncReply } from './types/messages-types.js';
+export type { MessagesFilter, MessagesQueryDescriptor, MessagesQueryMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessagesSubscribeMessageOptions } from './types/messages-types.js';
 export type { GT, LT, Filter, FilterValue, KeyValues, EqualFilter, OneOfFilter, RangeFilter, RangeCriterion, PaginationCursor, QueryOptions, RangeValue, StartsWithFilter } from './types/query-types.js';
 export type { ProtocolsConfigureDescriptor, ProtocolDefinition, ProtocolTypes, ProtocolRuleSet, ProtocolsQueryFilter, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply, ProtocolActionRule, ProtocolDeliveryStrategy, ProtocolPathEncryption, ProtocolsQueryDescriptor, ProtocolRecordLimitDefinition, ProtocolSizeDefinition, ProtocolTagsDefinition, ProtocolTagSchema, ProtocolType, ProtocolUses } from './types/protocols-types.js';
 export { ProtocolRecordLimitStrategy } from './types/protocols-types.js';
@@ -50,8 +50,6 @@ export { MessagesRead } from './interfaces/messages-read.js';
 export type { MessagesReadOptions } from './interfaces/messages-read.js';
 export { MessagesQuery } from './interfaces/messages-query.js';
 export type { MessagesQueryOptions } from './interfaces/messages-query.js';
-export { MessagesSync } from './interfaces/messages-sync.js';
-export type { MessagesSyncOptions } from './interfaces/messages-sync.js';
 export type { UnionMessageReply } from './core/message-reply.js';
 export type { MessageStore, MessageStoreOptions, MessageStorePutResult } from './types/message-store.js';
 export { Replication } from './utils/replication.js';
@@ -106,15 +104,6 @@ export { EventEmitterWakePublisher } from './event-stream/event-emitter-wake-pub
 export { DurableEventLog } from './event-stream/durable-event-log.js';
 export type { DurableEventLogConfig, DurableEventLogStore } from './event-stream/durable-event-log.js';
 
-// Sparse Merkle Tree and StateIndex
-export type { StateIndex } from './types/state-index.js';
-export { StateIndexLevel } from './state-index/state-index-level.js';
-export type { StateIndexLevelConfig } from './state-index/state-index-level.js';
-export { SparseMerkleTree } from './smt/sparse-merkle-tree.js';
-export { SMTStoreLevel } from './smt/smt-store-level.js';
-export { SMTStoreMemory } from './smt/smt-store-memory.js';
-export type { Hash, SMTNode, SMTInternalNode, SMTLeafNode, SMTProof, SMTDiffResult, SMTNodeStore } from './types/smt-types.js';
-export { hashChildren, hashEquals, hashKey, hashLeaf, hashToHex, hexToHash, getBit, initDefaultHashes, getDefaultHashes, SMT_DEPTH, ZERO_HASH } from './smt/smt-utils.js';
 // test library exports
 export type { GenerateFromRecordsWriteInput, GenerateFromRecordsWriteOut, GenerateGrantCreateInput, GenerateGrantCreateOutput, GenerateMessagesQueryInput, GenerateMessagesQueryOutput, GenerateMessagesReadInput, GenerateMessagesReadOutput, GenerateMessagesSubscribeInput, GenerateMessagesSubscribeOutput, GenerateProtocolsConfigureInput, GenerateProtocolsConfigureOutput, GenerateProtocolsQueryInput, GenerateProtocolsQueryOutput, GenerateRecordsCountInput, GenerateRecordsCountOutput, GenerateRecordsDeleteInput, GenerateRecordsDeleteOutput, GenerateRecordsQueryInput, GenerateRecordsQueryOutput, GenerateRecordsSubscribeInput, GenerateRecordsSubscribeOutput, GenerateRecordsWriteInput, GenerateRecordsWriteOutput, Persona } from '../tests/utils/test-data-generator.js';
 export { TestDataGenerator } from '../tests/utils/test-data-generator.js';

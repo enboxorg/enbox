@@ -1,5 +1,5 @@
-import type { DataStore, MessageStore, ResumableTaskStore, StateIndex } from '../src/index.js';
-import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel, StateIndexLevel } from '../src/index.js';
+import type { DataStore, MessageStore, ResumableTaskStore } from '../src/index.js';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../src/index.js';
 
 /**
  * Class that manages store implementations for testing.
@@ -11,7 +11,6 @@ export class TestStores {
 
   private static messageStore?: MessageStore;
   private static dataStore?: DataStore;
-  private static stateIndex?: StateIndex;
   private static resumableTaskStore?: ResumableTaskStore;
 
   /**
@@ -21,12 +20,10 @@ export class TestStores {
   public static override(overrides?:{
     messageStore?: MessageStore,
     dataStore?: DataStore,
-    stateIndex?: StateIndex,
     resumableTaskStore?: ResumableTaskStore,
   }): void {
     TestStores.messageStore = overrides?.messageStore;
     TestStores.dataStore = overrides?.dataStore;
-    TestStores.stateIndex = overrides?.stateIndex;
     TestStores.resumableTaskStore = overrides?.resumableTaskStore;
   }
 
@@ -36,7 +33,6 @@ export class TestStores {
   public static get(): {
     messageStore: MessageStore,
     dataStore: DataStore,
-    stateIndex: StateIndex,
     resumableTaskStore: ResumableTaskStore,
     } {
     TestStores.messageStore ??= new MessageStoreLevel({
@@ -47,10 +43,6 @@ export class TestStores {
       blockstoreLocation: 'TEST-DATASTORE'
     });
 
-    TestStores.stateIndex ??= new StateIndexLevel({
-      location: 'TEST-STATEINDEX'
-    });
-
     TestStores.resumableTaskStore ??= new ResumableTaskStoreLevel({
       location: 'TEST-RESUMABLE-TASK-STORE'
     });
@@ -58,7 +50,6 @@ export class TestStores {
     return {
       messageStore       : TestStores.messageStore,
       dataStore          : TestStores.dataStore,
-      stateIndex         : TestStores.stateIndex,
       resumableTaskStore : TestStores.resumableTaskStore,
     };
   }

@@ -45,7 +45,7 @@ Fly.io as an R2-backed IPFS peer.
               │              │  │                     │
               │  SQLite:     │  │  Holds ~1K client   │
               │   messages   │  │  WebSockets each    │
-              │   stateIndex │  │  (hibernatable)     │
+              │   feed/fps   │  │  (hibernatable)     │
               │   events     │  │                     │
               │   tasks      │  │  NATS subscriber    │
               │              │  │  (per unique tenant  │
@@ -83,8 +83,8 @@ Fly.io as an R2-backed IPFS peer.
 A user's DID document lists endpoints from multiple providers. Providers can
 share a NATS super-cluster for low-latency wake propagation, but durable replay
 and cursor validation stay in each provider's Level/SQL-compatible message
-store. SMT reconciliation provides the correctness backstop regardless of
-delivery path.
+store. Feed fingerprints provide the correctness backstop regardless of delivery
+path.
 
 ---
 
@@ -120,19 +120,18 @@ Next request → DO re-instantiates
 
 **Store implementations:**
 
-The DWN engine (`@enbox/dwn-sdk-js`) requires five store interfaces. Each is
-implemented using DO SQLite (via `ctx.storage.sql`) with the **identical schema**
-as `@enbox/dwn-sql-store`. The `tenant` column is retained on every table for
-schema compatibility — it is always set to the DO's own DID, making the schema
-identical across DO SQLite and Postgres-backed providers. This enables data
-portability: a DO's SQLite can be exported and imported into Postgres (or vice
-versa) with no schema translation.
+The DWN engine (`@enbox/dwn-sdk-js`) store interfaces are implemented using DO
+SQLite (via `ctx.storage.sql`) with the **identical schema** as
+`@enbox/dwn-sql-store`. The `tenant` column is retained on every table for schema
+compatibility — it is always set to the DO's own DID, making the schema identical
+across DO SQLite and Postgres-backed providers. This enables data portability: a
+DO's SQLite can be exported and imported into Postgres (or vice versa) with no
+schema translation.
 
 | DWN Interface | DO Implementation | Storage |
 |---|---|---|
 | `MessageStore` | `MessageStoreDOSql` | DO SQLite (same schema as `MessageStoreSql`) |
 | `DataStore` | `DataStoreDOR2` | DO SQLite for refs + R2 for blobs > 30 KB |
-| `StateIndex` | `StateIndexDOSql` | DO SQLite (reuses `SMTStoreSql` patterns) |
 | `ResumableTaskStore` | `ResumableTaskStoreDOSql` | DO SQLite |
 | `EventLog` | `DurableEventLogDOSql` | Store-backed replay/cursors + in-memory `mitt` for live pub/sub |
 | `TenantGate` | N/A | Gateway Worker checks registration before routing |
@@ -140,7 +139,7 @@ versa) with no schema translation.
 **Key simplification from single-threaded execution:**
 - `ResumableTaskStore.grab()` does not need transactions — no concurrent workers
 - In-DO live subscription fan-out is race-free — emit and subscribe in same context
-- `StateIndex` SMT updates need no locking
+- Message feed and fingerprint updates are serialized through the tenant DO
 
 **SQLite schema:**
 
@@ -226,35 +225,6 @@ CREATE TABLE dataBlocks (
   data BLOB NOT NULL,
   UNIQUE(rootDataCid, blockCid)
 );
-
--- SMT nodes (identical to dwn-sql-store stateIndexNodes)
-CREATE TABLE stateIndexNodes (
-  tenant TEXT NOT NULL,
-  scope TEXT NOT NULL DEFAULT '',
-  nodeHash TEXT NOT NULL,
-  nodeType TEXT NOT NULL,
-  leftHash TEXT,
-  rightHash TEXT,
-  leafKeyHash TEXT,
-  leafValueCid TEXT
-);
-CREATE INDEX idx_smt_nodes ON stateIndexNodes(tenant, scope, nodeHash);
-
--- SMT roots (identical to dwn-sql-store stateIndexRoots)
-CREATE TABLE stateIndexRoots (
-  tenant TEXT NOT NULL,
-  scope TEXT NOT NULL,
-  rootHash TEXT NOT NULL
-);
-CREATE INDEX idx_smt_roots ON stateIndexRoots(tenant, scope);
-
--- SMT metadata (identical to dwn-sql-store stateIndexMeta)
-CREATE TABLE stateIndexMeta (
-  tenant TEXT NOT NULL,
-  messageCid TEXT NOT NULL,
-  protocol TEXT
-);
-CREATE INDEX idx_smt_meta ON stateIndexMeta(tenant, messageCid);
 
 -- Resumable tasks (identical to dwn-sql-store resumableTasks)
 CREATE TABLE resumableTasks (
@@ -503,10 +473,11 @@ naturally to this infrastructure:
 | **Relay** (`$delivery: "relay"`) | Same as Direct, but Consumer Worker computes rendezvous hash to determine relay coordinator assignment. Sends to k coordinators who forward to their assigned providers. |
 | **Subscribe** (`$delivery: "subscribe"`) | Remote providers' Connection DOs subscribe to the origin tenant's NATS wake subject, then read from the origin provider's durable log/API as needed. This is the firehose wake path — no Queue needed, but payload and cursor authority stay out of NATS. Provider-grouped: one wake subscription per remote provider (not per user). |
 
-**SMT reconciliation backstop:** All three strategies are latency optimizations.
-The `StateIndex` (SMT) in each Tenant DO provides the correctness guarantee.
-Periodic SMT root comparison between providers (via the sync daemon or delegated
-sync grants) detects and repairs any divergence.
+**Feed-fingerprint convergence backstop:** All three strategies are latency
+optimizations. The durable feed and scoped replication fingerprints in each
+Tenant DO provide the correctness guarantee. Periodic fingerprint comparison
+between providers (via the sync daemon or delegated sync grants) detects and
+repairs divergence.
 
 ---
 
@@ -878,10 +849,9 @@ replicated DWN APIs over HTTPS. Loop prevention relies on DWN idempotency.
 
 **Correctness backstop:**
 
-Periodic SMT root comparison between providers detects any divergence regardless
-of delivery mechanism. The `StateIndex` in each provider's store independently
-maintains the same Sparse Merkle Tree. Identical message sets produce identical
-root hashes regardless of storage backend.
+Periodic scoped-fingerprint comparison between providers detects divergence
+regardless of delivery mechanism. Identical live message sets produce identical
+fingerprints regardless of storage backend.
 
 ---
 
@@ -914,7 +884,6 @@ root hashes regardless of storage backend.
 | DO SQLite Dialect | Adapter for `ctx.storage.sql` compatible with `dwn-sql-store` query patterns |
 | `MessageStoreDOSql` | Port `MessageStoreSql` to use DO SQLite. Same schema, same query logic. |
 | `DataStoreDOR2` | SQLite for refs, R2 for blobs. UnixFS importer with `fixedSize(262144)`. |
-| `StateIndexDOSql` | Port `StateIndexSql` + `SMTStoreSql` to DO SQLite. |
 | `ResumableTaskStoreDOSql` | Port `ResumableTaskStoreSql`. Simplified `grab()` (no transactions needed). |
 | `DurableEventLogDOSql` | Store-backed replay/cursors over DO SQLite plus `mitt` for in-DO pub/sub. NATS wake publish deferred to Phase 2. |
 | Tenant DO class | Instantiates `Dwn.create(config)` with DO stores. `fetch()` handler for JSON-RPC. |

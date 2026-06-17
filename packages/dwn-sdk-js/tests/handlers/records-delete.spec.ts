@@ -8,7 +8,6 @@ import type {
   RecordsDeleteMessage,
   RecordsWriteMessage,
   ResumableTaskStore,
-  StateIndex,
 } from '../../src/index.js';
 import type { EventLog, SubscriptionListener } from '../../src/types/subscriptions.js';
 
@@ -45,7 +44,6 @@ export function testRecordsDeleteHandler(): void {
     let messageStore: MessageStore;
     let dataStore: DataStore;
     let resumableTaskStore: ResumableTaskStore;
-    let stateIndex: StateIndex;
     let eventLog: EventLog;
     let dwn: Dwn;
 
@@ -68,10 +66,9 @@ export function testRecordsDeleteHandler(): void {
         messageStore = stores.messageStore;
         dataStore = stores.dataStore;
         resumableTaskStore = stores.resumableTaskStore;
-        stateIndex = stores.stateIndex;
         eventLog = TestEventLog.get();
 
-        dwn = await Dwn.create({ didResolver, messageStore, dataStore, stateIndex, eventLog, resumableTaskStore });
+        dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
       });
 
       beforeEach(async () => {
@@ -79,7 +76,6 @@ export function testRecordsDeleteHandler(): void {
         await messageStore.clear();
         await dataStore.clear();
         await resumableTaskStore.clear();
-        await stateIndex.clear();
       });
 
       afterAll(async () => {
@@ -871,9 +867,6 @@ export function testRecordsDeleteHandler(): void {
         expect(messages.length).toBe(1);
         expect(await Message.getCid(messages[0])).toBe(deleteMessageCid);
 
-        // state index
-        const events = await stateIndex.getLeaves(alice.did, []);
-        expect(events).toContain(deleteMessageCid);
       });
 
       describe('tombstone visibility facts', () => {
@@ -1174,15 +1167,13 @@ export function testRecordsDeleteHandler(): void {
           const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
           expect(deleteReply.status.code).toBe(202);
 
-          // NOTE: getLeaves returns ALL messageCids (including ProtocolsConfigure), so count is 3 not 2
-          const events = await stateIndex.getLeaves(alice.did, []);
-          expect(events.length).toBe(3);
-
           const writeMessageCid = await Message.getCid(message);
           const deleteMessageCid = await Message.getCid(recordsDelete.message);
           const expectedMessageCids = new Set([writeMessageCid, deleteMessageCid]);
+          const { messages } = await messageStore.query(alice.did, [{ recordId: message.recordId }]);
 
-          for (const messageCid of events) {
+          for (const storedMessage of messages) {
+            const messageCid = await Message.getCid(storedMessage);
             expectedMessageCids.delete(messageCid);
           }
 
@@ -1216,11 +1207,11 @@ export function testRecordsDeleteHandler(): void {
           const deleteReply = await dwn.processMessage(author.did, recordsDelete.message);
           expect(deleteReply.status.code).toBe(202);
 
-          const events = await stateIndex.getLeaves(author.did, []);
-          expect(events.length).toBe(4); // 1 for protocol configure + first write + latest pre-delete write + delete
-
+          const { messages } = await messageStore.query(author.did, [{ recordId: message.recordId }]);
+          expect(messages.length).toBe(3); // first write + latest pre-delete write + delete
           const retainedWriteCid = await Message.getCid(newWrite.message);
-          expect(events).toContain(retainedWriteCid);
+          const retainedCids = await Promise.all(messages.map((storedMessage) => Message.getCid(storedMessage)));
+          expect(retainedCids).toContain(retainedWriteCid);
         });
       });
     });
