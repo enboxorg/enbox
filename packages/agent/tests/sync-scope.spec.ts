@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { getProtocolClosureEdges } from '../src/sync-scope-closure.js';
 import {
   computeAuthorizationEpoch,
   computeProjectionId,
@@ -137,6 +138,75 @@ describe('sync scope identity', () => {
 
     expect(projectionId).toBe(sameProjectionId);
     expect(oldEpoch).not.toBe(newEpoch);
+  });
+
+  it('extracts uses and nested cross-protocol dependency references from protocol definitions', () => {
+    const edges = getProtocolClosureEdges({
+      protocol  : 'https://example.com/composed',
+      published : true,
+      uses      : {
+        social : 'https://example.com/social',
+        tasks  : 'https://example.com/tasks',
+      },
+      types     : {},
+      structure : {
+        root: {
+          $actions : [{ who: 'anyone', can: ['create'] }],
+          reply    : {
+            $ref : 'social:thread',
+            note : {
+              $ref: 'tasks:item',
+            },
+          },
+          localRole: {
+            $actions: [{ role: 'social:moderator', can: ['create'] }],
+          },
+          localOf: {
+            $actions: [{ who: 'author', of: 'tasks:item', can: ['read'] }],
+          },
+          localOnly: {
+            $ref     : 'social',
+            $actions : [
+              { role: 'tasks', can: ['create'] },
+              { who: 'recipient', of: 'tasks', can: ['read'] },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(edges).toEqual({
+      dependencyProtocols : ['https://example.com/social', 'https://example.com/tasks'],
+      usesProtocols       : ['https://example.com/social', 'https://example.com/tasks'],
+    });
+  });
+
+  it('does not treat bare local references that match uses aliases as cross-protocol dependencies', () => {
+    const edges = getProtocolClosureEdges({
+      protocol  : 'https://example.com/composed',
+      published : true,
+      uses      : {
+        roles   : 'https://example.com/roles',
+        threads : 'https://example.com/threads',
+      },
+      types     : {},
+      structure : {
+        root: {
+          child: {
+            $ref     : 'threads',
+            $actions : [
+              { role: 'roles', can: ['create'] },
+              { who: 'recipient', of: 'threads', can: ['read'] },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(edges).toEqual({
+      dependencyProtocols : [],
+      usesProtocols       : ['https://example.com/roles', 'https://example.com/threads'],
+    });
   });
 
 });

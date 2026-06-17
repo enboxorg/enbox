@@ -12,6 +12,16 @@ export type MessagesScopeResolution = {
   permissionGrants: PermissionGrantEntry[];
 };
 
+export class SyncProtocolRootPermissionGrantMissingError extends Error {
+  public readonly protocol: string;
+
+  public constructor(messageType: DwnInterface, protocol: string) {
+    super(`SyncPermissions: No active protocol-root Messages.Read permission found for ${messageType}: ${protocol}`);
+    this.name = 'SyncProtocolRootPermissionGrantMissingError';
+    this.protocol = protocol;
+  }
+}
+
 /** Returns a sorted, duplicate-free grant ID set, or `undefined` for owner requests. */
 export function toMessagesPermissionGrantIds(permissionGrantIds: string[] | undefined): NonEmptyStringArray | undefined {
   if (permissionGrantIds === undefined || permissionGrantIds.length === 0) {
@@ -121,7 +131,7 @@ function resolveProtocolSetScope(
       continue;
     }
 
-    throw new Error(`SyncPermissions: No active protocol-root Messages.Read permission found for ${messageType}: ${protocol}`);
+    throw new SyncProtocolRootPermissionGrantMissingError(messageType, protocol);
   }
 
   const grants = permissionGrants

@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProgressToken, RecordsQueryReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProgressToken, ProtocolDefinition, RecordsQueryReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import ms from 'ms';
 
@@ -20,12 +20,13 @@ import { admitClosure } from './sync-admit-closure.js';
 import { buildLinkId } from './sync-link-id.js';
 import { classifySyncEventScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
+import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
-import { permissionGrantIdsFromEntries, resolveMessagesScopes, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
+import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, resolveMessagesScopes, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
 export type SyncEngineLevelParams = {
   agent?: EnboxPlatformAgent;
@@ -43,6 +44,9 @@ const PUSH_DEBOUNCE_MS = 100;
 
 /** Default durable-feed page size for engine replay. */
 const FEED_PAGE_LIMIT = 100;
+
+/** Page size for local retained ProtocolsConfigure history scans. */
+const PROTOCOL_HISTORY_PAGE_LIMIT = 500;
 
 /** Tracks a live subscription to a remote DWN for one sync target. */
 type LiveSubscription = {
@@ -106,6 +110,15 @@ type SyncReconcileOptions = {
 
 type SyncRunOptions = {
   verifyConvergence?: boolean;
+};
+
+type SyncScopeClosureValidationState = {
+  requestedProtocols: Set<string>;
+  protocolsToScan: string[];
+  scannedProtocols: Set<string>;
+  missingGrantProtocols: Set<string>;
+  nonScopedUsesProtocols: Set<string>;
+  splitDependencyEdges: Map<string, Set<string>>;
 };
 
 type SyncReconcileResult = {
@@ -353,6 +366,250 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  private async validateSyncScopeClosure(did: string, options: SyncIdentityOptions): Promise<void> {
+    const scope = syncScopeFromProtocols(options.protocols);
+    if (scope.kind === 'full') {
+      return;
+    }
+
+    const state = SyncEngineLevel.createScopeClosureValidationState(scope.protocols);
+    await this.scanSyncScopeClosure(did, options, state);
+
+    const details = SyncEngineLevel.scopeClosureErrorDetails(options, state);
+    if (details.length > 0) {
+      throw new Error(`SyncEngineLevel: sync scope closure validation failed for ${did}: ${details.join('; ')}`);
+    }
+  }
+
+  private static createScopeClosureValidationState(protocols: NonEmptyStringArray): SyncScopeClosureValidationState {
+    return {
+      requestedProtocols     : new Set(protocols),
+      protocolsToScan        : [...protocols],
+      scannedProtocols       : new Set(),
+      missingGrantProtocols  : new Set(),
+      nonScopedUsesProtocols : new Set(),
+      splitDependencyEdges   : new Map(),
+    };
+  }
+
+  private async scanSyncScopeClosure(
+    did: string,
+    options: SyncIdentityOptions,
+    state: SyncScopeClosureValidationState,
+  ): Promise<void> {
+    while (state.protocolsToScan.length > 0) {
+      const protocol = state.protocolsToScan.shift();
+      if (protocol === undefined || state.scannedProtocols.has(protocol)) {
+        continue;
+      }
+
+      await this.scanSyncScopeProtocol(did, options, protocol, state);
+    }
+  }
+
+  private async scanSyncScopeProtocol(
+    did: string,
+    options: SyncIdentityOptions,
+    protocol: string,
+    state: SyncScopeClosureValidationState,
+  ): Promise<void> {
+    state.scannedProtocols.add(protocol);
+
+    const permissionGrantIds = await this.permissionGrantIdsForClosureProtocol(did, options, protocol);
+    if (permissionGrantIds === 'missing') {
+      state.missingGrantProtocols.add(protocol);
+      return;
+    }
+
+    const definitions = await this.fetchLocalProtocolHistory(did, protocol, options.delegateDid, permissionGrantIds);
+    for (const definition of definitions) {
+      SyncEngineLevel.recordScopeClosureEdges(state, definition);
+    }
+  }
+
+  private static recordScopeClosureEdges(
+    state: SyncScopeClosureValidationState,
+    definition: ProtocolDefinition,
+  ): void {
+    const edges = getProtocolClosureEdges(definition);
+    SyncEngineLevel.recordUsesClosureProtocols(state, edges.usesProtocols);
+    SyncEngineLevel.recordDependencyClosureProtocols(state, definition.protocol, edges.dependencyProtocols);
+  }
+
+  private static recordUsesClosureProtocols(
+    state: SyncScopeClosureValidationState,
+    protocols: string[],
+  ): void {
+    for (const protocol of protocols) {
+      if (!state.requestedProtocols.has(protocol)) {
+        state.nonScopedUsesProtocols.add(protocol);
+      }
+      SyncEngineLevel.enqueueScopeClosureProtocol(state, protocol);
+    }
+  }
+
+  private static recordDependencyClosureProtocols(
+    state: SyncScopeClosureValidationState,
+    sourceProtocol: string,
+    protocols: string[],
+  ): void {
+    for (const protocol of protocols) {
+      if (!state.requestedProtocols.has(protocol)) {
+        SyncEngineLevel.addProtocolEdge(state.splitDependencyEdges, sourceProtocol, protocol);
+      }
+      SyncEngineLevel.enqueueScopeClosureProtocol(state, protocol);
+    }
+  }
+
+  private static enqueueScopeClosureProtocol(state: SyncScopeClosureValidationState, protocol: string): void {
+    if (!state.scannedProtocols.has(protocol)) {
+      state.protocolsToScan.push(protocol);
+    }
+  }
+
+  private static scopeClosureErrorDetails(
+    options: SyncIdentityOptions,
+    state: SyncScopeClosureValidationState,
+  ): string[] {
+    if (state.missingGrantProtocols.size === 0 && state.splitDependencyEdges.size === 0) {
+      return [];
+    }
+
+    const details: string[] = [];
+    if (state.missingGrantProtocols.size > 0) {
+      details.push(
+        `delegate ${options.delegateDid} lacks Messages.Read grants for closure protocols: ` +
+        SyncEngineLevel.formatStringSet(state.missingGrantProtocols)
+      );
+    }
+    if (state.splitDependencyEdges.size > 0) {
+      details.push(`scope splits cross-protocol dependencies: ${SyncEngineLevel.formatProtocolEdges(state.splitDependencyEdges)}`);
+    }
+    if (state.nonScopedUsesProtocols.size > 0) {
+      details.push(`uses protocols outside the sync scope: ${SyncEngineLevel.formatStringSet(state.nonScopedUsesProtocols)}`);
+    }
+
+    return details;
+  }
+
+  private async permissionGrantIdsForClosureProtocol(
+    did: string,
+    options: SyncIdentityOptions,
+    protocol: string,
+  ): Promise<NonEmptyStringArray | undefined | 'missing'> {
+    if (options.delegateDid === undefined) {
+      return undefined;
+    }
+
+    try {
+      const grants = await getMessagesPermissionGrantsForScope({
+        did,
+        delegateDid    : options.delegateDid,
+        protocols      : [protocol],
+        messageType    : DwnInterface.MessagesQuery,
+        permissionsApi : this._permissionsApi,
+      });
+      return permissionGrantIdsFromEntries(grants);
+    } catch (error) {
+      if (error instanceof SyncProtocolRootPermissionGrantMissingError) {
+        return 'missing';
+      }
+      throw error;
+    }
+  }
+
+  private async fetchLocalProtocolHistory(
+    did: string,
+    protocol: string,
+    delegateDid: string | undefined,
+    permissionGrantIds: NonEmptyStringArray | undefined,
+  ): Promise<ProtocolDefinition[]> {
+    const definitions: ProtocolDefinition[] = [];
+    let cursor: ProgressToken | undefined;
+
+    for (;;) {
+      const { reply } = await this.agent.dwn.processRequest({
+        author        : did,
+        target        : did,
+        messageType   : DwnInterface.MessagesQuery,
+        granteeDid    : delegateDid,
+        messageParams : {
+          cursor,
+          filters: [{
+            interface : DwnInterfaceName.Protocols,
+            method    : DwnMethodName.Configure,
+            protocol,
+          }],
+          limit              : PROTOCOL_HISTORY_PAGE_LIMIT,
+          permissionGrantIds : permissionGrantIds,
+        },
+      });
+
+      if (reply.status.code !== 200) {
+        throw new Error(
+          `SyncEngineLevel: local protocol history query failed for ${did} / ${protocol}: ${reply.status.code} ${reply.status.detail}`
+        );
+      }
+
+      for (const entry of reply.entries ?? []) {
+        const definition = SyncEngineLevel.protocolDefinitionFromMessage(entry.message);
+        if (definition !== undefined) {
+          definitions.push(definition);
+        }
+      }
+
+      if (reply.drained === true) {
+        return definitions;
+      }
+      if (reply.cursor === undefined) {
+        throw new Error(`SyncEngineLevel: local protocol history query returned no cursor before drain for ${did} / ${protocol}`);
+      }
+
+      cursor = reply.cursor;
+    }
+  }
+
+  private static protocolDefinitionFromMessage(message: GenericMessage | undefined): ProtocolDefinition | undefined {
+    const descriptor = message?.descriptor as { interface?: string; method?: string; definition?: unknown } | undefined;
+    if (
+      descriptor?.interface !== DwnInterfaceName.Protocols ||
+      descriptor.method !== DwnMethodName.Configure ||
+      !SyncEngineLevel.isProtocolDefinition(descriptor.definition)
+    ) {
+      return undefined;
+    }
+
+    return descriptor.definition;
+  }
+
+  private static isProtocolDefinition(value: unknown): value is ProtocolDefinition {
+    return typeof value === 'object' &&
+      value !== null &&
+      typeof (value as { protocol?: unknown }).protocol === 'string';
+  }
+
+  private static addProtocolEdge(edges: Map<string, Set<string>>, from: string, to: string): void {
+    let targets = edges.get(from);
+    if (targets === undefined) {
+      targets = new Set();
+      edges.set(from, targets);
+    }
+    targets.add(to);
+  }
+
+  private static formatStringSet(values: Set<string>): string {
+    return [...values].sort(lexicographicalCompare).join(', ');
+  }
+
+  private static formatProtocolEdges(edges: Map<string, Set<string>>): string {
+    return [...edges.entries()]
+      .sort(([a], [b]) => lexicographicalCompare(a, b))
+      .flatMap(([from, targets]) => [...targets]
+        .sort(lexicographicalCompare)
+        .map(to => `${from} -> ${to}`))
+      .join(', ');
+  }
+
   private async buildSyncTargetsForEndpoint(did: string, dwnUrl: string, options: SyncIdentityOptions): Promise<SyncTarget[]> {
     const requestedScope = syncScopeFromProtocols(options.protocols);
     const resolutions = await this.buildSyncTargetResolutions(did, requestedScope, options);
@@ -574,6 +831,7 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is already registered.`);
     }
 
+    await this.validateSyncScopeClosure(did, options);
     await registeredIdentities.put(did, JSON.stringify(options));
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
@@ -634,6 +892,7 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error(`SyncEngineLevel: Identity with DID ${did} is not registered.`);
     }
 
+    await this.validateSyncScopeClosure(did, options);
     await registeredIdentities.put(did, JSON.stringify(options));
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;

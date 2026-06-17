@@ -508,7 +508,7 @@ describe('SyncEngineLevel', () => {
         sendDwnRequestSpy.restore();
       });
 
-      it('should skip the identity when delegate permission grant is missing during pull', async () => {
+      it('should reject delegated scoped registration when the permission grant is missing during pull setup', async () => {
         // create new identity to not conflict the previous tests's remote records
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
@@ -518,21 +518,13 @@ describe('SyncEngineLevel', () => {
           metadata  : { name: 'Alice Delegate', connectedDid: aliceSync.did.uri }
         });
 
-        await testHarness.agent.sync.registerIdentity({
+        await expect(testHarness.agent.sync.registerIdentity({
           did     : aliceSync.did.uri,
           options : {
             delegateDid : delegateDid.did.uri,
             protocols   : [ 'https://protocol.xyz/foo' ]
           }
-        });
-
-        const warnSpy = sinon.stub(console, 'warn');
-
-        await syncEngine.sync('pull');
-
-        expect(warnSpy.calledWithMatch(
-          `SyncEngineLevel: Unable to resolve sync targets for ${aliceSync.did.uri} at ${testDwnUrl}, skipping identity endpoint:`
-        )).toBe(true);
+        })).rejects.toThrow('lacks Messages.Read grants for closure protocols: https://protocol.xyz/foo');
       });
 
       it('succeeds with only a MessagesSync grant when messages are inlined in the diff response', async () => {
@@ -990,7 +982,7 @@ describe('SyncEngineLevel', () => {
         processRequestSpy.restore();
       });
 
-      it('should skip the identity when delegate permission grant is missing during push', async () => {
+      it('should reject delegated scoped registration when the permission grant is missing during push setup', async () => {
         // create new identity to not conflict the previous tests's remote records
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
@@ -1000,21 +992,13 @@ describe('SyncEngineLevel', () => {
           metadata  : { name: 'Alice Delegate', connectedDid: aliceSync.did.uri }
         });
 
-        await testHarness.agent.sync.registerIdentity({
+        await expect(testHarness.agent.sync.registerIdentity({
           did     : aliceSync.did.uri,
           options : {
             delegateDid : delegateDid.did.uri,
             protocols   : [ 'https://protocol.xyz/foo' ]
           }
-        });
-
-        const warnSpy = sinon.stub(console, 'warn');
-
-        await syncEngine.sync('push');
-
-        expect(warnSpy.calledWithMatch(
-          `SyncEngineLevel: Unable to resolve sync targets for ${aliceSync.did.uri} at ${testDwnUrl}, skipping identity endpoint:`
-        )).toBe(true);
+        })).rejects.toThrow('lacks Messages.Read grants for closure protocols: https://protocol.xyz/foo');
       });
 
       it('pushes a missing delegate grant dependency before a scoped local record', async () => {
