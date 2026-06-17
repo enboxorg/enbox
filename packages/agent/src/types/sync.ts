@@ -1,4 +1,4 @@
-import type { ProgressToken } from '@enbox/dwn-sdk-js';
+import type { ProgressToken, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './agent.js';
 
@@ -27,6 +27,17 @@ export type SyncIdentityOptions = {
    * install or use while applying records for the requested protocol set.
    */
   protocols: 'all' | [string, ...string[]];
+};
+
+export type ProtocolReferenceKind = 'closure' | 'scope' | 'scope-all' | 'self';
+
+export type ProtocolReference = {
+  tenantDid: string;
+  protocol: string;
+  kind: ProtocolReferenceKind;
+  referencer: string;
+  sourceProtocol?: string;
+  createdAt: string;
 };
 
 /**
@@ -529,6 +540,22 @@ export interface SyncEngine {
    * Update the Sync Options for a specific identity, replaces the existing options.
    */
   updateIdentityOptions(params: { did: string, options: SyncIdentityOptions }): Promise<void>;
+  /**
+   * Assert that a local app-surface ProtocolsConfigure keeps the protocol visible.
+   */
+  assertProtocolSelfReference(params: { identity: string, protocol: string, definition?: ProtocolDefinition }): Promise<void>;
+  /**
+   * Release a previously asserted self reference.
+   */
+  releaseProtocolSelfReference(params: { identity: string, protocol: string }): Promise<void>;
+  /**
+   * Return all device-local protocol references for an identity.
+   */
+  getProtocolReferences(identity: string): Promise<ProtocolReference[]>;
+  /**
+   * Test whether an identity has any active reference for a protocol.
+   */
+  hasProtocolReference(params: { identity: string, protocol: string }): Promise<boolean>;
   /**
    * Preforms a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    * @param direction which direction you'd like to perform the sync operation.

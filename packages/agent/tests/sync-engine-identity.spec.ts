@@ -1,7 +1,10 @@
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+
 import sinon from 'sinon';
 
 import { Level } from 'level';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
@@ -207,6 +210,222 @@ describe('SyncEngineLevel — identity management', () => {
       });
       const options = await syncEngine.getIdentityOptions('did:example:scope-widen');
       expect(options!.protocols).toBe('all');
+    });
+  });
+
+  describe('protocol reference index', () => {
+    it('should create scope references when registering an identity', async () => {
+      await syncEngine.registerIdentity({
+        did     : 'did:example:refs-register',
+        options : { protocols: ['https://proto.example.com/chat', 'https://proto.example.com/profile'] },
+      });
+
+      const references = await syncEngine.getProtocolReferences('did:example:refs-register');
+      expect(references.map(reference => ({
+        kind     : reference.kind,
+        protocol : reference.protocol,
+      }))).toEqual([
+        {
+          kind     : 'scope',
+          protocol : 'https://proto.example.com/chat',
+        },
+        {
+          kind     : 'scope',
+          protocol : 'https://proto.example.com/profile',
+        },
+      ]);
+    });
+
+    it('should store protocols all as a wildcard scope reference', async () => {
+      await syncEngine.registerIdentity({ did: 'did:example:refs-all', options: { protocols: 'all' } });
+
+      expect(await syncEngine.hasProtocolReference({
+        identity : 'did:example:refs-all',
+        protocol : 'https://proto.example.com/arrives-later',
+      })).toBe(true);
+
+      const references = await syncEngine.getProtocolReferences('did:example:refs-all');
+      expect(references.map(reference => ({
+        kind     : reference.kind,
+        protocol : reference.protocol,
+      }))).toEqual([{
+        kind     : 'scope-all',
+        protocol : '*',
+      }]);
+    });
+
+    it('should rewrite scope references when updating identity options', async () => {
+      await syncEngine.registerIdentity({
+        did     : 'did:example:refs-update',
+        options : { protocols: ['https://proto.example.com/old'] },
+      });
+
+      await syncEngine.updateIdentityOptions({
+        did     : 'did:example:refs-update',
+        options : { protocols: ['https://proto.example.com/new'] },
+      });
+
+      expect(await syncEngine.hasProtocolReference({
+        identity : 'did:example:refs-update',
+        protocol : 'https://proto.example.com/old',
+      })).toBe(false);
+      expect(await syncEngine.hasProtocolReference({
+        identity : 'did:example:refs-update',
+        protocol : 'https://proto.example.com/new',
+      })).toBe(true);
+    });
+
+    it('should leave self references when unregistering an identity', async () => {
+      await syncEngine.assertProtocolSelfReference({
+        identity : 'did:example:refs-self',
+        protocol : 'https://proto.example.com/local',
+      });
+      await syncEngine.registerIdentity({
+        did     : 'did:example:refs-self',
+        options : { protocols: ['https://proto.example.com/synced'] },
+      });
+
+      await syncEngine.unregisterIdentity('did:example:refs-self');
+
+      const references = await syncEngine.getProtocolReferences('did:example:refs-self');
+      expect(references.map(reference => ({
+        kind     : reference.kind,
+        protocol : reference.protocol,
+      }))).toEqual([{
+        kind     : 'self',
+        protocol : 'https://proto.example.com/local',
+      }]);
+    });
+
+    it('should derive closure references from asserted self protocol definitions', async () => {
+      const sourceProtocol = 'https://proto.example.com/self-source';
+      const dependencyProtocol = 'https://proto.example.com/self-dependency';
+      await syncEngine.assertProtocolSelfReference({
+        identity   : 'did:example:refs-self-closure',
+        protocol   : sourceProtocol,
+        definition : {
+          protocol  : sourceProtocol,
+          published : true,
+          uses      : { dep: dependencyProtocol },
+          types     : {},
+          structure : {
+            root: {
+              $actions: [{ role: 'dep:admin', can: ['create'] }],
+            },
+          },
+        },
+      });
+
+      const references = await syncEngine.getProtocolReferences('did:example:refs-self-closure');
+      expect(references.map(reference => ({
+        kind           : reference.kind,
+        protocol       : reference.protocol,
+        sourceProtocol : reference.sourceProtocol,
+      }))).toEqual([
+        {
+          kind           : 'closure',
+          protocol       : dependencyProtocol,
+          sourceProtocol : sourceProtocol,
+        },
+        {
+          kind           : 'self',
+          protocol       : sourceProtocol,
+          sourceProtocol : undefined,
+        },
+      ]);
+    });
+
+    it('should remove a self protocol closure when the last self reference is released', async () => {
+      const sourceProtocol = 'https://proto.example.com/released-source';
+      const dependencyProtocol = 'https://proto.example.com/released-dependency';
+      await syncEngine.assertProtocolSelfReference({
+        identity   : 'did:example:refs-release',
+        protocol   : sourceProtocol,
+        definition : {
+          protocol  : sourceProtocol,
+          published : true,
+          uses      : { dep: dependencyProtocol },
+          types     : {},
+          structure : {
+            root: {
+              child: { $ref: 'dep:item' },
+            },
+          },
+        },
+      });
+
+      await syncEngine.releaseProtocolSelfReference({
+        identity : 'did:example:refs-release',
+        protocol : sourceProtocol,
+      });
+
+      expect(await syncEngine.getProtocolReferences('did:example:refs-release')).toEqual([]);
+    });
+
+    it('should rebuild closure references from retained protocol history at startSync', async () => {
+      const sourceProtocol = 'https://proto.example.com/source';
+      const dependencyProtocol = 'https://proto.example.com/dependency';
+      const sourceDefinition: ProtocolDefinition = {
+        protocol  : sourceProtocol,
+        published : true,
+        uses      : { dep: dependencyProtocol },
+        types     : {},
+        structure : {
+          root: {
+            child: { $ref: 'dep:item' },
+          },
+        },
+      };
+      const agent = {
+        dwn: {
+          getRemoteDwnEndpointUrls : sinon.stub().resolves([]),
+          processRequest           : sinon.stub().callsFake(async (request: any) => {
+            const protocol = request.messageParams.filters[0].protocol;
+            return {
+              reply: {
+                status  : { code: 200, detail: 'OK' },
+                entries : protocol === sourceProtocol ? [{
+                  message: {
+                    descriptor: {
+                      interface  : DwnInterfaceName.Protocols,
+                      method     : DwnMethodName.Configure,
+                      definition : sourceDefinition,
+                    },
+                  },
+                }] : [],
+                drained: true,
+              },
+            };
+          }),
+        },
+      };
+      const engine = new SyncEngineLevel({ db, agent: agent as any });
+
+      await engine.registerIdentity({
+        did     : 'did:example:refs-closure',
+        options : { protocols: [sourceProtocol] },
+      });
+
+      await engine.startSync({ mode: 'poll', interval: '1h' });
+      await engine.stopSync();
+
+      const references = await engine.getProtocolReferences('did:example:refs-closure');
+      expect(references.map(reference => ({
+        kind           : reference.kind,
+        protocol       : reference.protocol,
+        sourceProtocol : reference.sourceProtocol,
+      }))).toEqual([
+        {
+          kind           : 'closure',
+          protocol       : dependencyProtocol,
+          sourceProtocol : sourceProtocol,
+        },
+        {
+          kind           : 'scope',
+          protocol       : sourceProtocol,
+          sourceProtocol : undefined,
+        },
+      ]);
     });
   });
 

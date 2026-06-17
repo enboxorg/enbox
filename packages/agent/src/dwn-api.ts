@@ -538,6 +538,7 @@ export class AgentDwnApi {
     // Post-write key delivery and reply decryption are independent — run in parallel.
     await Promise.all([
       this.postWriteKeyDelivery(request, message, reply),
+      this.maybeAssertProtocolSelfReference(request, message, reply),
       this.maybeDecryptReply(request, reply),
     ]);
 
@@ -669,6 +670,41 @@ export class AgentDwnApi {
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
     return { reply, message, messageCid };
+  }
+
+  private async maybeAssertProtocolSelfReference<T extends DwnInterface>(
+    request: ProcessDwnRequest<T>,
+    message: DwnMessage[T],
+    reply: DwnMessageReply[T],
+  ): Promise<void> {
+    if (
+      !isDwnRequest(request, DwnInterface.ProtocolsConfigure) ||
+      request.store === false ||
+      reply.status.code < 200 ||
+      reply.status.code >= 300
+    ) {
+      return;
+    }
+    if (this._agent === undefined) {
+      return;
+    }
+
+    const definition = (message.descriptor as { definition?: unknown }).definition;
+    if (!this.isProtocolDefinition(definition)) {
+      return;
+    }
+
+    await this._agent.sync.assertProtocolSelfReference({
+      definition,
+      identity : request.target,
+      protocol : definition.protocol,
+    });
+  }
+
+  private isProtocolDefinition(value: unknown): value is ProtocolDefinition {
+    return typeof value === 'object' &&
+      value !== null &&
+      typeof (value as { protocol?: unknown }).protocol === 'string';
   }
 
   /**

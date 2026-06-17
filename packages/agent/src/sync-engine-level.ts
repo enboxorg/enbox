@@ -12,7 +12,7 @@ import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sd
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
 import type { SyncMessageEntry } from './sync-messages.js';
-import type { DeadLetterCategory, DeadLetterEntry, DirectionCheckpoint, NonEmptyStringArray, PushFailure, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
+import type { DeadLetterCategory, DeadLetterEntry, DirectionCheckpoint, NonEmptyStringArray, ProtocolReference, PushFailure, PushResult, ReplicationLinkState, StartSyncParams, SyncAuthorization, SyncConnectivityState, SyncEngine, SyncEvent, SyncEventListener, SyncEventScope, SyncHealthSummary, SyncIdentityOptions, SyncMode, SyncScope } from './types/sync.js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 
@@ -22,6 +22,7 @@ import { classifySyncEventScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
 import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
+import { ProtocolReferenceIndex } from './protocol-reference-index.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { topologicalSort } from './sync-topological-sort.js';
 import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
@@ -293,6 +294,12 @@ export class SyncEngineLevel implements SyncEngine {
    * Lazily initialized on first use to avoid sublevel() calls on mock dbs.
    */
   private _ledger?: ReplicationLedger;
+
+  /**
+   * Device-local protocol reference index. Kept beside the sync ledger and
+   * never consulted by the replication feed itself.
+   */
+  private _protocolReferences?: ProtocolReferenceIndex;
 
   /**
    * In-memory cache of active links, keyed by `{did}^{dwnUrl}^{protocol}`.
@@ -582,6 +589,70 @@ export class SyncEngineLevel implements SyncEngine {
     return descriptor.definition;
   }
 
+  private async rebuildDerivedProtocolReferences(): Promise<void> {
+    for await (const [did, options] of this._db.sublevel('registeredIdentities').iterator()) {
+      let parsed: SyncIdentityOptions;
+      try {
+        parsed = JSON.parse(options) as SyncIdentityOptions;
+      } catch (error: unknown) {
+        console.warn(`SyncEngineLevel: Corrupt sync options for ${did}, skipping protocol reference rebuild:`, error);
+        continue;
+      }
+
+      await this.rebuildDerivedProtocolReferencesForIdentity(did, parsed);
+    }
+  }
+
+  private async rebuildDerivedProtocolReferencesForIdentity(did: string, options: SyncIdentityOptions): Promise<void> {
+    await this.protocolReferences.clearDerivedReferences(did);
+    await this.protocolReferences.replaceScopeReferences(did, did, options.protocols);
+
+    const scope = syncScopeFromProtocols(options.protocols);
+    const protocols = protocolsForSyncScope(scope);
+    if (protocols === undefined) {
+      return;
+    }
+
+    const scanned = new Set<string>();
+    const protocolsToScan = [...protocols];
+
+    while (protocolsToScan.length > 0) {
+      const protocol = protocolsToScan.shift();
+      if (protocol === undefined || scanned.has(protocol)) {
+        continue;
+      }
+      scanned.add(protocol);
+
+      const permissionGrantIds = await this.permissionGrantIdsForClosureProtocol(did, options, protocol);
+      if (permissionGrantIds === 'missing') {
+        throw new Error(`SyncEngineLevel: delegate ${options.delegateDid} lacks Messages.Read grants for closure protocol ${protocol}`);
+      }
+
+      const definitions = await this.fetchLocalProtocolHistory(did, protocol, options.delegateDid, permissionGrantIds);
+      const targetProtocols = new Set<string>();
+      for (const definition of definitions) {
+        SyncEngineLevel.collectProtocolReferenceTargets(definition, targetProtocols);
+      }
+
+      await this.protocolReferences.replaceClosureReferences(did, protocol, targetProtocols);
+      for (const targetProtocol of targetProtocols) {
+        if (!scanned.has(targetProtocol)) {
+          protocolsToScan.push(targetProtocol);
+        }
+      }
+    }
+  }
+
+  private static collectProtocolReferenceTargets(definition: ProtocolDefinition, targetProtocols: Set<string>): void {
+    const edges = getProtocolClosureEdges(definition);
+    for (const dependencyProtocol of edges.dependencyProtocols) {
+      targetProtocols.add(dependencyProtocol);
+    }
+    for (const usesProtocol of edges.usesProtocols) {
+      targetProtocols.add(usesProtocol);
+    }
+  }
+
   private static isProtocolDefinition(value: unknown): value is ProtocolDefinition {
     return typeof value === 'object' &&
       value !== null &&
@@ -720,6 +791,13 @@ export class SyncEngineLevel implements SyncEngine {
     return this._ledger;
   }
 
+  private get protocolReferences(): ProtocolReferenceIndex {
+    if (!this._protocolReferences) {
+      this._protocolReferences = new ProtocolReferenceIndex(this._db);
+    }
+    return this._protocolReferences;
+  }
+
   /** LevelDB sublevel for permanently failed messages (dead letters). */
   private get _deadLetters(): AbstractLevel<string | Buffer | Uint8Array, string, string> {
     return this._db.sublevel('deadLetters') as unknown as AbstractLevel<string | Buffer | Uint8Array, string, string>;
@@ -833,6 +911,8 @@ export class SyncEngineLevel implements SyncEngine {
 
     await this.validateSyncScopeClosure(did, options);
     await registeredIdentities.put(did, JSON.stringify(options));
+    await this.protocolReferences.clearDerivedReferences(did);
+    await this.protocolReferences.replaceScopeReferences(did, did, options.protocols);
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
 
@@ -860,6 +940,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     await registeredIdentities.del(did);
+    await this.protocolReferences.clearDerivedReferences(did);
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
     await this.pruneSupersededDurableLinksForIdentity(did, new Set());
@@ -883,6 +964,38 @@ export class SyncEngineLevel implements SyncEngine {
     }
   }
 
+  public async assertProtocolSelfReference({
+    identity,
+    protocol,
+    definition,
+  }: {
+    identity: string;
+    protocol: string;
+    definition?: ProtocolDefinition;
+  }): Promise<void> {
+    await this.protocolReferences.assertSelfReference(identity, protocol);
+    if (definition !== undefined) {
+      const targetProtocols = new Set<string>();
+      SyncEngineLevel.collectProtocolReferenceTargets(definition, targetProtocols);
+      await this.protocolReferences.replaceClosureReferences(identity, protocol, targetProtocols);
+    }
+  }
+
+  public async releaseProtocolSelfReference({ identity, protocol }: { identity: string, protocol: string }): Promise<void> {
+    await this.protocolReferences.deleteSelfReference(identity, protocol);
+    if (!await this.protocolReferences.hasReference(identity, protocol)) {
+      await this.protocolReferences.replaceClosureReferences(identity, protocol, []);
+    }
+  }
+
+  public async getProtocolReferences(identity: string): Promise<ProtocolReference[]> {
+    return this.protocolReferences.getReferences(identity);
+  }
+
+  public async hasProtocolReference({ identity, protocol }: { identity: string, protocol: string }): Promise<boolean> {
+    return this.protocolReferences.hasReference(identity, protocol);
+  }
+
   public async updateIdentityOptions({ did, options }: { did: string, options: SyncIdentityOptions }): Promise<void> {
     SyncEngineLevel.validateSyncIdentityOptions(options);
 
@@ -894,6 +1007,8 @@ export class SyncEngineLevel implements SyncEngine {
 
     await this.validateSyncScopeClosure(did, options);
     await registeredIdentities.put(did, JSON.stringify(options));
+    await this.protocolReferences.clearDerivedReferences(did);
+    await this.protocolReferences.replaceScopeReferences(did, did, options.protocols);
     this._syncTargetsCache = undefined;
     this._syncTargetsCacheGeneration++;
 
@@ -1038,6 +1153,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     this._syncMode = mode;
+    await this.rebuildDerivedProtocolReferences();
 
     if (mode === 'live') {
       await this.startLiveSync(intervalMilliseconds);

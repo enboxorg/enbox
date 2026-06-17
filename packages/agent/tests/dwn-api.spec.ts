@@ -80,6 +80,38 @@ describe('AgentDwnApi', () => {
     });
   });
 
+  describe('protocol references', () => {
+    it('asserts a self reference after a successful local ProtocolsConfigure', async () => {
+      const { message } = await TestDataGenerator.generateProtocolsConfigure({
+        protocolDefinition: emailProtocolDefinition as ProtocolDefinition,
+      });
+      const processMessage = sinon.stub().resolves({
+        status: { code: 202, detail: 'Accepted' },
+      });
+      const assertProtocolSelfReference = sinon.stub().resolves();
+      const dwnApi = new AgentDwnApi({
+        agent: {
+          sync: { assertProtocolSelfReference },
+        } as any,
+        dwn: { processMessage } as unknown as Dwn,
+      });
+
+      await dwnApi.processRequest({
+        author      : 'did:example:alice',
+        target      : 'did:example:alice',
+        messageType : DwnInterface.ProtocolsConfigure,
+        rawMessage  : message,
+      });
+
+      expect(assertProtocolSelfReference.calledOnceWithExactly({
+        definition : emailProtocolDefinition,
+        identity   : 'did:example:alice',
+        protocol   : emailProtocolDefinition.protocol,
+      })).toBe(true);
+    });
+
+  });
+
   describe('get agent', () => {
     it(`returns the 'agent' instance property`, () => {
       // we are only mocking

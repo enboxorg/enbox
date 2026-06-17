@@ -30,6 +30,7 @@ export * from './dwn-encryption.js';
 export * from './dwn-key-delivery.js';
 export * from './dwn-type-guards.js';
 export * from './protocol-utils.js';
+export * from './protocol-reference-index.js';
 export * from './hd-identity-vault.js';
 export * from './identity-api.js';
 export * from './local-dwn.js';
