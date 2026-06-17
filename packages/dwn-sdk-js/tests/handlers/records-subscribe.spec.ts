@@ -23,7 +23,7 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, EventEmitterEventLog, MessageStoreLevel, Time } from '../../src/index.js';
+import { DurableEventLog, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, MessageStoreLevel, Time } from '../../src/index.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
 
@@ -556,7 +556,7 @@ export function testRecordsSubscribeHandler(): void {
         const mismatchingPersona = await TestDataGenerator.generatePersona({ did: author!.did, keyId: author!.keyId });
         const didResolver = TestStubGenerator.createDidResolverStub(mismatchingPersona);
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
-        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
+        const eventLogStub = sinon.createStubInstance(DurableEventLog);
 
         const recordsSubscribeHandler = new RecordsSubscribeHandler({
           didResolver, messageStore          : messageStoreStub, eventLog              : eventLogStub,
@@ -574,7 +574,7 @@ export function testRecordsSubscribeHandler(): void {
         // setting up a stub method resolver & message store
         const didResolver = TestStubGenerator.createDidResolverStub(author!);
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
-        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
+        const eventLogStub = sinon.createStubInstance(DurableEventLog);
         const recordsSubscribeHandler = new RecordsSubscribeHandler({
           didResolver, messageStore          : messageStoreStub, eventLog              : eventLogStub,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub }),

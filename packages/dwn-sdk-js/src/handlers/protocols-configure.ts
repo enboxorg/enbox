@@ -105,12 +105,6 @@ export class ProtocolsConfigureHandler implements MethodHandler {
 
       const putResult = await this.deps.messageStore.put(tenant, message, indexes);
       position = putResult.position;
-      const messageCid = await Message.getCid(message);
-
-      // only emit if the event log is set
-      if (this.deps.eventLog !== undefined) {
-        await this.deps.eventLog.emit(tenant, { message }, indexes, messageCid);
-      }
 
       messageReply = {
         status: { code: 202, detail: 'Accepted' },

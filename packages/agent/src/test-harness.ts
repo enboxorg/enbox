@@ -1,12 +1,12 @@
 import type { AbstractLevel } from 'abstract-level';
 import type { BearerIdentity } from './bearer-identity.js';
 import type { DidResolverCache } from '@enbox/dids';
-import type { Dwn } from '@enbox/dwn-sdk-js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { KeyValueStore } from '@enbox/common';
+import type { Dwn, EventLog } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
-import { DataStoreLevel, EventEmitterEventLog, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js';
+import { DataStoreLevel, DurableEventLog, EventEmitterWakePublisher, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js';
 import { DidDht, DidJwk, DidResolverCacheMemory } from '@enbox/dids';
 import { LevelStore, MemoryStore } from '@enbox/common';
 
@@ -45,7 +45,7 @@ type PlatformAgentTestHarnessParams = {
   didResolverCache: DidResolverCache;
   dwn: Dwn;
   dwnDataStore: DataStoreLevel;
-  dwnEventLog: EventEmitterEventLog;
+  dwnEventLog: EventLog;
   dwnMessageStore: MessageStoreLevel;
   dwnResumableTaskStore: ResumableTaskStoreLevel;
   /** Backing KeyValueStore for VaultBackedSecretStore (disk mode only). */
@@ -67,7 +67,7 @@ export class PlatformAgentTestHarness {
   public didResolverCache: DidResolverCache;
   public dwn: Dwn;
   public dwnDataStore: DataStoreLevel;
-  public dwnEventLog: EventEmitterEventLog;
+  public dwnEventLog: EventLog;
   public dwnMessageStore: MessageStoreLevel;
   public dwnResumableTaskStore: ResumableTaskStoreLevel;
   public secretStore?: KeyValueStore<string, string>;
@@ -301,12 +301,13 @@ export class PlatformAgentTestHarness {
     // Instantiate custom stores to use with DWN instance.
     // Note: There is no in-memory store for DWN, so we always use LevelDB-based disk stores.
     const dwnDataStore = new DataStoreLevel({ blockstoreLocation: testDataPath('DWN_DATASTORE') });
-    const dwnEventLog = new EventEmitterEventLog();
-    const dwnResumableTaskStore = new ResumableTaskStoreLevel({ location: testDataPath('DWN_RESUMABLETASKSTORE') });
-
+    const wakePublisher = new EventEmitterWakePublisher();
     const dwnMessageStore = new MessageStoreLevel({
-      location: testDataPath('DWN_MESSAGESTORE')
+      location: testDataPath('DWN_MESSAGESTORE'),
+      wakePublisher,
     });
+    const dwnEventLog = new DurableEventLog(dwnMessageStore, wakePublisher);
+    const dwnResumableTaskStore = new ResumableTaskStoreLevel({ location: testDataPath('DWN_RESUMABLETASKSTORE') });
 
     // Instantiate DWN instance using the custom stores.
     const dwn = await AgentDwnApi.createDwn({

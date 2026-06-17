@@ -2,7 +2,7 @@ import type { DataStore } from '../types/data-store.js';
 import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { EventLog, ProgressToken } from '../types/subscriptions.js';
+import type { ProgressToken } from '../types/subscriptions.js';
 import type { RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { DwnConstant } from '../core/dwn-constant.js';
@@ -35,16 +35,14 @@ export class StorageController {
 
   private readonly messageStore: MessageStore;
   private readonly dataStore: DataStore;
-  private readonly eventLog?: EventLog;
 
-  public constructor({ messageStore, dataStore, eventLog }: {
+  public constructor({ messageStore, dataStore }: {
     messageStore : MessageStore,
     dataStore : DataStore,
-    eventLog? : EventLog}
+  }
   ) {
     this.messageStore = messageStore;
     this.dataStore = dataStore;
-    this.eventLog = eventLog;
   }
 
   public async performRecordsDelete({ tenant, message }: ResumableRecordsDeleteData): Promise<RecordsDeleteTaskResult> {
@@ -82,13 +80,7 @@ export class StorageController {
     // tombstones carry no visibility facts in their descriptors, so the retained write is the
     // durable source of truth for later prune/replay/replication index reconstruction.
     const indexes = recordsDelete.constructIndexes(initialWrite, newestPreDeleteWrite);
-    const messageCid = await Message.getCid(message);
     const { position } = await this.messageStore.put(tenant, message, indexes);
-
-    // only emit if the event log is set
-    if (this.eventLog !== undefined) {
-      await this.eventLog.emit(tenant, { message, initialWrite }, indexes, messageCid);
-    }
 
     if (message.descriptor.prune) {
       // purge/hard-delete all descendant records. Cascade is intentionally protocol-agnostic:

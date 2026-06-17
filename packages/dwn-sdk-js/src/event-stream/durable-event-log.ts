@@ -1,3 +1,4 @@
+import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
@@ -17,7 +18,6 @@ import type {
   Wake,
   WakeSubscriber,
 } from '../types/subscriptions.js';
-import type { Filter, KeyValues } from '../types/query-types.js';
 
 import { Messages } from '../utils/messages.js';
 import { Records } from '../utils/records.js';
@@ -71,8 +71,7 @@ const DEFAULT_IDLE_REDRAIN_INTERVAL_MS = 30_000;
  * EventLog implementation backed by the durable replication feed.
  *
  * Writes are store-owned: MessageStore commits publish wakes after the row is
- * durable. `emit()` is therefore intentionally a no-op while legacy handlers
- * still depend on the EventLog interface.
+ * durable.
  */
 export class DurableEventLog implements EventLog {
   private readonly subscriptions: Map<string, DurableSubscription> = new Map();
@@ -125,10 +124,6 @@ export class DurableEventLog implements EventLog {
     }
     this.subscriptions.clear();
     this.isOpen = false;
-  }
-
-  public async emit(_tenant: string, _event: MessageEvent, _indexes: KeyValues, _messageCid: string): Promise<ProgressToken | undefined> {
-    return undefined;
   }
 
   public async read(tenant: string, options: EventLogReadOptions = {}): Promise<EventLogReadResult> {
@@ -186,10 +181,6 @@ export class DurableEventLog implements EventLog {
 
   public async getReplayBounds(tenant: string): Promise<{ oldest: ProgressToken; latest: ProgressToken } | undefined> {
     return this.store.logBounds(tenant);
-  }
-
-  public async trim(_tenant: string, _olderThan: number | string): Promise<void> {
-    // Durable retention is owned by the backing store.
   }
 
   private async getInitialCursor(tenant: string, cursor: ProgressToken | undefined): Promise<ProgressToken | undefined> {

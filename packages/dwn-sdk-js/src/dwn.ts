@@ -118,7 +118,6 @@ export class Dwn {
     this.storageController = new StorageController({
       messageStore : this.messageStore,
       dataStore    : this.dataStore,
-      eventLog     : this.eventLog
     });
     this.resumableTaskManager = new ResumableTaskManager(
       config.resumableTaskStore,

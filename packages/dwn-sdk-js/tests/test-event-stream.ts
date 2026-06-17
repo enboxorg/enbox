@@ -1,6 +1,7 @@
-import type { EventLog } from '../src/index.js';
+import type { DurableEventLogStore, EventLog } from '../src/index.js';
 
-import { EventEmitterEventLog } from '../src/index.js';
+import { DurableEventLog } from '../src/index.js';
+import { TestStores } from './test-stores.js';
 
 /**
  * Class that manages the EventLog implementation for testing.
@@ -12,7 +13,7 @@ export class TestEventLog {
 
   /**
    * Overrides the event log with a given implementation.
-   * If not given, default in-memory implementation will be used.
+   * If not given, the default durable implementation will be used.
    */
   public static override(overrides?: { eventLog?: EventLog }): void {
     TestEventLog.eventLog = overrides?.eventLog;
@@ -22,7 +23,14 @@ export class TestEventLog {
    * Initializes and returns the event log used for running the test suite.
    */
   public static get(): EventLog {
-    TestEventLog.eventLog ??= new EventEmitterEventLog();
+    if (TestEventLog.eventLog === undefined) {
+      const { messageStore } = TestStores.get();
+      TestEventLog.eventLog = new DurableEventLog(
+        messageStore as unknown as DurableEventLogStore,
+        TestStores.getWakePublisher(),
+        { idleRedrainIntervalMs: 0 },
+      );
+    }
     return TestEventLog.eventLog;
   }
 }

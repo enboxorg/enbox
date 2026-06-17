@@ -4,7 +4,7 @@
 
 This document describes a production-grade, horizontally-scalable DWN deployment
 on AWS. The architecture addresses four systemic gaps in the current single-process
-DWN server: (1) the in-memory-only `EventLog` cannot fan out events across
+DWN server: (1) in-process subscription wakeups cannot fan out across
 processes, (2) the `InMemoryConnectionManager` pins WebSocket state to a single
 node, (3) the `DataStoreSql` buffers entire blobs in memory, and (4) there is no
 confidential-compute boundary for key material. The design introduces Aurora
@@ -18,13 +18,13 @@ Nitro Enclaves for cryptographic isolation.
 
 | Component | Current State | Scaling Limitation |
 |---|---|---|
-| **EventLog** | `EventEmitterEventLog` — in-memory `mitt` emitter | Events are process-local; subscribers on node B never see writes on node A |
+| **EventLog** | `DurableEventLog` drains the store-owned replication feed; local wakes are in-process by default | Subscribers on node B need a shared wake bus to notice writes on node A promptly |
 | **ConnectionManager** | `InMemoryConnectionManager` — `Map<WS, SocketConnection>` | WebSocket state is lost if the process dies; no cross-node awareness |
 | **DataStore** | `DataStoreSql` — `DataStream.toBytes()` buffers full blob in RAM | 1 GB `maxRecordDataSize` can OOM a container |
 | **Connection Pool** | 4 separate `pg.Pool` instances (one per store), each defaulting to 10 connections | 40 connections per web head; untunable without code changes |
 | **Schema Management** | Imperative `CREATE TABLE IF NOT EXISTS` in `open()` | No migrations, no version tracking, no `ALTER TABLE` |
 | **Tenant Isolation** | Shared tables with `WHERE tenant = ?` | No RLS, no partitioning; a bug leaks cross-tenant data |
-| **EventLog Persistence** | Events stored in per-tenant `Map<number, StoredEntry>` | Volatile — all events lost on restart |
+| **EventLog Wakeups** | Local wake publication is process-local unless an event bus is configured | Cross-node subscribers rely on NATS or another shared wake bus |
 
 The durable replication log now lives in the `MessageStore`; NATS is used as an
 EventBus that wakes other server processes to drain that log. The

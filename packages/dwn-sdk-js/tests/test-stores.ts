@@ -1,5 +1,9 @@
-import type { DataStore, MessageStore, ResumableTaskStore } from '../src/index.js';
-import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../src/index.js';
+import type { DataStore, MessageStore, ResumableTaskStore, WakePublisher } from '../src/index.js';
+import { DataStoreLevel, EventEmitterWakePublisher, MessageStoreLevel, ResumableTaskStoreLevel } from '../src/index.js';
+
+type WakePublisherAwareStore = {
+  setWakePublisher(wakePublisher: WakePublisher | undefined): void;
+};
 
 /**
  * Class that manages store implementations for testing.
@@ -12,6 +16,7 @@ export class TestStores {
   private static messageStore?: MessageStore;
   private static dataStore?: DataStore;
   private static resumableTaskStore?: ResumableTaskStore;
+  private static wakePublisher?: EventEmitterWakePublisher;
 
   /**
    * Overrides test stores with given implementation.
@@ -22,9 +27,13 @@ export class TestStores {
     dataStore?: DataStore,
     resumableTaskStore?: ResumableTaskStore,
   }): void {
+    TestStores.wakePublisher ??= new EventEmitterWakePublisher();
     TestStores.messageStore = overrides?.messageStore;
     TestStores.dataStore = overrides?.dataStore;
     TestStores.resumableTaskStore = overrides?.resumableTaskStore;
+    if (TestStores.messageStore !== undefined) {
+      TestStores.setWakePublisherIfSupported(TestStores.messageStore, TestStores.wakePublisher);
+    }
   }
 
   /**
@@ -35,8 +44,11 @@ export class TestStores {
     dataStore: DataStore,
     resumableTaskStore: ResumableTaskStore,
     } {
+    TestStores.wakePublisher ??= new EventEmitterWakePublisher();
+
     TestStores.messageStore ??= new MessageStoreLevel({
-      location: 'TEST-MESSAGESTORE'
+      location      : 'TEST-MESSAGESTORE',
+      wakePublisher : TestStores.wakePublisher,
     });
 
     TestStores.dataStore ??= new DataStoreLevel({
@@ -52,5 +64,17 @@ export class TestStores {
       dataStore          : TestStores.dataStore,
       resumableTaskStore : TestStores.resumableTaskStore,
     };
+  }
+
+  public static getWakePublisher(): EventEmitterWakePublisher {
+    TestStores.wakePublisher ??= new EventEmitterWakePublisher();
+    return TestStores.wakePublisher;
+  }
+
+  private static setWakePublisherIfSupported(store: MessageStore, wakePublisher: WakePublisher): void {
+    const maybeStore = store as Partial<WakePublisherAwareStore>;
+    if (typeof maybeStore.setWakePublisher === 'function') {
+      maybeStore.setWakePublisher(wakePublisher);
+    }
   }
 }
