@@ -314,8 +314,7 @@ export class PlatformAgentTestHarness {
       dataPath           : testDataLocation,
       dataStore          : dwnDataStore,
       didResolver        : didApi,
-      eventLog           : dwnEventLog,
-      messageStore       : dwnMessageStore,
+      messageLog         : { eventLog: dwnEventLog, messageStore: dwnMessageStore },
       resumableTaskStore : dwnResumableTaskStore
     });
 

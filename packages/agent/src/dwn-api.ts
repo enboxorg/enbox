@@ -1,11 +1,12 @@
 import type {
   DerivedPrivateJwk,
-  DurableEventLogStore,
   DwnConfig,
   EncryptionInput,
   EncryptionKeyDeriver,
+  EventLog,
   GenericMessage,
   KeyDecrypter,
+  MessageStore,
   ProgressToken,
   ProtocolDefinition,
   RecordsWrite,
@@ -112,12 +113,20 @@ type DwnApiParams = {
   | { dwn?: never; localDwnEndpoint: string }
 );
 
-interface DwnApiCreateDwnParams extends Partial<DwnConfig> {
-  dataPath?: string;
-}
+type MessageLog = {
+  eventLog: EventLog;
+  messageStore: MessageStore;
+};
 
-type WakePublisherAwareStore = {
-  setWakePublisher(wakePublisher: EventEmitterWakePublisher | undefined): void;
+type DwnApiCreateDwnParams = Omit<Partial<DwnConfig>, 'eventLog' | 'messageStore'> & {
+  dataPath?: string;
+
+  /**
+   * Inject a platform-specific message store together with its durable event log.
+   * They are coupled because the event log reads the store's replication feed and must
+   * share its wake publisher, so they are provided as a pair or omitted for defaults.
+   */
+  messageLog?: MessageLog;
 };
 
 export class AgentDwnApi {
@@ -481,10 +490,8 @@ export class AgentDwnApi {
   }
 
   public static async createDwn({
-    dataPath, dataStore, didResolver, eventLog, messageStore, tenantGate, resumableTaskStore
+    dataPath, dataStore, didResolver, messageLog, tenantGate, resumableTaskStore
   }: DwnApiCreateDwnParams): Promise<Dwn> {
-    const wakePublisher = new EventEmitterWakePublisher();
-
     dataStore ??= new DataStoreLevel({ blockstoreLocation: `${dataPath}/DWN_DATASTORE` });
 
     didResolver ??= new UniversalResolver({
@@ -492,27 +499,21 @@ export class AgentDwnApi {
       cache        : new DidResolverCacheLevel({ location: `${dataPath}/DID_RESOLVERCACHE` }),
     });
 
-    if (messageStore === undefined) {
-      messageStore = new MessageStoreLevel({
-        location: `${dataPath}/DWN_MESSAGESTORE`,
-        wakePublisher,
-      });
-    } else {
-      AgentDwnApi.setWakePublisherIfSupported(messageStore, wakePublisher);
-    }
-
     resumableTaskStore ??= new ResumableTaskStoreLevel({ location: `${dataPath}/DWN_RESUMABLETASKSTORE` });
 
-    eventLog ??= new DurableEventLog(messageStore as unknown as DurableEventLogStore, wakePublisher);
+    const { eventLog, messageStore } = messageLog ?? AgentDwnApi.createDefaultMessageLog(dataPath);
 
     return await Dwn.create({ dataStore, didResolver, eventLog, messageStore, tenantGate, resumableTaskStore });
   }
 
-  private static setWakePublisherIfSupported(store: DwnConfig['messageStore'], wakePublisher: EventEmitterWakePublisher): void {
-    const maybeStore = store as Partial<WakePublisherAwareStore>;
-    if (typeof maybeStore.setWakePublisher === 'function') {
-      maybeStore.setWakePublisher(wakePublisher);
-    }
+  private static createDefaultMessageLog(dataPath?: string): MessageLog {
+    const wakePublisher = new EventEmitterWakePublisher();
+    const messageStore = new MessageStoreLevel({
+      location: `${dataPath}/DWN_MESSAGESTORE`,
+      wakePublisher,
+    });
+
+    return { eventLog: new DurableEventLog(messageStore, wakePublisher), messageStore };
   }
 
   public async processRequest<T extends DwnInterface>(
