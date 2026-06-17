@@ -48,29 +48,13 @@ export class RecordsWriteHandler implements MethodHandler {
     // mutable validation. An already-stored message has already passed
     // admission; replay should not be reinterpreted against current protocol,
     // parent, role, grant, or record-limit state.
-    //
-    // Exception: an initial write may have been stored earlier without data
-    // (204). A later delivery of the same message with data must be allowed
-    // to complete the record.
     const incomingCid = await Message.getCid(message);
-    let isDataCompletion = false;
     for (const existingMessage of existingMessages) {
       if (await Message.getCid(existingMessage) !== incomingCid) {
         continue;
       }
 
-      const canCompleteMissingData = await this.existingInitialWriteLacksData(
-        tenant,
-        existingMessage as RecordsWriteMessage,
-        message,
-        dataStream !== undefined,
-      );
-
-      if (!canCompleteMissingData) {
-        return { status: { code: 409, detail: 'Conflict' } };
-      }
-
-      isDataCompletion = true;
+      return { status: { code: 409, detail: 'Conflict' } };
     }
 
     const newMessageIsInitialWrite = await recordsWrite.isInitialWrite();
@@ -125,30 +109,9 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     if (!incomingMessageIsNewest) {
-      // Allow re-processing when the existing record was stored as an
-      // initial write without data (isLatestBaseState = false, status 204)
-      // and the incoming message now supplies data.  This happens during
-      // sync when a live pull initially stores the message without data
-      // and a subsequent poll or retry delivers the same message with data.
-      //
-      // We detect the incomplete state by checking whether the existing
-      // message is an initial write that lacks both inline encodedData and
-      // DataStore data — indicating it was stored without data.
-      let existingLacksData = false;
-      if (newestExistingMessage) {
-        existingLacksData = await this.existingInitialWriteLacksData(
-          tenant,
-          newestExistingMessage as RecordsWriteMessage,
-          message,
-          dataStream !== undefined,
-        );
-      }
-
-      if (!existingLacksData) {
-        return {
-          status: { code: 409, detail: 'Conflict' }
-        };
-      }
+      return {
+        status: { code: 409, detail: 'Conflict' }
+      };
     }
 
     // Look up the core protocol (if any) for the incoming message so that lifecycle hooks
@@ -198,14 +161,9 @@ export class RecordsWriteHandler implements MethodHandler {
 
       const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
       const messageCid = await Message.getCid(message);
-      if (isDataCompletion) {
-        const completeDataResult = await this.deps.messageStore.completeData(tenant, messageCid, indexes, messageWithOptionalEncodedData.encodedData);
-        position = completeDataResult.position;
-      } else {
-        const putResult = await this.deps.messageStore.put(tenant, messageWithOptionalEncodedData, indexes);
-        position = putResult.position;
-        await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
-      }
+      const putResult = await this.deps.messageStore.put(tenant, messageWithOptionalEncodedData, indexes);
+      position = putResult.position;
+      await this.deps.stateIndex!.insert(tenant, messageCid, indexes);
 
       // NOTE: We only emit a `RecordsWrite` when the message is the latest base state.
       // Because we allow a `RecordsWrite` which is not the latest state to be written, but not queried, we shouldn't emit it either.
@@ -326,31 +284,6 @@ export class RecordsWriteHandler implements MethodHandler {
     }
 
     return messageWithOptionalEncodedData;
-  }
-
-  private async existingInitialWriteLacksData(
-    tenant: string,
-    existingMessage: RecordsWriteMessage,
-    incomingMessage: RecordsWriteMessage,
-    incomingHasData: boolean,
-  ): Promise<boolean> {
-    if (!incomingHasData) {
-      return false;
-    }
-
-    const isInitial = await RecordsWrite.isInitialWrite(existingMessage);
-    if (!isInitial) {
-      return false;
-    }
-
-    const hasInlineData = !!(existingMessage as RecordsQueryReplyEntry).encodedData;
-    const hasStoredData = await this.deps.validationStateReader.hasStoredData(
-      tenant,
-      existingMessage.recordId,
-      incomingMessage.descriptor.dataCid,
-    );
-
-    return !hasInlineData && !hasStoredData;
   }
 
   private async getInitialWrite(

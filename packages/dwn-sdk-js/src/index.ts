@@ -53,7 +53,7 @@ export type { MessagesQueryOptions } from './interfaces/messages-query.js';
 export { MessagesSync } from './interfaces/messages-sync.js';
 export type { MessagesSyncOptions } from './interfaces/messages-sync.js';
 export type { UnionMessageReply } from './core/message-reply.js';
-export type { MessageStore, MessageStoreCompleteDataResult, MessageStoreOptions, MessageStorePutResult } from './types/message-store.js';
+export type { MessageStore, MessageStoreOptions, MessageStorePutResult } from './types/message-store.js';
 export { Replication } from './utils/replication.js';
 export type { MessageInterface } from './types/message-interface.js';
 export { PermissionGrant } from './protocols/permission-grant.js';

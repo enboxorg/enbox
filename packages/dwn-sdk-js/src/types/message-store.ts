@@ -24,17 +24,6 @@ export type MessageStorePutResult = {
   position?: ProgressToken;
 };
 
-/**
- * Result of a {@link MessageStore.completeData} operation.
- */
-export type MessageStoreCompleteDataResult = {
-  /**
-   * The redelivery stamp position assigned to the completed row. Present on
-   * stores that maintain a replication log.
-   */
-  position?: ProgressToken;
-};
-
 export interface MessageStore {
   /**
    * opens a connection to the underlying store
@@ -87,8 +76,8 @@ export interface MessageStore {
   ): Promise<number>;
 
   /**
-   * Replaces the indexes of an existing message in place: same row, same log
-   * sequence, and no redelivery stamp.
+   * Replaces the indexes of an existing message in place: same row and same log
+   * sequence.
    */
   updateIndexes(
     tenant: string,
@@ -99,8 +88,8 @@ export interface MessageStore {
 
   /**
    * Replaces the stored same-CID message payload and indexes in place: same
-   * row, same log sequence, and no redelivery stamp. The replacement message
-   * must resolve to `messageCid` under DWN CID rules.
+   * row and same log sequence. The replacement message must resolve to
+   * `messageCid` under DWN CID rules.
    */
   updateMessageAndIndexes(
     tenant: string,
@@ -109,19 +98,6 @@ export interface MessageStore {
     indexes: KeyValues,
     options?: MessageStoreOptions
   ): Promise<void>;
-
-  /**
-   * Completes a previously dataless row with its inline data and replacement
-   * indexes, assigning a redelivery position when the store supports durable
-   * log stamps.
-   */
-  completeData(
-    tenant: string,
-    messageCid: string,
-    indexes: KeyValues,
-    encodedData?: string,
-    options?: MessageStoreOptions
-  ): Promise<MessageStoreCompleteDataResult>;
 
   /**
    * Deletes the message associated with the id provided.

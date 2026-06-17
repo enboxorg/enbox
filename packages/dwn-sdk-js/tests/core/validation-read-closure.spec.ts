@@ -474,7 +474,7 @@ describe('validation read closure', () => {
       snapshot('replicated: initial write accepted by timestamped config');
     }
 
-    // ---- scenario: replicated completion of a dataless stub ----
+    // ---- scenario: replicated same-CID data retry of a dataless stub ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -489,11 +489,11 @@ describe('validation read closure', () => {
       });
       expect((await dwn.applyReplicatedMessage(alice.did, stubMessage)).kind).toBe('Applied');
 
-      // same-CID re-delivery with data completes the record instead of classifying as Duplicate
-      const completionResult = await dwn.applyReplicatedMessage(alice.did, stubMessage, { dataStream: DataStream.fromBytes(stubDataBytes!) });
-      expect(completionResult.kind).toBe('Applied');
+      // same-CID retry with data is not a completion mechanism; fetch-first sync applies once.
+      const retryResult = await dwn.applyReplicatedMessage(alice.did, stubMessage, { dataStream: DataStream.fromBytes(stubDataBytes!) });
+      expect(retryResult.kind).toBe('Superseded');
 
-      snapshot('replicated: same-CID completion of dataless stub');
+      snapshot('replicated: same-CID data retry of dataless stub');
     }
 
     // ---- scenario: replicated tombstone-beaten dataless update missing compacted data ----

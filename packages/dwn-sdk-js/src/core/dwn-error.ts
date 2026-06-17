@@ -48,8 +48,6 @@ export enum DwnErrorCode {
   IndexInvalidSortPropertyInMemory = 'IndexInvalidSortPropertyInMemory',
   IndexMissingIndexableProperty = 'IndexMissingIndexableProperty',
   JwsDecodePlainObjectPayloadInvalid = 'JwsDecodePlainObjectPayloadInvalid',
-  MessageStoreCompleteDataAlreadyStamped = 'MessageStoreCompleteDataAlreadyStamped',
-  MessageStoreCompleteDataMessageNotFound = 'MessageStoreCompleteDataMessageNotFound',
   MessageStoreDeleteLogEntryMissing = 'MessageStoreDeleteLogEntryMissing',
   MessageStoreFingerprintScopeMutation = 'MessageStoreFingerprintScopeMutation',
   MessageStorePreSubstrateLayout = 'MessageStorePreSubstrateLayout',

@@ -105,7 +105,7 @@ describe('validation-state reader admission parity', () => {
       expect(replicatedResult.kind).toBe('Applied');
     });
 
-    it('should continue to admit a child after the same dataless parent is completed with data', async () => {
+    it('should continue to admit a child after same-CID data retry is rejected', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const protocolDefinition = nestedProtocolDefinition;
@@ -126,7 +126,7 @@ describe('validation-state reader admission parity', () => {
       const datalessParentReply = await dwn.processMessage(alice.did, parentMessage);
       expect(datalessParentReply.status.code).toBe(204);
 
-      const { message: childBeforeCompletionMessage, dataStream: childBeforeCompletionDataStream } = await TestDataGenerator.generateRecordsWrite({
+      const { message: childBeforeRetryMessage, dataStream: childBeforeRetryDataStream } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
         protocol        : protocolDefinition.protocol,
         protocolPath    : 'foo/bar',
@@ -134,18 +134,19 @@ describe('validation-state reader admission parity', () => {
         dataFormat      : 'text/plain',
         parentContextId : parentWrite.message.contextId,
       });
-      const childBeforeCompletionReply = await dwn.processMessage(alice.did, childBeforeCompletionMessage, {
-        dataStream: childBeforeCompletionDataStream,
+      const childBeforeRetryReply = await dwn.processMessage(alice.did, childBeforeRetryMessage, {
+        dataStream: childBeforeRetryDataStream,
       });
-      expect(childBeforeCompletionReply.status.code).toBe(202);
+      expect(childBeforeRetryReply.status.code).toBe(202);
 
-      // Same-CID delivery with data flips the parent from retained ancestry to latest/queryable state.
-      const completedParentReply = await dwn.processMessage(alice.did, parentMessage, {
+      // Same-CID delivery with data is not a completion mechanism; the retained parent still
+      // authorizes children through immutable ancestry facts.
+      const retriedParentReply = await dwn.processMessage(alice.did, parentMessage, {
         dataStream: DataStream.fromBytes(parentDataBytes!),
       });
-      expect(completedParentReply.status.code).toBe(202);
+      expect(retriedParentReply.status.code).toBe(409);
 
-      const { message: childAfterCompletionMessage, dataStream: childAfterCompletionDataStream } = await TestDataGenerator.generateRecordsWrite({
+      const { message: childAfterRetryMessage, dataStream: childAfterRetryDataStream } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
         protocol        : protocolDefinition.protocol,
         protocolPath    : 'foo/bar',
@@ -153,10 +154,10 @@ describe('validation-state reader admission parity', () => {
         dataFormat      : 'text/plain',
         parentContextId : parentWrite.message.contextId,
       });
-      const childAfterCompletionReply = await dwn.processMessage(alice.did, childAfterCompletionMessage, {
-        dataStream: childAfterCompletionDataStream,
+      const childAfterRetryReply = await dwn.processMessage(alice.did, childAfterRetryMessage, {
+        dataStream: childAfterRetryDataStream,
       });
-      expect(childAfterCompletionReply.status.code).toBe(202);
+      expect(childAfterRetryReply.status.code).toBe(202);
     });
 
     it('should admit a child after a parent update because immutable parent facts are unchanged', async () => {

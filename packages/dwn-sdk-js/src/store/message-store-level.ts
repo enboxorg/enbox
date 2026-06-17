@@ -13,7 +13,7 @@ import type {
 import type { Filter, KeyValues, PaginationCursor, QueryOptions } from '../types/query-types.js';
 import type { GenericMessage, MessageSort, Pagination } from '../types/message-types.js';
 import type { LevelDatabase, LevelWrapperBatchOperation } from './level-wrapper.js';
-import type { MessageStore, MessageStoreCompleteDataResult, MessageStoreOptions, MessageStorePutResult } from '../types/message-store.js';
+import type { MessageStore, MessageStoreOptions, MessageStorePutResult } from '../types/message-store.js';
 
 import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
@@ -84,7 +84,6 @@ const BLOCKS_PARTITION = 'blocks';
 const INDEX_PARTITION = 'idx';
 const LOG_PARTITION = 'log';
 const CID_TO_SEQ_PARTITION = 'cid';
-const REDELIVERY_PARTITION = 'redeliver';
 const FINGERPRINT_PARTITION = 'fp';
 const HEADS_PARTITION = 'heads';
 const META_PARTITION = 'meta';
@@ -95,7 +94,6 @@ const CURRENT_PARTITIONS = new Set([
   INDEX_PARTITION,
   LOG_PARTITION,
   CID_TO_SEQ_PARTITION,
-  REDELIVERY_PARTITION,
   FINGERPRINT_PARTITION,
   HEADS_PARTITION,
   META_PARTITION,
@@ -109,15 +107,13 @@ type LogEntryValue = {
   seq: string;
   /** The CID of the stored message. */
   messageCid: string;
-  /** The row's current query indexes (replaced by `updateIndexes`/`completeData`). */
+  /** The row's current query indexes (replaced by `updateIndexes`). */
   indexes: KeyValues;
   /**
    * The row's fingerprint-domain membership, computed once from the insert-time indexes and
    * persisted so deletion can fold the fingerprints without recomputing from mutated state.
    */
   fingerprintScopes: string[];
-  /** The redelivery stamp position, present only after `completeData` stamped the row. */
-  redeliverSeq?: string;
 };
 
 /**
@@ -132,8 +128,6 @@ type StorePartitions = {
   log: LevelWrapper<string>;
   /** messageCid → seq lookup, tenant-partitioned: `cid!<tenant>!<messageCid>`. */
   cidToSeq: LevelWrapper<string>;
-  /** Redelivery stamps, tenant-partitioned: `redeliver!<tenant>!<paddedRedeliverSeq>`. */
-  redeliveries: LevelWrapper<string>;
   /** Fingerprint domain values, tenant-partitioned: `fp!<tenant>!<domainKey>` → 64-char hex. */
   fingerprints: LevelWrapper<string>;
   /** Per-tenant counter high-water: `heads!<tenant>` → decimal string. */
@@ -145,9 +139,9 @@ type StorePartitions = {
 /**
  * A {@link MessageStore} and {@link ReplicationFeedReader} implementation that works in both the
  * browser and server-side, backed by a SINGLE LevelDB root: message blocks, query indexes, the
- * per-tenant replication log, the cid→seq index, redelivery stamps, fingerprint domains, the
- * tenant counters, and the store epoch are all sublevels of one Level instance, so every mutation
- * commits as one fully atomic batch.
+ * per-tenant replication log, the cid→seq index, fingerprint domains, the tenant counters, and
+ * the store epoch are all sublevels of one Level instance, so every mutation commits as one fully
+ * atomic batch.
  *
  * A per-tenant async write mutex spans seq assignment through batch write, so commit order equals
  * seq order by construction. Seq assignment is gap-free (a failed batch never persists the head),
@@ -229,7 +223,6 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       blocks       : await binaryView.partition(BLOCKS_PARTITION),
       log          : await root.partition(LOG_PARTITION),
       cidToSeq     : await root.partition(CID_TO_SEQ_PARTITION),
-      redeliveries : await root.partition(REDELIVERY_PARTITION),
       fingerprints : await root.partition(FINGERPRINT_PARTITION),
       heads        : await root.partition(HEADS_PARTITION),
       meta         : await root.partition(META_PARTITION),
@@ -470,7 +463,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, storedMessage, messageCid, indexes);
 
       // Same row, same seq: indexes replaced; fingerprint scopes carried forward verbatim;
-      // never stamps and never touches the fingerprints or the head.
+      // fingerprints and head stay untouched.
       const updatedEntry: LogEntryValue = { ...entry, indexes };
 
       const operations: LevelWrapperBatchOperation<string>[] = [
@@ -527,78 +520,6 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     });
   }
 
-  async completeData(
-    tenant: string,
-    messageCid: string,
-    indexes: KeyValues,
-    encodedData?: string,
-    options?: MessageStoreOptions
-  ): Promise<MessageStoreCompleteDataResult> {
-    options?.signal?.throwIfAborted();
-
-    const partitions = await executeUnlessAborted(this.partitions(), options?.signal);
-    const index = await executeUnlessAborted(this.index(), options?.signal);
-
-    return this.withTenantWriteLock(tenant, async () => {
-      const { entry, positionKey, tenantLog } = await this.getLogEntryForMutation(
-        partitions, tenant, messageCid, DwnErrorCode.MessageStoreCompleteDataMessageNotFound
-      );
-
-      if (entry.redeliverSeq !== undefined) {
-        throw new DwnError(
-          DwnErrorCode.MessageStoreCompleteDataAlreadyStamped,
-          `message ${messageCid} is already stamped at position ${entry.redeliverSeq}; the dataless-to-data transition cannot repeat`
-        );
-      }
-
-      const storedMessage = await this.readStoredMessage(
-        partitions, tenant, messageCid, DwnErrorCode.MessageStoreCompleteDataMessageNotFound, options
-      );
-      Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, storedMessage, messageCid, indexes);
-
-      // The completion is the one substance mutation whose cause does not append a log row, so it
-      // stamps the row for redelivery: same CID, same seq, a second delivery position drawn from
-      // the same tenant counter in the same atomic batch. No fingerprint change — the CID set is
-      // unchanged.
-      const head = await this.getHead(partitions, tenant);
-      const redeliverSeq = head + 1n;
-
-      const updatedEntry: LogEntryValue = { ...entry, indexes, redeliverSeq: redeliverSeq.toString() };
-
-      let blockOperations: LevelWrapperBatchOperation<string>[] = [];
-
-      if (encodedData !== undefined) {
-        const tenantBlocks = await partitions.blocks.partition(tenant);
-        const completedMessage = { ...storedMessage, encodedData };
-        const reEncodedBlock = await block.encode({ value: completedMessage, codec: cbor, hasher: sha256 });
-        const blockOperation = tenantBlocks.createOperation({ type: 'put', key: messageCid, value: reEncodedBlock.bytes });
-        blockOperations = [blockOperation as unknown as LevelWrapperBatchOperation<string>];
-      }
-
-      const tenantRedeliveries = await partitions.redeliveries.partition(tenant);
-      const operations: LevelWrapperBatchOperation<string>[] = [
-        ...blockOperations,
-        ...await index.createDeleteOperations(tenant, messageCid),
-        ...await index.createPutOperations(tenant, messageCid, indexes),
-        tenantLog.createOperation({ type: 'put', key: positionKey, value: JSON.stringify(updatedEntry) }),
-        tenantRedeliveries.createOperation({
-          type  : 'put',
-          key   : Replication.encodePositionKey(redeliverSeq),
-          value : JSON.stringify({ seq: entry.seq, messageCid }),
-        }),
-        partitions.heads.createOperation({ type: 'put', key: tenant, value: redeliverSeq.toString() }),
-      ];
-
-      await partitions.root.batch(operations);
-
-      // Store-owned wake, post-commit — the stamp advances the head, so the same forward drain
-      // delivers the completed row at a strictly increasing position.
-      this.publishWake(tenant, redeliverSeq);
-
-      return { position: await this.buildToken(tenant, redeliverSeq, messageCid) };
-    });
-  }
-
   async delete(tenant: string, cidString: string, options?: MessageStoreOptions): Promise<void> {
     options?.signal?.throwIfAborted();
 
@@ -631,20 +552,12 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       const tenantBlocks = await partitions.blocks.partition(tenant);
       const blockOperation = tenantBlocks.createOperation({ type: 'del', key: messageCid });
 
-      // Removing the row removes both delivery appearances — the stamp lives and dies with it.
-      let redeliveryOperations: LevelWrapperBatchOperation<string>[] = [];
-      if (entry.redeliverSeq !== undefined) {
-        const tenantRedeliveries = await partitions.redeliveries.partition(tenant);
-        redeliveryOperations = [tenantRedeliveries.createOperation({ type: 'del', key: Replication.encodePositionKey(BigInt(entry.redeliverSeq)) })];
-      }
-
       // XOR is self-inverse: folding the persisted scopes again removes the row's contribution.
       const operations: LevelWrapperBatchOperation<string>[] = [
         blockOperation as unknown as LevelWrapperBatchOperation<string>,
         ...await index.createDeleteOperations(tenant, messageCid),
         tenantLog.createOperation({ type: 'del', key: positionKey }),
         tenantCidToSeq.createOperation({ type: 'del', key: messageCid }),
-        ...redeliveryOperations,
         ...await this.createFingerprintFoldOperations(partitions, tenant, messageCid, entry.fingerprintScopes),
       ];
 
@@ -699,12 +612,10 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     }
 
     const tenantLog = await partitions.log.partition(tenant);
-    const tenantRedeliveries = await partitions.redeliveries.partition(tenant);
     const tenantBlocks = await partitions.blocks.partition(tenant);
 
     const iteratorRange = { gt: Replication.encodePositionKey(startPosition), lte: Replication.encodePositionKey(head) };
     const logIterator = tenantLog.iterator(iteratorRange);
-    const redeliveryIterator = tenantRedeliveries.iterator(iteratorRange);
 
     const events: EventLogEntry[] = [];
     let drained = true;
@@ -712,8 +623,10 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     let lastDeliveredPosition: bigint | undefined;
     let lastDeliveredMessageCid: string | undefined;
 
-    for await (const { position, entry } of this.mergePositionStreams(logIterator, redeliveryIterator, tenantLog)) {
+    for await (const [positionKey, serializedEntry] of logIterator) {
+      const position = BigInt(positionKey);
       lastScannedPosition = position;
+      const entry = JSON.parse(serializedEntry) as LogEntryValue;
 
       const event = await this.readEventFromLogEntry(tenantBlocks, position, entry, filters);
       if (event === undefined) {
@@ -742,15 +655,9 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
   private async readEventFromLogEntry(
     tenantBlocks: LevelWrapper<Uint8Array>,
     position: bigint,
-    entry: LogEntryValue | undefined,
+    entry: LogEntryValue,
     filters: Filter[] | undefined,
   ): Promise<EventLogEntry | undefined> {
-    if (entry === undefined) {
-      // A redelivery stamp whose row vanished between the head capture and this lookup —
-      // deletion removes both appearances, so there is nothing to deliver at this position.
-      return undefined;
-    }
-
     if (filters !== undefined && filters.length > 0 && !FilterUtility.matchAnyFilter(entry.indexes, filters)) {
       return undefined;
     }
@@ -764,7 +671,7 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     const decodedBlock = await block.decode({ bytes, codec: cbor, hasher: sha256 });
     const message = decodedBlock.value as GenericMessage;
     return {
-      seq        : entry.seq, // a redelivered entry carries the row's original seq
+      seq        : entry.seq,
       position   : position.toString(),
       event      : { message },
       indexes    : entry.indexes,
@@ -783,19 +690,13 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
     // position is always 0 regardless of compaction.
     const oldest = await this.buildToken(tenant, 0n);
 
-    // Resolve the head position against either column for the latest token's messageCid.
+    // Resolve the head position for the latest token's messageCid.
     const headKey = Replication.encodePositionKey(head);
     const tenantLog = await partitions.log.partition(tenant);
-    const tenantRedeliveries = await partitions.redeliveries.partition(tenant);
 
     let headMessageCid: string | undefined;
     const headLogEntry = await tenantLog.get(headKey);
-    if (headLogEntry === undefined) {
-      const headRedelivery = await tenantRedeliveries.get(headKey);
-      if (headRedelivery !== undefined) {
-        headMessageCid = (JSON.parse(headRedelivery) as { seq: string, messageCid: string }).messageCid;
-      }
-    } else {
+    if (headLogEntry !== undefined) {
       headMessageCid = (JSON.parse(headLogEntry) as LogEntryValue).messageCid;
     }
 
@@ -968,12 +869,6 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       return (JSON.parse(serializedEntry) as LogEntryValue).messageCid;
     }
 
-    const tenantRedeliveries = await partitions.redeliveries.partition(tenant);
-    const serializedStamp = await tenantRedeliveries.get(positionKey);
-    if (serializedStamp !== undefined) {
-      return (JSON.parse(serializedStamp) as { seq: string, messageCid: string }).messageCid;
-    }
-
     return undefined;
   }
 
@@ -1033,53 +928,6 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
    */
   private static fingerprintKey(scope: string): string {
     return `d${scope}`;
-  }
-
-  /**
-   * Merges the seq range and the redelivery range in ascending position order beneath the
-   * captured head. Position comparisons are numeric via BigInt, never lexicographic. Yields
-   * `entry: undefined` for redelivery stamps whose row disappeared mid-scan.
-   */
-  private async * mergePositionStreams(
-    logIterator: AsyncGenerator<[string, string]>,
-    redeliveryIterator: AsyncGenerator<[string, string]>,
-    tenantLog: LevelWrapper<string>,
-  ): AsyncGenerator<{ position: bigint, entry: LogEntryValue | undefined }> {
-    try {
-      let logNext = await logIterator.next();
-      let redeliveryNext = await redeliveryIterator.next();
-
-      while (!logNext.done || !redeliveryNext.done) {
-        let useLogStream: boolean;
-        if (logNext.done) {
-          useLogStream = false;
-        } else if (redeliveryNext.done) {
-          useLogStream = true;
-        } else {
-          const logPosition = BigInt(logNext.value[0]);
-          const redeliveryPosition = BigInt(redeliveryNext.value[0]);
-          useLogStream = logPosition < redeliveryPosition;
-        }
-
-        if (useLogStream) {
-          const [positionKey, serializedEntry] = logNext.value!;
-          yield { position: BigInt(positionKey), entry: JSON.parse(serializedEntry) as LogEntryValue };
-          logNext = await logIterator.next();
-        } else {
-          const [positionKey, serializedStamp] = redeliveryNext.value!;
-          const stamp = JSON.parse(serializedStamp) as { seq: string, messageCid: string };
-          const serializedEntry = await tenantLog.get(Replication.encodePositionKey(BigInt(stamp.seq)));
-          const entry = serializedEntry === undefined ? undefined : JSON.parse(serializedEntry) as LogEntryValue;
-          yield { position: BigInt(positionKey), entry };
-          redeliveryNext = await redeliveryIterator.next();
-        }
-      }
-    } finally {
-      // Close the underlying Level iterators when the merge is abandoned early (e.g. a row limit
-      // breaks out of the consuming loop). Calling return() on an exhausted generator is a no-op.
-      await logIterator.return(undefined);
-      await redeliveryIterator.return(undefined);
-    }
   }
 
   private async buildToken(tenant: string, position: bigint, messageCid?: string): Promise<ProgressToken> {

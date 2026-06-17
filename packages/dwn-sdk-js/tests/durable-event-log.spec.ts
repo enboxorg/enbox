@@ -362,45 +362,6 @@ describe('DurableEventLog', () => {
     await scriptedLog.close();
   });
 
-  it('should emit redelivery events at the redelivery cursor position', async () => {
-    const alice = await TestDataGenerator.generateDidKeyPersona();
-    const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
-    const message = { ...record.message } as RecordsWriteMessage & { encodedData?: string };
-    delete message.encodedData;
-
-    const messageCid = await Message.getCid(message);
-    const indexes = await record.recordsWrite.constructIndexes(true);
-    const initialPut = await messageStore.put(alice.did, message, { ...indexes, isLatestBaseState: false });
-    const completion = await messageStore.completeData(
-      alice.did,
-      messageCid,
-      indexes,
-      (record.message as RecordsWriteMessage & { encodedData?: string }).encodedData
-    );
-    expect(completion.position!.position).toBe('2');
-
-    const received: SubscriptionMessage[] = [];
-    await eventLog.subscribe(alice.did, 'redelivery-subscription', (message): void => {
-      received.push(message);
-    }, { cursor: initialPut.position! });
-
-    expect(received[0]).toEqual(expect.objectContaining({
-      type : 'event',
-      seq  : '1',
-      messageCid,
-    }));
-    const redeliveryEvent = received[0];
-    expect(redeliveryEvent.type).toBe('event');
-    if (redeliveryEvent.type !== 'event') {
-      throw new Error('expected a redelivery event');
-    }
-    expect(redeliveryEvent.encodedData).toBe((record.message as RecordsWriteMessage & { encodedData?: string }).encodedData);
-    expect((redeliveryEvent.event.message as RecordsWriteMessage & { encodedData?: string }).encodedData).toBeUndefined();
-    expect(redeliveryEvent.cursor.position).toBe('2');
-    expect(received[1]).toEqual(expect.objectContaining({ type: 'eose' }));
-    expect(received[1].cursor.position).toBe('2');
-  });
-
   it('should attach initial writes to non-initial RecordsWrite events', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
