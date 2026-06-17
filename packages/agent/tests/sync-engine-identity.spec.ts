@@ -384,14 +384,6 @@ describe('SyncEngineLevel — identity management', () => {
     });
   });
 
-  describe('topologicalSort (static)', () => {
-    it('should delegate to the standalone topologicalSort function', () => {
-      const messages = [{ message: { descriptor: { interface: 'Records', method: 'Write' } } }];
-      const result = SyncEngineLevel.topologicalSort(messages as any);
-      expect(result).toEqual(messages);
-    });
-  });
-
   describe('stopSync', () => {
     it('should stop when there is no sync in progress', async () => {
       const engine = new SyncEngineLevel({ db });
@@ -599,24 +591,6 @@ describe('SyncEngineLevel — identity management', () => {
       clearTimeout(bobTimer);
     });
 
-    it('removeIdentityFromLiveSync should clear degraded-poll timers for the target DID', async () => {
-      const engine = new SyncEngineLevel({ db });
-      (engine as any)._liveSubscriptions = [];
-      (engine as any)._localSubscriptions = [];
-
-      const aliceTimer = setInterval(() => {}, 60_000);
-      const bobTimer = setInterval(() => {}, 60_000);
-      (engine as any)._degradedPollTimers.set('did:example:alice^https://dwn.example.com^scope1', aliceTimer);
-      (engine as any)._degradedPollTimers.set('did:example:bob^https://dwn.example.com^scope2', bobTimer);
-
-      await (engine as any).removeIdentityFromLiveSync('did:example:alice');
-
-      expect((engine as any)._degradedPollTimers.has('did:example:alice^https://dwn.example.com^scope1')).toBe(false);
-      expect((engine as any)._degradedPollTimers.has('did:example:bob^https://dwn.example.com^scope2')).toBe(true);
-
-      clearInterval(bobTimer);
-    });
-
     it('removeIdentityFromLiveSync should clear repair attempts and retry timers for the target DID', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any)._liveSubscriptions = [];
@@ -756,7 +730,6 @@ describe('SyncEngineLevel — identity management', () => {
         status             : 'initializing',
         pull               : {},
         connectivity       : 'unknown',
-        needsReconcile     : false,
       }));
       sinon.stub(engine as any, 'ledger').get(() => ({
         getOrCreateLink : ledgerStub,
@@ -795,7 +768,6 @@ describe('SyncEngineLevel — identity management', () => {
         status             : 'initializing',
         pull               : {},
         connectivity       : 'unknown',
-        needsReconcile     : false,
       }));
       sinon.stub(engine as any, 'ledger').get(() => ({
         getOrCreateLink : ledgerStub,
@@ -829,7 +801,6 @@ describe('SyncEngineLevel — identity management', () => {
           status             : 'initializing',
           pull               : {},
           connectivity       : 'unknown',
-          needsReconcile     : false,
         })),
         saveLink  : sinon.stub().resolves(),
         setStatus : sinon.stub().resolves(),

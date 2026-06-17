@@ -23,8 +23,7 @@ import { DwnInterface } from './types/dwn.js';
 import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
-import { topologicalSort } from './sync-topological-sort.js';
-import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, MAX_PENDING_TOKENS, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
+import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
 import { fetchRemoteMessages, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, resolveMessagesScopes, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
@@ -44,6 +43,9 @@ const PUSH_DEBOUNCE_MS = 100;
 
 /** Default durable-feed page size for engine replay. */
 const FEED_PAGE_LIMIT = 100;
+
+/** Maximum concurrent live-pull deliveries waiting for earlier ordinals to commit. */
+const MAX_IN_FLIGHT_PULL_DELIVERIES = 100;
 
 /** Page size for local retained ProtocolsConfigure history scans. */
 const PROTOCOL_HISTORY_PAGE_LIMIT = 500;
@@ -1233,10 +1235,10 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Per-link repair and degraded-poll orchestration
+  // Per-link repair orchestration
   // ---------------------------------------------------------------------------
 
-  /** Maximum consecutive repair attempts before falling back to degraded_poll. */
+  /** Maximum consecutive repair attempts before the link becomes terminal-incomplete. */
   private static readonly MAX_REPAIR_ATTEMPTS = 3;
 
   /** Maximum repeated verified feed mismatches before pausing the link as terminal-incomplete. */
@@ -1244,9 +1246,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Maximum age for a repeatedly deferred pull entry before it is dead-lettered and skipped. */
   private static readonly DEFERRED_PULL_DEAD_LETTER_AFTER_MS = 24 * 60 * 60 * 1000;
-
-  /** Per-link degraded-poll interval timers. */
-  private readonly _degradedPollTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
 
   /** Per-link repair attempt counters. */
   private readonly _repairAttempts: Map<string, number> = new Map();
@@ -1324,11 +1323,6 @@ export class SyncEngineLevel implements SyncEngine {
       clearTimeout(retryTimer);
       this._repairRetryTimers.delete(linkKey);
     }
-    const degradedTimer = this._degradedPollTimers.get(linkKey);
-    if (degradedTimer) {
-      clearInterval(degradedTimer);
-      this._degradedPollTimers.delete(linkKey);
-    }
     const reconcileTimer = this._reconcileTimers.get(linkKey);
     if (reconcileTimer) {
       clearTimeout(reconcileTimer);
@@ -1369,13 +1363,11 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Schedule a retry for a failed repair. Uses exponential backoff.
-   * No-op if the link is already in `degraded_poll` (timer loop owns retries)
-   * or if a retry is already scheduled.
+   * No-op if the link is terminal-incomplete or a retry is already scheduled.
    */
   private scheduleRepairRetry(linkKey: string): void {
-    // Don't schedule if already in degraded_poll or retry pending.
     const link = this._activeLinks.get(linkKey);
-    if (!link || link.status === 'degraded_poll') { return; }
+    if (!link || link.status === 'terminal_incomplete') { return; }
     if (this._repairRetryTimers.has(linkKey)) { return; }
 
     // attempts is already post-increment from doRepairLink, so subtract 1
@@ -1398,7 +1390,7 @@ export class SyncEngineLevel implements SyncEngine {
       try {
         await this.repairLink(linkKey);
       } catch {
-        // repairLink handles max attempts → degraded_poll internally.
+        // repairLink handles max attempts → terminal-incomplete internally.
         // If still below max, schedule another retry.
         if (currentLink.status === 'repairing') {
           this.scheduleRepairRetry(linkKey);
@@ -1420,13 +1412,10 @@ export class SyncEngineLevel implements SyncEngine {
     const promise = this.doRepairLink(linkKey).finally(() => {
       this._activeRepairs.delete(linkKey);
 
-      // Post-repair reconcile: if doRepairLink() marked needsReconcile
-      // (to close the gap between feed catch-up and new push subscription),
-      // schedule reconciliation NOW — after _activeRepairs is cleared so
-      // scheduleReconcile() won't skip it.
+      // Close the gap between feed catch-up and the reopened push subscription.
       const link = this._activeLinks.get(linkKey);
-      if (link?.needsReconcile && link.status === 'live') {
-        this.scheduleReconcile(linkKey, 500);
+      if (link?.status === 'live') {
+        this.scheduleLinkReconcile(linkKey, link, 'post-repair-gap', 500);
       }
     });
     this._activeRepairs.set(linkKey, promise);
@@ -1435,9 +1424,8 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Internal repair implementation. Replays durable feed entries for a single
-   * link, then attempts to re-establish live
-   * subscriptions. If repair succeeds, transitions to `live`. If it fails,
-   * throws so callers (degraded_poll timer, startup) can handle retry scheduling.
+   * link, then attempts to re-establish live subscriptions. If repair succeeds,
+   * transitions to `live`. If it fails, throws so callers can retry.
    */
   private async doRepairLink(linkKey: string): Promise<void> {
     const link = this._activeLinks.get(linkKey);
@@ -1509,13 +1497,6 @@ export class SyncEngineLevel implements SyncEngine {
       if (this._engineGeneration !== generation || isStaleLink()) { return; }
 
       // Step 5: Reopen subscriptions.
-      // Mark needsReconcile BEFORE reopening — local push starts from "now",
-      // so any writes between durable feed replay (step 3) and the new push
-      // subscription are picked up by a short post-reopen reconcile.
-      link.needsReconcile = true;
-      await this.ledger.saveLink(link);
-      if (this._engineGeneration !== generation || isStaleLink()) { return; }
-
       const target = {
         did,
         dwnUrl,
@@ -1552,10 +1533,8 @@ export class SyncEngineLevel implements SyncEngine {
       }
       if (this._engineGeneration !== generation || isStaleLink()) { return; }
 
-      // Note: post-repair reconcile to close the repair-window gap is
-      // scheduled by repairLink() AFTER _activeRepairs is cleared — not
-      // here, because scheduleReconcile() would skip it while _activeRepairs
-      // still contains this link.
+      // Note: post-repair reconcile to close the repair-window gap is scheduled
+      // by repairLink() AFTER _activeRepairs is cleared.
 
       // Step 6: Clean up repair context and transition to live.
       this._repairContext.delete(linkKey);
@@ -1577,19 +1556,19 @@ export class SyncEngineLevel implements SyncEngine {
 
     } catch (error: any) {
       // If teardown occurred during repair or the link was replaced by a
-      // hot-remove + re-add, don't retry or enter degraded_poll.
+      // hot-remove + re-add, don't retry or terminalize the replacement link.
       if (this._engineGeneration !== generation || isStaleLink()) { return; }
 
       console.error(`SyncEngineLevel: Repair failed for ${did} -> ${dwnUrl} (attempt ${attempts})`, error);
       this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, attempt: attempts, error: String(error.message ?? error) });
 
       if (attempts >= SyncEngineLevel.MAX_REPAIR_ATTEMPTS) {
-        console.warn(`SyncEngineLevel: Max repair attempts reached for ${did} -> ${dwnUrl}, entering degraded_poll`);
-        await this.enterDegradedPoll(linkKey);
+        console.warn(`SyncEngineLevel: Max repair attempts reached for ${did} -> ${dwnUrl}, entering terminal_incomplete`);
+        await this.transitionToTerminalIncomplete(linkKey, link);
         return;
       }
 
-      // Re-throw so callers (degraded_poll timer) can handle retry scheduling.
+      // Re-throw so callers can handle retry scheduling.
       throw error;
     }
   }
@@ -1621,87 +1600,6 @@ export class SyncEngineLevel implements SyncEngine {
     this._localSubscriptions = this._localSubscriptions.filter(s => s !== pushSub);
   }
 
-  /**
-   * Transition a link to `degraded_poll` and start a per-link polling timer.
-   * The timer runs durable feed repair at a reduced frequency (30s with jitter)
-   * and attempts to re-establish live subscriptions after each successful repair.
-   */
-  private async enterDegradedPoll(linkKey: string): Promise<void> {
-    const link = this._activeLinks.get(linkKey);
-    if (!link) { return; }
-    link.connectivity = 'offline';
-
-    const prevDegradedStatus = link.status;
-    await this.ledger.setStatus(link, 'degraded_poll');
-    this._repairAttempts.delete(linkKey);
-    const eventScope = syncEventScope(link.scope);
-    this.emitEvent({ type: 'link:status-change', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope, from: prevDegradedStatus, to: 'degraded_poll' });
-    this.emitEvent({ type: 'degraded-poll:entered', tenantDid: link.tenantDid, remoteEndpoint: link.remoteEndpoint, ...eventScope });
-
-    // Clear any existing timer for this link.
-    const existing = this._degradedPollTimers.get(linkKey);
-    if (existing) { clearInterval(existing); }
-
-    // Schedule per-link polling with jitter (15-30 seconds).
-    // Rejection sampling: mask to 14 bits ([0, 16383]), reject >= 15000.
-    const baseInterval = 15_000;
-    const randomBuf = new Uint32Array(1);
-    let jitter: number;
-    do {
-      crypto.getRandomValues(randomBuf);
-      jitter = randomBuf[0] & 0x3FFF;
-    } while (jitter >= baseInterval);
-    const interval = baseInterval + jitter;
-
-    const pollGeneration = this._engineGeneration;
-    const timer = setInterval(async (): Promise<void> => {
-      // Bail if teardown occurred since this timer was created.
-      if (this._engineGeneration !== pollGeneration) {
-        clearInterval(timer);
-        this._degradedPollTimers.delete(linkKey);
-        return;
-      }
-
-      // Resolve the *current* link from _activeLinks on each tick, not the
-      // captured callback reference. After hot-remove + re-add, the captured
-      // `link` object is stale and must not be used for status checks or
-      // ledger writes.
-      const currentLink = this._activeLinks.get(linkKey);
-      if (currentLink?.status !== 'degraded_poll') {
-        clearInterval(timer);
-        this._degradedPollTimers.delete(linkKey);
-        return;
-      }
-
-      try {
-        // Attempt repair. Reset attempt counter so repairLink doesn't
-        // immediately re-enter degraded_poll on failure.
-        this._repairAttempts.set(linkKey, 0);
-        await this.ledger.setStatus(currentLink, 'repairing');
-        await this.repairLink(linkKey);
-
-        // If repairLink succeeded, link is now 'live' — stop polling.
-        if ((currentLink.status as string) === 'live') {
-          clearInterval(timer);
-          this._degradedPollTimers.delete(linkKey);
-        }
-      } catch {
-        // Repair failed — restore degraded_poll status so the timer continues.
-        // This is critical: repairLink sets status to 'repairing' internally,
-        // and if we don't restore degraded_poll, the next tick would see
-        // status !== 'degraded_poll' and stop the timer permanently.
-        if (this._activeLinks.get(linkKey) === currentLink) {
-          await this.ledger.setStatus(currentLink, 'degraded_poll');
-        }
-      }
-    }, interval);
-
-    this._degradedPollTimers.set(linkKey, timer);
-  }
-
-  /**
-   * Tears down all live subscriptions and push listeners.
-   */
   // ---------------------------------------------------------------------------
   // Browser connectivity: online/offline + visibilitychange
   // ---------------------------------------------------------------------------
@@ -1809,7 +1707,7 @@ export class SyncEngineLevel implements SyncEngine {
     this.stopBrowserConnectivityListeners();
 
     // Increment generation to invalidate all in-flight async operations
-    // (repairs, retry timers, degraded-poll ticks). Any async work that
+    // (repairs, retry timers). Any async work that
     // captured the previous generation will bail on its next checkpoint.
     this._engineGeneration++;
 
@@ -1841,11 +1739,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
     this._localSubscriptions = [];
 
-    // Clear degraded-poll timers and repair state.
-    for (const timer of this._degradedPollTimers.values()) {
-      clearInterval(timer);
-    }
-    this._degradedPollTimers.clear();
+    // Clear repair state.
     this._repairAttempts.clear();
     this._activeRepairs.clear();
     for (const timer of this._repairRetryTimers.values()) {
@@ -1889,7 +1783,7 @@ export class SyncEngineLevel implements SyncEngine {
 
       const subscriptionResult = await this.openLinkSubscriptions({ ...target, linkKey });
       if (subscriptionResult === LinkSubscriptionOpenResult.ReadyForLive) {
-        await this.markLinkLive(target, link, linkKey);
+        await this.markLinkLive(target, link);
       } else if (subscriptionResult === LinkSubscriptionOpenResult.Polling) {
         await this.markLinkPolling(target, link);
       }
@@ -1931,7 +1825,7 @@ export class SyncEngineLevel implements SyncEngine {
     return LinkSubscriptionOpenResult.ReadyForLive;
   }
 
-  private async markLinkLive(target: SyncTarget, link: ReplicationLinkState, linkKey: string): Promise<void> {
+  private async markLinkLive(target: SyncTarget, link: ReplicationLinkState): Promise<void> {
     this.emitEvent({
       type           : 'link:status-change',
       tenantDid      : target.did,
@@ -1941,10 +1835,6 @@ export class SyncEngineLevel implements SyncEngine {
       to             : 'live'
     });
     await this.ledger.setStatus(link, 'live');
-
-    if (link.needsReconcile) {
-      this.scheduleReconcile(linkKey, 1000);
-    }
   }
 
   private async markLinkPolling(target: SyncTarget, link: ReplicationLinkState): Promise<void> {
@@ -2095,9 +1985,6 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }
 
-    for (const [key, timer] of this._degradedPollTimers) {
-      if (this.isLinkKeyForDid(key, did)) { clearInterval(timer); this._degradedPollTimers.delete(key); }
-    }
     for (const key of this._repairAttempts.keys()) {
       if (this.isLinkKeyForDid(key, did)) { this._repairAttempts.delete(key); }
     }
@@ -2361,14 +2248,13 @@ export class SyncEngineLevel implements SyncEngine {
       await this.ledger.saveLink(link);
     }
 
-    this.markPullLinkOnline({ did, dwnUrl, eventScope, linkKey, link });
+    this.markPullLinkOnline({ did, dwnUrl, eventScope, link });
   }
 
-  private markPullLinkOnline({ did, dwnUrl, eventScope, linkKey, link }: {
+  private markPullLinkOnline({ did, dwnUrl, eventScope, link }: {
     did: string;
     dwnUrl: string;
     eventScope: SyncEventScope;
-    linkKey: string;
     link?: ReplicationLinkState;
   }): void {
     if (!link) {
@@ -2380,9 +2266,6 @@ export class SyncEngineLevel implements SyncEngine {
     link.connectivity = 'online';
     if (previous !== 'online') {
       this.emitEvent({ type: 'link:connectivity-change', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, from: previous, to: 'online' });
-    }
-    if (link.needsReconcile) {
-      this.scheduleReconcile(linkKey, 500);
     }
   }
 
@@ -2424,7 +2307,7 @@ export class SyncEngineLevel implements SyncEngine {
     { did, dwnUrl, linkKey, link, isStale }: LivePullContext,
     subMessage: Extract<SubscriptionMessage, { type: 'event' }>,
   ): Promise<boolean> {
-    // Guard: if the link is not live (e.g., repairing, degraded_poll, paused),
+    // Guard: if the link is not live (e.g., repairing, paused),
     // skip all processing. Old subscription handlers may still fire after the
     // link transitions — these events should be ignored entirely, not just
     // skipped at the checkpoint level.
@@ -2522,7 +2405,7 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     if (context.link !== undefined) {
-      this.markLinkNeedsReconcile(context.linkKey, context.link, `pull-${outcome.kind}`);
+      this.scheduleLinkReconcile(context.linkKey, context.link, `pull-${outcome.kind}`);
     }
     return { messageCid: rootCid, admitted: false };
   }
@@ -2617,7 +2500,7 @@ export class SyncEngineLevel implements SyncEngine {
       this.emitPullCheckpointAdvance(link);
     }
 
-    if (delivery.runtime.inflight.size > MAX_PENDING_TOKENS) {
+    if (delivery.runtime.inflight.size > MAX_IN_FLIGHT_PULL_DELIVERIES) {
       console.warn(`SyncEngineLevel: Pull in-flight overflow for ${did} -> ${dwnUrl}, transitioning to repairing`);
       await this.transitionToRepairing(linkKey, link);
     }
@@ -2682,7 +2565,6 @@ export class SyncEngineLevel implements SyncEngine {
     // not admission failures. Recording them as `admit-failed` would suppress
     // the root permanently during reconcile.
     if (link && !isStale()) {
-      this.markLinkNeedsReconcile(linkKey, link, 'pull-error');
       await this.transitionToRepairing(linkKey, link);
     }
   }
@@ -2732,7 +2614,7 @@ export class SyncEngineLevel implements SyncEngine {
           return;
         }
         if (scopeClassification === 'unknown') {
-          this.markLinkNeedsReconcile(pushLinkKey, pushLink, 'push-scope-unclassified');
+          this.scheduleLinkReconcile(pushLinkKey, pushLink, 'push-scope-unclassified');
           return;
         }
       }
@@ -2948,10 +2830,6 @@ export class SyncEngineLevel implements SyncEngine {
       this._pushRuntimes.delete(linkKey);
     }
 
-    const link = this._activeLinks.get(linkKey);
-    if (link?.status === 'live' && link.needsReconcile) {
-      this.scheduleReconcile(linkKey, 500);
-    }
   }
 
   private finishPushFlush(linkKey: string, pushRuntime: PushRuntimeState): void {
@@ -2999,9 +2877,8 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /**
-   * Re-queues a failed push batch for retry, or marks the link
-   * `needsReconcile` if retries are exhausted. Bounded to prevent
-   * infinite retry loops.
+   * Re-queues a failed push batch for retry, or schedules a feed check when
+   * retries are exhausted. Bounded to prevent infinite retry loops.
    */
   private async requeueOrReconcile(targetKey: string, pending: {
     did: string; dwnUrl: string; delegateDid?: string; protocol?: string;
@@ -3019,13 +2896,13 @@ export class SyncEngineLevel implements SyncEngine {
     };
     if (pending.entries.length === 0) {
       this.stopPushRuntime(targetKey, pushRuntime);
-      this.markLinkNeedsReconcileIfActive(targetKey, link, 'push-terminal');
+      this.scheduleLinkReconcileIfActive(targetKey, link, 'push-terminal');
       return;
     }
 
     if (pending.entries.some(entry => entry.lastFailure !== undefined && isTenantInactivePushFailure(entry.lastFailure))) {
       this.stopPushRuntime(targetKey, pushRuntime);
-      this.markLinkNeedsReconcileIfActive(
+      this.scheduleLinkReconcileIfActive(
         targetKey,
         link,
         'push-tenant-inactive',
@@ -3036,7 +2913,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     if (pending.retryCount >= maxRetries) {
       this.stopPushRuntime(targetKey, pushRuntime);
-      this.markLinkNeedsReconcileIfActive(targetKey, link, 'push-retry-exhausted');
+      this.scheduleLinkReconcileIfActive(targetKey, link, 'push-retry-exhausted');
       return;
     }
 
@@ -3116,7 +2993,6 @@ export class SyncEngineLevel implements SyncEngine {
     this._feedConvergenceFailures.set(linkKey, { attempts, signature });
 
     if (attempts >= SyncEngineLevel.MAX_FEED_CONVERGENCE_ATTEMPTS) {
-      link.needsReconcile = false;
       await this.transitionToTerminalIncomplete(linkKey, link);
       return;
     }
@@ -3178,7 +3054,7 @@ export class SyncEngineLevel implements SyncEngine {
     await this.ledger.saveLink(link);
 
     if (activeLink?.status === 'live') {
-      await this.persistLinkNeedsReconcile(linkKey, activeLink, reason, 0);
+      this.scheduleLinkReconcile(linkKey, activeLink, reason, 0);
     }
   }
 
@@ -3189,7 +3065,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._pushRuntimes.delete(targetKey);
   }
 
-  private markLinkNeedsReconcileIfActive(
+  private scheduleLinkReconcileIfActive(
     linkKey: string,
     link: ReplicationLinkState | undefined,
     reason: string,
@@ -3199,7 +3075,7 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    this.markLinkNeedsReconcile(linkKey, link, reason, delayMs);
+    this.scheduleLinkReconcile(linkKey, link, reason, delayMs);
   }
 
   private schedulePushRetry(targetKey: string, pushRuntime: PushRuntimeState, pending: {
@@ -3218,16 +3094,12 @@ export class SyncEngineLevel implements SyncEngine {
     }, delayMs);
   }
 
-  private markLinkNeedsReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void {
-    void this.persistLinkNeedsReconcile(linkKey, link, reason, delayMs).catch((error: unknown) => {
-      console.error(`SyncEngineLevel: Failed to mark link for reconciliation ${link.tenantDid} -> ${link.remoteEndpoint}`, error);
-    });
-  }
+  private scheduleLinkReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): void {
+    if (link.status !== 'live') {
+      return;
+    }
 
-  private async persistLinkNeedsReconcile(linkKey: string, link: ReplicationLinkState, reason: string, delayMs?: number): Promise<void> {
-    if (!link.needsReconcile) {
-      link.needsReconcile = true;
-      await this.ledger.saveLink(link);
+    if (this.scheduleReconcile(linkKey, delayMs)) {
       this.emitEvent({
         type           : 'reconcile:needed',
         tenantDid      : link.tenantDid,
@@ -3236,8 +3108,6 @@ export class SyncEngineLevel implements SyncEngine {
         reason,
       });
     }
-
-    this.scheduleReconcile(linkKey, delayMs);
   }
 
   private getAuthorizationGrantIds(authorization: SyncAuthorization): NonEmptyStringArray | undefined {
@@ -4282,10 +4152,9 @@ export class SyncEngineLevel implements SyncEngine {
    * Schedule a per-link reconciliation after a short debounce. Coalesces
    * repeated requests for the same link.
    */
-  private scheduleReconcile(linkKey: string, delayMs: number = 1500): void {
-    if (this._reconcileTimers.has(linkKey)) { return; }
-    if (this._reconcileInFlight.has(linkKey)) { return; }
-    if (this._activeRepairs.has(linkKey)) { return; }
+  private scheduleReconcile(linkKey: string, delayMs: number = 1500): boolean {
+    if (this._reconcileTimers.has(linkKey)) { return false; }
+    if (this._activeRepairs.has(linkKey)) { return false; }
 
     const generation = this._engineGeneration;
     const timer = setTimeout((): void => {
@@ -4301,11 +4170,12 @@ export class SyncEngineLevel implements SyncEngine {
       });
     }, delayMs);
     this._reconcileTimers.set(linkKey, timer);
+    return true;
   }
 
   /**
    * Run durable feed reconciliation for a single link. Deduplicates concurrent calls.
-   * On success, clears `needsReconcile`. On failure, schedules retry.
+   * On success, emits completion. On failure, schedules retry.
    */
   private async reconcileLink(linkKey: string): Promise<void> {
     const existing = this._reconcileInFlight.get(linkKey);
@@ -4313,17 +4183,9 @@ export class SyncEngineLevel implements SyncEngine {
 
     const promise = this.doReconcileLink(linkKey).finally(() => {
       this._reconcileInFlight.delete(linkKey);
-      this.scheduleReconcileIfStillNeeded(linkKey, 5000);
     });
     this._reconcileInFlight.set(linkKey, promise);
     return promise;
-  }
-
-  private scheduleReconcileIfStillNeeded(linkKey: string, delayMs: number): void {
-    const link = this._activeLinks.get(linkKey);
-    if (link?.status === 'live' && link.needsReconcile) {
-      this.scheduleReconcile(linkKey, delayMs);
-    }
   }
 
   /**
@@ -4334,7 +4196,7 @@ export class SyncEngineLevel implements SyncEngine {
     const link = this._activeLinks.get(linkKey);
     if (!link) { return; }
 
-    // Only reconcile live links — repairing/degraded links have their own
+    // Only reconcile live links — repairing links have their own
     // recovery path.
     if (link.status !== 'live') {
       return;
@@ -4389,7 +4251,6 @@ export class SyncEngineLevel implements SyncEngine {
 
       if (reconcileOutcome.converged) {
         this._feedConvergenceFailures.delete(linkKey);
-        await this.ledger.clearNeedsReconcile(link);
         this.emitEvent({ type: 'reconcile:completed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope });
       } else if (!isStaleLink()) {
         // Feed fingerprints still differ — retry after a delay. This can
@@ -4491,7 +4352,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Reads missing messages from the local DWN and pushes them to the remote DWN
-   * in dependency order (topological sort).
+   * in dependency order.
    */
   private async pushMessages({ did, dwnUrl, delegateDid, permissionGrantIds, messageCids }: {
     did: string;
@@ -4505,20 +4366,6 @@ export class SyncEngineLevel implements SyncEngine {
       agent          : this.agent,
       permissionsApi : this._permissionsApi,
     });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Dependency-aware topological sort — delegates to sync-topological-sort.ts
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Delegate to the standalone `topologicalSort` function.
-   * Tests call `SyncEngineLevel.topologicalSort(...)` so this static method must remain.
-   */
-  public static topologicalSort<T extends { message: GenericMessage }>(
-    messages: T[]
-  ): T[] {
-    return topologicalSort(messages);
   }
 
   // ---------------------------------------------------------------------------
@@ -4641,15 +4488,11 @@ export class SyncEngineLevel implements SyncEngine {
     // affect health. Endpoint-level orphan cleanup is a separate GC concern.
     const currentLinkIdentityKeys = await this.getCurrentDurableLinkIdentityKeys();
     let degradedLinkCount = 0;
-    let reconcileNeededCount = 0;
     const allLinks = await this.ledger.getAllLinks();
     for (const link of allLinks) {
       const isCurrentLink = currentLinkIdentityKeys === undefined || currentLinkIdentityKeys.has(this.getDurableLinkIdentityKey(link));
       if (isCurrentLink && SyncEngineLevel.isUnhealthyLinkStatus(link.status)) {
         degradedLinkCount++;
-      }
-      if (isCurrentLink && link.needsReconcile) {
-        reconcileNeededCount++;
       }
     }
 
@@ -4658,8 +4501,7 @@ export class SyncEngineLevel implements SyncEngine {
       failedMessageCount    : failedMessageCount,
       admissionFailureCount : admissionFailureCount,
       degradedLinkCount     : degradedLinkCount,
-      reconcileNeededCount  : reconcileNeededCount,
-      syncHealthy           : failedMessageCount === 0 && degradedLinkCount === 0 && reconcileNeededCount === 0,
+      syncHealthy           : failedMessageCount === 0 && degradedLinkCount === 0,
     };
   }
 
@@ -4698,7 +4540,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private static isUnhealthyLinkStatus(status: ReplicationLinkState['status']): boolean {
-    return status === 'repairing' || status === 'degraded_poll' || status === 'terminal_incomplete';
+    return status === 'repairing' || status === 'terminal_incomplete';
   }
 
   // ---------------------------------------------------------------------------

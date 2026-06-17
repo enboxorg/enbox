@@ -1,6 +1,6 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { SyncIdentityOptions } from '../src/index.js';
-import type { GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -8,7 +8,7 @@ import { AbstractLevel } from 'abstract-level';
 import { Convert } from '@enbox/common';
 import { CryptoUtils } from '@enbox/crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
+import { DwnConstant, DwnInterfaceName, DwnMethodName, Jws, Message, Time } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
@@ -3181,7 +3181,6 @@ describe('SyncEngineLevel', () => {
           });
           const linkKey = linkKeyFor(did, testDwnUrls[0], originalLink);
           originalLink.status = 'live';
-          originalLink.needsReconcile = true;
           syncEngine['_activeLinks'].set(linkKey, originalLink);
 
           // Stub the feed reconcile path to capture the shouldContinue callback.
@@ -3202,9 +3201,8 @@ describe('SyncEngineLevel', () => {
           await syncEngine['doReconcileLink'](linkKey);
 
           expect(capturedShouldContinue).toBeDefined();
-          // The old reconcile aborted — needsReconcile was NOT cleared.
           const currentLink = syncEngine['_activeLinks'].get(linkKey)!;
-          expect(currentLink.needsReconcile).toBe(true);
+          expect(currentLink).not.toBe(originalLink);
         });
 
         it('should bail old repair when the same link key is re-added during in-flight repair', async () => {
@@ -3248,241 +3246,6 @@ describe('SyncEngineLevel', () => {
           expect(syncEngine['_activeLinks'].get(linkKey)).not.toBe(link);
         });
       });
-    });
-  });
-
-  describe('topologicalSort', () => {
-    // Helper to create a minimal mock GenericMessage with the given descriptor fields.
-    function mockMessage(
-      overrides: Record<string, unknown>,
-      topLevel?: Record<string, unknown>
-    ): { message: GenericMessage } {
-      const descriptor = {
-        interface        : DwnInterfaceName.Records,
-        method           : DwnMethodName.Write,
-        messageTimestamp : Time.getCurrentTimestamp(),
-        ...overrides,
-      };
-      return {
-        message: { descriptor, ...topLevel } as unknown as GenericMessage,
-      };
-    }
-
-    function withAuthorizationPayload(
-      entry: { message: GenericMessage },
-      payloadProperties: Record<string, unknown>,
-      author = 'did:example:alice'
-    ): { message: GenericMessage } {
-      const payload = Buffer.from(JSON.stringify(payloadProperties)).toString('base64url');
-      const protectedHeader = Buffer.from(JSON.stringify({ alg: 'EdDSA', kid: `${author}#key-1` })).toString('base64url');
-      return {
-        ...entry,
-        message: {
-          ...entry.message,
-          authorization: {
-            signature: {
-              payload,
-              signatures: [{ protected: protectedHeader, signature: 'fake' }],
-            },
-          },
-        } as unknown as GenericMessage,
-      };
-    }
-
-    it('returns messages unchanged when there is only one message', () => {
-      const msg = mockMessage({});
-      const result = SyncEngineLevel.topologicalSort([msg]);
-      expect(result).toHaveLength(1);
-      expect(result[0]).toBe(msg);
-    });
-
-    it('sorts ProtocolsConfigure before RecordsWrite that references the protocol', () => {
-      const protocolUrl = 'https://example.com/proto';
-      const recordsWrite = mockMessage(
-        { protocol: protocolUrl },
-        { recordId: 'rec-1' }
-      );
-      const protocolsConfigure = mockMessage({
-        interface  : DwnInterfaceName.Protocols,
-        method     : DwnMethodName.Configure,
-        definition : { protocol: protocolUrl },
-      });
-      // Pass in reverse order: records first, protocol second.
-      const result = SyncEngineLevel.topologicalSort([recordsWrite, protocolsConfigure]);
-      expect(result[0]).toBe(protocolsConfigure);
-      expect(result[1]).toBe(recordsWrite);
-    });
-
-    it('sorts initial write before update write for the same recordId', () => {
-      const ts1 = '2024-01-01T00:00:00.000000Z';
-      const ts2 = '2024-01-02T00:00:00.000000Z';
-      const update = mockMessage(
-        { dateCreated: ts1, messageTimestamp: ts2 },
-        { recordId: 'rec-1' }
-      );
-      const initial = mockMessage(
-        { dateCreated: ts1, messageTimestamp: ts1 },
-        { recordId: 'rec-1' }
-      );
-      // Pass update first.
-      const result = SyncEngineLevel.topologicalSort([update, initial]);
-      expect(result[0]).toBe(initial);
-      expect(result[1]).toBe(update);
-    });
-
-    it('sorts permission grant before a message that references it via permissionGrantId', () => {
-      const grantRecordId = 'grant-record-1';
-      const grant = mockMessage(
-        {
-          protocol         : PermissionsProtocol.uri,
-          protocolPath     : PermissionsProtocol.grantPath,
-          dateCreated      : '2024-01-01T00:00:00.000000Z',
-          messageTimestamp : '2024-01-01T00:00:00.000000Z',
-        },
-        { recordId: grantRecordId }
-      );
-      const dependent = withAuthorizationPayload(
-        mockMessage({
-          permissionGrantId : grantRecordId,
-          messageTimestamp  : '2024-01-02T00:00:00.000000Z',
-        }),
-        { permissionGrantId: grantRecordId }
-      );
-      // Pass dependent first, grant second.
-      const result = SyncEngineLevel.topologicalSort([dependent, grant]);
-      expect(result[0]).toBe(grant);
-      expect(result[1]).toBe(dependent);
-    });
-
-    it('does not crash when permissionGrantId references a grant not in the batch', () => {
-      const msg1 = mockMessage({ messageTimestamp: '2024-01-01T00:00:00.000000Z' });
-      const msg2 = withAuthorizationPayload(
-        mockMessage({
-          permissionGrantId : 'grant-not-in-batch',
-          messageTimestamp  : '2024-01-02T00:00:00.000000Z',
-        }),
-        { permissionGrantId: 'grant-not-in-batch' }
-      );
-      // Should not throw; no edge is added because the grant is not in the batch.
-      const result = SyncEngineLevel.topologicalSort([msg1, msg2]);
-      expect(result).toHaveLength(2);
-    });
-
-    it('handles combined protocol, parent, and grant dependencies', () => {
-      const protocolUrl = 'https://example.com/proto';
-      const grantRecordId = 'grant-1';
-      const parentRecordId = 'parent-1';
-
-      const protocolsConfigure = mockMessage({
-        interface        : DwnInterfaceName.Protocols,
-        method           : DwnMethodName.Configure,
-        definition       : { protocol: protocolUrl },
-        messageTimestamp : '2024-01-01T00:00:00.000000Z',
-      });
-      const grant = mockMessage(
-        {
-          protocol         : PermissionsProtocol.uri,
-          protocolPath     : PermissionsProtocol.grantPath,
-          dateCreated      : '2024-01-01T00:00:00.000000Z',
-          messageTimestamp : '2024-01-01T00:00:00.000000Z',
-        },
-        { recordId: grantRecordId }
-      );
-      const parent = mockMessage(
-        {
-          protocol         : protocolUrl,
-          dateCreated      : '2024-01-02T00:00:00.000000Z',
-          messageTimestamp : '2024-01-02T00:00:00.000000Z',
-        },
-        { recordId: parentRecordId }
-      );
-      const child = withAuthorizationPayload(
-        mockMessage(
-          {
-            protocol          : protocolUrl,
-            parentId          : parentRecordId,
-            permissionGrantId : grantRecordId,
-            dateCreated       : '2024-01-03T00:00:00.000000Z',
-            messageTimestamp  : '2024-01-03T00:00:00.000000Z',
-          },
-          { recordId: 'child-1' }
-        ),
-        { permissionGrantId: grantRecordId }
-      );
-
-      // Pass in reverse dependency order.
-      const result = SyncEngineLevel.topologicalSort([child, parent, grant, protocolsConfigure]);
-
-      // ProtocolsConfigure must come before parent and child (both reference the protocol).
-      const configIdx = result.indexOf(protocolsConfigure);
-      const parentIdx = result.indexOf(parent);
-      const childIdx = result.indexOf(child);
-      const grantIdx = result.indexOf(grant);
-
-      expect(configIdx).toBeLessThan(parentIdx);
-      expect(configIdx).toBeLessThan(childIdx);
-      expect(parentIdx).toBeLessThan(childIdx);
-      expect(grantIdx).toBeLessThan(childIdx);
-    });
-
-    it('preserves extra properties on message entries through the sort', () => {
-      const protocolUrl = 'https://example.com/proto';
-      const dataBytes = new Uint8Array([1, 2, 3]);
-      const recordsWrite = {
-        ...mockMessage(
-          { protocol: protocolUrl },
-          { recordId: 'rec-1' }
-        ),
-        dataBytes,
-      };
-      const protocolsConfigure = {
-        ...mockMessage({
-          interface  : DwnInterfaceName.Protocols,
-          method     : DwnMethodName.Configure,
-          definition : { protocol: protocolUrl },
-        }),
-      };
-      // Pass in reverse order: records first, protocol second.
-      const result = SyncEngineLevel.topologicalSort([recordsWrite, protocolsConfigure]);
-      expect(result[0]).toBe(protocolsConfigure);
-      expect(result[1]).toBe(recordsWrite);
-      // Verify the dataBytes property survived the sort.
-      expect((result[1] as typeof recordsWrite).dataBytes).toBe(dataBytes);
-    });
-
-    it('sorts RecordsDelete after ProtocolsConfigure for the same protocol', () => {
-      const protocolUrl = 'https://example.com/proto';
-      const recordId = 'rec-1';
-      const ts = '2024-01-01T00:00:00.000000Z';
-      const initialWrite = mockMessage(
-        {
-          protocol         : protocolUrl,
-          dateCreated      : ts,
-          messageTimestamp : ts,
-        },
-        { recordId }
-      );
-      // RecordsDelete has recordId in the descriptor (accessed via msg.descriptor.recordId).
-      const deleteMsg = mockMessage({
-        interface        : DwnInterfaceName.Records,
-        method           : DwnMethodName.Delete,
-        protocol         : protocolUrl,
-        recordId,
-        messageTimestamp : '2024-01-02T00:00:00.000000Z',
-      });
-      // Delete depends on initial write (not directly on ProtocolsConfigure,
-      // but the initial write depends on ProtocolsConfigure).
-      const protocolsConfigure = mockMessage({
-        interface  : DwnInterfaceName.Protocols,
-        method     : DwnMethodName.Configure,
-        definition : { protocol: protocolUrl },
-      });
-      const result = SyncEngineLevel.topologicalSort([deleteMsg, initialWrite, protocolsConfigure]);
-      const configIdx = result.indexOf(protocolsConfigure);
-      const writeIdx = result.indexOf(initialWrite);
-      const deleteIdx = result.indexOf(deleteMsg);
-      expect(configIdx).toBeLessThan(writeIdx);
-      expect(writeIdx).toBeLessThan(deleteIdx);
     });
   });
 

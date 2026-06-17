@@ -1,7 +1,7 @@
 /**
  * A local DWN RPC shim that routes sendDwnRequest calls to an in-process
  * DWN instance instead of over the network. Used for testing live sync
- * flows (subscriptions, repair, degraded_poll) without external infrastructure.
+ * flows (subscriptions and repair) without external infrastructure.
  *
  * Handles both regular requests and subscription requests by routing them
  * to the in-process DWN's processMessage with the appropriate options.

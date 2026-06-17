@@ -99,8 +99,8 @@ describe('SyncEngineLevel — private methods', () => {
   // Track every SyncEngineLevel created in this suite so `afterEach` can
   // clear any pending timers before the next test (and before `afterAll`
   // closes the shared Level DB). Tests that exercise code paths which
-  // schedule setTimeout/setInterval callbacks (repair retries, reconcile,
-  // degraded polling, push debounces) would otherwise let those callbacks
+  // schedule setTimeout callbacks (repair retries, reconcile,
+  // push debounces) would otherwise let those callbacks
   // fire after teardown, triggering unhandled `LEVEL_DATABASE_NOT_OPEN`
   // rejections when `ledger.saveLink()` hits the closed DB.
   const createdEngines: SyncEngineLevel[] = [];
@@ -165,11 +165,6 @@ describe('SyncEngineLevel — private methods', () => {
     }
     repairRetryTimers.clear();
 
-    const degradedPollTimers = (engine as any)._degradedPollTimers as Map<string, ReturnType<typeof setInterval>>;
-    for (const timer of degradedPollTimers.values()) {
-      clearInterval(timer);
-    }
-    degradedPollTimers.clear();
   };
 
   beforeAll(async () => {
@@ -2094,7 +2089,7 @@ describe('SyncEngineLevel — private methods', () => {
       })).toBe(false);
     });
 
-    it('should reset feed checkpoints and mark a live link for reconcile when verified fingerprints diverge', async () => {
+    it('should reset feed checkpoints and schedule a live link for reconcile when verified fingerprints diverge', async () => {
       const mockAgent = { agentDid: 'did:example:agent', did: { dereference: sinon.stub() } } as any;
       const engine = createEngine({ db, agent: mockAgent });
       const target = syncTarget('did:example:1', 'https://dwn.example.com');
@@ -2109,7 +2104,6 @@ describe('SyncEngineLevel — private methods', () => {
       link.status = 'live';
       link.pull = { contiguousAppliedToken: token, receivedToken: token };
       link.push = { contiguousAppliedToken: token, receivedToken: token };
-      link.needsReconcile = false;
       (engine as any)._activeLinks.set(linkKey, link);
       sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
       ((engine as any).verifyFeedConvergence).resolves({
@@ -2126,7 +2120,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(link.pull.receivedToken).toBeUndefined();
       expect(link.push.contiguousAppliedToken).toBeUndefined();
       expect(link.push.receivedToken).toBeUndefined();
-      expect(link.needsReconcile).toBe(true);
       expect(scheduleStub.calledOnceWith(linkKey, 0)).toBe(true);
     });
 
@@ -2145,7 +2138,6 @@ describe('SyncEngineLevel — private methods', () => {
       link.status = 'live';
       link.pull = { contiguousAppliedToken: token, receivedToken: token };
       link.push = { contiguousAppliedToken: token, receivedToken: token };
-      link.needsReconcile = false;
       await (engine as any).ledger.saveLink(link);
       (engine as any)._activeLinks.set(linkKey, link);
       sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
@@ -2165,7 +2157,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       const [finalLink] = await (engine as any).ledger.getLinksForTenant(target.did);
       expect(finalLink.status).toBe('terminal_incomplete');
-      expect(finalLink.needsReconcile).toBe(false);
       expect(scheduleStub.callCount).toBe(2);
       expect(events.some(event =>
         event.type === 'link:status-change' &&
@@ -2190,7 +2181,6 @@ describe('SyncEngineLevel — private methods', () => {
       link.status = 'live';
       link.pull = { contiguousAppliedToken: token, receivedToken: token };
       link.push = { contiguousAppliedToken: token, receivedToken: token };
-      link.needsReconcile = false;
       (engine as any)._activeLinks.set(linkKey, link);
       const localFingerprint = await fingerprintFromCids(['cid-terminal']);
       const remoteFingerprint = await fingerprintFromCids([]);
@@ -2220,7 +2210,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(link.pull.receivedToken).toBeUndefined();
       expect(link.push.contiguousAppliedToken).toBeUndefined();
       expect(link.push.receivedToken).toBeUndefined();
-      expect(link.needsReconcile).toBe(true);
       expect(scheduleStub.calledOnceWith(linkKey, 0)).toBe(true);
     });
 
@@ -2321,7 +2310,6 @@ describe('SyncEngineLevel — private methods', () => {
       const linkKey = (engine as any).getReplicationLinkKey(target, link);
       link.status = 'live';
       link.pull = { contiguousAppliedToken: pullCursor, receivedToken: pullCursor };
-      link.needsReconcile = false;
       await (engine as any).ledger.saveLink(link);
       (engine as any)._activeLinks.set(linkKey, link);
 
@@ -2342,7 +2330,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(finalLink.pull.receivedToken).toBeUndefined();
       expect(finalLink.push.contiguousAppliedToken).toEqual(pushCursor);
       expect(finalLink.push.receivedToken).toEqual(pushCursor);
-      expect(finalLink.needsReconcile).toBe(false);
       expect(pushMessagesStub.calledOnce).toBe(true);
       expect(feedQueriesFromStart).toBe(feedQueriesAtTerminal);
       expect(scheduleStub.callCount).toBe(2);
@@ -2383,7 +2370,6 @@ describe('SyncEngineLevel — private methods', () => {
       link.status = 'live';
       link.pull = { contiguousAppliedToken: token, receivedToken: token };
       link.push = { contiguousAppliedToken: token, receivedToken: token };
-      link.needsReconcile = false;
       await (engine as any).ledger.saveLink(link);
       (engine as any)._activeLinks.set(linkKey, link);
       sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
@@ -2401,7 +2387,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(storedLink.status).toBe('live');
       expect(storedLink.pull.contiguousAppliedToken).toEqual(token);
       expect(storedLink.push.contiguousAppliedToken).toEqual(token);
-      expect(storedLink.needsReconcile).toBe(false);
       expect(scheduleStub.called).toBe(false);
     });
 
@@ -2851,7 +2836,6 @@ describe('SyncEngineLevel — private methods', () => {
         status             : 'initializing',
         pull               : {},
         connectivity       : 'online',
-        needsReconcile     : false,
       } as any;
 
       sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(link);
@@ -3218,26 +3202,6 @@ describe('SyncEngineLevel — private methods', () => {
       // Runtime should be cleaned up (success + no pending entries + no timer).
       // retryCount was reset to 0, enabling deletion.
       expect((engine as any)._pushRuntimes.has('key1')).toBe(false);
-    });
-
-    it('should schedule reconcile after a successful retry on a dirty live link', () => {
-      const engine = createEngine({ db });
-      const linkKey = 'key1';
-      const pushRuntime = (engine as any).getOrCreatePushRuntime(linkKey, {
-        did    : 'did:example:alice',
-        dwnUrl : 'https://dwn.example.com',
-      });
-      (engine as any)._activeLinks.set(linkKey, {
-        tenantDid      : 'did:example:alice',
-        remoteEndpoint : 'https://dwn.example.com',
-        status         : 'live',
-        needsReconcile : true,
-      });
-      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
-
-      (engine as any).cleanupSuccessfulPushRuntime(linkKey, pushRuntime);
-
-      expect(scheduleStub.calledOnceWith(linkKey, 500)).toBe(true);
     });
 
     it('should not let stale retryCount leak to subsequent batches', async () => {
@@ -3656,7 +3620,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
-        pull               : {}, connectivity       : 'unknown', needsReconcile     : false,
+        pull               : {}, connectivity       : 'unknown',
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -3690,7 +3654,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
-        pull               : {}, connectivity       : 'online', needsReconcile     : false,
+        pull               : {}, connectivity       : 'online',
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -3727,7 +3691,7 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' },
         scope              : { kind: 'protocolSet', protocols: ['https://example.com/profile'] }, status             : 'live',
-        pull               : {}, connectivity       : 'online', needsReconcile     : false,
+        pull               : {}, connectivity       : 'online',
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -3770,7 +3734,7 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' },
         scope              : { kind: 'protocolSet', protocols: ['https://example.com/profile'] }, status             : 'live',
-        pull               : {}, connectivity       : 'online', needsReconcile     : false,
+        pull               : {}, connectivity       : 'online',
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -3805,7 +3769,7 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' },
         scope              : { kind: 'protocolSet', protocols: ['https://example.com/profile'] }, status             : 'live',
-        pull               : {}, connectivity       : 'online', needsReconcile     : false,
+        pull               : {}, connectivity       : 'online',
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -3841,7 +3805,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
-        pull               : {}, connectivity       : 'online', needsReconcile     : false,
+        pull               : {}, connectivity       : 'online',
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -3878,7 +3842,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
-        pull               : {}, connectivity       : 'online', needsReconcile     : false,
+        pull               : {}, connectivity       : 'online',
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -3914,7 +3878,6 @@ describe('SyncEngineLevel — private methods', () => {
       });
       expect(link.pull.contiguousAppliedToken).toEqual(eventCursor);
       expect(link.status).toBe('live');
-      expect(link.needsReconcile).toBe(false);
 
       (engine as any)._liveSubscriptions = [];
     });
@@ -3930,7 +3893,7 @@ describe('SyncEngineLevel — private methods', () => {
       const link = {
         tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'live',
-        pull               : { contiguousAppliedToken: previousCursor }, connectivity       : 'online', needsReconcile     : false,
+        pull               : { contiguousAppliedToken: previousCursor }, connectivity       : 'online',
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -4111,7 +4074,7 @@ describe('SyncEngineLevel — private methods', () => {
       (engine as any)._localSubscriptions = [];
     });
 
-    it('should mark the link for reconcile when a scoped local RecordsDelete cannot be classified', async () => {
+    it('should schedule reconcile when a scoped local RecordsDelete cannot be classified', async () => {
       let capturedHandler: any;
       const mockAgent = {
         agentDid : 'did:example:agent',
@@ -4128,15 +4091,13 @@ describe('SyncEngineLevel — private methods', () => {
         },
       } as any;
       const engine = createEngine({ db, agent: mockAgent });
-      sinon.stub(engine as any, 'scheduleReconcile').returns(undefined);
-      const saveLinkStub = sinon.stub().resolves();
-      overrideLedger(engine, { saveLink: saveLinkStub });
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile').returns(true);
       const pushLinkKey = 'did:example:alice^https://dwn.example.com';
       const link = {
         tenantDid      : 'did:example:alice',
         remoteEndpoint : 'https://dwn.example.com',
         scope          : { kind: 'protocolSet', protocols: ['https://example.com/profile'] },
-        needsReconcile : false,
+        status         : 'live',
       };
       (engine as any)._activeLinks.set(pushLinkKey, link);
 
@@ -4150,8 +4111,7 @@ describe('SyncEngineLevel — private methods', () => {
       });
       await Promise.resolve();
 
-      expect(link.needsReconcile).toBe(true);
-      expect(saveLinkStub.calledOnce).toBe(true);
+      expect(scheduleStub.calledOnceWith(pushLinkKey)).toBe(true);
       expect((engine as any)._pushRuntimes.size).toBe(0);
       (engine as any)._localSubscriptions = [];
     });
@@ -4421,7 +4381,7 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Repair orchestration and degraded polling
+  // Repair orchestration
   // ---------------------------------------------------------------------------
 
   describe('repairLink', () => {
@@ -4450,7 +4410,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(link.status).toBe('live');
     });
 
-    it('should track repair attempts and enter degraded_poll after max attempts', async () => {
+    it('should track repair attempts and enter terminal_incomplete after max attempts', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
@@ -4466,21 +4426,23 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(console, 'error');
       sinon.stub(console, 'warn');
 
-      const saveStub = sinon.stub().resolves();
-      overrideLedger(engine, { saveLink: saveStub, setStatus: sinon.stub().resolves() });
+      const setStatusStub = sinon.stub().callsFake(async (l: any, status: string): Promise<void> => { l.status = status; });
+      overrideLedger(engine, { saveLink: sinon.stub().resolves(), setStatus: setStatusStub });
 
-      const enterDegradedStub = sinon.stub(engine as any, 'enterDegradedPoll').resolves();
+      const closeLinkSubscriptionsStub = (engine as any).closeLinkSubscriptions;
 
       const maxAttempts = (SyncEngineLevel as any).MAX_REPAIR_ATTEMPTS;
       for (let i = 0; i < maxAttempts; i++) {
         try {
           await (engine as any).repairLink(linkKey);
         } catch {
-          // Expected — doRepairLink re-throws on failure (except when entering degraded_poll).
+          // Expected — doRepairLink re-throws while retry attempts remain.
         }
       }
 
-      expect(enterDegradedStub.calledOnce).toBe(true);
+      expect(link.status).toBe('terminal_incomplete');
+      expect(setStatusStub.calledWith(link, 'terminal_incomplete')).toBe(true);
+      expect(closeLinkSubscriptionsStub.callCount).toBe(maxAttempts + 1);
     });
 
     it('should deduplicate concurrent repair calls for the same link', async () => {
@@ -4564,34 +4526,6 @@ describe('SyncEngineLevel — private methods', () => {
       // Since the handler checks status before calling drain, we verify the
       // link's checkpoint is unchanged when status is repairing.
       expect(link.pull.contiguousAppliedToken).toEqual(token(1));
-    });
-  });
-
-  describe('degraded_poll', () => {
-    it('should set up a polling timer when entering degraded_poll', async () => {
-      const engine = createEngine({ db });
-      const linkKey = 'did:example:alice^https://dwn.example.com';
-
-      const link = {
-        tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
-        projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
-        pull               : {},
-      } as any;
-      (engine as any)._activeLinks.set(linkKey, link);
-
-      const setStatusStub = sinon.stub();
-      overrideLedger(engine, { setStatus: setStatusStub });
-
-      await (engine as any).enterDegradedPoll(linkKey);
-
-      // Link should be in degraded_poll.
-      expect(setStatusStub.calledWith(link, 'degraded_poll')).toBe(true);
-
-      // A timer should be registered.
-      expect((engine as any)._degradedPollTimers.has(linkKey)).toBe(true);
-
-      // Clean up timer.
-      clearInterval((engine as any)._degradedPollTimers.get(linkKey));
     });
   });
 
@@ -4804,7 +4738,6 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
         pull               : {},
-        needsReconcile     : false,
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -4824,11 +4757,9 @@ describe('SyncEngineLevel — private methods', () => {
       // After repair completes:
       // 1. _activeRepairs should be cleared
       expect((engine as any)._activeRepairs.has(linkKey)).toBe(false);
-      // 2. needsReconcile should have been set (by doRepairLink before reopen)
-      expect(link.needsReconcile).toBe(true);
-      // 3. Link should be live
+      // 2. Link should be live
       expect(link.status).toBe('live');
-      // 4. A reconcile timer should be scheduled (the main assertion)
+      // 3. A reconcile timer should be scheduled after repair completes.
       expect((engine as any)._reconcileTimers.has(linkKey)).toBe(true);
 
       // Clean up the timer.
@@ -4844,7 +4775,6 @@ describe('SyncEngineLevel — private methods', () => {
         tenantDid          : 'did:example:alice', remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-test', authorizationEpoch : 'authorization-test', authorization      : { kind: 'owner' }, scope              : { kind: 'full' }, status             : 'repairing',
         pull               : {},
-        needsReconcile     : false,
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
       (engine as any).getOrCreateRuntime(linkKey);
@@ -4852,7 +4782,7 @@ describe('SyncEngineLevel — private methods', () => {
       sinon.stub(engine as any, 'closeLinkSubscriptions').resolves();
       const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
       pullStub.callsFake(async (): Promise<Record<string, never>> => {
-        link.status = 'degraded_poll';
+        link.status = 'terminal_incomplete';
         return {};
       });
       const openPullStub = sinon.stub(engine as any, 'openLivePullSubscription').resolves();
@@ -4927,11 +4857,11 @@ describe('SyncEngineLevel — private methods', () => {
   // ---------------------------------------------------------------------------
 
   describe('scheduleRepairRetry', () => {
-    it('should not schedule if link is in degraded_poll', () => {
+    it('should not schedule if link is terminal_incomplete', () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
-      (engine as any)._activeLinks.set(linkKey, { status: 'degraded_poll' });
+      (engine as any)._activeLinks.set(linkKey, { status: 'terminal_incomplete' });
 
       (engine as any).scheduleRepairRetry(linkKey);
 
@@ -5000,7 +4930,6 @@ describe('SyncEngineLevel — private methods', () => {
           status             : 'initializing',
           pull               : {},
           connectivity       : 'unknown',
-          needsReconcile     : false,
         };
       });
       overrideLedger(engine, {
@@ -5053,7 +4982,6 @@ describe('SyncEngineLevel — private methods', () => {
             status             : 'initializing',
             pull               : {},
             connectivity       : 'unknown',
-            needsReconcile     : false,
           };
         }),
         setStatus: setStatusStub,
@@ -5069,11 +4997,11 @@ describe('SyncEngineLevel — private methods', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Push simplification — opportunistic push + needsReconcile
+  // Push simplification — opportunistic push + feed reconciliation
   // ---------------------------------------------------------------------------
 
-  describe('opportunistic push + needsReconcile', () => {
-    it('should dead-letter terminal push failures immediately and mark link needsReconcile', async () => {
+  describe('opportunistic push + feed reconciliation', () => {
+    it('should dead-letter terminal push failures immediately and schedule reconciliation', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
 
@@ -5082,13 +5010,11 @@ describe('SyncEngineLevel — private methods', () => {
         remoteEndpoint : 'https://dwn.example.com',
         status         : 'live',
         pull           : {},
-        needsReconcile : false,
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 
-      const saveStub = sinon.stub().resolves();
-      overrideLedger(engine, { saveLink: saveStub });
       const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile').returns(true);
 
       await (engine as any).requeueOrReconcile(linkKey, {
         did     : 'did:example:alice',
@@ -5100,10 +5026,10 @@ describe('SyncEngineLevel — private methods', () => {
         retryCount: 0,
       });
 
-      expect(link.needsReconcile).toBe(true);
       expect(deadLetterStub.calledOnce).toBe(true);
       expect(deadLetterStub.firstCall.args[0].category).toBe('admit-failed');
       expect(deadLetterStub.firstCall.args[0].errorCode).toBe('Invalid');
+      expect(scheduleStub.calledOnceWith(linkKey)).toBe(true);
 
       expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
     });
@@ -5125,7 +5051,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(requeued.retryCount).toBe(1);
     });
 
-    it('should mark tenant-inactive push failures for reconcile without retrying the message', async () => {
+    it('should schedule tenant-inactive push failures for reconciliation without retrying the message', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = {
@@ -5133,14 +5059,11 @@ describe('SyncEngineLevel — private methods', () => {
         remoteEndpoint : 'https://dwn.example.com',
         status         : 'live',
         pull           : {},
-        needsReconcile : false,
       } as any;
       (engine as any)._activeLinks.set(linkKey, link);
 
-      const saveStub = sinon.stub().resolves();
-      overrideLedger(engine, { saveLink: saveStub });
       const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
-      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile');
+      const scheduleStub = sinon.stub(engine as any, 'scheduleReconcile').returns(true);
 
       await (engine as any).requeueOrReconcile(linkKey, {
         did     : 'did:example:alice',
@@ -5158,8 +5081,6 @@ describe('SyncEngineLevel — private methods', () => {
         retryCount: 0,
       });
 
-      expect(link.needsReconcile).toBe(true);
-      expect(saveStub.calledOnce).toBe(true);
       expect(deadLetterStub.called).toBe(false);
       expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
       await Promise.resolve();
@@ -5173,7 +5094,6 @@ describe('SyncEngineLevel — private methods', () => {
         status         : 'live',
         pull           : {},
         push           : {},
-        needsReconcile : false,
       } as any;
 
       expect(link.push).toEqual({});
@@ -5196,27 +5116,21 @@ describe('SyncEngineLevel — private methods', () => {
         status             : 'live',
         pull               : {},
         push               : {},
-        needsReconcile     : true,
         ...overrides,
       };
     }
 
-    it('should clear needsReconcile when feed fingerprints converge after reconciliation', async () => {
+    it('should emit reconcile:completed when feed fingerprints converge after reconciliation', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
       (engine as any)._activeLinks.set(linkKey, link);
-
-      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
 
       const events: any[] = [];
       engine.on((event) => { events.push(event); });
 
       await (engine as any).doReconcileLink(linkKey);
 
-      expect(link.needsReconcile).toBe(false);
-      expect(clearStub.calledOnce).toBe(true);
       expect(events.some(e => e.type === 'reconcile:completed')).toBe(true);
     });
 
@@ -5232,9 +5146,6 @@ describe('SyncEngineLevel — private methods', () => {
         admittedCids: ['cid-protocol', 'cid-profile'],
       });
 
-      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
-
       const events: any[] = [];
       engine.on((event) => { events.push(event); });
 
@@ -5246,7 +5157,7 @@ describe('SyncEngineLevel — private methods', () => {
       expect(appliedEvent.protocol).toBe('https://example.com/profile');
     });
 
-    it('should NOT clear needsReconcile when feed fingerprints still differ after reconciliation', async () => {
+    it('should schedule a retry when feed fingerprints still differ after reconciliation', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       const link = makeLiveLink();
@@ -5259,13 +5170,7 @@ describe('SyncEngineLevel — private methods', () => {
         pushFailures      : [],
       });
 
-      const clearStub = sinon.stub().resolves();
-      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
-
       await (engine as any).doReconcileLink(linkKey);
-
-      expect(link.needsReconcile).toBe(true);
-      expect(clearStub.called).toBe(false);
 
       expect((engine as any)._reconcileTimers.has(linkKey)).toBe(true);
       clearTimeout((engine as any)._reconcileTimers.get(linkKey));
@@ -5283,8 +5188,6 @@ describe('SyncEngineLevel — private methods', () => {
         remoteFingerprint : 'remote-fingerprint',
         pushFailures      : [],
       });
-      overrideLedger(engine, { clearNeedsReconcile: sinon.stub().resolves(), saveLink: sinon.stub().resolves() });
-
       await (engine as any).reconcileLink(linkKey);
 
       expect((engine as any)._reconcileTimers.has(linkKey)).toBe(true);
@@ -5318,20 +5221,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(pullStub.called).toBe(false);
     });
 
-    it('should clear needsReconcile when feed fingerprints already match', async () => {
-      const engine = createEngine({ db });
-      const linkKey = 'did:example:alice^https://dwn.example.com';
-      const link = makeLiveLink();
-      (engine as any)._activeLinks.set(linkKey, link);
-
-      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
-
-      await (engine as any).doReconcileLink(linkKey);
-
-      expect(link.needsReconcile).toBe(false);
-    });
-
     it('should bail on generation mismatch during reconciliation', async () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
@@ -5348,7 +5237,6 @@ describe('SyncEngineLevel — private methods', () => {
       await (engine as any).doReconcileLink(linkKey);
 
       expect(pushStub.called).toBe(false);
-      expect(link.needsReconcile).toBe(true);
     });
 
     it('should schedule retry on reconciliation error', async () => {
@@ -5364,7 +5252,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       // Should schedule a retry reconcile.
       expect((engine as any)._reconcileTimers.has(linkKey)).toBe(true);
-      expect(link.needsReconcile).toBe(true);
       clearTimeout((engine as any)._reconcileTimers.get(linkKey));
     });
 
@@ -5416,14 +5303,15 @@ describe('SyncEngineLevel — private methods', () => {
       expect((engine as any)._reconcileTimers.has(linkKey)).toBe(false);
     });
 
-    it('scheduleReconcile should not schedule if reconcile is already in-flight', () => {
+    it('scheduleReconcile should schedule a follow-up if reconcile is already in-flight', () => {
       const engine = createEngine({ db });
       const linkKey = 'did:example:alice^https://dwn.example.com';
       (engine as any)._reconcileInFlight.set(linkKey, Promise.resolve());
 
       (engine as any).scheduleReconcile(linkKey, 100);
 
-      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(false);
+      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(true);
+      clearTimeout((engine as any)._reconcileTimers.get(linkKey));
     });
 
     it('doReconcileLink should run feed pull and feed push', async () => {
@@ -5434,9 +5322,6 @@ describe('SyncEngineLevel — private methods', () => {
 
       const pullStub = (engine as any).pullRemoteFeedForSyncTarget;
       const pushStub = (engine as any).pushLocalFeedForSyncTarget;
-
-      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
 
       await (engine as any).doReconcileLink(linkKey);
 
@@ -5454,20 +5339,17 @@ describe('SyncEngineLevel — private methods', () => {
         pushFailures: [{ cid: 'local-cid-1', kind: 'Invalid', terminal: true, detail: 'bad request' }],
       });
 
-      const clearStub = sinon.stub().resolves();
-      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
       const deadLetterStub = sinon.stub(engine as any, 'recordDeadLetter').resolves();
 
       await (engine as any).doReconcileLink(linkKey);
 
-      expect(clearStub.called).toBe(false);
       expect(deadLetterStub.calledOnce).toBe(true);
       expect(deadLetterStub.firstCall.args[0].messageCid).toBe('local-cid-1');
       expect(deadLetterStub.firstCall.args[0].errorCode).toBe('Invalid');
       expect((engine as any)._pushRuntimes.has(linkKey)).toBe(false);
     });
 
-    it('doReconcileLink should keep needsReconcile when dead-lettered local feed entries still diverge', async () => {
+    it('doReconcileLink should schedule retry when dead-lettered local feed entries still diverge', async () => {
       const engine = createEngine({ db });
       const events: any[] = [];
       engine.on((event) => { events.push(event); });
@@ -5495,14 +5377,11 @@ describe('SyncEngineLevel — private methods', () => {
         pushFailures      : [],
       });
 
-      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
-
       await (engine as any).doReconcileLink(linkKey);
 
-      expect(clearStub.called).toBe(false);
-      expect(link.needsReconcile).toBe(true);
       expect(events.some(event => event.type === 'reconcile:completed')).toBe(false);
+      expect((engine as any)._reconcileTimers.has(linkKey)).toBe(true);
+      clearTimeout((engine as any)._reconcileTimers.get(linkKey));
     });
 
     it('doReconcileLink should abort if the active link epoch changes during pull', async () => {
@@ -5519,15 +5398,11 @@ describe('SyncEngineLevel — private methods', () => {
         return {};
       });
       const pushStub = (engine as any).pushLocalFeedForSyncTarget;
-      const clearStub = sinon.stub().callsFake(async (l: any): Promise<void> => { l.needsReconcile = false; });
-      overrideLedger(engine, { clearNeedsReconcile: clearStub, saveLink: sinon.stub().resolves() });
 
       await (engine as any).doReconcileLink(linkKey);
 
       expect(pullStub.calledOnce).toBe(true);
       expect(pushStub.called).toBe(false);
-      expect(clearStub.called).toBe(false);
-      expect(link.needsReconcile).toBe(true);
     });
   });
 
@@ -6322,31 +6197,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(link.status).toBe('repairing');
     });
 
-    it('should mark and clear needsReconcile', async () => {
-      const link = await ledger.getOrCreateLink({
-        tenantDid      : 'did:example:reconcile-test',
-        remoteEndpoint : 'https://dwn.example.com',
-        scope          : { kind: 'full' },
-        ...ownerAuthorization,
-      });
-
-      expect(link.needsReconcile).toBe(false);
-
-      await ledger.markNeedsReconcile(link, 'test reason');
-      expect(link.needsReconcile).toBe(true);
-
-      // Idempotent — second call should be a no-op.
-      await ledger.markNeedsReconcile(link);
-      expect(link.needsReconcile).toBe(true);
-
-      await ledger.clearNeedsReconcile(link);
-      expect(link.needsReconcile).toBe(false);
-
-      // Idempotent — second clear should be a no-op.
-      await ledger.clearNeedsReconcile(link);
-      expect(link.needsReconcile).toBe(false);
-    });
-
     it('should compare token positions correctly', () => {
       const a = { streamId: 's', epoch: 'e', position: '10', messageCid: 'a' };
       const b = { streamId: 's', epoch: 'e', position: '20', messageCid: 'b' };
@@ -6568,33 +6418,6 @@ describe('SyncEngineLevel — private methods', () => {
       expect(health.syncHealthy).toBe(false);
     });
 
-    it('should surface links needing reconcile in sync health', async () => {
-      const engine = createEngine({ db });
-      const ownerEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
-      await engine.registerIdentity({
-        did     : 'did:needs-reconcile-health',
-        options : { protocols: 'all' },
-      });
-      const target = syncTarget('did:needs-reconcile-health', 'https://dwn.example.com', {
-        authorizationEpoch: ownerEpoch,
-      });
-
-      const ledger = (engine as any).ledger;
-      const link = await ledger.getOrCreateLink({
-        tenantDid          : target.did,
-        remoteEndpoint     : target.dwnUrl,
-        scope              : target.scope,
-        authorization      : target.authorization,
-        authorizationEpoch : target.authorizationEpoch,
-      });
-      link.needsReconcile = true;
-      await ledger.saveLink(link);
-
-      const health = await engine.getSyncHealth();
-      expect(health.reconcileNeededCount).toBe(1);
-      expect(health.syncHealthy).toBe(false);
-    });
-
     it('should scope admission dead-letter scans to the active tenant', async () => {
       const engine = createEngine({ db });
       const iteratorOptions: any[] = [];
@@ -6694,7 +6517,7 @@ describe('SyncEngineLevel — private methods', () => {
         authorization      : targetA.authorization,
         authorizationEpoch : targetA.authorizationEpoch,
       });
-      await ledger.setStatus(link1, 'degraded_poll');
+      await ledger.setStatus(link1, 'terminal_incomplete');
 
       const link2 = await ledger.getOrCreateLink({
         tenantDid          : targetB.did,
@@ -6777,7 +6600,7 @@ describe('SyncEngineLevel — private methods', () => {
         authorization      : target.authorization,
         authorizationEpoch : target.authorizationEpoch,
       });
-      await ledger.setStatus(link, 'degraded_poll');
+      await ledger.setStatus(link, 'terminal_incomplete');
 
       const health = await engine.getSyncHealth();
       expect(health.degradedLinkCount).toBe(1);

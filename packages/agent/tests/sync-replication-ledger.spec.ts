@@ -53,7 +53,6 @@ describe('ReplicationLedger', () => {
       expect(link.authorization).toEqual({ kind: 'owner' });
       expect(link.status).toBe('initializing');
       expect(link.pull.contiguousAppliedToken).toBeUndefined();
-      expect(link.needsReconcile).toBe(false);
     });
 
     it('should return existing link on second call', async () => {

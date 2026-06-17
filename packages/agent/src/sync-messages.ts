@@ -29,7 +29,7 @@ import { DwnInterface } from './types/dwn.js';
 import { DwnRpcError } from '@enbox/dwn-clients';
 import { isRecordsWrite } from './utils.js';
 import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
-import { getRoleKey, topologicalSort } from './sync-topological-sort.js';
+import { getRoleKey, orderMessagesForAdmission } from './sync-admission-order.js';
 
 /** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
 const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
@@ -470,7 +470,7 @@ class RemoteApplyPushContext {
       rootEntries.push(...root.entries);
     }
 
-    for (const rootEntry of topologicalSort(rootEntries)) {
+    for (const rootEntry of orderMessagesForAdmission(rootEntries)) {
       const rootCid = await this.rememberEntry(rootEntry);
       if (failedByRoot.has(rootCid)) {
         continue;
@@ -492,7 +492,7 @@ class RemoteApplyPushContext {
     let pending = [rootEntry];
     for (let pass = 0; pass < MAX_PUSH_ADMISSION_PASSES && pending.length > 0; pass++) {
       const retry: SyncMessageEntry[] = [];
-      for (const entry of topologicalSort(pending)) {
+      for (const entry of orderMessagesForAdmission(pending)) {
         const result = await this.pushEntry(rootCid, entry);
         switch (result.kind) {
           case 'applied':
