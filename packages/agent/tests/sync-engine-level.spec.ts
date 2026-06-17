@@ -1908,6 +1908,7 @@ describe('SyncEngineLevel', () => {
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
         const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        await clock.tickAsync(0);
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -1951,6 +1952,7 @@ describe('SyncEngineLevel', () => {
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
         const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        await clock.tickAsync(0);
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -2012,6 +2014,7 @@ describe('SyncEngineLevel', () => {
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
         const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        await clock.tickAsync(0);
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
@@ -2075,12 +2078,14 @@ describe('SyncEngineLevel', () => {
 
         const syncSpy = sinon.spy(SyncEngineLevel.prototype as any, 'sync');
 
-        testHarness.agent.sync.startSync({ interval: '500ms' });
+        const startPromise = testHarness.agent.sync.startSync({ interval: '500ms' });
+        await clock.tickAsync(0);
 
         // expect the immediate sync call
         expect(syncSpy.callCount).toBe(1);
 
         await clock.tickAsync(10); // enough time for the sync round trip to complete
+        await startPromise;
 
         // cause getSyncTargets to take longer than the 2 second timeout
         getSyncTargetsStub.returns(new Promise<any[]>((resolve) => {
