@@ -10,7 +10,6 @@ type MessageStoreTable = {
   encodedMessageBytes: Uint8Array;
   encodedData: string | null;
   seq: string | null;
-  redeliverSeq: string | null;
   fingerprintScopes: string | null;
   // "indexes" start
   interface: string | null;

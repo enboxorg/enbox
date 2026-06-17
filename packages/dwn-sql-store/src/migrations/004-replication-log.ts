@@ -5,8 +5,8 @@ import type { Kysely, Migration } from 'kysely';
 /**
  * Migration 004: durable replication log substrate for SQL stores.
  *
- * The log is represented by `messageStoreMessages` itself: each live row gets an original `seq`,
- * optional completion `redeliverSeq`, and persisted fingerprint-domain membership. Fresh stores
+ * The log is represented by `messageStoreMessages` itself: each live row gets a `seq`
+ * and persisted fingerprint-domain membership. Fresh stores
  * fill these columns for every write; existing pre-substrate rows are intentionally not backfilled.
  */
 export const migration004ReplicationLog: DwnMigrationFactory = (dialect: Dialect): Migration => ({
@@ -19,23 +19,12 @@ export const migration004ReplicationLog: DwnMigrationFactory = (dialect: Dialect
 
     await db.schema
       .alterTable('messageStoreMessages')
-      .addColumn('redeliverSeq', 'bigint')
-      .execute();
-
-    await db.schema
-      .alterTable('messageStoreMessages')
       .addColumn('fingerprintScopes', 'text')
       .execute();
 
     await db.schema.createIndex('index_messageStoreMessages_tenant_seq')
       .on('messageStoreMessages')
       .columns(['tenant', 'seq'])
-      .unique()
-      .execute();
-
-    await db.schema.createIndex('index_messageStoreMessages_tenant_redeliverSeq')
-      .on('messageStoreMessages')
-      .columns(['tenant', 'redeliverSeq'])
       .unique()
       .execute();
 

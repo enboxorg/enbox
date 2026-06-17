@@ -88,11 +88,11 @@ describe('isMessageCidDuplicateKeyError', () => {
     (postgresSeqError as any).code = '23505';
     (postgresSeqError as any).constraint = 'index_messageStoreMessages_tenant_seq';
 
-    const sqliteRedeliveryError = new Error('UNIQUE constraint failed: messageStoreMessages.tenant, messageStoreMessages.redeliverSeq');
-    (sqliteRedeliveryError as any).code = 'SQLITE_CONSTRAINT_UNIQUE';
+    const sqliteSeqError = new Error('UNIQUE constraint failed: messageStoreMessages.tenant, messageStoreMessages.seq');
+    (sqliteSeqError as any).code = 'SQLITE_CONSTRAINT_UNIQUE';
 
     expect(isMessageCidDuplicateKeyError(postgresSeqError)).toBe(false);
-    expect(isMessageCidDuplicateKeyError(sqliteRedeliveryError)).toBe(false);
+    expect(isMessageCidDuplicateKeyError(sqliteSeqError)).toBe(false);
   });
 });
 

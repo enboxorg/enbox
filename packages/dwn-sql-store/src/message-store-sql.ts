@@ -8,7 +8,6 @@ import type {
   GenericMessage,
   MessageSort,
   MessageStore,
-  MessageStoreCompleteDataResult,
   MessageStoreOptions,
   MessageStorePutResult,
   Pagination,
@@ -49,18 +48,15 @@ type MessageStoreSystemColumn =
   'encodedMessageBytes' |
   'encodedData' |
   'seq' |
-  'redeliverSeq' |
   'fingerprintScopes';
 type MessageStoreIndexColumn = Exclude<keyof DwnDatabaseType['messageStoreMessages'], MessageStoreSystemColumn>;
 type MessageStoreRow = Selectable<DwnDatabaseType['messageStoreMessages']>;
 type MessageStoreExecutor = Kysely<DwnDatabaseType> | Transaction<DwnDatabaseType>;
-type PositionColumn = 'seq' | 'redeliverSeq';
-// Replication positions (`seq`/`redeliverSeq`) must be read through these text columns, populated by
+// Replication positions must be read through these text columns, populated by
 // `Dialect.bigIntColumnAsText` (`CAST(... AS CHAR/TEXT)`). Reading the raw bigint columns instead lets
 // the MySQL/SQLite drivers narrow them to a JS `number`, truncating positions above 2^53.
 type PositionTextColumns = {
   seqText: string | null;
-  redeliverSeqText: string | null;
 };
 type LogRow = MessageStoreRow & PositionTextColumns;
 
@@ -192,7 +188,6 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
           encodedMessageBytes,
           encodedData,
           seq               : seq.toString(),
-          redeliverSeq      : null,
           fingerprintScopes : JSON.stringify(fingerprintScopes),
           ...putIndexes,
         };
@@ -380,33 +375,6 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     });
   }
 
-  public async completeData(
-    tenant: string,
-    messageCid: string,
-    indexes: KeyValues,
-    encodedData?: string,
-    options?: MessageStoreOptions
-  ): Promise<MessageStoreCompleteDataResult> {
-    this.requireDb('completeData');
-    options?.signal?.throwIfAborted();
-
-    const redeliverSeq = await this.replaceRowIndexes({
-      tenant,
-      messageCid,
-      indexes,
-      encodedData,
-      notFoundErrorCode : DwnErrorCode.MessageStoreCompleteDataMessageNotFound,
-      stampRedelivery   : true,
-    });
-
-    if (redeliverSeq === undefined) {
-      return {};
-    }
-
-    this.publishWake(tenant, redeliverSeq);
-    return { position: await this.buildToken(tenant, redeliverSeq, messageCid) };
-  }
-
   public async delete(
     tenant: string,
     cid: string,
@@ -501,18 +469,11 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       return { events: [], cursor, drained: true };
     }
 
-    const [originalRows, redeliveryRows] = await Promise.all([
-      this.selectLogRows(db, tenant, 'seq', startPosition, head, filters, maxResults),
-      this.selectLogRows(db, tenant, 'redeliverSeq', startPosition, head, filters, maxResults),
-    ]);
-
-    const mergedRows = MessageStoreSql.mergeRowsByPosition(originalRows, redeliveryRows)
-      .slice(0, maxResults);
-
-    const events = await this.buildEventEntries(db, mergedRows);
+    const rows = await this.selectLogRows(db, tenant, startPosition, head, filters, maxResults);
+    const events = await this.buildEventEntries(db, rows);
     const lastDelivered = events.at(-1);
     const lastDeliveredPosition = lastDelivered === undefined ? undefined : BigInt(lastDelivered.position ?? lastDelivered.seq);
-    const lastScannedPosition = mergedRows.at(-1)?.position ?? startPosition;
+    const lastScannedPosition = rows.at(-1)?.position ?? startPosition;
     const drained = events.length < maxResults || lastScannedPosition >= head;
     const cursorPosition = drained ? head : lastScannedPosition;
     const cursorMessageCid = lastDeliveredPosition === cursorPosition ? lastDelivered?.messageCid : undefined;
@@ -574,13 +535,12 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     encodedData?: string | null;
     messageForScopeCheck?: GenericMessage;
     notFoundErrorCode: DwnErrorCode;
-    stampRedelivery?: boolean;
-  }): Promise<bigint | undefined> {
-    const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, messageForScopeCheck, notFoundErrorCode, stampRedelivery } = input;
+  }): Promise<void> {
+    const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, messageForScopeCheck, notFoundErrorCode } = input;
     const db = this.requireDb('replaceRowIndexes');
     const { indexes: replacementIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
 
-    return executeWithTransaction(db, async (tx) => {
+    await executeWithTransaction(db, async (tx) => {
       await this.#dialect.lockReplicationCounter(tx, tenant);
 
       const existingRow = await tx
@@ -594,13 +554,6 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
         throw new DwnError(notFoundErrorCode, `no message found for tenant ${tenant} with CID ${messageCid}`);
       }
 
-      if (stampRedelivery === true && existingRow.redeliverSeq !== null) {
-        throw new DwnError(
-          DwnErrorCode.MessageStoreCompleteDataAlreadyStamped,
-          `message ${messageCid} is already stamped at position ${existingRow.redeliverSeq}; the dataless-to-data transition cannot repeat`
-        );
-      }
-
       const message = messageForScopeCheck ?? await this.parseEncodedMessage(existingRow.encodedMessageBytes, existingRow.encodedData);
       Replication.assertFingerprintScopesUntouched(
         MessageStoreSql.parseFingerprintScopes(existingRow.fingerprintScopes, messageCid),
@@ -609,13 +562,11 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
         indexes
       );
 
-      const redeliverSeq = stampRedelivery === true ? await this.#dialect.incrementReplicationCounter(tx, tenant) : undefined;
       const replacementColumns = {
         ...NULLED_INDEX_COLUMNS,
         ...replacementIndexes,
         ...(encodedMessageBytes !== undefined && { encodedMessageBytes }),
         ...(encodedData !== undefined && { encodedData }),
-        ...(redeliverSeq !== undefined && { redeliverSeq: redeliverSeq.toString() }),
       };
 
       await tx
@@ -632,15 +583,12 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       if (Object.keys(tags).length > 0) {
         await this.#tags.executeTagsInsert(existingRow.id, tags, tx);
       }
-
-      return redeliverSeq;
     });
   }
 
   private async selectLogRows(
     executor: MessageStoreExecutor,
     tenant: string,
-    positionColumn: PositionColumn,
     startPosition: bigint,
     head: bigint,
     filters: Filter[] | undefined,
@@ -652,13 +600,12 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       .selectAll('messageStoreMessages')
       .select([
         this.#dialect.bigIntColumnAsText('messageStoreMessages.seq').as('seqText'),
-        this.#dialect.bigIntColumnAsText('messageStoreMessages.redeliverSeq').as('redeliverSeqText'),
       ])
       .distinct()
       .where('tenant', '=', tenant)
-      .where(positionColumn, '>', startPosition.toString())
-      .where(positionColumn, '<=', head.toString())
-      .orderBy(positionColumn, 'asc');
+      .where('seq', '>', startPosition.toString())
+      .where('seq', '<=', head.toString())
+      .orderBy('seq', 'asc');
 
     if (filters !== undefined && filters.length > 0) {
       query = filterSelectQuery(filters, query);
@@ -671,7 +618,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     const rows = await query.execute() as LogRow[];
     return rows.map((row) => ({
       row,
-      position: MessageStoreSql.requirePosition(row, positionColumn),
+      position: MessageStoreSql.requirePosition(row),
     }));
   }
 
@@ -685,7 +632,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     for (const { row, position } of positionedRows) {
       const message = await this.parseEncodedMessage(row.encodedMessageBytes, row.encodedData);
       entries.push({
-        seq        : MessageStoreSql.requirePosition(row, 'seq').toString(),
+        seq        : MessageStoreSql.requirePosition(row).toString(),
         position   : position.toString(),
         event      : { message },
         indexes    : MessageStoreSql.rowToIndexes(row, tagMap.get(row.id)),
@@ -825,10 +772,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       .selectFrom('messageStoreMessages')
       .select('messageCid')
       .where('tenant', '=', tenant)
-      .where(({ eb, or }) => or([
-        eb('seq', '=', positionString),
-        eb('redeliverSeq', '=', positionString),
-      ]))
+      .where('seq', '=', positionString)
       .executeTakeFirst();
 
     return row?.messageCid;
@@ -1042,20 +986,6 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     return { messageToStore, encodedData };
   }
 
-  private static mergeRowsByPosition<TRow extends MessageStoreRow>(
-    originalRows: Array<{ row: TRow; position: bigint }>,
-    redeliveryRows: Array<{ row: TRow; position: bigint }>,
-  ): Array<{ row: TRow; position: bigint }> {
-    const rows = [...originalRows, ...redeliveryRows];
-    rows.sort((left, right) => {
-      if (left.position === right.position) {
-        return 0;
-      }
-      return left.position < right.position ? -1 : 1;
-    });
-    return rows;
-  }
-
   private static rowToIndexes(row: MessageStoreRow, tags: KeyValues = {}): KeyValues {
     const indexes: KeyValues = {};
 
@@ -1102,16 +1032,15 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     return filters.some((filter) => Object.keys(filter).some((key) => key.startsWith('tag.')));
   }
 
-  private static requirePosition(row: MessageStoreRow & Partial<PositionTextColumns>, positionColumn: PositionColumn): bigint {
+  private static requirePosition(row: MessageStoreRow & Partial<PositionTextColumns>): bigint {
     // Prefer the cast text column (BigInt-exact). The raw-column fallback is NOT safe above 2^53 —
     // every position-bearing read (logRead/getHead/increment) selects the `*Text` columns, so the
     // fallback should never carry a real position; it exists only for rows fetched without them.
-    const textValue = positionColumn === 'seq' ? row.seqText : row.redeliverSeqText;
-    const value = textValue ?? row[positionColumn];
+    const value = row.seqText ?? row.seq;
     if (value === null || value === undefined) {
       throw new DwnError(
         DwnErrorCode.MessageStorePreSubstrateLayout,
-        `message ${row.messageCid} is missing replication position ${positionColumn}`
+        `message ${row.messageCid} is missing replication position seq`
       );
     }
 

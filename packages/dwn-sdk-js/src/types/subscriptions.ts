@@ -184,11 +184,7 @@ export type EventLogEntry = {
   /** Monotonic sequence number scoped to (instance, tenant), as a decimal string. */
   seq: string;
 
-  /**
-   * The actual delivered log position. This differs from `seq` for redelivery
-   * stamps, where the entry keeps the row's original `seq` but is delivered at
-   * the later redelivery position.
-   */
+  /** The actual delivered log position. Equal to `seq` for store-backed feeds. */
   position?: string;
 
   /** The event payload. */

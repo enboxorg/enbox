@@ -284,7 +284,7 @@ describe('MessageStoreLevel Test Suite', () => {
   });
 
   describe('updateIndexes', () => {
-    it('should replace indexes in place without moving the row, stamping, or stripping inline data', async () => {
+    it('should replace indexes in place without moving the row or stripping inline data', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const first = await generateStoredMessage();
       const second = await generateStoredMessage();
@@ -328,7 +328,7 @@ describe('MessageStoreLevel Test Suite', () => {
   });
 
   describe('updateMessageAndIndexes', () => {
-    it('should replace the stored payload and indexes without moving the row or stamping', async () => {
+    it('should replace the stored payload and indexes without moving the row', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const first = await generateStoredMessage();
       const second = await generateStoredMessage();
@@ -362,82 +362,6 @@ describe('MessageStoreLevel Test Suite', () => {
 
       await expect(messageStore.updateMessageAndIndexes(alice.did, messageCid, message, { ...indexes, protocol: 'https://example.com/other' }))
         .rejects.toThrow(DwnErrorCode.MessageStoreFingerprintScopeMutation);
-    });
-  });
-
-  describe('completeData', () => {
-    it('should update the existing row and redeliver it at a later position exactly once', async () => {
-      const alice = await TestDataGenerator.generateDidKeyPersona();
-      const stub = await generateStoredMessage();
-      const other = await generateStoredMessage();
-
-      await messageStore.put(alice.did, stub.message, { ...stub.indexes, isLatestBaseState: false });
-      await messageStore.put(alice.did, other.message, other.indexes);
-
-      const result = await messageStore.completeData(alice.did, stub.messageCid, stub.indexes, 'aGVsbG8');
-      expect(result.position!.position).toBe('3');
-      expect(result.position!.messageCid).toBe(stub.messageCid);
-      expect(wakes.map((wake) => wake.seq)).toEqual(['1', '2', '3']);
-
-      const storedMessage = await messageStore.get(alice.did, stub.messageCid);
-      expect(storedMessage!.encodedData).toBe('aGVsbG8');
-
-      const { events, cursor, drained } = await messageStore.logRead(alice.did);
-      expect(events.map((entry) => entry.messageCid)).toEqual([stub.messageCid, other.messageCid, stub.messageCid]);
-      expect(events.filter((entry) => entry.messageCid === stub.messageCid).map((entry) => entry.seq)).toEqual(['1', '1']);
-      expect(cursor!.position).toBe('3');
-      expect(drained).toBe(true);
-
-      await expect(messageStore.completeData(alice.did, stub.messageCid, stub.indexes, 'aGVsbG8'))
-        .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataAlreadyStamped);
-    });
-
-    it('should complete dataless permission records without changing permission fingerprint scope', async () => {
-      const alice = await TestDataGenerator.generateDidKeyPersona();
-      const scopedProtocol = 'https://example.com/photos';
-      const grant = await generateStoredMessage({
-        protocol : PermissionsProtocol.uri,
-        tags     : { protocol: scopedProtocol },
-      });
-      const grantFingerprint = await cidFingerprint(grant.messageCid);
-      const { 'tag.protocol': _tagProtocol, ...datalessGrantIndexes } = grant.indexes;
-
-      await messageStore.put(alice.did, grant.message, { ...datalessGrantIndexes, isLatestBaseState: false });
-      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(scopedProtocol)])).toBe(grantFingerprint);
-      const datalessFiltered = await messageStore.logRead(alice.did, { filters: [{ 'tag.protocol': scopedProtocol }] });
-      expect(datalessFiltered.events).toHaveLength(0);
-
-      const result = await messageStore.completeData(alice.did, grant.messageCid, grant.indexes, 'aGVsbG8');
-
-      expect(result.position!.position).toBe('2');
-      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(scopedProtocol)])).toBe(grantFingerprint);
-      const { events } = await messageStore.logRead(alice.did);
-      expect(events.map((entry) => entry.indexes['tag.protocol'])).toEqual([scopedProtocol, scopedProtocol]);
-    });
-
-    it('should reject missing messages', async () => {
-      const alice = await TestDataGenerator.generateDidKeyPersona();
-      const { messageCid, indexes } = await generateStoredMessage();
-
-      await expect(messageStore.completeData(alice.did, messageCid, indexes))
-        .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataMessageNotFound);
-    });
-
-    it('should resume from a cursor whose redelivery position was deleted', async () => {
-      const alice = await TestDataGenerator.generateDidKeyPersona();
-      const stub = await generateStoredMessage();
-      const later = await generateStoredMessage();
-
-      await messageStore.put(alice.did, stub.message, { ...stub.indexes, isLatestBaseState: false });
-      const completion = await messageStore.completeData(alice.did, stub.messageCid, stub.indexes, 'aGVsbG8');
-      await messageStore.put(alice.did, later.message, later.indexes);
-      await messageStore.delete(alice.did, stub.messageCid);
-
-      const { events, cursor, drained } = await messageStore.logRead(alice.did, { cursor: completion.position });
-
-      expect(events.map((entry) => entry.messageCid)).toEqual([later.messageCid]);
-      expect(cursor!.position).toBe('3');
-      expect(drained).toBe(true);
     });
   });
 
@@ -551,7 +475,6 @@ describe('MessageStoreLevel Test Suite', () => {
 
       await messageStore.put(alice.did, first.message, first.indexes);
       await messageStore.put(alice.did, second.message, { ...second.indexes, isLatestBaseState: false });
-      await messageStore.completeData(alice.did, second.messageCid, second.indexes, 'aGVsbG8');
 
       const boundsBefore = await messageStore.logBounds(alice.did);
       const logBefore = await messageStore.logRead(alice.did);

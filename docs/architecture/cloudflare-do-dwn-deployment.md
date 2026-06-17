@@ -179,7 +179,6 @@ CREATE TABLE messageStoreMessages (
   squash INTEGER,
   attester TEXT,
   seq INTEGER NOT NULL,
-  redeliverSeq INTEGER,
   fingerprintScopes TEXT NOT NULL,
   UNIQUE(tenant, messageCid)
 );
@@ -195,7 +194,6 @@ CREATE INDEX idx_tenant_dateCreated ON messageStoreMessages(tenant, dateCreated)
 CREATE INDEX idx_tenant_datePub ON messageStoreMessages(tenant, datePublished);
 CREATE INDEX idx_tenant_contextId ON messageStoreMessages(tenant, contextId, messageTimestamp);
 CREATE INDEX idx_tenant_seq ON messageStoreMessages(tenant, seq);
-CREATE INDEX idx_tenant_redeliverSeq ON messageStoreMessages(tenant, redeliverSeq);
 CREATE INDEX idx_tenant_protocol_seq ON messageStoreMessages(tenant, protocol, seq);
 
 -- Tags (identical to dwn-sql-store messageStoreRecordsTags)

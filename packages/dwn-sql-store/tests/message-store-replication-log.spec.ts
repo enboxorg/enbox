@@ -8,7 +8,7 @@ import { MessageStoreSql } from '../src/message-store-sql.js';
 import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { SqliteDialect } from '../src/dialect/sqlite-dialect.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DwnErrorCode, Message, PermissionsProtocol, Replication, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, Message, Replication, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test-dialects.js';
 
 const ZERO_FINGERPRINT = '0'.repeat(64);
@@ -254,7 +254,6 @@ function runReplicationLogTests(dialect: Dialect): void {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const highBase = 9_007_199_254_740_992n;
       const expectedPutPosition = highBase + 1n;
-      const expectedRedeliveryPosition = highBase + 2n;
 
       await db
         .insertInto('replicationCounters')
@@ -265,25 +264,20 @@ function runReplicationLogTests(dialect: Dialect): void {
       const put = await messageStore.put(alice.did, stored.message, stored.indexes);
       expect(put.position!.position).toBe(expectedPutPosition.toString());
 
-      const redelivery = await messageStore.completeData(alice.did, stored.messageCid, stored.indexes, 'aGVsbG8');
-      expect(redelivery.position!.position).toBe(expectedRedeliveryPosition.toString());
-
       const { events, cursor, drained } = await messageStore.logRead(alice.did);
       expect(events.map((entry) => entry.position)).toEqual([
         expectedPutPosition.toString(),
-        expectedRedeliveryPosition.toString(),
       ]);
       expect(events.map((entry) => entry.seq)).toEqual([
         expectedPutPosition.toString(),
-        expectedPutPosition.toString(),
       ]);
-      expect(cursor!.position).toBe(expectedRedeliveryPosition.toString());
+      expect(cursor!.position).toBe(expectedPutPosition.toString());
       expect(drained).toBe(true);
 
       // logBounds reads the head via the cast getHead path — assert it also round-trips beyond 2^53.
       const bounds = await messageStore.logBounds(alice.did);
       expect(bounds!.oldest.position).toBe('0');
-      expect(bounds!.latest.position).toBe(expectedRedeliveryPosition.toString());
+      expect(bounds!.latest.position).toBe(expectedPutPosition.toString());
     });
 
     it('should page with high-water cursors and preserve zero-limit cursor semantics', async () => {
@@ -365,86 +359,6 @@ function runReplicationLogTests(dialect: Dialect): void {
 
       await expect(messageStore.updateIndexes(alice.did, first.messageCid, { ...first.indexes, protocol: 'https://example.com/other' }))
         .rejects.toThrow(DwnErrorCode.MessageStoreFingerprintScopeMutation);
-    });
-
-    it('should stamp completeData redelivery once and preserve permission fingerprint scopes', async () => {
-      const alice = await TestDataGenerator.generateDidKeyPersona();
-      const stub = await generateStoredMessage();
-      const other = await generateStoredMessage();
-
-      await messageStore.put(alice.did, stub.message, { ...stub.indexes, isLatestBaseState: false });
-      await messageStore.put(alice.did, other.message, other.indexes);
-
-      const result = await messageStore.completeData(alice.did, stub.messageCid, stub.indexes, 'aGVsbG8');
-      expect(result.position!.position).toBe('3');
-      expect(result.position!.messageCid).toBe(stub.messageCid);
-      expect(wakePublisher.wakes.map((wake) => wake.seq)).toEqual(['1', '2', '3']);
-
-      const storedMessage = await messageStore.get(alice.did, stub.messageCid);
-      expect(storedMessage!.encodedData).toBe('aGVsbG8');
-
-      const { events, cursor, drained } = await messageStore.logRead(alice.did);
-      expect(events.map((entry) => entry.messageCid)).toEqual([stub.messageCid, other.messageCid, stub.messageCid]);
-      expect(events.filter((entry) => entry.messageCid === stub.messageCid).map((entry) => entry.seq)).toEqual(['1', '1']);
-      expect(cursor!.position).toBe('3');
-      expect(drained).toBe(true);
-
-      const boundsBeforeRetry = await messageStore.logBounds(alice.did);
-      const wakeCountBeforeRetry = wakePublisher.wakes.length;
-      await expect(messageStore.completeData(alice.did, stub.messageCid, stub.indexes, 'aGVsbG8'))
-        .rejects.toThrow(DwnErrorCode.MessageStoreCompleteDataAlreadyStamped);
-      expect(wakePublisher.wakes).toHaveLength(wakeCountBeforeRetry);
-      expect((await messageStore.logBounds(alice.did))!.latest).toEqual(boundsBeforeRetry!.latest);
-
-      await messageStore.clear();
-      const scopedProtocol = 'https://example.com/permission-photos';
-      const grant = await generateStoredMessage({
-        protocol : PermissionsProtocol.uri,
-        tags     : { protocol: scopedProtocol },
-      });
-      const grantFingerprint = await cidFingerprint(grant.messageCid);
-      const { 'tag.protocol': _tagProtocol, ...datalessGrantIndexes } = grant.indexes;
-
-      await messageStore.put(alice.did, grant.message, { ...datalessGrantIndexes, isLatestBaseState: false });
-      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(scopedProtocol)])).toBe(grantFingerprint);
-      expect((await messageStore.logRead(alice.did, { filters: [{ 'tag.protocol': scopedProtocol }] })).events).toHaveLength(0);
-
-      const completion = await messageStore.completeData(alice.did, grant.messageCid, grant.indexes, 'aGVsbG8');
-      expect(completion.position!.position).toBe('2');
-      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(scopedProtocol)])).toBe(grantFingerprint);
-      expect((await messageStore.logRead(alice.did)).events.map((entry) => entry.indexes['tag.protocol']))
-        .toEqual([scopedProtocol, scopedProtocol]);
-    });
-
-    it('should page redeliveries by redelivery position on partial pages', async () => {
-      const alice = await TestDataGenerator.generateDidKeyPersona();
-      const first = await generateStoredMessage();
-      const second = await generateStoredMessage();
-      const third = await generateStoredMessage();
-
-      await messageStore.put(alice.did, first.message, first.indexes);
-      await messageStore.put(alice.did, second.message, second.indexes);
-      await messageStore.put(alice.did, third.message, third.indexes);
-      await messageStore.completeData(alice.did, first.messageCid, first.indexes, 'aGVsbG8');
-
-      const firstPage = await messageStore.logRead(alice.did, { limit: 2 });
-      expect(firstPage.events.map((entry) => entry.position)).toEqual(['1', '2']);
-      expect(firstPage.events.map((entry) => entry.messageCid)).toEqual([first.messageCid, second.messageCid]);
-      expect(firstPage.cursor!.position).toBe('2');
-      expect(firstPage.drained).toBe(false);
-
-      const secondPage = await messageStore.logRead(alice.did, { cursor: firstPage.cursor, limit: 2 });
-      expect(secondPage.events.map((entry) => entry.position)).toEqual(['3', '4']);
-      expect(secondPage.events.map((entry) => entry.seq)).toEqual(['3', '1']);
-      expect(secondPage.events.map((entry) => entry.messageCid)).toEqual([third.messageCid, first.messageCid]);
-      expect(secondPage.cursor!.position).toBe('4');
-      expect(secondPage.cursor!.messageCid).toBe(first.messageCid);
-      expect(secondPage.drained).toBe(true);
-
-      const drained = await messageStore.logRead(alice.did, { cursor: secondPage.cursor, limit: 2 });
-      expect(drained.events).toHaveLength(0);
-      expect(drained.cursor).toEqual(secondPage.cursor);
-      expect(drained.drained).toBe(true);
     });
 
     it('should fold protocol configs and tombstones into protocol fingerprints and persist across reopen', async () => {
