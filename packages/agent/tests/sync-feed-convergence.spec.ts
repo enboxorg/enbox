@@ -13,7 +13,8 @@ import {
 import {
   DataStoreLevel,
   DataStream,
-  EventEmitterEventLog,
+  DurableEventLog,
+  EventEmitterWakePublisher,
   MessageStoreLevel,
   RecordsDelete,
   RecordsWrite,
@@ -87,7 +88,7 @@ const feedHarnessProtocolV2: ProtocolDefinition = {
 type RemoteDwnStores = {
   dataStore: DataStoreLevel;
   dwn: Dwn;
-  eventLog: EventEmitterEventLog;
+  eventLog: DurableEventLog;
   messageStore: MessageStoreLevel;
   resumableTaskStore: ResumableTaskStoreLevel;
 };
@@ -470,8 +471,12 @@ async function createRemoteDwnStores(
 ): Promise<RemoteDwnStores> {
   const testDataPath = (path: string): string => `${testDataLocation}/${path}`;
   const dataStore = new DataStoreLevel({ blockstoreLocation: testDataPath('DWN_DATASTORE') });
-  const eventLog = new EventEmitterEventLog();
-  const messageStore = new MessageStoreLevel({ location: testDataPath('DWN_MESSAGESTORE') });
+  const wakePublisher = new EventEmitterWakePublisher();
+  const messageStore = new MessageStoreLevel({
+    location: testDataPath('DWN_MESSAGESTORE'),
+    wakePublisher,
+  });
+  const eventLog = new DurableEventLog(messageStore, wakePublisher);
   const resumableTaskStore = new ResumableTaskStoreLevel({ location: testDataPath('DWN_RESUMABLETASKSTORE') });
   const dwn = await AgentDwnApi.createDwn({
     dataPath    : testDataLocation,

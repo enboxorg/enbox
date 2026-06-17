@@ -1,6 +1,6 @@
 // export everything that we want to be consumable
 export type { DwnConfig } from './dwn.js';
-export type { EventListener, EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, MessageEvent, ProgressGapInfo, ProgressGapReason, ProgressToken, ReplicationFeedReader, SubscriptionEose, SubscriptionError, SubscriptionEvent, SubscriptionListener, SubscriptionMessage, SubscriptionReply, Wake, WakePublisher, WakeSubscriber } from './types/subscriptions.js';
+export type { EventLog, EventLogEntry, EventLogReadOptions, EventLogReadResult, EventLogSubscribeOptions, EventSubscription, MessageEvent, ProgressGapInfo, ProgressGapReason, ProgressToken, ReplicationFeedReader, SubscriptionEose, SubscriptionError, SubscriptionEvent, SubscriptionListener, SubscriptionMessage, SubscriptionReply, Wake, WakePublisher, WakeSubscriber } from './types/subscriptions.js';
 export type { AuthorizationModel, Descriptor, DelegatedGrantRecordsWriteMessage, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSort, MessageSubscription, Pagination, QueryResultEntry, Status } from './types/message-types.js';
 export type { DependencyRef, ReplicationApplyOptions, ReplicationApplyResult, ReplicationApplyResultContext } from './core/replication-apply.js';
 export { replicationApplyResultFromReply } from './core/replication-apply.js';
@@ -98,8 +98,6 @@ export { MessageStoreLevel } from './store/message-store-level.js';
 export type { MessageStoreLevelConfig } from './store/message-store-level.js';
 export { ResumableTaskStoreLevel } from './store/resumable-task-store-level.js';
 export type { ResumableTaskStoreLevelConfig } from './store/resumable-task-store-level.js';
-export { EventEmitterEventLog } from './event-stream/event-emitter-event-log.js';
-export type { EventEmitterEventLogConfig } from './event-stream/event-emitter-event-log.js';
 export { EventEmitterWakePublisher } from './event-stream/event-emitter-wake-publisher.js';
 export { DurableEventLog } from './event-stream/durable-event-log.js';
 export type { DurableEventLogConfig, DurableEventLogStore } from './event-stream/durable-event-log.js';

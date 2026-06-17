@@ -1,5 +1,6 @@
 import type {
   DerivedPrivateJwk,
+  DurableEventLogStore,
   DwnConfig,
   EncryptionInput,
   EncryptionKeyDeriver,
@@ -19,9 +20,10 @@ import {
   ContentEncryptionAlgorithm,
   DataStoreLevel,
   DataStream,
+  DurableEventLog,
   Dwn,
   DwnMethodName,
-  EventEmitterEventLog,
+  EventEmitterWakePublisher,
   Jws,
   KeyDerivationScheme,
   Message,
@@ -113,6 +115,10 @@ type DwnApiParams = {
 interface DwnApiCreateDwnParams extends Partial<DwnConfig> {
   dataPath?: string;
 }
+
+type WakePublisherAwareStore = {
+  setWakePublisher(wakePublisher: EventEmitterWakePublisher | undefined): void;
+};
 
 export class AgentDwnApi {
   /**
@@ -477,6 +483,8 @@ export class AgentDwnApi {
   public static async createDwn({
     dataPath, dataStore, didResolver, eventLog, messageStore, tenantGate, resumableTaskStore
   }: DwnApiCreateDwnParams): Promise<Dwn> {
+    const wakePublisher = new EventEmitterWakePublisher();
+
     dataStore ??= new DataStoreLevel({ blockstoreLocation: `${dataPath}/DWN_DATASTORE` });
 
     didResolver ??= new UniversalResolver({
@@ -484,15 +492,27 @@ export class AgentDwnApi {
       cache        : new DidResolverCacheLevel({ location: `${dataPath}/DID_RESOLVERCACHE` }),
     });
 
-    messageStore ??= new MessageStoreLevel(({
-      location: `${dataPath}/DWN_MESSAGESTORE`
-    }));
+    if (messageStore === undefined) {
+      messageStore = new MessageStoreLevel({
+        location: `${dataPath}/DWN_MESSAGESTORE`,
+        wakePublisher,
+      });
+    } else {
+      AgentDwnApi.setWakePublisherIfSupported(messageStore, wakePublisher);
+    }
 
     resumableTaskStore ??= new ResumableTaskStoreLevel({ location: `${dataPath}/DWN_RESUMABLETASKSTORE` });
 
-    eventLog ??= new EventEmitterEventLog();
+    eventLog ??= new DurableEventLog(messageStore as unknown as DurableEventLogStore, wakePublisher);
 
     return await Dwn.create({ dataStore, didResolver, eventLog, messageStore, tenantGate, resumableTaskStore });
+  }
+
+  private static setWakePublisherIfSupported(store: DwnConfig['messageStore'], wakePublisher: EventEmitterWakePublisher): void {
+    const maybeStore = store as Partial<WakePublisherAwareStore>;
+    if (typeof maybeStore.setWakePublisher === 'function') {
+      maybeStore.setWakePublisher(wakePublisher);
+    }
   }
 
   public async processRequest<T extends DwnInterface>(

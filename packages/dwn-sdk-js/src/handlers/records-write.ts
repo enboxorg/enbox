@@ -160,21 +160,8 @@ export class RecordsWriteHandler implements MethodHandler {
       }
 
       const indexes = await recordsWrite.constructIndexes(isLatestBaseState);
-      const messageCid = await Message.getCid(message);
       const putResult = await this.deps.messageStore.put(tenant, messageWithOptionalEncodedData, indexes);
       position = putResult.position;
-
-      // NOTE: We only emit a `RecordsWrite` when the message is the latest base state.
-      // Because we allow a `RecordsWrite` which is not the latest state to be written, but not queried, we shouldn't emit it either.
-      // It will be emitted as a part of a subsequent next write, if it is the latest base state.
-      //
-      // We emit `messageWithOptionalEncodedData` (not the raw `message`) so
-      // that WebSocket subscribers receive inline `encodedData` for small
-      // records (<= 30 KB).  This allows live sync to store the record
-      // immediately without a separate MessagesRead round-trip.
-      if (this.deps.eventLog !== undefined && isLatestBaseState) {
-        await this.deps.eventLog.emit(tenant, { message: messageWithOptionalEncodedData, initialWrite }, indexes, messageCid);
-      }
     } catch (error) {
       if (error instanceof DwnError) {
         if (error.code === DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious ||

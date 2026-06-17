@@ -54,14 +54,7 @@ export type ProgressGapInfo = {
 };
 
 /**
- * Internal listener type used by {@link EventLog.emit} to notify in-process
- * subscribers. Not intended for direct consumer use — consumers should use
- * {@link SubscriptionListener} via {@link EventLog.subscribe}.
- */
-export type EventListener = (tenant: string, event: MessageEvent, indexes: KeyValues, seq: number) => void;
-
-/**
- * MessageEvent contains the message being emitted and an optional initial write message.
+ * MessageEvent contains a committed message and an optional initial write message.
  */
 export type MessageEvent = {
   message: GenericMessage;
@@ -161,8 +154,7 @@ export type EventLogSubscribeOptions = {
    * an EOSE marker, then live events. When omitted, only live events are delivered.
    *
    * Tokens must be obtained from a prior interaction with the same EventLog
-   * instance (e.g. `SubscriptionEvent.cursor`, `EventLogReadResult.cursor`,
-   * or the return value of `emit()`).
+   * instance (e.g. `SubscriptionEvent.cursor` or `EventLogReadResult.cursor`).
    */
   cursor? : ProgressToken;
 
@@ -197,7 +189,7 @@ export type EventLogEntry = {
 
   /**
    * The CID of the message that produced this event. Populated by
-   * implementations that track it (e.g. {@link EventEmitterEventLog}).
+   * implementations that track it.
    * Consumers should fall back to computing the CID from the message
    * if this is absent.
    */
@@ -246,16 +238,6 @@ export type EventLogReadResult = {
  */
 export interface EventLog {
   /**
-   * Persist an event and notify in-process subscribers.
-   * @param tenant     The tenant DID.
-   * @param event      The event payload.
-   * @param indexes    Index values for the event.
-   * @param messageCid The CID of the message being emitted — embedded in the returned token.
-   * @returns A {@link ProgressToken} assigned to the event, or `undefined` on failure.
-   */
-  emit(tenant: string, event: MessageEvent, indexes: KeyValues, messageCid: string): Promise<ProgressToken | undefined>;
-
-  /**
    * Read events from the log starting after `cursor`, optionally filtered.
    */
   read(tenant: string, options?: EventLogReadOptions): Promise<EventLogReadResult>;
@@ -283,11 +265,6 @@ export interface EventLog {
    * `ProgressGap` metadata when a consumer's cursor is no longer replayable.
    */
   getReplayBounds(tenant: string): Promise<{ oldest: ProgressToken; latest: ProgressToken } | undefined>;
-
-  /**
-   * Delete events older than the given sequence number or ISO-8601 timestamp.
-   */
-  trim(tenant: string, olderThan: number | string): Promise<void>;
 
   open(): Promise<void>;
   close(): Promise<void>;

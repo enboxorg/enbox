@@ -19,7 +19,6 @@ import {
   DataStream,
   DwnErrorCode,
   DwnMethodName,
-  EventEmitterEventLog,
   Jws,
   Message,
   MessageStoreLevel,
@@ -125,14 +124,11 @@ export function testDwnClass(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
         const resumableTaskStoreStub = sinon.createStubInstance(ResumableTaskStoreLevel);
-        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
-
         const dwnWithConfig = await Dwn.create({
           tenantGate         : blockAllTenantGate,
           messageStore       : messageStoreStub,
           dataStore          : dataStoreStub,
           resumableTaskStore : resumableTaskStoreStub,
-          eventLog           : eventLogStub
         });
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -156,14 +152,11 @@ export function testDwnClass(): void {
         const messageStoreStub = sinon.createStubInstance(MessageStoreLevel);
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
         const resumableTaskStoreStub = sinon.createStubInstance(ResumableTaskStoreLevel);
-        const eventLogStub = sinon.createStubInstance(EventEmitterEventLog);
-
         const dwnWithConfig = await Dwn.create({
           tenantGate         : blockAllTenantGate,
           messageStore       : messageStoreStub,
           dataStore          : dataStoreStub,
           resumableTaskStore : resumableTaskStoreStub,
-          eventLog           : eventLogStub
         });
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -416,7 +409,6 @@ export function testDwnClass(): void {
           didResolver,
           messageStore       : messageStoreB,
           dataStore          : dataStoreB,
-          eventLog           : new EventEmitterEventLog(),
           resumableTaskStore : resumableTaskStoreB,
         });
 
@@ -621,7 +613,7 @@ export function testDwnClass(): void {
 
         // replaying the beaten delete through the task path must be a no-op — the same lattice
         // gate as admission — leaving the canonical tombstone as the record's newest message
-        const storageController = new StorageController({ messageStore, dataStore, eventLog });
+        const storageController = new StorageController({ messageStore, dataStore });
         await storageController.performRecordsDelete({ tenant: alice.did, message: staleDelete.message });
 
         const tombstoneCid = await Message.getCid(recordsDelete.message);
@@ -668,7 +660,6 @@ export function testDwnClass(): void {
           didResolver,
           messageStore       : messageStoreB,
           dataStore          : dataStoreB,
-          eventLog           : new EventEmitterEventLog(),
           resumableTaskStore : resumableTaskStoreB,
         });
 
@@ -753,7 +744,6 @@ export function testDwnClass(): void {
           didResolver,
           messageStore       : messageStoreB,
           dataStore          : dataStoreB,
-          eventLog           : new EventEmitterEventLog(),
           resumableTaskStore : resumableTaskStoreB,
         });
 

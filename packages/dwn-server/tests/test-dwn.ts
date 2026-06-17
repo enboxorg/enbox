@@ -11,7 +11,7 @@ import {
   SqliteDialect,
 } from '@enbox/dwn-sql-store';
 import { DidDht, DidIon, DidKey, UniversalResolver } from '@enbox/dids';
-import { Dwn, EventEmitterEventLog } from '@enbox/dwn-sdk-js';
+import { DurableEventLog, Dwn, EventEmitterWakePublisher } from '@enbox/dwn-sdk-js';
 
 import { runServerMigrations } from '../src/server-migration-runner.js';
 
@@ -44,9 +44,11 @@ export async function getTestDwn(options: {
   await runServerMigrations(migrationDb, dialect);
 
   const dataStore = new DataStoreSql(dialect);
+  const wakePublisher = new EventEmitterWakePublisher();
   const messageStore = new MessageStoreSql(dialect);
+  messageStore.setWakePublisher(wakePublisher);
   const resumableTaskStore = new ResumableTaskStoreSql(dialect);
-  const eventLog = withEvents ? new EventEmitterEventLog() : undefined;
+  const eventLog = withEvents ? new DurableEventLog(messageStore, wakePublisher) : undefined;
 
   // NOTE: no resolver cache used here to avoid locking LevelDB
   const didResolver = new UniversalResolver({
