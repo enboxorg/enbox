@@ -7,7 +7,7 @@
  *   3. A record is written directly to the REMOTE DWN (bypassing this agent)
  *   4. JsonRpcSocket auto-reconnect fires, pull subscription re-establishes
  *   5. The remote-only record appears in the local DWN via the recovered
- *      pull subscription (or the SMT integrity check that follows)
+ *      pull subscription (or the durable feed settle check that follows)
  *
  * This isolates the pull reconnection path — the push path uses HTTP and
  * is unaffected by WebSocket drops.
