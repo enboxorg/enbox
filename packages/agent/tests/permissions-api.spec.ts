@@ -568,11 +568,12 @@ describe('AgentPermissionsApi', () => {
       );
       expect(revocationQueryCalls.length).toBe(1);
 
-      const revocationFilter = (revocationQueryCalls[0][1] as Array<Record<string, unknown>>)[0];
-      const parentIds = revocationFilter.parentId as string[];
+      const revocationFilters = revocationQueryCalls[0][1] as Array<Record<string, unknown>>;
+      const parentIds = revocationFilters.map(filter => filter.parentId);
       expect(parentIds.length).toBe(2);
       expect(parentIds.includes(writeGrant.message.recordId)).toBe(true);
       expect(parentIds.includes(readGrant.message.recordId)).toBe(true);
+      expect(revocationFilters.every(filter => typeof filter.parentId === 'string')).toBe(true);
     });
 
     it('should use only 1 DWN roundtrip when checkRevoked is false', async () => {

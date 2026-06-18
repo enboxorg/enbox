@@ -162,23 +162,27 @@ export class AgentPermissionsApi implements PermissionsApi {
     }
 
     const grantRecordIds = grantMessages.map(grantMessage => grantMessage.recordId);
-    const filter: Filter = {
-      isLatestBaseState : true,
-      parentId          : grantRecordIds,
-      protocol          : PermissionsProtocol.uri,
-      protocolPath      : PermissionsProtocol.revocationPath,
-    };
+    const filters = grantRecordIds.map((parentId): Filter => {
+      const filter: Filter = {
+        isLatestBaseState : true,
+        parentId,
+        protocol          : PermissionsProtocol.uri,
+        protocolPath      : PermissionsProtocol.revocationPath,
+      };
 
-    if (grantor !== undefined) {
-      filter.author = grantor;
-    }
+      if (grantor !== undefined) {
+        filter.author = grantor;
+      }
 
-    if (tags !== undefined) {
-      filter['tag.protocol'] = tags.protocol;
-    }
+      if (tags !== undefined) {
+        filter['tag.protocol'] = tags.protocol;
+      }
+
+      return filter;
+    });
 
     const grantRecordIdSet = new Set(grantRecordIds);
-    const { messages: revocationMessages } = await messageStore.query(target, [filter]);
+    const { messages: revocationMessages } = await messageStore.query(target, filters);
     const revokedGrantIds = new Set<string>();
     for (const revocationMessage of revocationMessages as RecordsWriteMessage[]) {
       const grantRecordId = revocationMessage.descriptor.parentId;
