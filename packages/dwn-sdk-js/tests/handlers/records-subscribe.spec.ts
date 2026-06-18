@@ -1063,8 +1063,36 @@ export function testRecordsSubscribeHandler(): void {
           });
           const chatSubscribeReply = await dwn.processMessage(alice.did, chatSubscribe.message);
           expect(chatSubscribeReply.status.code).toBe(400);
-          expect(chatSubscribeReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeFilterMissingRequiredProperties);
+          expect(chatSubscribeReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeNestedProtocolPathContextIdInvalid);
           expect(chatSubscribeReply.subscription).toBeUndefined();
+        });
+
+        it('rejects root-filter subscriptions that invoke a nested role without a contextId', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition = threadRoleProtocolDefinition;
+
+          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition
+          });
+          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+          expect(protocolsConfigureReply.status.code).toBe(202);
+
+          const threadSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+            author : bob,
+            filter : {
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'thread',
+            },
+            protocolRole: 'thread/participant',
+          });
+
+          const threadSubscribeReply = await dwn.processMessage(alice.did, threadSubscribe.message);
+          expect(threadSubscribeReply.status.code).toBe(401);
+          expect(threadSubscribeReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMissingContextId);
+          expect(threadSubscribeReply.subscription).toBeUndefined();
         });
 
         it('rejects role authorized subscriptions if the request author does not have a matching root-level role', async () => {

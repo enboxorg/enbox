@@ -29,10 +29,18 @@ export function testRecordsNestedQueryScope(): void {
       protocol  : 'http://nested-query-scope.xyz',
       published : true,
       types     : {
-        avatar  : {},
-        profile : {},
+        avatar    : {},
+        channel   : {},
+        community : {},
+        message   : {},
+        profile   : {},
       },
       structure: {
+        community: {
+          channel: {
+            message: {},
+          },
+        },
         profile: {
           avatar: {},
         },
@@ -140,7 +148,7 @@ export function testRecordsNestedQueryScope(): void {
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter });
       const queryReply = await dwn.processMessage(alice.did, recordsQuery.message) as RecordsQueryReply;
       expect(queryReply.status.code).toBe(400);
-      expect(queryReply.status.detail).toContain(DwnErrorCode.RecordsQueryFilterMissingRequiredProperties);
+      expect(queryReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
       expect(queryReply.entries).toBeUndefined();
 
       const childScopedQuery = await TestDataGenerator.generateRecordsQuery({
@@ -149,12 +157,12 @@ export function testRecordsNestedQueryScope(): void {
       });
       const childScopedQueryReply = await dwn.processMessage(alice.did, childScopedQuery.message) as RecordsQueryReply;
       expect(childScopedQueryReply.status.code).toBe(400);
-      expect(childScopedQueryReply.status.detail).toContain(DwnErrorCode.RecordsQueryFilterMissingRequiredProperties);
+      expect(childScopedQueryReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
 
       const recordsCount = await TestDataGenerator.generateRecordsCount({ author: alice, filter });
       const countReply = await dwn.processMessage(alice.did, recordsCount.message) as RecordsCountReply;
       expect(countReply.status.code).toBe(400);
-      expect(countReply.status.detail).toContain(DwnErrorCode.RecordsCountFilterMissingRequiredProperties);
+      expect(countReply.status.detail).toContain(DwnErrorCode.RecordsCountNestedProtocolPathContextIdInvalid);
       expect(countReply.count).toBeUndefined();
 
       const streamedRecordIds: string[] = [];
@@ -170,10 +178,59 @@ export function testRecordsNestedQueryScope(): void {
         },
       }) as RecordsSubscribeReply;
       expect(subscribeReply.status.code).toBe(400);
-      expect(subscribeReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeFilterMissingRequiredProperties);
+      expect(subscribeReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeNestedProtocolPathContextIdInvalid);
       expect(subscribeReply.subscription).toBeUndefined();
       expect(subscribeReply.entries).toBeUndefined();
       expect(streamedRecordIds).toEqual([]);
+    });
+
+    it('should reject malformed nested query context IDs that can span direct parents', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      await installProtocol(alice);
+
+      const community = await writeProtocolRecord({
+        author       : alice,
+        dateCreated  : '2026-04-01T00:00:00.000000Z',
+        protocolPath : 'community',
+      });
+      const channel1 = await writeProtocolRecord({
+        author          : alice,
+        dateCreated     : '2026-04-02T00:00:00.000000Z',
+        parentContextId : community.message.contextId,
+        protocolPath    : 'community/channel',
+      });
+      const channel2 = await writeProtocolRecord({
+        author          : alice,
+        dateCreated     : '2026-04-03T00:00:00.000000Z',
+        parentContextId : community.message.contextId,
+        protocolPath    : 'community/channel',
+      });
+      await writeProtocolRecord({
+        author          : alice,
+        dateCreated     : '2026-04-04T00:00:00.000000Z',
+        parentContextId : channel1.message.contextId,
+        protocolPath    : 'community/channel/message',
+      });
+      await writeProtocolRecord({
+        author          : alice,
+        dateCreated     : '2026-04-05T00:00:00.000000Z',
+        parentContextId : channel2.message.contextId,
+        protocolPath    : 'community/channel/message',
+      });
+
+      const recordsQuery = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : {
+          contextId    : `${community.message.contextId}/`,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'community/channel/message',
+        },
+      });
+
+      const queryReply = await dwn.processMessage(alice.did, recordsQuery.message) as RecordsQueryReply;
+      expect(queryReply.status.code).toBe(400);
+      expect(queryReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
+      expect(queryReply.entries).toBeUndefined();
     });
 
     it('should allow scoped nested Query, Count, and Subscribe requests for one parent context', async () => {

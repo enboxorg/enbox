@@ -40,7 +40,7 @@ export class RecordsCount extends AbstractMessage<RecordsCountMessage> {
     await Records.validateDelegatedGrantReferentialIntegrity(message, signaturePayload);
     Records.validateNestedProtocolPathQueryScope(
       message.descriptor.filter,
-      DwnErrorCode.RecordsCountFilterMissingRequiredProperties,
+      DwnErrorCode.RecordsCountNestedProtocolPathContextIdInvalid,
       'RecordsCount'
     );
 

@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
+
 import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
@@ -615,12 +617,20 @@ describe('restoreSession', () => {
                 },
               };
             }
-            if (filter?.protocolPath === 'grant/revocation') {
+            if (filter?.protocolPath === PermissionsProtocol.revocationPath && filter.contextId === undefined) {
+              return { reply: { status: { code: 400, detail: 'nested revocation queries require contextId' } } };
+            }
+            if (filter?.protocol === PermissionsProtocol.uri && filter.protocolPath === undefined) {
               // Return a revocation for the second grant.
               return {
                 reply: {
                   status  : { code: 200, detail: 'OK' },
-                  entries : [{ descriptor: { parentId: 'grant-https://proto.example/revoked' } }],
+                  entries : [{
+                    descriptor: {
+                      parentId     : 'grant-https://proto.example/revoked',
+                      protocolPath : PermissionsProtocol.revocationPath,
+                    },
+                  }],
                 },
               };
             }

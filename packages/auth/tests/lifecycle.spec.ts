@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { Convert } from '@enbox/common';
+import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
@@ -254,9 +255,12 @@ describe('deriveActiveSyncScope', () => {
             buildGrantMessage('https://proto.example/revoked', 'g-revoked'),
           ] } };
         }
-        if (filter?.protocolPath === 'grant/revocation') {
+        if (filter?.protocolPath === PermissionsProtocol.revocationPath && filter.contextId === undefined) {
+          return { reply: { status: { code: 400, detail: 'nested revocation queries require contextId' } } };
+        }
+        if (filter?.protocol === PermissionsProtocol.uri && filter.protocolPath === undefined) {
           return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            { descriptor: { parentId: 'g-revoked' } },
+            { descriptor: { parentId: 'g-revoked', protocolPath: PermissionsProtocol.revocationPath } },
           ] } };
         }
         return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
@@ -265,6 +269,37 @@ describe('deriveActiveSyncScope', () => {
 
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
     expect(result).toEqual(['https://proto.example/valid']);
+  });
+
+  test('does not issue an unscoped nested revocation query', async () => {
+    const filters: any[] = [];
+    const agent = createMockAgent({
+      processDwnRequest: async (params: any) => {
+        const filter = params?.messageParams?.filter;
+        filters.push(filter);
+        if (filter?.protocolPath === PermissionsProtocol.grantPath) {
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
+            buildGrantMessage('https://proto.example/a', 'g1'),
+          ] } };
+        }
+        if (filter?.protocolPath === PermissionsProtocol.revocationPath && filter.contextId === undefined) {
+          return { reply: { status: { code: 400, detail: 'nested revocation queries require contextId' } } };
+        }
+        if (filter?.protocol === PermissionsProtocol.uri && filter.protocolPath === undefined) {
+          return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+        }
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      },
+    });
+
+    const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
+    expect(result).toEqual(['https://proto.example/a']);
+    expect(filters.some(filter =>
+      filter?.protocolPath === PermissionsProtocol.revocationPath && filter.contextId === undefined
+    )).toBe(false);
+    expect(filters.some(filter =>
+      filter?.protocol === PermissionsProtocol.uri && filter.protocolPath === undefined
+    )).toBe(true);
   });
 
   test('fails closed when revocation query fails', async () => {
@@ -322,9 +357,12 @@ describe('deriveActiveSyncScope', () => {
             buildUnscopedGrantMessage('g-unscoped'),
           ] } };
         }
-        if (filter?.protocolPath === 'grant/revocation') {
+        if (filter?.protocolPath === PermissionsProtocol.revocationPath && filter.contextId === undefined) {
+          return { reply: { status: { code: 400, detail: 'nested revocation queries require contextId' } } };
+        }
+        if (filter?.protocol === PermissionsProtocol.uri && filter.protocolPath === undefined) {
           return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            { descriptor: { parentId: 'g-unscoped' } },
+            { descriptor: { parentId: 'g-unscoped', protocolPath: PermissionsProtocol.revocationPath } },
           ] } };
         }
         return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };

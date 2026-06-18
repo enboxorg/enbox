@@ -626,7 +626,7 @@ export function testRecordsRecordLimit(): void {
         });
         const broadReply = await dwn.processMessage(alice.did, broadQuery.message) as RecordsQueryReply;
         expect(broadReply.status.code).toBe(400);
-        expect(broadReply.status.detail).toContain(DwnErrorCode.RecordsQueryFilterMissingRequiredProperties);
+        expect(broadReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
       });
 
       it('should paginate over the projected occupant set for max:N scopes', async () => {

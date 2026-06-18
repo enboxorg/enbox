@@ -320,10 +320,12 @@ export class Records {
     }
 
     const expectedParentDepth = protocolPath.split('/').length - 1;
-    const actualContextDepth = contextId !== undefined && contextId.length > 0
-      ? contextId.split('/').length
-      : undefined;
-    if (actualContextDepth === expectedParentDepth) {
+    const contextIdSegments = contextId?.split('/');
+    if (
+      contextIdSegments !== undefined &&
+      contextIdSegments.length === expectedParentDepth &&
+      contextIdSegments.every(segment => segment.length > 0)
+    ) {
       return;
     }
 

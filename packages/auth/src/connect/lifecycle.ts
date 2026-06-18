@@ -14,6 +14,7 @@
  * @internal
  */
 
+import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import type { PortableDid } from '@enbox/dids';
 import type { AgentSessionIdentity, BearerIdentity, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent } from '@enbox/agent';
 
@@ -22,8 +23,6 @@ import type { PasswordProvider } from '../password-provider.js';
 import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { Convert } from '@enbox/common';
-import type { GenericMessage } from '@enbox/dwn-sdk-js';
-
 import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError, KeyDeliveryProtocolDefinition } from '@enbox/agent';
 
@@ -334,7 +333,9 @@ export async function deriveActiveSyncScope(
   userAgent: EnboxUserAgent,
   delegateDid: string,
 ): Promise<'all' | string[]> {
-  // Query grants and revocations in parallel.
+  // Query grants and the permissions protocol in parallel. Revocations are nested
+  // under grants, so the second query intentionally avoids a protocolPath filter
+  // and filters revocation entries client-side.
   const [grantResponse, revocationResponse] = await Promise.all([
     userAgent.processDwnRequest({
       author        : delegateDid,
@@ -346,7 +347,7 @@ export async function deriveActiveSyncScope(
       author        : delegateDid,
       target        : delegateDid,
       messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { protocol: PermissionsProtocol.uri, protocolPath: PermissionsProtocol.revocationPath } },
+      messageParams : { filter: { protocol: PermissionsProtocol.uri } },
     }),
   ]);
 
@@ -363,6 +364,10 @@ export async function deriveActiveSyncScope(
   const revokedGrantIds = new Set<string>();
   if (revocationResponse.reply.entries) {
     for (const entry of revocationResponse.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
+      if (entry.descriptor.protocolPath !== PermissionsProtocol.revocationPath) {
+        continue;
+      }
+
       const parentId =
         entry.descriptor.parentId
         ?? (entry as { parentId?: string }).parentId;

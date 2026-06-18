@@ -159,6 +159,7 @@ export enum DwnErrorCode {
   RecordsAuthorDelegatedGrantNotADelegatedGrant = 'RecordsAuthorDelegatedGrantNotADelegatedGrant',
   RecordsDecryptNoMatchingKeyEncryptedFound = 'RecordsDecryptNoMatchingKeyEncryptedFound',
   RecordsCountFilterMissingRequiredProperties = 'RecordsCountFilterMissingRequiredProperties',
+  RecordsCountNestedProtocolPathContextIdInvalid = 'RecordsCountNestedProtocolPathContextIdInvalid',
 
   RecordsQueryCreateFilterPublishedSortInvalid = 'RecordsQueryCreateFilterPublishedSortInvalid',
   RecordsQueryParseFilterPublishedSortInvalid = 'RecordsQueryParseFilterPublishedSortInvalid',
@@ -178,11 +179,13 @@ export enum DwnErrorCode {
   RecordsOwnerDelegatedGrantNotADelegatedGrant = 'RecordsOwnerDelegatedGrantNotADelegatedGrant',
 
   RecordsQueryFilterMissingRequiredProperties = 'RecordsQueryFilterMissingRequiredProperties',
+  RecordsQueryNestedProtocolPathContextIdInvalid = 'RecordsQueryNestedProtocolPathContextIdInvalid',
 
   RecordsReadCreateFilterPublishedSortInvalid = 'RecordsReadCreateFilterPublishedSortInvalid',
   RecordsReadParseFilterPublishedSortInvalid = 'RecordsReadParseFilterPublishedSortInvalid',
   RecordsSubscribeEventLogUnimplemented = 'RecordsSubscribeEventLogUnimplemented',
   RecordsSubscribeFilterMissingRequiredProperties = 'RecordsSubscribeFilterMissingRequiredProperties',
+  RecordsSubscribeNestedProtocolPathContextIdInvalid = 'RecordsSubscribeNestedProtocolPathContextIdInvalid',
 
   RecordsWriteAttestationIntegrityMoreThanOneSignature = 'RecordsWriteAttestationIntegrityMoreThanOneSignature',
   RecordsWriteAttestationIntegrityDescriptorCidMismatch = 'RecordsWriteAttestationIntegrityDescriptorCidMismatch',

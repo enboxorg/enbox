@@ -342,6 +342,16 @@ describe('AgentPermissionsApi', () => {
           protocol  : 'http://example.com/remote-revocation-test'
         }
       });
+      const writeRevocationMessage = {
+        ...writeGrant.message,
+        contextId  : `${writeGrant.message.contextId}/remote-revocation`,
+        recordId   : 'remote-revocation',
+        descriptor : {
+          ...writeGrant.message.descriptor,
+          parentId     : writeGrant.message.recordId,
+          protocolPath : PermissionsProtocol.revocationPath,
+        },
+      };
 
       const sendDwnRequestStub = spyOn(testHarness.agent, 'sendDwnRequest').mockImplementation(async (request) => {
         const filter = 'messageParams' in request
@@ -355,7 +365,7 @@ describe('AgentPermissionsApi', () => {
           };
         }
 
-        const entries = filter.contextId === writeGrant.message.contextId ? [writeGrant.message] : [];
+        const entries = filter.contextId === writeGrant.message.contextId ? [writeRevocationMessage] : [];
         return {
           messageCid : '',
           reply      : { entries, status: { code: 200, detail: 'OK' } }
@@ -569,11 +579,12 @@ describe('AgentPermissionsApi', () => {
       expect(revocationQueryCalls.length).toBe(1);
 
       const revocationFilters = revocationQueryCalls[0][1] as Array<Record<string, unknown>>;
-      const parentIds = revocationFilters.map(filter => filter.parentId);
-      expect(parentIds.length).toBe(2);
-      expect(parentIds.includes(writeGrant.message.recordId)).toBe(true);
-      expect(parentIds.includes(readGrant.message.recordId)).toBe(true);
-      expect(revocationFilters.every(filter => typeof filter.parentId === 'string')).toBe(true);
+      expect(revocationFilters.length).toBe(1);
+      expect(revocationFilters[0].method).toBe(DwnMethodName.Write);
+      expect(revocationFilters[0].parentId).toEqual(expect.arrayContaining([
+        writeGrant.message.recordId,
+        readGrant.message.recordId,
+      ]));
     });
 
     it('should use only 1 DWN roundtrip when checkRevoked is false', async () => {

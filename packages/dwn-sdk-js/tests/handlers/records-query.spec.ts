@@ -3138,7 +3138,7 @@ export function testRecordsQueryHandler(): void {
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message) as RecordsQueryReply;
           expect(chatQueryReply.status.code).toBe(400);
-          expect(chatQueryReply.status.detail).toContain(DwnErrorCode.RecordsQueryFilterMissingRequiredProperties);
+          expect(chatQueryReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
         });
 
         it('rejects root-filter queries that invoke a nested role without a contextId', async () => {
