@@ -351,7 +351,7 @@ Use `bunx changeset status` to verify the changeset is valid before committing.
 |---|---|---|
 | New feature / new API | `minor` | New protocol directive, new sync engine, new public method |
 | Bug fix / security fix | `patch` | SSRF protection, escape LIKE wildcards, crash fix |
-| Breaking change | `major` | Removed public API, changed wire format, renamed exports |
+| Breaking change | `patch` | Removed public API, changed wire format, renamed exports — greenfield project, breaking changes are expected |
 | Test-only changes | No bump needed | Don't include test-only packages in the changeset |
 
 ### Example changeset file
