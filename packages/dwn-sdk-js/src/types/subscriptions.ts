@@ -88,7 +88,7 @@ export type SubscriptionEvent = {
   cursor : ProgressToken;
   /** The event payload (message + optional initialWrite). */
   event : MessageEvent;
-  /** Original row sequence for this message. Redelivery events keep the row's original sequence. */
+  /** Original row sequence for this message. */
   seq? : string;
   /** CID of the message that produced this event. */
   messageCid? : string;

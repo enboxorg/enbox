@@ -5,7 +5,7 @@
  * the remote DWN via live sync push. Then pulls from the remote to verify
  * the round-trip. Proves the full pipeline:
  *   local write -> EventLog -> live push subscription -> remote DWN
- *   remote DWN -> SMT reconciliation -> local pull -> local DWN
+ *   remote DWN -> durable feed pull -> local DWN
  *
  * Requires: DWN server running on localhost:3000 (or TEST_DWN_URL),
  *           Pkarr relay on localhost:7527 (or DID_DHT_GATEWAY_URI).
@@ -124,7 +124,7 @@ describe('E2E: live sync convergence', () => {
     expect(found).toBe(true);
   }, 20_000);
 
-  it('should pull a remote-only record to local via SMT reconciliation', async () => {
+  it('should pull a remote-only record to local via durable feed sync', async () => {
     // Stop sync so we can create a record on the remote that the local
     // agent doesn't know about — then verify pull brings it down.
     await harness.agent.sync.stopSync();
@@ -157,7 +157,7 @@ describe('E2E: live sync convergence', () => {
     });
     expect(beforePull.reply.entries?.length ?? 0).toBe(0);
 
-    // Pull from remote via SMT reconciliation.
+    // Pull from the remote via durable feed sync.
     await harness.agent.sync.sync('pull');
 
     // The record should now exist locally.

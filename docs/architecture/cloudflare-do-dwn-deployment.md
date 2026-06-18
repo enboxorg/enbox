@@ -464,8 +464,7 @@ cursor:
 
 **`$delivery` integration:**
 
-The three delivery strategies from `proposals/dwn-delivery-and-sync.md` map
-naturally to this infrastructure:
+The three delivery strategies map naturally to this infrastructure:
 
 | Strategy | Implementation |
 |---|---|
@@ -698,8 +697,8 @@ The Tenant DO reads from R2 directly.
 
 **IPFS as read fallback (relay/cache mode):**
 
-When a Tenant DO operates in cache mode (per `proposals/constrained-dwn-relay-cache.md`),
-it stores only message envelopes and SMT data — record data may not be in R2.
+When a Tenant DO operates in cache mode, it stores only message envelopes and
+replication metadata — record data may not be in R2.
 On `RecordsRead`:
 
 ```
@@ -934,9 +933,9 @@ fingerprints regardless of storage backend.
 
 | Task | Description |
 |---|---|
-| Constrained Tenant DO | Envelope-only storage mode. Skip R2 writes, retain messages + SMT only. |
+| Constrained Tenant DO | Envelope-only storage mode. Skip R2 writes, retain messages + replication metadata only. |
 | IPFS fallback reads | `RecordsRead` fetches from IPFS when R2 data unavailable. |
-| `dataRetention: "cache"` | Service endpoint annotation support per `proposals/constrained-dwn-relay-cache.md`. |
+| `dataRetention: "cache"` | Service endpoint annotation support for cache-mode tenants. |
 | Eviction policy | Alarm-based data eviction (oldest first) when approaching 10 GB SQLite limit. |
 
 ---
@@ -1008,8 +1007,8 @@ fingerprints regardless of storage backend.
 | `docs/architecture/aws-dwn-deployment.md` | Coexists as Provider 2/4. Shares NATS super-cluster. Users choose based on trust, region, or performance preferences. |
 | `docs/architecture/eu-confidential-dwn-deployment.md` | Coexists as Provider 3. CF provider does not offer TEE; users requiring confidential compute use OVHcloud. |
 | `infra/multi-region-plan.md` | NATS super-cluster replaces per-region independent NATS clusters. Sync daemon works unchanged — receives wakes, reads the durable log, pushes to peer endpoints. |
-| `proposals/dwn-delivery-and-sync.md` | Implements all three `$delivery` strategies: Direct and Relay via Queues, Subscribe via NATS + Connection DOs. |
-| `proposals/constrained-dwn-relay-cache.md` | Phase 5 implements relay/cache mode. IPFS fallback enables cache-mode DOs to serve reads without holding full dataset. |
+| `$delivery` strategies | Direct and Relay use Queues; Subscribe uses NATS wakes plus Connection DOs. |
+| Relay/cache mode | Phase 5 implements cache-mode tenants. IPFS fallback enables reads without holding full datasets. |
 | `proposals/push-notifications.md` | Push notifications can hook into NATS wakes via a consumer worker — subscribe to `dwn.wakes.>`, read durable entries, match notification rules, fire APNs/FCM. |
 
 ---

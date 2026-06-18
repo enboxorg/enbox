@@ -23,7 +23,7 @@ Push notifications solve the **"app is not running"** problem. They are the comp
 | EventLog (durable store) | `dwn-sdk-js/src/event-stream/durable-event-log.ts` | Cursor-based replay over the committed message-store feed |
 | EventBus (NATS) | `dwn-server/src/plugins/event-bus-nats.ts` | Cross-process wake fan-out for durable EventLog drains |
 | Admin webhooks | `dwn-server/src/admin/webhook-manager.ts` | Server-to-server HTTP callbacks for admin events only (not DWN message events) |
-| Agent sync engine | `agent/src/sync-engine-level.ts` | Poll (SMT reconciliation) and live (WebSocket subscription) sync modes |
+| Agent sync engine | `agent/src/sync-engine-level.ts` | Poll and live sync over durable feed cursors and WebSocket subscriptions |
 | LiveQuery | `api/src/live-query.ts` | Reactive record change stream with dedup and lifecycle events |
 
 ### What Does Not Exist
@@ -121,7 +121,7 @@ All four levels are supported, configurable per push subscription:
 
 ### 6. Independent from `$delivery`
 
-Push notifications are a **server-to-device** concern, separate from the provider-to-provider delivery system described in `proposals/dwn-delivery-and-sync.md`. They hook into the EventLog directly regardless of how messages arrived at the DWN (direct write, provider-to-provider sync, or relay delivery).
+Push notifications are a **server-to-device** concern, separate from provider-to-provider delivery. They hook into the EventLog directly regardless of how messages arrived at the DWN (direct write, provider-to-provider sync, or relay delivery).
 
 The `$delivery` system handles "how does a message get from DWN A to DWN B." Push notifications handle "how does a user's device find out something happened in their DWN."
 
