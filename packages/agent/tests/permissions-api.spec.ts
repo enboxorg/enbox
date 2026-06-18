@@ -8,7 +8,7 @@ import { Convert } from '@enbox/common';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { DwnInterface, DwnPermissionGrant, type PermissionGrantEntry } from '../src/index.js';
-import { DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 
 describe('AgentPermissionsApi', () => {
@@ -462,8 +462,8 @@ describe('AgentPermissionsApi', () => {
       expect(grants[0].grant.id).toBe(grant.grant.id);
     });
 
-    it('should query revocations once per candidate grant when checking revocations', async () => {
-      await testHarness.agent.permissions.createGrant({
+    it('should batch local revocation checks through one message store query', async () => {
+      const writeGrant = await testHarness.agent.permissions.createGrant({
         store       : true,
         author      : aliceDid.uri,
         grantedTo   : aliceDid.uri,
@@ -474,7 +474,7 @@ describe('AgentPermissionsApi', () => {
           protocol  : 'http://example.com/revocation-roundtrip-test'
         }
       });
-      await testHarness.agent.permissions.createGrant({
+      const readGrant = await testHarness.agent.permissions.createGrant({
         store       : true,
         author      : aliceDid.uri,
         grantedTo   : aliceDid.uri,
@@ -485,18 +485,33 @@ describe('AgentPermissionsApi', () => {
           protocol  : 'http://example.com/revocation-roundtrip-test'
         }
       });
+      await testHarness.agent.permissions.createRevocation({
+        store  : true,
+        author : aliceDid.uri,
+        grant  : writeGrant.grant,
+      });
 
-      const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
+      const messageStoreQuerySpy = spyOn(testHarness.agent.dwn.node.storage.messageStore, 'query');
 
-      // fetch grants with revocation check (default)
-      await testHarness.agent.permissions.fetchGrants({
+      const grants = await testHarness.agent.permissions.fetchGrants({
         author   : aliceDid.uri,
         target   : aliceDid.uri,
         protocol : 'http://example.com/revocation-roundtrip-test',
       });
 
-      // expect one grants query plus one revocation query per candidate grant
-      expect(processDwnRequestSpy).toHaveBeenCalledTimes(3);
+      expect(grants.length).toBe(1);
+      expect(grants[0].message.recordId).toBe(readGrant.message.recordId);
+
+      const revocationQueryCalls = messageStoreQuerySpy.mock.calls.filter(([, filters]) =>
+        (filters as Array<Record<string, unknown>>).some(filter => filter.protocolPath === PermissionsProtocol.revocationPath)
+      );
+      expect(revocationQueryCalls.length).toBe(1);
+
+      const revocationFilter = (revocationQueryCalls[0][1] as Array<Record<string, unknown>>)[0];
+      const parentIds = revocationFilter.parentId as string[];
+      expect(parentIds.length).toBe(2);
+      expect(parentIds.includes(writeGrant.message.recordId)).toBe(true);
+      expect(parentIds.includes(readGrant.message.recordId)).toBe(true);
     });
 
     it('should use only 1 DWN roundtrip when checkRevoked is false', async () => {
