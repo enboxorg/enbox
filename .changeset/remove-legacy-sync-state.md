@@ -6,4 +6,4 @@
 "@enbox/auth": patch
 ---
 
-Remove legacy StateIndex, MessagesSync, and sparse-Merkle sync surfaces now that replication uses durable message feeds and scoped fingerprints.
+Remove legacy sync index, wire, and sparse-tree surfaces now that replication uses durable message feeds and scoped fingerprints.
