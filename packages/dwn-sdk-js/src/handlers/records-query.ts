@@ -8,6 +8,7 @@ import { DateSort } from '../types/records-types.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
+import { queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsQuery } from '../interfaces/records-query.js';
@@ -121,7 +122,15 @@ export class RecordsQueryHandler implements MethodHandler {
     };
 
     const messageSort = this.convertDateSort(dateSort);
-    return this.deps.messageStore.query(tenant, [ queryFilter ], messageSort, pagination);
+    return queryRecordsWithRecordLimitOccupancy({
+      messageStore          : this.deps.messageStore,
+      validationStateReader : this.deps.validationStateReader,
+      tenant,
+      filters               : [queryFilter],
+      messageSort,
+      pagination,
+      messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
+    });
   }
 
   /**
@@ -171,7 +180,15 @@ export class RecordsQueryHandler implements MethodHandler {
     }
 
     const messageSort = this.convertDateSort(dateSort);
-    return this.deps.messageStore.query(tenant, filters, messageSort, pagination );
+    return queryRecordsWithRecordLimitOccupancy({
+      messageStore          : this.deps.messageStore,
+      validationStateReader : this.deps.validationStateReader,
+      tenant,
+      filters,
+      messageSort,
+      pagination,
+      messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
+    });
   }
 
   /**
@@ -183,7 +200,15 @@ export class RecordsQueryHandler implements MethodHandler {
     const { dateSort, pagination } = recordsQuery.message.descriptor;
     const filter = RecordsQueryHandler.buildPublishedRecordsFilter(recordsQuery);
     const messageSort = this.convertDateSort(dateSort);
-    return this.deps.messageStore.query(tenant, [ filter ], messageSort, pagination);
+    return queryRecordsWithRecordLimitOccupancy({
+      messageStore          : this.deps.messageStore,
+      validationStateReader : this.deps.validationStateReader,
+      tenant,
+      filters               : [filter],
+      messageSort,
+      pagination,
+      messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
+    });
   }
 
   private static buildPublishedRecordsFilter(recordsQuery: RecordsQuery): Filter {

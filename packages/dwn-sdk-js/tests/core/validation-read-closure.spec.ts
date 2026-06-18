@@ -37,7 +37,6 @@ const VALIDATION_READER_METHODS = new Set<string>([
   'fetchOldestGrantRevocation',
   'fetchNewestRecordsWrite',
   'fetchProtocolDefinition',
-  'countLatestRecordsAtScope',
   'fetchLatestSquashRecordAtScope',
   'hasStoredData',
 ]);
@@ -288,7 +287,7 @@ describe('validation read closure', () => {
       snapshot('live: messages-read of deleted record with grant');
     }
 
-    // ---- scenario: live record-limit rejection ----
+    // ---- scenario: live record-limit candidate admission ----
     {
       await clearStores();
       recorder.clearRecordedReads();
@@ -310,9 +309,9 @@ describe('validation read closure', () => {
       const { message: secondMessage, dataStream: secondDataStream } = await TestDataGenerator.generateRecordsWrite({
         author: alice, protocol: definition.protocol, protocolPath: 'item', schema: 'item', dataFormat: 'text/plain',
       });
-      expect((await dwn.processMessage(alice.did, secondMessage, { dataStream: secondDataStream })).status.code).toBe(400);
+      expect((await dwn.processMessage(alice.did, secondMessage, { dataStream: secondDataStream })).status.code).toBe(202);
 
-      snapshot('live: record-limit rejection');
+      snapshot('live: record-limit candidate admission');
     }
 
     // ---- scenario: live squash backstop ----

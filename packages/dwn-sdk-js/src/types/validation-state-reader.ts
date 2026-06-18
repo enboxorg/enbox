@@ -109,17 +109,6 @@ export interface ValidationStateReader {
   fetchProtocolDefinition(tenant: string, protocolUri: string, messageTimestamp?: string): Promise<ProtocolDefinition>;
 
   /**
-   * Counts the latest-state records at a `$recordLimit` scope:
-   * protocol + protocolPath within the parent context.
-   */
-  countLatestRecordsAtScope(input: {
-    tenant: string;
-    protocol: string;
-    protocolPath: string;
-    contextIdPrefix?: string;
-  }): Promise<number>;
-
-  /**
    * Fetches the latest `$squash: true` record at a protocol path within the parent context.
    * This is the temporal floor used by the squash backstop.
    */

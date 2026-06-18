@@ -77,6 +77,7 @@ export class RecordsDeleteHandler implements MethodHandler {
         recordsDelete,
         initialWrite!,
       );
+
     } catch (e) {
       return messageReplyFromError(e, 401);
     }
@@ -125,4 +126,5 @@ export class RecordsDeleteHandler implements MethodHandler {
       await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, this.deps.validationStateReader);
     }
   }
+
 };

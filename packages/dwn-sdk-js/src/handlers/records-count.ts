@@ -3,6 +3,7 @@ import type { HandlerDependencies, MethodHandler } from '../types/method-handler
 import type { RecordsCountMessage, RecordsCountReply } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
+import { countRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -66,7 +67,7 @@ export class RecordsCountHandler implements MethodHandler {
       isLatestBaseState : true
     };
 
-    return this.deps.messageStore.count(tenant, [countFilter]);
+    return this.countProjectedRecords(tenant, recordsCount, [countFilter]);
   }
 
   /**
@@ -98,7 +99,7 @@ export class RecordsCountHandler implements MethodHandler {
       }
     }
 
-    return this.deps.messageStore.count(tenant, filters);
+    return this.countProjectedRecords(tenant, recordsCount, filters);
   }
 
   /**
@@ -106,7 +107,17 @@ export class RecordsCountHandler implements MethodHandler {
    */
   private async countPublishedRecords(tenant: string, recordsCount: RecordsCount): Promise<number> {
     const filter = RecordsCountHandler.buildPublishedRecordsFilter(recordsCount);
-    return this.deps.messageStore.count(tenant, [filter]);
+    return this.countProjectedRecords(tenant, recordsCount, [filter]);
+  }
+
+  private async countProjectedRecords(tenant: string, recordsCount: RecordsCount, filters: Filter[]): Promise<number> {
+    return countRecordsWithRecordLimitOccupancy({
+      messageStore          : this.deps.messageStore,
+      validationStateReader : this.deps.validationStateReader,
+      tenant,
+      filters,
+      messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
+    });
   }
 
   private static buildPublishedRecordsFilter(recordsCount: RecordsCount): Filter {

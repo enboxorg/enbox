@@ -113,17 +113,6 @@ export class Dwn {
     this.dataStore = config.dataStore;
     this.resumableTaskStore = config.resumableTaskStore;
 
-    this.eventLog = config.eventLog;
-
-    this.storageController = new StorageController({
-      messageStore : this.messageStore,
-      dataStore    : this.dataStore,
-    });
-    this.resumableTaskManager = new ResumableTaskManager(
-      config.resumableTaskStore,
-      this.storageController
-    );
-
     // Initialize the core protocol registry with built-in system protocols.
     this._coreProtocols = new CoreProtocolRegistry();
     this._coreProtocols.register(new PermissionsProtocol());
@@ -135,6 +124,17 @@ export class Dwn {
       coreProtocols : this._coreProtocols,
     });
     this.validationStateReader = config.instrumentValidationStateReader?.(validationStateReader) ?? validationStateReader;
+
+    this.eventLog = config.eventLog;
+
+    this.storageController = new StorageController({
+      messageStore : this.messageStore,
+      dataStore    : this.dataStore,
+    });
+    this.resumableTaskManager = new ResumableTaskManager(
+      config.resumableTaskStore,
+      this.storageController
+    );
 
     // Build the shared dependency bag once; every handler receives the same object
     // and accesses only the dependencies it needs.

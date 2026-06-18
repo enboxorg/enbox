@@ -24,8 +24,7 @@
     "fetchNewestRecordsWrite",
     "fetchOldestGrantRevocation"
   ],
-  "live: record-limit rejection": [
-    "countLatestRecordsAtScope",
+  "live: record-limit candidate admission": [
     "fetchProtocolDefinition"
   ],
   "live: squash backstop": [

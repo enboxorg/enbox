@@ -1,0 +1,377 @@
+import type { MessageStore } from '../types/message-store.js';
+import type { ProtocolRecordLimitDefinition } from '../types/protocols-types.js';
+import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { ValidationStateReader } from '../types/validation-state-reader.js';
+import type { Filter, PaginationCursor } from '../types/query-types.js';
+import type { MessageSort, Pagination } from '../types/message-types.js';
+
+import { FilterUtility } from './filter.js';
+import { getRuleSetAtPath } from './protocols.js';
+import { lexicographicalCompare } from './string.js';
+import { ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
+import { Records } from './records.js';
+import { SortDirection } from '../types/query-types.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
+import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+
+type RecordLimitOccupancyDependencies = {
+  messageStore: MessageStore;
+  validationStateReader: ValidationStateReader;
+};
+
+type RecordLimitOccupancyQueryInput = RecordLimitOccupancyDependencies & {
+  tenant: string;
+  filters: Filter[];
+  messageTimestamp: string;
+  messageSort?: MessageSort;
+  pagination?: Pagination;
+};
+
+type RecordLimitScope = {
+  protocol: string;
+  protocolPath: string;
+  parentContextId: string;
+};
+
+type RecordLimitFilterResolution = {
+  projectedFilters: Filter[];
+};
+
+/**
+ * Queries records with bounded `$recordLimit` occupancy projection when every limited filter targets one concrete scope.
+ *
+ * Broad filters keep the store's native query path. Projecting those without a store-level grouping primitive would require
+ * scanning the full matching set, which is worse than leaving them unprojected until a bounded broad-query strategy exists.
+ */
+export async function queryRecordsWithRecordLimitOccupancy(
+  input: RecordLimitOccupancyQueryInput
+): Promise<{ messages: RecordsWriteMessage[]; cursor?: PaginationCursor }> {
+  const filterResolution = await resolveRecordLimitFilters(input);
+  if (filterResolution === undefined) {
+    const { messages, cursor } = await input.messageStore.query(input.tenant, input.filters, input.messageSort, input.pagination);
+    return { messages: messages.filter(Records.isRecordsWrite), cursor };
+  }
+
+  if (filterResolution.projectedFilters.length === 0) {
+    return { messages: [] };
+  }
+
+  const { messages, cursor } = await input.messageStore.query(
+    input.tenant,
+    filterResolution.projectedFilters,
+    input.messageSort,
+    input.pagination
+  );
+
+  return { messages: messages.filter(Records.isRecordsWrite), cursor };
+}
+
+/**
+ * Counts records with bounded `$recordLimit` occupancy projection when every limited filter targets one concrete scope.
+ */
+export async function countRecordsWithRecordLimitOccupancy(input: Omit<RecordLimitOccupancyQueryInput, 'pagination'>): Promise<number> {
+  const filterResolution = await resolveRecordLimitFilters(input);
+  if (filterResolution === undefined) {
+    return input.messageStore.count(input.tenant, input.filters, input.messageSort);
+  }
+
+  if (filterResolution.projectedFilters.length === 0) {
+    return 0;
+  }
+
+  return input.messageStore.count(input.tenant, filterResolution.projectedFilters, input.messageSort);
+}
+
+/**
+ * Returns true when the latest RecordsWrite is visible under the `$recordLimit` projection.
+ */
+export async function isRecordLimitOccupant(input: RecordLimitOccupancyDependencies & {
+  tenant: string;
+  message: RecordsWriteMessage;
+  messageTimestamp: string;
+}): Promise<boolean> {
+  const recordLimit = await getRecordLimitForMessage({
+    messageStore           : input.messageStore,
+    validationStateReader  : input.validationStateReader,
+    tenant                 : input.tenant,
+    message                : input.message,
+    messageTimestamp       : input.messageTimestamp,
+    recordLimitDefinitions : new Map(),
+  });
+
+  if (recordLimit === undefined) {
+    return true;
+  }
+
+  const occupantRecordIds = await findOccupantRecordIds({
+    messageStore : input.messageStore,
+    tenant       : input.tenant,
+    scope        : getRecordLimitScope(input.message),
+    recordLimit,
+  });
+
+  return occupantRecordIds.has(input.message.recordId);
+}
+
+async function resolveRecordLimitFilters(
+  input: Omit<RecordLimitOccupancyQueryInput, 'pagination'>
+): Promise<RecordLimitFilterResolution | undefined> {
+  const recordLimitDefinitions = new Map<string, ProtocolRecordLimitDefinition | undefined>();
+  const projectedFilters: Filter[] = [];
+  let projectionApplied = false;
+
+  for (const filter of input.filters) {
+    const recordLimit = await getRecordLimitForFilter({
+      messageStore          : input.messageStore,
+      validationStateReader : input.validationStateReader,
+      tenant                : input.tenant,
+      filter,
+      messageTimestamp      : input.messageTimestamp,
+      recordLimitDefinitions,
+    });
+
+    if (recordLimit === undefined) {
+      projectedFilters.push(filter);
+      continue;
+    }
+
+    const scope = getRecordLimitScopeFromFilter(filter);
+    if (scope === undefined) {
+      return undefined;
+    }
+
+    const occupantRecordIds = await findOccupantRecordIds({
+      messageStore : input.messageStore,
+      tenant       : input.tenant,
+      scope,
+      recordLimit,
+    });
+
+    const projectedFilter = buildProjectedFilter(filter, occupantRecordIds);
+    if (projectedFilter !== undefined) {
+      projectedFilters.push(projectedFilter);
+    }
+    projectionApplied = true;
+  }
+
+  return projectionApplied ? { projectedFilters } : undefined;
+}
+
+async function getRecordLimitForMessage(input: RecordLimitOccupancyDependencies & {
+  tenant: string;
+  message: RecordsWriteMessage;
+  messageTimestamp: string;
+  recordLimitDefinitions: Map<string, ProtocolRecordLimitDefinition | undefined>;
+}): Promise<ProtocolRecordLimitDefinition | undefined> {
+  const { protocol, protocolPath } = input.message.descriptor;
+  if (protocol === undefined || protocolPath === undefined) {
+    return undefined;
+  }
+
+  return getRecordLimit({
+    validationStateReader  : input.validationStateReader,
+    tenant                 : input.tenant,
+    protocol,
+    protocolPath,
+    messageTimestamp       : input.messageTimestamp,
+    recordLimitDefinitions : input.recordLimitDefinitions,
+  });
+}
+
+async function getRecordLimitForFilter(input: RecordLimitOccupancyDependencies & {
+  tenant: string;
+  filter: Filter;
+  messageTimestamp: string;
+  recordLimitDefinitions: Map<string, ProtocolRecordLimitDefinition | undefined>;
+}): Promise<ProtocolRecordLimitDefinition | undefined> {
+  if (input.filter.interface !== DwnInterfaceName.Records ||
+    input.filter.method !== DwnMethodName.Write ||
+    input.filter.isLatestBaseState !== true
+  ) {
+    return undefined;
+  }
+
+  const { protocol, protocolPath } = input.filter;
+  if (typeof protocol !== 'string' || typeof protocolPath !== 'string') {
+    return undefined;
+  }
+
+  return getRecordLimit({
+    validationStateReader  : input.validationStateReader,
+    tenant                 : input.tenant,
+    protocol,
+    protocolPath,
+    messageTimestamp       : input.messageTimestamp,
+    recordLimitDefinitions : input.recordLimitDefinitions,
+  });
+}
+
+async function getRecordLimit(input: {
+  validationStateReader: ValidationStateReader;
+  tenant: string;
+  protocol: string;
+  protocolPath: string;
+  messageTimestamp: string;
+  recordLimitDefinitions: Map<string, ProtocolRecordLimitDefinition | undefined>;
+}): Promise<ProtocolRecordLimitDefinition | undefined> {
+  const key = `${input.protocol}\u0000${input.protocolPath}`;
+  if (!input.recordLimitDefinitions.has(key)) {
+    let protocolDefinition;
+    try {
+      protocolDefinition = await input.validationStateReader.fetchProtocolDefinition(
+        input.tenant,
+        input.protocol,
+        input.messageTimestamp,
+      );
+    } catch (error) {
+      if (error instanceof DwnError && error.code === DwnErrorCode.ProtocolAuthorizationProtocolNotFound) {
+        input.recordLimitDefinitions.set(key, undefined);
+        return undefined;
+      }
+      throw error;
+    }
+
+    const ruleSet = getRuleSetAtPath(input.protocolPath, protocolDefinition.structure);
+    const recordLimit = ruleSet?.$recordLimit;
+    input.recordLimitDefinitions.set(
+      key,
+      recordLimit?.strategy === ProtocolRecordLimitStrategy.Reject ? recordLimit : undefined
+    );
+  }
+
+  return input.recordLimitDefinitions.get(key);
+}
+
+async function findOccupantRecordIds(input: {
+  messageStore: MessageStore;
+  tenant: string;
+  scope: RecordLimitScope;
+  recordLimit: ProtocolRecordLimitDefinition;
+}): Promise<Set<string>> {
+  const scopeFilter = buildRecordLimitScopeFilter(input.scope);
+  const messageSort = { dateCreated: SortDirection.Ascending };
+  const { messages: firstPage } = await input.messageStore.query(
+    input.tenant,
+    [scopeFilter],
+    messageSort,
+    { limit: input.recordLimit.max }
+  );
+  const firstPageCandidates = firstPage.filter(Records.isRecordsWrite);
+  if (firstPageCandidates.length === 0) {
+    return new Set();
+  }
+
+  const boundaryDateCreated = firstPageCandidates.at(-1)!.descriptor.dateCreated;
+  const beforeBoundary = firstPageCandidates.filter(
+    (message): boolean => message.descriptor.dateCreated < boundaryDateCreated
+  );
+  let boundaryCandidates = firstPageCandidates.filter(
+    (message): boolean => message.descriptor.dateCreated === boundaryDateCreated
+  );
+
+  if (firstPageCandidates.length === input.recordLimit.max) {
+    const { messages } = await input.messageStore.query(
+      input.tenant,
+      [{ ...scopeFilter, dateCreated: boundaryDateCreated }],
+      messageSort
+    );
+    boundaryCandidates = messages.filter(Records.isRecordsWrite);
+  }
+
+  boundaryCandidates.sort(compareRecordLimitCandidates);
+
+  const rankedCandidates = [
+    ...beforeBoundary,
+    ...boundaryCandidates,
+  ];
+
+  return new Set(
+    rankedCandidates
+      .slice(0, input.recordLimit.max)
+      .map((message): string => message.recordId)
+  );
+}
+
+function buildRecordLimitScopeFilter(scope: RecordLimitScope): Filter {
+  const filter: Filter = {
+    interface         : DwnInterfaceName.Records,
+    method            : DwnMethodName.Write,
+    isLatestBaseState : true,
+    protocol          : scope.protocol,
+    protocolPath      : scope.protocolPath,
+  };
+
+  if (scope.parentContextId !== '') {
+    filter.contextId = FilterUtility.constructPrefixFilterAsRangeFilter(scope.parentContextId);
+  }
+
+  return filter;
+}
+
+function getRecordLimitScopeFromFilter(filter: Filter): RecordLimitScope | undefined {
+  const { protocol, protocolPath } = filter;
+  if (typeof protocol !== 'string' || typeof protocolPath !== 'string') {
+    return undefined;
+  }
+
+  if (!protocolPath.includes('/')) {
+    return { protocol, protocolPath, parentContextId: '' };
+  }
+
+  const parentContextId = getExactParentContextIdFromFilter(filter);
+  if (parentContextId === undefined) {
+    return undefined;
+  }
+
+  return { protocol, protocolPath, parentContextId };
+}
+
+function getRecordLimitScope(message: RecordsWriteMessage): RecordLimitScope {
+  return {
+    protocol        : message.descriptor.protocol,
+    protocolPath    : message.descriptor.protocolPath,
+    parentContextId : Records.getParentContextFromOfContextId(message.contextId) ?? '',
+  };
+}
+
+function getExactParentContextIdFromFilter(filter: Filter): string | undefined {
+  const { contextId } = filter;
+  if (contextId === undefined || !FilterUtility.isRangeFilter(contextId)) {
+    return undefined;
+  }
+
+  if (typeof contextId.gte !== 'string' || contextId.lt !== `${contextId.gte}\uffff`) {
+    return undefined;
+  }
+
+  return contextId.gte;
+}
+
+function buildProjectedFilter(filter: Filter, occupantRecordIds: Set<string>): Filter | undefined {
+  let projectedRecordIds = Array.from(occupantRecordIds);
+  const existingRecordIdFilter = filter.recordId;
+  if (typeof existingRecordIdFilter === 'string') {
+    projectedRecordIds = occupantRecordIds.has(existingRecordIdFilter) ? [existingRecordIdFilter] : [];
+  } else if (Array.isArray(existingRecordIdFilter)) {
+    projectedRecordIds = existingRecordIdFilter
+      .filter((recordId): recordId is string => typeof recordId === 'string' && occupantRecordIds.has(recordId));
+  }
+
+  if (projectedRecordIds.length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...filter,
+    recordId: projectedRecordIds,
+  };
+}
+
+function compareRecordLimitCandidates(left: RecordsWriteMessage, right: RecordsWriteMessage): number {
+  const dateComparison = lexicographicalCompare(left.descriptor.dateCreated, right.descriptor.dateCreated);
+  if (dateComparison !== 0) {
+    return dateComparison;
+  }
+
+  return lexicographicalCompare(left.recordId, right.recordId);
+}
