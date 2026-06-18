@@ -10,7 +10,6 @@ import sinon from 'sinon';
 import nestedProtocol from './vectors/protocol-definitions/nested.json' with { type: 'json' };
 
 import { Dwn } from '../src/dwn.js';
-import { StorageController } from '../src/store/storage-controller.js';
 import { TestEventLog } from './test-event-stream.js';
 import { TestStores } from './test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -613,8 +612,7 @@ export function testDwnClass(): void {
 
         // replaying the beaten delete through the task path must be a no-op — the same lattice
         // gate as admission — leaving the canonical tombstone as the record's newest message
-        const storageController = new StorageController({ messageStore, dataStore });
-        await storageController.performRecordsDelete({ tenant: alice.did, message: staleDelete.message });
+        await dwn['storageController'].performRecordsDelete({ tenant: alice.did, message: staleDelete.message });
 
         const tombstoneCid = await Message.getCid(recordsDelete.message);
         const staleDeleteCid = await Message.getCid(staleDelete.message);

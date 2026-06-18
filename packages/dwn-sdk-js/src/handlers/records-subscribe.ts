@@ -1,7 +1,7 @@
 import type { MessageSort } from '../types/message-types.js';
+import type { EventSubscription, ProgressGapInfo, SubscriptionEvent, SubscriptionListener, SubscriptionMessage } from '../types/subscriptions.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
-import type { ProgressGapInfo, SubscriptionListener } from '../types/subscriptions.js';
 import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
@@ -16,6 +16,12 @@ import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
+import { isRecordLimitOccupant, queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
+
+type ProjectedRecordsSubscriptionHandler = {
+  listener: SubscriptionListener;
+  setSubscription(subscription: EventSubscription): Promise<void>;
+};
 
 export class RecordsSubscribeHandler implements MethodHandler {
 
@@ -74,6 +80,12 @@ export class RecordsSubscribeHandler implements MethodHandler {
 
     const messageCid = await Message.getCid(message);
     const { cursor: eventLogCursor } = recordsSubscribe.message.descriptor;
+    const projectedSubscriptionHandler = RecordsSubscribeHandler.createRecordLimitOccupancyGuard({
+      deps: this.deps,
+      recordsSubscribe,
+      subscriptionHandler,
+      tenant,
+    });
 
     if (eventLogCursor !== undefined) {
       // ---- Cursor mode: catch-up from EventLog + EOSE + live ----
@@ -82,10 +94,11 @@ export class RecordsSubscribeHandler implements MethodHandler {
       // The subscriptionHandler receives SubscriptionMessage (event + EOSE) directly.
 
       try {
-        const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, subscriptionHandler, {
+        const subscription = await this.deps.eventLog.subscribe(tenant, messageCid, projectedSubscriptionHandler.listener, {
           cursor  : eventLogCursor,
           filters : eventFilters,
         });
+        await projectedSubscriptionHandler.setSubscription(subscription);
 
         return {
           status: { code: 200, detail: 'OK' },
@@ -106,9 +119,10 @@ export class RecordsSubscribeHandler implements MethodHandler {
     // ---- No cursor: existing behavior (initial snapshot from MessageStore) ----
 
     // Step 1: Register event listener FIRST to ensure no events are missed between query and subscribe
-    const subscription = await this.deps.eventLog!.subscribe(tenant, messageCid, subscriptionHandler, {
+    const subscription = await this.deps.eventLog.subscribe(tenant, messageCid, projectedSubscriptionHandler.listener, {
       filters: eventFilters,
     });
+    await projectedSubscriptionHandler.setSubscription(subscription);
 
     // Step 2: Query for initial snapshot of matching records
     let entries: RecordsQueryReplyEntry[];
@@ -116,8 +130,16 @@ export class RecordsSubscribeHandler implements MethodHandler {
     try {
       const { dateSort, pagination } = recordsSubscribe.message.descriptor;
       const messageSort = RecordsSubscribeHandler.convertDateSort(dateSort);
-      const queryResult = await this.deps.messageStore.query(tenant, queryFilters, messageSort, pagination);
-      entries = queryResult.messages as RecordsQueryReplyEntry[];
+      const queryResult = await queryRecordsWithRecordLimitOccupancy({
+        messageStore          : this.deps.messageStore,
+        validationStateReader : this.deps.validationStateReader,
+        tenant,
+        filters               : queryFilters,
+        messageSort,
+        pagination,
+        messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
+      });
+      entries = queryResult.messages;
       paginationCursor = queryResult.cursor;
 
       // attach initialWrite for non-initial writes
@@ -168,6 +190,101 @@ export class RecordsSubscribeHandler implements MethodHandler {
     default:
       return { dateCreated: SortDirection.Ascending };
     }
+  }
+
+  private static createRecordLimitOccupancyGuard(input: {
+    deps: HandlerDependencies;
+    recordsSubscribe: RecordsSubscribe;
+    subscriptionHandler: SubscriptionListener;
+    tenant: string;
+  }): ProjectedRecordsSubscriptionHandler {
+    const { deps, recordsSubscribe, subscriptionHandler, tenant } = input;
+    let subscription: EventSubscription | undefined;
+    let closeRequested = false;
+    let terminalErrorEmitted = false;
+    let deliveryQueue: Promise<void> = Promise.resolve();
+
+    const closeSubscription = (): void => {
+      if (closeRequested) {
+        return;
+      }
+      closeRequested = true;
+      Promise.resolve(subscription?.close()).catch(() => {});
+    };
+
+    const emitTerminalProjectionError = (cursor: SubscriptionEvent['cursor']): void => {
+      if (terminalErrorEmitted) {
+        return;
+      }
+      terminalErrorEmitted = true;
+      subscriptionHandler({
+        type  : 'error',
+        cursor,
+        error : {
+          code   : 'RecordsSubscribeProjectionFailed',
+          detail : 'record-limit occupancy projection failed during delivery',
+        },
+      });
+    };
+
+    const deliverProjectedEvent = async (subscriptionEvent: SubscriptionEvent): Promise<void> => {
+      const { message } = subscriptionEvent.event;
+      if (Records.isRecordsWrite(message)) {
+        let isOccupant: boolean;
+        try {
+          isOccupant = await isRecordLimitOccupant({
+            messageStore          : deps.messageStore,
+            validationStateReader : deps.validationStateReader,
+            tenant,
+            message,
+            messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
+          });
+        } catch {
+          emitTerminalProjectionError(subscriptionEvent.cursor);
+          closeSubscription();
+          return;
+        }
+
+        if (!isOccupant) {
+          return;
+        }
+      }
+
+      if (!closeRequested) {
+        subscriptionHandler(subscriptionEvent);
+      }
+    };
+
+    const deliverQueuedMessage = async (subscriptionMessage: SubscriptionMessage): Promise<void> => {
+      if (closeRequested) {
+        return;
+      }
+
+      if (subscriptionMessage.type !== 'event') {
+        subscriptionHandler(subscriptionMessage);
+        return;
+      }
+
+      await deliverProjectedEvent(subscriptionMessage);
+    };
+
+    const enqueueDelivery = (subscriptionMessage: SubscriptionMessage): void => {
+      deliveryQueue = deliveryQueue
+        .then(() => deliverQueuedMessage(subscriptionMessage))
+        .catch(() => {});
+    };
+
+    return {
+      listener: (subscriptionMessage: SubscriptionMessage): void => {
+        enqueueDelivery(subscriptionMessage);
+      },
+      setSubscription: async (eventSubscription: EventSubscription): Promise<void> => {
+        subscription = eventSubscription;
+        if (closeRequested) {
+          await eventSubscription.close();
+        }
+      },
+    };
   }
 
   // =============================================

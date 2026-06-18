@@ -371,57 +371,30 @@ export async function verifyAsRoleRecordIfNeeded(
 }
 
 /**
- * Verifies that a new record creation does not exceed the `$recordLimit` defined in the rule set.
+ * Verifies that the `$recordLimit` strategy is supported for a new record creation.
  *
- * This check only applies to initial writes (new records). Updates to existing records are not counted.
- * The count is scoped to the same `protocol + protocolPath` within the parent context:
- * - For root-level records: counted across the entire protocol for the tenant.
- * - For nested records: counted within the parent record's context.
+ * This check only applies to initial writes (new records). Updates to existing records do not
+ * affect record-limit occupancy. The supported `reject` strategy admits every candidate and
+ * projects the visible occupant set at read time, so validation stays independent of arrival order.
  *
- * @throws {DwnError} with `ProtocolAuthorizationRecordLimitExceeded` if the limit is reached and strategy is `reject`.
- * @throws {DwnError} with `ProtocolAuthorizationRecordLimitStrategyNotImplemented` if strategy is not yet implemented.
+ * @throws {DwnError} with `ProtocolAuthorizationRecordLimitStrategyNotImplemented` if strategy is not implemented.
  */
 export async function verifyRecordLimit(
-  tenant: string,
   incomingMessage: RecordsWrite,
   ruleSet: ProtocolRuleSet,
-  validationStateReader: ValidationStateReader,
 ): Promise<void> {
   if (ruleSet.$recordLimit === undefined) {
     return;
   }
 
-  // Only enforce on initial writes — updates to existing records do not count as new records.
+  // Only initial writes can introduce a new record-limit candidate.
   const isInitialWrite = await incomingMessage.isInitialWrite();
   if (!isInitialWrite) {
     return;
   }
 
-  const { max, strategy } = ruleSet.$recordLimit;
-
-  // Count existing records at the same protocol path, scoped by parent context for nested records.
-  const protocolPath = incomingMessage.message.descriptor.protocolPath;
-  const parentContextId = Records.getParentContextFromOfContextId(incomingMessage.message.contextId)!;
-
-  const existingCount = await validationStateReader.countLatestRecordsAtScope({
-    tenant,
-    protocol        : incomingMessage.message.descriptor.protocol,
-    protocolPath,
-    contextIdPrefix : parentContextId === '' ? undefined : parentContextId,
-  });
-
-  if (existingCount >= max) {
-    if (strategy === ProtocolRecordLimitStrategy.Reject) {
-      throw new DwnError(
-        DwnErrorCode.ProtocolAuthorizationRecordLimitExceeded,
-        `record limit of ${max} reached at protocol path '${protocolPath}'` +
-        `${parentContextId === '' ? '' : ` under parent context '${parentContextId}'`}` +
-        `: new records are rejected until existing records are deleted.`
-      );
-    }
-
-    // Future strategies (e.g. purgeOldest) will be implemented here.
-    // For now, any non-reject strategy that somehow passes schema validation is rejected.
+  const { strategy } = ruleSet.$recordLimit;
+  if (strategy !== ProtocolRecordLimitStrategy.Reject) {
     throw new DwnError(
       DwnErrorCode.ProtocolAuthorizationRecordLimitStrategyNotImplemented,
       `record limit strategy '${strategy}' is not yet implemented.`

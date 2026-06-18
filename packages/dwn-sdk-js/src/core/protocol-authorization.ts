@@ -34,7 +34,7 @@ export class ProtocolAuthorization {
     tenant: string,
     incomingMessage: RecordsWrite,
     validationStateReader: ValidationStateReader,
-  ): Promise<void> {
+  ): Promise<ProtocolRuleSet> {
     const protocolDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
 
     // fetch the protocol definition active at the incoming message timestamp
@@ -82,7 +82,9 @@ export class ProtocolAuthorization {
     await verifySquashEligibility(incomingMessage, ruleSet);
 
     // Verify record count limit
-    await verifyRecordLimit(tenant, incomingMessage, ruleSet, validationStateReader);
+    await verifyRecordLimit(incomingMessage, ruleSet);
+
+    return ruleSet;
   }
 
   /**
@@ -121,9 +123,8 @@ export class ProtocolAuthorization {
     await verifySquashEligibility(incomingMessage, ruleSet);
     ProtocolAuthorization.verifyStoredInitialWriteCreateAction(tenant, incomingMessage, ruleSet);
 
-    // `verifyRecordLimit()` is not replayed here. It is stateful and counts the present
-    // latest live set, which would incorrectly reject the record being revalidated.
-    // Inbound writes continue to enforce record limits at admission time.
+    // `verifyRecordLimit()` is intentionally not replayed here. It only checks strategy
+    // support for new record candidates; read-time occupancy projection decides visibility.
   }
 
   /**

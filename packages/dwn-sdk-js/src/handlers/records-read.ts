@@ -5,6 +5,7 @@ import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsReadMessage, 
 import { authenticate } from '../core/auth.js';
 import { DataStream } from '../utils/data-stream.js';
 import { Encoder } from '../utils/encoder.js';
+import { isRecordLimitOccupant } from '../utils/record-limit-occupancy.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -48,7 +49,7 @@ export class RecordsReadHandler implements MethodHandler {
       ...Records.convertFilter(message.descriptor.filter)
     };
     const messageSort = Records.convertDateSort(message.descriptor.dateSort);
-    const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [ query ], messageSort, { limit: 1 });
+    const { messages: existingMessages } = await this.deps.messageStore.query(tenant, [query], messageSort, { limit: 1 });
     if (existingMessages.length === 0) {
       return {
         status: { code: 404, detail: 'Not Found' }
@@ -57,50 +58,24 @@ export class RecordsReadHandler implements MethodHandler {
 
     const matchedMessage = existingMessages[0];
 
-    // If the matched message is a RecordsDelete, authorize against the newest RecordsWrite
-    // (for parity with the live-record path which authorizes against the latest write),
-    // then return 404 with both the RecordsDelete and the initial RecordsWrite.
     if (matchedMessage.descriptor.method === DwnMethodName.Delete) {
-      const recordsDeleteMessage = matchedMessage as RecordsDeleteMessage;
-      const recordId = recordsDeleteMessage.descriptor.recordId;
-
-      const initialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(this.deps.messageStore, tenant, recordId);
-      if (initialWrite === undefined) {
-        return messageReplyFromError(new DwnError(
-          DwnErrorCode.RecordsReadInitialWriteNotFound,
-          'initial write for deleted record not found'
-        ), 400);
-      }
-
-      // Authorize against the newest RecordsWrite so that mutable properties like `published`
-      // reflect the record's state at the time of deletion, not just the initial write.
-      let newestWrite;
-      try {
-        newestWrite = await RecordsWrite.fetchNewestRecordsWrite(this.deps.messageStore, tenant, recordId);
-      } catch {
-        // If newest write is not found (should not happen since initial write exists),
-        // fall back to the initial write for authorization.
-        newestWrite = initialWrite;
-      }
-      const parsedNewestWrite = await RecordsWrite.parse(newestWrite);
-
-      try {
-        await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps);
-      } catch (error) {
-        return messageReplyFromError(error, 401);
-      }
-
-      return {
-        status : { code: 404, detail: 'Not Found' },
-        entry  : {
-          recordsDelete: recordsDeleteMessage,
-          initialWrite,
-        }
-      };
+      return this.replyForDeletedRecord(tenant, recordsRead, matchedMessage as RecordsDeleteMessage);
     }
 
     // else the matched message is a RecordsWrite
     const matchedRecordsWrite = matchedMessage as RecordsQueryReplyEntry;
+
+    if (!await isRecordLimitOccupant({
+      messageStore          : this.deps.messageStore,
+      validationStateReader : this.deps.validationStateReader,
+      tenant,
+      message               : matchedRecordsWrite,
+      messageTimestamp      : recordsRead.message.descriptor.messageTimestamp,
+    })) {
+      return {
+        status: { code: 404, detail: 'Not Found' }
+      };
+    }
 
     try {
       const parsedWrite = await RecordsWrite.parse(matchedRecordsWrite);
@@ -151,6 +126,48 @@ export class RecordsReadHandler implements MethodHandler {
 
     return recordsReadReply;
   };
+
+  private async replyForDeletedRecord(
+    tenant: string,
+    recordsRead: RecordsRead,
+    recordsDeleteMessage: RecordsDeleteMessage,
+  ): Promise<RecordsReadReply> {
+    const recordId = recordsDeleteMessage.descriptor.recordId;
+
+    const initialWrite = await RecordsWrite.fetchInitialRecordsWriteMessage(this.deps.messageStore, tenant, recordId);
+    if (initialWrite === undefined) {
+      return messageReplyFromError(new DwnError(
+        DwnErrorCode.RecordsReadInitialWriteNotFound,
+        'initial write for deleted record not found'
+      ), 400);
+    }
+
+    // Authorize against the newest RecordsWrite so that mutable properties like `published`
+    // reflect the record's state at the time of deletion, not just the initial write.
+    let newestWrite;
+    try {
+      newestWrite = await RecordsWrite.fetchNewestRecordsWrite(this.deps.messageStore, tenant, recordId);
+    } catch {
+      // If newest write is not found (should not happen since initial write exists),
+      // fall back to the initial write for authorization.
+      newestWrite = initialWrite;
+    }
+    const parsedNewestWrite = await RecordsWrite.parse(newestWrite);
+
+    try {
+      await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps);
+    } catch (error) {
+      return messageReplyFromError(error, 401);
+    }
+
+    return {
+      status : { code: 404, detail: 'Not Found' },
+      entry  : {
+        recordsDelete: recordsDeleteMessage,
+        initialWrite,
+      }
+    };
+  }
 
   /**
    * @param messageStore Used to check if the grant has been revoked.

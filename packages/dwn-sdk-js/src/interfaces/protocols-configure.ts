@@ -8,6 +8,7 @@ import type {
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import Ajv from 'ajv/dist/2020.js';
+import { DwnConstant } from '../core/dwn-constant.js';
 import { Message } from '../core/message.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorization.js';
@@ -244,6 +245,13 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         throw new DwnError(
           DwnErrorCode.ProtocolsConfigureInvalidRecordLimit,
           `Invalid $recordLimit.max value ${max} at protocol path '${ruleSetProtocolPath}': must be an integer >= 1.`
+        );
+      }
+
+      if (max > DwnConstant.maxRecordLimit) {
+        throw new DwnError(
+          DwnErrorCode.ProtocolsConfigureInvalidRecordLimit,
+          `Invalid $recordLimit.max value ${max} at protocol path '${ruleSetProtocolPath}': must be <= ${DwnConstant.maxRecordLimit}.`
         );
       }
 

@@ -56,14 +56,18 @@ import type { ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
 // Runtime helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Checks whether a DWN response status indicates that the record limit
- * has been exceeded. The DWN engine returns a 400 status with a detail
- * message containing "record limit" when `$recordLimit` rejects a write.
- */
-function isRecordLimitExceeded(status: { code: number; detail: string }): boolean {
-  return status.code === 400 && status.detail.includes('record limit');
-}
+type SingletonRecord = {
+  id: string;
+  update(options: Record<string, unknown>): Promise<DwnResponseStatus & { record?: unknown }>;
+};
+
+type SingletonQueryResult = {
+  records: SingletonRecord[];
+};
+
+type SingletonWriteResult = DwnResponseStatus & {
+  record?: SingletonRecord;
+};
 
 /**
  * Checks whether a protocol rule set at a given path is a singleton
@@ -110,6 +114,47 @@ function getChildKeys(definition: ProtocolDefinition, path: string): string[] {
   return Object.keys(node).filter((k) => !k.startsWith('$'));
 }
 
+async function querySingletonRecord(
+  typed: TypedEnbox<ProtocolDefinition, SchemaMap>,
+  path: string,
+  options?: Record<string, unknown>,
+): Promise<SingletonRecord | undefined> {
+  const { records } = await typed.records.query(path, options as never) as unknown as SingletonQueryResult;
+  return records[0];
+}
+
+async function updateSingletonRecord(record: SingletonRecord, options: Record<string, unknown>): Promise<unknown> {
+  const { status, record: updatedRecord } = await record.update({
+    data: options.data,
+    ...(options.tags === undefined ? {} : { tags: options.tags }),
+  });
+  return { status, record: updatedRecord };
+}
+
+async function createSingletonRecord(
+  typed: TypedEnbox<ProtocolDefinition, SchemaMap>,
+  path: string,
+  options: Record<string, unknown>,
+): Promise<SingletonWriteResult> {
+  const result = await typed.records.create(path, options as never);
+  return result as unknown as SingletonWriteResult;
+}
+
+async function setSingletonRecord(
+  typed: TypedEnbox<ProtocolDefinition, SchemaMap>,
+  path: string,
+  createOptions: Record<string, unknown>,
+  queryOptions?: Record<string, unknown>,
+): Promise<unknown> {
+  const existingRecord = await querySingletonRecord(typed, path, queryOptions);
+  if (existingRecord !== undefined) {
+    return updateSingletonRecord(existingRecord, createOptions);
+  }
+
+  const createResult = await createSingletonRecord(typed, path, createOptions);
+  return { status: createResult.status, record: createResult.record };
+}
+
 // ---------------------------------------------------------------------------
 // CRUD method builders
 // ---------------------------------------------------------------------------
@@ -153,10 +198,8 @@ function buildRootCollectionMethods(
 /**
  * Build singleton CRUD methods for a root-level path.
  *
- * Uses a create-first strategy: attempts to create a new record, and if the
- * DWN rejects it because the record limit is reached, falls back to querying
- * the existing record and updating it. This avoids the race condition inherent
- * in query-then-create/update.
+ * `set()` preserves singleton upsert semantics over DWN `$recordLimit` scopes:
+ * update the current projected singleton when it exists, otherwise create one.
  */
 function buildRootSingletonMethods(
   typed: TypedEnbox<ProtocolDefinition, SchemaMap>,
@@ -164,22 +207,7 @@ function buildRootSingletonMethods(
 ): Record<string, Function> {
   return {
     async set(options: Record<string, unknown>): Promise<unknown> {
-      // Attempt to create — if limit not yet reached, this succeeds.
-      const createResult = await typed.records.create(path, options as never);
-
-      if (isRecordLimitExceeded(createResult.status)) {
-        // Record limit hit — query existing and update.
-        const { records } = await typed.records.query(path);
-        if (records.length > 0) {
-          const { status, record } = await records[0].update({
-            data: options.data,
-            ...(options.tags === undefined ? {} : { tags: options.tags }),
-          } as never);
-          return { status, record };
-        }
-      }
-
-      return { status: createResult.status, record: createResult.record };
+      return setSingletonRecord(typed, path, options);
     },
 
     async get(): Promise<unknown> {
@@ -247,8 +275,8 @@ function buildNestedCollectionMethods(
 /**
  * Build singleton CRUD methods for a nested path.
  *
- * Uses the same create-first strategy as root singletons to avoid race
- * conditions between concurrent set() calls.
+ * Uses the same singleton upsert strategy as root singletons, scoped to the
+ * parent context.
  */
 function buildNestedSingletonMethods(
   typed: TypedEnbox<ProtocolDefinition, SchemaMap>,
@@ -256,28 +284,11 @@ function buildNestedSingletonMethods(
 ): Record<string, Function> {
   return {
     async set(parentContextId: string, options: Record<string, unknown>): Promise<unknown> {
-      // Attempt to create under this parent — succeeds if no record exists yet.
-      const createResult = await typed.records.create(path, {
+      const queryOptions = { filter: { contextId: parentContextId } };
+      return setSingletonRecord(typed, path, {
         ...options,
         parentContextId,
-      } as never);
-
-      if (isRecordLimitExceeded(createResult.status)) {
-        // Record limit hit — query existing under this parent and update.
-        const { records } = await typed.records.query(path, {
-          filter: { contextId: parentContextId },
-        } as never);
-
-        if (records.length > 0) {
-          const { status, record } = await records[0].update({
-            data: options.data,
-            ...(options.tags === undefined ? {} : { tags: options.tags }),
-          } as never);
-          return { status, record };
-        }
-      }
-
-      return { status: createResult.status, record: createResult.record };
+      }, queryOptions);
     },
 
     async get(parentContextId: string): Promise<unknown> {

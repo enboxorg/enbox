@@ -107,7 +107,6 @@ export enum DwnErrorCode {
   ProtocolAuthorizationMatchingRoleRecordNotFound = 'ProtocolAuthorizationMatchingRoleRecordNotFound',
   ProtocolAuthorizationMaxSizeInvalid = 'ProtocolAuthorizationMaxSizeInvalid',
   ProtocolAuthorizationMinSizeInvalid = 'ProtocolAuthorizationMinSizeInvalid',
-  ProtocolAuthorizationRecordLimitExceeded = 'ProtocolAuthorizationRecordLimitExceeded',
   ProtocolAuthorizationRecordLimitStrategyNotImplemented = 'ProtocolAuthorizationRecordLimitStrategyNotImplemented',
   ProtocolAuthorizationSquashNotEnabled = 'ProtocolAuthorizationSquashNotEnabled',
   ProtocolAuthorizationSquashNotInitialWrite = 'ProtocolAuthorizationSquashNotInitialWrite',

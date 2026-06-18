@@ -112,17 +112,6 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
-  public async countLatestRecordsAtScope(input: {
-    tenant: string;
-    protocol: string;
-    protocolPath: string;
-    contextIdPrefix?: string;
-  }): Promise<number> {
-    this.recordedReads.push({ method: 'countLatestRecordsAtScope' });
-    return this.inner.countLatestRecordsAtScope(input);
-  }
-
-  /** @inheritdoc */
   public async fetchLatestSquashRecordAtScope(input: {
     tenant: string;
     protocol: string;

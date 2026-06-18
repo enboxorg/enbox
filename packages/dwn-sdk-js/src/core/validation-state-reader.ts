@@ -274,28 +274,6 @@ export class StoreValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
-  public async countLatestRecordsAtScope(input: {
-    tenant: string;
-    protocol: string;
-    protocolPath: string;
-    contextIdPrefix?: string;
-  }): Promise<number> {
-    const filter: Filter = {
-      interface         : DwnInterfaceName.Records,
-      method            : DwnMethodName.Write,
-      isLatestBaseState : true,
-      protocol          : input.protocol,
-      protocolPath      : input.protocolPath,
-    };
-
-    if (input.contextIdPrefix !== undefined) {
-      filter.contextId = FilterUtility.constructPrefixFilterAsRangeFilter(input.contextIdPrefix);
-    }
-
-    return this.messageStore.count(input.tenant, [filter]);
-  }
-
-  /** @inheritdoc */
   public async fetchLatestSquashRecordAtScope(input: {
     tenant: string;
     protocol: string;

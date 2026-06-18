@@ -6,4 +6,10 @@ export class DwnConstant {
    * We currently encode using base64url which is a 33% increase in size.
    */
   public static readonly maxDataSizeAllowedToBeEncoded = 30_000;
+
+  /**
+   * Maximum supported `$recordLimit.max`. Read-time occupancy projection may load
+   * up to this many occupants per scope before applying the caller's filter/page.
+   */
+  public static readonly maxRecordLimit = 1000;
 }
