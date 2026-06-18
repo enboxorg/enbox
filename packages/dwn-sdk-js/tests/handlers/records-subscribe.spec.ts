@@ -1062,8 +1062,8 @@ export function testRecordsSubscribeHandler(): void {
             protocolRole: 'thread/participant',
           });
           const chatSubscribeReply = await dwn.processMessage(alice.did, chatSubscribe.message);
-          expect(chatSubscribeReply.status.code).toBe(401);
-          expect(chatSubscribeReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMissingContextId);
+          expect(chatSubscribeReply.status.code).toBe(400);
+          expect(chatSubscribeReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeFilterMissingRequiredProperties);
           expect(chatSubscribeReply.subscription).toBeUndefined();
         });
 

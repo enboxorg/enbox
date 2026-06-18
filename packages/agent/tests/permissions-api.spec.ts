@@ -462,17 +462,41 @@ describe('AgentPermissionsApi', () => {
       expect(grants[0].grant.id).toBe(grant.grant.id);
     });
 
-    it('should use only 2 DWN roundtrips when checking revocations', async () => {
+    it('should query revocations once per candidate grant when checking revocations', async () => {
+      await testHarness.agent.permissions.createGrant({
+        store       : true,
+        author      : aliceDid.uri,
+        grantedTo   : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Write,
+          protocol  : 'http://example.com/revocation-roundtrip-test'
+        }
+      });
+      await testHarness.agent.permissions.createGrant({
+        store       : true,
+        author      : aliceDid.uri,
+        grantedTo   : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Read,
+          protocol  : 'http://example.com/revocation-roundtrip-test'
+        }
+      });
+
       const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
 
       // fetch grants with revocation check (default)
       await testHarness.agent.permissions.fetchGrants({
-        author : aliceDid.uri,
-        target : aliceDid.uri,
+        author   : aliceDid.uri,
+        target   : aliceDid.uri,
+        protocol : 'http://example.com/revocation-roundtrip-test',
       });
 
-      // expect exactly 2 calls: one for grants query, one for revocations query
-      expect(processDwnRequestSpy).toHaveBeenCalledTimes(2);
+      // expect one grants query plus one revocation query per candidate grant
+      expect(processDwnRequestSpy).toHaveBeenCalledTimes(3);
     });
 
     it('should use only 1 DWN roundtrip when checkRevoked is false', async () => {

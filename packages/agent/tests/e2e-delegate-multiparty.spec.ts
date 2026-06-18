@@ -420,7 +420,13 @@ describe('e2e: delegate + multi-party encrypted protocol', () => {
         author        : walletIdentity.did.uri,
         target        : walletIdentity.did.uri,
         messageType   : DwnInterface.RecordsQuery,
-        messageParams : { filter: { protocol: chatProtocol.protocol, protocolPath: 'thread/chat' } },
+        messageParams : {
+          filter: {
+            protocol     : chatProtocol.protocol,
+            protocolPath : 'thread/chat',
+            contextId    : threadContextId,
+          }
+        },
       });
       const chatWrite = chatQuery.entries![0] as RecordsWriteMessage;
       expect(chatWrite.encryption).toBeDefined();

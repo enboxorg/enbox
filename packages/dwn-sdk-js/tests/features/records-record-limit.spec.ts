@@ -518,7 +518,7 @@ export function testRecordsRecordLimit(): void {
         expect((await readRecord({ author: alice, recordId: record2.message.recordId })).status.code).toBe(200);
       });
 
-      it('should project occupancy independently per exact parent context without scanning broad cross-context queries', async () => {
+      it('should project occupancy independently per exact parent context and reject broad cross-context queries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         const protocolDefinition: ProtocolDefinition = {
@@ -617,14 +617,16 @@ export function testRecordsRecordLimit(): void {
           room2Messages[0].message.recordId,
           room2Messages[1].message.recordId,
         ]);
-        expect((await queryProtocolRecordIds({ author: alice, protocol, protocolPath: 'room/message' })).recordIds).toEqual([
-          room1Messages[0].message.recordId,
-          room1Messages[1].message.recordId,
-          room1Messages[2].message.recordId,
-          room2Messages[0].message.recordId,
-          room2Messages[1].message.recordId,
-          room2Messages[2].message.recordId,
-        ]);
+        const broadQuery = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : {
+            protocol,
+            protocolPath: 'room/message',
+          },
+        });
+        const broadReply = await dwn.processMessage(alice.did, broadQuery.message) as RecordsQueryReply;
+        expect(broadReply.status.code).toBe(400);
+        expect(broadReply.status.detail).toContain(DwnErrorCode.RecordsQueryFilterMissingRequiredProperties);
       });
 
       it('should paginate over the projected occupant set for max:N scopes', async () => {

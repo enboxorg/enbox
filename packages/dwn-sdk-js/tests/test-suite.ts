@@ -25,6 +25,7 @@ import { testRecordsCountHandler } from './handlers/records-count.spec.js';
 import { testRecordsDeleteHandler } from './handlers/records-delete.spec.js';
 import { testRecordsDelivery } from './features/records-delivery.spec.js';
 import { testRecordsImmutable } from './features/records-immutable.spec.js';
+import { testRecordsNestedQueryScope } from './features/records-nested-query-scope.spec.js';
 import { testRecordsPrune } from './features/records-prune.spec.js';
 import { testRecordsPruneCrossProtocol } from './features/records-prune-cross-protocol.spec.js';
 import { testRecordsQueryHandler } from './handlers/records-query.spec.js';
@@ -86,6 +87,7 @@ export class TestSuite {
     testProtocolUpdateAction();
     testRecordsDelivery();
     testRecordsImmutable();
+    testRecordsNestedQueryScope();
     testRecordsPrune();
     testRecordsPruneCrossProtocol();
     testRecordsRecordLimit();

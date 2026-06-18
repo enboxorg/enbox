@@ -247,7 +247,8 @@ export function testRecordsSquash(): void {
           author : alice,
           filter : {
             protocol,
-            protocolPath: 'document/patch',
+            protocolPath : 'document/patch',
+            contextId    : documentContextId,
           },
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
@@ -305,7 +306,8 @@ export function testRecordsSquash(): void {
           author : alice,
           filter : {
             protocol,
-            protocolPath: 'document/patch',
+            protocolPath : 'document/patch',
+            contextId    : documentContextId,
           },
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
@@ -385,7 +387,8 @@ export function testRecordsSquash(): void {
           author : alice,
           filter : {
             protocol,
-            protocolPath: 'document/patch',
+            protocolPath : 'document/patch',
+            contextId    : documentContextId,
           },
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
@@ -600,6 +603,7 @@ export function testRecordsSquash(): void {
           filter : {
             protocol     : editorSquashProtocol.protocol,
             protocolPath : 'document/patch',
+            contextId    : documentContextId,
           },
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
@@ -1161,6 +1165,7 @@ export function testRecordsSquash(): void {
           filter : {
             protocol     : deletableSquashProtocol.protocol,
             protocolPath : 'document/patch',
+            contextId    : documentContextId,
           },
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);

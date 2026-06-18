@@ -3137,8 +3137,8 @@ export function testRecordsQueryHandler(): void {
             protocolRole: 'thread/participant',
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message) as RecordsQueryReply;
-          expect(chatQueryReply.status.code).toBe(401);
-          expect(chatQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMissingContextId);
+          expect(chatQueryReply.status.code).toBe(400);
+          expect(chatQueryReply.status.detail).toContain(DwnErrorCode.RecordsQueryFilterMissingRequiredProperties);
         });
 
         it('should reject root-level role authorized queries if a matching root-level role record is not found for the message author', async () => {
@@ -3546,7 +3546,7 @@ export function testRecordsQueryHandler(): void {
             expect(daveRoleQueryReply.status.code).toBe(401);
             expect(daveRoleQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
 
-            // Dave without a role — should get 200 but zero results (no records addressed to him)
+            // Dave without a role still must pin the nested query to a single parent context.
             const daveNoRoleQuery = await TestDataGenerator.generateRecordsQuery({
               author : dave,
               filter : {
@@ -3555,8 +3555,8 @@ export function testRecordsQueryHandler(): void {
               },
             });
             const daveNoRoleQueryReply = await dwn.processMessage(alice.did, daveNoRoleQuery.message) as RecordsQueryReply;
-            expect(daveNoRoleQueryReply.status.code).toBe(200);
-            expect(daveNoRoleQueryReply.entries?.length).toBe(0);
+            expect(daveNoRoleQueryReply.status.code).toBe(400);
+            expect(daveNoRoleQueryReply.status.detail).toContain(DwnErrorCode.RecordsQueryFilterMissingRequiredProperties);
           });
         });
       });
