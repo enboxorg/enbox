@@ -3141,6 +3141,33 @@ export function testRecordsQueryHandler(): void {
           expect(chatQueryReply.status.detail).toContain(DwnErrorCode.RecordsQueryFilterMissingRequiredProperties);
         });
 
+        it('rejects root-filter queries that invoke a nested role without a contextId', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition = threadRoleProtocolDefinition;
+
+          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition
+          });
+          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+          expect(protocolsConfigureReply.status.code).toBe(202);
+
+          const threadQuery = await TestDataGenerator.generateRecordsQuery({
+            author : bob,
+            filter : {
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'thread',
+            },
+            protocolRole: 'thread/participant',
+          });
+
+          const threadQueryReply = await dwn.processMessage(alice.did, threadQuery.message) as RecordsQueryReply;
+          expect(threadQueryReply.status.code).toBe(401);
+          expect(threadQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMissingContextId);
+        });
+
         it('should reject root-level role authorized queries if a matching root-level role record is not found for the message author', async () => {
           // scenario: Alice creates a thread and writes some chat messages writes a chat message.
           //           Bob invokes a root-level role but fails because he does not actually have a role.
@@ -3546,17 +3573,18 @@ export function testRecordsQueryHandler(): void {
             expect(daveRoleQueryReply.status.code).toBe(401);
             expect(daveRoleQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
 
-            // Dave without a role still must pin the nested query to a single parent context.
+            // Dave without a role still gets an empty result, not an error, when the nested query pins a single parent context.
             const daveNoRoleQuery = await TestDataGenerator.generateRecordsQuery({
               author : dave,
               filter : {
+                contextId    : threadRecord.message.contextId,
                 protocol     : mixedProtocol.protocol,
                 protocolPath : 'thread/chat',
               },
             });
             const daveNoRoleQueryReply = await dwn.processMessage(alice.did, daveNoRoleQuery.message) as RecordsQueryReply;
-            expect(daveNoRoleQueryReply.status.code).toBe(400);
-            expect(daveNoRoleQueryReply.status.detail).toContain(DwnErrorCode.RecordsQueryFilterMissingRequiredProperties);
+            expect(daveNoRoleQueryReply.status.code).toBe(200);
+            expect(daveNoRoleQueryReply.entries?.length).toBe(0);
           });
         });
       });
