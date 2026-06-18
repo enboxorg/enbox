@@ -1324,6 +1324,7 @@ describe('DwnApi', () => {
         // query for child records to confirm it exists
         const { status: childrenStatus, records: childrenRecords } = await dwnAlice.records.query({
           filter: {
+            contextId    : parentRecord.contextId,
             protocol     : protocol.definition.protocol,
             protocolPath : 'foo/bar'
           }
@@ -1343,6 +1344,7 @@ describe('DwnApi', () => {
         // query for child records to confirm it was deleted
         const { status: childrenStatusAfterDelete, records: childrenRecordsAfterDelete } = await dwnAlice.records.query({
           filter: {
+            contextId    : parentRecord.contextId,
             protocol     : protocol.definition.protocol,
             protocolPath : 'foo/bar'
           }

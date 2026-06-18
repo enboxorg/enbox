@@ -426,6 +426,7 @@ describe('E2E: same-owner profile sync convergence', () => {
     expect(pulledProfile.contextId).toBe(profileRecord.contextId);
 
     const pulledAvatar = await expectRecord(walletA, did, {
+      contextId    : profileRecord.contextId,
       protocol     : profileProtocol.protocol,
       protocolPath : 'profile/avatar',
       recordId     : avatarRecord.recordId,
@@ -434,6 +435,7 @@ describe('E2E: same-owner profile sync convergence', () => {
     expect(pulledAvatar.descriptor.parentId).toBe(profileRecord.recordId);
 
     const pulledHero = await expectRecord(walletA, did, {
+      contextId    : profileRecord.contextId,
       protocol     : profileProtocol.protocol,
       protocolPath : 'profile/hero',
       recordId     : heroRecord.recordId,
@@ -565,6 +567,7 @@ describe('E2E: same-owner identity discovery and profile sync convergence', () =
     expect(pulledProfile.contextId).toBe(profileRecord.contextId);
 
     const pulledAvatar = await expectRecord(walletA, did, {
+      contextId    : profileRecord.contextId,
       protocol     : profileProtocol.protocol,
       protocolPath : 'profile/avatar',
       recordId     : avatarRecord.recordId,
@@ -572,6 +575,7 @@ describe('E2E: same-owner identity discovery and profile sync convergence', () =
     expect(pulledAvatar.descriptor.parentId).toBe(profileRecord.recordId);
 
     const pulledHero = await expectRecord(walletA, did, {
+      contextId    : profileRecord.contextId,
       protocol     : profileProtocol.protocol,
       protocolPath : 'profile/hero',
       recordId     : heroRecord.recordId,
