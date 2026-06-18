@@ -482,8 +482,7 @@ async function createRemoteDwnStores(
     dataPath    : testDataLocation,
     dataStore,
     didResolver : testHarness.agent.did,
-    eventLog,
-    messageStore,
+    messageLog  : { eventLog, messageStore },
     resumableTaskStore,
   });
 
