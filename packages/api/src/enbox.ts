@@ -454,17 +454,18 @@ export class Enbox {
     // Explicit allowlist — every key must exist on `AuthManagerOptions`
     // (verified by `satisfies` below).
     const allowlisted = {
-      agent            : options.agent,
-      agentVault       : options.agentVault,
-      localDwnStrategy : options.localDwnStrategy,
-      dataPath         : options.dataPath,
-      storage          : options.storage,
-      password         : options.password,
-      passwordProvider : options.passwordProvider,
-      sync             : options.sync,
-      dwnEndpoints     : options.dwnEndpoints,
-      registration     : options.registration,
-      connectHandler   : options.connectHandler,
+      agent                 : options.agent,
+      agentVault            : options.agentVault,
+      localDwnStrategy      : options.localDwnStrategy,
+      dataPath              : options.dataPath,
+      storage               : options.storage,
+      password              : options.password,
+      passwordProvider      : options.passwordProvider,
+      sync                  : options.sync,
+      identitySyncProtocols : options.identitySyncProtocols,
+      dwnEndpoints          : options.dwnEndpoints,
+      registration          : options.registration,
+      connectHandler        : options.connectHandler,
     } satisfies Partial<AuthManagerOptions>;
     return omitUndefined(allowlisted);
   }
@@ -498,16 +499,17 @@ export class Enbox {
     // `ConnectOptions` union (verified by `satisfies` below).
     const allowlisted = {
       // Shared across handler + local
-      password       : options.password,
-      sync           : options.sync,
-      dwnEndpoints   : options.dwnEndpoints,
+      password              : options.password,
+      sync                  : options.sync,
+      identitySyncProtocols : options.identitySyncProtocols,
+      dwnEndpoints          : options.dwnEndpoints,
       // Handler-only
-      protocols      : options.protocols,
-      connectHandler : options.connectHandler,
+      protocols             : options.protocols,
+      connectHandler        : options.connectHandler,
       // Local-only
-      recoveryPhrase : options.recoveryPhrase,
-      createIdentity : options.createIdentity,
-      metadata       : options.metadata,
+      recoveryPhrase        : options.recoveryPhrase,
+      createIdentity        : options.createIdentity,
+      metadata              : options.metadata,
     } satisfies Partial<HandlerConnectOptions & VaultConnectOptions>;
 
     // Normalize `protocols: []` to undefined so omitUndefined strips it.

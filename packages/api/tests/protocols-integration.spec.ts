@@ -1,9 +1,14 @@
 /**
- * Integration tests for `@enbox/protocols` definitions.
+ * Integration tests for protocol-shaped API fixtures.
  *
  * These tests configure each protocol on a real DWN, write records, read them
  * back, and verify end-to-end correctness — including singleton upsert
  * semantics, nested record creation, and tag enforcement.
+ *
+ * The fixtures intentionally live in this test file instead of importing
+ * `@enbox/protocols`. `@enbox/protocols` depends on `@enbox/api`; importing it
+ * from this package's tests would create an api -> protocols -> api workspace
+ * cycle.
  *
  * Protocols that compose with the Social Graph via `uses` require the Social
  * Graph protocol to be installed first. Friend/collaborator-only actions
@@ -16,19 +21,14 @@
  */
 
 import type { BearerDid } from '@enbox/dids';
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import {
-  ConnectProtocol,
-  ListsProtocol,
-  ProfileProtocol,
-  SocialGraphProtocol,
-  StatusProtocol,
-} from '@enbox/protocols';
 import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
 
+import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { repository } from '../src/repository.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -36,12 +36,341 @@ import { TypedEnbox } from '../src/typed-enbox.js';
 import { TypedRecord } from '../src/typed-record.js';
 
 // ---------------------------------------------------------------------------
+// Local protocol fixtures
+// ---------------------------------------------------------------------------
+
+type SocialGraphSchemaMap = {
+  friend: { did: string; alias?: string; note?: string };
+  block: { did: string; reason?: string };
+  group: { name: string; description?: string; icon?: string };
+  member: { did: string; alias?: string };
+};
+
+const SocialGraphDefinition = {
+  protocol  : 'https://identity.foundation/protocols/social-graph',
+  published : true,
+  types     : {
+    friend: {
+      schema      : 'https://identity.foundation/schemas/social-graph/friend',
+      dataFormats : ['application/json'],
+    },
+    block: {
+      schema      : 'https://identity.foundation/schemas/social-graph/block',
+      dataFormats : ['application/json'],
+    },
+    group: {
+      schema      : 'https://identity.foundation/schemas/social-graph/group',
+      dataFormats : ['application/json'],
+    },
+    member: {
+      schema      : 'https://identity.foundation/schemas/social-graph/member',
+      dataFormats : ['application/json'],
+    },
+  },
+  structure: {
+    friend: {
+      $role    : true,
+      $actions : [
+        { who: 'anyone', can: ['create'] },
+        { who: 'author', of: 'friend', can: ['read'] },
+      ],
+      $tags: {
+        $requiredTags       : ['did'],
+        $allowUndefinedTags : false,
+        did                 : { type: 'string' },
+      },
+    },
+    block: {
+      $actions: [
+        { who: 'anyone', can: ['create'] },
+      ],
+      $tags: {
+        $requiredTags       : ['did'],
+        $allowUndefinedTags : false,
+        did                 : { type: 'string' },
+      },
+    },
+    group: {
+      $actions: [
+        { who: 'anyone', can: ['read'] },
+      ],
+      member: {
+        $actions: [
+          { who: 'anyone', can: ['read'] },
+        ],
+        $tags: {
+          $requiredTags       : ['did'],
+          $allowUndefinedTags : false,
+          did                 : { type: 'string' },
+        },
+      },
+    },
+  },
+} as const satisfies ProtocolDefinition;
+
+const SocialGraphProtocol = defineProtocol(
+  SocialGraphDefinition,
+  {} as SocialGraphSchemaMap,
+);
+
+type ProfileSchemaMap = {
+  profile: {
+    displayName: string;
+    bio?: string;
+    tagline?: string;
+    location?: string;
+    website?: string;
+    pronouns?: string;
+  };
+  avatar: Blob;
+  hero: Blob;
+  link: { url: string; title: string; icon?: string; sortOrder?: number };
+  privateNote: { content: string };
+};
+
+const ProfileDefinition = {
+  protocol  : 'https://identity.foundation/protocols/profile',
+  published : true,
+  uses      : {
+    social: 'https://identity.foundation/protocols/social-graph',
+  },
+  types: {
+    profile: {
+      schema      : 'https://identity.foundation/schemas/profile/profile',
+      dataFormats : ['application/json'],
+    },
+    avatar: {
+      dataFormats: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+    },
+    hero: {
+      dataFormats: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+    },
+    link: {
+      schema      : 'https://identity.foundation/schemas/profile/link',
+      dataFormats : ['application/json'],
+    },
+    privateNote: {
+      schema      : 'https://identity.foundation/schemas/profile/private-note',
+      dataFormats : ['application/json'],
+    },
+  },
+  structure: {
+    profile: {
+      $recordLimit : { max: 1, strategy: 'reject' },
+      $size        : { max: 10000 },
+      $actions     : [
+        { who: 'anyone', can: ['read'] },
+      ],
+      avatar: {
+        $recordLimit : { max: 1, strategy: 'reject' },
+        $size        : { max: 12582912 },
+        $actions     : [
+          { who: 'anyone', can: ['read'] },
+        ],
+      },
+      hero: {
+        $recordLimit : { max: 1, strategy: 'reject' },
+        $size        : { max: 25165824 },
+        $actions     : [
+          { who: 'anyone', can: ['read'] },
+        ],
+      },
+      link: {
+        $actions: [
+          { who: 'anyone', can: ['read'] },
+        ],
+      },
+    },
+    privateNote: {
+      $actions: [
+        { role: 'social:friend', can: ['read'] },
+      ],
+    },
+  },
+} as const satisfies ProtocolDefinition;
+
+const ProfileProtocol = defineProtocol(
+  ProfileDefinition,
+  {} as ProfileSchemaMap,
+);
+
+type ConnectSchemaMap = {
+  wallet: { webWallets: string[] };
+};
+
+const ConnectDefinition = {
+  protocol  : 'https://identity.foundation/protocols/connect',
+  published : true,
+  types     : {
+    wallet: {
+      schema      : 'https://identity.foundation/schemas/connect/wallet',
+      dataFormats : ['application/json'],
+    },
+  },
+  structure: {
+    wallet: {
+      $recordLimit : { max: 1, strategy: 'reject' },
+      $actions     : [
+        { who: 'anyone', can: ['read'] },
+      ],
+    },
+  },
+} as const satisfies ProtocolDefinition;
+
+const ConnectProtocol = defineProtocol(
+  ConnectDefinition,
+  {} as ConnectSchemaMap,
+);
+
+type StatusSchemaMap = {
+  status: {
+    text: string;
+    emoji?: string;
+    activity?: 'online' | 'away' | 'busy' | 'offline';
+    expiresAt?: string;
+  };
+  reaction: { emoji: string };
+};
+
+const StatusDefinition = {
+  protocol  : 'https://identity.foundation/protocols/status',
+  published : true,
+  uses      : {
+    social: 'https://identity.foundation/protocols/social-graph',
+  },
+  types: {
+    status: {
+      schema      : 'https://identity.foundation/schemas/status/status',
+      dataFormats : ['application/json'],
+    },
+    reaction: {
+      schema      : 'https://identity.foundation/schemas/status/reaction',
+      dataFormats : ['application/json'],
+    },
+  },
+  structure: {
+    status: {
+      $size    : { max: 5000 },
+      $actions : [
+        { who: 'anyone', can: ['read'] },
+        { role: 'social:friend', can: ['read'] },
+      ],
+      reaction: {
+        $actions: [
+          { role: 'social:friend', can: ['create', 'read', 'delete'] },
+        ],
+      },
+    },
+  },
+} as const satisfies ProtocolDefinition;
+
+const StatusProtocol = defineProtocol(
+  StatusDefinition,
+  {} as StatusSchemaMap,
+);
+
+type ListsSchemaMap = {
+  list: {
+    name: string;
+    description?: string;
+    icon?: string;
+    listType: 'todo' | 'bookmarks' | 'reading' | 'custom';
+  };
+  item: { title: string; url?: string; note?: string; completed?: boolean; sortOrder?: number };
+  folder: { name: string; icon?: string; sortOrder?: number };
+  collaborator: { did: string; alias?: string };
+  comment: { text: string };
+};
+
+const ListsDefinition = {
+  protocol  : 'https://identity.foundation/protocols/lists',
+  published : false,
+  uses      : {
+    social: 'https://identity.foundation/protocols/social-graph',
+  },
+  types: {
+    list: {
+      schema      : 'https://identity.foundation/schemas/lists/list',
+      dataFormats : ['application/json'],
+    },
+    item: {
+      schema      : 'https://identity.foundation/schemas/lists/item',
+      dataFormats : ['application/json'],
+    },
+    folder: {
+      schema      : 'https://identity.foundation/schemas/lists/folder',
+      dataFormats : ['application/json'],
+    },
+    collaborator: {
+      schema      : 'https://identity.foundation/schemas/lists/collaborator',
+      dataFormats : ['application/json'],
+    },
+    comment: {
+      schema      : 'https://identity.foundation/schemas/lists/comment',
+      dataFormats : ['application/json'],
+    },
+  },
+  structure: {
+    list: {
+      $actions: [
+        { role: 'social:friend', can: ['read'] },
+      ],
+      $tags: {
+        $requiredTags       : ['listType'],
+        $allowUndefinedTags : false,
+        listType            : { type: 'string', enum: ['todo', 'bookmarks', 'reading', 'custom'] },
+      },
+      item: {
+        $actions: [
+          { role: 'social:friend', can: ['read'] },
+          { role: 'list/collaborator', can: ['create', 'read', 'update', 'delete'] },
+        ],
+        $tags: {
+          $allowUndefinedTags : true,
+          parentItemId        : { type: 'string' },
+        },
+        comment: {
+          $actions: [
+            { role: 'list/collaborator', can: ['create', 'read'] },
+          ],
+        },
+      },
+      collaborator: {
+        $role    : true,
+        $actions : [
+          { who: 'anyone', can: ['read'] },
+        ],
+        $tags: {
+          $requiredTags       : ['did'],
+          $allowUndefinedTags : false,
+          did                 : { type: 'string' },
+        },
+      },
+    },
+    folder: {
+      $tags: {
+        $allowUndefinedTags : true,
+        sortOrder           : { type: 'number' },
+      },
+      folder: {
+        folder: {},
+      },
+    },
+  },
+} as const satisfies ProtocolDefinition;
+
+const ListsProtocol = defineProtocol(
+  ListsDefinition,
+  {} as ListsSchemaMap,
+);
+
+// ---------------------------------------------------------------------------
 // Test setup
 // ---------------------------------------------------------------------------
 
 const testDwnUrls: string[] = [testDwnUrl];
 
-describe('@enbox/protocols integration', () => {
+describe('protocol API integration fixtures', () => {
   let aliceDid: BearerDid;
   let dwnAlice: DwnApi;
   let testHarness: PlatformAgentTestHarness;
