@@ -15,6 +15,7 @@ import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { DataStream, DwnConstant } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../../src/test-harness.js';
@@ -22,6 +23,7 @@ import { TestAgent } from '../utils/test-agent.js';
 import { testDwnUrl } from '../utils/test-config.js';
 
 const testDwnUrls = [testDwnUrl];
+const largeDataSize = DwnConstant.maxDataSizeAllowedToBeEncoded + 1_000;
 
 const chatProtocol: ProtocolDefinition = {
   published : true,
@@ -169,8 +171,111 @@ describe('E2E: live sync convergence', () => {
     }, 10_000);
   }, 20_000);
 
+  it('should push a large locally written record to the remote DWN via live sync', async () => {
+    const dataBytes = largePayloadBytes(0x61);
+    const writeResult = await harness.agent.dwn.processRequest({
+      author        : aliceDid,
+      target        : aliceDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'message',
+        schema       : chatProtocol.types.message.schema,
+        dataFormat   : 'text/plain',
+      },
+      dataStream: new Blob([dataBytes]),
+    });
+    expect(writeResult.reply.status.code).toBe(202);
+
+    await expectLargeRecordData('remote', writeResult.message!.recordId, dataBytes);
+  }, 30_000);
+
+  it('should pull a large remote-only record to local via live sync', async () => {
+    const dataBytes = largePayloadBytes(0x62);
+    const remoteWrite = await harness.agent.dwn.sendRequest({
+      author        : aliceDid,
+      target        : aliceDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'message',
+        schema       : chatProtocol.types.message.schema,
+        dataFormat   : 'text/plain',
+      },
+      dataStream: new Blob([dataBytes]),
+    });
+    expect(remoteWrite.reply.status.code).toBe(202);
+
+    await expectLargeRecordData('local', remoteWrite.message!.recordId, dataBytes);
+  }, 30_000);
+
   it('should report healthy sync with zero failed messages', async () => {
     const health = await harness.agent.sync.getSyncHealth();
     expect(health.failedMessageCount).toBe(0);
   });
+
+  function largePayloadBytes(fill: number): Uint8Array {
+    return new Uint8Array(largeDataSize).fill(fill);
+  }
+
+  async function expectLargeRecordData(
+    location: 'local' | 'remote',
+    recordId: string,
+    expectedBytes: Uint8Array,
+  ): Promise<void> {
+    await waitFor(async () => {
+      const record = await readRecordData(location, recordId);
+      return record !== undefined &&
+        record.dataSize === expectedBytes.byteLength &&
+        bytesEqual(record.dataBytes, expectedBytes);
+    }, 15_000);
+
+    const record = await readRecordData(location, recordId);
+    expect(record).toBeDefined();
+    expect(record!.dataSize).toBe(expectedBytes.byteLength);
+    expect(record!.dataBytes.byteLength).toBe(expectedBytes.byteLength);
+    expect(bytesEqual(record!.dataBytes, expectedBytes)).toBe(true);
+  }
+
+  async function readRecordData(
+    location: 'local' | 'remote',
+    recordId: string,
+  ): Promise<{ dataBytes: Uint8Array; dataSize: number } | undefined> {
+    const request = {
+      author        : aliceDid,
+      target        : aliceDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : { filter: { recordId } },
+    };
+    const { reply } = location === 'local'
+      ? await harness.agent.dwn.processRequest(request)
+      : await harness.agent.dwn.sendRequest(request);
+
+    if (reply.status.code !== 200 || reply.entry?.data === undefined) {
+      return undefined;
+    }
+
+    const dataSize = reply.entry.recordsWrite?.descriptor.dataSize;
+    if (typeof dataSize !== 'number') {
+      return undefined;
+    }
+
+    return {
+      dataBytes: await DataStream.toBytes(reply.entry.data),
+      dataSize,
+    };
+  }
+
+  function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.byteLength !== b.byteLength) {
+      return false;
+    }
+
+    for (let i = 0; i < a.byteLength; i++) {
+      if (a[i] !== b[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
 });
