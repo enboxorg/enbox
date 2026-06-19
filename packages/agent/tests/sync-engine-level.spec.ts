@@ -2922,6 +2922,26 @@ describe('SyncEngineLevel', () => {
       });
     });
 
+    describe('sync health', () => {
+      it('should report paused current links as degraded', async () => {
+        const did = alice.did.uri;
+        await syncEngine.registerIdentity({
+          did     : did,
+          options : { protocols: 'all' },
+        });
+
+        const [target] = await syncEngine['getSyncTargets']();
+        expect(target).toBeDefined();
+        const link = await syncEngine['getOrCreateReplicationLink'](target!);
+        await syncEngine['ledger'].setStatus(link, 'paused');
+
+        const health = await syncEngine.getSyncHealth();
+
+        expect(health.degradedLinkCount).toBe(1);
+        expect(health.syncHealthy).toBe(false);
+      });
+    });
+
     // -----------------------------------------------------------------------
     // Issue #898: Multi-identity live sync correctness hardening
     // -----------------------------------------------------------------------

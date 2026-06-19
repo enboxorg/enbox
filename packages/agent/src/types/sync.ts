@@ -242,10 +242,9 @@ export type DirectionCheckpoint = {
  * - `live` — actively receiving events via subscription.
  * - `polling` — current link is reconciled by periodic durable feed sync; live subscription is not supported for its scope.
  * - `repairing` — gap detected or pending overflow; running durable feed repair.
- * - `terminal_incomplete` — admission failed with a terminal dependency error; requires a new scope/authorization epoch.
- * - `paused` — explicitly paused by the application.
+ * - `paused` — link retries are stopped until the app updates registration or recreates the link.
  */
-export type LinkStatus = 'initializing' | 'live' | 'polling' | 'repairing' | 'terminal_incomplete' | 'paused';
+export type LinkStatus = 'initializing' | 'live' | 'polling' | 'repairing' | 'paused';
 
 /**
  * Durable state of a single replication link. Persisted to LevelDB and
@@ -451,7 +450,7 @@ export type SyncHealthSummary = {
    * to callers.
    */
   admissionFailureCount: number;
-  /** Number of current sync links in `repairing` or `terminal_incomplete` status. */
+  /** Number of current sync links in `repairing` or `paused` status. */
   degradedLinkCount: number;
   /** True only when there are no failed messages or degraded links. */
   syncHealthy: boolean;
