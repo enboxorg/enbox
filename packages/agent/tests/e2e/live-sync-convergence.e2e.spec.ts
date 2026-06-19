@@ -2,10 +2,11 @@
  * E2E: Live sync push + pull convergence.
  *
  * Creates an agent, writes a record locally, and verifies it appears on
- * the remote DWN via live sync push. Then pulls from the remote to verify
- * the round-trip. Proves the full pipeline:
+ * the remote DWN via live sync push. Then writes directly to the remote
+ * and verifies the live pull subscription applies the record locally.
+ * Proves the full pipeline:
  *   local write -> EventLog -> live push subscription -> remote DWN
- *   remote DWN -> durable feed pull -> local DWN
+ *   remote DWN -> live pull subscription -> local DWN
  *
  * Requires: DWN server running on localhost:3000 (or TEST_DWN_URL),
  *           Pkarr relay on localhost:7527 (or DID_DHT_GATEWAY_URI).
@@ -33,6 +34,21 @@ const chatProtocol: ProtocolDefinition = {
   },
   structure: { message: {} },
 };
+
+async function waitFor(
+  condition: () => Promise<boolean> | boolean,
+  timeoutMs: number,
+  intervalMs: number = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await condition()) {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+}
 
 describe('E2E: live sync convergence', () => {
   let harness: PlatformAgentTestHarness;
@@ -72,10 +88,8 @@ describe('E2E: live sync convergence', () => {
       did     : aliceDid,
       options : { protocols: [chatProtocol.protocol] },
     });
-    harness.agent.sync.startSync({ mode: 'live', interval: '30s' });
-
-    // Wait for initial sync to settle.
-    await new Promise(r => setTimeout(r, 2_000));
+    await harness.agent.sync.startSync({ mode: 'live', interval: '30s' });
+    expect(harness.agent.sync.hasActiveSubscriptions).toBe(true);
   }, 30_000);
 
   afterAll(async () => {
@@ -102,10 +116,7 @@ describe('E2E: live sync convergence', () => {
     expect(writeResult.reply.status.code).toBe(202);
     recordId = writeResult.message!.recordId;
 
-    // Wait for live sync to push to the remote (up to 10s).
-    const deadline = Date.now() + 10_000;
-    let found = false;
-    while (Date.now() < deadline) {
+    await waitFor(async () => {
       const remoteResult = await harness.agent.dwn.sendRequest({
         author        : aliceDid,
         target        : aliceDid,
@@ -114,22 +125,11 @@ describe('E2E: live sync convergence', () => {
           filter: { protocol: chatProtocol.protocol, recordId },
         },
       });
-      if (remoteResult.reply.status.code === 200 && remoteResult.reply.entries?.length) {
-        found = true;
-        break;
-      }
-      await new Promise(r => setTimeout(r, 500));
-    }
-
-    expect(found).toBe(true);
+      return remoteResult.reply.status.code === 200 && (remoteResult.reply.entries?.length ?? 0) > 0;
+    }, 10_000);
   }, 20_000);
 
-  it('should pull a remote-only record to local via durable feed sync', async () => {
-    // Stop sync so we can create a record on the remote that the local
-    // agent doesn't know about — then verify pull brings it down.
-    await harness.agent.sync.stopSync();
-
-    // Write a new record directly to the remote (bypassing local DWN).
+  it('should pull a remote-only record to local via live sync', async () => {
     const pullTestData = Convert.string('pull convergence test').toUint8Array();
     const remoteWrite = await harness.agent.dwn.sendRequest({
       author        : aliceDid,
@@ -146,7 +146,6 @@ describe('E2E: live sync convergence', () => {
     expect(remoteWrite.reply.status.code).toBe(202);
     const pullRecordId = remoteWrite.message!.recordId;
 
-    // Verify it does NOT exist locally yet.
     const beforePull = await harness.agent.dwn.processRequest({
       author        : aliceDid,
       target        : aliceDid,
@@ -157,20 +156,17 @@ describe('E2E: live sync convergence', () => {
     });
     expect(beforePull.reply.entries?.length ?? 0).toBe(0);
 
-    // Pull from the remote via durable feed sync.
-    await harness.agent.sync.sync('pull');
-
-    // The record should now exist locally.
-    const afterPull = await harness.agent.dwn.processRequest({
-      author        : aliceDid,
-      target        : aliceDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: { protocol: chatProtocol.protocol, recordId: pullRecordId },
-      },
-    });
-    expect(afterPull.reply.status.code).toBe(200);
-    expect(afterPull.reply.entries?.length).toBe(1);
+    await waitFor(async () => {
+      const afterPull = await harness.agent.dwn.processRequest({
+        author        : aliceDid,
+        target        : aliceDid,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: { protocol: chatProtocol.protocol, recordId: pullRecordId },
+        },
+      });
+      return afterPull.reply.status.code === 200 && afterPull.reply.entries?.length === 1;
+    }, 10_000);
   }, 20_000);
 
   it('should report healthy sync with zero failed messages', async () => {
