@@ -92,9 +92,9 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
       options: { protocols: [todoProtocol.protocol] },
     });
 
-    // Start live sync and let it settle (establishes pull WebSocket subscription).
-    harness.agent.sync.startSync({ mode: 'live', interval: '30s' });
-    await new Promise(r => setTimeout(r, 3_000));
+    // Start live sync and establish the pull WebSocket subscription.
+    await harness.agent.sync.startSync({ mode: 'live', interval: '30s' });
+    expect(harness.agent.sync.hasActiveSubscriptions).toBe(true);
   }, 30_000);
 
   afterAll(async () => {
