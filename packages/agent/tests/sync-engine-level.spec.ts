@@ -2922,6 +2922,144 @@ describe('SyncEngineLevel', () => {
       });
     });
 
+    describe('sync health', () => {
+      it('should report paused current links as degraded', async () => {
+        const did = alice.did.uri;
+        await syncEngine.registerIdentity({
+          did     : did,
+          options : { protocols: 'all' },
+        });
+
+        const [target] = await syncEngine['getSyncTargets']();
+        expect(target).toBeDefined();
+        const link = await syncEngine['getOrCreateReplicationLink'](target!);
+        await syncEngine['ledger'].setStatus(link, 'paused');
+
+        const health = await syncEngine.getSyncHealth();
+
+        expect(health.degradedLinkCount).toBe(1);
+        expect(health.syncHealthy).toBe(false);
+      });
+    });
+
+    describe('paused repair behavior', () => {
+      it('should not transition paused links back to repairing or schedule repair retries', async () => {
+        const did = alice.did.uri;
+        const dwnUrl = testDwnUrls[0];
+        const link = await syncEngine['ledger'].getOrCreateLink({
+          tenantDid          : did,
+          remoteEndpoint     : dwnUrl,
+          scope              : { kind: 'full' },
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+        });
+        const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
+        link.status = 'paused';
+        syncEngine['_activeLinks'].set(linkKey, link);
+
+        const statusSpy = sinon.spy(syncEngine as any, 'setLinkOfflineStatus');
+        const repairStub = sinon.stub(syncEngine as any, 'repairLink').resolves();
+
+        await syncEngine['transitionToRepairing'](linkKey, link);
+        syncEngine['scheduleRepairRetry'](linkKey);
+
+        expect(statusSpy.called).toBe(false);
+        expect(repairStub.called).toBe(false);
+        expect(syncEngine['_repairRetryTimers'].has(linkKey)).toBe(false);
+      });
+
+      it('should pause a live link only once and leave it degraded', async () => {
+        const did = alice.did.uri;
+        const dwnUrl = testDwnUrls[0];
+        const link = await syncEngine['ledger'].getOrCreateLink({
+          tenantDid          : did,
+          remoteEndpoint     : dwnUrl,
+          scope              : { kind: 'full' },
+          authorization      : { kind: 'owner' },
+          authorizationEpoch : 'owner-epoch',
+        });
+        const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
+        link.status = 'live';
+
+        const closeStub = sinon.stub(syncEngine as any, 'closeLinkSubscriptions').resolves();
+
+        await syncEngine['transitionToPaused'](linkKey, link);
+        await syncEngine['transitionToPaused'](linkKey, link);
+
+        expect(link.status).toBe('paused');
+        expect(closeStub.calledOnce).toBe(true);
+      });
+
+      it('should schedule another repair retry when a retry attempt fails below the attempt ceiling', async () => {
+        const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+        try {
+          const did = alice.did.uri;
+          const dwnUrl = testDwnUrls[0];
+          const link = await syncEngine['ledger'].getOrCreateLink({
+            tenantDid          : did,
+            remoteEndpoint     : dwnUrl,
+            scope              : { kind: 'full' },
+            authorization      : { kind: 'owner' },
+            authorizationEpoch : 'owner-epoch',
+          });
+          const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
+          link.status = 'repairing';
+          syncEngine['_activeLinks'].set(linkKey, link);
+          syncEngine['_repairAttempts'].set(linkKey, 1);
+
+          const repairStub = sinon.stub(syncEngine as any, 'repairLink').rejects(new Error('still broken'));
+
+          syncEngine['scheduleRepairRetry'](linkKey);
+          await clock.tickAsync(1_000);
+
+          expect(repairStub.calledOnce).toBe(true);
+          expect(syncEngine['_repairRetryTimers'].has(linkKey)).toBe(true);
+        } finally {
+          for (const retryTimer of syncEngine['_repairRetryTimers'].values()) {
+            clearTimeout(retryTimer);
+          }
+          syncEngine['_repairRetryTimers'].clear();
+          clock.restore();
+        }
+      });
+
+      it('should pause the link after repeated feed convergence mismatches', async () => {
+        const did = alice.did.uri;
+        const dwnUrl = testDwnUrls[0];
+        const target = {
+          did                : did,
+          dwnUrl             : dwnUrl,
+          scope              : { kind: 'full' as const },
+          authorization      : { kind: 'owner' as const },
+          authorizationEpoch : 'owner-epoch',
+        };
+        const link = await syncEngine['ledger'].getOrCreateLink({
+          tenantDid          : did,
+          remoteEndpoint     : dwnUrl,
+          scope              : target.scope,
+          authorization      : target.authorization,
+          authorizationEpoch : target.authorizationEpoch,
+        });
+        const linkKey = `${did}^${dwnUrl}^${link.projectionId}^${link.authorizationEpoch}`;
+        const result = {
+          admittedCids       : [],
+          converged          : false,
+          hasActionableDiffs : true,
+          pushFailures       : [],
+        };
+
+        const mismatchStub = sinon.stub(syncEngine as any, 'handleFeedConvergenceMismatch').resolves();
+        const pauseStub = sinon.stub(syncEngine as any, 'transitionToPaused').resolves();
+
+        await syncEngine['handleRepeatedFeedConvergenceMismatch'](target, result, [], { link, linkKey });
+        await syncEngine['handleRepeatedFeedConvergenceMismatch'](target, result, [], { link, linkKey });
+        await syncEngine['handleRepeatedFeedConvergenceMismatch'](target, result, [], { link, linkKey });
+
+        expect(mismatchStub.callCount).toBe(2);
+        expect(pauseStub.calledOnceWith(linkKey, link)).toBe(true);
+      });
+    });
+
     // -----------------------------------------------------------------------
     // Issue #898: Multi-identity live sync correctness hardening
     // -----------------------------------------------------------------------

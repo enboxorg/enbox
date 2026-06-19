@@ -1238,10 +1238,10 @@ export class SyncEngineLevel implements SyncEngine {
   // Per-link repair orchestration
   // ---------------------------------------------------------------------------
 
-  /** Maximum consecutive repair attempts before the link becomes terminal-incomplete. */
+  /** Maximum consecutive repair attempts before the link is paused. */
   private static readonly MAX_REPAIR_ATTEMPTS = 3;
 
-  /** Maximum repeated verified feed mismatches before pausing the link as terminal-incomplete. */
+  /** Maximum repeated verified feed mismatches before pausing the link. */
   private static readonly MAX_FEED_CONVERGENCE_ATTEMPTS = 3;
 
   /** Maximum age for a repeatedly deferred pull entry before it is dead-lettered and skipped. */
@@ -1284,7 +1284,7 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState,
     options?: { resumeToken?: ProgressToken },
   ): Promise<void> {
-    if (link.status === 'terminal_incomplete') {
+    if (link.status === 'paused') {
       return;
     }
 
@@ -1304,15 +1304,15 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  private async transitionToTerminalIncomplete(
+  private async transitionToPaused(
     linkKey: string,
     link: ReplicationLinkState,
   ): Promise<void> {
-    if (link.status === 'terminal_incomplete') {
+    if (link.status === 'paused') {
       return;
     }
 
-    await this.setLinkOfflineStatus(link, 'terminal_incomplete');
+    await this.setLinkOfflineStatus(link, 'paused');
 
     await this.closeLinkSubscriptions(link);
 
@@ -1363,11 +1363,11 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Schedule a retry for a failed repair. Uses exponential backoff.
-   * No-op if the link is terminal-incomplete or a retry is already scheduled.
+   * No-op if the link is paused or a retry is already scheduled.
    */
   private scheduleRepairRetry(linkKey: string): void {
     const link = this._activeLinks.get(linkKey);
-    if (!link || link.status === 'terminal_incomplete') { return; }
+    if (!link || link.status === 'paused') { return; }
     if (this._repairRetryTimers.has(linkKey)) { return; }
 
     // attempts is already post-increment from doRepairLink, so subtract 1
@@ -1390,7 +1390,7 @@ export class SyncEngineLevel implements SyncEngine {
       try {
         await this.repairLink(linkKey);
       } catch {
-        // repairLink handles max attempts → terminal-incomplete internally.
+        // repairLink handles max attempts by pausing the link internally.
         // If still below max, schedule another retry.
         if (currentLink.status === 'repairing') {
           this.scheduleRepairRetry(linkKey);
@@ -1563,8 +1563,8 @@ export class SyncEngineLevel implements SyncEngine {
       this.emitEvent({ type: 'repair:failed', tenantDid: did, remoteEndpoint: dwnUrl, ...eventScope, attempt: attempts, error: String(error.message ?? error) });
 
       if (attempts >= SyncEngineLevel.MAX_REPAIR_ATTEMPTS) {
-        console.warn(`SyncEngineLevel: Max repair attempts reached for ${did} -> ${dwnUrl}, entering terminal_incomplete`);
-        await this.transitionToTerminalIncomplete(linkKey, link);
+        console.warn(`SyncEngineLevel: Max repair attempts reached for ${did} -> ${dwnUrl}, pausing link`);
+        await this.transitionToPaused(linkKey, link);
         return;
       }
 
@@ -1777,7 +1777,7 @@ export class SyncEngineLevel implements SyncEngine {
       link = await this.getOrCreateReplicationLink(target);
       const linkKey = this.getReplicationLinkKey(target, link);
       this._activeLinks.set(linkKey, link);
-      if (link.status === 'terminal_incomplete') {
+      if (link.status === 'paused') {
         return this.createActiveLinkInitializationResult(link);
       }
 
@@ -2993,7 +2993,7 @@ export class SyncEngineLevel implements SyncEngine {
     this._feedConvergenceFailures.set(linkKey, { attempts, signature });
 
     if (attempts >= SyncEngineLevel.MAX_FEED_CONVERGENCE_ATTEMPTS) {
-      await this.transitionToTerminalIncomplete(linkKey, link);
+      await this.transitionToPaused(linkKey, link);
       return;
     }
 
@@ -3121,7 +3121,7 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<SyncReconcileResult> {
     const result = SyncEngineLevel.emptySyncReconcileResult(options);
     const link = await this.getOrCreateReplicationLink(target);
-    if (link.status === 'terminal_incomplete') {
+    if (link.status === 'paused') {
       return result;
     }
 
@@ -4540,7 +4540,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private static isUnhealthyLinkStatus(status: ReplicationLinkState['status']): boolean {
-    return status === 'repairing' || status === 'terminal_incomplete';
+    return status === 'repairing' || status === 'paused';
   }
 
   // ---------------------------------------------------------------------------
