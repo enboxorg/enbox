@@ -19,7 +19,7 @@ import { SyncEngineLevel } from '../../src/sync-engine-level.js';
 import { TestAgent } from '../utils/test-agent.js';
 import { testDwnUrl } from '../utils/test-config.js';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { DataStream, RecordsDelete, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, RecordsDelete, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { queryLocalMessageFeed, queryRemoteMessageFeed } from '../../src/sync-messages.js';
 
 type Device = {
@@ -121,6 +121,8 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
 
     const aNote = await writeRecord(deviceA, 'note', 'device-a note before update');
     const bNote = await writeRecord(deviceB, 'note', 'device-b note before delete');
+    const largeNoteData = largeRecordText('device-a large note');
+    const largeNote = await writeRecord(deviceA, 'note', largeNoteData);
     const thread = await writeRecord(deviceA, 'thread', 'device-a thread before prune');
     const reply = await writeRecord(deviceA, 'thread/reply', 'device-a reply before prune', thread.message.contextId);
     await writeRecord(deviceA, 'profile', 'device-a profile candidate');
@@ -151,6 +153,9 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
     expect(snapshots.a.some(entry => entry.recordId === thread.message.recordId)).toBe(false);
     expect(snapshots.a.some(entry => entry.recordId === reply.message.recordId)).toBe(false);
     expect(snapshots.a.find(entry => entry.recordId === aNote.message.recordId)?.data).toBe('device-a note after update');
+    const syncedLargeNote = snapshots.a.find(entry => entry.recordId === largeNote.message.recordId);
+    expect(syncedLargeNote?.data.length).toBe(largeNoteData.length);
+    expect(syncedLargeNote?.data === largeNoteData).toBe(true);
     expect(snapshots.a.find(entry => entry.recordId === bookmark.message.recordId)?.data).toBe('device-b bookmark after config churn');
     await expectRecordLimitOccupantsConverged('profile', 1);
     await expectRecordLimitOccupantsConverged('pin', 2);
@@ -228,6 +233,10 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
     });
     expect(reply.status.code).toBe(202);
     return { message: message! };
+  }
+
+  function largeRecordText(prefix: string): string {
+    return `${prefix}:${'x'.repeat(DwnConstant.maxDataSizeAllowedToBeEncoded + 1_000)}`;
   }
 
   async function updateRecord(device: Device, recordsWriteMessage: RecordsWriteMessage, data: string): Promise<void> {
