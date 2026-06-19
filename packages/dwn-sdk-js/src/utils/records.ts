@@ -315,15 +315,14 @@ export class Records {
     operationName: string,
   ): void {
     const { contextId, protocolPath } = filter;
-    if (protocolPath === undefined || !protocolPath.includes('/')) {
+    if (!protocolPath?.includes('/')) {
       return;
     }
 
     const expectedParentDepth = protocolPath.split('/').length - 1;
     const contextIdSegments = contextId?.split('/');
     if (
-      contextIdSegments !== undefined &&
-      contextIdSegments.length === expectedParentDepth &&
+      contextIdSegments?.length === expectedParentDepth &&
       contextIdSegments.every(segment => segment.length > 0)
     ) {
       return;

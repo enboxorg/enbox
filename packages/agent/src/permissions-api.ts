@@ -1,17 +1,21 @@
+import type { EnboxAgent } from './types/agent.js';
 import type { CreateGrantParams, CreateRequestParams, CreateRevocationParams, FetchPermissionRequestParams, FetchPermissionsParams, GetPermissionParams, IsGrantRevokedParams, PermissionGrantEntry, PermissionRequestEntry, PermissionRevocationEntry, PermissionsApi } from './types/permissions.js';
 import type { DwnDataEncodedRecordsWriteMessage, DwnMessageParams, DwnRecordsPermissionScope, ProcessDwnRequest } from './types/dwn.js';
-import type { EnboxAgent, EnboxPlatformAgent } from './types/agent.js';
-import type { MessageStore, PermissionGrant, PermissionGrantData, PermissionRequestData, PermissionRevocationData } from '@enbox/dwn-sdk-js';
+import type { PermissionGrant, PermissionGrantData, PermissionRequestData, PermissionRevocationData } from '@enbox/dwn-sdk-js';
 
 import { isRecordsType } from './dwn-api.js';
+import { mapConcurrent } from './utils.js';
 import { Convert, TtlCache } from '@enbox/common';
 import { DwnInterface, DwnPermissionGrant, DwnPermissionRequest } from './types/dwn.js';
 import { PermissionScopeMatcher, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+
+const REVOCATION_CHECK_CONCURRENCY = 8;
 
 export class AgentPermissionsApi implements PermissionsApi {
 
   /** cache for fetching a permission {@link PermissionGrant}, keyed by a specific MessageType and protocol */
   private readonly _cachedPermissions: TtlCache<string, PermissionGrantEntry> = new TtlCache({ ttl: 60 * 1000 });
+  private readonly _revokedGrantIds = new Set<string>();
 
   private _agent?: EnboxAgent;
 
@@ -47,10 +51,11 @@ export class AgentPermissionsApi implements PermissionsApi {
     }
 
     const permissionGrants = await this.fetchGrants({
-      author  : delegateDid,
-      target  : delegateDid,
-      grantor : connectedDid,
-      grantee : delegateDid,
+      author       : delegateDid,
+      target       : delegateDid,
+      grantor      : connectedDid,
+      grantee      : delegateDid,
+      checkRevoked : true,
     });
 
     // get the delegate grants that match the messageParams and are associated with the connectedDid as the grantor
@@ -77,7 +82,7 @@ export class AgentPermissionsApi implements PermissionsApi {
     grantor,
     protocol,
     remote = false,
-    checkRevoked = true,
+    checkRevoked = false,
   }: FetchPermissionsParams): Promise<PermissionGrantEntry[]> {
 
     // filter by a protocol using tags if provided
@@ -105,7 +110,9 @@ export class AgentPermissionsApi implements PermissionsApi {
 
     const grantMessages = reply.entries! as DwnDataEncodedRecordsWriteMessage[];
 
-    // Build a set of revoked grant IDs so that revoked grants can be filtered out.
+    // Revocation filtering is opt-in and intentionally checks one grant at a
+    // time. If this becomes hot, add a dedicated revocation-read path instead
+    // of broad nested queries or parentId set filters.
     const revokedGrantIds = checkRevoked
       ? await this.fetchRevokedGrantIds({ author, target, grantMessages, remote })
       : new Set<string>();
@@ -123,7 +130,7 @@ export class AgentPermissionsApi implements PermissionsApi {
   }
 
   /**
-   * Fetch all revocation record IDs for grants, returned as a Set of parent grant record IDs.
+   * Fetches the grant record IDs that have a stored revocation.
    */
   private async fetchRevokedGrantIds({ author, target, grantMessages, remote }: {
     author: string;
@@ -135,53 +142,25 @@ export class AgentPermissionsApi implements PermissionsApi {
       return new Set<string>();
     }
 
-    // Bulk grant listings are local/synced views: owner reads can use the local
-    // store predicate directly, while cross-tenant or remote reads go through
-    // the message path for authorization and authoritative remote state.
-    const messageStore = this.getOwnerLocalMessageStore({ author, target, remote });
     const revokedGrantIds = new Set<string>();
-    await Promise.all(grantMessages.map(async (grantMessage): Promise<void> => {
-      const revoked = messageStore !== undefined
-        ? await this.isGrantRevokedInLocalStore(target, grantMessage.recordId, messageStore)
-        : await this.isGrantRevoked({
-          author,
-          target,
-          grantRecordId: grantMessage.recordId,
-          remote,
-        });
+    await mapConcurrent(grantMessages, REVOCATION_CHECK_CONCURRENCY, async (grantMessage): Promise<void> => {
+      if (this._revokedGrantIds.has(grantMessage.recordId)) {
+        revokedGrantIds.add(grantMessage.recordId);
+        return;
+      }
+
+      const revoked = await this.isGrantRevoked({
+        author,
+        target,
+        grantRecordId: grantMessage.recordId,
+        remote,
+      });
       if (revoked) {
         revokedGrantIds.add(grantMessage.recordId);
       }
-    }));
+    });
 
     return revokedGrantIds;
-  }
-
-  private async isGrantRevokedInLocalStore(tenant: string, grantRecordId: string, messageStore: MessageStore): Promise<boolean> {
-    const { messages } = await messageStore.query(
-      tenant,
-      [PermissionsProtocol.grantRevocationFilter(grantRecordId)],
-      undefined,
-      { limit: 1 },
-    );
-    return messages.length > 0;
-  }
-
-  private getOwnerLocalMessageStore({ author, target, remote }: {
-    author: string;
-    target: string;
-    remote: boolean;
-  }): MessageStore | undefined {
-    if (remote || author !== target) {
-      return undefined;
-    }
-
-    const dwn = (this.agent as Partial<EnboxPlatformAgent>).dwn;
-    if (dwn === undefined || dwn.isRemoteMode) {
-      return undefined;
-    }
-
-    return dwn.node.storage.messageStore;
   }
 
   async fetchRequests({
@@ -226,16 +205,19 @@ export class AgentPermissionsApi implements PermissionsApi {
     grantRecordId,
     remote = false
   }: IsGrantRevokedParams): Promise<boolean> {
-    const revocationFilter = PermissionsProtocol.grantRevocationFilter(grantRecordId);
+    if (this._revokedGrantIds.has(grantRecordId)) {
+      return true;
+    }
+
     const params: ProcessDwnRequest<DwnInterface.RecordsRead> = {
       author,
       target,
       messageType   : DwnInterface.RecordsRead,
       messageParams : {
         filter: {
-          parentId     : revocationFilter.parentId as string,
+          parentId     : grantRecordId,
           protocol     : PermissionsProtocol.uri,
-          protocolPath : revocationFilter.protocolPath as string,
+          protocolPath : PermissionsProtocol.revocationPath,
         }
       }
     };
@@ -246,6 +228,7 @@ export class AgentPermissionsApi implements PermissionsApi {
       return false;
     } else if (revocationReply.status.code === 200) {
       // a revocation was found, the grant is revoked
+      this._revokedGrantIds.add(grantRecordId);
       return true;
     }
 
@@ -391,6 +374,9 @@ export class AgentPermissionsApi implements PermissionsApi {
     if (reply.status.code !== 202) {
       throw new Error(`PermissionsApi: Failed to create revocation: ${reply.status.detail}`);
     }
+    if (store) {
+      this._revokedGrantIds.add(grant.id);
+    }
 
     const dataEncodedMessage: DwnDataEncodedRecordsWriteMessage = {
       ...message!,
@@ -402,6 +388,7 @@ export class AgentPermissionsApi implements PermissionsApi {
 
   async clear():Promise<void> {
     this._cachedPermissions.clear();
+    this._revokedGrantIds.clear();
   }
 
   /**

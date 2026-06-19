@@ -4,4 +4,4 @@
 "@enbox/auth": patch
 ---
 
-Require nested protocol Query, Count, and Subscribe filters to pin the direct parent contextId, consolidate permission revocation checks onto the canonical per-grant predicate, and route delegated sync scope derivation through the permissions API.
+Require nested protocol Query, Count, and Subscribe filters to pin the direct parent contextId, make permission revocation filtering opt-in with scalar per-grant checks, and route delegated sync scope derivation through the permissions API.
