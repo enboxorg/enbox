@@ -5,6 +5,7 @@ import type { MessagesQueryReply, MessagesQueryReplyEntry } from '../../src/type
 import type { ProtocolDefinition, RecordsQueryReply } from '../../src/index.js';
 
 import fc from 'fast-check';
+import { rm } from 'node:fs/promises';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { afterAll, describe, expect, it } from 'bun:test';
@@ -12,6 +13,8 @@ import {
   DataStoreLevel,
   DataStream,
   Dwn,
+  DwnInterfaceName,
+  DwnMethodName,
   Encoder,
   Jws,
   Message,
@@ -24,6 +27,7 @@ import {
 } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
+// Keep CI deterministic and cheap; set FAST_CHECK_NUM_RUNS for deeper local or nightly sweeps.
 const numRuns = Math.min(Number(process.env.FAST_CHECK_NUM_RUNS) || 5, 20);
 
 const replayOperations = [
@@ -41,6 +45,7 @@ const replayOperations = [
 type ReplayOperation = typeof replayOperations[number];
 
 type ReplayHarness = {
+  dataPath: string;
   dwn: Dwn;
   messageStore: MessageStoreLevel;
 };
@@ -65,24 +70,28 @@ describe('replication replay property', () => {
   afterAll(async () => {
     for (const harness of harnesses) {
       await harness.dwn.close();
+      await rm(harness.dataPath, { force: true, recursive: true });
     }
   });
 
   it('should replay the retained feed into a fresh DWN with equal live records, fingerprints, and data bytes', async () => {
     await fc.assert(
       fc.asyncProperty(
-        fc.array(fc.constantFrom(...replayOperations), { minLength: 8, maxLength: 14 }),
-        async (operations) => {
-          const runId = crypto.randomUUID();
-          const source = await createHarness(`${runId}/source`);
-          const replica = await createHarness(`${runId}/replica`);
+        fc.record({
+          operations      : fc.array(fc.constantFrom(...replayOperations), { minLength: 8, maxLength: 14 }),
+          replayOrderSeed : fc.integer({ min: 0, max: 0xffffffff }),
+          runId           : fc.uuid(),
+        }),
+        async ({ operations, replayOrderSeed, runId }) => {
+          const source = await createHarness(`${runId}-source`);
+          const replica = await createHarness(`${runId}-replica`);
           harnesses.push(source, replica);
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const protocol = `https://replay-property.example/${runId}`;
 
           await driveSourceMutationPlan(source.dwn, alice, protocol, operations);
-          await replayFeed(source.dwn, replica.dwn, alice);
+          await replayFeed(source.dwn, replica.dwn, alice, replayOrderSeed);
 
           await expectFingerprintsEqual(source.messageStore, replica.messageStore, alice.did, protocol);
           await expectLiveRecordsEqual(source.dwn, replica.dwn, alice, protocol);
@@ -96,12 +105,14 @@ describe('replication replay property', () => {
 
   async function createHarness(path: string): Promise<ReplayHarness> {
     const dataPath = `__TESTDATA__/replication-replay-property/${path}`;
+    await rm(dataPath, { force: true, recursive: true });
+
     const messageStore = new MessageStoreLevel({ location: `${dataPath}/messages` });
     const dataStore = new DataStoreLevel({ blockstoreLocation: `${dataPath}/data` });
     const resumableTaskStore = new ResumableTaskStoreLevel({ location: `${dataPath}/resumable-tasks` });
     const dwn = await Dwn.create({ dataStore, didResolver, messageStore, resumableTaskStore });
 
-    return { dwn, messageStore };
+    return { dataPath, dwn, messageStore };
   }
 });
 
@@ -271,9 +282,10 @@ async function deleteRecord(
   expect(reply.status.code).toBe(202);
 }
 
-async function replayFeed(source: Dwn, replica: Dwn, alice: Persona): Promise<void> {
-  const entries = await queryAllReplayEntries(source, alice);
+async function replayFeed(source: Dwn, replica: Dwn, alice: Persona, replayOrderSeed: number): Promise<void> {
+  const entries = permuteReplayEntries(await queryAllReplayEntries(source, alice), replayOrderSeed);
   let pending = entries;
+  let incompleteDeferrals = 0;
 
   for (let attempt = 0; attempt < entries.length + 1 && pending.length > 0; attempt++) {
     const nextPending: ReplayEntry[] = [];
@@ -286,9 +298,14 @@ async function replayFeed(source: Dwn, replica: Dwn, alice: Persona): Promise<vo
         ...(dataBytes === undefined ? {} : { dataStream: DataStream.fromBytes(dataBytes) }),
       });
 
-      if (result.kind === 'Incomplete' || result.kind === 'Deferred') {
+      if (result.kind === 'Incomplete') {
+        incompleteDeferrals++;
         nextPending.push(replayEntry);
         continue;
+      }
+
+      if (result.kind === 'Deferred') {
+        throw new Error(`replay unexpectedly deferred CID ${entry.messageCid}: ${result.reason}`);
       }
 
       expect(['Applied', 'Duplicate', 'Superseded']).toContain(result.kind);
@@ -302,6 +319,47 @@ async function replayFeed(source: Dwn, replica: Dwn, alice: Persona): Promise<vo
   }
 
   expect(pending).toHaveLength(0);
+  expect(incompleteDeferrals).toBeGreaterThan(0);
+}
+
+// Shuffling puts records before protocol configs, forcing dependency Incomplete outcomes before retry convergence.
+function permuteReplayEntries(entries: ReplayEntry[], replayOrderSeed: number): ReplayEntry[] {
+  return entries
+    .map((entry, index) => ({
+      entry,
+      group   : replayDependencyGroup(entry),
+      index,
+      sortKey : replaySortKey(replayOrderSeed, entry.entry.messageCid, index),
+    }))
+    .sort((left, right) => {
+      const groupComparison = left.group - right.group;
+      if (groupComparison !== 0) {
+        return groupComparison;
+      }
+
+      const sortKeyComparison = left.sortKey - right.sortKey;
+      if (sortKeyComparison !== 0) {
+        return sortKeyComparison;
+      }
+
+      return left.index - right.index;
+    })
+    .map(item => item.entry);
+}
+
+function replayDependencyGroup(replayEntry: ReplayEntry): number {
+  const descriptor = replayEntry.entry.message?.descriptor;
+  return descriptor?.interface === DwnInterfaceName.Protocols && descriptor.method === DwnMethodName.Configure ? 1 : 0;
+}
+
+function replaySortKey(replayOrderSeed: number, messageCid: string, index: number): number {
+  let hash = replayOrderSeed >>> 0;
+  const input = `${messageCid}:${index}`;
+  for (let i = 0; i < input.length; i++) {
+    hash = Math.imul(hash ^ input.charCodeAt(i), 16777619) >>> 0;
+  }
+
+  return hash;
 }
 
 async function queryAllReplayEntries(source: Dwn, alice: Persona): Promise<ReplayEntry[]> {
