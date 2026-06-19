@@ -3137,8 +3137,35 @@ export function testRecordsQueryHandler(): void {
             protocolRole: 'thread/participant',
           });
           const chatQueryReply = await dwn.processMessage(alice.did, chatQuery.message) as RecordsQueryReply;
-          expect(chatQueryReply.status.code).toBe(401);
-          expect(chatQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMissingContextId);
+          expect(chatQueryReply.status.code).toBe(400);
+          expect(chatQueryReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
+        });
+
+        it('rejects root-filter queries that invoke a nested role without a contextId', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition = threadRoleProtocolDefinition;
+
+          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition
+          });
+          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+          expect(protocolsConfigureReply.status.code).toBe(202);
+
+          const threadQuery = await TestDataGenerator.generateRecordsQuery({
+            author : bob,
+            filter : {
+              protocol     : protocolDefinition.protocol,
+              protocolPath : 'thread',
+            },
+            protocolRole: 'thread/participant',
+          });
+
+          const threadQueryReply = await dwn.processMessage(alice.did, threadQuery.message) as RecordsQueryReply;
+          expect(threadQueryReply.status.code).toBe(401);
+          expect(threadQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMissingContextId);
         });
 
         it('should reject root-level role authorized queries if a matching root-level role record is not found for the message author', async () => {
@@ -3546,10 +3573,11 @@ export function testRecordsQueryHandler(): void {
             expect(daveRoleQueryReply.status.code).toBe(401);
             expect(daveRoleQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
 
-            // Dave without a role — should get 200 but zero results (no records addressed to him)
+            // Dave without a role still gets an empty result, not an error, when the nested query pins a single parent context.
             const daveNoRoleQuery = await TestDataGenerator.generateRecordsQuery({
               author : dave,
               filter : {
+                contextId    : threadRecord.message.contextId,
                 protocol     : mixedProtocol.protocol,
                 protocolPath : 'thread/chat',
               },

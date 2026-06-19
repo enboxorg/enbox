@@ -770,7 +770,10 @@ export function testAuthorDelegatedGrant(): void {
       // sanity verify the chat message is still in Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
-        filter : { protocolPath: 'thread/chat' }
+        filter : {
+          protocolPath : 'thread/chat',
+          contextId    : threadRecord.message.contextId
+        }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
@@ -1310,7 +1313,10 @@ export function testAuthorDelegatedGrant(): void {
       // sanity verify the chat message is still in Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
-        filter : { protocolPath: 'thread/chat' }
+        filter : {
+          protocolPath : 'thread/chat',
+          contextId    : threadRecord.message.contextId
+        }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);

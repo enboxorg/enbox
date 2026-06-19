@@ -1324,6 +1324,7 @@ describe('DwnApi', () => {
         // query for child records to confirm it exists
         const { status: childrenStatus, records: childrenRecords } = await dwnAlice.records.query({
           filter: {
+            contextId    : parentRecord.contextId,
             protocol     : protocol.definition.protocol,
             protocolPath : 'foo/bar'
           }
@@ -1343,6 +1344,7 @@ describe('DwnApi', () => {
         // query for child records to confirm it was deleted
         const { status: childrenStatusAfterDelete, records: childrenRecordsAfterDelete } = await dwnAlice.records.query({
           filter: {
+            contextId    : parentRecord.contextId,
             protocol     : protocol.definition.protocol,
             protocolPath : 'foo/bar'
           }
@@ -3346,35 +3348,17 @@ describe('DwnApi', () => {
       expect(fetchedGrantsCarol[0].id).toBe(grantFromCarol.id);
     });
 
-    it('should filter out revoked grants by default', async () => {
-      // alice creates a grant for bob and stores it
-      const bobGrant = await dwnAlice.permissions.grant({
-        store       : true,
-        grantedTo   : bobDid.uri,
-        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
-        scope       : {
-          interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol'
-        }
-      });
+    it('passes checkRevoked through to fetchGrants only when requested', async () => {
+      const fetchGrantsSpy = sinon.spy(AgentPermissionsApi.prototype, 'fetchGrants');
 
-      // query for the grants — should include the grant
-      let fetchedGrants = await dwnAlice.permissions.queryGrants();
-      expect(fetchedGrants.length).toBe(1);
-      expect(fetchedGrants[0].id).toBe(bobGrant.id);
+      await dwnAlice.permissions.queryGrants();
+      expect(fetchGrantsSpy.args[0][0].checkRevoked).toBeUndefined();
 
-      // revoke the grant
-      await bobGrant.revoke();
+      await dwnAlice.permissions.queryGrants({ checkRevoked: false });
+      expect(fetchGrantsSpy.args[1][0].checkRevoked).toBe(false);
 
-      // default query should now exclude the revoked grant
-      fetchedGrants = await dwnAlice.permissions.queryGrants();
-      expect(fetchedGrants.length).toBe(0);
-
-      // with checkRevoked: false, the revoked grant should still be returned
-      fetchedGrants = await dwnAlice.permissions.queryGrants({ checkRevoked: false });
-      expect(fetchedGrants.length).toBe(1);
-      expect(fetchedGrants[0].id).toBe(bobGrant.id);
+      await dwnAlice.permissions.queryGrants({ checkRevoked: true });
+      expect(fetchGrantsSpy.args[2][0].checkRevoked).toBe(true);
     });
   });
 });

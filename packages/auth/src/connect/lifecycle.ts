@@ -14,16 +14,15 @@
  * @internal
  */
 
+import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, BearerIdentity, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent } from '@enbox/agent';
+import type { AgentSessionIdentity, BearerIdentity, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent, PermissionGrantEntry } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
 import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { Convert } from '@enbox/common';
-import type { GenericMessage } from '@enbox/dwn-sdk-js';
-
 import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError, KeyDeliveryProtocolDefinition } from '@enbox/agent';
 
@@ -334,48 +333,14 @@ export async function deriveActiveSyncScope(
   userAgent: EnboxUserAgent,
   delegateDid: string,
 ): Promise<'all' | string[]> {
-  // Query grants and revocations in parallel.
-  const [grantResponse, revocationResponse] = await Promise.all([
-    userAgent.processDwnRequest({
-      author        : delegateDid,
-      target        : delegateDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { protocol: PermissionsProtocol.uri, protocolPath: PermissionsProtocol.grantPath } },
-    }),
-    userAgent.processDwnRequest({
-      author        : delegateDid,
-      target        : delegateDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { protocol: PermissionsProtocol.uri, protocolPath: PermissionsProtocol.revocationPath } },
-    }),
-  ]);
+  const grantEntries: PermissionGrantEntry[] = await userAgent.permissions.fetchGrants({
+    author       : delegateDid,
+    target       : delegateDid,
+    grantee      : delegateDid,
+    checkRevoked : true,
+  });
 
-  if (grantResponse.reply.status.code !== 200 || !grantResponse.reply.entries) {
-    return [];
-  }
-  // Fail closed: if we can't verify revocations, treat as zero grants.
-  if (revocationResponse.reply.status.code !== 200) { return []; }
-
-  // Build the set of revoked grant IDs from revocation parent context.
-  // `descriptor.parentId` is the canonical location; the top-level
-  // `parentId` is a legacy/alternate-format fallback. Typed narrowly
-  // (no `any`) so additions to the shape land in the type system.
-  const revokedGrantIds = new Set<string>();
-  if (revocationResponse.reply.entries) {
-    for (const entry of revocationResponse.reply.entries as DwnDataEncodedRecordsWriteMessage[]) {
-      const parentId =
-        entry.descriptor.parentId
-        ?? (entry as { parentId?: string }).parentId;
-      if (parentId) { revokedGrantIds.add(parentId); }
-    }
-  }
-
-  // Parse grants and filter out revoked ones before deriving scope.
-  const grants = (grantResponse.reply.entries as DwnDataEncodedRecordsWriteMessage[])
-    .map((entry) => DwnPermissionGrant.parse(entry))
-    .filter((grant) => !revokedGrantIds.has(grant.id));
-
-  return deriveSyncScopeFromGrants(grants);
+  return deriveSyncScopeFromGrants(grantEntries.map(({ grant }) => grant));
 }
 
 // ─── toSyncIdentityProtocols ────────────────────────────────────

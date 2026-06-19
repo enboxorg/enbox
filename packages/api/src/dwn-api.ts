@@ -46,7 +46,7 @@ export type FetchRequestsRequest = Omit<FetchPermissionRequestParams, 'author' |
  * Represents the request payload for fetching permission grants from a Decentralized Web Node (DWN).
  *
  * Optionally, specify a remote DWN target in the `from` property to fetch requests from.
- * Revoked grants are filtered out by default; set `checkRevoked: false` to include them.
+ * Set `checkRevoked: true` to perform explicit per-grant revocation checks.
  */
 export type FetchGrantsRequest = Omit<FetchPermissionsParams, 'author' | 'target' | 'remote'> & {
   /** Optional DID specifying the remote target DWN tenant to be queried. */

@@ -93,10 +93,11 @@ export async function resolveMessagesScopes({
 
   const now = new Date().toISOString();
   const permissionGrants = (await permissionsApi.fetchGrants({
-    author  : delegateDid,
-    target  : delegateDid,
-    grantor : did,
-    grantee : delegateDid,
+    author       : delegateDid,
+    target       : delegateDid,
+    grantor      : did,
+    grantee      : delegateDid,
+    checkRevoked : true,
   })).filter(entry => isActiveMessagesGrant(entry, did, delegateDid, now));
 
   if (requestedScope.kind === 'full') {

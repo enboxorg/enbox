@@ -715,13 +715,25 @@ describe('TypedProtocol API', () => {
         it('should recognize all valid paths from the protocol structure', async () => {
           // Verify all expected paths are valid by performing operations on them.
           // If collectPaths is wrong, _assertReady would throw 'invalid protocol path'.
+          const { record: listRecord } = await typed.records.create('list', {
+            data: { name: 'Path Test' },
+          });
+          const { record: taskRecord } = await typed.records.create('list/task', {
+            data            : { title: 'Path task', completed: false },
+            parentContextId : listRecord.contextId,
+          });
+
           const { status: listStatus } = await typed.records.query('list');
           expect(listStatus.code).toBe(200);
 
-          const { status: taskStatus } = await typed.records.query('list/task');
+          const { status: taskStatus } = await typed.records.query('list/task', {
+            filter: { contextId: listRecord.contextId },
+          });
           expect(taskStatus.code).toBe(200);
 
-          const { status: attachmentStatus } = await typed.records.query('list/task/attachment');
+          const { status: attachmentStatus } = await typed.records.query('list/task/attachment', {
+            filter: { contextId: taskRecord.contextId },
+          });
           expect(attachmentStatus.code).toBe(200);
         });
 

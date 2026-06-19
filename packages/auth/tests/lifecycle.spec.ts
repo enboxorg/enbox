@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
 import { Convert } from '@enbox/common';
+import { DwnPermissionGrant } from '@enbox/agent';
+import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
@@ -74,6 +76,27 @@ function buildGrantMessage(protocol: string, grantId: string): any {
         signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner1#sig' })) }],
       },
     },
+  };
+}
+
+function buildGrantEntry(protocol: string, grantId: string): any {
+  const message = buildGrantMessage(protocol, grantId);
+  return {
+    grant: DwnPermissionGrant.parse(message),
+    message,
+  };
+}
+
+function buildUnscopedGrantEntry(
+  grantId: string,
+  scopeInterface = 'Messages',
+  scopeMethod = 'Read',
+  dateExpires = '2040-06-25T16:09:16.693356Z',
+): any {
+  const message = buildUnscopedGrantMessage(grantId, scopeInterface, scopeMethod, dateExpires);
+  return {
+    grant: DwnPermissionGrant.parse(message),
+    message,
   };
 }
 
@@ -227,17 +250,10 @@ describe('deriveSyncScopeFromGrants', () => {
 describe('deriveActiveSyncScope', () => {
   test('returns protocols from active Messages.Read grants', async () => {
     const agent = createMockAgent({
-      processDwnRequest: async (params: any) => {
-        const filter = params?.messageParams?.filter;
-        if (filter?.protocolPath === 'grant') {
-          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            buildGrantMessage('https://proto.example/a', 'g1'),
-            buildGrantMessage('https://proto.example/b', 'g2'),
-          ] } };
-        }
-        // No revocations.
-        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
-      },
+      permissionsFetchGrants: async () => [
+        buildGrantEntry('https://proto.example/a', 'g1'),
+        buildGrantEntry('https://proto.example/b', 'g2'),
+      ],
     });
 
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
@@ -245,68 +261,65 @@ describe('deriveActiveSyncScope', () => {
   });
 
   test('excludes revoked grants', async () => {
+    let fetchParams: any;
     const agent = createMockAgent({
-      processDwnRequest: async (params: any) => {
-        const filter = params?.messageParams?.filter;
-        if (filter?.protocolPath === 'grant') {
-          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            buildGrantMessage('https://proto.example/valid', 'g-valid'),
-            buildGrantMessage('https://proto.example/revoked', 'g-revoked'),
-          ] } };
-        }
-        if (filter?.protocolPath === 'grant/revocation') {
-          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            { descriptor: { parentId: 'g-revoked' } },
-          ] } };
-        }
-        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+      permissionsFetchGrants: async (params: any) => {
+        fetchParams = params;
+        return [buildGrantEntry('https://proto.example/valid', 'g-valid')];
       },
     });
 
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
     expect(result).toEqual(['https://proto.example/valid']);
+    expect(fetchParams).toEqual({
+      author       : 'did:delegate',
+      target       : 'did:delegate',
+      grantee      : 'did:delegate',
+      checkRevoked : true,
+    });
   });
 
-  test('fails closed when revocation query fails', async () => {
+  test('does not issue an unscoped nested revocation query', async () => {
+    const filters: any[] = [];
     const agent = createMockAgent({
       processDwnRequest: async (params: any) => {
         const filter = params?.messageParams?.filter;
-        if (filter?.protocolPath === 'grant') {
-          // Grants query succeeds with active grants.
-          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            buildGrantMessage('https://proto.example/a', 'g1'),
-          ] } };
+        filters.push(filter);
+        if (filter?.protocolPath === PermissionsProtocol.revocationPath && filter.contextId === undefined) {
+          return { reply: { status: { code: 400, detail: 'nested revocation queries require contextId' } } };
         }
-        // Revocation query fails — cannot verify revocation status.
-        return { reply: { status: { code: 500, detail: 'Internal Error' } } };
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
       },
+      permissionsFetchGrants: async () => [buildGrantEntry('https://proto.example/a', 'g1')],
     });
 
-    // Should return [] (fail closed), NOT ['https://proto.example/a'].
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
-    expect(result).toEqual([]);
+    expect(result).toEqual(['https://proto.example/a']);
+    expect(filters.some(filter =>
+      filter?.protocolPath === PermissionsProtocol.revocationPath && filter.contextId === undefined
+    )).toBe(false);
+    expect(filters.length).toBe(0);
   });
 
-  test('returns empty when grant query fails', async () => {
+  test('throws when grant fetching fails', async () => {
     const agent = createMockAgent({
-      processDwnRequest: async () => ({ reply: { status: { code: 500, detail: 'Error' } } }),
+      permissionsFetchGrants: async () => { throw new Error('Internal Error'); },
     });
 
-    const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
-    expect(result).toEqual([]);
+    await expect(deriveActiveSyncScope(agent as any, 'did:delegate')).rejects.toThrow('Internal Error');
+  });
+
+  test('throws when the grant query fails', async () => {
+    const agent = createMockAgent({
+      permissionsFetchGrants: async () => { throw new Error('Error'); },
+    });
+
+    await expect(deriveActiveSyncScope(agent as any, 'did:delegate')).rejects.toThrow('Error');
   });
 
   test('returns all for unscoped Messages.Read grant', async () => {
     const agent = createMockAgent({
-      processDwnRequest: async (params: any) => {
-        const filter = params?.messageParams?.filter;
-        if (filter?.protocolPath === 'grant') {
-          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            buildUnscopedGrantMessage('g-unscoped'),
-          ] } };
-        }
-        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
-      },
+      permissionsFetchGrants: async () => [buildUnscopedGrantEntry('g-unscoped')],
     });
 
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
@@ -315,20 +328,7 @@ describe('deriveActiveSyncScope', () => {
 
   test('excludes revoked wildcard grant', async () => {
     const agent = createMockAgent({
-      processDwnRequest: async (params: any) => {
-        const filter = params?.messageParams?.filter;
-        if (filter?.protocolPath === 'grant') {
-          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            buildUnscopedGrantMessage('g-unscoped'),
-          ] } };
-        }
-        if (filter?.protocolPath === 'grant/revocation') {
-          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            { descriptor: { parentId: 'g-unscoped' } },
-          ] } };
-        }
-        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
-      },
+      permissionsFetchGrants: async () => [],
     });
 
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
@@ -337,15 +337,7 @@ describe('deriveActiveSyncScope', () => {
 
   test('excludes expired wildcard grant', async () => {
     const agent = createMockAgent({
-      processDwnRequest: async (params: any) => {
-        const filter = params?.messageParams?.filter;
-        if (filter?.protocolPath === 'grant') {
-          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            buildUnscopedGrantMessage('g-expired', 'Messages', 'Read', '2020-01-01T00:00:00Z'),
-          ] } };
-        }
-        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
-      },
+      permissionsFetchGrants: async () => [buildUnscopedGrantEntry('g-expired', 'Messages', 'Read', '2020-01-01T00:00:00Z')],
     });
 
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
@@ -354,16 +346,10 @@ describe('deriveActiveSyncScope', () => {
 
   test('wildcard wins when mixed with scoped grants', async () => {
     const agent = createMockAgent({
-      processDwnRequest: async (params: any) => {
-        const filter = params?.messageParams?.filter;
-        if (filter?.protocolPath === 'grant') {
-          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            buildGrantMessage('https://proto.example/chat', 'g-scoped'),
-            buildUnscopedGrantMessage('g-unscoped'),
-          ] } };
-        }
-        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
-      },
+      permissionsFetchGrants: async () => [
+        buildGrantEntry('https://proto.example/chat', 'g-scoped'),
+        buildUnscopedGrantEntry('g-unscoped'),
+      ],
     });
 
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');

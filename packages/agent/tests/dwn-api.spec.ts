@@ -4699,6 +4699,7 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
         filter: {
           protocol     : chatProtocol.protocol,
           protocolPath : 'thread/participant',
+          contextId    : threadContextId,
         }
       },
       encryption: true,
@@ -4808,6 +4809,7 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
         filter: {
           protocol     : chatProtocol.protocol,
           protocolPath : 'thread/chat',
+          contextId    : threadContextId,
         }
       },
       encryption: true,

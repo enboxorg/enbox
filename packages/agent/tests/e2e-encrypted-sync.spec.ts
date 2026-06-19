@@ -484,6 +484,7 @@ describe('e2e: multi-party encrypted thread with key delivery', () => {
         filter: {
           protocol     : chatProtocol.protocol,
           protocolPath : 'thread/chat',
+          contextId    : threadContextId,
         }
       },
     });

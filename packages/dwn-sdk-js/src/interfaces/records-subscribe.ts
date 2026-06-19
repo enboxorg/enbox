@@ -48,6 +48,11 @@ export class RecordsSubscribe extends AbstractMessage<RecordsSubscribeMessage> {
     }
 
     await Records.validateDelegatedGrantReferentialIntegrity(message, signaturePayload);
+    Records.validateNestedProtocolPathQueryScope(
+      message.descriptor.filter,
+      DwnErrorCode.RecordsSubscribeNestedProtocolPathContextIdInvalid,
+      'RecordsSubscribe'
+    );
 
     if (signaturePayload?.protocolRole !== undefined) {
       if (message.descriptor.filter.protocolPath === undefined) {

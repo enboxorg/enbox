@@ -38,6 +38,11 @@ export class RecordsCount extends AbstractMessage<RecordsCountMessage> {
     }
 
     await Records.validateDelegatedGrantReferentialIntegrity(message, signaturePayload);
+    Records.validateNestedProtocolPathQueryScope(
+      message.descriptor.filter,
+      DwnErrorCode.RecordsCountNestedProtocolPathContextIdInvalid,
+      'RecordsCount'
+    );
 
     if (signaturePayload?.protocolRole !== undefined) {
       if (message.descriptor.filter.protocolPath === undefined) {

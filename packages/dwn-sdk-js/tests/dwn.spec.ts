@@ -232,7 +232,7 @@ export function testDwnClass(): void {
           author       : bob,
           protocolRole : 'threads:thread/participant',
           filter       : {
-            contextId    : 'thread-context/comment-context',
+            contextId    : 'thread-context',
             protocol     : commentsProtocol.protocol,
             protocolPath : 'thread/comment',
           },

@@ -759,7 +759,11 @@ describe('e2e: grant revocation stops future delivery', () => {
         target        : ownerDid,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
-          filter: { protocol: PermissionsProtocol.uri, protocolPath: 'grant/revocation' },
+          filter: {
+            protocol     : PermissionsProtocol.uri,
+            protocolPath : 'grant/revocation',
+            contextId    : sessionGrant.message.recordId,
+          },
         },
       });
       expect((revQ.entries ?? []).length).toBeGreaterThanOrEqual(1);
@@ -984,7 +988,11 @@ describe('e2e: grant revocation stops future delivery', () => {
         target        : ownerDid,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
-          filter: { protocol: PermissionsProtocol.uri, protocolPath: 'grant/revocation' },
+          filter: {
+            protocol     : PermissionsProtocol.uri,
+            protocolPath : 'grant/revocation',
+            contextId    : sessionGrant.message.recordId,
+          },
         },
       });
       expect((revQ.entries ?? []).length).toBeGreaterThanOrEqual(1);
@@ -1191,7 +1199,11 @@ describe('e2e: grant revocation stops future delivery', () => {
         target        : ownerDid,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
-          filter: { protocol: PermissionsProtocol.uri, protocolPath: 'grant/revocation' },
+          filter: {
+            protocol     : PermissionsProtocol.uri,
+            protocolPath : 'grant/revocation',
+            contextId    : sessionGrant.message.recordId,
+          },
         },
       });
 

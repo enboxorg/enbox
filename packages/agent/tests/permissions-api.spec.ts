@@ -8,7 +8,7 @@ import { Convert } from '@enbox/common';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { DwnInterface, DwnPermissionGrant, type PermissionGrantEntry } from '../src/index.js';
-import { DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 
 describe('AgentPermissionsApi', () => {
@@ -319,6 +319,72 @@ describe('AgentPermissionsApi', () => {
       expect(sendDwnRequestStub).toHaveBeenCalled();
     });
 
+    it('should fall back to single-grant remote revocation reads when checking remote grants', async () => {
+      const writeGrant = await testHarness.agent.permissions.createGrant({
+        store       : false,
+        author      : aliceDid.uri,
+        grantedTo   : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Write,
+          protocol  : 'http://example.com/remote-revocation-test'
+        }
+      });
+      const readGrant = await testHarness.agent.permissions.createGrant({
+        store       : false,
+        author      : aliceDid.uri,
+        grantedTo   : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Read,
+          protocol  : 'http://example.com/remote-revocation-test'
+        }
+      });
+
+      const sendDwnRequestStub = spyOn(testHarness.agent, 'sendDwnRequest').mockImplementation(async (request) => {
+        const filter = 'messageParams' in request
+          ? request.messageParams.filter as Record<string, unknown>
+          : {};
+
+        if (request.messageType === DwnInterface.RecordsQuery && filter.protocolPath === PermissionsProtocol.grantPath) {
+          return {
+            messageCid : '',
+            reply      : { entries: [writeGrant.message, readGrant.message], status: { code: 200, detail: 'OK' } }
+          };
+        }
+
+        const status = filter.parentId === writeGrant.message.recordId
+          ? { code: 200, detail: 'OK' }
+          : { code: 404, detail: 'Not Found' };
+        return {
+          messageCid : '',
+          reply      : { status }
+        };
+      });
+
+      const grants = await testHarness.agent.permissions.fetchGrants({
+        author       : aliceDid.uri,
+        target       : aliceDid.uri,
+        protocol     : 'http://example.com/remote-revocation-test',
+        remote       : true,
+        checkRevoked : true,
+      });
+
+      expect(grants.length).toBe(1);
+      expect(grants[0].message.recordId).toBe(readGrant.message.recordId);
+
+      const revocationFilters = sendDwnRequestStub.mock.calls
+        .map(([request]) => ('messageParams' in request ? request.messageParams.filter as Record<string, unknown> : {}))
+        .filter(filter => filter.protocolPath === PermissionsProtocol.revocationPath);
+      expect(revocationFilters.length).toBe(2);
+      expect(revocationFilters.some(filter => filter.parentId === writeGrant.message.recordId)).toBe(true);
+      expect(revocationFilters.some(filter => filter.parentId === readGrant.message.recordId)).toBe(true);
+      expect(revocationFilters.every(filter => filter.contextId === undefined)).toBe(true);
+      expect(revocationFilters.every(filter => !Array.isArray(filter.parentId))).toBe(true);
+    });
+
     it('filter by protocol', async () => {
       // create a grant for permission-1
       const protocol1Grant = await testHarness.agent.permissions.createGrant({
@@ -379,7 +445,7 @@ describe('AgentPermissionsApi', () => {
       }
     });
 
-    it('should filter out revoked grants by default', async () => {
+    it('should filter out revoked grants when checkRevoked is true', async () => {
       // create two grants
       const grant1 = await testHarness.agent.permissions.createGrant({
         store       : true,
@@ -420,17 +486,18 @@ describe('AgentPermissionsApi', () => {
         grant  : grant1.grant,
       });
 
-      // default (checkRevoked: true) should only return the non-revoked grant
+      // checkRevoked filters out revoked grants.
       grants = await testHarness.agent.permissions.fetchGrants({
-        author   : aliceDid.uri,
-        target   : aliceDid.uri,
-        protocol : 'http://example.com/revocation-test',
+        author       : aliceDid.uri,
+        target       : aliceDid.uri,
+        protocol     : 'http://example.com/revocation-test',
+        checkRevoked : true,
       });
       expect(grants.length).toBe(1);
       expect(grants[0].grant.id).toBe(grant2.grant.id);
     });
 
-    it('should include revoked grants when checkRevoked is false', async () => {
+    it('should include revoked grants when checkRevoked is omitted or false', async () => {
       // create a grant and revoke it
       const grant = await testHarness.agent.permissions.createGrant({
         store       : true,
@@ -451,8 +518,17 @@ describe('AgentPermissionsApi', () => {
         grant  : grant.grant,
       });
 
-      // with checkRevoked: false, the revoked grant should still be returned
-      const grants = await testHarness.agent.permissions.fetchGrants({
+      // without checkRevoked, the revoked grant should still be returned.
+      let grants = await testHarness.agent.permissions.fetchGrants({
+        author   : aliceDid.uri,
+        target   : aliceDid.uri,
+        protocol : 'http://example.com/revocation-test-2',
+      });
+      expect(grants.length).toBe(1);
+      expect(grants[0].grant.id).toBe(grant.grant.id);
+
+      // with checkRevoked: false, the revoked grant should still be returned.
+      grants = await testHarness.agent.permissions.fetchGrants({
         author       : aliceDid.uri,
         target       : aliceDid.uri,
         protocol     : 'http://example.com/revocation-test-2',
@@ -462,17 +538,124 @@ describe('AgentPermissionsApi', () => {
       expect(grants[0].grant.id).toBe(grant.grant.id);
     });
 
-    it('should use only 2 DWN roundtrips when checking revocations', async () => {
+    it('should check revocations through one message-path read per grant when checkRevoked is true', async () => {
+      const writeGrant = await testHarness.agent.permissions.createGrant({
+        store       : true,
+        author      : aliceDid.uri,
+        grantedTo   : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Write,
+          protocol  : 'http://example.com/revocation-roundtrip-test'
+        }
+      });
+      const readGrant = await testHarness.agent.permissions.createGrant({
+        store       : true,
+        author      : aliceDid.uri,
+        grantedTo   : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Read,
+          protocol  : 'http://example.com/revocation-roundtrip-test'
+        }
+      });
+      await testHarness.agent.permissions.createRevocation({
+        store  : true,
+        author : aliceDid.uri,
+        grant  : writeGrant.grant,
+      });
+      await testHarness.agent.permissions.clear();
+
       const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
 
-      // fetch grants with revocation check (default)
-      await testHarness.agent.permissions.fetchGrants({
-        author : aliceDid.uri,
-        target : aliceDid.uri,
+      const grants = await testHarness.agent.permissions.fetchGrants({
+        author       : aliceDid.uri,
+        target       : aliceDid.uri,
+        protocol     : 'http://example.com/revocation-roundtrip-test',
+        checkRevoked : true,
       });
 
-      // expect exactly 2 calls: one for grants query, one for revocations query
-      expect(processDwnRequestSpy).toHaveBeenCalledTimes(2);
+      expect(grants.length).toBe(1);
+      expect(grants[0].message.recordId).toBe(readGrant.message.recordId);
+
+      const revocationFilters = processDwnRequestSpy.mock.calls
+        .filter(([request]) => request.messageType === DwnInterface.RecordsRead)
+        .map(([request]) => request.messageParams.filter as Record<string, unknown>);
+      expect(revocationFilters.length).toBe(2);
+
+      expect(revocationFilters.map(filter => filter.parentId).sort()).toEqual([
+        readGrant.message.recordId,
+        writeGrant.message.recordId,
+      ].sort());
+      expect(revocationFilters.every(filter => filter.protocol === PermissionsProtocol.uri)).toBe(true);
+      expect(revocationFilters.every(filter => filter.protocolPath === PermissionsProtocol.revocationPath)).toBe(true);
+      expect(revocationFilters.every(filter => !Array.isArray(filter.parentId))).toBe(true);
+
+      const grantsAgain = await testHarness.agent.permissions.fetchGrants({
+        author       : aliceDid.uri,
+        target       : aliceDid.uri,
+        protocol     : 'http://example.com/revocation-roundtrip-test',
+        checkRevoked : true,
+      });
+      expect(grantsAgain.length).toBe(1);
+      expect(grantsAgain[0].message.recordId).toBe(readGrant.message.recordId);
+
+      const repeatedRevocationFilters = processDwnRequestSpy.mock.calls
+        .filter(([request]) => request.messageType === DwnInterface.RecordsRead)
+        .map(([request]) => request.messageParams.filter as Record<string, unknown>);
+      expect(repeatedRevocationFilters.length).toBe(3);
+      expect(repeatedRevocationFilters[2].parentId).toBe(readGrant.message.recordId);
+    });
+
+    it('should use the message path for cross-tenant local revocation checks', async () => {
+      const writeGrant = await testHarness.agent.permissions.createGrant({
+        store       : false,
+        author      : aliceDid.uri,
+        grantedTo   : bobDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Write,
+          protocol  : 'http://example.com/cross-tenant-revocation-test'
+        }
+      });
+      const processDwnRequestStub = spyOn(testHarness.agent, 'processDwnRequest').mockImplementation(async (request) => {
+        const filter = 'messageParams' in request
+          ? request.messageParams.filter as Record<string, unknown>
+          : {};
+
+        if (request.messageType === DwnInterface.RecordsQuery && filter.protocolPath === PermissionsProtocol.grantPath) {
+          return {
+            messageCid : '',
+            reply      : { entries: [writeGrant.message], status: { code: 200, detail: 'OK' } }
+          };
+        }
+
+        return {
+          messageCid : '',
+          reply      : { status: { code: 404, detail: 'Not Found' } }
+        };
+      });
+
+      const grants = await testHarness.agent.permissions.fetchGrants({
+        author       : bobDid.uri,
+        target       : aliceDid.uri,
+        protocol     : 'http://example.com/cross-tenant-revocation-test',
+        checkRevoked : true,
+      });
+
+      expect(grants.length).toBe(1);
+
+      const revocationFilters = processDwnRequestStub.mock.calls
+        .filter(([request]) => request.messageType === DwnInterface.RecordsRead)
+        .map(([request]) => request.messageParams.filter as Record<string, unknown>);
+      expect(revocationFilters).toEqual([{
+        parentId     : writeGrant.message.recordId,
+        protocol     : PermissionsProtocol.uri,
+        protocolPath : PermissionsProtocol.revocationPath,
+      }]);
     });
 
     it('should use only 1 DWN roundtrip when checkRevoked is false', async () => {

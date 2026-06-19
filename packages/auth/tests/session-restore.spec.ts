@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
+import { DwnPermissionGrant } from '@enbox/agent';
+import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
+
 import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { STORAGE_KEYS } from '../src/types.js';
@@ -600,29 +603,15 @@ describe('restoreSession', () => {
         firstLaunch               : async () => false,
         identityConnectedIdentity : async () => identity,
         syncRegisterIdentity      : async (params) => { registerCalls.push(params); },
-        processDwnRequest         : async (params: any) => {
+        permissionsFetchGrants    : async () => {
+          const validGrant = buildMockGrantEntry('https://proto.example/valid');
+          return [{ grant: DwnPermissionGrant.parse(validGrant), message: validGrant }];
+        },
+        processDwnRequest: async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             const filter = params.messageParams?.filter;
-            if (filter?.protocolPath === 'grant') {
-              // Return two grants: one valid, one that will be revoked.
-              return {
-                reply: {
-                  status  : { code: 200, detail: 'OK' },
-                  entries : [
-                    buildMockGrantEntry('https://proto.example/valid'),
-                    buildMockGrantEntry('https://proto.example/revoked'),
-                  ],
-                },
-              };
-            }
-            if (filter?.protocolPath === 'grant/revocation') {
-              // Return a revocation for the second grant.
-              return {
-                reply: {
-                  status  : { code: 200, detail: 'OK' },
-                  entries : [{ descriptor: { parentId: 'grant-https://proto.example/revoked' } }],
-                },
-              };
+            if (filter?.protocolPath === PermissionsProtocol.revocationPath && filter.contextId === undefined) {
+              return { reply: { status: { code: 400, detail: 'nested revocation queries require contextId' } } };
             }
           }
           return { reply: { status: { code: 202, detail: 'Accepted' } } };

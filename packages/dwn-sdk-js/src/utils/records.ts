@@ -305,6 +305,35 @@ export class Records {
     return filterCopy;
   }
 
+  /**
+   * Nested protocol-path queries must pin one parent context. Otherwise the same
+   * protocol type is read across every parent instance.
+   */
+  public static validateNestedProtocolPathQueryScope(
+    filter: RecordsFilter,
+    errorCode: DwnErrorCode,
+    operationName: string,
+  ): void {
+    const { contextId, protocolPath } = filter;
+    if (!protocolPath?.includes('/')) {
+      return;
+    }
+
+    const expectedParentDepth = protocolPath.split('/').length - 1;
+    const contextIdSegments = contextId?.split('/');
+    if (
+      contextIdSegments?.length === expectedParentDepth &&
+      contextIdSegments.every(segment => segment.length > 0)
+    ) {
+      return;
+    }
+
+    throw new DwnError(
+      errorCode,
+      `${operationName} for nested protocol path '${protocolPath}' must include the direct parent contextId in the filter`
+    );
+  }
+
 
   public static isStartsWithFilter(filter: RecordsWriteTagsFilter): filter is StartsWithFilter {
     return typeof filter === 'object' && ('startsWith' in filter && typeof filter.startsWith === 'string');

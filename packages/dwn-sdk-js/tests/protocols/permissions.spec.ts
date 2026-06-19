@@ -63,6 +63,14 @@ describe('PermissionsProtocol', () => {
       expect(revocation.$immutable).toBe(true);
     });
 
+    it('should define the canonical grant revocation store filter', () => {
+      expect(PermissionsProtocol.grantRevocationFilter('grant-id')).toEqual({
+        isLatestBaseState : true,
+        parentId          : 'grant-id',
+        protocolPath      : PermissionsProtocol.revocationPath,
+      });
+    });
+
     it('should pass ProtocolsConfigure validation without $immutable warnings', async () => {
       // `$immutable: true` combined with `update`/`co-update` actions triggers a `console.warn`
       // during ProtocolsConfigure rule-set validation. No permission record path grants update
