@@ -113,6 +113,17 @@ export class PermissionsProtocol implements CoreProtocol {
   public static readonly revocationPath = 'grant/revocation';
 
   /**
+   * Canonical store predicate for the latest revocation of a permission grant.
+   */
+  public static grantRevocationFilter(grantId: string): Filter {
+    return {
+      isLatestBaseState : true,
+      parentId          : grantId,
+      protocolPath      : PermissionsProtocol.revocationPath,
+    };
+  }
+
+  /**
    * The definition of the Permissions protocol.
    */
   public static readonly definition: ProtocolDefinition = {

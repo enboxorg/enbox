@@ -9,7 +9,6 @@ import type { ProtocolDefinition, ProtocolsConfigureMessage } from '../types/pro
 
 import { FilterUtility } from '../utils/filter.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
-import { PERMISSIONS_REVOCATION_PATH } from './constants.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
@@ -195,11 +194,7 @@ export class StoreValidationStateReader implements ValidationStateReader {
 
   /** @inheritdoc */
   public async fetchOldestGrantRevocation(tenant: string, permissionGrantId: string): Promise<GenericMessage | undefined> {
-    const query: Filter = {
-      parentId          : permissionGrantId,
-      protocolPath      : PERMISSIONS_REVOCATION_PATH,
-      isLatestBaseState : true
-    };
+    const query = PermissionsProtocol.grantRevocationFilter(permissionGrantId);
     const { messages } = await this.messageStore.query(
       tenant,
       [query],

@@ -90,7 +90,8 @@ function buildRevocationAgent(opts: {
 
   // Mock permissions.createRevocation
   (agent as any).permissions = {
-    createRevocation: async (params: any): Promise<any> => {
+    fetchGrants      : async (): Promise<any[]> => [],
+    createRevocation : async (params: any): Promise<any> => {
       if (opts.revocationError) { throw new Error('revocation failed'); }
       opts.revocationCalls?.push(params);
       return {

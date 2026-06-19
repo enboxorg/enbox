@@ -5,7 +5,8 @@
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
-import { InMemorySecretStore } from '@enbox/agent';
+import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnPermissionGrant, InMemorySecretStore } from '@enbox/agent';
 
 /** Minimal BearerIdentity-like object for testing. */
 export interface MockIdentity {
@@ -86,6 +87,7 @@ export interface MockAgentOverrides {
   syncClose?: () => Promise<void>;
   syncHasActiveSubscriptions?: boolean;
   processDwnRequest?: (params: any) => Promise<any>;
+  permissionsFetchGrants?: (params: any) => Promise<any[]>;
   rpcGetServerInfo?: (url: string) => Promise<any>;
   vaultIsInitialized?: () => Promise<boolean>;
   vaultIsLocked?: () => boolean;
@@ -106,6 +108,39 @@ export interface MockAgentOverrides {
  */
 export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAgent {
   const defaultIdentity = createMockIdentity();
+  const processDwnRequest = overrides.processDwnRequest ?? (async (params: any): Promise<any> => {
+    // RecordsQuery returns 200 with empty entries (used by _deriveProtocolsFromGrants).
+    // All other DWN messages return 202 Accepted.
+    if (params?.messageType === 'RecordsQuery') {
+      return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
+    }
+    return { reply: { status: { code: 202, detail: 'Accepted' } } };
+  });
+  const permissionsFetchGrants = overrides.permissionsFetchGrants ?? (async (params: any): Promise<any[]> => {
+    const tags = params.protocol !== undefined ? { protocol: params.protocol } : undefined;
+    const { reply } = await processDwnRequest({
+      author        : params.author,
+      target        : params.target,
+      messageType   : 'RecordsQuery',
+      messageParams : {
+        filter: {
+          author       : params.grantor,
+          recipient    : params.grantee,
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.grantPath,
+          tags,
+        },
+      },
+    });
+    if (reply.status.code !== 200) {
+      throw new Error(`mock fetchGrants failed: ${reply.status.detail}`);
+    }
+
+    return (reply.entries ?? []).map((entry: any) => ({
+      grant   : DwnPermissionGrant.parse(entry),
+      message : entry,
+    }));
+  });
 
   return {
     agentDid : { uri: 'did:dht:testagent' },
@@ -155,14 +190,11 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       ensureKeyDeliveryProtocol         : overrides.dwnEnsureKeyDeliveryProtocol ?? (async (): Promise<void> => {}),
     },
 
-    processDwnRequest: overrides.processDwnRequest ?? (async (params: any): Promise<any> => {
-      // RecordsQuery returns 200 with empty entries (used by _deriveProtocolsFromGrants).
-      // All other DWN messages return 202 Accepted.
-      if (params?.messageType === 'RecordsQuery') {
-        return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
-      }
-      return { reply: { status: { code: 202, detail: 'Accepted' } } };
-    }),
+    processDwnRequest,
+
+    permissions: {
+      fetchGrants: permissionsFetchGrants,
+    },
 
     rpc: {
       getServerInfo: overrides.rpcGetServerInfo ?? (async (): Promise<any> => ({
