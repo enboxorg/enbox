@@ -1,3 +1,4 @@
+import type { SyncEvent } from '../src/types/sync.js';
 import type { Dwn, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
@@ -82,6 +83,55 @@ const feedHarnessProtocolV2: ProtocolDefinition = {
   structure: {
     ...feedHarnessProtocolV1.structure,
     bookmark: {},
+  },
+};
+
+const closureNotesProtocol = 'https://sync-feed-convergence.example/closure-notes';
+const closureTasksProtocol = 'https://sync-feed-convergence.example/closure-tasks';
+
+const closureNotesProtocolV1: ProtocolDefinition = {
+  published : true,
+  protocol  : closureNotesProtocol,
+  types     : {
+    note: {
+      schema      : `${closureNotesProtocol}/schemas/note-v1`,
+      dataFormats : ['text/plain'],
+    },
+  },
+  structure: {
+    note: {},
+  },
+};
+
+const closureTasksProtocolDefinition: ProtocolDefinition = {
+  published : true,
+  protocol  : closureTasksProtocol,
+  types     : {
+    task: {
+      schema      : `${closureTasksProtocol}/schemas/task`,
+      dataFormats : ['text/plain'],
+    },
+  },
+  structure: {
+    task: {},
+  },
+};
+
+const closureNotesProtocolV2: ProtocolDefinition = {
+  published : true,
+  protocol  : closureNotesProtocol,
+  uses      : { tasks: closureTasksProtocol },
+  types     : {
+    note: {
+      schema      : `${closureNotesProtocol}/schemas/note-v2`,
+      dataFormats : ['text/plain'],
+    },
+  },
+  structure: {
+    task: {
+      $ref : 'tasks:task',
+      note : {},
+    },
   },
 };
 
@@ -266,6 +316,48 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(await syncEngine.getFailedMessages(tenantDid)).toHaveLength(0);
   });
 
+  it('pauses a scoped link when a pulled protocol config introduces an uncovered dependency', async () => {
+    await configureLocalProtocol(closureNotesProtocolV1);
+    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [closureNotesProtocol] } });
+
+    const events: SyncEvent[] = [];
+    const unsubscribe = syncEngine.on(event => { events.push(event); });
+    await configureRemoteProtocol(closureTasksProtocolDefinition);
+    await configureRemoteProtocol(closureNotesProtocolV2);
+
+    await syncEngine.sync('pull');
+    unsubscribe();
+
+    const localDefinitions = await queryProtocolDefinitions('local', closureNotesProtocol);
+    expect(localDefinitions.some(definition => definition.uses?.tasks === closureTasksProtocol)).toBe(true);
+    expect(events.some(event => event.type === 'link:status-change' && event.to === 'paused')).toBe(true);
+
+    const health = await syncEngine.getSyncHealth();
+    expect(health.degradedLinkCount).toBe(1);
+    expect(health.syncHealthy).toBe(false);
+  });
+
+  it('pauses a scoped link when a local protocol config introduces an uncovered dependency before push', async () => {
+    await configureLocalProtocol(closureNotesProtocolV1);
+    await syncEngine.registerIdentity({ did: tenantDid, options: { protocols: [closureNotesProtocol] } });
+
+    const events: SyncEvent[] = [];
+    const unsubscribe = syncEngine.on(event => { events.push(event); });
+    await configureLocalProtocol(closureTasksProtocolDefinition);
+    await configureLocalProtocol(closureNotesProtocolV2);
+
+    await syncEngine.sync('push');
+    unsubscribe();
+
+    const remoteDefinitions = await queryProtocolDefinitions('remote', closureNotesProtocol);
+    expect(remoteDefinitions.some(definition => definition.uses?.tasks === closureTasksProtocol)).toBe(false);
+    expect(events.some(event => event.type === 'link:status-change' && event.to === 'paused')).toBe(true);
+
+    const health = await syncEngine.getSyncHealth();
+    expect(health.degradedLinkCount).toBe(1);
+    expect(health.syncHealthy).toBe(false);
+  });
+
   async function expectLocalRecordCount(recordId: string, count: number): Promise<void> {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
@@ -317,7 +409,37 @@ describe('SyncEngineLevel durable feed convergence', () => {
       messageType   : DwnInterface.ProtocolsConfigure,
       messageParams : { definition },
     });
-    expect(reply.status.code).toBe(202);
+    if (reply.status.code !== 202) {
+      throw new Error(`expected local ProtocolsConfigure to succeed: ${reply.status.code} ${reply.status.detail}`);
+    }
+  }
+
+  async function configureRemoteProtocol(definition: ProtocolDefinition): Promise<void> {
+    const { reply } = await testHarness.agent.dwn.sendRequest({
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition },
+    });
+    if (reply.status.code !== 202) {
+      throw new Error(`expected remote ProtocolsConfigure to succeed: ${reply.status.code} ${reply.status.detail}`);
+    }
+  }
+
+  async function queryProtocolDefinitions(location: 'local' | 'remote', protocol: string): Promise<ProtocolDefinition[]> {
+    const request = {
+      author        : tenantDid,
+      target        : tenantDid,
+      messageType   : DwnInterface.ProtocolsQuery,
+      messageParams : { filter: { protocol } },
+    } as const;
+    const { reply } = location === 'local'
+      ? await testHarness.agent.dwn.processRequest(request)
+      : await testHarness.agent.dwn.sendRequest(request);
+    expect(reply.status.code).toBe(200);
+    return (reply.entries ?? [])
+      .map(entry => entry.descriptor.definition)
+      .filter((definition): definition is ProtocolDefinition => typeof definition === 'object' && definition !== null);
   }
 
   async function writeLocalRecord(params: {

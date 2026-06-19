@@ -148,10 +148,12 @@ type DeferredPullState = {
 type FeedPageAdmissionResult =
   | { kind: 'aborted' }
   | { kind: 'deferred'; admittedCids: string[]; detail?: string; hasActionableDiffs: boolean; messageCid: string }
+  | { kind: 'paused'; admittedCids: string[]; hasActionableDiffs: boolean }
   | { kind: 'processed'; admittedCids: string[]; hasActionableDiffs: boolean };
 
 type TrackedFeedPageAdmissionResult =
   | { kind: 'aborted' }
+  | { kind: 'paused'; hasActionableDiffs: boolean }
   | { kind: 'processed'; hasActionableDiffs: boolean };
 
 type FeedCursorAdvanceResult =
@@ -574,7 +576,8 @@ export class SyncEngineLevel implements SyncEngine {
   private static protocolDefinitionFromMessage(message: GenericMessage | undefined): ProtocolDefinition | undefined {
     const descriptor = message?.descriptor as { interface?: string; method?: string; definition?: unknown } | undefined;
     if (
-      descriptor?.interface !== DwnInterfaceName.Protocols ||
+      descriptor === undefined ||
+      descriptor.interface !== DwnInterfaceName.Protocols ||
       descriptor.method !== DwnMethodName.Configure ||
       !SyncEngineLevel.isProtocolDefinition(descriptor.definition)
     ) {
@@ -610,6 +613,57 @@ export class SyncEngineLevel implements SyncEngine {
         .sort(lexicographicalCompare)
         .map(to => `${from} -> ${to}`))
       .join(', ');
+  }
+
+  private async pauseLinkIfProtocolConfigViolatesScope({
+    link,
+    linkKey,
+    message,
+    target,
+  }: {
+    link: ReplicationLinkState;
+    linkKey: string;
+    message: GenericMessage | undefined;
+    target: Pick<SyncTarget, 'did' | 'scope'>;
+  }): Promise<boolean> {
+    const definition = SyncEngineLevel.protocolDefinitionFromMessage(message);
+    if (definition === undefined || !SyncEngineLevel.shouldValidateAppliedProtocolConfig(target.scope, definition.protocol)) {
+      return false;
+    }
+
+    return this.pauseLinkIfRegisteredScopeViolatesClosure({ link, linkKey, target });
+  }
+
+  private async pauseLinkIfRegisteredScopeViolatesClosure({
+    link,
+    linkKey,
+    target,
+  }: {
+    link: ReplicationLinkState;
+    linkKey: string;
+    target: Pick<SyncTarget, 'did' | 'scope'>;
+  }): Promise<boolean> {
+    if (target.scope.kind === 'full') {
+      return false;
+    }
+
+    const options = await this.getIdentityOptions(target.did);
+    if (options === undefined) {
+      return false;
+    }
+
+    try {
+      await this.validateSyncScopeClosure(target.did, options);
+      return false;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.transitionToPaused(linkKey, link, detail);
+      return true;
+    }
+  }
+
+  private static shouldValidateAppliedProtocolConfig(scope: SyncScope, protocol: string): boolean {
+    return scope.kind === 'protocolSet' && scope.protocols.includes(protocol);
   }
 
   private async buildSyncTargetsForEndpoint(did: string, dwnUrl: string, options: SyncIdentityOptions): Promise<SyncTarget[]> {
@@ -1284,7 +1338,7 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState,
     options?: { resumeToken?: ProgressToken },
   ): Promise<void> {
-    if (link.status === 'terminal_incomplete') {
+    if (link.status === 'terminal_incomplete' || link.status === 'paused') {
       return;
     }
 
@@ -1338,6 +1392,41 @@ export class SyncEngineLevel implements SyncEngine {
     this._repairContext.delete(linkKey);
   }
 
+  private async transitionToPaused(
+    linkKey: string,
+    link: ReplicationLinkState,
+    reason: string,
+  ): Promise<void> {
+    if (link.status === 'paused' || link.status === 'terminal_incomplete') {
+      return;
+    }
+
+    console.warn(`SyncEngineLevel: Pausing sync link for ${link.tenantDid} -> ${link.remoteEndpoint}: ${reason}`);
+    await this.setLinkOfflineStatus(link, 'paused');
+    await this.closeLinkSubscriptions(link);
+    this.clearLinkRuntimeInflight(linkKey);
+
+    const retryTimer = this._repairRetryTimers.get(linkKey);
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      this._repairRetryTimers.delete(linkKey);
+    }
+    const reconcileTimer = this._reconcileTimers.get(linkKey);
+    if (reconcileTimer) {
+      clearTimeout(reconcileTimer);
+      this._reconcileTimers.delete(linkKey);
+    }
+    const pushRuntime = this._pushRuntimes.get(linkKey);
+    if (pushRuntime?.timer) {
+      clearTimeout(pushRuntime.timer);
+    }
+    this._pushRuntimes.delete(linkKey);
+
+    this._repairAttempts.delete(linkKey);
+    this._repairContext.delete(linkKey);
+    this._feedConvergenceFailures.delete(linkKey);
+  }
+
   private async setLinkOfflineStatus(link: ReplicationLinkState, status: ReplicationLinkState['status']): Promise<void> {
     const prevStatus = link.status;
     const prevConnectivity = link.connectivity;
@@ -1363,11 +1452,11 @@ export class SyncEngineLevel implements SyncEngine {
 
   /**
    * Schedule a retry for a failed repair. Uses exponential backoff.
-   * No-op if the link is terminal-incomplete or a retry is already scheduled.
+   * No-op if the link is stopped or a retry is already scheduled.
    */
   private scheduleRepairRetry(linkKey: string): void {
     const link = this._activeLinks.get(linkKey);
-    if (!link || link.status === 'terminal_incomplete') { return; }
+    if (!link || SyncEngineLevel.isStoppedLinkStatus(link.status)) { return; }
     if (this._repairRetryTimers.has(linkKey)) { return; }
 
     // attempts is already post-increment from doRepairLink, so subtract 1
@@ -1777,7 +1866,7 @@ export class SyncEngineLevel implements SyncEngine {
       link = await this.getOrCreateReplicationLink(target);
       const linkKey = this.getReplicationLinkKey(target, link);
       this._activeLinks.set(linkKey, link);
-      if (link.status === 'terminal_incomplete') {
+      if (SyncEngineLevel.isStoppedLinkStatus(link.status)) {
         return this.createActiveLinkInitializationResult(link);
       }
 
@@ -2396,6 +2485,14 @@ export class SyncEngineLevel implements SyncEngine {
     if (context.isStale()) { return undefined; }
 
     if (outcome.kind === 'admitted') {
+      if (context.link !== undefined) {
+        await this.pauseLinkIfProtocolConfigViolatesScope({
+          link    : context.link,
+          linkKey : context.linkKey,
+          message : event.message,
+          target  : { did: context.did, scope: context.link.scope },
+        });
+      }
       return { messageCid: rootCid, admitted: true };
     }
 
@@ -2615,6 +2712,14 @@ export class SyncEngineLevel implements SyncEngine {
         }
         if (scopeClassification === 'unknown') {
           this.scheduleLinkReconcile(pushLinkKey, pushLink, 'push-scope-unclassified');
+          return;
+        }
+        if (await this.pauseLinkIfProtocolConfigViolatesScope({
+          link    : pushLink,
+          linkKey : pushLinkKey,
+          message : subMessage.event.message,
+          target,
+        })) {
           return;
         }
       }
@@ -3121,12 +3226,15 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<SyncReconcileResult> {
     const result = SyncEngineLevel.emptySyncReconcileResult(options);
     const link = await this.getOrCreateReplicationLink(target);
-    if (link.status === 'terminal_incomplete') {
+    if (SyncEngineLevel.isStoppedLinkStatus(link.status)) {
       return result;
     }
 
-    const feedPullResult = await this.pullRemoteFeedForSyncTarget(target, options, shouldContinue);
+    const feedPullResult = await this.pullRemoteFeedForSyncTarget(target, link, options, shouldContinue);
     SyncEngineLevel.mergeSyncReconcileResult(result, feedPullResult, options);
+    if (link.status === 'paused') {
+      return result;
+    }
     if (SyncEngineLevel.shouldStopAfterFeedResult(result, feedPullResult)) {
       return result;
     }
@@ -3134,7 +3242,7 @@ export class SyncEngineLevel implements SyncEngine {
       return { ...result, aborted: true };
     }
 
-    const feedPushResult = await this.pushLocalFeedForSyncTarget(target, options, shouldContinue);
+    const feedPushResult = await this.pushLocalFeedForSyncTarget(target, link, options, shouldContinue);
     SyncEngineLevel.mergeSyncReconcileResult(result, feedPushResult, options);
     if (SyncEngineLevel.shouldStopAfterFeedResult(result, feedPushResult)) {
       return result;
@@ -3241,6 +3349,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async pullRemoteFeedForSyncTarget(
     target: SyncTarget,
+    link: ReplicationLinkState,
     options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
@@ -3248,7 +3357,6 @@ export class SyncEngineLevel implements SyncEngine {
       return {};
     }
 
-    const link = await this.getOrCreateReplicationLink(target);
     return this.pullRemoteFeedPages(target, link, shouldContinue);
   }
 
@@ -3298,6 +3406,7 @@ export class SyncEngineLevel implements SyncEngine {
       SyncEngineLevel.assertFeedPullSucceeded(reply, target);
       const pageResult = await this.admitRemoteFeedPageAndTrack({
         target         : target,
+        link,
         entries        : reply.entries ?? [],
         admittedCids   : admittedCids,
         shouldContinue : shouldContinue,
@@ -3307,6 +3416,9 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
+      if (pageResult.kind === 'paused') {
+        return { admittedCids, hasActionableDiffs };
+      }
 
       const cursorAdvance = await this.advanceFeedPullCursor(link, cursor, reply, target);
       if (cursorAdvance.drained) {
@@ -3345,6 +3457,7 @@ export class SyncEngineLevel implements SyncEngine {
       const missingEntries = SyncEngineLevel.feedEntriesMissingFrom(localCids, reply.entries ?? []);
       const pageResult = await this.admitRemoteFeedPageAndTrack({
         target         : target,
+        link,
         entries        : missingEntries,
         admittedCids   : admittedCids,
         knownCids      : localCids,
@@ -3355,6 +3468,9 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       hasActionableDiffs ||= pageResult.hasActionableDiffs;
+      if (pageResult.kind === 'paused') {
+        return { admittedCids, hasActionableDiffs };
+      }
 
       const cursorAdvance = await this.advanceFeedPullCursor(link, cursor, reply, target);
       if (cursorAdvance.drained) {
@@ -3367,6 +3483,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async pushLocalFeedForSyncTarget(
     target: SyncTarget,
+    link: ReplicationLinkState,
     options?: SyncReconcileOptions,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
@@ -3374,7 +3491,6 @@ export class SyncEngineLevel implements SyncEngine {
       return {};
     }
 
-    const link = await this.getOrCreateReplicationLink(target);
     return this.pushLocalFeedPages(target, link, shouldContinue);
   }
 
@@ -3383,6 +3499,11 @@ export class SyncEngineLevel implements SyncEngine {
     link: ReplicationLinkState,
     shouldContinue?: () => boolean,
   ): Promise<SyncReconcileResult> {
+    const linkKey = this.getReplicationLinkKey(target, link);
+    if (await this.pauseLinkIfRegisteredScopeViolatesClosure({ link, linkKey, target })) {
+      return { hasActionableDiffs: false, pushFailures: [] };
+    }
+
     if (link.push.contiguousAppliedToken === undefined) {
       return this.pushLocalFeedDiffWithRemoteInventory(target, link, shouldContinue);
     }
@@ -3699,18 +3820,20 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async admitRemoteFeedPageAndTrack({
     target,
+    link,
     entries,
     admittedCids,
     knownCids,
     shouldContinue,
   }: {
     target: SyncTarget;
+    link: ReplicationLinkState;
     entries: MessagesQueryReplyEntry[];
     admittedCids: string[];
     knownCids?: Set<string>;
     shouldContinue?: () => boolean;
   }): Promise<TrackedFeedPageAdmissionResult> {
-    const pageResult = await this.admitRemoteFeedPage(target, entries, shouldContinue);
+    const pageResult = await this.admitRemoteFeedPage(target, link, entries, shouldContinue);
     if (pageResult.kind === 'aborted') {
       return { kind: 'aborted' };
     }
@@ -3725,6 +3848,13 @@ export class SyncEngineLevel implements SyncEngine {
         this.emitReconcileApplied(target, admittedCids);
       }
       throw new Error(`SyncEngineLevel: pull deferred for ${pageResult.messageCid}: ${pageResult.detail ?? 'dependency unavailable'}`);
+    }
+
+    if (pageResult.kind === 'paused') {
+      if (admittedCids.length > 0) {
+        this.emitReconcileApplied(target, admittedCids);
+      }
+      return { kind: 'paused', hasActionableDiffs: pageResult.hasActionableDiffs };
     }
 
     return { kind: 'processed', hasActionableDiffs: pageResult.hasActionableDiffs };
@@ -3832,11 +3962,13 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async admitRemoteFeedPage(
     target: SyncTarget,
+    link: ReplicationLinkState,
     entries: MessagesQueryReplyEntry[],
     shouldContinue?: () => boolean,
   ): Promise<FeedPageAdmissionResult> {
     const admittedCids: string[] = [];
     let hasActionableDiffs = false;
+    const linkKey = this.getReplicationLinkKey(target, link);
 
     for (const entry of entries) {
       if (await this.hasAdmissionDeadLetter(target.did, target.dwnUrl, entry.messageCid)) {
@@ -3860,6 +3992,15 @@ export class SyncEngineLevel implements SyncEngine {
       if (outcome.kind === 'admitted') {
         admittedCids.push(...outcome.appliedCids);
         this.trackRemoteFeedAppliedCids(outcome.appliedCids, target);
+        const paused = await this.pauseLinkIfProtocolConfigViolatesScope({
+          link,
+          linkKey,
+          message: outcome.message,
+          target,
+        });
+        if (paused) {
+          return { kind: 'paused', admittedCids, hasActionableDiffs };
+        }
       }
     }
 
@@ -4011,7 +4152,7 @@ export class SyncEngineLevel implements SyncEngine {
     shouldContinue?: () => boolean,
   ): Promise<
     | { kind: 'aborted' }
-    | { kind: 'admitted'; appliedCids: string[] }
+    | { kind: 'admitted'; appliedCids: string[]; message?: GenericMessage }
     | { kind: 'dead-lettered' }
     | { kind: 'deferred'; detail?: string }
   > {
@@ -4033,7 +4174,7 @@ export class SyncEngineLevel implements SyncEngine {
     });
 
     if (outcome.kind === 'admitted') {
-      return { kind: 'admitted', appliedCids: outcome.appliedCids };
+      return { kind: 'admitted', appliedCids: outcome.appliedCids, message: prefetched[0]?.message };
     }
 
     if (outcome.kind === 'deferred') {
@@ -4539,8 +4680,12 @@ export class SyncEngineLevel implements SyncEngine {
     return `${tenantDid}^${projectionId}^${authorizationEpoch}`;
   }
 
+  private static isStoppedLinkStatus(status: ReplicationLinkState['status']): boolean {
+    return status === 'paused' || status === 'terminal_incomplete';
+  }
+
   private static isUnhealthyLinkStatus(status: ReplicationLinkState['status']): boolean {
-    return status === 'repairing' || status === 'terminal_incomplete';
+    return status === 'paused' || status === 'repairing' || status === 'terminal_incomplete';
   }
 
   // ---------------------------------------------------------------------------

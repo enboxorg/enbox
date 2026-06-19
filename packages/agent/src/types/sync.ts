@@ -243,7 +243,7 @@ export type DirectionCheckpoint = {
  * - `polling` — current link is reconciled by periodic durable feed sync; live subscription is not supported for its scope.
  * - `repairing` — gap detected or pending overflow; running durable feed repair.
  * - `terminal_incomplete` — admission failed with a terminal dependency error; requires a new scope/authorization epoch.
- * - `paused` — explicitly paused by the application.
+ * - `paused` — sync is stopped until the scope/authorization epoch changes, for example after scope-closure validation fails.
  */
 export type LinkStatus = 'initializing' | 'live' | 'polling' | 'repairing' | 'terminal_incomplete' | 'paused';
 
@@ -451,7 +451,7 @@ export type SyncHealthSummary = {
    * to callers.
    */
   admissionFailureCount: number;
-  /** Number of current sync links in `repairing` or `terminal_incomplete` status. */
+  /** Number of current sync links in `paused`, `repairing`, or `terminal_incomplete` status. */
   degradedLinkCount: number;
   /** True only when there are no failed messages or degraded links. */
   syncHealthy: boolean;
