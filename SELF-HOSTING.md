@@ -35,31 +35,32 @@ it in production you need three things:
 
 ### Option A — Docker (recommended)
 
-Pre-built images are published to GitHub Container Registry. Mount a persistent
-volume so data survives restarts.
+There is no official public image yet, so build one from the repository. The
+Dockerfile copies workspace-root files, so build it from the repo root with an
+explicit `-f`, then run it with a persistent volume so data survives restarts:
 
 ```bash
+# From the repository root
+docker build -f packages/dwn-server/Dockerfile -t dwn-server .
+
 docker run -d \
   --name dwn-server \
   -p 3000:3000 \
-  -v dwn-data:/dwn-server/data \
+  -v dwn-data:/app/packages/dwn-server/data \
   -e DWN_BASE_URL=https://dwn.example.com \
   -e DS_WEBSOCKET_SERVER=on \
-  ghcr.io/enboxorg/dwn-server:main
+  dwn-server
 ```
 
-To pin a specific version instead of `:main`, see the
-[published images](https://github.com/enboxorg/enbox/pkgs/container/dwn-server/versions)
-and pull by digest:
-
-```bash
-docker pull ghcr.io/enboxorg/dwn-server@sha256:<hash>
-```
+The default `level://data` store lives under the server's working directory
+(`/app/packages/dwn-server/data`), which is why the volume mounts that path. Push
+this image to a registry your platform can pull from for remote deploys.
 
 ### Option B — Docker Compose
 
-For a self-contained stack (DWN server + PostgreSQL) use the compose file shipped
-with the package. See [`docs/HOSTING.md`](./docs/HOSTING.md) and
+The package ships a minimal compose file that builds the image and runs an open
+node with a persistent volume (default LevelDB storage). See
+[`docs/HOSTING.md`](./docs/HOSTING.md) and
 [`packages/dwn-server/docker-compose.yaml`](./packages/dwn-server/docker-compose.yaml).
 
 ```bash
@@ -100,10 +101,10 @@ delivery/forwarding, connection pooling, and more).
 
 ### Storage backends
 
-The server reads/writes through four logical stores (messages, data, state index,
+The server reads/writes through three logical stores (messages, data, and
 resumable tasks). By default they all share `DWN_STORAGE`; override any of them
-individually with `DWN_STORAGE_MESSAGES`, `DWN_STORAGE_DATA`,
-`DWN_STORAGE_STATE_INDEX`, and `DWN_STORAGE_RESUMABLE_TASKS`.
+individually with `DWN_STORAGE_MESSAGES`, `DWN_STORAGE_DATA`, and
+`DWN_STORAGE_RESUMABLE_TASKS`.
 
 | Backend    | Connection URL example              | Notes                                                                            |
 | ---------- | ----------------------------------- | -------------------------------------------------------------------------------- |
@@ -121,12 +122,18 @@ docker run -d \
   -e DWN_BASE_URL=https://dwn.example.com \
   -e DWN_STORAGE=postgres://user:pass@db.internal:5432/dwn \
   -e DWN_TTL_CACHE_URL=postgres://user:pass@db.internal:5432/dwn \
-  ghcr.io/enboxorg/dwn-server:main
+  dwn-server
 ```
 
-> **Note:** `DWN_TTL_CACHE_URL` must be a SQL backend, and if you also set
-> `DWN_REGISTRATION_STORE_URL` (see below) both must point at the **same** SQL
-> database — they share server-side tables. LevelDB is never accepted for either.
+> **Note:** `DWN_TTL_CACHE_URL` must be a SQL backend. The registration store URL
+> falls back to `DWN_STORAGE`, so a SQL `DWN_STORAGE` like the one above **activates
+> the tenant registration gate** even without `DWN_REGISTRATION_STORE_URL` — you must
+> then enable a registration method or pre-register tenants (see
+> [Registration & tenant gating](#registration--tenant-gating)). When a registration
+> store is set, `DWN_TTL_CACHE_URL` must point at the **same** SQL database (shared
+> server-side tables). To keep an **open** node on SQL, set the per-store vars
+> (`DWN_STORAGE_MESSAGES` / `DWN_STORAGE_DATA` / `DWN_STORAGE_RESUMABLE_TASKS`)
+> instead of `DWN_STORAGE`, and leave `DWN_REGISTRATION_STORE_URL` unset.
 
 ## 3. Expose it publicly (TLS)
 
@@ -223,19 +230,23 @@ const endpoints = await agent.identity.getDwnEndpoints({ didUri: identity.did.ur
 
 ## Registration & tenant gating
 
-By default the server is **open** — any DID can use it. To restrict who may
-register as a tenant, set `DWN_REGISTRATION_STORE_URL` (a SQL database) and enable
-one or more gates:
+By default the server is **open** — any DID can use it. The tenant gate activates
+when a SQL registration store is configured, which resolves from
+`DWN_REGISTRATION_STORE_URL` **or** its fallback to `DWN_STORAGE` (not the per-store
+overrides). To gate registration, enable one or more methods:
 
 - **Proof of Work** — `DWN_REGISTRATION_PROOF_OF_WORK_ENABLED=true`.
-- **Terms of Service** — `DWN_TERMS_OF_SERVICE_FILE_PATH=/path/to/tos.txt`.
 - **Provider Auth (OAuth2)** — `DWN_PROVIDER_AUTH_ENABLED=true` plus a JWT secret,
   JWKS URL, or custom plugin.
+- **Terms of Service** — `DWN_TERMS_OF_SERVICE_FILE_PATH=/path/to/tos.txt`. Layered
+  on top of the above (required for proof-of-work; only validated for provider-auth
+  when the client supplies the hash), not a standalone gate.
 
-Active requirements are advertised at `/info`. If you set
-`DWN_REGISTRATION_STORE_URL` but enable **no** gate, new tenants cannot register —
-the server logs a warning at startup. Leave `DWN_REGISTRATION_STORE_URL` unset for
-an open node. See the
+Every registration request must carry proof-of-work or provider-auth credentials.
+Active requirements are advertised at `/info`. If a registration store is configured
+but **no** method is enabled, new tenants cannot register — the server logs a warning
+at startup. For an open node, leave `DWN_REGISTRATION_STORE_URL` and `DWN_STORAGE`
+unset (use the default LevelDB, or set the per-store SQL vars). See the
 [Registration Requirements](./packages/dwn-server/README.md#registration-requirements)
 section of the README for the full client flow.
 
@@ -253,8 +264,8 @@ The admin API and UI are **disabled** unless you provide a token via
 2. **Run multiple instances** behind a load balancer — the app is stateless when
    all instances share the same SQL database. Tune the Postgres pool with
    `DWN_PG_POOL_MIN` / `DWN_PG_POOL_MAX` when many instances share one database.
-3. **Persist the data volume** if you do use LevelDB/SQLite-on-disk
-   (`-v dwn-data:/dwn-server/data`).
+3. **Persist the data volume** if you use the default LevelDB (or SQLite-on-disk)
+   backend — mount `-v dwn-data:/app/packages/dwn-server/data`.
 4. **Manage secrets** (database URLs, admin token, JWT secrets) via your platform's
    secret manager — never bake them into images.
 5. **Back up the database** and test restores.
@@ -283,4 +294,3 @@ document resolves with your endpoint.
 
 - [`@enbox/dwn-server` README](./packages/dwn-server/README.md) — full configuration, storage, and JSON-RPC reference
 - [`docs/HOSTING.md`](./docs/HOSTING.md) — Docker Compose quick start
-- [`packages/dwn-server/charts`](./packages/dwn-server/charts) — Helm chart for Kubernetes
