@@ -435,24 +435,28 @@ describe('Enbox API', () => {
       const connect = sinon.stub().resolves(session);
       const auth = { connect };
       const create = sinon.stub(AuthManager, 'create').resolves(auth as any);
+      const identitySyncProtocols: [string, ...string[]] = ['https://proto.example/profile'];
 
       const result = await Enbox.connect({
-        password       : 'test-password',
-        createIdentity : true,
-        sync           : 'off',
+        password              : 'test-password',
+        createIdentity        : true,
+        sync                  : 'off',
+        identitySyncProtocols : identitySyncProtocols,
       });
 
       expect(result.enbox).toBeInstanceOf(Enbox);
       expect(result.session).toBe(session);
       expect(result.auth).toBe(auth);
       expect(create.firstCall.args[0]).toEqual({
-        password : 'test-password',
-        sync     : 'off',
+        password              : 'test-password',
+        sync                  : 'off',
+        identitySyncProtocols : identitySyncProtocols,
       });
       expect(connect.firstCall.args[0]).toEqual({
-        password       : 'test-password',
-        sync           : 'off',
-        createIdentity : true,
+        password              : 'test-password',
+        sync                  : 'off',
+        identitySyncProtocols : identitySyncProtocols,
+        createIdentity        : true,
       });
     });
 
