@@ -1,94 +1,17 @@
-# Contribution Guide
+# Contributing to `@enbox/dwn-server`
 
-First off, thank you for considering contributing to DWN-Server. It's people like you that make DWN-Server such a great tool.
-Given that we're still in early stages of development, this contribution guide will certainly change as we near a release. Until then, things will be a bit ragtag but there's still plenty of opportunities for contribution.
+General contributor workflow, style, testing, and release rules are maintained
+at the repository root in [AGENTS.md](../../AGENTS.md). Use that file as the
+source of truth for this package.
 
-- [Code of Conduct](#code-of-conduct)
-- [Getting Started](#getting-started)
-  - [Issues](#issues)
-  - [Working on the issue](#working-on-the-issue)
-  - [Pull Requests](#pull-requests)
-- [Development](#development)
-  - [Running tests](#tests)
-  - [Code Style](#code-style)
-  - [Code Guidelines](#code-guidelines)
-  - [Available Commands](#available-commands)
+Useful package commands:
 
-## Code of Conduct
+```bash
+bun run build
+bun run lint
+bun run lint:fix
+bun run test:node
+```
 
-We take our open-source community seriously. Please adhere to our [Code of Conduct](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/CODE_OF_CONDUCT.md).
-
-## Getting Started
-
-### Issues
-
-- Feel free to open issues for any reason as long as you make it clear what the issue pertains to.
-- Before opening new issues, please search to check if there is an existing issue.
-- Existing issues with labels `bug`, `documentation`, `good first issue`, `help wanted` are excellent candidates for contribution, and we'd be thrilled to get all the help we can get. You can take a look at all the Issues that match the these labels [here](https://github.com/enboxorg/enbox/issues?q=is%3Aopen+label%3A%22help+wanted%22%2C%22good+first+issue%22%2C%22documentation%22%2C%22bug%22+)
-- If planning to work on non-trivial issue involving major/significant changes please check with us first on the implementation approach
-  - Leave explanation of the approach and tag both @adam4leos and @finn-tbd in the issue
-  - Good idea to also post link to the issue in our [dwn discord channel](https://discord.com/channels/937858703112155166/1068273971432280196) to initiate discussion with more people
-
-### Working on the issue
-
-- Check to see if anyone is already working on the issue by looking to see if the issue has a `WIP` tag.
-- Fork the repository
-- Create a branch named the issue number you're taking on (usually branch from `main`)
-- Push that branch and create a draft PR
-- Paste a link to the draft PR in the issue you're tackling
-- We'll add the `WIP` tag for you
-- Work away. Feel free to ask any/all questions that crop up along the way
-
-### Pull Requests
-
-- When ready, switch the draft PR to "Ready for review".
-- If you've added code that should be tested, add tests.
-- Update the README.md with details of changes to the interface, if applicable.
-
-## Development
-
-### Tests
-
-- Running the `bun run test` command from the root of the project will run all tests.
-  - This is run via CI whenever a pull request is opened, or a commit is pushed to a branch that has an open PR.
-- Make sure to cover added code with tests, if it should be tested
-
-### Test Coverage
-
-- [Codecov](https://app.codecov.io/github/enboxorg/enbox) is used to track
-  the coverage of our tests and will automatically comment on every pull request
-  showing the impact to overall coverage.
-- If your pull request introduces new features or changes existing logic, please
-  ensure you include comprehensive tests that cover edge-cases and failure
-  scenarios. This ensures that your contributions are of the highest quality and
-  safeguards our codebase against potential bugs or breaking changes.
-- Thorough tests are also a great way to better understand your proposed changes.
-- If you encounter any difficulties while writing tests, don't hesitate to reach
-  out for help or guidance in our Web5
-  [Discord](https://discord.com/channels/937858703112155166/1068273971432280196)
-  channel.
-
-### Code Style
-
-- Our preferred code style has been codified into `eslint`.
-  - Feel free to take a look onto [eslint config](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/.eslintrc.cjs).
-- Running `bun run lint:fix` will auto-format as much as it can. Everything it wasn't able to fix will be printed out as errors or warnings.
-- We have a pre-commit hook which would run both commands with attempt to autofix problems
-  - It runs by [husky](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/.husky/pre-commit) and executes [lint-staged command](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/package.json#L89)
-- Make sure that no errors/warnings are introduced in your PR
-
-### Code Guidelines
-
-1. A `TODO` in comment must always link to a GitHub issue.
-
-### Available Commands
-
-| Script                 | Description                                                        |
-| ---------------------- | ------------------------------------------------------------------ |
-| `bun run build:esm`    | compiles typescript into ESM JS                                    |
-| `bun run build`        | compiles typescript into ESM JS                                    |
-| `bun run clean`        | deletes compiled JS                                                |
-| `bun run lint`         | runs linter                                                        |
-| `bun run lint:fix`     | runs linter and fixes auto-fixable problems                        |
-| `bun run test`         | runs tests                                                         |
-| `bun run server`       | starts server                                                      |
+Server tests that use PostgreSQL, NATS, MinIO, or DID:DHT publishing require
+the shared local services described in [docs/TESTING.md](../../docs/TESTING.md).

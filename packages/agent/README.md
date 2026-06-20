@@ -27,10 +27,10 @@ bun add @enbox/agent
 ## Usage
 
 ```typescript
-import { Web5UserAgent } from '@enbox/agent';
+import { EnboxUserAgent } from '@enbox/agent';
 
 // Create and initialize a new agent
-const agent = await Web5UserAgent.create();
+const agent = await EnboxUserAgent.create();
 await agent.initialize({ password: 'user-password' });
 await agent.start({ password: 'user-password' });
 
@@ -59,7 +59,7 @@ await agent.sync.sync();
 
 | Class | Purpose |
 |---|---|
-| `Web5UserAgent` | Main agent — composes all sub-APIs into a single runtime |
+| `EnboxUserAgent` | Main agent — composes all sub-APIs into a single runtime |
 | `HdIdentityVault` | Seed phrase vault, password-encrypts agent DID as CompactJWE |
 | `LocalKeyManager` | In-process key management with HD derivation and ECIES |
 | `AgentDwnApi` | DWN message processing, encryption/decryption callbacks |
@@ -82,6 +82,7 @@ bun run --filter @enbox/agent build
 # Start test infrastructure (Pkarr relay, Postgres, MySQL, NATS) from repo root
 docker compose -f docker-compose.test.yaml up -d --wait
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
 
 # Full agent test suite (bun:test)
 bun run test:node

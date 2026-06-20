@@ -34,7 +34,7 @@ Key settings:
 | Variable | Default | Description |
 |---|---|---|
 | `DWN_SERVER_PORT` | `3000` | DWN server port |
-| `DWN_BASE_URL` | `http://localhost:3000` | Public URL (used for Web5 Connect flows) |
+| `DWN_BASE_URL` | `http://localhost:3000` | Public URL (used for Enbox Connect flows) |
 | `POSTGRES_DB` | `dwn` | Database name |
 | `POSTGRES_USER` | `dwn_user` | Database user |
 | `POSTGRES_PASSWORD` | `dwn_password` | Database password (change in production) |

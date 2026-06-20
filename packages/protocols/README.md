@@ -2,7 +2,7 @@
 
 > **Research Preview** -- Enbox is under active development. APIs may change without notice.
 
-Production-ready DWN protocol definitions for the Enbox ecosystem. Each protocol ships with:
+Ready-to-use DWN protocol definitions for the Enbox ecosystem. Each protocol ships with:
 
 - A raw `ProtocolDefinition` constant (e.g. `SocialGraphDefinition`)
 - A typed protocol via `defineProtocol()` (e.g. `SocialGraphProtocol`)
@@ -20,13 +20,13 @@ bun add @enbox/protocols
 ## Quick Start
 
 ```ts
-import { repository, Web5 } from '@enbox/api';
+import { repository, Enbox } from '@enbox/api';
 import { ProfileProtocol, SocialGraphProtocol } from '@enbox/protocols';
 
-const { web5 } = await Web5.connect({ password: 'secret' });
+const { enbox } = await Enbox.connect({ password: 'secret' });
 
 // Use the repository pattern for ergonomic CRUD
-const social = repository(web5.using(SocialGraphProtocol));
+const social = repository(enbox.using(SocialGraphProtocol));
 await social.configure();
 
 // Collections: create, query, get, delete, subscribe
@@ -41,7 +41,7 @@ for (const f of friends) {
 }
 
 // Singletons: set, get, delete
-const profile = repository(web5.using(ProfileProtocol));
+const profile = repository(enbox.using(ProfileProtocol));
 await profile.configure();
 
 await profile.profile.set({

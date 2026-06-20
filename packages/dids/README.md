@@ -34,8 +34,5 @@ console.log(resolution.didDocument);
 
 | Resource                                                                            | Description                                                                   |
 | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [CODEOWNERS](https://github.com/enboxorg/enbox/blob/main/CODEOWNERS)              | Outlines the project lead(s)                                                 |
-| [CODE_OF_CONDUCT.md](https://github.com/enboxorg/enbox/blob/main/CODE_OF_CONDUCT.md) | Expected behavior for project contributors, promoting a welcoming environment |
-| [CONTRIBUTING.md](https://github.com/enboxorg/enbox/blob/main/CONTRIBUTING.md)    | Developer guide to build, test, run, access CI, chat, discuss, file issues   |
-| [GOVERNANCE.md](https://github.com/enboxorg/enbox/blob/main/GOVERNANCE.md)        | Project governance                                                            |
-| [LICENSE](https://github.com/enboxorg/enbox/blob/main/LICENSE)                    | Apache License, Version 2.0                                                   |
+| [AGENTS.md](https://github.com/enboxorg/enbox/blob/main/AGENTS.md) | Contributor workflow, style, testing, and release rules |
+| [LICENSE](https://github.com/enboxorg/enbox/blob/main/LICENSE)     | Apache License, Version 2.0                             |

@@ -34,18 +34,15 @@ To enable this functionality import and run `activatePolyfills()` at the entrypo
 
 | Resource                                | Description                                                                   |
 | --------------------------------------- | ----------------------------------------------------------------------------- |
-| [CODEOWNERS][codeowners-link]           | Outlines the project lead(s)                                                  |
-| [CODE OF CONDUCT][code-of-conduct-link] | Expected behavior for project contributors, promoting a welcoming environment |
-| [CONTRIBUTING][contributing-link]       | Developer guide to build, test, run, access CI, chat, discuss, file issues    |
-| [GOVERNANCE][governance-link]           | Project governance                                                            |
-| [LICENSE][license-link]                 | Apache License, Version 2.0                                                   |
+| [AGENTS.md][agents-link] | Contributor workflow, style, testing, and release rules |
+| [LICENSE][license-link]  | Apache License, Version 2.0                             |
 
 [browser-npm-badge]: https://img.shields.io/npm/v/@enbox/browser.svg?style=flat&color=blue&santize=true
 [browser-npm-link]: https://www.npmjs.com/package/@enbox/browser
 [browser-downloads-badge]: https://img.shields.io/npm/dt/@enbox/browser?&color=blue
-[browser-build-badge]: https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/tests-ci.yml?branch=main&label=build
-[browser-build-link]: https://github.com/enboxorg/enbox/actions/workflows/tests-ci.yml
-[browser-coverage-badge]: https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/crypto.json
+[browser-build-badge]: https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/ci.yml?branch=main&label=ci
+[browser-build-link]: https://github.com/enboxorg/enbox/actions/workflows/ci.yml
+[browser-coverage-badge]: https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/browser.json
 [browser-coverage-link]: https://github.com/enboxorg/enbox/actions/workflows/ci.yml
 [browser-issues-badge]: https://img.shields.io/github/issues/enboxorg/enbox/package:%20browser?label=issues
 [browser-issues-link]: https://github.com/enboxorg/enbox/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+browser"
@@ -54,10 +51,5 @@ To enable this functionality import and run `activatePolyfills()` at the entrypo
 [browser-jsdelivr-browser]: https://cdn.jsdelivr.net/npm/@enbox/browser/dist/browser.mjs
 [browser-unpkg-link]: https://unpkg.com/@enbox/browser
 [browser-unpkg-browser]: https://unpkg.com/@enbox/browser/dist/browser.mjs
-[codeowners-link]: https://github.com/enboxorg/enbox/blob/main/CODEOWNERS
-[code-of-conduct-link]: https://github.com/enboxorg/enbox/blob/main/CODE_OF_CONDUCT.md
-[contributing-link]: https://github.com/enboxorg/enbox/blob/main/CONTRIBUTING.md
-[governance-link]: https://github.com/enboxorg/enbox/blob/main/GOVERNANCE.md
+[agents-link]: https://github.com/enboxorg/enbox/blob/main/AGENTS.md
 [license-link]: https://github.com/enboxorg/enbox/blob/main/LICENSE
-[discord-badge]: https://img.shields.io/discord/937858703112155166?color=5865F2&logo=discord&logoColor=white
-[discord-link]: https://discord.com/channels/937858703112155166/969272658501976117
