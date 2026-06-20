@@ -158,6 +158,119 @@ describe('vaultConnect', () => {
     expect(syncCalls[1].options.protocols).toEqual(['https://proto.example/profile']);
   });
 
+  test('recovers remote identities before creating a fallback identity on fresh vault restore', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const createCalls: any[] = [];
+    const syncCalls: any[] = [];
+    const updateCalls: any[] = [];
+    const identity = createMockIdentity({
+      metadata: { name: 'Recovered', tenant: 'did:dht:testagent' },
+    });
+    let pullCount = 0;
+    let recoveredIdentityRegistrationCount = 0;
+
+    const agent = createMockAgent({
+      firstLaunch          : async () => true,
+      initialize           : async () => 'recovery phrase words',
+      identityList         : async () => (pullCount > 0 ? [identity] : []),
+      identityCreate       : async (params) => { createCalls.push(params); return createMockIdentity(); },
+      syncSync             : async () => { pullCount++; },
+      syncRegisterIdentity : async (params) => {
+        syncCalls.push(params);
+        if (params.did === 'did:dht:testuser123') {
+          recoveredIdentityRegistrationCount++;
+          if (recoveredIdentityRegistrationCount > 1) {
+            throw new Error('already registered');
+          }
+        }
+      },
+      syncUpdateIdentityOptions: async (params) => { updateCalls.push(params); },
+    });
+
+    const session = await vaultConnect(
+      {
+        userAgent                    : agent,
+        emitter,
+        storage,
+        defaultSync                  : '15s',
+        defaultIdentitySyncProtocols : ['https://proto.example/profile'],
+      },
+      { recoveryPhrase: 'existing recovery phrase', password: 'pass', createIdentity: true },
+    );
+
+    expect(session.did).toBe('did:dht:testuser123');
+    expect(session.identity.name).toBe('Recovered');
+    expect(createCalls).toHaveLength(0);
+    expect(pullCount).toBe(2);
+    expect(syncCalls.map((call) => call.did)).toEqual([
+      'did:dht:testagent',
+      'did:dht:testuser123',
+      'did:dht:testuser123',
+    ]);
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].did).toBe('did:dht:testuser123');
+  });
+
+  test('creates a fallback identity when fresh vault remote recovery fails', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    const createCalls: any[] = [];
+    const warn = console.warn;
+    console.warn = (): void => {};
+
+    try {
+      const agent = createMockAgent({
+        firstLaunch    : async () => true,
+        initialize     : async () => 'recovery phrase words',
+        identityList   : async () => [],
+        identityCreate : async (params) => { createCalls.push(params); return createMockIdentity(); },
+        syncSync       : async () => { throw new Error('remote unavailable'); },
+      });
+
+      const session = await vaultConnect(
+        { userAgent: agent, emitter, storage, defaultSync: '15s' },
+        { recoveryPhrase: 'existing recovery phrase', password: 'pass', createIdentity: true },
+      );
+
+      expect(session.did).toBe('did:dht:testuser123');
+      expect(createCalls).toHaveLength(1);
+    } finally {
+      console.warn = warn;
+    }
+  });
+
+  test('registers the newly created identity tenant when registration options are provided', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    let registrationSuccesses = 0;
+
+    const agent = createMockAgent({
+      firstLaunch      : async () => true,
+      identityList     : async () => [],
+      identityCreate   : async () => createMockIdentity(),
+      rpcGetServerInfo : async () => ({
+        registrationRequirements : [],
+        maxFileSize              : 10_000_000,
+      }),
+    });
+
+    await vaultConnect(
+      {
+        userAgent    : agent,
+        emitter,
+        storage,
+        registration : {
+          onSuccess : () => { registrationSuccesses++; },
+          onFailure : () => {},
+        },
+      },
+      { createIdentity: true },
+    );
+
+    expect(registrationSuccesses).toBe(2);
+  });
+
   test('registers agent DID for sync even without identity creation', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();

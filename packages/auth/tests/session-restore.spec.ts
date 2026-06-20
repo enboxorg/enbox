@@ -94,6 +94,69 @@ describe('restoreSession', () => {
     expect(session!.delegateDid).toBe('did:dht:testuser123');
   });
 
+  test('restores encrypted legacy delegate keys and migrates them into SecretStore', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+
+    const delegateKeys = [{ rootKeyId: 'root-key-1', keyMaterial: 'secret' }];
+    const seedAgent = createMockAgent();
+    const encryptedKeys = await seedAgent.vault.encryptData({
+      plaintext: new TextEncoder().encode(JSON.stringify(delegateKeys)),
+    });
+    await storage.set(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, encryptedKeys);
+
+    const identity = createMockIdentity({
+      metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+    });
+    const importedKeys: any[] = [];
+    const agent = createMockAgent({
+      firstLaunch                     : async () => false,
+      identityConnectedIdentity       : async () => identity,
+      dwnImportDelegateDecryptionKeys : (did: string, keys: any[]) => {
+        importedKeys.push({ did, keys });
+      },
+    });
+
+    const session = await restoreSession({ userAgent: agent, emitter, storage });
+
+    expect(session).toBeDefined();
+    expect(importedKeys).toEqual([{ did: 'did:dht:testuser123', keys: delegateKeys }]);
+    expect(await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBeNull();
+
+    const migrated = await agent.secrets.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS);
+    expect(migrated).toBeDefined();
+    expect(new TextDecoder().decode(migrated)).toBe(JSON.stringify(delegateKeys));
+  });
+
+  test('ignores corrupted encrypted legacy delegate keys during restore', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await storage.set(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, 'not.a.valid.compact.jwe');
+
+    const identity = createMockIdentity({
+      metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
+    });
+    const importedKeys: any[] = [];
+    const agent = createMockAgent({
+      firstLaunch                     : async () => false,
+      identityConnectedIdentity       : async () => identity,
+      dwnImportDelegateDecryptionKeys : (did: string, keys: any[]) => {
+        importedKeys.push({ did, keys });
+      },
+      vaultDecryptData: async () => {
+        throw new Error('decrypt failed');
+      },
+    });
+
+    const session = await restoreSession({ userAgent: agent, emitter, storage });
+
+    expect(session).toBeDefined();
+    expect(importedKeys).toHaveLength(0);
+    expect(await storage.get(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS)).toBe('not.a.valid.compact.jwe');
+  });
+
   test('restores session from active identity DID', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
@@ -954,6 +1017,25 @@ describe('restoreSession', () => {
 
       // Retry context should be cleared after success.
       expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
+    });
+
+    test('keeps retry state when remote endpoint resolution fails', async () => {
+      const storage = new MemoryStorage();
+      const retryContext = JSON.stringify([{
+        delegateDid  : 'did:jwk:delegate1',
+        connectedDid : 'did:dht:owner1',
+        revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
+      }]);
+      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, retryContext);
+
+      const agent = createMockAgent();
+      (agent.dwn as any).getRemoteDwnEndpointUrls = async (): Promise<string[]> => {
+        throw new Error('resolution failed');
+      };
+
+      await retryOrphanedRevocations(agent, storage);
+
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(retryContext);
     });
   });
 });

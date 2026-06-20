@@ -528,6 +528,22 @@ describe('repository()', () => {
       expect(data.theme).toBe('light');
       expect(data.notifications).toBe(false);
     });
+
+    it('should delete a nested singleton by record id', async () => {
+      const { record: groupRecord } = await repo.group.create({
+        data: { name: 'Delete Team' },
+      });
+
+      const { record: settingsRecord } = await repo.group.settings.set(groupRecord.contextId, {
+        data: { theme: 'dark', notifications: true },
+      });
+
+      const deleteResult = await repo.group.settings.delete(settingsRecord.id);
+      expect(deleteResult.status.code).toBe(202);
+
+      const record = await repo.group.settings.get(groupRecord.contextId);
+      expect(record).toBeUndefined();
+    });
   });
 
   describe('mixed collection and singleton under same parent', () => {

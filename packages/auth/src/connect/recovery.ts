@@ -55,6 +55,57 @@ export async function registerAgentDidForSync(userAgent: EnboxUserAgent): Promis
   }
 }
 
+function isAlreadyRegisteredError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('already registered');
+}
+
+async function registerRecoveredIdentityTenant(params: {
+  userAgent: EnboxUserAgent;
+  dwnEndpoints: string[];
+  agentDid: string;
+  connectedDid: string;
+  registration?: RegistrationOptions;
+  storage: StorageAdapter;
+}): Promise<void> {
+  const { userAgent, dwnEndpoints, agentDid, connectedDid, registration, storage } = params;
+
+  if (registration === undefined) {
+    return;
+  }
+
+  try {
+    await registerWithDwnEndpoints(
+      { userAgent, dwnEndpoints, agentDid, connectedDid, secretStore: userAgent.secrets, storage },
+      registration,
+    );
+  } catch {
+    // Best effort — the DID may already be registered, or the
+    // endpoint may be temporarily unreachable.
+  }
+}
+
+async function registerRecoveredIdentityForSync(params: {
+  userAgent: EnboxUserAgent;
+  did: string;
+  identitySyncProtocols?: IdentitySyncProtocols;
+}): Promise<boolean> {
+  const { userAgent, did, identitySyncProtocols } = params;
+
+  if (identitySyncProtocols === undefined) {
+    return false;
+  }
+
+  try {
+    await userAgent.sync.registerIdentity({ did, options: { protocols: identitySyncProtocols } });
+  } catch (error: unknown) {
+    if (!isAlreadyRegisteredError(error)) {
+      throw error;
+    }
+  }
+
+  return true;
+}
+
 /**
  * Recover identities and their data from remote DWN endpoints.
  *
@@ -105,26 +156,8 @@ export async function recoverIdentitiesFromRemote(params: {
   for (const identity of identities) {
     const did = identity.metadata.connectedDid ?? identity.did.uri;
 
-    if (registration) {
-      try {
-        await registerWithDwnEndpoints(
-          { userAgent, dwnEndpoints, agentDid, connectedDid: did, secretStore: userAgent.secrets, storage },
-          registration,
-        );
-      } catch {
-        // Best effort — the DID may already be registered, or the
-        // endpoint may be temporarily unreachable.
-      }
-    }
-
-    if (identitySyncProtocols !== undefined) {
-      try {
-        await userAgent.sync.registerIdentity({ did, options: { protocols: identitySyncProtocols } });
-      } catch {
-        // Already registered from a previous session.
-      }
-      registeredIdentityForSync = true;
-    }
+    await registerRecoveredIdentityTenant({ userAgent, dwnEndpoints, agentDid, connectedDid: did, registration, storage });
+    registeredIdentityForSync = await registerRecoveredIdentityForSync({ userAgent, did, identitySyncProtocols }) || registeredIdentityForSync;
   }
 
   if (registeredIdentityForSync) {

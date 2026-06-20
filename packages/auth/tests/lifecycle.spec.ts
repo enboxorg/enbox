@@ -1,14 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 
 import { Convert } from '@enbox/common';
-import { DwnPermissionGrant } from '@enbox/agent';
 import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError } from '@enbox/agent';
 
 import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { RecoveryPhraseMismatchError } from '../src/errors.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { deriveActiveSyncScope, deriveSyncScopeFromGrants, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants, registerSyncScopeForIdentity, toSyncIdentityProtocols } from '../src/connect/lifecycle.js';
+import { deriveActiveSyncScope, deriveSyncScopeFromGrants, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants, registerSyncScopeForIdentity, toSyncIdentityProtocols } from '../src/connect/lifecycle.js';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -99,6 +100,33 @@ function buildUnscopedGrantEntry(
     message,
   };
 }
+
+describe('ensureVaultReady', () => {
+  test('translates HD vault recovery phrase mismatch errors', async () => {
+    const emitter = new AuthEventEmitter();
+    let startCalled = false;
+    const agent = createMockAgent({
+      start: async () => {
+        startCalled = true;
+      },
+      vaultResetPasswordWithRecoveryPhrase: async () => {
+        throw new HdIdentityVaultRecoveryPhraseMismatchError();
+      },
+    });
+
+    await expect(
+      ensureVaultReady({
+        userAgent      : agent,
+        emitter,
+        password       : 'pass',
+        isFirstLaunch  : false,
+        recoveryPhrase : 'wrong phrase',
+      })
+    ).rejects.toBeInstanceOf(RecoveryPhraseMismatchError);
+
+    expect(startCalled).toBe(false);
+  });
+});
 
 describe('deriveSyncScopeFromGrants', () => {
   /** Build a minimal mock grant object (no DWN parse overhead). */
@@ -1081,6 +1109,34 @@ describe('finalizeDelegateSession', () => {
 
       const revocations = await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
       expect(revocations).toBeNull();
+    });
+
+    test('persists session revocations when present on reconnect', async () => {
+      const emitter = new AuthEventEmitter();
+      const storage = new MemoryStorage();
+      const agent = createMockAgent();
+      const sessionRevocations = [
+        { grantId: 'grant-1', revocationGrantId: 'revocation-1' },
+      ];
+
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate2' },
+        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
+      });
+
+      await finalizeDelegateSession({
+        userAgent     : agent,
+        emitter,
+        storage,
+        identity      : identity as any,
+        connectedDid  : 'did:dht:connected1',
+        delegateDid   : 'did:jwk:delegate2',
+        sync          : '15s',
+        delegateState : { sessionRevocations },
+      });
+
+      const revocations = await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
+      expect(revocations).toBe(JSON.stringify(sessionRevocations));
     });
   });
 
