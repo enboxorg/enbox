@@ -85,7 +85,7 @@ docker run -p 3000:3000 \
 
 The image exposes `DS_PORT` (default `3000`) and runs the compiled server via `entrypoint.sh`. The build accepts a `DS_PORT` build arg if you need to bake in a different port.
 
-The default `level://data` store is **relative to the server's working directory** (`/app/packages/dwn-server`), so the volume above mounts `/app/packages/dwn-server/data` to persist it. Do not set `DWN_STORAGE` to a LevelDB path to relocate it — `DWN_STORAGE` also feeds the registration store, which must be SQL (see [Storage](#storage) and [Registration requirements](#registration-requirements)). To store data elsewhere, mount the path above, or use a SQL backend.
+The default `level://data` store is **relative to the server's working directory** (`/app/packages/dwn-server`), so the volume above mounts `/app/packages/dwn-server/data` to persist it. Don't relocate it via `DWN_STORAGE` — that variable also feeds the registration store, which must be SQL, so a LevelDB value there is invalid (see [Storage](#storage) and [Registration requirements](#registration-requirements)). To store data elsewhere, mount the path above, set the per-store overrides (`DWN_STORAGE_MESSAGES` / `DWN_STORAGE_DATA` / `DWN_STORAGE_RESUMABLE_TASKS`), or use a SQL backend.
 
 > The bundled Helm chart ([`charts/`](./charts)) and some examples reference `ghcr.io/enboxorg/dwn-server`; that image is not published yet. Build and push your own image to a registry your platform can pull from, and point the chart's `image.repository` / `image.tag` at it.
 
@@ -164,7 +164,7 @@ Custom store implementations can be loaded by pointing a storage variable at a *
 
 ### Registration & provider-auth
 
-Registration is **open by default**. The tenant gate activates whenever a **SQL** registration store is configured — via `DWN_REGISTRATION_STORE_URL`, or its fallback to `DWN_STORAGE`. So pointing `DWN_STORAGE` at Postgres/MySQL/SQLite activates the gate **even when `DWN_REGISTRATION_STORE_URL` is unset**; you must then enable a method below (or pre-register tenants via the admin API), or new tenants are rejected. See [Registration requirements](#registration-requirements) for the full flow.
+Registration is **open by default**. The tenant gate activates whenever a **SQL** registration store is configured — via `DWN_REGISTRATION_STORE_URL`, or its fallback to `DWN_STORAGE` (the per-store `DWN_STORAGE_*` overrides do **not** count). So pointing `DWN_STORAGE` at Postgres/MySQL/SQLite activates the gate **even when `DWN_REGISTRATION_STORE_URL` is unset**; you must then enable a method below (or pre-register tenants via the admin API), or new tenants are rejected. See [Registration requirements](#registration-requirements) for the full flow.
 
 | Env var                                           | Description                                                                 | Default                |
 | ------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------- |
@@ -356,9 +356,9 @@ Public endpoints (no auth unless noted). Permissive CORS is applied to the JSON-
 | `GET`  | `/registration/proof-of-work`         | Proof-of-work challenge (only if PoW is enabled).                           |
 | `GET`  | `/registration/terms-of-service`      | Terms-of-service text (only if a ToS file is configured).                   |
 | `POST` | `/registration`                        | Register a tenant DID (only if registration is gated).                      |
-| `GET`  | `/provider-auth/authorize`            | OAuth2 authorize (only if provider-auth is enabled).                        |
-| `POST` | `/provider-auth/token`                | OAuth2 token exchange.                                                       |
-| `POST` | `/provider-auth/refresh`              | OAuth2 token refresh.                                                        |
+| `GET`  | `/provider-auth/authorize`            | OAuth2 authorize — built-in OpenAuth handler only (see note below).         |
+| `POST` | `/provider-auth/token`                | OAuth2 token exchange — built-in OpenAuth handler only.                      |
+| `POST` | `/provider-auth/refresh`              | OAuth2 token refresh — built-in OpenAuth handler only.                       |
 | `POST` | `/connect/par`                         | Pushed Authorization Request store (Enbox Connect).                         |
 | `GET`  | `/connect/authorize/:requestId.jwt`   | Retrieve a stored PAR request object.                                       |
 | `POST` | `/connect/callback`                    | Submit an identity-provider response.                                       |
@@ -367,6 +367,8 @@ Public endpoints (no auth unless noted). Permissive CORS is applied to the JSON-
 | `GET`  | `/:did/read/protocols/:protocol/*`    | Convenience read of a protocol record over HTTP.                           |
 | `GET`  | `/:did/query` · `/:did/query/protocols` | Convenience record / protocol queries over HTTP.                         |
 | `*`    | `/admin/api/*`, `/admin/*`            | Admin API and UI (disabled unless an admin token is set) — see [Admin API](#admin-api). |
+
+> **Provider-auth note:** the built-in `/provider-auth/*` routes are served **only** when the built-in OpenAuth handler is active — that is, provider-auth is enabled with `DWN_PROVIDER_AUTH_JWT_SECRET` and no custom plugin. JWKS-only or custom-plugin deployments do not expose these routes; clients use the provider-auth URLs advertised at `/info` (or your provider's own endpoints) instead.
 
 ## Server info
 
@@ -391,13 +393,13 @@ Public endpoints (no auth unless noted). Permissive CORS is applied to the JSON-
 
 Registration gates are optional and **all disabled by default**. The gate becomes active when a SQL registration store is configured — via `DWN_REGISTRATION_STORE_URL` or its fallback to `DWN_STORAGE` (LevelDB is not supported). Tenants that have not satisfied the active requirements receive a `401`. The current requirements are advertised at `/info`.
 
-Every registration request must carry **either** proof-of-work **or** provider-auth credentials; a request with neither is rejected. Terms-of-service is not a standalone gate — it layers on top of whichever of the two is used.
+Every registration request must carry **either** proof-of-work **or** provider-auth credentials; a request with neither is rejected. Terms-of-service is not a standalone gate — it is layered onto those two, and (as noted below) enforced for proof-of-work but only conditionally for provider-auth.
 
 - **Proof of work** (`DWN_REGISTRATION_PROOF_OF_WORK_ENABLED=true`) — advertised as `proof-of-work-sha256-v0`. Clients `GET /registration/proof-of-work` for a challenge, compute a nonce so that `sha256(challenge + nonce)` has the required number of leading zeros, and POST it back. Challenges expire after 5 minutes; difficulty auto-adjusts.
-- **Provider auth** (`DWN_PROVIDER_AUTH_ENABLED=true` with a JWT secret, JWKS URL, or custom plugin) — advertised as `provider-auth-v0`. Clients complete the OAuth2 flow at `/provider-auth/*` and register with the resulting token.
-- **Terms of service** (`DWN_TERMS_OF_SERVICE_FILE_PATH=/path/to/tos.txt`) — advertised as `terms-of-service`. A **layered** requirement, not a gate of its own: clients `GET /registration/terms-of-service`, display it, and include the accepted `termsOfServiceHash` in their proof-of-work or provider-auth registration request. Editing the file invalidates prior acceptances.
+- **Provider auth** (`DWN_PROVIDER_AUTH_ENABLED=true` with a JWT secret, JWKS URL, or custom plugin) — advertised as `provider-auth-v0`. Clients obtain a token via the OAuth2 flow (the built-in `/provider-auth/*` endpoints, or your configured provider) and register with it.
+- **Terms of service** (`DWN_TERMS_OF_SERVICE_FILE_PATH=/path/to/tos.txt`) — advertised as `terms-of-service`. A **layered** requirement, not a gate of its own, and it is enforced **asymmetrically**: a **proof-of-work** registration must include a matching `termsOfServiceHash` (from `GET /registration/terms-of-service`), but a **provider-auth** registration validates the hash only if the client supplies one — omitting it still succeeds. If you need ToS to be mandatory for provider-auth tenants, enforce acceptance in your provider/OAuth flow. Editing the file invalidates prior acceptances.
 
-If a registration store is configured but neither proof-of-work nor provider-auth is enabled, the server logs a startup warning — new tenants would be unable to register. To run an **open** node, use the default LevelDB storage and leave `DWN_REGISTRATION_STORE_URL` unset; with a SQL storage backend the gate is always active, so enable a method above or pre-register tenants via the admin API.
+If a registration store is configured but neither proof-of-work nor provider-auth is enabled, the server logs a startup warning — new tenants would be unable to register. The registration store URL resolves from `DWN_REGISTRATION_STORE_URL` **or** `DWN_STORAGE` only (not the per-store `DWN_STORAGE_*` overrides), so to run an **open** node leave both of those unset — you can still use SQL stores by setting `DWN_STORAGE_MESSAGES` / `DWN_STORAGE_DATA` / `DWN_STORAGE_RESUMABLE_TASKS` individually. When the gate is active, enable a method above or pre-register tenants via the admin API.
 
 ## Admin API
 

@@ -53,5 +53,5 @@ Which should return the message "please use an enbox client"
 | `resources.requests.memory`   | string | `"500Mi"`                                                                 | Memory resource request                      |
 | `customLabels`                | object | `{}`                                                                      | Custom labels to add to the deployed objects |
 | `env.DS_PORT`                 | int    | `3000`                                                                    | Port that the server listens on              |
-| `env.DS_MAX_RECORD_DATA_SIZE` | string | `"1gb"`                                                                   | Maximum size for RecordsWrite data           |
+| `env.MAX_RECORD_DATA_SIZE`    | string | `"1gb"`                                                                   | Maximum size for RecordsWrite data           |
 | `env.DS_WEBSOCKET_SERVER`     | string | `"on"`                                                                    | Whether to enable listening over ws          |

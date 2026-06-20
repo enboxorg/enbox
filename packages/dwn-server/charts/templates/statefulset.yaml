@@ -28,13 +28,14 @@ spec:
           env:
             - name: DS_PORT
               value: "{{ .Values.env.DS_PORT }}"
-            - name: DS_MAX_RECORD_DATA_SIZE
-              value: "{{ .Values.env.DS_MAX_RECORD_DATA_SIZE }}"
+            - name: MAX_RECORD_DATA_SIZE
+              value: "{{ .Values.env.MAX_RECORD_DATA_SIZE }}"
             - name: DS_WEBSOCKET_SERVER
               value: "{{ .Values.env.DS_WEBSOCKET_SERVER }}"
           volumeMounts:
+            # The default level://data store lives under the server's working directory.
             - name: data
-              mountPath: /data
+              mountPath: /app/packages/dwn-server/data
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 13 }}

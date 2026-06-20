@@ -2,6 +2,9 @@ replicaCount: 1 # do not override this unless you want to run a headless service
 nameOverride: ''
 fullnameOverride: ''
 
+# No official public image is published yet. Build the image from the repo
+# (docker build -f packages/dwn-server/Dockerfile -t <your-image> .), push it to a
+# registry your cluster can pull from, and override image.repository/image.tag here.
 image:
   repository: ghcr.io/enboxorg/dwn-server
   tag: main
@@ -49,5 +52,5 @@ customLabels: {}
 
 env:
   DS_PORT: 3000
-  DS_MAX_RECORD_DATA_SIZE: '1gb'
+  MAX_RECORD_DATA_SIZE: '1gb'
   DS_WEBSOCKET_SERVER: 'on'
