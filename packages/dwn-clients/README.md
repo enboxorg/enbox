@@ -10,9 +10,9 @@ Client libraries and shared types for communicating with [DWN Servers](../dwn-se
 |---|---|
 | `HttpDwnRpcClient` | HTTP client for DWN JSON-RPC endpoints |
 | `WebSocketDwnRpcClient` | WebSocket client for DWN JSON-RPC with subscriptions |
-| `Web5RpcClient` | Transport multiplexer — routes to HTTP or WebSocket based on URL scheme |
-| `HttpWeb5RpcClient` | HTTP client with DID RPC support |
-| `WebSocketWeb5RpcClient` | WebSocket client with DID RPC support |
+| `EnboxRpcClient` | Transport multiplexer — routes to HTTP or WebSocket based on URL scheme |
+| `HttpEnboxRpcClient` | HTTP client with DID RPC support |
+| `WebSocketEnboxRpcClient` | WebSocket client with DID RPC support |
 | `DwnRegistrar` | HTTP client for DWN tenant registration (proof-of-work challenge flow) |
 
 ### JSON-RPC
@@ -47,9 +47,9 @@ Types used by both `@enbox/dwn-server` (server-side) and clients:
 ## Usage
 
 ```typescript
-import { Web5RpcClient } from '@enbox/dwn-clients';
+import { EnboxRpcClient } from '@enbox/dwn-clients';
 
-const rpc = new Web5RpcClient();
+const rpc = new EnboxRpcClient();
 
 // Send a DWN request over HTTP
 const response = await rpc.sendDwnRequest({

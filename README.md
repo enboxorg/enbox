@@ -211,7 +211,7 @@ curl https://dev.aws.dwn.enbox.id/health
 
 ### Run Your Own Node
 
-The `@enbox/dwn-server` package is a production-ready DWN server that runs anywhere Docker does. It supports PostgreSQL, SQLite, and MySQL for storage, with optional S3 for large blobs.
+The `@enbox/dwn-server` package is a self-hostable DWN server that runs anywhere Docker does. It supports PostgreSQL, SQLite, and MySQL for storage, with optional S3 for large blobs.
 
 ```bash
 # Quick start with Docker Compose
@@ -238,7 +238,7 @@ See [docs/HOSTING.md](./docs/HOSTING.md) for the public deployment guide: Docker
 
 | Package | npm | What it does |
 |---|---|---|
-| [`@enbox/api`](./packages/api) | [![npm](https://img.shields.io/npm/v/@enbox/api?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/api) | **Start here.** `Web5.connect()`, typed protocols, queries, subscriptions |
+| [`@enbox/api`](./packages/api) | [![npm](https://img.shields.io/npm/v/@enbox/api?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/api) | **Start here.** `Enbox.connect()`, typed protocols, queries, subscriptions |
 | [`@enbox/auth`](./packages/auth) | [![npm](https://img.shields.io/npm/v/@enbox/auth?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/auth) | Auth manager: local connect, wallet-connect, session restore |
 | [`@enbox/browser`](./packages/browser) | [![npm](https://img.shields.io/npm/v/@enbox/browser?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/browser) | Browser SDK: `Enbox.connect()`, polyfills, `repository()` helper |
 | [`@enbox/protocols`](./packages/protocols) | [![npm](https://img.shields.io/npm/v/@enbox/protocols?color=357ec7&label=)](https://www.npmjs.com/package/@enbox/protocols) | Pre-built protocol definitions with JSON Schemas |
@@ -296,6 +296,7 @@ Several packages require Docker services (Pkarr relay, PostgreSQL, NATS) and a l
 ```bash
 docker compose -f docker-compose.test.yaml up -d --wait
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
 bun run test:node
 ```
 

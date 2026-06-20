@@ -8,6 +8,7 @@ This document covers the full test infrastructure for the Enbox monorepo.
 # Start test services
 docker compose -f docker-compose.test.yaml up -d --wait
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
 
 # Run all Node tests
 bun run test:node
@@ -75,11 +76,14 @@ docker compose -f docker-compose.test.yaml up -d --wait
 # REQUIRED for did:dht tests (~115 agent, ~23 api, ~1 dids tests need this)
 export DID_DHT_GATEWAY_URI=http://localhost:7527
 
+# REQUIRED when the gateway URI points at the local Docker relay
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
+
 # REQUIRED for dwn-server NatsEventBus tests
 export NATS_URL=nats://localhost:4222
 ```
 
-Without `DID_DHT_GATEWAY_URI`, tests will fail with `DidError: internalError: Failed to put Pkarr record`. These are not real failures -- the tests are correct, they just need the gateway.
+Without `DID_DHT_GATEWAY_URI`, tests will fail with `DidError: internalError: Failed to put Pkarr record`. Without `DID_DHT_ALLOW_PRIVATE_GATEWAY=1`, local runs fail because the DID:DHT URL validator correctly rejects loopback/private gateway hosts by default. These are not real failures -- the tests are correct, they just need the local gateway opt-in.
 
 ### DWN Server (localhost:3000)
 
@@ -93,6 +97,7 @@ If not running, start it:
 
 ```bash
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
 export DS_PORT=3000
 export DWN_BASE_URL=http://localhost:3000
 export DWN_TTL_CACHE_URL="postgres://dwn_user:dwn_password@localhost:5433/dwn"
@@ -156,7 +161,9 @@ CI runs a **3x3 matrix** (3 package shards x 3 browsers = 9 parallel jobs):
 | `dwn-sdk-js` | `@enbox/dwn-sdk-js` |
 | `dids-agent-api` | `@enbox/dids`, `@enbox/browser`, `@enbox/agent`, `@enbox/api` |
 
-Browser test failures block merging. Browser coverage is collected per-browser and reported on pull requests (informational -- no threshold enforced). Node coverage enforces a **98% line threshold**.
+Browser test failures block merging. Browser coverage is collected per-browser
+so the LCOV output can be merged with Node coverage for SonarCloud; CI does not
+post a separate browser-coverage PR comment.
 
 ## Coverage
 
@@ -170,15 +177,11 @@ bun run --filter @enbox/agent test:node:coverage
 BROWSER=chromium bun run --filter @enbox/dwn-sdk-js test:browser:coverage
 ```
 
-CI coverage thresholds:
+The CI pipeline uploads package LCOV artifacts from Node and browser jobs,
+merges them with `bun run coverage:merge:reports`, and sends the merged report
+to SonarCloud. SonarCloud owns the PR quality gate when repository variables
+and `SONAR_TOKEN` are configured. Main-branch pushes also update the README
+coverage badges from the latest package LCOV artifacts.
 
-| Package | CI Coverage |
-|---|---|
-| `@enbox/agent` | 90.3% |
-| `@enbox/api` | 99.8% |
-| `@enbox/common` | 95.7% |
-| `@enbox/crypto` | 98.6% |
-| `@enbox/dids` | 99.2% |
-| `@enbox/dwn-sdk-js` | 98.9% |
-| `@enbox/dwn-server` | 97.3% |
-| `@enbox/dwn-sql-store` | 96.9% |
+Use SonarCloud for current branch, line, and new-code coverage. The badge
+percentages are informational snapshots from `main`, not PR gates.

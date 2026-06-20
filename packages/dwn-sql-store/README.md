@@ -6,8 +6,6 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/ci.yml?branch=main&logo=github&label=ci&logoColor=FFFFFF&style=flat-square)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sql-store.json&style=flat-square)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
 [![License](https://img.shields.io/npm/l/@enbox/dwn-sql-store.svg?style=flat-square&color=24f2ff&logo=apache&logoColor=FFFFFF&santize=true)](https://github.com/enboxorg/enbox/blob/main/LICENSE)
-[![Chat](https://img.shields.io/badge/chat-on%20discord-7289da.svg?style=flat-square&color=9a1aff&logo=discord&logoColor=FFFFFF&sanitize=true)](https://discord.com/channels/937858703112155166/969272658501976117)
-
 
 SQL backed implementations of DWN `MessageStore` and `DataStore`.
 
@@ -31,7 +29,7 @@ SQL backed implementations of DWN `MessageStore` and `DataStore`.
 * PostgreSQL ✔️
 
 > NOTE:
-See [SQL Dialect Variations](sql-dialect-variations) for the list of special handling to support the above SQL variations.
+See [SQL Dialect Variations](./sql-dialect-variations.md) for the list of special handling to support the above SQL variations.
 
 # Installation
 
@@ -157,5 +155,3 @@ Docker is used to spin up a local containerized DBs for testing purposes. Docker
 | `bun run test`      | runs tests                   |
 | `bun run lint`      | runs linter                  |
 | `bun run lint:fix`  | auto-fix lint issues         |
-
-[codeowners-link]: https://github.com/enboxorg/enbox/blob/main/sql-dialect-variations.md

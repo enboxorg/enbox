@@ -229,7 +229,7 @@ Before any commits get pushed and PRs opened, ALL of the following MUST pass:
 
 1. **Lint** — `bun run lint` (use `bun run lint:fix` to auto-fix issues)
 2. **Build** — `bun run --filter @enbox/agent build` (rebuild `dwn-sdk-js` first if changed)
-3. **Tests** — `export DID_DHT_GATEWAY_URI=http://localhost:7527 && bun run test:node` from `packages/agent/`
+3. **Tests** — `export DID_DHT_GATEWAY_URI=http://localhost:7527 DID_DHT_ALLOW_PRIVATE_GATEWAY=1 && bun run test:node` from `packages/agent/`
 
 Do not push or open a PR until all three checks pass locally. See [Local Test Infrastructure](#local-test-infrastructure) for required services.
 
@@ -257,10 +257,11 @@ Most packages use **`bun test`** (Bun's native test runner). **`@enbox/browser`*
 
 ### Agent / API / Auth tests (bun:test)
 
-**Important:** Always set `DID_DHT_GATEWAY_URI` before running **agent**, **api**, or **auth** tests. Without it, a large subset of tests will fail with Pkarr / `did:dht` publishing errors.
+**Important:** Always set `DID_DHT_GATEWAY_URI` and `DID_DHT_ALLOW_PRIVATE_GATEWAY=1` before running **agent**, **api**, or **auth** tests against the local Pkarr relay. Without them, a large subset of tests will fail with Pkarr / `did:dht` publishing errors or local-gateway URL validation errors.
 
 ```bash
 export DID_DHT_GATEWAY_URI=http://localhost:7527
+export DID_DHT_ALLOW_PRIVATE_GATEWAY=1
 
 # Full agent test suite (from packages/agent/):
 bun run test:node
@@ -288,7 +289,7 @@ bun run lint
 
 ## Local test infrastructure
 
-Setting up Docker services (Pkarr relay, Postgres x2, MySQL, NATS, MinIO), required environment variables (`DID_DHT_GATEWAY_URI`, `NATS_URL`), running a local DWN server on `:3000`, browser-test setup, and CI coverage thresholds all live in [`docs/TESTING.md`](docs/TESTING.md). Read it before running the full test suite for `agent`, `api`, `auth`, `dids`, `dwn-server`, or `dwn-sql-store`, or before debugging a `Failed to put Pkarr record` error.
+Setting up Docker services (Pkarr relay, Postgres x2, MySQL, NATS, MinIO), required environment variables (`DID_DHT_GATEWAY_URI`, `DID_DHT_ALLOW_PRIVATE_GATEWAY`, `NATS_URL`), running a local DWN server on `:3000`, browser-test setup, and the CI coverage pipeline all live in [`docs/TESTING.md`](docs/TESTING.md). Read it before running the full test suite for `agent`, `api`, `auth`, `dids`, `dwn-server`, or `dwn-sql-store`, or before debugging a `Failed to put Pkarr record` error.
 
 ## Releasing & Publishing Packages
 
@@ -362,7 +363,7 @@ Use `bunx changeset status` to verify the changeset is valid before committing.
 "@enbox/api": patch
 ---
 
-feat: add provider-auth-v0 client methods and Web5.connect() integration
+feat: add provider-auth-v0 client methods and Enbox.connect() integration
 ```
 
 ## Coding Style

@@ -16,7 +16,6 @@
 
 - [Enbox Crypto API](#enbox-crypto-api)
   - [Supported Algorithms \& Key Types](#supported-algorithms--key-types)
-  - [Extensions](#extensions)
   - [Getting Started](#getting-started)
     - [Node.js](#nodejs)
     - [Web Browsers](#web-browsers)
@@ -72,14 +71,6 @@ as the library progresses towards a 1.0 release.
 | Hash           | SHA-256                                         |
 | Key Derivation | ConcatKDF, ECDH, PBKDF2                         |
 | ECC Curves     | Ed25519, secp256k1, X25519                      |
-
-### Extensions
-
-Packages that extend the functionality of the `@enbox/crypto` library:
-
-| Extension         | Repository                                             |
-| ----------------- | ------------------------------------------------------ |
-| AWS KMS extension | [enboxorg/enbox/crypto-aws-kms][crypto-aws-kms-repo-link] |
 
 ## Getting Started
 
@@ -140,17 +131,8 @@ import "react-native-get-random-values";
 
 ## Contributing
 
-We welcome you to join our open source community. Whether you're new to open source or a seasoned
-contributor, there's a place for you here. From coding to documentation, every contribution matters.
-Check out our [contribution guide][contributing-link] for ways to get started.
-
-For help, discussion about best practices, or to chat with others building on Enbox join our
-[Discord Server][discord-link]:
-
-[![discord-badge]][discord-link]
-
-Remember, contributing is not just about code; it's about building together. Join us in shaping the
-future of decentralized applications!
+See the repository [agent guide][agents-link] for contributor workflow, style,
+testing, and release rules.
 
 ## Core Concepts
 
@@ -181,9 +163,7 @@ exposing private key information.
 This library includes a self-contained Key Management System (KMS) implementation that supports
 generating keys, hashing, and creating/verifying digital signatures. Cryptographic operations are
 performed within the confines of the local environment, without relying on external services. This
-KMS is designed to be used by browser-based web apps or when testing backend services that depend on
-cloud-based services (e.g., AWS KMS). Extensions that support external KMS services are
-[listed here](#extensions).
+KMS is designed for browser-based web apps and tests.
 
 Start by instantiating a local KMS implementation of the `CryptoApi` interface:
 
@@ -362,13 +342,13 @@ const kms = new LocalKeyManager({ keyStore });
 
 ## Cryptographic Primitives
 
-This library encourages using its capabilities through concrete implementations of the `CryptoApi`
-interface (e.g., [`LocalKeyManager`](#using-a-local-kms) or
-[`AwsKeyManager`][crypto-aws-kms-repo-link]). These implementations provides high-level,
-user-friendly access to a range of cryptographic functions. However, for developers requiring
-lower-level control or specific customizations, the library also exposes its cryptographic
-primitives directly. These primitives include a variety of cipher, hash, signature, key derivation,
-and key conversion algorithms for advanced use cases.
+This library encourages using its capabilities through concrete implementations
+of the `CryptoApi` interface such as [`LocalKeyManager`](#using-a-local-kms).
+These implementations provide high-level access to cryptographic functions. For
+lower-level control or specific customizations, the library also exposes its
+cryptographic primitives directly. These primitives include a variety of cipher,
+hash, signature, key derivation, and key conversion algorithms for advanced use
+cases.
 
 > [!WARNING]
 > While `@enbox/crypto` offers low-level cryptographic primitives, it's crucial to acknowledge the
@@ -610,31 +590,22 @@ const decryptedData = await XChaCha20Poly1305.decrypt({
 
 | Resource                                | Description                                                                   |
 | --------------------------------------- | ----------------------------------------------------------------------------- |
-| [CODEOWNERS][codeowners-link]           | Outlines the project lead(s)                                                  |
-| [CODE OF CONDUCT][code-of-conduct-link] | Expected behavior for project contributors, promoting a welcoming environment |
-| [CONTRIBUTING][contributing-link]       | Developer guide to build, test, run, access CI, chat, discuss, file issues    |
-| [GOVERNANCE][governance-link]           | Project governance                                                            |
-| [LICENSE][license-link]                 | Apache License, Version 2.0                                                   |
+| [AGENTS.md][agents-link] | Contributor workflow, style, testing, and release rules |
+| [LICENSE][license-link]  | Apache License, Version 2.0                             |
 
 [crypto-npm-badge]: https://img.shields.io/npm/v/@enbox/crypto.svg?style=flat&color=blue&santize=true
 [crypto-npm-link]: https://www.npmjs.com/package/@enbox/crypto
 [crypto-downloads-badge]: https://img.shields.io/npm/dt/@enbox/crypto?&color=blue
-[crypto-build-badge]: https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/tests-ci.yml?branch=main&label=build
-[crypto-build-link]: https://github.com/enboxorg/enbox/actions/workflows/tests-ci.yml
+[crypto-build-badge]: https://img.shields.io/github/actions/workflow/status/enboxorg/enbox/ci.yml?branch=main&label=ci
+[crypto-build-link]: https://github.com/enboxorg/enbox/actions/workflows/ci.yml
 [crypto-coverage-badge]: https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/crypto.json
 [crypto-coverage-link]: https://github.com/enboxorg/enbox/actions/workflows/ci.yml
 [crypto-issues-badge]: https://img.shields.io/github/issues/enboxorg/enbox/package:%20crypto?label=issues
 [crypto-issues-link]: https://github.com/enboxorg/enbox/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+crypto"
-[crypto-aws-kms-repo-link]: https://github.com/enboxorg/enbox/tree/main/packages/crypto-aws-kms
 [crypto-repo-link]: https://github.com/enboxorg/enbox/tree/main/packages/crypto
 [crypto-jsdelivr-link]: https://www.jsdelivr.com/package/npm/@enbox/crypto
 [crypto-jsdelivr-browser]: https://cdn.jsdelivr.net/npm/@enbox/crypto/dist/browser.mjs
 [crypto-unpkg-link]: https://unpkg.com/@enbox/crypto
 [crypto-unpkg-browser]: https://unpkg.com/@enbox/crypto/dist/browser.mjs
-[codeowners-link]: https://github.com/enboxorg/enbox/blob/main/CODEOWNERS
-[code-of-conduct-link]: https://github.com/enboxorg/enbox/blob/main/CODE_OF_CONDUCT.md
-[contributing-link]: https://github.com/enboxorg/enbox/blob/main/CONTRIBUTING.md
-[governance-link]: https://github.com/enboxorg/enbox/blob/main/GOVERNANCE.md
+[agents-link]: https://github.com/enboxorg/enbox/blob/main/AGENTS.md
 [license-link]: https://github.com/enboxorg/enbox/blob/main/LICENSE
-[discord-badge]: https://img.shields.io/discord/937858703112155166?color=5865F2&logo=discord&logoColor=white
-[discord-link]: https://discord.com/channels/937858703112155166/969272658501976117

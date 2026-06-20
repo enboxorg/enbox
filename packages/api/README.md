@@ -11,12 +11,12 @@ The high-level SDK for building decentralized applications with protocol-first d
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Core Concepts](#core-concepts)
-  - [Web5.connect()](#web5connectoptions)
+  - [Enbox.connect()](#enboxconnectoptions)
   - [defineProtocol()](#defineprotocoldefinition-schemamap)
-  - [web5.using()](#web5usingprotocol)
+  - [enbox.using()](#enboxusingprotocol)
   - [Record Instances](#record-instances)
   - [LiveQuery (Subscriptions)](#livequery-subscriptions)
-  - [Web5.anonymous()](#web5anonymousoptions)
+  - [Enbox.anonymous()](#enboxanonymousoptions)
 - [Repository Pattern](#repository-pattern)
   - [Collections vs Singletons](#collections-vs-singletons)
   - [Nested Records](#nested-records-1)
@@ -46,10 +46,11 @@ bun add @enbox/api
 ## Quick Start
 
 ```ts
-import { defineProtocol, Web5 } from '@enbox/api';
+import { defineProtocol, Enbox } from '@enbox/api';
 
 // 1. Connect -- creates or loads a local identity and agent
-const { web5, did: myDid } = await Web5.connect();
+const { enbox, session } = await Enbox.connect({ createIdentity: true });
+const myDid = session.did;
 
 // 2. Define a protocol with typed data shapes
 const NotesProtocol = defineProtocol({
@@ -69,7 +70,7 @@ const NotesProtocol = defineProtocol({
 });
 
 // 3. Scope all operations to the protocol
-const notes = web5.using(NotesProtocol);
+const notes = enbox.using(NotesProtocol);
 
 // 4. Install the protocol on the local DWN
 await notes.configure();
@@ -92,16 +93,17 @@ await record.send(myDid);
 
 ## Core Concepts
 
-### `Web5.connect(options?)`
+### `Enbox.connect(options?)`
 
 Connects to a local identity agent. On first launch it creates an identity vault, generates a `did:dht` DID, and starts the sync engine. On subsequent launches it unlocks the existing vault.
 
 ```ts
-const { web5, did, recoveryPhrase } = await Web5.connect({
-  password: 'user-chosen-password',
+const { enbox, session } = await Enbox.connect({
+  password      : 'user-chosen-password',
+  createIdentity: true,
 });
 
-// recoveryPhrase is returned on first launch only -- store it safely!
+// session.recoveryPhrase is returned on first launch only -- store it safely.
 ```
 
 **Options** (all optional):
@@ -109,26 +111,28 @@ const { web5, did, recoveryPhrase } = await Web5.connect({
 | Option | Type | Description |
 |--------|------|-------------|
 | `password` | `string` | Password to protect the local identity vault. **Defaults to an insecure static value** -- always set this in production. |
-| `recoveryPhrase` | `string` | 12-word BIP-39 phrase for vault recovery. Generated automatically on first launch if not provided. |
-| `sync` | `string` | Sync interval (e.g. `'2m'`, `'30s'`) or `'off'` to disable. Default: `'2m'`. |
-| `didCreateOptions.dwnEndpoints` | `string[]` | DWN service endpoints for the created DID. Default: `['https://enbox-dwn.fly.dev']`. |
-| `connectedDid` | `string` | Use an existing DID instead of creating a new one. |
-| `agent` | `Web5Agent` | Provide a custom agent instance. Defaults to a local `Web5UserAgent`. |
-| `walletConnectOptions` | `ConnectOptions` | Trigger an external wallet connect flow for delegated identity. |
-| `registration` | `{ onSuccess, onFailure }` | Callbacks for DWN endpoint registration status. |
+| `recoveryPhrase` | `string` | 12-word BIP-39 phrase for explicit vault recovery. |
+| `createIdentity` | `boolean` | Create a default identity when no identity exists. |
+| `sync` | `'off' \| \`${number}s\` \| \`${number}m\` \| \`${number}h\`` | Omit for live sync, pass an interval for polling, or `'off'` to disable sync. |
+| `dwnEndpoints` | `string[]` | Remote DWN service endpoints for registration and sync. |
+| `protocols` | `TypedProtocol[]` | Protocol scopes for handler-based connect flows. |
+| `connectHandler` | `ConnectHandler` | Handler for wallet/browser connect flows. |
+| `agent` | `EnboxPlatformAgent` | Provide a custom agent instance. Defaults to a local `EnboxUserAgent`. |
+| `registration` | `RegistrationOptions` | DWN endpoint registration callbacks and token persistence options. |
 
-**Returns** `{ web5, did, recoveryPhrase?, delegateDid? }`.
+**Returns** `{ auth, enbox, session }`.
 
-- `web5` -- the `Web5` instance for all subsequent operations
-- `did` -- the connected DID URI (e.g. `did:dht:abc...`)
-- `recoveryPhrase` -- only returned on first initialization
-- `delegateDid` -- only present when using wallet connect
+- `auth` -- the `AuthManager` that owns the session lifecycle
+- `enbox` -- the `Enbox` instance for all subsequent operations
+- `session.did` -- the connected DID URI (e.g. `did:dht:abc...`)
+- `session.recoveryPhrase` -- only returned on first initialization or explicit phrase restore
+- `session.delegateDid` -- only present for delegated sessions
 
 ---
 
 ### `defineProtocol(definition, schemaMap?)`
 
-Creates a typed protocol definition that enables compile-time path autocompletion and data type checking when used with `web5.using()`.
+Creates a typed protocol definition that enables compile-time path autocompletion and data type checking when used with `enbox.using()`.
 
 ```ts
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
@@ -160,12 +164,12 @@ This gives you:
 
 ---
 
-### `web5.using(protocol)`
+### `enbox.using(protocol)`
 
-The **primary interface** for all record operations. Returns a `TypedWeb5` instance scoped to the given protocol.
+The **primary interface** for all record operations. Returns a `TypedEnbox` instance scoped to the given protocol.
 
 ```ts
-const chat = web5.using(ChatProtocol);
+const chat = enbox.using(ChatProtocol);
 ```
 
 #### `configure()`
@@ -374,12 +378,12 @@ The underlying `LiveQuery` is accessible via `liveQuery.rawLiveQuery` if needed.
 
 ---
 
-### `Web5.anonymous(options?)`
+### `Enbox.anonymous(options?)`
 
 Creates a lightweight, read-only instance for querying public DWN data. No identity, vault, or signing keys are required.
 
 ```ts
-const { dwn } = Web5.anonymous();
+const { dwn } = Enbox.anonymous();
 
 // Query published records from someone's DWN
 const { records } = await dwn.records.query({
@@ -437,7 +441,7 @@ const ChatProtocol = defineProtocol({
   message : { text: string };
 });
 
-const chat = web5.using(ChatProtocol);
+const chat = enbox.using(ChatProtocol);
 await chat.configure();
 
 // Create a parent thread
@@ -517,7 +521,7 @@ const { record } = await notes.records.create('note', {
 ### Reading Public Data Anonymously
 
 ```ts
-const { dwn } = Web5.anonymous();
+const { dwn } = Enbox.anonymous();
 
 const { records } = await dwn.records.query({
   from   : 'did:dht:alice...',
@@ -545,18 +549,18 @@ await record.send(myDid);
 await record.send('did:dht:bob...');
 ```
 
-The sync engine (enabled by default at 2-minute intervals) automatically synchronizes records between local and remote DWNs. For most use cases, you don't need to call `send()` manually.
+The sync engine automatically synchronizes records between local and remote DWNs when sync is enabled. For most use cases, you don't need to call `send()` manually.
 
 ---
 
 ## Repository Pattern
 
-The `repository()` factory provides a higher-level abstraction over `TypedWeb5`. Instead of passing path strings to every call, you get a **structure-aware object** with CRUD methods directly on each protocol type -- with automatic singleton detection.
+The `repository()` factory provides a higher-level abstraction over `TypedEnbox`. Instead of passing path strings to every call, you get a **structure-aware object** with CRUD methods directly on each protocol type -- with automatic singleton detection.
 
 ```ts
-import { defineProtocol, repository, Web5 } from '@enbox/api';
+import { defineProtocol, repository, Enbox } from '@enbox/api';
 
-const { web5 } = await Web5.connect({ password: 'secret' });
+const { enbox } = await Enbox.connect({ password: 'secret' });
 
 const TaskProtocol = defineProtocol({
   protocol  : 'https://example.com/tasks',
@@ -580,7 +584,7 @@ const TaskProtocol = defineProtocol({
   config  : { defaultView: 'list' | 'board' };
 });
 
-const repo = repository(web5.using(TaskProtocol));
+const repo = repository(enbox.using(TaskProtocol));
 await repo.configure();
 ```
 
@@ -651,20 +655,20 @@ const { liveQuery } = await repo.project.task.subscribe(project.contextId);
 
 ### Using Pre-built Protocols
 
-The `@enbox/protocols` package provides production-ready protocol definitions. Combined with `repository()`, you get zero-boilerplate typed data access:
+The `@enbox/protocols` package provides ready-to-use protocol definitions. Combined with `repository()`, you get zero-boilerplate typed data access:
 
 ```ts
-import { repository, Web5 } from '@enbox/api';
+import { repository, Enbox } from '@enbox/api';
 import {
   PreferencesProtocol,
   ProfileProtocol,
   SocialGraphProtocol,
 } from '@enbox/protocols';
 
-const { web5 } = await Web5.connect({ password: 'secret' });
+const { enbox } = await Enbox.connect({ password: 'secret' });
 
 // Social Graph -- friend, block, group, member
-const social = repository(web5.using(SocialGraphProtocol));
+const social = repository(enbox.using(SocialGraphProtocol));
 await social.configure();
 
 const { record } = await social.friend.create({
@@ -672,7 +676,7 @@ const { record } = await social.friend.create({
 });
 
 // Profile -- profile (singleton), avatar, hero, link, privateNote
-const profile = repository(web5.using(ProfileProtocol));
+const profile = repository(enbox.using(ProfileProtocol));
 await profile.configure();
 
 await profile.profile.set({
@@ -686,7 +690,7 @@ await profile.profile.link.create(p.contextId, {
 });
 
 // Preferences -- theme, locale, privacy (singletons), notification (collection)
-const prefs = repository(web5.using(PreferencesProtocol));
+const prefs = repository(enbox.using(PreferencesProtocol));
 await prefs.configure();
 
 await prefs.theme.set({ data: { mode: 'dark', accentColor: '#8b5cf6' } });
@@ -726,22 +730,26 @@ For power users who need direct DWN access without protocol scoping (e.g. cross-
 
 ```ts
 import { DwnApi } from '@enbox/api/advanced';
+
+const dwn = new DwnApi({
+  agent        : session.agent,
+  connectedDid : session.did,
+  delegateDid  : session.delegateDid,
+});
 ```
 
-The `DwnApi` class provides raw `records`, `protocols`, and `permissions` accessors without automatic protocol/path/schema injection. You must provide those fields manually in every call. Most applications should use `web5.using()` instead.
+The `DwnApi` class provides raw `records`, `protocols`, and `permissions` accessors without automatic protocol/path/schema injection. You must provide those fields manually in every call. Most applications should use `enbox.using()` instead.
 
 ### Permissions
 
 The DWN permission system supports fine-grained access control through permission requests, grants, and revocations.
 
 ```ts
-import { DwnApi } from '@enbox/api/advanced';
-
 // Query existing permission grants
-const grants = await web5._dwn.permissions.queryGrants();
+const grants = await dwn.permissions.queryGrants();
 
 // Request permissions from another DWN
-const request = await web5._dwn.permissions.request({
+const request = await dwn.permissions.request({
   scope: {
     interface : 'Records',
     method    : 'Write',
@@ -757,7 +765,7 @@ await request.send('did:dht:alice...');
 
 ```ts
 // Resolve any DID
-const { didDocument } = await web5.did.resolve('did:dht:abc...');
+const { didDocument } = await enbox.did.resolve('did:dht:abc...');
 ```
 
 ---
@@ -830,10 +838,10 @@ Service workers built via [VitePWA](https://vite-pwa-org.netlify.app/) run in a 
 
 | Export | Description |
 |--------|-------------|
-| `Web5` | Main entry point -- `connect()`, `anonymous()`, `using()` |
+| `Enbox` | Main entry point -- `connect()`, `anonymous()`, `using()` |
 | `defineProtocol()` | Factory for creating typed protocol definitions |
-| `repository()` | Factory for creating structure-aware CRUD repositories from `TypedWeb5` |
-| `TypedWeb5` | Protocol-scoped API returned by `web5.using()` -- `create`, `query`, `read`, `delete`, `subscribe` |
+| `repository()` | Factory for creating structure-aware CRUD repositories from `TypedEnbox` |
+| `TypedEnbox` | Protocol-scoped API returned by `enbox.using()` -- `create`, `query`, `read`, `delete`, `subscribe` |
 | `TypedRecord<T>` | Type-safe record wrapper -- `data.json()` returns `Promise<T>` |
 | `TypedLiveQuery<T>` | Type-safe subscription with `TypedRecord<T>[]` snapshot and typed change events |
 | `Record` | Mutable record instance with data accessors and side-effect methods |
@@ -867,8 +875,8 @@ Service workers built via [VitePWA](https://vite-pwa-org.netlify.app/) run in a 
 | `TypedSubscribeResponse<T>` | Response from `records.subscribe()` -- `{ status, liveQuery: TypedLiveQuery<T> }` |
 | `Repository<D, M>` | Repository type -- structure-aware Proxy object with CRUD methods |
 | `DataForPath<D, M, Path>` | Resolves TypeScript data type for a protocol path from the schema map |
-| `Web5ConnectOptions` | Options for `Web5.connect()` |
-| `Web5ConnectResult` | Return type of `Web5.connect()` |
+| `EnboxConnectOptions` | Options for `Enbox.connect()` |
+| `EnboxConnectResult` | Return type of `Enbox.connect()` |
 | `RecordModel` | Structured data model of a record |
 | `RecordChangeType` | `'create' \| 'update' \| 'delete'` |
 | `RecordChange` | Change event payload `{ type, record }` |
