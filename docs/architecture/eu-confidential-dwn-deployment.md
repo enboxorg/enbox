@@ -716,9 +716,9 @@ overhead (self-managed K8s nodes, NATS, Vault).
 
 | File | Description |
 |---|---|
-| `infra/eu-contrast/terraform/` | Terraform modules for OVHcloud resources |
-| `infra/eu-contrast/k8s/` | Kubernetes manifests (DWN, NATS, Vault, Coordinator, Ingress) |
-| `infra/eu-contrast/scripts/` | Node setup scripts (BIOS, kernel, K3s, Contrast install) |
+| Private infra repo | Terraform modules for OVHcloud resources |
+| Private infra repo | Kubernetes manifests (DWN, NATS, Vault, Coordinator, Ingress) |
+| Private infra repo | Node setup scripts (BIOS, kernel, K3s, Contrast install) |
 | `.github/workflows/deploy-eu.yml` | CI/CD workflow for EU deployment |
 
 ### Already-implemented components (no work needed)

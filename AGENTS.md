@@ -47,7 +47,7 @@ Branch naming follows the existing convention in `git log`: `fix/...`, `feat/...
 
 ### 2. Open a PR — do not push to `main`
 
-`main` is protected (see `BRANCH_PROTECTION_SETUP.md`). Every change — including doc-only updates and one-line fixes — goes through a pull request:
+`main` is protected. Every change — including doc-only updates and one-line fixes — goes through a pull request:
 
 1. Commit with a conventional message (`<type>(<scope>): <summary>`) matching the log (e.g. `fix(agent): …`, `feat(auth): …`, `docs: …`, `chore(deps): …`).
 2. Push your branch to `origin` (never force-push shared branches).
@@ -618,9 +618,9 @@ The **agent DID** (`agent.agentDid`) is the agent's own identity. The **tenant D
 
 Conventions and patterns for Kysely-backed schema changes (DWN store domain + server store domain) live in [`docs/MIGRATIONS.md`](docs/MIGRATIONS.md). Read it before adding a migration, editing `packages/dwn-sql-store/src/migrations/` or `packages/dwn-server/src/migrations/`, or changing any store's `open()` / `initialize()` flow.
 
-## AWS deployment
+## Private operations
 
-Operational runbook for the dev/prod AWS deployment — CI/CD pipeline, manual ECR/ECS deploys, Dockerfile gotchas, Terraform plan/apply — lives in [`infra/DEPLOYMENT.md`](infra/DEPLOYMENT.md). The architecture itself (ALB, ECS, Aurora, S3, secret-sync) is described in [`infra/architecture.md`](infra/architecture.md). Read these before touching anything under `infra/`, shipping a `dwn-server` rollout, or adding a workspace package that the Dockerfile needs to copy.
+AWS/Terraform deployment material is intentionally not tracked in this public monorepo. Internal operational runbooks, Terraform modules, and deployment architecture live in the private `enboxorg/enbox-internal` repository.
 
 ## Documentation site
 
@@ -629,5 +629,5 @@ Build/dev commands, MDX content layout, Fumadocs theming, and Cloudflare Pages d
 ## Related infrastructure
 
 - **Pkarr / DHT gateway** for `did:dht` tests: `docker-compose.test.yaml` (see [`docs/TESTING.md`](docs/TESTING.md)).
-- **Hosted DWN** (AWS): [`infra/architecture.md`](infra/architecture.md) for what is deployed and [`infra/DEPLOYMENT.md`](infra/DEPLOYMENT.md) for how to deploy it.
+- **Hosted DWN** (AWS): operational material lives in the private `enboxorg/enbox-internal` repository.
 - **dwn-relay** is a **separate** repository (`enboxorg/dwn-relay`), not this monorepo.
