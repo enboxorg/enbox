@@ -294,4 +294,3 @@ document resolves with your endpoint.
 
 - [`@enbox/dwn-server` README](./packages/dwn-server/README.md) — full configuration, storage, and JSON-RPC reference
 - [`docs/HOSTING.md`](./docs/HOSTING.md) — Docker Compose quick start
-- [`packages/dwn-server/charts`](./packages/dwn-server/charts) — Helm chart for Kubernetes

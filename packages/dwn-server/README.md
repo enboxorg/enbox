@@ -87,7 +87,7 @@ The image exposes `DS_PORT` (default `3000`) and runs the compiled server via `e
 
 The default `level://data` store is **relative to the server's working directory** (`/app/packages/dwn-server`), so the volume above mounts `/app/packages/dwn-server/data` to persist it. Don't relocate it via `DWN_STORAGE` — that variable also feeds the registration store, which must be SQL, so a LevelDB value there is invalid (see [Storage](#storage) and [Registration requirements](#registration-requirements)). To store data elsewhere, mount the path above, set the per-store overrides (`DWN_STORAGE_MESSAGES` / `DWN_STORAGE_DATA` / `DWN_STORAGE_RESUMABLE_TASKS`), or use a SQL backend.
 
-> The bundled Helm chart ([`charts/`](./charts)) and some examples reference `ghcr.io/enboxorg/dwn-server`; that image is not published yet. Build and push your own image to a registry your platform can pull from, and point the chart's `image.repository` / `image.tag` at it.
+> No official image is published to a public registry yet (CI builds and pushes only to a private registry). For a remote deploy, build the image as above and push it to a registry your platform can pull from.
 
 For an end-to-end self-hosting walkthrough (TLS, storage, and advertising the node in your DID document), see the [Self-Hosting Guide](../../SELF-HOSTING.md).
 
