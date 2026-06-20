@@ -228,7 +228,7 @@ const auth = await AuthManager.create({
 });
 ```
 
-See [docs/HOSTING.md](./docs/HOSTING.md) for the full deployment guide: Docker Compose configuration, environment variables, production checklist, Fly.io one-click deploy, and AWS ECS setup.
+See [docs/HOSTING.md](./docs/HOSTING.md) for the public deployment guide: Docker Compose configuration, environment variables, production checklist, and Fly.io deployment.
 
 ---
 

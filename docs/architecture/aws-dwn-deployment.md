@@ -648,14 +648,14 @@ CDK / Terraform Deploy
 | Read/write split | `dwn-sql-store` | `ReadReplicaAwareDialect` routing SELECTs to reader endpoint |
 | Migration framework | `dwn-sql-store` | `dwn_migrations` table + sequential SQL files |
 | Dockerize dwn-server | `dwn-server` | Multi-stage Bun Dockerfile |
-| IaC scaffolding | `infra/` | CDK or Terraform for VPC, ALB, ECS, Aurora |
+| IaC scaffolding | Private infra repo | CDK or Terraform for VPC, ALB, ECS, Aurora |
 
 ### Phase 2: Distributed Durable-Log Wakes (Weeks 3-5)
 
 | Task | Package | Description |
 |---|---|---|
 | `NatsEventBus` | `dwn-server` (plugin) | Publishes durable-log wakes over NATS |
-| NATS cluster | `infra/` | 3-node NATS cluster in private subnets |
+| NATS cluster | Private infra repo | 3-node NATS cluster in private subnets |
 | Integration tests | `dwn-server` | Test subscribe flow across two DWN instances sharing SQL + NATS wakes |
 | Split HTTP/WS services | `dwn-server` | `DS_WEBSOCKET_SERVER=false` for HTTP fleet, `true` for WS fleet |
 
@@ -667,7 +667,7 @@ CDK / Terraform Deploy
 | vsock RPC protocol | `packages/dwn-enclave/` | Request/response codec over vsock |
 | `NitroIdentityVault` | `agent` | Replaces `HdIdentityVault`; delegates to enclave |
 | `NitroKeyManager` | `agent` | Replaces `LocalKeyManager`; delegates signing/derivation |
-| KMS key + policy | `infra/` | CMK with PCR-based attestation policy |
+| KMS key + policy | Private infra repo | CMK with PCR-based attestation policy |
 | Enclave EIF build | CI | `nitro-cli build-enclave` in CI pipeline |
 
 ### Phase 4: Production Hardening (Weeks 8-10)
@@ -676,8 +676,8 @@ CDK / Terraform Deploy
 |---|---|---|
 | `TieredDataStore` | `dwn-sql-store` or `dwn-server` | S3 offload for blobs > 256 KB |
 | Table partitioning | `dwn-sql-store` | Hash partitioning on `tenant` for messageStoreMessages |
-| Row-Level Security | `infra/` (migration) | RLS policies on all tenant-scoped tables |
-| Observability | `infra/` | AMP, X-Ray, CloudWatch dashboards, PagerDuty alerts |
+| Row-Level Security | Private infra repo (migration) | RLS policies on all tenant-scoped tables |
+| Observability | Private infra repo | AMP, X-Ray, CloudWatch dashboards, PagerDuty alerts |
 | Load testing | `tests/` | k6 or artillery scripts simulating multi-tenant workload |
 | Chaos testing | `tests/` | Kill NATS node, kill dwn-ws instance, verify client catch-up |
 

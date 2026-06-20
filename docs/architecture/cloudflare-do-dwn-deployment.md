@@ -841,7 +841,7 @@ cross-provider sync.
 
 **Fallback (non-NATS providers or network partitions):**
 
-The sync daemon (from `infra/multi-region-plan.md`) runs as a separate service,
+The sync daemon from the internal multi-region plan runs as a separate service,
 subscribes to local NATS wakes, resolves tenant DID endpoints, reads new rows
 from the local durable log, and pushes messages to peer providers via standard
 replicated DWN APIs over HTTPS. Loop prevention relies on DWN idempotency.
@@ -1006,10 +1006,10 @@ fingerprints regardless of storage backend.
 |---|---|
 | `docs/architecture/aws-dwn-deployment.md` | Coexists as Provider 2/4. Shares NATS super-cluster. Users choose based on trust, region, or performance preferences. |
 | `docs/architecture/eu-confidential-dwn-deployment.md` | Coexists as Provider 3. CF provider does not offer TEE; users requiring confidential compute use OVHcloud. |
-| `infra/multi-region-plan.md` | NATS super-cluster replaces per-region independent NATS clusters. Sync daemon works unchanged — receives wakes, reads the durable log, pushes to peer endpoints. |
+| Internal multi-region plan | NATS super-cluster replaces per-region independent NATS clusters. Sync daemon works unchanged — receives wakes, reads the durable log, pushes to peer endpoints. |
 | `$delivery` strategies | Direct and Relay use Queues; Subscribe uses NATS wakes plus Connection DOs. |
 | Relay/cache mode | Phase 5 implements cache-mode tenants. IPFS fallback enables reads without holding full datasets. |
-| `proposals/push-notifications.md` | Push notifications can hook into NATS wakes via a consumer worker — subscribe to `dwn.wakes.>`, read durable entries, match notification rules, fire APNs/FCM. |
+| Internal push-notifications proposal | Push notifications can hook into NATS wakes via a consumer worker — subscribe to `dwn.wakes.>`, read durable entries, match notification rules, fire APNs/FCM. |
 
 ---
 

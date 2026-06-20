@@ -66,7 +66,7 @@ jobs:
         id: filter
         with:
           filters: |
-            infra:
+            workspace:
               - 'package.json'
               - 'bun.lock'
               - 'tsconfig.json'
@@ -163,7 +163,7 @@ jobs:
         id: propagate
         run: |
           # Convert filter outputs to shell booleans
-          infra="${{ steps.filter.outputs.infra }}"
+          workspace="${{ steps.filter.outputs.workspace }}"
           common_crypto="${{ steps.filter.outputs.common-crypto }}"
           dids="${{ steps.filter.outputs.dids }}"
           dwn_sdk="${{ steps.filter.outputs.dwn-sdk }}"
@@ -177,7 +177,7 @@ jobs:
           browser_pkg="${{ steps.filter.outputs.browser-pkg }}"
 
           # Propagate down the dependency graph
-          needs_common_crypto=$( [ "$infra" = "true" ] || [ "$common_crypto" = "true" ] && echo true || echo false )
+          needs_common_crypto=$( [ "$workspace" = "true" ] || [ "$common_crypto" = "true" ] && echo true || echo false )
           needs_dids=$( [ "$needs_common_crypto" = "true" ] || [ "$dids" = "true" ] && echo true || echo false )
           needs_dwn_sdk=$( [ "$needs_dids" = "true" ] || [ "$dwn_sdk" = "true" ] && echo true || echo false )
           needs_dwn_clients=$( [ "$needs_dwn_sdk" = "true" ] || [ "$dwn_clients" = "true" ] && echo true || echo false )
