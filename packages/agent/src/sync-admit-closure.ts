@@ -54,9 +54,10 @@ type AdmissionEntryResult =
   | { kind: 'retry'; entries: SyncMessageEntry[] }
   | { kind: 'done'; outcome: AdmitOutcome };
 
-// Replication handlers currently report one missing dependency per rejected apply.
-// Keep a high safety cap so deep but valid closures can converge while still
-// bounding work against malformed or adversarial remotes.
+// applyReplicatedMessage reports the full set of missing ancestors in a single
+// Incomplete, so a well-formed closure converges in a handful of passes. Keep a
+// high cap anyway as a safety bound against malformed or adversarial remotes (and
+// dependencies that only become fetchable across passes).
 const MAX_ADMISSION_PASSES = 128;
 
 /**
