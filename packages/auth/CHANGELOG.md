@@ -1,5 +1,11 @@
 # @enbox/auth
 
+## 0.6.47
+
+### Patch Changes
+
+- [#1051](https://github.com/enboxorg/enbox/pull/1051) [`7baefc6`](https://github.com/enboxorg/enbox/commit/7baefc69fcae948ce93b9fa4ee69aea050ac2f2b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: preserve and repair agent DID recovery sync scope
+
 ## 0.6.46
 
 ### Patch Changes
