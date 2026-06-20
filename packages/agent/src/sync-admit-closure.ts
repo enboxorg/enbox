@@ -532,8 +532,15 @@ class AdmitClosureContext {
         messageType,
       });
       return grant.id;
-    } catch {
-      return undefined;
+    } catch (error: any) {
+      // The only expected failure is "no matching grant exists"; the caller then
+      // proceeds without a delegate grant and the DWN enforces authorization.
+      // Surface anything else (store/network failure, revocation-check failure,
+      // parse error) instead of silently treating it as "no grant".
+      if (error instanceof Error && error.message.includes('No permissions found')) {
+        return undefined;
+      }
+      throw error;
     }
   }
 

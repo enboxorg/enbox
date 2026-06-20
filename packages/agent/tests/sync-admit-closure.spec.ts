@@ -315,6 +315,89 @@ describe('admitClosure', () => {
     });
   });
 
+  it('fetches role records without a grant when no matching delegate grant exists', async () => {
+    const protocol = 'https://example.com/protocol';
+    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const role = await TestDataGenerator.generateRecordsWrite({
+      protocol,
+      protocolPath : 'thread/member',
+      recipient    : 'did:example:bob',
+    });
+    const rootCid = await Message.getCid(root.message);
+    const roleCid = await Message.getCid(role.message);
+    const agent = createMockAgent();
+    const permissionsApi = {
+      getPermissionForRequest: sinon.stub().rejects(
+        new Error(`CachedPermissions: No permissions found for RecordsQuery: ${protocol}`)
+      ),
+    };
+
+    agent.rpc.sendDwnRequest.resolves({
+      status  : { code: 200 },
+      entries : [role.message],
+    });
+    agent.dwn.applyReplicatedMessage
+      .onFirstCall().resolves({
+        kind    : 'Incomplete',
+        missing : [{
+          type          : 'Role',
+          contextPrefix : 'thread-context',
+          protocol,
+          protocolPath  : 'thread/member',
+          recipient     : 'did:example:bob',
+        }],
+      })
+      .onSecondCall().resolves({ kind: 'Applied' })
+      .onThirdCall().resolves({ kind: 'Applied' });
+
+    const outcome = await admitClosure(rootCid, {
+      did         : 'did:example:alice',
+      dwnUrl      : 'https://dwn.example.com',
+      delegateDid : 'did:example:delegate',
+      agent,
+      permissionsApi,
+      prefetched  : [{ message: root.message }],
+    });
+
+    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [roleCid, rootCid] });
+    const queryCall = agent.dwn.processRequest.firstCall.args[0];
+    expect(queryCall.author).toBe('did:example:delegate');
+    expect(queryCall.granteeDid).toBeUndefined();
+    expect(queryCall.messageParams.permissionGrantId).toBeUndefined();
+  });
+
+  it('surfaces an unexpected grant-lookup error instead of treating it as no grant', async () => {
+    const protocol = 'https://example.com/protocol';
+    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const rootCid = await Message.getCid(root.message);
+    const agent = createMockAgent();
+    const permissionsApi = {
+      getPermissionForRequest: sinon.stub().rejects(
+        new Error('PermissionsApi: Failed to fetch grants: 500 boom')
+      ),
+    };
+
+    agent.dwn.applyReplicatedMessage.onFirstCall().resolves({
+      kind    : 'Incomplete',
+      missing : [{
+        type          : 'Role',
+        contextPrefix : 'thread-context',
+        protocol,
+        protocolPath  : 'thread/member',
+        recipient     : 'did:example:bob',
+      }],
+    });
+
+    await expect(admitClosure(rootCid, {
+      did         : 'did:example:alice',
+      dwnUrl      : 'https://dwn.example.com',
+      delegateDid : 'did:example:delegate',
+      agent,
+      permissionsApi,
+      prefetched  : [{ message: root.message }],
+    })).rejects.toThrow('Failed to fetch grants');
+  });
+
   it('admits dependency chains deeper than the historical eight-pass budget', async () => {
     const chain = await Promise.all(
       Array.from({ length: 10 }, () => TestDataGenerator.generateRecordsWrite())
