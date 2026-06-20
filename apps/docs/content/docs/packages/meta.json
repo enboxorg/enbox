@@ -3,6 +3,7 @@
   "pages": [
     "api",
     "dwn-server",
+    "replication-sync",
     "agent",
     "protocols",
     "dids",

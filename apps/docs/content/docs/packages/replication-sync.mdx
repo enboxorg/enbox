@@ -1,0 +1,217 @@
+---
+title: Replication & sync wire surface
+description: How replicated DWN messages are applied, how the structured apply result drives dependency fetch-and-retry, and how record data is framed over HTTP and WebSocket.
+---
+
+`@enbox/dwn-sdk-js` exposes a dedicated entry point for applying messages that arrive through replication — `Dwn.applyReplicatedMessage()` — separate from the `processMessage()` path used for local authoring. Replication uses it so that a message which fails only because a local dependency is missing can be repaired (fetch the dependency, retry) instead of being treated as permanently invalid.
+
+This page documents the wire and API surface that sync is built on:
+
+- `dwn.applyReplicatedMessage()` and its `ReplicationApplyResult` union
+- `DependencyRef` — the typed description of a missing dependency
+- the bounded fetch-and-retry loop the agent runs over those results
+- how a replicated message frames its record data over the wire (inline vs. streamed) and how the consumer rehydrates it
+
+## Layers
+
+| Layer | Package | Responsibility |
+|---|---|---|
+| Engine | `@enbox/dwn-sdk-js` | `Dwn.applyReplicatedMessage()`, dedup, and the adapter that turns a handler status into a `ReplicationApplyResult` |
+| Transport | `@enbox/dwn-clients` | `DwnRpc.applyReplicatedMessage()` over HTTP and WebSocket; data framing; result parsing |
+| Server | `@enbox/dwn-server` | The `dwn.applyReplicatedMessage` JSON-RPC handler — transport gating, quota/rate limits, data rehydration |
+| Consumer | `@enbox/agent` | The push/pull sync engine that drives apply, reads the result, and fetches missing dependencies |
+
+The DWN handler remains the **dependency authority**. The replication adapter only gives the transport a typed way to distinguish a recoverable "missing dependency" from a terminal "invalid message"; it never relaxes authorization. (`packages/dwn-sdk-js/src/core/replication-apply.ts`)
+
+## `applyReplicatedMessage`
+
+```ts
+public async applyReplicatedMessage(
+  tenant: string,
+  rawMessage: GenericMessage,
+  options: ReplicationApplyOptions = {},
+): Promise<ReplicationApplyResult>
+```
+
+`ReplicationApplyOptions` carries an optional `dataStream?: ReadableStream<Uint8Array>` — the record data for a data-bearing `RecordsWrite`.
+
+The entry flow is, in order (`packages/dwn-sdk-js/src/dwn.ts`):
+
+1. **Tenant check.** If the tenant is not active, return `{ kind: 'Deferred', reason: 'tenant-inactive' }` — the message is not invalid, just not applicable here yet.
+2. **Integrity check.** If the message fails signature/structure validation, return `{ kind: 'Invalid', reason }`.
+3. **Dedup (idempotency).** If the exact message is already stored, return `{ kind: 'Duplicate' }` before any handler runs. See [Idempotency](#idempotency-and-dedup).
+4. **Process.** Run the normal `processMessage()` handler with `options` (the dependency authority).
+5. **Write-beaten-by-delete repair.** A replicated `RecordsWrite` that loses to an already-applied `RecordsDelete` is still stored (so its ancestry is retained for other records) and reported as `{ kind: 'Superseded' }`. (`storeReplicatedWriteBeatenByDelete`)
+6. **Adapt.** Pre-compute the protocol definition and the full missing-ancestor set, then map the handler reply into a `ReplicationApplyResult` via `replicationApplyResultFromReply()`.
+
+### Ancestry batching
+
+Step 6 pre-computes the complete set of locally-missing ancestor record IDs before adapting the reply (`getReplicationApplyMissingAncestors` → `missingAncestorRecordIdsFromReply`). A missing-ancestor failure names only a single ancestor, but the message's `contextId` names the full ancestor record-ID chain. By presence-checking every segment up front, an entire missing ancestry collapses into **one** `Incomplete` result carrying one `DependencyRef` per absent ancestor — so the consumer resolves the whole chain in a single fetch pass instead of one ancestry level per retry. If the chain cannot be determined, the adapter falls back to emitting the single ancestor named by the failure.
+
+## `ReplicationApplyResult`
+
+The result is a discriminated union on `kind` (`packages/dwn-sdk-js/src/core/replication-apply.ts`):
+
+| Kind | Carries | When it occurs |
+|---|---|---|
+| `Applied` | `ancestryOnly?: true`, `position?: ProgressToken` | The message was accepted (handler status `202`). `ancestryOnly` is set when status is `204` — an initial `RecordsWrite` stored for ancestry only, without advancing latest state. `position` is the local admission cursor when the receiving store has a durable replication log. |
+| `Duplicate` | — | The exact message is already stored (dedup short-circuit, or handler status indicating no change). |
+| `Superseded` | — | A newer or conflicting state already exists: handler status `409`, or a `RecordsWrite` that lost to a `RecordsDelete` (`RecordsWriteNotAllowedAfterDelete`). The message may still be stored for ancestry. |
+| `Incomplete` | `missing: DependencyRef[]` | The message is well-formed but references something not present locally (a parent, ancestor, protocol, grant, role, key-delivery record, cross-protocol record, or record data). The refs say what to fetch. |
+| `Invalid` | `reason: string` | The message is terminally rejected — failed integrity, or a non-recoverable status with no extractable dependency. |
+| `Deferred` | `reason: 'tenant-inactive' \| 'resolver-unavailable' \| 'storage'` | Transient: tenant inactive, a DID/key resolver was unavailable, or a `>= 500` storage error. Safe to retry later. |
+
+Status-code mapping in `replicationApplyResultFromReply()`:
+
+- `202` / `204` → `Applied` (`204` adds `ancestryOnly: true`)
+- `409` → `Superseded`
+- `RecordsWriteNotAllowedAfterDelete` → `Superseded`
+- resolver-not-found → `Deferred` (`resolver-unavailable`)
+- a known dependency error code → `Incomplete` (with refs)
+- any other `>= 500` → `Deferred` (`storage`)
+- everything else → `Invalid`
+
+> The reverse mapping the server records for telemetry is: `Applied` → `202`, `Duplicate`/`Superseded` → `409`, `Incomplete` → `424`, `Invalid` → `400`, `Deferred` → `503`. (`packages/dwn-server/src/json-rpc-handlers/dwn/apply-replicated-message.ts`)
+
+## `DependencyRef`
+
+An `Incomplete` result lists one or more dependencies the local store needs before the message can apply. Each ref is discriminated on `type` (`packages/dwn-sdk-js/src/core/replication-apply.ts`):
+
+| `type` | Identifying fields | Emitted for |
+|---|---|---|
+| `Protocol` | `protocol` | `ProtocolAuthorizationProtocolNotFound`, `ProtocolsConfigureComposedProtocolNotInstalled` |
+| `InitialWrite` | `recordId`, `protocol?` | `RecordsWriteGetInitialWriteNotFound`, or a `404` on a `RecordsDelete` |
+| `Parent` | `recordId`, `protocol` | `ProtocolAuthorizationParentRecordNotFound`, cross-protocol parent not found |
+| `Ancestor` | `recordId`, `protocol?` | `ProtocolAuthorizationParentNotFoundConstructingRecordChain`, plus the batched ancestors above a missing parent |
+| `Role` | `protocol`, `protocolPath`, `recipient`, `contextPrefix?` | `ProtocolAuthorizationMatchingRoleRecordNotFound` |
+| `Grant` | `permissionGrantId` | `GrantAuthorizationGrantMissing` |
+| `KeyDelivery` | `protocol`, `contextId` | encrypted-record key delivery |
+| `CrossProtocolRef` | `protocol`, `recordId` | cross-protocol reference |
+| `RecordData` | `recordId`, `dataCid`, `protocol?` | `RecordsWriteMissingDataInPrevious`, `RecordsWriteMissingEncodedDataInPrevious` |
+
+Every variant also carries two optional fields:
+
+- `messageCid?` — when set, the dependency can be fetched directly by CID; the consumer prefers this over a query.
+- `terminal?: true` — the dependency is known to be unreachable. A terminal ref turns the closure into a hard failure instead of a retry; the consumer never tries to fetch it.
+
+The dependency authority is the handler. `dependencyRefsFromStatus()` only inspects the failed reply's error code and the message itself (descriptor, signature payload, `contextId`) to reconstruct what is missing — it does not re-derive authorization.
+
+## Idempotency and dedup
+
+`applyReplicatedMessage()` is safe to call repeatedly with the same message. Before running any handler, `replicatedMessageAlreadyStored()` queries the message store for the record/protocol the message targets and compares CIDs; an exact CID match short-circuits to `Duplicate` (`packages/dwn-sdk-js/src/dwn.ts`).
+
+The server handler adds a complementary check: a fully-stored duplicate (message present, and for a data-bearing `RecordsWrite` its data also present) skips quota enforcement, and a `Duplicate` result lets the server cancel any inbound data body it received — re-delivering an already-stored message neither double-counts quota nor forces a redundant upload. (`packages/dwn-server/src/json-rpc-handlers/dwn/apply-replicated-message.ts`)
+
+The transport interface documents the same contract: `applyReplicatedMessage()` differs from `sendDwnRequest()` in that the server "repairs missing replication index entries when the message store already contains the exact message." (`packages/dwn-clients/src/dwn-rpc-types.ts`)
+
+## Data framing over the wire
+
+Two independent size boundaries are in play. Don't conflate them:
+
+- **`DwnConstant.maxDataSizeAllowedToBeEncoded = 30_000`** governs **storage** inside the DWN: a `RecordsWrite` whose `descriptor.dataSize <= 30 KB` is stored inline as `encodedData` alongside the message; larger data goes to the `DataStore` as a separate stream. This is the same threshold used everywhere in the engine (queries, reads, message-store writes). (`packages/dwn-sdk-js/src/core/dwn-constant.ts`)
+- **The JSON-RPC frame budget** governs **transport** of the record's data when applying a replicated message, and differs by transport.
+
+### HTTP
+
+Over HTTP, the message travels in the `dwn-request` header and the record data travels in the request **body** as `application/octet-stream`. The body may be a `Blob`/`Uint8Array` (replayable across retries) or a one-shot `ReadableStream` (`duplex: 'half'`, not retried after a failed attempt). Large uploads are therefore streamable; the per-attempt timeout is raised to 5 minutes for messages whose `dataSize > 1 MiB` so large sync uploads are not aborted by the normal 30-second budget. (`packages/dwn-clients/src/http-dwn-rpc-client.ts`)
+
+On the server side, an HTTP request body arrives as `context.dataStream` and is capped at the message's declared `descriptor.dataSize` before being handed to the engine. (`packages/dwn-server/src/json-rpc-handlers/dwn/apply-replicated-message.ts`)
+
+### WebSocket
+
+WebSocket has no separate body channel, so the record data is **inlined** into the JSON-RPC params as base64url `encodedData`:
+
+```ts
+createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
+  target,
+  message,
+  ...(encodedData === undefined ? {} : { encodedData }),
+});
+```
+
+Because the whole request must fit one frame, the client enforces a payload budget before sending (`packages/dwn-clients/src/web-socket-clients.ts`, `ws-payload-size.ts`):
+
+- A data-bearing `RecordsWrite` over WebSocket **requires** `encodedData`; otherwise the call is rejected with `InvalidParams`.
+- The max raw record size is derived from the server's advertised `maxFileSize` (or `100 MiB` by default), expanded for base64url overhead (`ceil(n/3) * 4`) plus a `64 KiB` envelope allowance via `maxWsJsonRpcPayloadBytes()`.
+- If the estimated payload exceeds that budget, the call is rejected up front rather than overflowing the frame.
+
+On the server, `encodedData` is validated (valid base64url, decoded length equals `descriptor.dataSize`, and within `maxRecordDataSize`) and then rehydrated into a `ReadableStream` for the engine. (`packages/dwn-server/src/json-rpc-handlers/dwn/apply-replicated-message.ts`)
+
+### Transport gating
+
+A normal `RecordsWrite` is HTTP-only because its data lives in the request body. Replicated apply may opt in to non-HTTP transports **only** when the message carries no data, or carries it inline as `encodedData`. The server enforces this with `validateInboundDwnMessageTransport({ allowRecordsWriteOverNonHttp: true, ... })`. (`packages/dwn-server/src/json-rpc-handlers/dwn/inbound-message.ts`)
+
+### What the consumer sends and rehydrates
+
+On the agent push side, data is materialized by `pushData(entry)`: buffered bytes become a `Blob`; an unconsumed `dataStream` is sent once; otherwise a `dataStreamFactory()` produces a fresh stream. The chosen transport then frames it as above. On the pull side, a query reply with inline `encodedData` is decoded into `bufferedData` so it can be replayed across retry passes, while a streamed read is wrapped in a size-capped stream. (`packages/agent/src/sync-messages.ts`, `packages/agent/src/sync-admit-closure.ts`)
+
+## The consumer: bounded fetch-and-retry
+
+The agent's pull path is `admitClosure()` (`packages/agent/src/sync-admit-closure.ts`); the push path is its mirror in `SyncEngineLevel` (`packages/agent/src/sync-messages.ts`). Both follow the same loop:
+
+1. Apply the root message via `applyReplicatedMessage()`.
+2. Branch on the result:
+   - `Applied` / `Duplicate` / `Superseded` → the entry is admitted.
+   - `Invalid` → terminal failure for the closure.
+   - `Deferred` → defer the closure (retry on a later sync).
+   - `Incomplete` → if any ref is `terminal`, fail; otherwise fetch every missing dependency and re-queue `[...dependencies, entry]` so the dependencies apply first, then the original message retries.
+3. Repeat until nothing is pending or the pass budget is exhausted.
+
+`fetchMissingDependencies()` maps each `DependencyRef` to a fetch (`fetchDependency()`), caching by ref so the same dependency is fetched at most once per closure:
+
+| Ref `type` | Fetch strategy |
+|---|---|
+| any with `messageCid` | fetch that CID directly |
+| `Protocol` | `ProtocolsQuery` for the protocol's newest tenant config |
+| `Parent` / `Ancestor` / `InitialWrite` | reuse a locally-known initial write, else `RecordsQuery` by `recordId` |
+| `CrossProtocolRef` | `RecordsQuery` by `recordId` (+ `protocol`) |
+| `Role` | `RecordsQuery` by `protocol` / `protocolPath` / `recipient` (+ `contextId` prefix) |
+| `Grant` | `RecordsQuery` for the grant record by id |
+| `KeyDelivery` | `RecordsQuery` on the key-delivery protocol, filtered by `protocol`/`contextId` tags |
+| `RecordData` | `RecordsRead` by `recordId`; the reply's data is accepted only if its `dataCid` matches the ref |
+
+### Pass budget
+
+Both loops cap at **`MAX_ADMISSION_PASSES = 128`** (`MAX_PUSH_ADMISSION_PASSES` on the push side). Because `applyReplicatedMessage()` reports the full missing-ancestor set in a single `Incomplete`, a well-formed closure converges in a handful of passes; the high cap is a safety bound against malformed or adversarial remotes and against dependencies that only become fetchable across passes. Exhausting the budget defers the closure rather than failing it.
+
+```ts
+const result = await agent.dwn.applyReplicatedMessage(tenantDid, message, { dataStream });
+
+switch (result.kind) {
+  case 'Applied':
+  case 'Duplicate':
+  case 'Superseded':
+    // admitted
+    break;
+  case 'Deferred':
+    // retry on a later sync
+    break;
+  case 'Invalid':
+    // terminal: drop the message
+    break;
+  case 'Incomplete':
+    // fetch result.missing, then retry this message after them
+    break;
+}
+```
+
+## API & wire reference
+
+| Symbol | Package | Notes |
+|---|---|---|
+| `Dwn.applyReplicatedMessage(tenant, message, options)` | `@enbox/dwn-sdk-js` | Engine entry point. Returns `ReplicationApplyResult`. |
+| `ReplicationApplyResult`, `DependencyRef`, `ReplicationApplyOptions` | `@enbox/dwn-sdk-js` | Exported types. |
+| `replicationApplyResultFromReply()` | `@enbox/dwn-sdk-js` | Adapter from a handler reply to a result. |
+| `DwnConstant.maxDataSizeAllowedToBeEncoded` | `@enbox/dwn-sdk-js` | `30_000` — inline-vs-stream **storage** threshold. |
+| `ProgressToken` | `@enbox/dwn-sdk-js` | Source-local admission cursor; compared numerically within `(streamId, epoch)`. |
+| `DwnRpc.applyReplicatedMessage(request)` | `@enbox/dwn-clients` | HTTP and WebSocket transports. |
+| `parseReplicationApplyResult()` | `@enbox/dwn-clients` | Validates a result received over the wire. |
+| `dwn.applyReplicatedMessage` JSON-RPC method | `@enbox/dwn-server` | Server handler; params `{ target, message, encodedData? }`. |
+
+## Further reading
+
+- Engine adapter and types: [`packages/dwn-sdk-js/src/core/replication-apply.ts`](https://github.com/enboxorg/enbox/blob/main/packages/dwn-sdk-js/src/core/replication-apply.ts)
+- Apply entry point: [`packages/dwn-sdk-js/src/dwn.ts`](https://github.com/enboxorg/enbox/blob/main/packages/dwn-sdk-js/src/dwn.ts)
+- Transport clients: [`packages/dwn-clients/src/web-socket-clients.ts`](https://github.com/enboxorg/enbox/blob/main/packages/dwn-clients/src/web-socket-clients.ts), [`packages/dwn-clients/src/http-dwn-rpc-client.ts`](https://github.com/enboxorg/enbox/blob/main/packages/dwn-clients/src/http-dwn-rpc-client.ts)
+- Server handler: [`packages/dwn-server/src/json-rpc-handlers/dwn/apply-replicated-message.ts`](https://github.com/enboxorg/enbox/blob/main/packages/dwn-server/src/json-rpc-handlers/dwn/apply-replicated-message.ts)
+- Consumer fetch-and-retry: [`packages/agent/src/sync-admit-closure.ts`](https://github.com/enboxorg/enbox/blob/main/packages/agent/src/sync-admit-closure.ts), [`packages/agent/src/sync-messages.ts`](https://github.com/enboxorg/enbox/blob/main/packages/agent/src/sync-messages.ts)
