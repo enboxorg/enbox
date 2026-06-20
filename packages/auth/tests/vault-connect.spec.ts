@@ -171,11 +171,16 @@ describe('vaultConnect', () => {
     });
 
     await vaultConnect(
-      { userAgent: agent, emitter, storage },
+      {
+        userAgent                    : agent,
+        emitter,
+        storage,
+        defaultIdentitySyncProtocols : ['https://proto.example/profile'],
+      },
       { password: 'test-pass' },
     );
 
-    // Only agent DID registration (no identity created)
+    // Only recovery registration; app identity scope must not overwrite the agent DID.
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].did).toBe('did:dht:testagent');
     expect(syncCalls[0].options.protocols).toEqual([
