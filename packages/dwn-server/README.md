@@ -78,12 +78,14 @@ docker build -f packages/dwn-server/Dockerfile -t dwn-server .
 
 # Run it, persisting data to a named volume
 docker run -p 3000:3000 \
-  -v dwn-data:/dwn-server/data \
+  -v dwn-data:/app/packages/dwn-server/data \
   -e DWN_BASE_URL=https://dwn.example.com \
   dwn-server
 ```
 
 The image exposes `DS_PORT` (default `3000`) and runs the compiled server via `entrypoint.sh`. The build accepts a `DS_PORT` build arg if you need to bake in a different port.
+
+The default `level://data` store is **relative to the server's working directory** (`/app/packages/dwn-server`), so the volume above mounts `/app/packages/dwn-server/data` to persist it. Do not set `DWN_STORAGE` to a LevelDB path to relocate it — `DWN_STORAGE` also feeds the registration store, which must be SQL (see [Storage](#storage) and [Registration requirements](#registration-requirements)). To store data elsewhere, mount the path above, or use a SQL backend.
 
 > The bundled Helm chart ([`charts/`](./charts)) and some examples reference `ghcr.io/enboxorg/dwn-server`; that image is not published yet. Build and push your own image to a registry your platform can pull from, and point the chart's `image.repository` / `image.tag` at it.
 
@@ -151,7 +153,7 @@ The server uses three logical stores: a **message store**, a **data store**, and
 | MySQL      | `mysql://user:pass@host:3306/db?debug=true&timezone=-0700` | [Connection options](https://github.com/mysqljs/mysql#connection-options) as query params. |
 | PostgreSQL | `postgres://user:pass@host:5432/db`                    | Also honors [standard `PG*` env vars](https://node-postgres.com/features/connecting). |
 
-> **TTL cache constraint:** if `DWN_REGISTRATION_STORE_URL` is set and `DWN_TTL_CACHE_URL` points at a *different* SQL database, the server throws at startup — the `cacheEntries` table is managed by the server migration system and must live in the same database. Point both at the same SQL URL (or leave `DWN_TTL_CACHE_URL` at its default for an open node).
+> **TTL cache constraint:** if a registration store is configured (via `DWN_REGISTRATION_STORE_URL`, or its fallback to `DWN_STORAGE`) and `DWN_TTL_CACHE_URL` points at a *different* SQL database, the server throws at startup — the `cacheEntries` table is managed by the server migration system and must live in the same database. Point both at the same SQL URL.
 
 #### Plugins
 
@@ -162,11 +164,11 @@ Custom store implementations can be loaded by pointing a storage variable at a *
 
 ### Registration & provider-auth
 
-Registration is **open by default**. Setting `DWN_REGISTRATION_STORE_URL` activates the tenant gate; enable one or more methods below. See [Registration requirements](#registration-requirements) for the full flow.
+Registration is **open by default**. The tenant gate activates whenever a **SQL** registration store is configured — via `DWN_REGISTRATION_STORE_URL`, or its fallback to `DWN_STORAGE`. So pointing `DWN_STORAGE` at Postgres/MySQL/SQLite activates the gate **even when `DWN_REGISTRATION_STORE_URL` is unset**; you must then enable a method below (or pre-register tenants via the admin API), or new tenants are rejected. See [Registration requirements](#registration-requirements) for the full flow.
 
 | Env var                                           | Description                                                                 | Default                |
 | ------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------- |
-| `DWN_REGISTRATION_STORE_URL`                      | SQL store for registered tenants. Unset = open for all. LevelDB not supported. | value of `DWN_STORAGE` |
+| `DWN_REGISTRATION_STORE_URL`                      | SQL store for registered tenants; falls back to `DWN_STORAGE`. A SQL value activates the tenant gate (LevelDB not supported). | value of `DWN_STORAGE` |
 | `DWN_REGISTRATION_PROOF_OF_WORK_ENABLED`          | Require proof-of-work to register                                            | `false`                |
 | `DWN_REGISTRATION_PROOF_OF_WORK_SEED`             | Seed for challenge nonces (keeps difficulty consistent across a cluster)     | unset                  |
 | `DWN_REGISTRATION_PROOF_OF_WORK_INITIAL_MAX_HASH` | Initial difficulty (64-char hex; more leading zeros = harder)               | unset                  |
@@ -174,13 +176,13 @@ Registration is **open by default**. Setting `DWN_REGISTRATION_STORE_URL` activa
 | `DWN_PROVIDER_AUTH_ENABLED`                       | Enable provider-auth (OAuth2) registration                                  | `false`                |
 | `DWN_PROVIDER_AUTH_JWT_SECRET`                    | HMAC secret for the built-in JWT verifier (symmetric)                       | unset                  |
 | `DWN_PROVIDER_AUTH_JWT_JWKS_URL`                  | JWKS URL for the built-in JWT verifier (asymmetric)                         | unset                  |
-| `DWN_PROVIDER_AUTH_JWT_ISSUER`                    | Expected JWT `iss` claim                                                     | `DWN_BASE_URL`         |
-| `DWN_PROVIDER_AUTH_JWT_AUDIENCE`                  | Expected JWT `aud` claim                                                     | `DWN_BASE_URL`         |
 | `DWN_PROVIDER_AUTH_PLUGIN_PATH`                   | Path to a custom provider-auth plugin (overrides the built-in JWT handler)  | unset                  |
-| `DWN_PROVIDER_AUTH_AUTHORIZE_URL`                 | OAuth2 authorize endpoint                                                    | `${DWN_BASE_URL}/provider-auth/authorize` |
-| `DWN_PROVIDER_AUTH_TOKEN_URL`                     | OAuth2 token endpoint                                                        | `${DWN_BASE_URL}/provider-auth/token`     |
-| `DWN_PROVIDER_AUTH_REFRESH_URL`                   | OAuth2 refresh endpoint                                                      | `${DWN_BASE_URL}/provider-auth/refresh`   |
+| `DWN_PROVIDER_AUTH_AUTHORIZE_URL`                 | OAuth2 authorize endpoint (see note)                                         | derived (see note)     |
+| `DWN_PROVIDER_AUTH_TOKEN_URL`                     | OAuth2 token endpoint (see note)                                             | derived (see note)     |
+| `DWN_PROVIDER_AUTH_REFRESH_URL`                   | OAuth2 refresh endpoint (see note)                                           | derived (see note)     |
 | `DWN_PROVIDER_AUTH_MANAGEMENT_URL`                | Account-management URL surfaced in `/info`                                   | unset                  |
+
+> The built-in JWT verifier fixes the expected `iss` and `aud` claims to `DWN_BASE_URL` — they are not separately configurable on the server. The `*_URL` values default to `${DWN_BASE_URL}/provider-auth/{authorize,token,refresh}` **only when the built-in OpenAuth handler is active** (provider-auth enabled with `DWN_PROVIDER_AUTH_JWT_SECRET` and no custom plugin). With a JWKS-only or custom-plugin setup, set these URLs explicitly or they remain unset.
 
 ### Admin API configuration
 
@@ -387,13 +389,15 @@ Public endpoints (no auth unless noted). Permissive CORS is applied to the JSON-
 
 ## Registration requirements
 
-Registration gates are optional and **all disabled by default**. They become active only when `DWN_REGISTRATION_STORE_URL` points at a SQL database (LevelDB is not supported). Tenants that have not satisfied the active requirements receive a `401`. The current requirements are advertised at `/info`.
+Registration gates are optional and **all disabled by default**. The gate becomes active when a SQL registration store is configured — via `DWN_REGISTRATION_STORE_URL` or its fallback to `DWN_STORAGE` (LevelDB is not supported). Tenants that have not satisfied the active requirements receive a `401`. The current requirements are advertised at `/info`.
+
+Every registration request must carry **either** proof-of-work **or** provider-auth credentials; a request with neither is rejected. Terms-of-service is not a standalone gate — it layers on top of whichever of the two is used.
 
 - **Proof of work** (`DWN_REGISTRATION_PROOF_OF_WORK_ENABLED=true`) — advertised as `proof-of-work-sha256-v0`. Clients `GET /registration/proof-of-work` for a challenge, compute a nonce so that `sha256(challenge + nonce)` has the required number of leading zeros, and POST it back. Challenges expire after 5 minutes; difficulty auto-adjusts.
-- **Terms of service** (`DWN_TERMS_OF_SERVICE_FILE_PATH=/path/to/tos.txt`) — advertised as `terms-of-service`. Clients `GET /registration/terms-of-service`, display it, and POST `{ termsOfServiceHash, did }` on acceptance. Editing the file invalidates prior acceptances.
 - **Provider auth** (`DWN_PROVIDER_AUTH_ENABLED=true` with a JWT secret, JWKS URL, or custom plugin) — advertised as `provider-auth-v0`. Clients complete the OAuth2 flow at `/provider-auth/*` and register with the resulting token.
+- **Terms of service** (`DWN_TERMS_OF_SERVICE_FILE_PATH=/path/to/tos.txt`) — advertised as `terms-of-service`. A **layered** requirement, not a gate of its own: clients `GET /registration/terms-of-service`, display it, and include the accepted `termsOfServiceHash` in their proof-of-work or provider-auth registration request. Editing the file invalidates prior acceptances.
 
-If `DWN_REGISTRATION_STORE_URL` is set but no gate is enabled, the server logs a startup warning — new tenants would be unable to register. Leave the variable unset to run an open node.
+If a registration store is configured but neither proof-of-work nor provider-auth is enabled, the server logs a startup warning — new tenants would be unable to register. To run an **open** node, use the default LevelDB storage and leave `DWN_REGISTRATION_STORE_URL` unset; with a SQL storage backend the gate is always active, so enable a method above or pre-register tenants via the admin API.
 
 ## Admin API
 
@@ -413,7 +417,7 @@ The [Self-Hosting Guide](../../SELF-HOSTING.md) covers the full workflow, includ
 
 - **ngrok** — `ngrok http 3000`, then set `DWN_BASE_URL` to the tunnel URL.
 - **Cloudflare Tunnel** — `cloudflared tunnel --url http://localhost:3000`.
-- **PaaS (Render, etc.)** — deploy the container and mount a persistent disk at `/dwn-server/data` if you use a file-based backend.
+- **PaaS (Render, etc.)** — deploy the container and, if you use the default LevelDB backend, mount a persistent disk at `/app/packages/dwn-server/data`.
 
 ## Development
 
