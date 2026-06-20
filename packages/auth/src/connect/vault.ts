@@ -136,7 +136,7 @@ export async function vaultConnect(
     // Persisted delegate identities need their sync scope refreshed from
     // current grants so revoked protocols do not keep syncing after restore.
     await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid });
-  } else if (!isNewIdentity && sync !== 'off') {
+  } else if (!isNewIdentity && identity && sync !== 'off') {
     await registerSyncScopeForIdentity({ userAgent, connectedDid, identitySyncProtocols });
   }
 

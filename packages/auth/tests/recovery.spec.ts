@@ -27,12 +27,26 @@ describe('registerAgentDidForSync', () => {
     expect(syncCalls[0].options.protocols).toEqual(AGENT_DID_SYNC_PROTOCOLS);
   });
 
-  test('silently succeeds when already registered', async () => {
+  test('repairs stale options when already registered', async () => {
+    const updateCalls: any[] = [];
     const agent = createMockAgent({
-      syncRegisterIdentity: async () => { throw new Error('already registered'); },
+      syncRegisterIdentity      : async () => { throw new Error('already registered'); },
+      syncUpdateIdentityOptions : async (params) => { updateCalls.push(params); },
     });
 
     await expect(registerAgentDidForSync(agent)).resolves.toBeUndefined();
+    expect(updateCalls).toEqual([{
+      did     : 'did:dht:testagent',
+      options : { protocols: AGENT_DID_SYNC_PROTOCOLS },
+    }]);
+  });
+
+  test('throws when sync registration fails for another reason', async () => {
+    const agent = createMockAgent({
+      syncRegisterIdentity: async () => { throw new Error('storage unavailable'); },
+    });
+
+    await expect(registerAgentDidForSync(agent)).rejects.toThrow('storage unavailable');
   });
 });
 

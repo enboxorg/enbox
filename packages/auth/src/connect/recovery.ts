@@ -32,16 +32,26 @@ export const AGENT_DID_SYNC_PROTOCOLS: [string, ...string[]] = [
  *
  * This is a prerequisite for both normal operation (pushing identity
  * metadata to the remote) and seed phrase recovery (pulling it back).
- * Silently succeeds if the agent DID is already registered.
+ * Repairs the registration if the agent DID was already registered with stale options.
  */
 export async function registerAgentDidForSync(userAgent: EnboxUserAgent): Promise<void> {
+  const options = { protocols: AGENT_DID_SYNC_PROTOCOLS };
   try {
     await userAgent.sync.registerIdentity({
-      did     : userAgent.agentDid.uri,
-      options : { protocols: AGENT_DID_SYNC_PROTOCOLS },
+      did: userAgent.agentDid.uri,
+      options,
     });
-  } catch {
-    // Already registered from a previous session.
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '';
+    if (message.includes('already registered')) {
+      await userAgent.sync.updateIdentityOptions({
+        did: userAgent.agentDid.uri,
+        options,
+      });
+      return;
+    }
+
+    throw error;
   }
 }
 
