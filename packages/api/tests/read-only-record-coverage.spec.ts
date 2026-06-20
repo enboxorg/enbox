@@ -83,6 +83,29 @@ describe('ReadOnlyRecord — coverage gaps', () => {
     });
   });
 
+  describe('state-dependent getters', () => {
+    it('should expose authorization, attestation, and initialWrite', () => {
+      anonStub = createAnonymousDwnStub();
+      const authorization = { signature: { signatures: [] } };
+      const attestation = { payload: 'attest-data', signatures: [] };
+      const initialWrite = createMockRecordsWriteMessage({ recordId: 'initial-record-id' });
+      const msg = createMockRecordsWriteMessage({
+        authorization : authorization as any,
+        attestation   : attestation as any,
+      });
+      const record = new ReadOnlyRecord({
+        rawMessage   : msg,
+        initialWrite,
+        remoteOrigin : targetDid,
+        anonymousDwn : anonStub as unknown as AnonymousDwnApi,
+      });
+
+      expect(record.authorization).toEqual(authorization);
+      expect(record.attestation).toEqual(attestation);
+      expect(record.initialWrite).toBe(initialWrite);
+    });
+  });
+
   describe('data.bytes()', () => {
     it('should return data as Uint8Array from encodedData', async () => {
       anonStub = createAnonymousDwnStub();

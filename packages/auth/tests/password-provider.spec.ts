@@ -305,6 +305,27 @@ describe('PasswordProvider', () => {
       const provider = PasswordProvider.fromTty();
       expect(provider).toBeDefined();
     });
+
+    test('throws when stdin.isTTY is forced false', async () => {
+      const originalDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+      Object.defineProperty(process.stdin, 'isTTY', {
+        value        : false,
+        configurable : true,
+      });
+
+      try {
+        const provider = PasswordProvider.fromTty();
+        await expect(provider.getPassword({ reason: 'unlock' })).rejects.toThrow(
+          'stdin is not a TTY'
+        );
+      } finally {
+        if (originalDescriptor !== undefined) {
+          Object.defineProperty(process.stdin, 'isTTY', originalDescriptor);
+        } else {
+          delete (process.stdin as any).isTTY;
+        }
+      }
+    });
   });
 
   describe('fromDevTty()', () => {

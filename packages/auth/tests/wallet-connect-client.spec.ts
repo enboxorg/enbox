@@ -124,6 +124,45 @@ describe('WalletConnect', () => {
       expect(fetchStub.callCount).toBeGreaterThanOrEqual(2);
     });
 
+    it('should return undefined when the wallet explicitly denies access', async () => {
+      sinon.stub(EnboxConnectProtocol, 'createConnectRequest').resolves({
+        clientDid           : 'did:jwk:test',
+        callbackUrl         : 'http://localhost:3000/connect/callback',
+        permissionRequests  : [],
+        appName             : 'Sample App',
+        nonce               : 'test-nonce',
+        responseMode        : 'direct_post',
+        state               : 'test-state',
+        supportedDidMethods : ['did:dht', 'did:jwk'],
+      } as any);
+      sinon.stub(EnboxConnectProtocol, 'signJwt').resolves('signed.jwt.value');
+      sinon.stub(EnboxConnectProtocol, 'encryptRequest').resolves('encrypted-jwe');
+      const decryptResponse = sinon.stub(EnboxConnectProtocol, 'decryptResponse').resolves('decrypted.jwt.value');
+
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      fetchStub.onFirstCall().resolves(
+        new Response(JSON.stringify({ request_uri: 'http://localhost:3000/connect/authorize/req.jwt' }), {
+          status  : 200,
+          headers : { 'Content-Type': 'application/json' },
+        })
+      );
+      fetchStub.onSecondCall().resolves(
+        new Response('DENIED', { status: 200 })
+      );
+
+      const result = await WalletConnect.initClient({
+        displayName        : 'Sample App',
+        walletUri          : 'http://localhost:3000/',
+        connectServerUrl   : 'http://localhost:3000/connect',
+        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        onWalletUriReady   : (): void => {},
+        validatePin        : async (): Promise<string> => '1234',
+      });
+
+      expect(result).toBeUndefined();
+      expect(decryptResponse.called).toBe(false);
+    });
+
   });
 
   describe('createPermissionRequestForProtocol', () => {

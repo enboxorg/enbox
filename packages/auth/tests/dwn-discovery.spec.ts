@@ -549,4 +549,11 @@ describe('requestLocalDwnDiscovery', () => {
     expect(hrefValues).toHaveLength(1);
     expect(hrefValues[0]).toContain('dwn://connect');
   });
+
+  test('should return false when callback is explicit but no opener or location exists', () => {
+    delete (globalThis as any).location;
+    delete (globalThis as any).open;
+
+    expect(requestLocalDwnDiscovery('https://myapp.com/callback')).toBe(false);
+  });
 });

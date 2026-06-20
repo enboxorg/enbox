@@ -220,4 +220,26 @@ describe('recoverIdentitiesFromRemote', () => {
     expect(result).toHaveLength(1);
     expect(pullCount).toBe(2);
   });
+
+  test('throws when recovered identity sync registration fails for another reason', async () => {
+    const identity = createMockIdentity();
+    let pullCount = 0;
+
+    const agent = createMockAgent({
+      identityList         : async () => (pullCount > 0 ? [identity] : []),
+      syncSync             : async () => { pullCount++; },
+      syncRegisterIdentity : async () => { throw new Error('sync store unavailable'); },
+    });
+
+    await expect(
+      recoverIdentitiesFromRemote({
+        userAgent             : agent,
+        dwnEndpoints          : ['https://dwn.example.com'],
+        identitySyncProtocols : ['https://proto.example/profile'],
+        storage               : new MemoryStorage(),
+      })
+    ).rejects.toThrow('sync store unavailable');
+
+    expect(pullCount).toBe(1);
+  });
 });
