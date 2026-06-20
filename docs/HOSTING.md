@@ -52,6 +52,6 @@ See the [`@enbox/dwn-server` README](../packages/dwn-server/README.md) for the f
 5. **Set resource limits** for containers
 6. **Enable registration** -- configure proof-of-work or terms-of-service tenant registration
 
-## Fly.io Deployment
+## Self-Hosting Anywhere
 
-Deploy the DWN server to Fly.io with managed PostgreSQL. See the complete [Fly.io Deployment Guide](../FLY.md).
+To deploy your own DWN on any host (cloud provider, VPS, Kubernetes, or a home server behind a tunnel) — including how to advertise the node in your DID document — see the complete [Self-Hosting Guide](../SELF-HOSTING.md).
