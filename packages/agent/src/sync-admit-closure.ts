@@ -26,6 +26,14 @@ import {
   SyncDataSizeLimitExceededError,
   SyncPullAbortedError,
 } from './sync-messages.js';
+import {
+  dependencyKey,
+  hasTerminalDependency,
+  isTenantProtocolConfig,
+  missingDependencyDetail,
+  newestProtocolConfig,
+  resolveDelegatePermissionGrantId,
+} from './sync-fetch-helpers.js';
 import { DwnInterfaceName, DwnMethodName, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 export type AdmitOutcome =
@@ -347,7 +355,7 @@ class AdmitClosureContext {
   private async fetchRecordsByRecordId(recordId: string, protocol?: string): Promise<SyncMessageEntry[]> {
     const permissionGrantId = protocol === undefined
       ? undefined
-      : await this.getPermissionGrantId(DwnInterface.RecordsQuery, protocol);
+      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, protocol);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { message } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
@@ -370,7 +378,7 @@ class AdmitClosureContext {
   }
 
   private async fetchRoleRecord(ref: Extract<DependencyRef, { type: 'Role' }>): Promise<SyncMessageEntry[]> {
-    const permissionGrantId = await this.getPermissionGrantId(DwnInterface.RecordsQuery, ref.protocol);
+    const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, ref.protocol);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { message } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
@@ -450,7 +458,7 @@ class AdmitClosureContext {
   private async fetchRecordData(ref: Extract<DependencyRef, { type: 'RecordData' }>): Promise<SyncMessageEntry[]> {
     const permissionGrantId = ref.protocol === undefined
       ? undefined
-      : await this.getPermissionGrantId(DwnInterface.RecordsRead, ref.protocol);
+      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsRead, ref.protocol);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { message } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
@@ -491,7 +499,7 @@ class AdmitClosureContext {
   }
 
   private async fetchProtocol(protocol: string): Promise<ProtocolsConfigureMessage | undefined> {
-    const permissionGrantId = await this.getPermissionGrantId(DwnInterface.ProtocolsQuery, protocol);
+    const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.ProtocolsQuery, protocol);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { message } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
@@ -516,25 +524,6 @@ class AdmitClosureContext {
 
     const configs = reply.entries.filter(isTenantProtocolConfig(this.deps.did, protocol));
     return newestProtocolConfig(configs);
-  }
-
-  private async getPermissionGrantId(messageType: DwnInterface, protocol: string): Promise<string | undefined> {
-    if (this.deps.delegateDid === undefined || this.deps.permissionsApi === undefined) {
-      return undefined;
-    }
-
-    try {
-      const { grant } = await this.deps.permissionsApi.getPermissionForRequest({
-        connectedDid : this.deps.did,
-        delegateDid  : this.deps.delegateDid,
-        protocol,
-        cached       : true,
-        messageType,
-      });
-      return grant.id;
-    } catch {
-      return undefined;
-    }
   }
 
   private async rememberEntries(entries: SyncMessageEntry[]): Promise<void> {
@@ -562,18 +551,6 @@ class AdmitClosureContext {
       }
     }
   }
-}
-
-function hasTerminalDependency(refs: DependencyRef[]): boolean {
-  return refs.some(ref => ref.terminal === true);
-}
-
-function missingDependencyDetail(refs: DependencyRef[]): string {
-  return refs.map(dependencyKey).join(', ');
-}
-
-function dependencyKey(ref: DependencyRef): string {
-  return JSON.stringify(ref);
 }
 
 async function replayableDataStream(entry: SyncMessageEntry): Promise<ReadableStream<Uint8Array> | undefined> {
@@ -610,30 +587,6 @@ async function dedupeEntries(entries: SyncMessageEntry[]): Promise<SyncMessageEn
     byCid.set(await getMessageCid(entry.message), entry);
   }
   return [...byCid.values()];
-}
-
-function isTenantProtocolConfig(tenantDid: string, protocol: string): (message: GenericMessage) => message is ProtocolsConfigureMessage {
-  return (message: GenericMessage): message is ProtocolsConfigureMessage => {
-    if (
-      message.descriptor.interface !== DwnInterfaceName.Protocols ||
-      message.descriptor.method !== DwnMethodName.Configure
-    ) {
-      return false;
-    }
-
-    const definition = (message.descriptor as { definition?: { protocol?: string } }).definition;
-    return definition?.protocol === protocol && Message.getAuthor(message) === tenantDid;
-  };
-}
-
-function newestProtocolConfig(configs: ProtocolsConfigureMessage[]): ProtocolsConfigureMessage | undefined {
-  let newest: ProtocolsConfigureMessage | undefined;
-  for (const config of configs) {
-    if (newest === undefined || config.descriptor.messageTimestamp > newest.descriptor.messageTimestamp) {
-      newest = config;
-    }
-  }
-  return newest;
 }
 
 function isInitialWriteForRecord(message: GenericMessage, recordId: string): message is RecordsWriteMessage {

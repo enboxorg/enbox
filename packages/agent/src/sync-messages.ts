@@ -6,7 +6,6 @@ import type {
   MessagesQueryReply,
   MessagesReadReply,
   ProgressToken,
-  ProtocolsConfigureMessage,
   ProtocolsQueryReply,
   RecordsQueryReply,
   RecordsReadReply,
@@ -29,6 +28,14 @@ import { DwnInterface } from './types/dwn.js';
 import { DwnRpcError } from '@enbox/dwn-clients';
 import { isRecordsWrite } from './utils.js';
 import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
+import {
+  dependencyKey,
+  hasTerminalDependency,
+  isTenantProtocolConfig,
+  missingDependencyDetail,
+  newestProtocolConfig,
+  resolveDelegatePermissionGrantId,
+} from './sync-fetch-helpers.js';
 import { getRoleKey, orderMessagesForAdmission } from './sync-admission-order.js';
 
 /** Maximum data size (in bytes) to buffer in memory for retry. Larger payloads are re-fetched. */
@@ -714,7 +721,7 @@ class RemoteApplyPushContext {
   }
 
   private async fetchProtocolConfig(protocol: string): Promise<FetchDependencyResult> {
-    const permissionGrantId = await this.getPermissionGrantId(DwnInterface.ProtocolsQuery, protocol);
+    const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.ProtocolsQuery, protocol);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { reply } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
@@ -745,7 +752,7 @@ class RemoteApplyPushContext {
   private async fetchRecordsByRecordId(recordId: string, protocol?: string): Promise<FetchDependencyResult> {
     const permissionGrantId = protocol === undefined
       ? undefined
-      : await this.getPermissionGrantId(DwnInterface.RecordsQuery, protocol);
+      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, protocol);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { reply } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
@@ -771,7 +778,7 @@ class RemoteApplyPushContext {
   }
 
   private async fetchRoleRecord(ref: Extract<DependencyRef, { type: 'Role' }>): Promise<FetchDependencyResult> {
-    const permissionGrantId = await this.getPermissionGrantId(DwnInterface.RecordsQuery, ref.protocol);
+    const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, ref.protocol);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const key = getRoleKey(ref.protocol, ref.protocolPath, ref.recipient, ref.contextPrefix);
     const { reply } = await this.deps.agent.dwn.processRequest({
@@ -805,7 +812,7 @@ class RemoteApplyPushContext {
   private async fetchRecordData(ref: Extract<DependencyRef, { type: 'RecordData' }>): Promise<FetchDependencyResult> {
     const permissionGrantId = ref.protocol === undefined
       ? undefined
-      : await this.getPermissionGrantId(DwnInterface.RecordsRead, ref.protocol);
+      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsRead, ref.protocol);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { reply } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
@@ -884,25 +891,6 @@ class RemoteApplyPushContext {
     return entry;
   }
 
-  private async getPermissionGrantId(messageType: DwnInterface, protocol: string): Promise<string | undefined> {
-    if (this.deps.delegateDid === undefined || this.deps.permissionsApi === undefined) {
-      return undefined;
-    }
-
-    try {
-      const { grant } = await this.deps.permissionsApi.getPermissionForRequest({
-        connectedDid : this.deps.did,
-        delegateDid  : this.deps.delegateDid,
-        protocol,
-        cached       : true,
-        messageType,
-      });
-      return grant.id;
-    } catch {
-      return undefined;
-    }
-  }
-
   private async rememberEntries(entries: SyncMessageEntry[]): Promise<void> {
     for (const entry of entries) {
       await this.rememberEntry(entry);
@@ -945,44 +933,6 @@ function isRecordsWriteMessage(message: GenericMessage): message is RecordsWrite
   return message.descriptor.interface === DwnInterfaceName.Records &&
     message.descriptor.method === DwnMethodName.Write &&
     typeof (message as { recordId?: unknown }).recordId === 'string';
-}
-
-function isProtocolsConfigureMessage(message: GenericMessage): message is ProtocolsConfigureMessage {
-  return message.descriptor.interface === DwnInterfaceName.Protocols &&
-    message.descriptor.method === DwnMethodName.Configure &&
-    (message.descriptor as { definition?: unknown }).definition !== undefined;
-}
-
-function isTenantProtocolConfig(tenantDid: string, protocol: string): (message: GenericMessage) => message is ProtocolsConfigureMessage {
-  return (message: GenericMessage): message is ProtocolsConfigureMessage => {
-    if (!isProtocolsConfigureMessage(message)) {
-      return false;
-    }
-
-    return message.descriptor.definition.protocol === protocol && Message.getAuthor(message) === tenantDid;
-  };
-}
-
-function newestProtocolConfig(configs: ProtocolsConfigureMessage[]): ProtocolsConfigureMessage | undefined {
-  let newest: ProtocolsConfigureMessage | undefined;
-  for (const config of configs) {
-    if (newest === undefined || config.descriptor.messageTimestamp > newest.descriptor.messageTimestamp) {
-      newest = config;
-    }
-  }
-  return newest;
-}
-
-function hasTerminalDependency(refs: DependencyRef[]): boolean {
-  return refs.some(ref => ref.terminal === true);
-}
-
-function missingDependencyDetail(refs: DependencyRef[]): string {
-  return refs.map(dependencyKey).join(', ');
-}
-
-function dependencyKey(ref: DependencyRef): string {
-  return JSON.stringify(ref);
 }
 
 function unreachable(value: never): never {
