@@ -621,7 +621,7 @@ Conventions and patterns for Kysely-backed schema changes (DWN store domain + se
 
 ## Private operations
 
-AWS/Terraform deployment material is intentionally not tracked in this public monorepo. Internal operational runbooks, Terraform modules, and deployment architecture live in the private `enboxorg/enbox-internal` repository.
+Deployment material — AWS/Terraform infrastructure, the Fly.io config, and the CI deploy pipeline — is intentionally not tracked in this public monorepo. Internal operational runbooks, Terraform modules, deployment architecture, and deploy workflows live in the private `enboxorg/enbox-internal` repository. Self-hosting the server is documented publicly in [`docs/HOSTING.md`](docs/HOSTING.md) and the docs site.
 
 ## Documentation site
 
