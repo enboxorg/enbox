@@ -1,5 +1,45 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.1
+
+### Patch Changes
+
+- [#1009](https://github.com/enboxorg/enbox/pull/1009) [`970aa97`](https://github.com/enboxorg/enbox/commit/970aa972013c61d9acc6a077f2f5ec2ae72ebf54) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: convergent tombstones — delete-wins over writes and a canonical-winner lattice among competing deletes. A RecordsDelete now displaces a RecordsWrite regardless of timestamp (the convergent counterpart of the write handler's writes-after-delete rejection), and competing tombstones resolve to one canonical winner on every replica: a prune beats a plain delete regardless of timestamp, and within the same class the newest (messageTimestamp, then CID) wins. Supersession displacement is decided by CID membership rather than timestamp comparison so the retained message survives resumable-task replay. Public behavior change: deleting an already-deleted record now returns 202 when the incoming tombstone wins and 409 Conflict when it is beaten (replication classifies the 409 as a Superseded no-op); 404 is returned only when the record has no messages at all. `Records.canPerformDeleteAgainstRecord` is removed in favor of the shared `Records.isDeleteBeatenByExistingTombstone` predicate used by both admission and resumable-task replay.
+
+- [#1014](https://github.com/enboxorg/enbox/pull/1014) [`18bf512`](https://github.com/enboxorg/enbox/commit/18bf51241aaad1628255a2c56e28ed5f7450a069) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add durable message-store progress positions and replication feed primitives, preserve same-CID index/data-completion transitions, fail fast on pre-substrate Level/IndexedDB layouts, and remove obsolete DWN record upgrade code.
+
+- [#1011](https://github.com/enboxorg/enbox/pull/1011) [`211049b`](https://github.com/enboxorg/enbox/commit/211049bd7727c80b701e8d6be243a5c464b8bc81) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: emit all missing ancestor refs in one Incomplete
+
+  `applyReplicatedMessage` now layer-batches missing-ancestor dependencies: the incoming message's `contextId` is split into its recordId segments, each segment above the failure-named ancestor is presence-checked against the message store, and a single `Incomplete` names every locally-absent ancestor — for both the immediate-parent referential failure and record-chain construction failure — instead of surfacing one ancestry level per retry pass. Deep record chains now resolve in a bounded number of passes regardless of depth. Refs remain recordId selectors and the wire shape is unchanged.
+
+- [#1015](https://github.com/enboxorg/enbox/pull/1015) [`5c1e8dc`](https://github.com/enboxorg/enbox/commit/5c1e8dc6bdfee56dce59d9aa963e74c7b4e7ce77) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add MessagesQuery over the durable replication feed.
+
+- [#1043](https://github.com/enboxorg/enbox/pull/1043) [`44941d3`](https://github.com/enboxorg/enbox/commit/44941d381f784aa6c22430c0ab6ee57c0ac22670) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require nested protocol Query, Count, and Subscribe filters to pin the direct parent contextId, make permission revocation filtering opt-in with scalar per-grant checks, and route delegated sync scope derivation through the permissions API.
+
+- [#1010](https://github.com/enboxorg/enbox/pull/1010) [`e781263`](https://github.com/enboxorg/enbox/commit/e78126309fc09e20be025ac2bf793632234a58f3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: mark permission records immutable
+
+  The permissions protocol now sets `$immutable: true` on the `request`, `grant`, and `grant/revocation` paths. Permission records are write-once by design — a grant is never amended, it is revoked and re-issued — and immutability locks each record's initial-write facts (notably the `protocol` tag), which replication fingerprint domains and protocol-scoped shadow filters are computed from. Updates to existing permission records (including tags-only mutations) are now rejected with `ProtocolAuthorizationImmutableRecord` in both `processMessage` and `applyReplicatedMessage`; creating permission records and revoking grants are unaffected.
+
+- [#1034](https://github.com/enboxorg/enbox/pull/1034) [`05c3203`](https://github.com/enboxorg/enbox/commit/05c3203e5e1cec054754200388e8470785d356a7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: remove same-CID data completion from replication feeds
+
+- [#1041](https://github.com/enboxorg/enbox/pull/1041) [`6a8907d`](https://github.com/enboxorg/enbox/commit/6a8907de94386b714a96ac9409af26dec974cb87) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Project `$recordLimit` occupants at read time for bounded scopes so over-limit candidates are retained uniformly while concrete Query, Read, Count, and Subscribe paths expose only the ranked occupants. Update singleton repository writes to upsert against the projected occupant.
+
+- [#1035](https://github.com/enboxorg/enbox/pull/1035) [`25821ed`](https://github.com/enboxorg/enbox/commit/25821eda3a551cc9b2f6605e2716a9705ebf3f63) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Remove legacy sync index, wire, and sparse-tree surfaces now that replication uses durable message feeds and scoped fingerprints.
+
+- [#1017](https://github.com/enboxorg/enbox/pull/1017) [`543b834`](https://github.com/enboxorg/enbox/commit/543b8340b8ef8914d52bc79fe8dbe0231e44d801) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: wire server subscriptions through the durable message-store log and a wake-only event bus
+
+- [#1037](https://github.com/enboxorg/enbox/pull/1037) [`028dd78`](https://github.com/enboxorg/enbox/commit/028dd78442a2217044595fdd7253982af92a1e57) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: remove the legacy event-log emit surface and use store-owned wakes for embedded DWNs
+
+- [#1012](https://github.com/enboxorg/enbox/pull/1012) [`a2bfa0d`](https://github.com/enboxorg/enbox/commit/a2bfa0dafff6a60d3b0343fcade2c6e4d7d871cf) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: carry mutable query-visibility facts (flattened `tag.*` and `published`) from the pre-delete latest write onto RecordsDelete tombstone indexes. Without them, tombstones of tagged permission records never match the permission shadow filters and published-record tombstones never match `published: true` queries and subscriptions. Immutable record facts keep coming from the initial write, and pruning an already-deleted record carries the existing tombstone's visibility facts forward.
+
+- [#1013](https://github.com/enboxorg/enbox/pull/1013) [`f90c4b8`](https://github.com/enboxorg/enbox/commit/f90c4b8a77007337b9ec7711c14885759efab383) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: ValidationStateReader with uniform admission
+
+  Adds `ValidationStateReader` as the validation-time state access boundary and moves admission checks to use it instead of direct `MessageStore` reads.
+
+  `processMessage()` and `applyReplicatedMessage()` now share the same admission rules. Replication calls normal admission and maps missing local dependencies to structured `Incomplete` repair results outside validation.
+
+  Protocol definitions are resolved with the incoming message timestamp for all entry points, and RecordsWrite immutable-property checks now run after authentication/authorization without echoing stored immutable values.
+
 ## 0.4.0
 
 ### Minor Changes

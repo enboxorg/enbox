@@ -1,5 +1,51 @@
 # @enbox/agent
 
+## 0.8.1
+
+### Patch Changes
+
+- [#1038](https://github.com/enboxorg/enbox/pull/1038) [`12413b1`](https://github.com/enboxorg/enbox/commit/12413b121b5387a1eb03faee4651b3770e1b2f6e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: preserve caller-owned DWN store and event-log wiring in AgentDwnApi.createDwn
+
+- [#1020](https://github.com/enboxorg/enbox/pull/1020) [`db83e50`](https://github.com/enboxorg/enbox/commit/db83e508fbc8e1628ef736c46a590aad6dec432a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add internal MessagesQuery feed helpers for the agent sync engine.
+
+- [#1023](https://github.com/enboxorg/enbox/pull/1023) [`777bd26`](https://github.com/enboxorg/enbox/commit/777bd26c428c6f1562fed743831f085b683541d5) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Enforce RecordsWrite descriptor dataSize limits while syncing record data streams.
+
+- [#1026](https://github.com/enboxorg/enbox/pull/1026) [`69c6367`](https://github.com/enboxorg/enbox/commit/69c6367a2c597ba858eed0eb28de099ab491199e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: pull remote sync entries from the durable message feed
+
+- [#1027](https://github.com/enboxorg/enbox/pull/1027) [`15817c9`](https://github.com/enboxorg/enbox/commit/15817c96e407175f4c8fb4a56a784bc56aa9959a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: push sync entries from the durable message feed
+
+- [#1049](https://github.com/enboxorg/enbox/pull/1049) [`09f7002`](https://github.com/enboxorg/enbox/commit/09f700217297b8101f4689f5e8a84c8a910f2def) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: collapse terminal sync link status into paused state
+
+- [#1018](https://github.com/enboxorg/enbox/pull/1018) [`0e4f67c`](https://github.com/enboxorg/enbox/commit/0e4f67c0c76c5d56603a5d5115ee7253d90fa0c9) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add MessagesQuery to the agent DWN request surface and treat Messages.Read grants as covering message feed queries.
+
+- [#1014](https://github.com/enboxorg/enbox/pull/1014) [`18bf512`](https://github.com/enboxorg/enbox/commit/18bf51241aaad1628255a2c56e28ed5f7450a069) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add durable message-store progress positions and replication feed primitives, preserve same-CID index/data-completion transitions, fail fast on pre-substrate Level/IndexedDB layouts, and remove obsolete DWN record upgrade code.
+
+- [#1028](https://github.com/enboxorg/enbox/pull/1028) [`228d8dc`](https://github.com/enboxorg/enbox/commit/228d8dcd2d211f7953b86e7e7c4358d9fdb27827) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Switch the active sync cycle to durable feed pull/push reconciliation, remove the orphaned legacy reconciler path, and keep dead-letter divergence visible as degraded health instead of treating it as convergence evidence.
+
+- [#1024](https://github.com/enboxorg/enbox/pull/1024) [`79a860d`](https://github.com/enboxorg/enbox/commit/79a860d2a007c4eb9092d46221bda61fbb0e8348) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: resume live sync subscriptions from durable applied cursors
+
+- [#1043](https://github.com/enboxorg/enbox/pull/1043) [`44941d3`](https://github.com/enboxorg/enbox/commit/44941d381f784aa6c22430c0ab6ee57c0ac22670) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require nested protocol Query, Count, and Subscribe filters to pin the direct parent contextId, make permission revocation filtering opt-in with scalar per-grant checks, and route delegated sync scope derivation through the permissions API.
+
+- [#1022](https://github.com/enboxorg/enbox/pull/1022) [`4ed695f`](https://github.com/enboxorg/enbox/commit/4ed695f18e4f9b2a4a2a68ca47fb39e4933e35b2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Emit sync checkpoint events for high-water cursors that do not carry a message CID.
+
+- [#1021](https://github.com/enboxorg/enbox/pull/1021) [`8928c5d`](https://github.com/enboxorg/enbox/commit/8928c5dfb6b5d8e44db016222bdb9acb8941f099) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Use remote DID-document DWN endpoints for sync targets and rotate sync projection IDs for the durable message-feed engine.
+
+- [#1035](https://github.com/enboxorg/enbox/pull/1035) [`25821ed`](https://github.com/enboxorg/enbox/commit/25821eda3a551cc9b2f6605e2716a9705ebf3f63) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Remove legacy sync index, wire, and sparse-tree surfaces now that replication uses durable message feeds and scoped fingerprints.
+
+- [#1005](https://github.com/enboxorg/enbox/pull/1005) [`9b51592`](https://github.com/enboxorg/enbox/commit/9b51592a00c9e5cec0d8f01bb7b41168ffee3549) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Remove Bun fetch stream buffering workarounds and pass data streams through HTTP and storage paths directly.
+
+- [#1036](https://github.com/enboxorg/enbox/pull/1036) [`49e2a4b`](https://github.com/enboxorg/enbox/commit/49e2a4be2db6692219519674e2b2f2b2db5c9c23) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: remove legacy sync engine state and stale ordering wrappers
+
+- [#1037](https://github.com/enboxorg/enbox/pull/1037) [`028dd78`](https://github.com/enboxorg/enbox/commit/028dd78442a2217044595fdd7253982af92a1e57) Thanks [@LiranCohen](https://github.com/LiranCohen)! - chore: remove the legacy event-log emit surface and use store-owned wakes for embedded DWNs
+
+- [#1030](https://github.com/enboxorg/enbox/pull/1030) [`97fffdf`](https://github.com/enboxorg/enbox/commit/97fffdfa827995c75497fe22a2a7631fb7c0a22d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: validate sync protocol scope closure during registration
+
+- [#1025](https://github.com/enboxorg/enbox/pull/1025) [`4129d17`](https://github.com/enboxorg/enbox/commit/4129d1712503ad67010630f729ef37d4ea8fc27b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: normalize DWN endpoints for sync links and WebSocket connections
+
+- Updated dependencies [[`970aa97`](https://github.com/enboxorg/enbox/commit/970aa972013c61d9acc6a077f2f5ec2ae72ebf54), [`18bf512`](https://github.com/enboxorg/enbox/commit/18bf51241aaad1628255a2c56e28ed5f7450a069), [`211049b`](https://github.com/enboxorg/enbox/commit/211049bd7727c80b701e8d6be243a5c464b8bc81), [`5c1e8dc`](https://github.com/enboxorg/enbox/commit/5c1e8dc6bdfee56dce59d9aa963e74c7b4e7ce77), [`44941d3`](https://github.com/enboxorg/enbox/commit/44941d381f784aa6c22430c0ab6ee57c0ac22670), [`e781263`](https://github.com/enboxorg/enbox/commit/e78126309fc09e20be025ac2bf793632234a58f3), [`05c3203`](https://github.com/enboxorg/enbox/commit/05c3203e5e1cec054754200388e8470785d356a7), [`6a8907d`](https://github.com/enboxorg/enbox/commit/6a8907de94386b714a96ac9409af26dec974cb87), [`25821ed`](https://github.com/enboxorg/enbox/commit/25821eda3a551cc9b2f6605e2716a9705ebf3f63), [`543b834`](https://github.com/enboxorg/enbox/commit/543b8340b8ef8914d52bc79fe8dbe0231e44d801), [`9b51592`](https://github.com/enboxorg/enbox/commit/9b51592a00c9e5cec0d8f01bb7b41168ffee3549), [`028dd78`](https://github.com/enboxorg/enbox/commit/028dd78442a2217044595fdd7253982af92a1e57), [`a2bfa0d`](https://github.com/enboxorg/enbox/commit/a2bfa0dafff6a60d3b0343fcade2c6e4d7d871cf), [`f90c4b8`](https://github.com/enboxorg/enbox/commit/f90c4b8a77007337b9ec7711c14885759efab383), [`4129d17`](https://github.com/enboxorg/enbox/commit/4129d1712503ad67010630f729ef37d4ea8fc27b)]:
+  - @enbox/dwn-sdk-js@0.4.1
+  - @enbox/dwn-clients@0.4.6
+
 ## 0.8.0
 
 ### Minor Changes
