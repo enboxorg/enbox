@@ -9,7 +9,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -806,8 +806,7 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # Coverage (Node): merge all LCOV files (node + browser), run diff-coverage
-  # gate, post PR comment.
+  # Coverage (Node): merge all LCOV files (node + browser) for SonarCloud.
   # ---------------------------------------------------------------------------
   coverage-node:
     name: 'Coverage: Node'
@@ -832,17 +831,6 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      - name: Restore bun cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-store-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
       - name: Download node coverage artifacts
         uses: actions/download-artifact@v4
         with:
@@ -861,14 +849,8 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-      - name: Diff-coverage gate
-        if: github.event_name == 'pull_request'
-        run: bun run scripts/diff-coverage.mjs
-        env:
-          DIFF_COVERAGE_THRESHOLD: '80'
-
-      - name: Build coverage report
-        id: coverage-check
+      - name: Build coverage badges
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         shell: bash
         run: |
           shopt -s nullglob
@@ -917,12 +899,8 @@ jobs:
             fi
           }
 
-          below_target=false
           found_any=false
-          target=96
           mkdir -p coverage-badges
-
-          node_file=$(mktemp)
 
           for lcov_file in packages/*/coverage/lcov.info; do
             found_any=true
@@ -932,104 +910,24 @@ jobs:
 
             printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' \
               "$coverage" "$badge_color" > "coverage-badges/${pkg}.json"
-
-            if [ "$(echo "$coverage < $target" | bc -l)" = "1" ]; then
-              echo "| $pkg | ${coverage}% | :warning: Below ${target}% target |" >> "$node_file"
-              echo "::warning::Coverage for $pkg is ${coverage}%, below ${target}% target"
-              below_target=true
-            else
-              echo "| $pkg | ${coverage}% | :white_check_mark: |" >> "$node_file"
-            fi
           done
 
-          {
-            echo "## Coverage Report"
-            echo ""
-            echo "### Node (bun test)"
-            echo ""
-            echo "| Package | Line Coverage | Status |"
-            echo "|---------|---------------|--------|"
-
-            if [ -s "$node_file" ]; then
-              cat "$node_file"
-            else
-              echo "| _(no data)_ | — | — |"
-            fi
-
-            echo ""
-
-            if [ "$found_any" = false ]; then
-              echo ":x: **No coverage artifacts found.** Ensure test jobs upload lcov reports."
-            elif [ "$below_target" = true ]; then
-              echo ":warning: **Some packages are below the ${target}% coverage target.** The report is informational and does not fail CI."
-            else
-              echo ":white_check_mark: **All packages meet the ${target}% coverage target.**"
-            fi
-          } > coverage-report.md
-
-          rm -f "$node_file"
-
-          cat coverage-report.md >> "$GITHUB_STEP_SUMMARY"
-
           if [ "$found_any" = false ]; then
-            echo "::error::No coverage artifacts found"
-            exit 1
+            echo "::warning::No coverage artifacts found for badge update"
           fi
 
-      - name: Comment PR with coverage
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const nodeSection = fs.readFileSync('coverage-report.md', 'utf8');
-            const NODE_START = '<!-- coverage-node-start -->';
-            const NODE_END = '<!-- coverage-node-end -->';
-            const markedNode = `${NODE_START}\n${nodeSection}\n${NODE_END}`;
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existing = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('Coverage Report')
-            );
-
-            if (existing) {
-              // Replace only the node section, preserving any browser section
-              let body = existing.body;
-              const startIdx = body.indexOf(NODE_START);
-              const endIdx = body.indexOf(NODE_END);
-              if (startIdx !== -1 && endIdx !== -1) {
-                body = body.slice(0, startIdx) + markedNode + body.slice(endIdx + NODE_END.length);
-              } else {
-                // First time node runs on this comment — prepend node section
-                body = markedNode + '\n\n' + body;
-              }
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: markedNode,
-              });
-            }
-
       - name: Update coverage badges
-        if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
           if [ -z "$GIST_TOKEN" ]; then
             echo "::warning::GIST_TOKEN not set — skipping badge update"
+            exit 0
+          fi
+
+          if ! compgen -G "coverage-badges/*.json" > /dev/null; then
+            echo "No coverage badges generated; skipping badge update"
             exit 0
           fi
 
@@ -1068,151 +966,11 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Coverage (Browser): merges browser LCOV files and updates PR comment.
-  # Informational only — does not block ci-passed for node-only changes.
-  # ---------------------------------------------------------------------------
-  coverage-browser:
-    name: 'Coverage: Browser'
-    runs-on: ubuntu-latest
-    timeout-minutes: 6
-    needs: [changes, test-browser]
-    if: always() && !cancelled() && needs.changes.outputs.needs_browser_tests == 'true'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download browser coverage artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: coverage-browser-*
-          path: .
-          merge-multiple: true
-
-      - name: Build browser coverage report
-        shell: bash
-        run: |
-          shopt -s nullglob
-
-          parse_lcov() {
-            local lcov_file="$1"
-            local total_lf=0 total_lh=0 in_src=false
-            while IFS= read -r line; do
-              case "$line" in
-                SF:src/*|SF:*/src/*) in_src=true ;;
-                SF:*) in_src=false ;;
-                LF:*) if [ "$in_src" = true ]; then total_lf=$((total_lf + ${line#LF:})); fi ;;
-                LH:*) if [ "$in_src" = true ]; then total_lh=$((total_lh + ${line#LH:})); fi ;;
-              esac
-            done < "$lcov_file"
-            if [ "$total_lf" -gt 0 ]; then
-              awk "BEGIN { printf \"%.1f\", ($total_lh / $total_lf) * 100 }"
-            else
-              echo "0.0"
-            fi
-          }
-
-          browser_tsv=$(mktemp)
-          found_any=false
-
-          for lcov_file in packages/*/coverage-browser-*/lcov.info; do
-            found_any=true
-            pkg=$(basename "$(dirname "$(dirname "$lcov_file")")")
-            coverage_dir=$(basename "$(dirname "$lcov_file")")
-            browser="${coverage_dir#coverage-browser-}"
-            coverage=$(parse_lcov "$lcov_file")
-            printf '%s\t%s\t%s\n' "$pkg" "$browser" "$coverage" >> "$browser_tsv"
-          done
-
-          if [ "$found_any" = true ] && [ -s "$browser_tsv" ]; then
-            {
-              echo "<details>"
-              echo "<summary>Browser Coverage (informational)</summary>"
-              echo ""
-              cr_icon='![Chromium](https://img.shields.io/badge/-Chromium-4285F4?logo=googlechrome&logoColor=white&style=flat-square)'
-              ff_icon='![Firefox](https://img.shields.io/badge/-Firefox-FF7139?logo=firefox&logoColor=white&style=flat-square)'
-              wk_icon='![WebKit](https://img.shields.io/badge/-WebKit-006CFF?logo=safari&logoColor=white&style=flat-square)'
-              echo "| Package | $cr_icon | $ff_icon | $wk_icon |"
-              echo "|---------|----------|---------|--------|"
-
-              sort -t$'\t' -k1,1 "$browser_tsv" -o "$browser_tsv"
-              pkg_list=$(cut -f1 "$browser_tsv" | sort -u)
-
-              for pkg in $pkg_list; do
-                chromium_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="chromium" {print $3}' "$browser_tsv")
-                firefox_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="firefox" {print $3}' "$browser_tsv")
-                webkit_cov=$(awk -F'\t' -v p="$pkg" '$1==p && $2=="webkit" {print $3}' "$browser_tsv")
-                cr_cell="${chromium_cov:+${chromium_cov}%}" ; cr_cell="${cr_cell:-—}"
-                ff_cell="${firefox_cov:+${firefox_cov}%}" ; ff_cell="${ff_cell:-—}"
-                wk_cell="${webkit_cov:+${webkit_cov}%}" ; wk_cell="${wk_cell:-—}"
-                echo "| $pkg | $cr_cell | $ff_cell | $wk_cell |"
-              done
-
-              echo ""
-              echo "_Browser coverage is informational only (subset of tests)._"
-              echo ""
-              echo "</details>"
-            } > browser-coverage-report.md
-
-            cat browser-coverage-report.md >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          rm -f "$browser_tsv"
-
-      - name: Append browser coverage to PR comment
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            if (!fs.existsSync('browser-coverage-report.md')) return;
-            const browserContent = fs.readFileSync('browser-coverage-report.md', 'utf8');
-            const BROWSER_START = '<!-- coverage-browser-start -->';
-            const BROWSER_END = '<!-- coverage-browser-end -->';
-            const markedBrowser = `${BROWSER_START}\n${browserContent}\n${BROWSER_END}`;
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existing = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('Coverage Report')
-            );
-
-            if (existing) {
-              let body = existing.body;
-              const startIdx = body.indexOf(BROWSER_START);
-              const endIdx = body.indexOf(BROWSER_END);
-              if (startIdx !== -1 && endIdx !== -1) {
-                body = body.slice(0, startIdx) + markedBrowser + body.slice(endIdx + BROWSER_END.length);
-              } else {
-                body = body + '\n\n' + markedBrowser;
-              }
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              const body = '## Coverage Report\n\n_Node coverage not available for this run._\n\n' + markedBrowser;
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
-
-  # ---------------------------------------------------------------------------
   # Browser tests: run Vitest browser mode with Playwright.
   #
   # Two-dimensional matrix: shard (package group) × browser.  Each cell runs
   # a single browser so (a) browsers execute in parallel and (b) coverage is
-  # collected per-browser, enabling the coverage job to report separate tables
-  # for Chromium, Firefox and WebKit.
+  # collected per-browser for the merged SonarCloud LCOV artifact.
   #
   # Trade-off: 9 jobs instead of 3, but each job only installs one Playwright
   # browser (~20s) and runs ~1/3 the tests, so wall-clock time drops from
@@ -1391,8 +1149,8 @@ jobs:
     name: SonarCloud
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [changes, coverage-node, coverage-browser]
-    # Run after coverage jobs finish (whichever ran); OK if both are skipped
+    needs: [changes, coverage-node]
+    # Run after coverage finishes; OK if coverage was skipped
     if: >-
       always() && !cancelled() &&
       needs.changes.outputs.src == 'true' &&
@@ -1452,7 +1210,7 @@ jobs:
     name: CI Passed
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [changes, lint, build, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage-node, coverage-browser, sonarcloud]
+    needs: [changes, lint, build, test-lightweight, test-dwn-sdk, test-agent-api, test-e2e, test-sql-store, test-dwn-server, test-browser, coverage-node, sonarcloud]
     if: always()
     steps:
       - name: Check results
@@ -1509,11 +1267,6 @@ jobs:
           if [ "${{ needs.coverage-node.result }}" != "success" ] && [ "${{ needs.coverage-node.result }}" != "skipped" ]; then
             echo "::error::coverage-node failed"
             exit 1
-          fi
-
-          # Coverage (browser): informational — OK to skip or fail
-          if [ "${{ needs.coverage-browser.result }}" = "failure" ]; then
-            echo "::warning::coverage-browser failed (informational, not blocking)"
           fi
 
           # SonarCloud: required when configured and ran
