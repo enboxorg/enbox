@@ -334,8 +334,12 @@ describe('TypedProtocol API', () => {
         });
         expect(status.code).toBe(202);
 
-        // only the squash record survives (this is the whole point of the flag reaching the write)
-        const { records } = await squashed.records.query('doc/snapshot');
+        // Only the squash record survives (this is the whole point of the flag reaching the write).
+        // Queries on a nested protocol path must be scoped by the parent context
+        // (dwn-sdk-js requires the parent contextId for nested-path queries — see #1043).
+        const { records } = await squashed.records.query('doc/snapshot', {
+          filter: { contextId: doc.contextId },
+        });
         expect(records.length).toBe(1);
         expect(records[0].id).toBe(squashRec.id);
       });
