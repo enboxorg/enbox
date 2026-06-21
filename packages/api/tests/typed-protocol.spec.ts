@@ -259,6 +259,117 @@ describe('TypedProtocol API', () => {
       });
     });
 
+    describe('create() with $squash (#972)', () => {
+      // Self-contained protocol with a $squash path, so the shared Todo fixture is untouched.
+      const SquashDefinition = {
+        protocol  : 'https://example.com/protocols/squash-test',
+        published : true,
+        types     : {
+          doc      : { schema: 'https://example.com/schemas/doc', dataFormats: ['application/json'] },
+          snapshot : { schema: 'https://example.com/schemas/snapshot', dataFormats: ['application/json'] },
+        },
+        structure: {
+          doc: {
+            $actions : [{ who: 'anyone', can: ['create', 'read'] }],
+            snapshot : {
+              $immutable : true,
+              $squash    : true,
+              $actions   : [{ who: 'anyone', can: ['create', 'read'] }],
+            },
+          },
+        },
+      } as const satisfies ProtocolDefinition;
+
+      type SquashSchemaMap = { doc: { n?: string }; snapshot: { v?: string } };
+      const SquashProtocol = defineProtocol(SquashDefinition, {} as SquashSchemaMap);
+
+      let squashed: TypedEnbox<typeof SquashDefinition, SquashSchemaMap>;
+
+      beforeEach(async () => {
+        squashed = new TypedEnbox(dwnAlice, SquashProtocol);
+        await squashed.configure();
+      });
+
+      it('forwards squash:true to the underlying write message descriptor', async () => {
+        const { record: doc } = await squashed.records.create('doc', { data: { n: 'd' } });
+        expect(doc).toBeDefined();
+
+        const { status, record } = await squashed.records.create('doc/snapshot', {
+          data            : { v: 's1' },
+          parentContextId : doc.contextId,
+          squash          : true,
+        });
+
+        // If `squash` were dropped by the typed wrapper, this would be an ordinary
+        // (non-squashing) write — the descriptor would lack the directive.
+        expect(status.code).toBe(202);
+        const descriptor = record.rawRecord.rawMessage.descriptor as { squash?: true };
+        expect(descriptor.squash).toBe(true);
+      });
+
+      it('omits squash when not requested (no false-y field)', async () => {
+        const { record: doc } = await squashed.records.create('doc', { data: { n: 'd2' } });
+        const { record } = await squashed.records.create('doc/snapshot', {
+          data            : { v: 's2' },
+          parentContextId : doc.contextId,
+        });
+        const descriptor = record.rawRecord.rawMessage.descriptor as { squash?: true };
+        expect(descriptor.squash).toBeUndefined();
+      });
+
+      it('compacts older siblings end-to-end — a squash write purges prior snapshots', async () => {
+        const { record: doc } = await squashed.records.create('doc', { data: { n: 'doc' } });
+
+        // two ordinary snapshots under the document context
+        await squashed.records.create('doc/snapshot', { data: { v: 's1' }, parentContextId: doc.contextId });
+        await new Promise((r) => setTimeout(r, 5)); // guarantee a distinct, later messageTimestamp
+        await squashed.records.create('doc/snapshot', { data: { v: 's2' }, parentContextId: doc.contextId });
+        await new Promise((r) => setTimeout(r, 5));
+
+        // a squashing snapshot — must purge the two older siblings in this context
+        const { status, record: squashRec } = await squashed.records.create('doc/snapshot', {
+          data            : { v: 's3' },
+          parentContextId : doc.contextId,
+          squash          : true,
+        });
+        expect(status.code).toBe(202);
+
+        // Only the squash record survives (this is the whole point of the flag reaching the write).
+        // Queries on a nested protocol path must be scoped by the parent context
+        // (dwn-sdk-js requires the parent contextId for nested-path queries — see #1043).
+        const { records } = await squashed.records.query('doc/snapshot', {
+          filter: { contextId: doc.contextId },
+        });
+        expect(records.length).toBe(1);
+        expect(records[0].id).toBe(squashRec.id);
+      });
+
+      it('rejects squash:true on a path without $squash (error surfaced, not swallowed)', async () => {
+        // `doc` has no $squash — the squash backstop must reject the write,
+        // and the typed surface must pass that failure through (not a silent 202).
+        const { status, record } = await squashed.records.create('doc', {
+          data   : { n: 'nope' },
+          squash : true,
+        });
+
+        expect(status.code).toBe(400);
+        expect(status.detail ?? '').toContain('Squash');
+        expect(record).toBeUndefined();
+      });
+
+      it('a squashing write still stores and reads back its data', async () => {
+        const { record: doc } = await squashed.records.create('doc', { data: { n: 'doc' } });
+        const { record } = await squashed.records.create('doc/snapshot', {
+          data            : { v: 'payload' },
+          parentContextId : doc.contextId,
+          squash          : true,
+        });
+
+        const readBack = await record.data.json();
+        expect(readBack.v).toBe('payload');
+      });
+    });
+
     describe('query()', () => {
       it('should query records and return TypedRecord instances', async () => {
         // Write two lists
