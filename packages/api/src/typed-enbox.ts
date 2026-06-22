@@ -37,11 +37,11 @@
  * ```
  */
 
-import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
 import type { LiveQuery } from './live-query.js';
 import type { Protocol } from './protocol.js';
 
 import type { DateSort, ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
+import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
 import type { DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type { ProtocolPaths, SchemaMap, TypedProtocol, TypeNameAtPath } from './protocol-types.js';
 

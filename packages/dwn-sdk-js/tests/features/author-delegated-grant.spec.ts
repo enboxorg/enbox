@@ -533,6 +533,147 @@ export function testAuthorDelegatedGrant(): void {
       expect(recordsQueryByCarolReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch);
     });
 
+    it('should scope author-delegated read-like grants to the matching context subtree', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const deviceX = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+
+      const protocolDefinition = threadRoleProtocolDefinition;
+      const protocol = threadRoleProtocolDefinition.protocol;
+      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+        author: bob,
+        protocolDefinition
+      });
+      const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
+      expect(protocolsConfigureReply.status.code).toBe(202);
+
+      const threadRecord = await TestDataGenerator.generateRecordsWrite({
+        author       : bob,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'thread',
+      });
+      const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
+      expect(threadRoleReply.status.code).toBe(202);
+
+      const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
+        author          : bob,
+        recipient       : alice.did,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'thread/participant',
+        parentContextId : threadRecord.message.contextId,
+        data            : new TextEncoder().encode('Alice is my friend'),
+      });
+      const participantRoleReply = await dwn.processMessage(bob.did, participantRoleRecord.message, { dataStream: participantRoleRecord.dataStream });
+      expect(participantRoleReply.status.code).toBe(202);
+
+      const chatRecord = await TestDataGenerator.generateRecordsWrite({
+        author          : bob,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'thread/chat',
+        parentContextId : threadRecord.message.contextId,
+      });
+      const chatRecordReply = await dwn.processMessage(bob.did, chatRecord.message, { dataStream: chatRecord.dataStream });
+      expect(chatRecordReply.status.code).toBe(202);
+
+      const contextScopedReadGrant = await PermissionsProtocol.createGrant({
+        delegated   : true,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        grantedTo   : deviceX.did,
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Read,
+          protocol,
+          contextId : threadRecord.message.contextId,
+        },
+        signer: Jws.createSigner(alice)
+      });
+
+      const matchingQuery = await RecordsQuery.create({
+        signer         : Jws.createSigner(deviceX),
+        delegatedGrant : contextScopedReadGrant.dataEncodedMessage,
+        protocolRole   : 'thread/participant',
+        filter         : {
+          protocol,
+          contextId    : threadRecord.message.contextId,
+          protocolPath : 'thread/chat'
+        }
+      });
+      const matchingQueryReply = await dwn.processMessage(bob.did, matchingQuery.message);
+      expect(matchingQueryReply.status.code).toBe(200);
+      expect(matchingQueryReply.entries?.map(entry => entry.recordId)).toEqual([chatRecord.message.recordId]);
+
+      const mismatchingContextId = `${threadRecord.message.contextId}EVIL`;
+      const mismatchingQuery = await RecordsQuery.create({
+        signer         : Jws.createSigner(deviceX),
+        delegatedGrant : contextScopedReadGrant.dataEncodedMessage,
+        protocolRole   : 'thread/participant',
+        filter         : {
+          protocol,
+          contextId    : mismatchingContextId,
+          protocolPath : 'thread/chat'
+        }
+      });
+      const mismatchingQueryReply = await dwn.processMessage(bob.did, mismatchingQuery.message);
+      expect(mismatchingQueryReply.status.code).toBe(401);
+      expect(mismatchingQueryReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+
+      const mismatchingSubscribe = await RecordsSubscribe.create({
+        signer         : Jws.createSigner(deviceX),
+        delegatedGrant : contextScopedReadGrant.dataEncodedMessage,
+        protocolRole   : 'thread/participant',
+        filter         : {
+          protocol,
+          contextId    : mismatchingContextId,
+          protocolPath : 'thread/chat'
+        }
+      });
+      const mismatchingSubscribeReply = await dwn.processMessage(bob.did, mismatchingSubscribe.message);
+      expect(mismatchingSubscribeReply.status.code).toBe(401);
+      expect(mismatchingSubscribeReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+
+      const subscriptionChatRecords:Set<string> = new Set();
+      const captureChatRecords = async (msg: SubscriptionMessage): Promise<void> => {
+        if (msg.type !== 'event') { return; }
+
+        const recordId = (msg.event.message as RecordsWriteMessage).recordId;
+        subscriptionChatRecords.add(recordId);
+      };
+
+      const matchingSubscribe = await RecordsSubscribe.create({
+        signer         : Jws.createSigner(deviceX),
+        delegatedGrant : contextScopedReadGrant.dataEncodedMessage,
+        protocolRole   : 'thread/participant',
+        filter         : {
+          protocol,
+          contextId    : threadRecord.message.contextId,
+          protocolPath : 'thread/chat'
+        }
+      });
+      const matchingSubscribeReply = await dwn.processMessage(bob.did, matchingSubscribe.message, {
+        subscriptionHandler: captureChatRecords
+      });
+      expect(matchingSubscribeReply.status.code).toBe(200);
+
+      const subscribedChatRecord = await TestDataGenerator.generateRecordsWrite({
+        author          : bob,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'thread/chat',
+        parentContextId : threadRecord.message.contextId,
+      });
+      const subscribedChatRecordReply = await dwn.processMessage(
+        bob.did,
+        subscribedChatRecord.message,
+        { dataStream: subscribedChatRecord.dataStream }
+      );
+      expect(subscribedChatRecordReply.status.code).toBe(202);
+
+      await Poller.pollUntilSuccessOrTimeout(async () => {
+        expect(subscriptionChatRecords.has(subscribedChatRecord.message.recordId)).toBe(true);
+      });
+
+      await matchingSubscribeReply.subscription?.close();
+    });
+
     it('should only allow correct entity invoking an author-delegated grant to subscribe', async () => {
       // scenario:
       // 1. Bob installs a chat protocol and creates a thread, adding Alice as a participant.

@@ -87,6 +87,35 @@ describe('PermissionsProtocol', () => {
       expect(protocolsConfigure.message).toBeDefined();
       expect(warnSpy.called).toBe(false);
     });
+
+    it('should reject removed read-like Records grant methods at schema validation', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const grant = await PermissionsProtocol.createGrant({
+        signer      : Jws.createSigner(alice),
+        grantedTo   : bob.did,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Read,
+          protocol  : 'https://example.com/protocol/test',
+        }
+      });
+
+      expect(() => PermissionsProtocol.validateSchema(grant.recordsWrite.message, grant.permissionGrantBytes)).not.toThrow();
+
+      for (const method of [DwnMethodName.Query, DwnMethodName.Subscribe, DwnMethodName.Count] as const) {
+        const invalidGrantBytes = Encoder.objectToBytes({
+          ...grant.permissionGrantData,
+          scope: {
+            ...grant.permissionGrantData.scope,
+            method,
+          },
+        });
+
+        expect(() => PermissionsProtocol.validateSchema(grant.recordsWrite.message, invalidGrantBytes)).toThrow();
+      }
+    });
   });
 
   describe('getScopeFromPermissionRecord', () => {

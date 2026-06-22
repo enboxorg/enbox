@@ -1288,7 +1288,7 @@ export function testRecordsReadHandler(): void {
             expect(protocolsConfigureReply.status.code).toBe(202);
 
             // Alice writes a record which Bob will later try to read
-            const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
+            const { recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
               author       : alice,
               protocol     : protocolDefinition.protocol,
               protocolPath : 'foo',
@@ -1337,6 +1337,9 @@ export function testRecordsReadHandler(): void {
             });
             const recordsReadWithGrantReply = await dwn.processMessage(alice.did, recordsReadWithGrant.message);
             expect(recordsReadWithGrantReply.status.code).toBe(200);
+            expect(recordsReadWithGrantReply.entry!.recordsWrite!.recordId).toBe(recordsWrite.message.recordId);
+            const dataFetched = await DataStream.toBytes(recordsReadWithGrantReply.entry!.data!);
+            expect(ArrayUtility.byteArraysEqual(dataFetched, dataBytes!)).toBe(true);
           });
 
           it('allows reads of protocol records with matching protocol grant scopes', async () => {
@@ -1357,7 +1360,7 @@ export function testRecordsReadHandler(): void {
             expect(protocolsConfigureReply.status.code).toBe(202);
 
             // Alice writes a record which Bob will later try to read
-            const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
+            const { recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
               author       : alice,
               protocol     : protocolDefinition.protocol,
               protocolPath : 'foo',
@@ -1405,6 +1408,9 @@ export function testRecordsReadHandler(): void {
             });
             const recordsReadWithGrantReply = await dwn.processMessage(alice.did, recordsReadWithGrant.message);
             expect(recordsReadWithGrantReply.status.code).toBe(200);
+            expect(recordsReadWithGrantReply.entry!.recordsWrite!.recordId).toBe(recordsWrite.message.recordId);
+            const dataFetched = await DataStream.toBytes(recordsReadWithGrantReply.entry!.data!);
+            expect(ArrayUtility.byteArraysEqual(dataFetched, dataBytes!)).toBe(true);
           });
 
           it('rejects reads of protocol records with mismatching protocol grant scopes', async () => {

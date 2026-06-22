@@ -154,12 +154,19 @@ describe('RecordsGrantAuthorization', () => {
     });
 
     it('rejects read-like Records grants that do not use method Read', async () => {
-      for (const method of [DwnMethodName.Query, DwnMethodName.Subscribe, DwnMethodName.Count] as const) {
+      const cases = [
+        [DwnMethodName.Query, DwnMethodName.Query],
+        [DwnMethodName.Subscribe, DwnMethodName.Subscribe],
+        [DwnMethodName.Count, DwnMethodName.Count],
+        [DwnMethodName.Write, DwnMethodName.Query],
+      ] as const;
+
+      for (const [grantMethod, incomingMethod] of cases) {
         await expect(RecordsGrantAuthorization.authorizeQueryOrSubscribe({
-          incomingMessage : makeIncomingMessage(method, { protocol }),
+          incomingMessage : makeIncomingMessage(incomingMethod, { protocol }),
           expectedGrantor : grantor,
           expectedGrantee : grantee,
-          permissionGrant : makePermissionGrant(method, { protocol }),
+          permissionGrant : makePermissionGrant(grantMethod, { protocol }),
           validationStateReader,
         })).rejects.toThrow(DwnErrorCode.GrantAuthorizationMethodMismatch);
       }
