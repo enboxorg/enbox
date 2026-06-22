@@ -12,6 +12,7 @@
  */
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
+import type { DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
 import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
@@ -25,6 +26,7 @@ import { AgentPermissionsApi } from '../src/permissions-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxConnectProtocol } from '../src/enbox-connect-protocol.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
@@ -102,6 +104,22 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       testDwnUrls : [testDwnUrl],
     });
   });
+
+  async function sendRemoteSetupRequest(
+    request: DwnRpcRequest
+  ): Promise<DwnRpcResponse> {
+    const reply = await retryFreshDidResolution(
+      () => ownerHarness.agent.rpc.sendDwnRequest(request)
+    );
+
+    if (![202, 409].includes(reply.status.code)) {
+      throw new Error(
+        `Remote setup request failed: ${reply.status.code} ${reply.status.detail ?? ''}`
+      );
+    }
+
+    return reply;
+  }
 
   /**
    * Simulates the wallet-connect flow:
@@ -243,7 +261,7 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       messageParams : { filter: { protocol: 'https://identity.foundation/protocols/key-delivery' } },
     });
     if (kdProto.entries?.[0]) {
-      await ownerHarness.agent.rpc.sendDwnRequest({
+      await sendRemoteSetupRequest({
         dwnUrl    : testDwnUrl,
         targetDid : ownerDid,
         message   : kdProto.entries[0] as any,
@@ -258,7 +276,7 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       messageParams : { filter: { protocol: chatProtocol.protocol } },
     });
     if (protoReply.entries?.[0]) {
-      await ownerHarness.agent.rpc.sendDwnRequest({
+      await sendRemoteSetupRequest({
         dwnUrl    : testDwnUrl,
         targetDid : ownerDid,
         message   : protoReply.entries[0] as any,
@@ -409,7 +427,7 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
             });
             if (rr.entry?.recordsWrite && rr.entry?.data) {
               const bytes = await DataStream.toBytes(rr.entry.data);
-              await ownerHarness.agent.rpc.sendDwnRequest({
+              await sendRemoteSetupRequest({
                 dwnUrl    : testDwnUrl,
                 targetDid : ownerDid,
                 message   : rr.entry.recordsWrite as any,
@@ -970,7 +988,7 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
         messageParams : { filter: { protocol: 'https://identity.foundation/protocols/key-delivery' } },
       });
       if (kdProto.entries?.[0]) {
-        await ownerHarness.agent.rpc.sendDwnRequest({
+        await sendRemoteSetupRequest({
           dwnUrl    : testDwnUrl,
           targetDid : ownerDid,
           message   : kdProto.entries[0] as any,

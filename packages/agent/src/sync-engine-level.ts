@@ -105,8 +105,10 @@ type SyncReconcileTarget = {
   authorization: SyncAuthorization;
 };
 
+type SyncDirection = 'push' | 'pull';
+
 type SyncReconcileOptions = {
-  direction?: 'push' | 'pull';
+  direction?: SyncDirection;
   verifyConvergence?: boolean;
 };
 
@@ -131,6 +133,17 @@ type SyncReconcileResult = {
   localFingerprint?: string;
   pushFailures?: PushFailure[];
   remoteFingerprint?: string;
+};
+
+type SyncTargetGroupRunResult = {
+  dwnUrl: string;
+  succeeded: boolean;
+};
+
+type SyncTargetGroupSummary = {
+  failedUrls: string[];
+  groupsFailed: number;
+  groupsSucceeded: number;
 };
 
 type FeedConvergenceFailureState = {
@@ -931,65 +944,140 @@ export class SyncEngineLevel implements SyncEngine {
   // One-shot sync (durable feed reconciliation)
   // ---------------------------------------------------------------------------
 
-  public async sync(direction?: 'push' | 'pull', options?: SyncRunOptions): Promise<void> {
+  public async sync(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
     if (this._syncLock) {
       throw new Error('SyncEngineLevel: Sync operation is already in progress.');
     }
 
     this._syncLock = true;
     try {
-      // Group targets by remote endpoint so each URL group can be reconciled
-      // concurrently. Within a group, targets are processed sequentially so
-      // that a single network failure skips the rest of that group.
       const syncTargets = await this.getSyncTargets();
-      const byUrl = new Map<string, typeof syncTargets>();
-      for (const target of syncTargets) {
-        let group = byUrl.get(target.dwnUrl);
-        if (!group) {
-          group = [];
-          byUrl.set(target.dwnUrl, group);
-        }
-        group.push(target);
-      }
-
-      const results = await Promise.allSettled([...byUrl.entries()].map(([dwnUrl, targets]) =>
-        this.syncTargetGroup(dwnUrl, targets, direction, options)
-      ));
-
-      let groupsSucceeded = 0;
-      let groupsFailed = 0;
-      for (const result of results) {
-        if (result.status === 'fulfilled' && result.value) {
-          groupsSucceeded++;
-        } else {
-          groupsFailed++;
-        }
-      }
-
-      // Track connectivity based on per-group outcomes. If at least one
-      // group succeeded, stay online — partial reachability is still online.
-      if (groupsSucceeded > 0) {
-        this._consecutiveFailures = 0;
-        this._connectivityState = 'online';
-      } else if (groupsFailed > 0) {
-        this._consecutiveFailures++;
-        if (this._connectivityState === 'online') {
-          this._connectivityState = 'offline';
-        }
-      } else if (syncTargets.length > 0) {
-        // No target required work.
-        this._consecutiveFailures = 0;
-        this._connectivityState = 'online';
-      }
+      const groupSummary = await this.syncTargetGroups(syncTargets, direction, options);
+      this.updateConnectivityAfterSync(syncTargets.length, groupSummary);
+      SyncEngineLevel.assertSyncTargetGroupsSucceeded(groupSummary);
     } finally {
       this._syncLock = false;
     }
   }
 
+  private async syncTargetGroups(
+    syncTargets: SyncTarget[],
+    direction: SyncDirection | undefined,
+    options: SyncRunOptions | undefined,
+  ): Promise<SyncTargetGroupSummary> {
+    // Group targets by remote endpoint so each URL group can be reconciled
+    // concurrently. Within a group, targets are processed sequentially so
+    // that a single network failure skips the rest of that group.
+    const byUrl = SyncEngineLevel.groupSyncTargetsByDwnUrl(syncTargets);
+    const results = await Promise.allSettled([...byUrl.entries()].map(([dwnUrl, targets]) =>
+      this.syncTargetGroupWithUrl(dwnUrl, targets, direction, options)
+    ));
+
+    return SyncEngineLevel.summarizeSyncTargetGroupResults(results);
+  }
+
+  private static groupSyncTargetsByDwnUrl(syncTargets: SyncTarget[]): Map<string, SyncTarget[]> {
+    const byUrl = new Map<string, SyncTarget[]>();
+    for (const target of syncTargets) {
+      const group = byUrl.get(target.dwnUrl) ?? [];
+      group.push(target);
+      byUrl.set(target.dwnUrl, group);
+    }
+
+    return byUrl;
+  }
+
+  private async syncTargetGroupWithUrl(
+    dwnUrl: string,
+    targets: SyncTarget[],
+    direction: SyncDirection | undefined,
+    options: SyncRunOptions | undefined,
+  ): Promise<SyncTargetGroupRunResult> {
+    return {
+      dwnUrl,
+      succeeded: await this.syncTargetGroup(dwnUrl, targets, direction, options),
+    };
+  }
+
+  private static summarizeSyncTargetGroupResults(
+    results: PromiseSettledResult<SyncTargetGroupRunResult>[]
+  ): SyncTargetGroupSummary {
+    const summary: SyncTargetGroupSummary = {
+      failedUrls      : [],
+      groupsFailed    : 0,
+      groupsSucceeded : 0,
+    };
+
+    for (const result of results) {
+      SyncEngineLevel.countSyncTargetGroupResult(summary, result);
+    }
+
+    return summary;
+  }
+
+  private static countSyncTargetGroupResult(
+    summary: SyncTargetGroupSummary,
+    result: PromiseSettledResult<SyncTargetGroupRunResult>
+  ): void {
+    if (result.status === 'rejected') {
+      summary.groupsFailed++;
+      return;
+    }
+
+    if (result.value.succeeded) {
+      summary.groupsSucceeded++;
+      return;
+    }
+
+    summary.groupsFailed++;
+    summary.failedUrls.push(result.value.dwnUrl);
+  }
+
+  private updateConnectivityAfterSync(syncTargetCount: number, summary: SyncTargetGroupSummary): void {
+    // If at least one group succeeded, stay online — partial reachability is still online.
+    if (summary.groupsSucceeded > 0) {
+      this.recordSyncSuccess();
+      return;
+    }
+
+    if (summary.groupsFailed > 0) {
+      this.recordSyncFailure();
+      return;
+    }
+
+    // No target required work.
+    if (syncTargetCount > 0) {
+      this.recordSyncSuccess();
+    }
+  }
+
+  private recordSyncSuccess(): void {
+    this._consecutiveFailures = 0;
+    this._connectivityState = 'online';
+  }
+
+  private recordSyncFailure(): void {
+    this._consecutiveFailures++;
+    if (this._connectivityState === 'online') {
+      this._connectivityState = 'offline';
+    }
+  }
+
+  private static assertSyncTargetGroupsSucceeded(summary: SyncTargetGroupSummary): void {
+    if (summary.groupsFailed === 0) {
+      return;
+    }
+
+    throw new Error(
+      `SyncEngineLevel: Sync operation failed for ${summary.groupsFailed} remote endpoint(s)`
+      + (summary.failedUrls.length > 0 ? `: ${summary.failedUrls.join(', ')}` : '.')
+    );
+  }
+
   private async syncTargetGroup(
     dwnUrl: string,
     targets: SyncTarget[],
-    direction: 'push' | 'pull' | undefined,
+    direction: SyncDirection | undefined,
     options: SyncRunOptions | undefined,
   ): Promise<boolean> {
     for (const target of targets) {
@@ -1007,7 +1095,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async syncSingleTarget(
     target: SyncTarget,
-    direction: 'push' | 'pull' | undefined,
+    direction: SyncDirection | undefined,
     options: SyncRunOptions | undefined,
   ): Promise<void> {
     const result = await this.syncTargetWithDurableFeeds(target, {
@@ -1146,7 +1234,11 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Initiate an immediate sync.
     if (!this._syncLock) {
-      await this.sync(undefined, { verifyConvergence: true });
+      try {
+        await this.sync(undefined, { verifyConvergence: true });
+      } catch (error) {
+        console.error('SyncEngineLevel: Error during initial poll sync', error);
+      }
     }
   }
 
