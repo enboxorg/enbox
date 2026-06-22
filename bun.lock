@@ -50,7 +50,7 @@
     },
     "packages/agent": {
       "name": "@enbox/agent",
-      "version": "0.8.2",
+      "version": "0.8.3",
       "dependencies": {
         "@enbox/common": "workspace:*",
         "@enbox/crypto": "workspace:*",
@@ -82,7 +82,7 @@
     },
     "packages/api": {
       "name": "@enbox/api",
-      "version": "0.6.40",
+      "version": "0.6.41",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/auth": "workspace:*",
@@ -108,7 +108,7 @@
     },
     "packages/auth": {
       "name": "@enbox/auth",
-      "version": "0.6.48",
+      "version": "0.6.49",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/common": "workspace:*",
@@ -128,7 +128,7 @@
     },
     "packages/browser": {
       "name": "@enbox/browser",
-      "version": "0.3.26",
+      "version": "0.3.27",
       "dependencies": {
         "@enbox/agent": "workspace:*",
         "@enbox/api": "workspace:*",
@@ -383,7 +383,7 @@
     },
     "packages/electrobun-dwn": {
       "name": "@enbox/electrobun-dwn",
-      "version": "0.0.58",
+      "version": "0.0.59",
       "dependencies": {
         "@digitalbazaar/did-io": "2.1.0",
         "@enbox/agent": "workspace:*",
@@ -428,7 +428,7 @@
     },
     "packages/protocols": {
       "name": "@enbox/protocols",
-      "version": "0.2.67",
+      "version": "0.2.68",
       "dependencies": {
         "@enbox/api": "workspace:*",
         "@enbox/dwn-sdk-js": "workspace:*",
