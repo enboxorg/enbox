@@ -9,6 +9,7 @@
  */
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
+import type { DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
 import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
@@ -18,7 +19,9 @@ import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, Permissio
 import { AgentPermissionsApi } from '../src/permissions-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
 import { TestAgent } from './utils/test-agent.js';
+import { testDwnUrl } from './utils/test-config.js';
 
 // Multi-party encrypted chat protocol
 const chatProtocol: ProtocolDefinition = {
@@ -75,9 +78,25 @@ describe('e2e: grant revocation stops future delivery', () => {
 
     ownerIdentity = await ownerHarness.createIdentity({
       name        : 'OwnerAlice',
-      testDwnUrls : ['http://localhost:3000'],
+      testDwnUrls : [testDwnUrl],
     });
   });
+
+  async function sendRemoteSetupRequest(
+    request: DwnRpcRequest
+  ): Promise<DwnRpcResponse> {
+    const reply = await retryFreshDidResolution(
+      () => ownerHarness.agent.rpc.sendDwnRequest(request)
+    );
+
+    if (![202, 409].includes(reply.status.code)) {
+      throw new Error(
+        `Remote setup request failed: ${reply.status.code} ${reply.status.detail ?? ''}`
+      );
+    }
+
+    return reply;
+  }
 
   it('should not deliver context keys after grants are revoked', async () => {
     const ownerDid = ownerIdentity.did.uri;
@@ -314,7 +333,6 @@ describe('e2e: grant revocation stops future delivery', () => {
   it('should self-heal revocation grant to remote DWN when fanout was missed', async () => {
     const ownerDid = ownerIdentity.did.uri;
     const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
-    const testDwnUrl = 'http://localhost:3000';
 
     // 1. Install protocol + key-delivery
     await ownerHarness.agent.processDwnRequest({
@@ -335,7 +353,7 @@ describe('e2e: grant revocation stops future delivery', () => {
         messageParams : { filter: { protocol: proto } },
       });
       for (const e of pq.entries ?? []) {
-        await ownerHarness.agent.rpc.sendDwnRequest({
+        await sendRemoteSetupRequest({
           dwnUrl    : testDwnUrl,
           targetDid : ownerDid,
           message   : e as any,
@@ -374,7 +392,7 @@ describe('e2e: grant revocation stops future delivery', () => {
 
     // Send session grant to remote
     const { encodedData: sgEncoded, ...sgRaw } = sessionGrant.message;
-    await ownerHarness.agent.rpc.sendDwnRequest({
+    await sendRemoteSetupRequest({
       dwnUrl    : testDwnUrl,
       targetDid : ownerDid,
       message   : sgRaw as any,
@@ -437,7 +455,7 @@ describe('e2e: grant revocation stops future delivery', () => {
     const revData = revGrantRead.entry!.data
       ? new Blob([await DataStream.toBytes(revGrantRead.entry!.data!) as BlobPart])
       : undefined;
-    await ownerHarness.agent.rpc.sendDwnRequest({
+    await sendRemoteSetupRequest({
       dwnUrl    : testDwnUrl,
       targetDid : ownerDid,
       message   : revRaw as any,
@@ -1108,7 +1126,6 @@ describe('e2e: grant revocation stops future delivery', () => {
 
     // Send permissions protocol + grants to DWN server so retry can
     // confirm revocations remotely.
-    const testDwnUrl = 'http://localhost:3000';
     const { reply: permProto } = await ownerHarness.agent.processDwnRequest({
       author        : ownerDid,
       target        : ownerDid,
@@ -1116,7 +1133,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       messageParams : { filter: { protocol: PermissionsProtocol.uri } },
     });
     for (const e of permProto.entries ?? []) {
-      await ownerHarness.agent.rpc.sendDwnRequest({
+      await sendRemoteSetupRequest({
         dwnUrl: testDwnUrl, targetDid: ownerDid, message: e as any,
       });
     }
@@ -1125,7 +1142,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       const dataBytes = encodedData
         ? Convert.base64Url(encodedData).toUint8Array()
         : new Uint8Array(0);
-      await ownerHarness.agent.rpc.sendDwnRequest({
+      await sendRemoteSetupRequest({
         dwnUrl    : testDwnUrl,
         targetDid : ownerDid,
         message   : rawMsg as any,
