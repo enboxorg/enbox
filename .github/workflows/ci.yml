@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_pr_number:
+        description: "Version packages PR number that requested this CI run"
+        required: false
+        type: string
   workflow_call:
 
 permissions:
@@ -12,8 +18,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.inputs.release_pr_number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event.inputs.release_pr_number != '' }}
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -51,6 +57,7 @@ jobs:
         uses: dorny/paths-filter@v3
         id: src-filter
         with:
+          base: main
           predicate-quantifier: 'every'
           filters: |
             src:
@@ -65,6 +72,7 @@ jobs:
         uses: dorny/paths-filter@v3
         id: filter
         with:
+          base: main
           filters: |
             workspace:
               - 'package.json'

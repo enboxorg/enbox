@@ -20,6 +20,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       pull-requests: write
       id-token: write
@@ -96,3 +97,16 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           # bun publish reads the npm token from bunfig or NPM_CONFIG_TOKEN
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Dispatch CI for version PR
+        if: steps.changesets.outputs.pullRequestNumber != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: changeset-release/${{ github.ref_name }}
+          RELEASE_PR_NUMBER: ${{ steps.changesets.outputs.pullRequestNumber }}
+        run: |
+          echo "Dispatching CI for version PR #${RELEASE_PR_NUMBER} on ${RELEASE_BRANCH}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/dispatches" \
+            --method POST \
+            -f ref="${RELEASE_BRANCH}" \
+            -f "inputs[release_pr_number]=${RELEASE_PR_NUMBER}"
