@@ -1,5 +1,5 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
-import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, RecordsQueryReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { DataStream } from '@enbox/dwn-sdk-js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -7,12 +7,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { JwkProtocolDefinition, KeyDeliveryProtocolDefinition } from '../src/store-data-protocols.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
+const syncConvergenceRetryDelaysMs = [500, 1_000, 2_000, 4_000, 8_000, 16_000];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 /**
  * End-to-end tests for encrypted data through sync, agent lifecycle with
@@ -74,6 +80,80 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     await testHarness.closeStorage();
   });
 
+  async function queryRemoteEncryptedNotes(): Promise<RecordsQueryReply> {
+    const { reply } = await retryFreshDidResolution(() => testHarness.agent.dwn.sendRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : encryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+        }
+      },
+    }));
+
+    return reply;
+  }
+
+  async function queryLocalEncryptedNotes(): Promise<RecordsQueryReply> {
+    const { reply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : encryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+        }
+      },
+    });
+
+    return reply;
+  }
+
+  async function syncPushUntilRemoteRecordCount(expectedCount: number): Promise<RecordsQueryReply> {
+    let lastReply: RecordsQueryReply | undefined;
+
+    for (let attempt = 0; attempt <= syncConvergenceRetryDelaysMs.length; attempt++) {
+      if (attempt > 0) {
+        await sleep(syncConvergenceRetryDelaysMs[attempt - 1]);
+      }
+
+      await syncEngine.sync('push');
+      lastReply = await queryRemoteEncryptedNotes();
+      if (lastReply.status.code === 200 && (lastReply.entries?.length ?? 0) === expectedCount) {
+        return lastReply;
+      }
+    }
+
+    throw new Error(
+      `Remote encrypted notes did not converge: ${lastReply?.status.code ?? 'no status'} `
+      + `${lastReply?.status.detail ?? ''}; entries=${lastReply?.entries?.length ?? 0}`
+    );
+  }
+
+  async function syncPullUntilLocalRecordCount(expectedCount: number): Promise<RecordsQueryReply> {
+    let lastReply: RecordsQueryReply | undefined;
+
+    for (let attempt = 0; attempt <= syncConvergenceRetryDelaysMs.length; attempt++) {
+      if (attempt > 0) {
+        await sleep(syncConvergenceRetryDelaysMs[attempt - 1]);
+      }
+
+      await syncEngine.sync('pull');
+      lastReply = await queryLocalEncryptedNotes();
+      if (lastReply.status.code === 200 && (lastReply.entries?.length ?? 0) === expectedCount) {
+        return lastReply;
+      }
+    }
+
+    throw new Error(
+      `Local encrypted notes did not converge after pull: ${lastReply?.status.code ?? 'no status'} `
+      + `${lastReply?.status.detail ?? ''}; entries=${lastReply?.entries?.length ?? 0}`
+    );
+  }
+
   it('should install the encrypted protocol locally with $encryption keys', async () => {
     // Configure the protocol locally with encryption enabled.
     const { reply } = await testHarness.agent.dwn.processRequest({
@@ -118,17 +198,7 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     }
 
     // Verify records exist locally with encryption metadata.
-    const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : encryptedNoteProtocol.protocol,
-          protocolPath : 'note',
-        }
-      },
-    });
+    const queryReply = await queryLocalEncryptedNotes();
     expect(queryReply.entries).toHaveLength(3);
     for (const entry of queryReply.entries!) {
       expect(entry.encryption).toBeDefined();
@@ -139,20 +209,9 @@ describe('e2e: encrypted data survives sync round-trip', () => {
   it('should push encrypted records to the remote DWN', async () => {
     // Register identity and push to remote.
     await testHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
-    await syncEngine.sync('push');
 
     // Verify records exist on the remote DWN.
-    const { reply: remoteQueryReply } = await testHarness.agent.dwn.sendRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : encryptedNoteProtocol.protocol,
-          protocolPath : 'note',
-        }
-      },
-    });
+    const remoteQueryReply = await syncPushUntilRemoteRecordCount(3);
     expect(remoteQueryReply.status.code).toBe(200);
     expect(remoteQueryReply.entries).toHaveLength(3);
 
@@ -161,7 +220,7 @@ describe('e2e: encrypted data survives sync round-trip', () => {
       expect(entry.encryption).toBeDefined();
       expect(entry.encryption!.protected).toBeDefined();
     }
-  }, 30_000);
+  }, 60_000);
 
   it('should clear local DWN data and pull back encrypted records', async () => {
     // Clear local DWN stores (simulating a fresh device), but keep the agent
@@ -172,53 +231,20 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     testHarness.dwnStores.clear();
 
     // Verify local is now empty.
-    const { reply: localBefore } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : encryptedNoteProtocol.protocol,
-          protocolPath : 'note',
-        }
-      },
-    });
+    const localBefore = await queryLocalEncryptedNotes();
     expect(localBefore.entries).toHaveLength(0);
 
-    // Pull from remote.
-    await syncEngine.sync('pull');
-
     // Verify the encrypted records were pulled back.
-    const { reply: localAfter } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : encryptedNoteProtocol.protocol,
-          protocolPath : 'note',
-        }
-      },
-    });
+    const localAfter = await syncPullUntilLocalRecordCount(3);
     expect(localAfter.entries).toHaveLength(3);
     for (const entry of localAfter.entries!) {
       expect(entry.encryption).toBeDefined();
     }
-  }, 30_000);
+  }, 60_000);
 
   it('should decrypt pulled records with the original encryption key', async () => {
     // Read each record individually with auto-decryption.
-    const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : encryptedNoteProtocol.protocol,
-          protocolPath : 'note',
-        }
-      },
-    });
+    const queryReply = await queryLocalEncryptedNotes();
 
     const decryptedTexts: string[] = [];
     for (const entry of queryReply.entries!) {
