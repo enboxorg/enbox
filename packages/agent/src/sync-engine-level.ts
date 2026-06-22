@@ -105,8 +105,10 @@ type SyncReconcileTarget = {
   authorization: SyncAuthorization;
 };
 
+type SyncDirection = 'push' | 'pull';
+
 type SyncReconcileOptions = {
-  direction?: 'push' | 'pull';
+  direction?: SyncDirection;
   verifyConvergence?: boolean;
 };
 
@@ -942,7 +944,7 @@ export class SyncEngineLevel implements SyncEngine {
   // One-shot sync (durable feed reconciliation)
   // ---------------------------------------------------------------------------
 
-  public async sync(direction?: 'push' | 'pull', options?: SyncRunOptions): Promise<void> {
+  public async sync(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
     if (this._syncLock) {
       throw new Error('SyncEngineLevel: Sync operation is already in progress.');
     }
@@ -960,7 +962,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async syncTargetGroups(
     syncTargets: SyncTarget[],
-    direction: 'push' | 'pull' | undefined,
+    direction: SyncDirection | undefined,
     options: SyncRunOptions | undefined,
   ): Promise<SyncTargetGroupSummary> {
     // Group targets by remote endpoint so each URL group can be reconciled
@@ -988,7 +990,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async syncTargetGroupWithUrl(
     dwnUrl: string,
     targets: SyncTarget[],
-    direction: 'push' | 'pull' | undefined,
+    direction: SyncDirection | undefined,
     options: SyncRunOptions | undefined,
   ): Promise<SyncTargetGroupRunResult> {
     return {
@@ -1075,7 +1077,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async syncTargetGroup(
     dwnUrl: string,
     targets: SyncTarget[],
-    direction: 'push' | 'pull' | undefined,
+    direction: SyncDirection | undefined,
     options: SyncRunOptions | undefined,
   ): Promise<boolean> {
     for (const target of targets) {
@@ -1093,7 +1095,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   private async syncSingleTarget(
     target: SyncTarget,
-    direction: 'push' | 'pull' | undefined,
+    direction: SyncDirection | undefined,
     options: SyncRunOptions | undefined,
   ): Promise<void> {
     const result = await this.syncTargetWithDurableFeeds(target, {
