@@ -78,6 +78,7 @@ export type {
   AuthManagerOptions,
   AuthSessionInfo,
   AuthState,
+  ConnectClientMetadata,
   ConnectHandler,
   ConnectOptions,
   ConnectPermissionRequest,

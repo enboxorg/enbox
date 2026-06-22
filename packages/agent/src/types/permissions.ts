@@ -1,4 +1,4 @@
-import type { DwnDataEncodedRecordsWriteMessage, DwnInterface, DwnPermissionGrant, DwnPermissionRequest, DwnPermissionScope } from './dwn.js';
+import type { ConnectSessionMetadata, DwnDataEncodedRecordsWriteMessage, DwnInterface, DwnPermissionGrant, DwnPermissionRequest, DwnPermissionScope } from './dwn.js';
 
 export type FetchPermissionsParams = {
   author: string;
@@ -53,6 +53,8 @@ export type CreateGrantParams = {
     rootKeyId: string;
     publicKeyJwk: Record<string, any>;
   };
+  /** Connect session metadata for grants created by wallet approval flows. */
+  connectSession?: ConnectSessionMetadata;
 };
 
 export type CreateRequestParams = {

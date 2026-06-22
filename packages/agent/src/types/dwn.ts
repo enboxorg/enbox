@@ -274,6 +274,8 @@ export {
 
 // Type-only re-exports (interfaces, type aliases)
 export type {
+  ConnectSessionMetadata,
+  ConnectSessionTransport,
   DataEncodedRecordsWriteMessage as DwnDataEncodedRecordsWriteMessage,
   MessageSigner as DwnSigner,
   MessageSubscription as DwnMessageSubscription,

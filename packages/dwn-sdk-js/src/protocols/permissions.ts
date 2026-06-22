@@ -3,9 +3,9 @@ import type { MessagesFilter } from '../types/messages-types.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
+import type { ConnectSessionMetadata, PermissionConditions, PermissionGrantData, PermissionRequestData, PermissionRevocationData, PermissionScope, RecordsPermissionScope } from '../types/permission-types.js';
 import type { CoreProtocol, CoreProtocolStores } from '../core/core-protocol.js';
 import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
-import type { PermissionConditions, PermissionGrantData, PermissionRequestData, PermissionRevocationData, PermissionScope, RecordsPermissionScope } from '../types/permission-types.js';
 
 import { DwnConstant } from '../core/dwn-constant.js';
 import { DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -63,6 +63,7 @@ export type PermissionGrantCreateOptions = {
   delegated?: boolean;
   scope: PermissionScope;
   conditions?: PermissionConditions;
+  connectSession?: ConnectSessionMetadata;
 };
 
 /**
@@ -422,12 +423,13 @@ export class PermissionsProtocol implements CoreProtocol {
     const scope = PermissionsProtocol.normalizePermissionScope(options.scope);
 
     const permissionGrantData: PermissionGrantData = {
-      dateExpires : options.dateExpires,
-      requestId   : options.requestId,
-      description : options.description,
-      delegated   : options.delegated,
+      dateExpires    : options.dateExpires,
+      requestId      : options.requestId,
+      description    : options.description,
+      delegated      : options.delegated,
       scope,
-      conditions  : options.conditions,
+      conditions     : options.conditions,
+      connectSession : options.connectSession,
     };
 
     // If the grant is scoped to a protocol, the protocol tag must be included with the record.

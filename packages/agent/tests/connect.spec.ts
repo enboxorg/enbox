@@ -12,7 +12,7 @@ import { testDwnUrl } from './utils/test-config.js';
 import { type BearerDid, DidDht, DidJwk } from '@enbox/dids';
 import { Convert, logger } from '@enbox/common';
 
-import { AgentPermissionsApi, DwnInterface } from '../src/index.js';
+import { AgentPermissionsApi, DwnInterface, DwnPermissionGrant } from '../src/index.js';
 import {
   EnboxConnectProtocol,
   type EnboxConnectRequest,
@@ -288,6 +288,11 @@ describe('enbox connect', () => {
     });
 
     it('should create permission grants for each selected did', async () => {
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget').resolves(['https://dwn.example']);
+      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
+        status: { code: 202, detail: 'Accepted' },
+      } as any);
+
       const results = await EnboxConnectProtocol.createPermissionGrants(
         providerIdentity.did.uri,
         delegateBearerDid,
@@ -297,6 +302,47 @@ describe('enbox connect', () => {
       const scopesRequested = permissionScopes.length;
       expect(results).toHaveLength(scopesRequested);
       expect(typeof results[0]).toBe('object');
+
+      const grants = results.map((result) => DwnPermissionGrant.parse(result));
+      const firstSession = grants[0].connectSession;
+      expect(firstSession).toBeDefined();
+      expect(firstSession?.id).toBeDefined();
+      expect(firstSession?.expiresAt).not.toBe('2040-06-25T16:09:16.693356Z');
+      expect(Date.parse(firstSession!.expiresAt) - Date.parse(firstSession!.createdAt)).toBe(86_400_000);
+
+      for (const grant of grants) {
+        expect(grant.connectSession?.id).toBe(firstSession?.id);
+        expect(grant.dateExpires).toBe(firstSession?.expiresAt);
+      }
+    });
+
+    it('should bound connect session display metadata', () => {
+      const session = EnboxConnectProtocol.createConnectSessionMetadata({
+        id             : 's'.repeat(200),
+        appName        : 'a'.repeat(200),
+        appIcon        : `https://example.com/${'i'.repeat(3000)}`,
+        transport      : 'postMessage',
+        clientMetadata : {
+          origin    : `https://${'o'.repeat(600)}.example`,
+          userAgent : 'u'.repeat(600),
+          platform  : 'p'.repeat(200),
+          language  : 'l'.repeat(100),
+          languages : Array.from({ length: 20 }, (_, index) => `language-${index}-${'x'.repeat(80)}`),
+          timezone  : 't'.repeat(200),
+        },
+      });
+
+      expect(session.id).toHaveLength(128);
+      expect(session.appName).toHaveLength(128);
+      expect(session.appIcon).toHaveLength(2048);
+      expect(session.origin).toHaveLength(512);
+      expect(session.userAgent).toHaveLength(512);
+      expect(session.platform).toHaveLength(128);
+      expect(session.language).toHaveLength(64);
+      expect(session.languages).toHaveLength(16);
+      expect(session.languages?.every((language) => language.length <= 64)).toBe(true);
+      expect(session.timezone).toHaveLength(128);
+      expect(session.transport).toBe('postMessage');
     });
 
     it('should reject obsolete read-like record grant scopes', async () => {

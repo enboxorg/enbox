@@ -1,4 +1,4 @@
-import type { RecordsPermissionScope } from '../../src/types/permission-types.js';
+import type { ConnectSessionMetadata, RecordsPermissionScope } from '../../src/types/permission-types.js';
 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -35,6 +35,69 @@ describe('PermissionGrant', () => {
     expect(parsed.grantee).toBe(bob.did);
     expect(parsed.scope).toEqual(scope);
     expect(parsed.dateExpires).toBeDefined();
+  });
+
+  it('should parse connect session metadata from a permission grant', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const bob = await TestDataGenerator.generateDidKeyPersona();
+    const createdAt = Time.getCurrentTimestamp();
+    const connectSession: ConnectSessionMetadata = {
+      id        : 'session-123',
+      appName   : 'Sample App',
+      appIcon   : 'https://example.com/icon.png',
+      origin    : 'https://example.com',
+      userAgent : 'ExampleBrowser/1.0',
+      platform  : 'MacIntel',
+      language  : 'en-US',
+      languages : ['en-US', 'en'],
+      timezone  : 'America/New_York',
+      transport : 'postMessage',
+      createdAt,
+      expiresAt : Time.createOffsetTimestamp({ seconds: 86_400 }, createdAt),
+    };
+
+    const permissionGrant = await PermissionsProtocol.createGrant({
+      signer      : Jws.createSigner(alice),
+      grantedTo   : bob.did,
+      dateExpires : connectSession.expiresAt,
+      scope       : {
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Read,
+        protocol  : 'https://example.com/protocol/test',
+      },
+      connectSession,
+    });
+
+    PermissionsProtocol.validateSchema(permissionGrant.recordsWrite.message, permissionGrant.permissionGrantBytes);
+    const parsed = PermissionGrant.parse(permissionGrant.dataEncodedMessage);
+    expect(parsed.connectSession).toEqual(connectSession);
+    expect(parsed.dateExpires).toBe(connectSession.expiresAt);
+  });
+
+  it('should reject oversized connect session metadata', async () => {
+    const alice = await TestDataGenerator.generateDidKeyPersona();
+    const bob = await TestDataGenerator.generateDidKeyPersona();
+    const createdAt = Time.getCurrentTimestamp();
+    const permissionGrant = await PermissionsProtocol.createGrant({
+      signer      : Jws.createSigner(alice),
+      grantedTo   : bob.did,
+      dateExpires : Time.createOffsetTimestamp({ seconds: 86_400 }, createdAt),
+      scope       : {
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Read,
+        protocol  : 'https://example.com/protocol/test',
+      },
+      connectSession: {
+        id        : 'x'.repeat(129),
+        createdAt,
+        expiresAt : Time.createOffsetTimestamp({ seconds: 86_400 }, createdAt),
+      },
+    });
+
+    expect(() => PermissionsProtocol.validateSchema(
+      permissionGrant.recordsWrite.message,
+      permissionGrant.permissionGrantBytes,
+    )).toThrow('must NOT have more than 128 characters');
   });
 
   describe('parse() validation', () => {

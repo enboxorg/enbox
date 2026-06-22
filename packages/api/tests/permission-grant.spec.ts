@@ -64,14 +64,24 @@ describe('PermissionGrant', () => {
 
   describe('parse()',() => {
     it('parses a grant message', async () => {
+      const createdAt = Time.getCurrentTimestamp();
+      const connectSession = {
+        id        : 'session-123',
+        appName   : 'Sample App',
+        origin    : 'https://example.com',
+        transport : 'postMessage',
+        createdAt,
+        expiresAt : Time.createOffsetTimestamp({ seconds: 86_400 }, createdAt),
+      };
       const { grant, message } = await testHarness.agent.permissions.createGrant({
         store       : false,
         author      : aliceDid.uri,
         grantedTo   : bobDid.uri,
         requestId   : '123',
-        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        dateExpires : connectSession.expiresAt,
         description : 'This is a grant',
         scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, protocol: protocolUri },
+        connectSession,
       });
 
       const parsedGrant = PermissionGrant.parse({
@@ -92,6 +102,7 @@ describe('PermissionGrant', () => {
       expect(parsedGrant.dateExpires).toBe(grant.dateExpires);
       expect(parsedGrant.description).toBe(grant.description);
       expect(parsedGrant.delegated).toBe(grant.delegated);
+      expect(parsedGrant.connectSession).toEqual(connectSession);
     });
 
     it('throws for an invalid grant', async () => {

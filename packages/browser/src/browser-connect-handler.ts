@@ -74,6 +74,7 @@ export interface BrowserConnectHandlerOptions {
    * Defaults to `${window.location.origin}/favicon.ico` if omitted.
    */
   appIcon?: string;
+
 }
 
 /**
