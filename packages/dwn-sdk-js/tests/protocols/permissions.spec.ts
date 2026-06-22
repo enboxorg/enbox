@@ -7,7 +7,7 @@ import { createTestValidationStateReader } from '../utils/test-validation-state-
 import { Jws } from '../../src/utils/jws.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
-import { DwnConstant, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, PermissionGrant, PermissionRequest, PermissionsProtocol, ProtocolsConfigure, Time } from '../../src/index.js';
+import { DwnConstant, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, PermissionGrant, PermissionRequest, PermissionsProtocol, ProtocolsConfigure, Time } from '../../src/index.js';
 
 describe('PermissionsProtocol', () => {
   let messageStore: MessageStore;
@@ -113,7 +113,15 @@ describe('PermissionsProtocol', () => {
           },
         });
 
-        expect(() => PermissionsProtocol.validateSchema(grant.recordsWrite.message, invalidGrantBytes)).toThrow();
+        let schemaError: unknown;
+        try {
+          PermissionsProtocol.validateSchema(grant.recordsWrite.message, invalidGrantBytes);
+        } catch (error) {
+          schemaError = error;
+        }
+
+        expect(schemaError).toBeInstanceOf(DwnError);
+        expect((schemaError as DwnError).code).toBe(DwnErrorCode.SchemaValidatorFailure);
       }
     });
   });
