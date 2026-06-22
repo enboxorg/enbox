@@ -5,8 +5,8 @@ import type { ProtocolDefinition, ProtocolRuleSet, ProtocolType, ProtocolTypes }
 
 import { ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
-import Ajv from 'ajv/dist/2020.js';
 import { Records } from '../utils/records.js';
+import { validateProtocolTags } from '../utils/protocol-tags.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { getTypeName, parseCrossProtocolRef } from '../utils/protocols.js';
 
@@ -282,7 +282,7 @@ export function verifySizeLimit(
 }
 
 /**
- * Verifies record tags against the `$tags` schema in the rule set using JSON Schema (Ajv).
+ * Verifies record tags against the `$tags` schema in the rule set.
  * Checks required tags, additional properties, and schema conformance.
  */
 export function verifyTagsIfNeeded(
@@ -291,30 +291,13 @@ export function verifyTagsIfNeeded(
 ): void {
   if (ruleSet.$tags !== undefined) {
     const { tags = {}, protocol, protocolPath } = incomingMessage.message.descriptor;
+    const schemaError = validateProtocolTags(
+      ruleSet.$tags,
+      tags,
+      `${protocol}/${protocolPath}/$tags`,
+    );
 
-    const { $allowUndefinedTags, $requiredTags, ...properties } = ruleSet.$tags;
-
-    // if $allowUndefinedTags is set to false and there are properties not defined in the schema, an error is thrown
-    const additionalProperties = $allowUndefinedTags || false;
-
-    // if $requiredTags is set, all required tags must be present
-    const required = $requiredTags || [];
-
-    const ajv = new Ajv.default();
-    const compiledTags = ajv.compile({
-      type: 'object',
-      properties,
-      required,
-      additionalProperties,
-    });
-
-    const validSchema = compiledTags(tags);
-    if (!validSchema) {
-      // the `dataVar` is used to add a qualifier to the error message.
-      // For example. If the error is related to a tag `status` in a protocol `https://example.protocol` with the protocolPath `example/path`
-      // the error would be described as `https://example.protocol/example/path/$tags/status'
-      // without this decorator it would show up as `data/status` which may be confusing.
-      const schemaError = ajv.errorsText(compiledTags.errors, { dataVar: `${protocol}/${protocolPath}/$tags` });
+    if (schemaError !== undefined) {
       throw new DwnError(DwnErrorCode.ProtocolAuthorizationTagsInvalidSchema, `tags schema validation error: ${schemaError}`);
     }
   }
