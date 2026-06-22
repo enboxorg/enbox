@@ -7,12 +7,12 @@ import type {
 } from '../types/protocols-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
-import Ajv from 'ajv/dist/2020.js';
 import { DwnConstant } from '../core/dwn-constant.js';
 import { Message } from '../core/message.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { ProtocolsGrantAuthorization } from '../core/protocols-grant-authorization.js';
 import { Time } from '../utils/time.js';
+import { validateProtocolTagSchemaDefinition } from '../utils/protocol-tags.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
@@ -265,16 +265,18 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       }
     }
 
-    if (ruleSet.$tags) {
-      const ajv = new Ajv.default();
+    if (ruleSet.$tags !== undefined) {
       const { $allowUndefinedTags, $requiredTags, ...tagProperties } = ruleSet.$tags;
 
-      // we validate each tag's expected schema to ensure it is a valid JSON schema
+      // validate each tag's schema against the DWN-supported tag schema subset
       for (const tag in tagProperties) {
         const tagSchemaDefinition = tagProperties[tag];
+        const schemaError = validateProtocolTagSchemaDefinition(
+          tagSchemaDefinition,
+          `${ruleSetProtocolPath}/$tags/${tag}`,
+        );
 
-        if (!ajv.validateSchema(tagSchemaDefinition as Record<string, unknown>)) {
-          const schemaError = ajv.errorsText(ajv.errors, { dataVar: `${ruleSetProtocolPath}/$tags/${tag}` });
+        if (schemaError !== undefined) {
           throw new DwnError(DwnErrorCode.ProtocolsConfigureInvalidTagSchema, `tags schema validation error: ${schemaError}`);
         }
       }
