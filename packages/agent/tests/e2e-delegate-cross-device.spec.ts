@@ -172,12 +172,11 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
     };
 
     // 3. Create permission grants on the owner's DWN
-    const readMethods = new Set(['Read', 'Query', 'Subscribe']);
     const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
     const grants = await Promise.all(
       options.scopes.map((scope) => {
         const isReadLike = (scope as any).interface === 'Records'
-          && readMethods.has((scope as any).method);
+          && (scope as any).method === 'Read';
         return permissionsApi.createGrant({
           delegated           : true,
           store               : true,

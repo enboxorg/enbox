@@ -273,6 +273,37 @@ export class DwnApi {
   }
 
   /**
+   * @internal
+   * Imports a wallet-owned ProtocolsConfigure message into the local DWN.
+   *
+   * Delegate sessions use this after fetching the owner's signed protocol
+   * configuration from the wallet DWN. The delegate does not receive a
+   * Protocols.Configure grant and does not author a new protocol
+   * configuration; it only stores the owner's already-signed message locally
+   * so owner-tenant record operations can validate and encrypt against it.
+   */
+  async importProtocolConfiguration(
+    protocolsConfigureMessage: DwnMessage[DwnInterface.ProtocolsConfigure],
+  ): Promise<ProtocolsConfigureResponse> {
+    const agentResponse = await this.agent.processDwnRequest({
+      author      : this.connectedDid,
+      rawMessage  : protocolsConfigureMessage,
+      messageType : DwnInterface.ProtocolsConfigure,
+      target      : this.connectedDid,
+    });
+
+    const { messageCid, reply: { status } } = agentResponse;
+    const response: ProtocolsConfigureResponse = { status };
+
+    if (status.code < 300 || status.code === 409) {
+      const metadata = { author: this.connectedDid, messageCid };
+      response.protocol = new Protocol(this.agent, protocolsConfigureMessage, metadata);
+    }
+
+    return response;
+  }
+
+  /**
    * API to interact with Grants
    *
    * NOTE: This is an EXPERIMENTAL API that will change behavior.

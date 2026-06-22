@@ -17,6 +17,9 @@ import type {
   ProtocolsQueryMessage,
   ProtocolsQueryOptions,
   ProtocolsQueryReply,
+  RecordsCountMessage,
+  RecordsCountOptions,
+  RecordsCountReply,
   RecordsDeleteMessage,
   RecordsDeleteOptions,
   RecordsQueryMessage,
@@ -41,6 +44,7 @@ import {
   MessagesSubscribe,
   ProtocolsConfigure,
   ProtocolsQuery,
+  RecordsCount,
   RecordsDelete,
   RecordsQuery,
   RecordsRead,
@@ -79,6 +83,7 @@ export enum DwnInterface {
   MessagesSubscribe = DwnInterfaceName.Messages + DwnMethodName.Subscribe,
   ProtocolsConfigure = DwnInterfaceName.Protocols + DwnMethodName.Configure,
   ProtocolsQuery = DwnInterfaceName.Protocols + DwnMethodName.Query,
+  RecordsCount = DwnInterfaceName.Records + DwnMethodName.Count,
   RecordsDelete = DwnInterfaceName.Records + DwnMethodName.Delete,
   RecordsQuery = DwnInterfaceName.Records + DwnMethodName.Query,
   RecordsRead = DwnInterfaceName.Records + DwnMethodName.Read,
@@ -87,7 +92,7 @@ export enum DwnInterface {
 }
 
 export type DwnRecordsInterfaces =
-  | DwnInterface.RecordsDelete | DwnInterface.RecordsQuery | DwnInterface.RecordsRead
+  | DwnInterface.RecordsCount | DwnInterface.RecordsDelete | DwnInterface.RecordsQuery | DwnInterface.RecordsRead
   | DwnInterface.RecordsSubscribe | DwnInterface.RecordsWrite;
 
 export interface DwnMessage {
@@ -96,6 +101,7 @@ export interface DwnMessage {
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeMessage;
   [DwnInterface.ProtocolsConfigure] : ProtocolsConfigureMessage;
   [DwnInterface.ProtocolsQuery] : ProtocolsQueryMessage;
+  [DwnInterface.RecordsCount] : RecordsCountMessage;
   [DwnInterface.RecordsDelete] : RecordsDeleteMessage;
   [DwnInterface.RecordsQuery] : RecordsQueryMessage;
   [DwnInterface.RecordsRead] : RecordsReadMessage;
@@ -109,6 +115,7 @@ export interface DwnMessageDescriptor {
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeMessage['descriptor'];
   [DwnInterface.ProtocolsConfigure] : ProtocolsConfigureMessage['descriptor'];
   [DwnInterface.ProtocolsQuery] : ProtocolsQueryMessage['descriptor'];
+  [DwnInterface.RecordsCount] : RecordsCountMessage['descriptor'];
   [DwnInterface.RecordsDelete] : RecordsDeleteMessage['descriptor'];
   [DwnInterface.RecordsQuery] : RecordsQueryMessage['descriptor'];
   [DwnInterface.RecordsRead] : RecordsReadMessage['descriptor'];
@@ -122,6 +129,7 @@ export interface DwnMessageParams {
   [DwnInterface.MessagesSubscribe] : Partial<MessagesSubscribeOptions>;
   [DwnInterface.ProtocolsConfigure] : RequireOnly<ProtocolsConfigureOptions, 'definition'>;
   [DwnInterface.ProtocolsQuery] : ProtocolsQueryOptions;
+  [DwnInterface.RecordsCount] : RecordsCountOptions;
   [DwnInterface.RecordsDelete] : RequireOnly<RecordsDeleteOptions, 'recordId'>;
   [DwnInterface.RecordsQuery] : RecordsQueryOptions;
   [DwnInterface.RecordsRead] : RecordsReadOptions;
@@ -135,6 +143,7 @@ export interface DwnMessageReply {
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeReply;
   [DwnInterface.ProtocolsConfigure] : GenericMessageReply;
   [DwnInterface.ProtocolsQuery] : ProtocolsQueryReply;
+  [DwnInterface.RecordsCount] : RecordsCountReply;
   [DwnInterface.RecordsDelete] : GenericMessageReply;
   [DwnInterface.RecordsQuery] : RecordsQueryReply;
   [DwnInterface.RecordsRead] : RecordsReadReply;
@@ -151,6 +160,7 @@ export interface MessageHandler {
   [DwnInterface.MessagesRead] : undefined;
   [DwnInterface.ProtocolsConfigure] : undefined;
   [DwnInterface.ProtocolsQuery] : undefined;
+  [DwnInterface.RecordsCount] : undefined;
   [DwnInterface.RecordsDelete] : undefined;
   [DwnInterface.RecordsQuery] : undefined;
   [DwnInterface.RecordsRead] : undefined;
@@ -222,6 +232,7 @@ export const dwnMessageConstructors: { [T in DwnInterface]: DwnMessageConstructo
   [DwnInterface.MessagesSubscribe]  : MessagesSubscribe,
   [DwnInterface.ProtocolsConfigure] : ProtocolsConfigure,
   [DwnInterface.ProtocolsQuery]     : ProtocolsQuery,
+  [DwnInterface.RecordsCount]       : RecordsCount,
   [DwnInterface.RecordsDelete]      : RecordsDelete,
   [DwnInterface.RecordsQuery]       : RecordsQuery,
   [DwnInterface.RecordsRead]        : RecordsRead,
@@ -235,6 +246,7 @@ export interface DwnMessageInstance {
   [DwnInterface.MessagesSubscribe] : MessagesSubscribe;
   [DwnInterface.ProtocolsConfigure] : ProtocolsConfigure;
   [DwnInterface.ProtocolsQuery] : ProtocolsQuery;
+  [DwnInterface.RecordsCount] : RecordsCount;
   [DwnInterface.RecordsDelete] : RecordsDelete;
   [DwnInterface.RecordsQuery] : RecordsQuery;
   [DwnInterface.RecordsRead] : RecordsRead;

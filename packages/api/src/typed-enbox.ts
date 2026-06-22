@@ -37,7 +37,7 @@
  * ```
  */
 
-import type { DwnApi } from './dwn-api.js';
+import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
 import type { LiveQuery } from './live-query.js';
 import type { Protocol } from './protocol.js';
 
@@ -655,18 +655,20 @@ export class TypedEnbox<
       }
     }
 
-    // Not installed or definition has changed — configure the new version.
-    // In delegate mode, the wallet is responsible for installing encrypted
-    // protocols during the connect flow. The delegate cannot derive the
-    // owner's encryption keys, so configuring here would install the
-    // protocol WITHOUT $encryption keys — breaking all encrypted writes.
-    if (this._dwn.isDelegate && this._hasEncryptedTypes) {
+    // Not installed or definition has changed. In delegate mode, the wallet
+    // owns protocol configuration; the delegate may only import the wallet's
+    // already-signed ProtocolsConfigure message into its local DWN.
+    if (this._dwn.isDelegate) {
+      const imported = await this._autoConfigureDelegateProtocol();
+      if (imported) {
+        return imported;
+      }
+
       throw new Error(
-        `TypedEnbox: Protocol '${this._definition.protocol}' requires ` +
-        `encryption but is not installed or has changed. In delegate mode, ` +
-        `encrypted protocols must be installed by the wallet during the ` +
-        `connect flow. Ensure the sync engine has completed its initial ` +
-        `sync before performing record operations.`,
+        `TypedEnbox: delegate cannot install protocol '${this._definition.protocol}' ` +
+        `because the wallet's remote protocol definition could not be found. ` +
+        `Ensure the wallet installed the protocol during connect and that the ` +
+        `delegate has access to the wallet's DWN endpoints.`,
       );
     }
 
@@ -803,35 +805,17 @@ export class TypedEnbox<
     //
     // For owners: derive encryption keys locally via the KMS.
     if (this._dwn.isDelegate) {
-      const installed = await this._autoConfigureDelegateProtocol();
-      if (installed) {
+      const imported = await this._autoConfigureDelegateProtocol();
+      if (imported) {
         return;
       }
 
-      // The remote definition could not be fetched. If this protocol has
-      // any types with `encryptionRequired: true`, we MUST fail — silently
-      // installing without `$encryption` keys would allow plaintext writes
-      // that the owner's remote DWN would later reject, or worse, persist
-      // unencrypted sensitive data.
-      if (this._hasEncryptedTypes) {
-        throw new Error(
-          `TypedEnbox: delegate cannot install protocol '${this._definition.protocol}' ` +
-          'because it contains types with encryptionRequired but the owner\'s ' +
-          'remote protocol definition (with $encryption keys) could not be fetched. ' +
-          'Ensure the owner has installed the protocol on their DWN and that the ' +
-          'delegate has network access to the owner\'s DWN endpoints.',
-        );
-      }
-
-      // No encrypted types — safe to install the app-provided definition
-      // as-is (no encryption keys needed).
-      const result = await this._dwn.protocols.configure({
-        definition: this._definition,
-      });
-      if (result.status.code === 202) {
-        this._configured = true;
-      }
-      return;
+      throw new Error(
+        `TypedEnbox: delegate cannot install protocol '${this._definition.protocol}' ` +
+        `because the wallet's remote protocol definition could not be found. ` +
+        `Ensure the wallet installed the protocol during connect and that the ` +
+        `delegate has access to the wallet's DWN endpoints.`,
+      );
     }
 
     // Owner path: derive encryption keys locally when any type needs them.
@@ -849,43 +833,37 @@ export class TypedEnbox<
   }
 
   /**
-   * For delegates: fetch the owner's protocol definition (with `$encryption`
-   * keys) from the remote DWN and install it locally.
+   * For delegates: fetch the owner's signed ProtocolsConfigure message from
+   * the remote DWN and import that same wallet-owned message locally.
    *
-   * Returns `true` if the remote definition was successfully installed.
+   * Returns the local import response when the remote configuration was found.
    */
-  private async _autoConfigureDelegateProtocol(): Promise<boolean> {
-    try {
-      const { protocols: remoteProtocols } = await this._dwn.protocols.query({
-        from   : this._dwn.connectedDid,
-        filter : { protocol: this._definition.protocol },
-      });
+  private async _autoConfigureDelegateProtocol(): Promise<ProtocolsConfigureResponse | undefined> {
+    const { protocols: remoteProtocols } = await this._dwn.protocols.query({
+      from   : this._dwn.connectedDid,
+      filter : { protocol: this._definition.protocol },
+    });
 
-      if (remoteProtocols.length === 0) {
-        return false;
-      }
-
-      // The remote definition includes `$encryption` keys injected by the
-      // owner's agent during their `protocols.configure({ encryption: true })`
-      // call. Install it as-is on the delegate's local DWN so that:
-      //   1. `encryptionRequired` is enforced locally (matching the remote)
-      //   2. `$encryption` public keys are available for record encryption
-      const remoteDefinition = remoteProtocols[0].definition;
-
-      const result = await this._dwn.protocols.configure({
-        definition: remoteDefinition,
-      });
-
-      if (result.status.code === 202) {
-        this._configured = true;
-        return true;
-      }
-
-      return false;
-    } catch {
-      // Network error or grant issue — fall back to local-only install.
-      return false;
+    if (remoteProtocols.length === 0) {
+      return undefined;
     }
+
+    // The remote message includes the wallet's signature and, for encrypted
+    // protocols, `$encryption` keys injected by the wallet during configure.
+    // Import that exact message locally so the delegate can validate/encrypt
+    // owner-tenant records without receiving Protocols.Configure permission.
+    const result = await this._dwn.importProtocolConfiguration(remoteProtocols[0].toJSON());
+
+    if (result.status.code < 300 || result.status.code === 409) {
+      this._configured = true;
+      return result;
+    }
+
+    throw new Error(
+      `TypedEnbox: delegate failed to import wallet-owned protocol ` +
+      `'${this._definition.protocol}' locally: ${result.status.code} ` +
+      `${result.status.detail}`,
+    );
   }
 
   /**

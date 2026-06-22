@@ -464,8 +464,9 @@ export class AgentPermissionsApi implements PermissionsApi {
       : false;
 
     // Records.Read is the canonical read-like Records scope and covers Query,
-    // Read, and Subscribe operations at the agent permission lookup layer.
-    const isRecordsReadLikeMessage = messageType === DwnInterface.RecordsQuery
+    // Read, Subscribe, and Count operations at the agent permission lookup layer.
+    const isRecordsReadLikeMessage = messageType === DwnInterface.RecordsCount
+      || messageType === DwnInterface.RecordsQuery
       || messageType === DwnInterface.RecordsRead
       || messageType === DwnInterface.RecordsSubscribe;
     const isRecordsScopeMatch = scope.interface === DwnInterfaceName.Records

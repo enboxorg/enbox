@@ -139,6 +139,7 @@ describe('AgentPermissionsApi', () => {
       });
 
       for (const messageType of [
+        DwnInterface.RecordsCount,
         DwnInterface.RecordsRead,
         DwnInterface.RecordsQuery,
         DwnInterface.RecordsSubscribe,
@@ -1784,6 +1785,13 @@ describe('AgentPermissionsApi', () => {
       }, deviceXRecordGrants);
 
       expect(subscribeGrant?.message.recordId).toBe(protocol1Grants.read.message.recordId);
+
+      const countGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType : DwnInterface.RecordsCount,
+        protocol    : protocol1
+      }, deviceXRecordGrants);
+
+      expect(countGrant?.message.recordId).toBe(protocol1Grants.read.message.recordId);
 
       const queryGrantOtherProtocol = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsQuery,

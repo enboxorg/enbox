@@ -142,7 +142,7 @@ describe('DwnApi', () => {
 
       const grantRequest = WalletConnect.createPermissionRequestForProtocol({
         definition  : notesProtocol,
-        permissions : ['write', 'read', 'delete', 'query', 'subscribe']
+        permissions : ['write', 'read', 'delete']
       });
 
       // alice and bob both configure the protocol
@@ -645,13 +645,23 @@ describe('DwnApi', () => {
           expect(error.message).toBe(`CachedPermissions: No permissions found for ProtocolsConfigure: ${protocolUri}`);
         }
 
-        // create a grant for the protocol
-        const delegatedBearerDid = await delegateHarness.agent.did.get({ didUri: delegateDid.uri });
-        const grants = await EnboxConnectProtocol.createPermissionGrants(aliceDid.uri, delegatedBearerDid, testHarness.agent, [{
-          interface : DwnInterfaceName.Protocols,
-          method    : DwnMethodName.Configure,
-          protocol  : protocolUri
-        }]);
+        // Create an explicit lower-level grant for this test. Connect must
+        // not mint Protocols.Configure grants, but the DWN permission layer
+        // still supports them when issued directly.
+        const permissionsApi = new AgentPermissionsApi({ agent: testHarness.agent });
+        const { message } = await permissionsApi.createGrant({
+          author      : aliceDid.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+          delegated   : true,
+          grantedTo   : delegateDid.uri,
+          scope       : {
+            interface : DwnInterfaceName.Protocols,
+            method    : DwnMethodName.Configure,
+            protocol  : protocolUri
+          },
+          store: true,
+        });
+        const grants = [message];
 
         await processConnectedGrants({
           grants, connectedDid : aliceDid.uri, delegateDid  : delegateDid.uri,

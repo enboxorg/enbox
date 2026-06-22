@@ -207,10 +207,11 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
     });
     const delegatePortable = await delegatedBearerDid.export();
 
-    // 3. Create permission grants (write, read, delete, query, subscribe, configure).
+    // 3. Create permission grants. Read is the unified read-like Records scope;
+    // Protocols.Configure remains wallet-owned.
     const grantRequest = WalletConnect.createPermissionRequestForProtocol({
       definition  : protocolDef,
-      permissions : ['write', 'read', 'delete', 'query', 'subscribe', 'configure'],
+      permissions : ['write', 'read', 'delete'],
     });
 
     const grants = await EnboxConnectProtocol.createPermissionGrants(
