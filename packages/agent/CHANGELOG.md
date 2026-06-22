@@ -1,5 +1,15 @@
 # @enbox/agent
 
+## 0.8.2
+
+### Patch Changes
+
+- [#1058](https://github.com/enboxorg/enbox/pull/1058) [`4d96b19`](https://github.com/enboxorg/enbox/commit/4d96b19e36be398dde948e783b9240d93ec57aa2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Consolidate the sync push/pull dependency-closure fetch helpers (grant resolution, dependency-ref utilities, protocol-config helpers) that were duplicated verbatim in `sync-messages.ts` and `sync-admit-closure.ts` into a shared `sync-fetch-helpers.ts` module. The shared grant resolver also narrows its error handling so unexpected grant-lookup failures (store/network/parse errors) surface instead of being silently swallowed as "no grant".
+
+- Updated dependencies [[`05f5621`](https://github.com/enboxorg/enbox/commit/05f56216adcbdba09ae039238055a4591674ef88)]:
+  - @enbox/dwn-sdk-js@0.4.2
+  - @enbox/dwn-clients@0.4.7
+
 ## 0.8.1
 
 ### Patch Changes
