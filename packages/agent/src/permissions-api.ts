@@ -469,11 +469,14 @@ export class AgentPermissionsApi implements PermissionsApi {
       || messageType === DwnInterface.RecordsQuery
       || messageType === DwnInterface.RecordsRead
       || messageType === DwnInterface.RecordsSubscribe;
-    const isRecordsScopeMatch = scope.interface === DwnInterfaceName.Records
-      ? isRecordsReadLikeMessage
-        ? scope.method === DwnMethodName.Read
-        : scopeMessageType === messageType
-      : false;
+    let isRecordsScopeMatch = false;
+    if (scope.interface === DwnInterfaceName.Records) {
+      if (isRecordsReadLikeMessage) {
+        isRecordsScopeMatch = scope.method === DwnMethodName.Read;
+      } else {
+        isRecordsScopeMatch = scopeMessageType === messageType;
+      }
+    }
 
     const isOtherScopeMatch = scope.interface !== DwnInterfaceName.Messages
       && scope.interface !== DwnInterfaceName.Records

@@ -83,7 +83,7 @@ export enum DwnInterface {
   MessagesSubscribe = DwnInterfaceName.Messages + DwnMethodName.Subscribe,
   ProtocolsConfigure = DwnInterfaceName.Protocols + DwnMethodName.Configure,
   ProtocolsQuery = DwnInterfaceName.Protocols + DwnMethodName.Query,
-  RecordsCount = DwnInterfaceName.Records + DwnMethodName.Count,
+  RecordsCount = 'RecordsCount',
   RecordsDelete = DwnInterfaceName.Records + DwnMethodName.Delete,
   RecordsQuery = DwnInterfaceName.Records + DwnMethodName.Query,
   RecordsRead = DwnInterfaceName.Records + DwnMethodName.Read,

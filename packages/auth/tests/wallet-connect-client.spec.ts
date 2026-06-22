@@ -253,7 +253,7 @@ describe('WalletConnect', () => {
       expect(permissionRequests.protocolDefinition).toEqual(protocol);
 
       // Messages.Read (unified) + 3 requested Records permissions + Protocols.Query
-      expect(permissionRequests.permissionScopes.length).toBe(5);
+      expect(permissionRequests.permissionScopes).toHaveLength(5);
       const ps = permissionRequests.permissionScopes;
       expect(ps.find(
         (scope) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
