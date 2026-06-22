@@ -1,5 +1,11 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.2
+
+### Patch Changes
+
+- [#1066](https://github.com/enboxorg/enbox/pull/1066) [`05f5621`](https://github.com/enboxorg/enbox/commit/05f56216adcbdba09ae039238055a4591674ef88) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(dwn-sdk-js): validate protocol tags without runtime Ajv compilation
+
 ## 0.4.1
 
 ### Patch Changes

@@ -1,5 +1,20 @@
 # @enbox/api
 
+## 0.6.40
+
+### Patch Changes
+
+- [#985](https://github.com/enboxorg/enbox/pull/985) [`7ff772b`](https://github.com/enboxorg/enbox/commit/7ff772bc41965463e571471f54800ce019c0f625) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(api): expose `squash` on typed `records.create`
+
+  The typed `create` wrapper now forwards the `squash` directive to the underlying
+  `records.write`, so `$squash`-enabled protocol paths can be compacted through the
+  typed surface instead of dropping the flag.
+
+- Updated dependencies [[`5a2498f`](https://github.com/enboxorg/enbox/commit/5a2498f49582db6a51e50fd0c78bb3d622460d84), [`4d96b19`](https://github.com/enboxorg/enbox/commit/4d96b19e36be398dde948e783b9240d93ec57aa2)]:
+  - @enbox/auth@0.6.48
+  - @enbox/agent@0.8.2
+  - @enbox/dwn-clients@0.4.7
+
 ## 0.6.39
 
 ### Patch Changes
