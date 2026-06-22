@@ -114,13 +114,20 @@ describe('e2e: encrypted data survives sync round-trip', () => {
 
   async function syncPushUntilRemoteRecordCount(expectedCount: number): Promise<RecordsQueryReply> {
     let lastReply: RecordsQueryReply | undefined;
+    let lastSyncError: unknown;
 
     for (let attempt = 0; attempt <= syncConvergenceRetryDelaysMs.length; attempt++) {
       if (attempt > 0) {
         await sleep(syncConvergenceRetryDelaysMs[attempt - 1]);
       }
 
-      await syncEngine.sync('push');
+      try {
+        await syncEngine.sync('push');
+        lastSyncError = undefined;
+      } catch (error) {
+        lastSyncError = error;
+      }
+
       lastReply = await queryRemoteEncryptedNotes();
       if (lastReply.status.code === 200 && (lastReply.entries?.length ?? 0) === expectedCount) {
         return lastReply;
@@ -129,19 +136,27 @@ describe('e2e: encrypted data survives sync round-trip', () => {
 
     throw new Error(
       `Remote encrypted notes did not converge: ${lastReply?.status.code ?? 'no status'} `
-      + `${lastReply?.status.detail ?? ''}; entries=${lastReply?.entries?.length ?? 0}`
+      + `${lastReply?.status.detail ?? ''}; entries=${lastReply?.entries?.length ?? 0}; `
+      + `lastSyncError=${lastSyncError instanceof Error ? lastSyncError.message : 'none'}`
     );
   }
 
   async function syncPullUntilLocalRecordCount(expectedCount: number): Promise<RecordsQueryReply> {
     let lastReply: RecordsQueryReply | undefined;
+    let lastSyncError: unknown;
 
     for (let attempt = 0; attempt <= syncConvergenceRetryDelaysMs.length; attempt++) {
       if (attempt > 0) {
         await sleep(syncConvergenceRetryDelaysMs[attempt - 1]);
       }
 
-      await syncEngine.sync('pull');
+      try {
+        await syncEngine.sync('pull');
+        lastSyncError = undefined;
+      } catch (error) {
+        lastSyncError = error;
+      }
+
       lastReply = await queryLocalEncryptedNotes();
       if (lastReply.status.code === 200 && (lastReply.entries?.length ?? 0) === expectedCount) {
         return lastReply;
@@ -150,7 +165,8 @@ describe('e2e: encrypted data survives sync round-trip', () => {
 
     throw new Error(
       `Local encrypted notes did not converge after pull: ${lastReply?.status.code ?? 'no status'} `
-      + `${lastReply?.status.detail ?? ''}; entries=${lastReply?.entries?.length ?? 0}`
+      + `${lastReply?.status.detail ?? ''}; entries=${lastReply?.entries?.length ?? 0}; `
+      + `lastSyncError=${lastSyncError instanceof Error ? lastSyncError.message : 'none'}`
     );
   }
 

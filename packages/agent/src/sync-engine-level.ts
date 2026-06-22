@@ -952,17 +952,22 @@ export class SyncEngineLevel implements SyncEngine {
         group.push(target);
       }
 
-      const results = await Promise.allSettled([...byUrl.entries()].map(([dwnUrl, targets]) =>
-        this.syncTargetGroup(dwnUrl, targets, direction, options)
-      ));
+      const results = await Promise.allSettled([...byUrl.entries()].map(async ([dwnUrl, targets]) => ({
+        dwnUrl,
+        succeeded: await this.syncTargetGroup(dwnUrl, targets, direction, options),
+      })));
 
       let groupsSucceeded = 0;
       let groupsFailed = 0;
+      const failedUrls: string[] = [];
       for (const result of results) {
-        if (result.status === 'fulfilled' && result.value) {
+        if (result.status === 'fulfilled' && result.value.succeeded) {
           groupsSucceeded++;
         } else {
           groupsFailed++;
+          if (result.status === 'fulfilled') {
+            failedUrls.push(result.value.dwnUrl);
+          }
         }
       }
 
@@ -980,6 +985,13 @@ export class SyncEngineLevel implements SyncEngine {
         // No target required work.
         this._consecutiveFailures = 0;
         this._connectivityState = 'online';
+      }
+
+      if (groupsFailed > 0) {
+        throw new Error(
+          `SyncEngineLevel: Sync operation failed for ${groupsFailed} remote endpoint(s)`
+          + (failedUrls.length > 0 ? `: ${failedUrls.join(', ')}` : '.')
+        );
       }
     } finally {
       this._syncLock = false;
@@ -1146,7 +1158,11 @@ export class SyncEngineLevel implements SyncEngine {
 
     // Initiate an immediate sync.
     if (!this._syncLock) {
-      await this.sync(undefined, { verifyConvergence: true });
+      try {
+        await this.sync(undefined, { verifyConvergence: true });
+      } catch (error) {
+        console.error('SyncEngineLevel: Error during initial poll sync', error);
+      }
     }
   }
 

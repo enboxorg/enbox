@@ -2744,8 +2744,8 @@ describe('SyncEngineLevel', () => {
           }
         });
 
-        // Execute Sync, only foo protocol should be synced
-        await aliceDeviceXHarness.agent.sync.sync();
+        // Execute pull sync, only foo protocol should be synced.
+        await aliceDeviceXHarness.agent.sync.sync('pull');
 
         // query aliceDeviceX to see foo records
         const localFooRecords = await aliceDeviceXHarness.agent.dwn.processRequest({
@@ -2846,7 +2846,7 @@ describe('SyncEngineLevel', () => {
         // Suppress console.error for the expected error.
         const consoleErrorStub = sinon.stub(console, 'error');
 
-        await syncEngine.sync();
+        await expect(syncEngine.sync()).rejects.toThrow('Sync operation failed');
         expect(syncEngine.connectivityState).toBe('offline');
 
         pullRemoteFeedStub.restore();
@@ -2869,7 +2869,7 @@ describe('SyncEngineLevel', () => {
         // Failing sync -> offline.
         const pullRemoteFeedStub = sinon.stub(syncEngine as any, 'pullRemoteFeedForSyncTarget').rejects(new Error('simulated failure'));
         const consoleErrorStub = sinon.stub(console, 'error');
-        await syncEngine.sync();
+        await expect(syncEngine.sync()).rejects.toThrow('Sync operation failed');
         expect(syncEngine.connectivityState).toBe('offline');
 
         // Restore and sync successfully -> back to online.
@@ -2905,7 +2905,7 @@ describe('SyncEngineLevel', () => {
         pullRemoteFeedStub.onFirstCall().rejects(new Error('DWN unreachable'));
         pullRemoteFeedStub.onSecondCall().resolves({});
 
-        await syncEngine.sync();
+        await expect(syncEngine.sync()).rejects.toThrow('Sync operation failed');
 
         // The error should have been logged.
         expect(consoleErrorStub.called).toBe(true);
