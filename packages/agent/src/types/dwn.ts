@@ -37,8 +37,6 @@ import type {
 } from '@enbox/dwn-sdk-js';
 
 import {
-  DwnInterfaceName,
-  DwnMethodName,
   MessagesQuery,
   MessagesRead,
   MessagesSubscribe,
@@ -78,17 +76,17 @@ import {
 export interface DwnDidService extends DidService {}
 
 export enum DwnInterface {
-  MessagesQuery = DwnInterfaceName.Messages + DwnMethodName.Query,
-  MessagesRead = DwnInterfaceName.Messages + DwnMethodName.Read,
-  MessagesSubscribe = DwnInterfaceName.Messages + DwnMethodName.Subscribe,
-  ProtocolsConfigure = DwnInterfaceName.Protocols + DwnMethodName.Configure,
-  ProtocolsQuery = DwnInterfaceName.Protocols + DwnMethodName.Query,
+  MessagesQuery = 'MessagesQuery',
+  MessagesRead = 'MessagesRead',
+  MessagesSubscribe = 'MessagesSubscribe',
+  ProtocolsConfigure = 'ProtocolsConfigure',
+  ProtocolsQuery = 'ProtocolsQuery',
   RecordsCount = 'RecordsCount',
-  RecordsDelete = DwnInterfaceName.Records + DwnMethodName.Delete,
-  RecordsQuery = DwnInterfaceName.Records + DwnMethodName.Query,
-  RecordsRead = DwnInterfaceName.Records + DwnMethodName.Read,
-  RecordsSubscribe = DwnInterfaceName.Records + DwnMethodName.Subscribe,
-  RecordsWrite = DwnInterfaceName.Records + DwnMethodName.Write
+  RecordsDelete = 'RecordsDelete',
+  RecordsQuery = 'RecordsQuery',
+  RecordsRead = 'RecordsRead',
+  RecordsSubscribe = 'RecordsSubscribe',
+  RecordsWrite = 'RecordsWrite'
 }
 
 export type DwnRecordsInterfaces =
