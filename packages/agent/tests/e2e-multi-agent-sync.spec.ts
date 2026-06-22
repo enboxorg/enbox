@@ -252,11 +252,11 @@ describe('E2E Multi-Agent Sync', () => {
       scope   : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
     });
 
-    // RecordsQuery grant (for test verification only).
+    // Records.Read grant authorizes RecordsQuery verification requests.
     recordsQueryGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
       grantor   : alice,
       grantee   : aliceDevice,
-      scope     : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Query },
+      scope     : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Read },
       delegated : true,
     });
   });

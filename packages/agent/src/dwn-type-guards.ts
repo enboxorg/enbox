@@ -27,7 +27,8 @@ export function isDwnMessage<T extends DwnInterface>(
 }
 
 export function isRecordsType(messageType: DwnInterface): messageType is DwnRecordsInterfaces {
-  return messageType === DwnInterface.RecordsDelete ||
+  return messageType === DwnInterface.RecordsCount ||
+    messageType === DwnInterface.RecordsDelete ||
     messageType === DwnInterface.RecordsQuery ||
     messageType === DwnInterface.RecordsRead ||
     messageType === DwnInterface.RecordsSubscribe ||

@@ -187,7 +187,7 @@ describe('WalletConnect', () => {
       });
 
       expect(permissionRequests.protocolDefinition).toEqual(protocol);
-      // Messages.Read (unified: covers Read, Subscribe, Sync) + Protocols.Query
+      // Messages.Read (unified: covers Read, Query, Subscribe) + Protocols.Query
       expect(permissionRequests.permissionScopes.length).toBe(2);
       const scopes = permissionRequests.permissionScopes;
       expect(scopes.find(
@@ -230,7 +230,7 @@ describe('WalletConnect', () => {
       )).toBeDefined();
     });
 
-    it('supports requesting `read`, `write`, `delete`, `query`, `subscribe` and `configure` permissions', async () => {
+    it('supports requesting `read`, `write`, and `delete` permissions', async () => {
       const protocol: DwnProtocolDefinition = {
         published : true,
         protocol  : 'https://exmaple.org/protocols/social',
@@ -247,13 +247,13 @@ describe('WalletConnect', () => {
 
       const permissionRequests = WalletConnect.createPermissionRequestForProtocol({
         definition  : protocol,
-        permissions : ['write', 'read', 'delete', 'query', 'subscribe', 'configure'],
+        permissions : ['write', 'read', 'delete'],
       });
 
       expect(permissionRequests.protocolDefinition).toEqual(protocol);
 
-      // Messages.Read (unified) + 5 requested Records permissions + Protocols.Query + Protocols.Configure
-      expect(permissionRequests.permissionScopes.length).toBe(8);
+      // Messages.Read (unified) + 3 requested Records permissions + Protocols.Query
+      expect(permissionRequests.permissionScopes).toHaveLength(5);
       const ps = permissionRequests.permissionScopes;
       expect(ps.find(
         (scope) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
@@ -265,17 +265,40 @@ describe('WalletConnect', () => {
         (scope) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Delete
       )).toBeDefined();
       expect(ps.find(
-        (scope) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Query
-      )).toBeDefined();
-      expect(ps.find(
-        (scope) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Subscribe
-      )).toBeDefined();
-      expect(ps.find(
         (scope) => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query
       )).toBeDefined();
       expect(ps.find(
         (scope) => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Configure
-      )).toBeDefined();
+      )).toBeUndefined();
+      expect(ps.find(
+        (scope) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Query
+      )).toBeUndefined();
+      expect(ps.find(
+        (scope) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Subscribe
+      )).toBeUndefined();
+    });
+
+    it('rejects unsupported runtime permission names', () => {
+      const protocol: DwnProtocolDefinition = {
+        published : true,
+        protocol  : 'https://exmaple.org/protocols/social',
+        types     : {
+          note: {
+            schema      : 'https://example.org/schemas/note',
+            dataFormats : ['application/json', 'text/plain'],
+          }
+        },
+        structure: {
+          note: {}
+        }
+      };
+
+      for (const permission of ['query', 'subscribe', 'configure']) {
+        expect(() => WalletConnect.createPermissionRequestForProtocol({
+          definition  : protocol,
+          permissions : [permission] as any,
+        })).toThrow('Supported permissions: read, write, delete');
+      }
     });
   });
 });

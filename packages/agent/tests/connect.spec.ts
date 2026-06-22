@@ -151,7 +151,7 @@ describe('enbox connect', () => {
     },
     {
       interface : 'Records' as any,
-      method    : 'Query' as any,
+      method    : 'Delete' as any,
       protocol  : 'http://profile-protocol.xyz',
     },
     {
@@ -297,6 +297,34 @@ describe('enbox connect', () => {
       const scopesRequested = permissionScopes.length;
       expect(results).toHaveLength(scopesRequested);
       expect(typeof results[0]).toBe('object');
+    });
+
+    it('should reject obsolete read-like record grant scopes', async () => {
+      for (const method of ['Query', 'Subscribe', 'Count']) {
+        await expect(EnboxConnectProtocol.createPermissionGrants(
+          providerIdentity.did.uri,
+          delegateBearerDid,
+          testHarness.agent,
+          [{
+            interface : 'Records' as any,
+            method    : method as any,
+            protocol  : 'http://profile-protocol.xyz',
+          }]
+        )).rejects.toThrow(`Records.${method} grants are not supported by connect`);
+      }
+    });
+
+    it('should reject delegated protocol configure scopes', async () => {
+      await expect(EnboxConnectProtocol.createPermissionGrants(
+        providerIdentity.did.uri,
+        delegateBearerDid,
+        testHarness.agent,
+        [{
+          interface : 'Protocols' as any,
+          method    : 'Configure' as any,
+          protocol  : 'http://profile-protocol.xyz',
+        }]
+      )).rejects.toThrow('Protocols.Configure cannot be delegated through connect');
     });
 
     it('should create the connect response which includes the permissionGrants, nonce, private key material', async () => {

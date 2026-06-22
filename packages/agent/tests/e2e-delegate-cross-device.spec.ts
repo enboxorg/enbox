@@ -172,12 +172,11 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
     };
 
     // 3. Create permission grants on the owner's DWN
-    const readMethods = new Set(['Read', 'Query', 'Subscribe']);
     const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
     const grants = await Promise.all(
       options.scopes.map((scope) => {
         const isReadLike = (scope as any).interface === 'Records'
-          && readMethods.has((scope as any).method);
+          && (scope as any).method === 'Read';
         return permissionsApi.createGrant({
           delegated           : true,
           store               : true,
@@ -297,7 +296,6 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       const { delegateDid } = await simulateCrossDeviceConnect({
         scopes: [
           { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
-          { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: chatProtocol.protocol },
         ],
       });
 
@@ -340,7 +338,7 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       const matchingKeys = ctxKeyQuery.entries!.filter((entry: any) =>
         entry.descriptor?.tags?.contextId === threadContextId
       );
-      // Multiple grants (Read, Query) may each trigger delivery; at least one must exist.
+      // At least one key delivery record must exist for the Records.Read grant.
       expect(matchingKeys.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -351,7 +349,6 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
       const { delegateDid } = await simulateCrossDeviceConnect({
         scopes: [
           { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
-          { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: chatProtocol.protocol },
         ],
       });
 
@@ -914,15 +911,14 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
   // ─── 7. Deduplication ────────────────────────────────────────
 
   describe('deduplication', () => {
-    it('should write one contextKey per delegate even with multiple read-like grants', async () => {
+    it('should write one contextKey per delegate even with duplicate read grants', async () => {
       const ownerDid = ownerIdentity.did.uri;
 
-      // Connect with Read + Query + Subscribe (3 read-like grants)
+      // Connect with duplicate Records.Read scopes.
       const { delegateDid } = await simulateCrossDeviceConnect({
         scopes: [
           { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
-          { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: chatProtocol.protocol },
-          { interface: DwnInterfaceName.Records, method: DwnMethodName.Subscribe, protocol: chatProtocol.protocol },
+          { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
         ],
       });
 
@@ -956,7 +952,7 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
         },
       });
 
-      // Despite 3 read-like grants, only 1 contextKey should be written
+      // Despite duplicate read grants, only 1 contextKey should be written
       const matchingKeys = (ctxKeyQuery.entries ?? []).filter((entry: any) =>
         entry.descriptor?.tags?.contextId === threadContextId
       );
@@ -1190,7 +1186,7 @@ describe('e2e: cross-device delegate multi-party context key delivery', () => {
         delegated           : true,
         store               : true,
         grantedTo           : delegateBearerDid.uri,
-        scope               : { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: chatProtocol.protocol },
+        scope               : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
         dateExpires         : '2040-06-25T16:09:16.693356Z',
         author              : ownerDid,
         delegateKeyDelivery : {

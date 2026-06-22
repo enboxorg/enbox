@@ -180,7 +180,7 @@ describe('Record', () => {
 
       const grantRequest = WalletConnect.createPermissionRequestForProtocol({
         definition  : notesProtocol,
-        permissions : ['write', 'read', 'delete', 'query', 'subscribe']
+        permissions : ['write', 'read', 'delete']
       });
 
       // alice and bob both configure the protocol

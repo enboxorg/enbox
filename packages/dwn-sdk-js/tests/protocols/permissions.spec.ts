@@ -7,7 +7,7 @@ import { createTestValidationStateReader } from '../utils/test-validation-state-
 import { Jws } from '../../src/utils/jws.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
-import { DwnConstant, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, PermissionGrant, PermissionRequest, PermissionsProtocol, ProtocolsConfigure, Time } from '../../src/index.js';
+import { DwnConstant, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, PermissionGrant, PermissionRequest, PermissionsProtocol, ProtocolsConfigure, Time } from '../../src/index.js';
 
 describe('PermissionsProtocol', () => {
   let messageStore: MessageStore;
@@ -87,6 +87,43 @@ describe('PermissionsProtocol', () => {
       expect(protocolsConfigure.message).toBeDefined();
       expect(warnSpy.called).toBe(false);
     });
+
+    it('should reject removed read-like Records grant methods at schema validation', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const grant = await PermissionsProtocol.createGrant({
+        signer      : Jws.createSigner(alice),
+        grantedTo   : bob.did,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Read,
+          protocol  : 'https://example.com/protocol/test',
+        }
+      });
+
+      expect(() => PermissionsProtocol.validateSchema(grant.recordsWrite.message, grant.permissionGrantBytes)).not.toThrow();
+
+      for (const method of [DwnMethodName.Query, DwnMethodName.Subscribe, DwnMethodName.Count] as const) {
+        const invalidGrantBytes = Encoder.objectToBytes({
+          ...grant.permissionGrantData,
+          scope: {
+            ...grant.permissionGrantData.scope,
+            method,
+          },
+        });
+
+        let schemaError: unknown;
+        try {
+          PermissionsProtocol.validateSchema(grant.recordsWrite.message, invalidGrantBytes);
+        } catch (error) {
+          schemaError = error;
+        }
+
+        expect(schemaError).toBeInstanceOf(DwnError);
+        expect((schemaError as DwnError).code).toBe(DwnErrorCode.SchemaValidatorFailure);
+      }
+    });
   });
 
   describe('getScopeFromPermissionRecord', () => {
@@ -100,7 +137,7 @@ describe('PermissionsProtocol', () => {
         delegated : true,
         scope     : {
           interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Query,
+          method    : DwnMethodName.Read,
           protocol  : 'https://example.com/protocol/test'
         }
       });

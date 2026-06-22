@@ -38,7 +38,7 @@ describe('RecordsGrantAuthorization', () => {
   }
 
   function makePermissionGrant(
-    method: RecordsPermissionScope['method'],
+    method: DwnMethodName,
     scope: Pick<RecordsPermissionScope, 'protocol'> & Partial<Pick<RecordsPermissionScope, 'protocolPath' | 'contextId'>>
   ): PermissionGrant {
     return {
@@ -78,7 +78,7 @@ describe('RecordsGrantAuthorization', () => {
       incomingMessage : makeIncomingMessage(method, filter),
       expectedGrantor : grantor,
       expectedGrantee : grantee,
-      permissionGrant : makePermissionGrant(method, grantScope),
+      permissionGrant : makePermissionGrant(DwnMethodName.Read, grantScope),
       validationStateReader,
     })).rejects.toThrow(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
   }
@@ -119,7 +119,7 @@ describe('RecordsGrantAuthorization', () => {
         }),
         expectedGrantor : grantor,
         expectedGrantee : grantee,
-        permissionGrant : makePermissionGrant(DwnMethodName.Query, {
+        permissionGrant : makePermissionGrant(DwnMethodName.Read, {
           protocol,
           protocolPath: 'thread/message',
         }),
@@ -141,15 +141,34 @@ describe('RecordsGrantAuthorization', () => {
       );
     });
 
-    it('allows protocol-scoped query and count filters', async () => {
-      for (const method of [DwnMethodName.Query, DwnMethodName.Count] as const) {
+    it('allows protocol-scoped query, subscribe, and count filters with a Records.Read grant', async () => {
+      for (const method of [DwnMethodName.Query, DwnMethodName.Subscribe, DwnMethodName.Count] as const) {
         await expect(RecordsGrantAuthorization.authorizeQueryOrSubscribe({
           incomingMessage : makeIncomingMessage(method, { protocol }),
           expectedGrantor : grantor,
           expectedGrantee : grantee,
-          permissionGrant : makePermissionGrant(method, { protocol }),
+          permissionGrant : makePermissionGrant(DwnMethodName.Read, { protocol }),
           validationStateReader,
         })).resolves.toBeUndefined();
+      }
+    });
+
+    it('rejects read-like Records grants that do not use method Read', async () => {
+      const cases = [
+        [DwnMethodName.Query, DwnMethodName.Query],
+        [DwnMethodName.Subscribe, DwnMethodName.Subscribe],
+        [DwnMethodName.Count, DwnMethodName.Count],
+        [DwnMethodName.Write, DwnMethodName.Query],
+      ] as const;
+
+      for (const [grantMethod, incomingMethod] of cases) {
+        await expect(RecordsGrantAuthorization.authorizeQueryOrSubscribe({
+          incomingMessage : makeIncomingMessage(incomingMethod, { protocol }),
+          expectedGrantor : grantor,
+          expectedGrantee : grantee,
+          permissionGrant : makePermissionGrant(grantMethod, { protocol }),
+          validationStateReader,
+        })).rejects.toThrow(DwnErrorCode.GrantAuthorizationMethodMismatch);
       }
     });
   });

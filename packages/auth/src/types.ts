@@ -246,7 +246,7 @@ export interface ConnectResult {
   /**
    * Scope-aware decryption keys for encrypted protocols.
    *
-   * Derived only for read-like permission scopes (Read/Query/Subscribe) on
+   * Derived only for `Records.Read` permission scopes on
    * protocols with `encryptionRequired: true` types. Write-only delegates
    * receive no decryption keys.
    */
@@ -473,18 +473,17 @@ export interface RestoreFromPhraseOptions extends Omit<VaultConnectOptions, 'pas
  * A protocol permission request in simplified form.
  *
  * Dapp developers can pass just a protocol definition (default permissions:
- * `['read', 'write', 'query', 'subscribe']`), or an object with explicit
- * permissions.
+ * `['read', 'write', 'delete']`), or an object with explicit permissions.
  */
 export type ProtocolRequest =
   | DwnProtocolDefinition
   | { definition: DwnProtocolDefinition; permissions: Permission[] };
 
 /** Shorthand permission names for DWN protocol scopes. */
-export type Permission = 'write' | 'read' | 'delete' | 'query' | 'subscribe' | 'configure';
+export type Permission = 'write' | 'read' | 'delete';
 
 /** Default permissions granted when only a protocol definition is provided. */
-export const DEFAULT_PERMISSIONS: Permission[] = ['read', 'write', 'delete', 'query', 'subscribe', 'configure'];
+export const DEFAULT_PERMISSIONS: Permission[] = ['read', 'write', 'delete'];
 
 /**
  * Options for a handler-based (delegated) connect flow.
@@ -502,7 +501,7 @@ export interface HandlerConnectOptions {
    *
    * @example
    * ```ts
-   * // Default permissions (read, write, query, subscribe)
+   * // Default permissions (read, write, delete)
    * protocols: [NotesProtocol]
    *
    * // Explicit permissions

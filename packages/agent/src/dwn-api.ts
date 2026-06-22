@@ -973,15 +973,12 @@ export class AgentDwnApi {
       );
     }
 
-    // When a ProtocolsConfigure is processed WITHOUT the encryption flag
-    // (e.g. a delegate installing the owner's protocol definition that
-    // already contains `$encryption` keys from the remote DWN), cache the
-    // definition so that subsequent RecordsWrite encryption can find it
-    // without re-querying the local DWN (which would fail for delegates
-    // because the query author doesn't match the unpublished protocol's
-    // tenant).
-    if (isDwnRequest(request, DwnInterface.ProtocolsConfigure) && !request.encryption && !rawMessage) {
-      const def = request.messageParams?.definition;
+    // Cache locally-imported protocol definitions so delegated encrypted
+    // writes can resolve `$encryption` keys without re-querying unpublished
+    // owner-tenant protocols.
+    if (isDwnRequest(request, DwnInterface.ProtocolsConfigure) && !request.encryption) {
+      const protocolConfigureMessage = rawMessage as DwnMessage[DwnInterface.ProtocolsConfigure] | undefined;
+      const def = protocolConfigureMessage?.descriptor.definition ?? request.messageParams?.definition;
       if (def?.protocol) {
         this._protocolDefinitionCache.set(`${request.target}~${def.protocol}`, def);
       }
@@ -1616,8 +1613,8 @@ export class AgentDwnApi {
    * Imports scope-aware decryption keys for delegate sessions.
    *
    * Called during the connect flow when the wallet delivers decryption keys
-   * for encrypted protocols. Keys are derived only for read-like scopes
-   * (Read/Query/Subscribe) — write-only delegates receive no keys.
+   * for encrypted protocols. Keys are derived only for `Records.Read`
+   * scopes — write-only delegates receive no keys.
    *
    * The keys are cached and used by `resolveKeyDecrypter()` to decrypt
    * records when the delegate does not possess the owner's root X25519
@@ -1856,12 +1853,11 @@ export class AgentDwnApi {
         checkRevoked : true,
       });
 
-      const readMethods = new Set(['Read', 'Query', 'Subscribe']);
       const nowMs = Date.now();
 
       // Deduplicate: one contextKey per delegate, not per grant.
-      // Multiple grants (Read, Query, Subscribe) for the same delegate
-      // should produce exactly one contextKey record.
+      // Multiple Records.Read grants for the same delegate should produce
+      // exactly one contextKey record.
       // IMPORTANT: dedup happens AFTER tag validation so that an older
       // untagged grant doesn't shadow a valid tagged grant for the same delegate.
       const deliveredDelegates = new Set<string>();
@@ -1877,7 +1873,7 @@ export class AgentDwnApi {
         if (new Date(grant.grant.dateExpires).getTime() <= nowMs) { continue; }
 
         const scope = grant.grant.scope as any;
-        if (scope.interface !== 'Records' || !readMethods.has(scope.method)) { continue; }
+        if (scope.interface !== 'Records' || scope.method !== 'Read') { continue; }
 
         // Narrow scopes (protocolPath, contextId) are not supported for
         // multi-party delegate delivery — skip them silently.

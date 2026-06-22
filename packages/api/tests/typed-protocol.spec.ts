@@ -4,10 +4,11 @@ import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
+import { DwnInterface, EnboxUserAgent, PlatformAgentTestHarness } from '@enbox/agent';
 
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
+import { Protocol } from '../src/protocol.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 import { TypedLiveQuery } from '../src/typed-live-query.js';
@@ -139,6 +140,109 @@ describe('TypedProtocol API', () => {
       const records1 = typed.records;
       const records2 = typed.records;
       expect(records1).toBe(records2);
+    });
+
+    it('should import the wallet-owned protocol configuration when configuring as a delegate', async () => {
+      const protocolsConfigureMessage = {
+        descriptor: {
+          interface  : 'Protocols',
+          method     : 'Configure',
+          definition : TodoProtocolDefinition,
+        },
+      };
+      const remoteProtocol = {
+        definition : TodoProtocolDefinition,
+        toJSON     : (): typeof protocolsConfigureMessage => protocolsConfigureMessage,
+      };
+      const query = sinon.stub();
+      query.onFirstCall().resolves({ status: { code: 200, detail: 'OK' }, protocols: [] });
+      query.onSecondCall().resolves({ status: { code: 200, detail: 'OK' }, protocols: [remoteProtocol] });
+      const importProtocolConfiguration = sinon.stub().resolves({
+        status   : { code: 202, detail: 'Accepted' },
+        protocol : remoteProtocol,
+      });
+
+      const delegateDwn = {
+        connectedDid : aliceDid.uri,
+        isDelegate   : true,
+        protocols    : { query },
+        importProtocolConfiguration,
+      } as unknown as DwnApi;
+
+      const typed = new TypedEnbox(delegateDwn, TodoProtocol);
+      const result = await typed.configure();
+
+      expect(result.status.code).toBe(202);
+      expect(importProtocolConfiguration.calledOnceWith(protocolsConfigureMessage)).toBe(true);
+      expect(query.secondCall.args[0]).toEqual({
+        from   : aliceDid.uri,
+        filter : { protocol: TodoProtocolDefinition.protocol },
+      });
+    });
+
+    it('should import a signed wallet protocol configuration through Protocol.toJSON()', async () => {
+      const definition = {
+        ...TodoProtocolDefinition,
+        protocol: `https://example.com/protocols/delegate-import/${crypto.randomUUID()}`,
+      };
+      const { message, messageCid } = await testHarness.agent.processDwnRequest({
+        author        : aliceDid.uri,
+        messageParams : { definition },
+        messageType   : DwnInterface.ProtocolsConfigure,
+        store         : false,
+        target        : aliceDid.uri,
+      });
+      const remoteProtocol = new Protocol(testHarness.agent, message!, {
+        author: aliceDid.uri,
+        messageCid,
+      });
+      const delegateDid = await testHarness.agent.did.create({ store: true, method: 'jwk' });
+      const delegateDwn = new DwnApi({
+        agent        : testHarness.agent,
+        connectedDid : aliceDid.uri,
+        delegateDid  : delegateDid.uri,
+      });
+
+      const result = await delegateDwn.importProtocolConfiguration(remoteProtocol.toJSON());
+      const duplicateResult = await delegateDwn.importProtocolConfiguration(remoteProtocol.toJSON());
+      const { protocols } = await dwnAlice.protocols.query({
+        filter: { protocol: definition.protocol },
+      });
+
+      expect(result.status.code).toBe(202);
+      expect(duplicateResult.status.code).toBe(409);
+      expect(duplicateResult.protocol?.definition.protocol).toBe(definition.protocol);
+      expect(protocols).toHaveLength(1);
+      expect(protocols[0].definition.protocol).toBe(definition.protocol);
+    });
+
+    it('should reject delegate-signed protocol configurations imported into the owner tenant', async () => {
+      const definition = {
+        ...TodoProtocolDefinition,
+        protocol: `https://example.com/protocols/delegate-import/${crypto.randomUUID()}`,
+      };
+      const delegateDid = await testHarness.agent.did.create({ store: true, method: 'jwk' });
+      const { message } = await testHarness.agent.processDwnRequest({
+        author        : delegateDid.uri,
+        messageParams : { definition },
+        messageType   : DwnInterface.ProtocolsConfigure,
+        store         : false,
+        target        : delegateDid.uri,
+      });
+      const delegateDwn = new DwnApi({
+        agent        : testHarness.agent,
+        connectedDid : aliceDid.uri,
+        delegateDid  : delegateDid.uri,
+      });
+
+      const result = await delegateDwn.importProtocolConfiguration(message!);
+      const { protocols } = await dwnAlice.protocols.query({
+        filter: { protocol: definition.protocol },
+      });
+
+      expect(result.status.code).toBeGreaterThanOrEqual(400);
+      expect(result.protocol).toBeUndefined();
+      expect(protocols).toHaveLength(0);
     });
   });
 

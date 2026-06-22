@@ -441,7 +441,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       const pathScopes = [
         {
           interface    : DwnInterfaceName.Records,
-          method       : DwnMethodName.Query,
+          method       : DwnMethodName.Read,
           protocol     : encryptedNoteProtocol.protocol,
           protocolPath : 'note',
         },
@@ -762,7 +762,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       const mixedScopes = [
         { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, protocol: multiTypeProtocol.protocol },
         { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: multiTypeProtocol.protocol },
-        { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: multiTypeProtocol.protocol, protocolPath: 'note' },
+        { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: multiTypeProtocol.protocol, protocolPath: 'note' },
       ];
 
       const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(

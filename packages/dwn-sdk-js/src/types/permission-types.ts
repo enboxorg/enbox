@@ -104,10 +104,13 @@ export type MessagesPermissionScope = {
 
 /**
  * The data model for a permission scope that is specific to the Records interface.
+ *
+ * `Read` is the only valid read-like Records permission scope and authorizes
+ * `RecordsRead`, `RecordsQuery`, `RecordsSubscribe`, and `RecordsCount` operations.
  */
 export type RecordsPermissionScope = {
   interface: DwnInterfaceName.Records;
-  method: DwnMethodName.Count | DwnMethodName.Read | DwnMethodName.Write | DwnMethodName.Query | DwnMethodName.Subscribe | DwnMethodName.Delete;
+  method: DwnMethodName.Read | DwnMethodName.Write | DwnMethodName.Delete;
   protocol: string;
   /** May only be present when `protocol` is defined and `protocolPath` is undefined */
   contextId?: string;

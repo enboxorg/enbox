@@ -482,7 +482,7 @@ export function testRecordsSubscribeHandler(): void {
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
             interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Subscribe,
+            method       : DwnMethodName.Read,
             protocol     : 'http://test-protocol.xyz',
             protocolPath : 'testRecord',
           }
@@ -520,7 +520,7 @@ export function testRecordsSubscribeHandler(): void {
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
             interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Subscribe,
+            method       : DwnMethodName.Read,
             protocol     : 'http://test-protocol.xyz',
             protocolPath : 'testRecord',
           }
