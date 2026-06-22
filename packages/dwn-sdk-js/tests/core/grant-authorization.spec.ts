@@ -40,7 +40,7 @@ describe('GrantAuthorization', () => {
       ).rejects.toThrow(DwnErrorCode.GrantAuthorizationMethodMismatch);
     });
 
-    it('should not treat Records Read grants as unified query grants', async () => {
+    it('allows Records Read grants to authorize read-like record methods', async () => {
       const mockGrant = {
         id          : 'grant-records-read',
         grantor     : 'did:example:grantor',
@@ -50,23 +50,56 @@ describe('GrantAuthorization', () => {
         scope       : { interface: 'Records', method: 'Read', protocol: 'https://proto.example' },
       };
 
-      const mockMessage = {
-        descriptor: {
-          interface        : 'Records',
-          method           : 'Query',
-          messageTimestamp : '2025-01-01T00:00:00.000Z',
-        },
-      };
+      for (const method of ['Read', 'Query', 'Subscribe', 'Count']) {
+        const mockMessage = {
+          descriptor: {
+            interface        : 'Records',
+            method,
+            messageTimestamp : '2025-01-01T00:00:00.000Z',
+          },
+        };
 
-      await expect(
-        GrantAuthorization.performBaseValidation({
-          incomingMessage       : mockMessage as any,
-          expectedGrantor       : 'did:example:grantor',
-          expectedGrantee       : 'did:example:grantee',
-          permissionGrant       : mockGrant as any,
-          validationStateReader : validationStateReader as any,
-        })
-      ).rejects.toThrow(DwnErrorCode.GrantAuthorizationMethodMismatch);
+        await expect(
+          GrantAuthorization.performBaseValidation({
+            incomingMessage       : mockMessage as any,
+            expectedGrantor       : 'did:example:grantor',
+            expectedGrantee       : 'did:example:grantee',
+            permissionGrant       : mockGrant as any,
+            validationStateReader : validationStateReader as any,
+          })
+        ).resolves.toBeUndefined();
+      }
+    });
+
+    it('rejects read-like Records grants that do not use method Read', async () => {
+      for (const method of ['Query', 'Subscribe', 'Count']) {
+        const mockGrant = {
+          id          : `grant-records-${method.toLowerCase()}`,
+          grantor     : 'did:example:grantor',
+          grantee     : 'did:example:grantee',
+          dateGranted : '2020-01-01T00:00:00.000Z',
+          dateExpires : '2040-01-01T00:00:00.000Z',
+          scope       : { interface: 'Records', method, protocol: 'https://proto.example' },
+        };
+
+        const mockMessage = {
+          descriptor: {
+            interface        : 'Records',
+            method,
+            messageTimestamp : '2025-01-01T00:00:00.000Z',
+          },
+        };
+
+        await expect(
+          GrantAuthorization.performBaseValidation({
+            incomingMessage       : mockMessage as any,
+            expectedGrantor       : 'did:example:grantor',
+            expectedGrantee       : 'did:example:grantee',
+            permissionGrant       : mockGrant as any,
+            validationStateReader : validationStateReader as any,
+          })
+        ).rejects.toThrow(DwnErrorCode.GrantAuthorizationMethodMismatch);
+      }
     });
   });
 });

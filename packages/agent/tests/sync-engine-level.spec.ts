@@ -2633,7 +2633,7 @@ describe('SyncEngineLevel', () => {
           grantedTo   : aliceDeviceX.did.uri,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
           delegated   : true,
-          scope       : { protocol: protocolFoo.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Query }
+          scope       : { protocol: protocolFoo.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Read }
         });
 
         const { encodedData: readGrantData, ... messagesReadGrantMessage } = messagesReadGrant.message;

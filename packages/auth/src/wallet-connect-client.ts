@@ -213,9 +213,9 @@ async function initClient({
  * Creates a set of Dwn Permission Scopes to request for a given protocol.
  *
  * If no permissions are provided, the default permissions from
- * {@link DEFAULT_PERMISSIONS} are used (read, write, query, subscribe, configure).
- * The 'configure' permission is included because dapps using the TypedEnbox API
- * need it to auto-install the protocol on their local DWN via _autoConfigureOnce().
+ * {@link DEFAULT_PERMISSIONS} are used (read, write, delete). Protocol configuration
+ * is wallet-owned; app delegates request record access, not permission to configure
+ * protocols themselves.
  */
 function createPermissionRequestForProtocol({ definition, permissions }: ProtocolPermissionOptions): ConnectPermissionRequest {
   const requests: DwnPermissionScope[] = [];
@@ -259,27 +259,10 @@ function createPermissionRequestForProtocol({ definition, permissions }: Protoco
           method    : DwnMethodName.Delete,
         });
         break;
-      case 'query':
-        requests.push({
-          protocol  : definition.protocol,
-          interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Query,
-        });
-        break;
-      case 'subscribe':
-        requests.push({
-          protocol  : definition.protocol,
-          interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Subscribe,
-        });
-        break;
-      case 'configure':
-        requests.push({
-          protocol  : definition.protocol,
-          interface : DwnInterfaceName.Protocols,
-          method    : DwnMethodName.Configure,
-        });
-        break;
+      default:
+        throw new Error(
+          `Unsupported connect permission '${String(permission)}'. Supported permissions: read, write, delete.`
+        );
     }
   }
 

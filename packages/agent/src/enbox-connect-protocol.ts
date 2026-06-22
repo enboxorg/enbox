@@ -50,7 +50,7 @@ export type ConnectPermissionRequest = {
  *
  * Common conditions (both kinds):
  * 1. The protocol has `encryptionRequired: true` types (single-party only)
- * 2. The delegate has at least one read-like scope (Read/Query/Subscribe)
+ * 2. The delegate has at least one `Records.Read` scope
  * 3. The protocol does NOT use multi-party / role-based access patterns
  *
  * Out of scope (fail closed):
@@ -86,7 +86,7 @@ export type DelegateDecryptionKey =
  *
  * Delivered only when:
  * 1. The protocol has multi-party access patterns (detected by `isMultiPartyContext`)
- * 2. The delegate has a protocol-wide read-like scope (no protocolPath/contextId)
+ * 2. The delegate has a protocol-wide `Records.Read` scope (no protocolPath/contextId)
  * 3. The protocol has `encryptionRequired: true` types
  */
 export type DelegateContextKey = {
@@ -249,7 +249,7 @@ export type EnboxConnectResponse = {
   /**
    * Scope-aware decryption keys for encrypted protocols.
    *
-   * Derived only for read-like permission scopes (Read/Query/Subscribe) on
+   * Derived only for `Records.Read` permission scopes on
    * protocols with `encryptionRequired: true` types. Write-only delegates
    * receive no decryption keys.
    */
@@ -259,7 +259,7 @@ export type EnboxConnectResponse = {
    * Context-scoped decryption keys for multi-party encrypted protocols.
    *
    * Derived at connect time for each existing rootContextId in multi-party
-   * protocols where the delegate has a protocol-wide read-like scope.
+   * protocols where the delegate has a protocol-wide `Records.Read` scope.
    * Each key is scoped to `[ProtocolContext, rootContextId]` and can decrypt
    * all records within that context domain.
    *
@@ -808,13 +808,34 @@ async function createConnectResponse(
 // Permission grants
 // ---------------------------------------------------------------------------
 
-function shouldUseDelegatePermission(scope: DwnPermissionScope): boolean {
+function assertConnectGrantScope(scope: DwnPermissionScope): void {
   if (isRecordPermissionScope(scope)) {
-    return true;
-  } else if (scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Configure) {
-    return true;
+    const method = scope.method as DwnMethodName;
+    if (
+      method === DwnMethodName.Query ||
+      method === DwnMethodName.Subscribe ||
+      method === DwnMethodName.Count
+    ) {
+      throw new Error(
+        `Records.${method} grants are not supported by connect; request Records.Read instead.`
+      );
+    }
+    return;
   }
-  return false;
+
+  if (scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Configure) {
+    throw new Error(
+      'Protocols.Configure cannot be delegated through connect; the wallet configures protocols during approval.'
+    );
+  }
+}
+
+function shouldUseDelegatePermission(scope: DwnPermissionScope): boolean {
+  return isRecordPermissionScope(scope);
+}
+
+function isConnectReadScope(scope: DwnPermissionScope): scope is DwnRecordsPermissionScope {
+  return isRecordPermissionScope(scope) && scope.method === DwnMethodName.Read;
 }
 
 /**
@@ -830,18 +851,17 @@ async function createPermissionGrants(
   const permissionsApi = new AgentPermissionsApi({ agent });
 
   logger.log(`Creating permission grants for ${scopes.length} scopes...`);
+  for (const scope of scopes) {
+    assertConnectGrantScope(scope);
+  }
+
   const permissionGrants = await Promise.all(
     scopes.map((scope) => {
       const delegated = shouldUseDelegatePermission(scope);
 
-      // Attach delegate key-delivery tags to read-like grants so the
+      // Attach delegate key-delivery tags to Records.Read grants so the
       // owner can encrypt future contextKey records to the delegate.
-      const readMethods = new Set([
-        DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
-      ]);
-      const isReadLike = isRecordPermissionScope(scope)
-        && readMethods.has(scope.method as DwnMethodName);
-      const delegateKeyDelivery = (isReadLike && delegateKeyDeliveryData) ? delegateKeyDeliveryData : undefined;
+      const delegateKeyDelivery = (isConnectReadScope(scope) && delegateKeyDeliveryData) ? delegateKeyDeliveryData : undefined;
 
       return permissionsApi.createGrant({
         delegated,
@@ -1021,7 +1041,7 @@ async function prepareProtocol(
  * scopes for a single-party encrypted protocol.
  *
  * Rules:
- *   - Only Records.Read / Records.Query / Records.Subscribe scopes contribute.
+ *   - Only Records.Read scopes contribute.
  *   - Write / Delete / Count scopes produce no decryption keys.
  *   - If any unrestricted (no `protocolPath`) read scope exists, one
  *     protocol-wide key is emitted and narrower keys are dropped.
@@ -1043,17 +1063,10 @@ async function deriveScopedDecryptionKeys(
   scopes: DwnPermissionScope[],
   protocolDefinition: DwnProtocolDefinition,
 ): Promise<DelegateDecryptionKey[]> {
-  const readMethods = new Set([
-    DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
-  ]);
-
   // Collect read-like scopes only. `isRecordPermissionScope` narrows to
   // `DwnRecordsPermissionScope`, which declares `protocolPath?: string`
   // and `contextId?: string` — no `as any` needed for those reads below.
-  const readScopes = scopes.filter(
-    (s): s is DwnRecordsPermissionScope =>
-      isRecordPermissionScope(s) && readMethods.has(s.method),
-  );
+  const readScopes = scopes.filter(isConnectReadScope);
 
   if (readScopes.length === 0) {
     return []; // write/delete only → no decryption keys
@@ -1181,7 +1194,7 @@ function classifyProtocolRoots(
  * (thread roots, etc.) and derives a `[ProtocolContext, rootContextId]` key
  * for each.
  *
- * Validates scopes first — only protocol-wide read-like scopes are accepted.
+ * Validates scopes first — only protocol-wide `Records.Read` scopes are accepted.
  * `protocolPath`-scoped and `contextId`-scoped reads throw (not yet supported).
  * Write-only scopes return empty (no decryption keys needed).
  *
@@ -1197,17 +1210,10 @@ async function deriveContextKeysForDelegate(
   protocolDefinition: DwnProtocolDefinition,
   scopes: DwnPermissionScope[],
 ): Promise<DelegateContextKey[]> {
-  const readMethods = new Set([
-    DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
-  ]);
-
   // `isRecordPermissionScope` narrows to `DwnRecordsPermissionScope`,
   // which declares `protocolPath?: string` and `contextId?: string` —
   // no `as any` needed for the field reads below.
-  const readScopes = scopes.filter(
-    (s): s is DwnRecordsPermissionScope =>
-      isRecordPermissionScope(s) && readMethods.has(s.method),
-  );
+  const readScopes = scopes.filter(isConnectReadScope);
 
   if (readScopes.length === 0) {
     return []; // write-only → no context keys
@@ -1430,14 +1436,9 @@ async function submitConnectResponse(
                 delegateContextKeys.push(...ctxKeys);
 
                 // Only register the protocol for post-connect delivery if the
-                // delegate has at least one read-like scope. Write-only delegates
+                // delegate has at least one Records.Read scope. Write-only delegates
                 // must NOT receive context keys — they have no decryption need.
-                const readMethods = new Set([
-                  DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe,
-                ]);
-                const hasReadLikeScope = permissionScopes.some(
-                  (s): boolean => isRecordPermissionScope(s) && readMethods.has(s.method as DwnMethodName),
-                );
+                const hasReadLikeScope = permissionScopes.some(isConnectReadScope);
                 if (hasReadLikeScope) {
                   delegateMultiPartyProtocols.push(protocolDefinition.protocol);
                 }

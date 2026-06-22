@@ -7,7 +7,7 @@ import { isRecordsType } from './dwn-api.js';
 import { mapConcurrent } from './utils.js';
 import { Convert, TtlCache } from '@enbox/common';
 import { DwnInterface, DwnPermissionGrant, DwnPermissionRequest } from './types/dwn.js';
-import { PermissionScopeMatcher, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, PermissionScopeMatcher, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 const REVOCATION_CHECK_CONCURRENCY = 8;
 
@@ -408,9 +408,9 @@ export class AgentPermissionsApi implements PermissionsApi {
     grants: PermissionGrantEntry[],
     delegated: boolean = false
   ): Promise<PermissionGrantEntry | undefined> {
-    // Two-pass matching: prefer exact scope matches over unified Messages.Read fallback.
-    // Messages.Read is the only valid Messages scope, but the exact-match path
-    // preserves normal behavior for non-Messages grants and MessagesRead itself.
+    // Two-pass matching: prefer exact scope matches over unified read-scope fallbacks.
+    // Messages.Read and Records.Read are canonical scopes for read-like methods, but
+    // the exact-match path preserves normal behavior for non-read-like grants.
     let unifiedFallback: PermissionGrantEntry | undefined;
 
     for (const entry of grants) {
@@ -456,14 +456,29 @@ export class AgentPermissionsApi implements PermissionsApi {
     // Messages.Read is the only valid Messages scope and covers Query, Read, and Subscribe operations.
     // Defensively require method === Read so malformed grants with method Query/Subscribe
     // are rejected rather than treated as valid scopes.
-    const isMessagesScopeMatch = scope.interface === 'Messages'
-      ? scope.method === 'Read'
+    const isMessagesScopeMatch = scope.interface === DwnInterfaceName.Messages
+      ? scope.method === DwnMethodName.Read
         && (messageType === DwnInterface.MessagesQuery
           || messageType === DwnInterface.MessagesRead
           || messageType === DwnInterface.MessagesSubscribe)
-      : scopeMessageType === messageType;
+      : false;
 
-    if (isMessagesScopeMatch) {
+    // Records.Read is the canonical read-like Records scope and covers Query,
+    // Read, and Subscribe operations at the agent permission lookup layer.
+    const isRecordsReadLikeMessage = messageType === DwnInterface.RecordsQuery
+      || messageType === DwnInterface.RecordsRead
+      || messageType === DwnInterface.RecordsSubscribe;
+    const isRecordsScopeMatch = scope.interface === DwnInterfaceName.Records
+      ? isRecordsReadLikeMessage
+        ? scope.method === DwnMethodName.Read
+        : scopeMessageType === messageType
+      : false;
+
+    const isOtherScopeMatch = scope.interface !== DwnInterfaceName.Messages
+      && scope.interface !== DwnInterfaceName.Records
+      && scopeMessageType === messageType;
+
+    if (isMessagesScopeMatch || isRecordsScopeMatch || isOtherScopeMatch) {
       if (isRecordsType(messageType)) {
         const recordScope = scope as DwnRecordsPermissionScope;
         return PermissionScopeMatcher.matches(recordScope, { protocol, protocolPath, contextId });

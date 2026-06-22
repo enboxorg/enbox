@@ -100,7 +100,7 @@ describe('PermissionsProtocol', () => {
         delegated : true,
         scope     : {
           interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Query,
+          method    : DwnMethodName.Read,
           protocol  : 'https://example.com/protocol/test'
         }
       });

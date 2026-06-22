@@ -639,7 +639,7 @@ export function testRecordsQueryHandler(): void {
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
             interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Query,
+            method       : DwnMethodName.Read,
             protocol     : defaultTestProtocolDefinition.protocol,
             protocolPath : 'testRecord',
           }
@@ -676,7 +676,7 @@ export function testRecordsQueryHandler(): void {
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
             interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Query,
+            method       : DwnMethodName.Read,
             protocol     : defaultTestProtocolDefinition.protocol,
             protocolPath : 'testRecord',
           }

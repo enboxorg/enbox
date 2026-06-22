@@ -427,14 +427,14 @@ export function testAuthorDelegatedGrant(): void {
       const chatRecordReply = await dwn.processMessage(bob.did, chatRecord.message, { dataStream: chatRecord.dataStream });
       expect(chatRecordReply.status.code).toBe(202);
 
-      // Alice creates a delegated query grant for device X to act as Alice.
+      // Alice creates a delegated read grant for device X to perform read-like operations as Alice.
       const queryGrantForDeviceX = await PermissionsProtocol.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Query,
+          method    : DwnMethodName.Read,
           protocol
         },
         signer: Jws.createSigner(alice)
@@ -581,14 +581,14 @@ export function testAuthorDelegatedGrant(): void {
       const participantRoleReply = await dwn.processMessage(bob.did, participantRoleRecord.message, { dataStream: participantRoleRecord.dataStream });
       expect(participantRoleReply.status.code).toBe(202);
 
-      // Alice creates a delegated subscribe grant for device X to act as Alice.
+      // Alice creates a delegated read grant for device X to subscribe as Alice.
       const subscribeGrantForDeviceX = await PermissionsProtocol.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Subscribe,
+          method    : DwnMethodName.Read,
           protocol
         },
         signer: Jws.createSigner(alice)
@@ -918,7 +918,7 @@ export function testAuthorDelegatedGrant(): void {
     it('should not allow entity using a non-delegated grant as an author-delegated grant to invoke query', async () => {
       // scenario:
       // 1. Bob has the message protocol installed
-      // 2. Alice creates a non-delegated query grant for device X
+      // 2. Alice creates a non-delegated read grant for device X
       // 3. Verify that device X cannot query Bob's DWN as Alice using the non-delegated grant
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
@@ -941,7 +941,7 @@ export function testAuthorDelegatedGrant(): void {
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Query,
+          method    : DwnMethodName.Read,
           protocol
         },
         signer: Jws.createSigner(alice)
@@ -1137,14 +1137,14 @@ export function testAuthorDelegatedGrant(): void {
 
       // 2. Alice creates a delegated grant for device X to act as her for a protocol that is NOT chat protocol
 
-      // Alice creates a delegated query grant for device X to act as Alice but not for chat protocol
+      // Alice creates a delegated read grant for device X to query as Alice but not for chat protocol
       const queryGrantForDeviceX = await PermissionsProtocol.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Query,
+          method    : DwnMethodName.Read,
           protocol  : 'some-other-protocol'
         },
         signer: Jws.createSigner(alice)
@@ -1163,14 +1163,14 @@ export function testAuthorDelegatedGrant(): void {
         signer: Jws.createSigner(alice)
       });
 
-      // Alice creates a delegated subscribe grant for device X to act as Alice but not for chat protocol
+      // Alice creates a delegated read grant for device X to subscribe as Alice but not for chat protocol
       const subscribeGrantForDeviceX = await PermissionsProtocol.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Subscribe,
+          method    : DwnMethodName.Read,
           protocol  : 'some-other-protocol'
         },
         signer: Jws.createSigner(alice)

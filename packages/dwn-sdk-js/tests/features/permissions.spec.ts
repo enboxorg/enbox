@@ -684,7 +684,7 @@ export function testPermissions(): void {
         expect(withProtocolPathReply.status.code).toBe(202);
       });
 
-      it('RecordsQuery', async () => {
+      it('RecordsRead authorizes read-like access', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
@@ -697,7 +697,7 @@ export function testPermissions(): void {
           delegated   : true,
           scope       : {
             interface : DwnInterfaceName.Records,
-            method    : DwnMethodName.Query,
+            method    : DwnMethodName.Read,
             protocol  : 'https://example.com/protocol/test',
             contextId : 'test-context'
           }
@@ -715,7 +715,7 @@ export function testPermissions(): void {
           delegated   : true,
           scope       : {
             interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Query,
+            method       : DwnMethodName.Read,
             protocol     : 'https://example.com/protocol/test',
             protocolPath : 'foo/bar'
           }
@@ -772,7 +772,7 @@ export function testPermissions(): void {
         expect(withProtocolPathReply.status.code).toBe(202);
       });
 
-      it('RecordsSubscribe', async () => {
+      it('RecordsRead supports subscribe-style scopes', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
@@ -785,7 +785,7 @@ export function testPermissions(): void {
           delegated   : true,
           scope       : {
             interface : DwnInterfaceName.Records,
-            method    : DwnMethodName.Subscribe,
+            method    : DwnMethodName.Read,
             protocol  : 'https://example.com/protocol/test',
             contextId : 'test-context'
           }
@@ -805,7 +805,7 @@ export function testPermissions(): void {
           delegated   : true,
           scope       : {
             interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Subscribe,
+            method       : DwnMethodName.Read,
             protocol     : 'https://example.com/protocol/test',
             protocolPath : 'foo/bar'
           }

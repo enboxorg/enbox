@@ -1616,8 +1616,8 @@ export class AgentDwnApi {
    * Imports scope-aware decryption keys for delegate sessions.
    *
    * Called during the connect flow when the wallet delivers decryption keys
-   * for encrypted protocols. Keys are derived only for read-like scopes
-   * (Read/Query/Subscribe) — write-only delegates receive no keys.
+   * for encrypted protocols. Keys are derived only for `Records.Read`
+   * scopes — write-only delegates receive no keys.
    *
    * The keys are cached and used by `resolveKeyDecrypter()` to decrypt
    * records when the delegate does not possess the owner's root X25519

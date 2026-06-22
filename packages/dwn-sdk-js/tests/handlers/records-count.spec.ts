@@ -210,7 +210,7 @@ export function testRecordsCountHandler(): void {
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
             interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Count,
+            method       : DwnMethodName.Read,
             protocol     : 'http://test-protocol.xyz',
             protocolPath : 'testRecord',
           }
@@ -247,7 +247,7 @@ export function testRecordsCountHandler(): void {
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
             interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Count,
+            method       : DwnMethodName.Read,
             protocol     : 'http://test-protocol.xyz',
             protocolPath : 'testRecord',
           }

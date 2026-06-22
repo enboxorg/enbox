@@ -62,6 +62,29 @@ describe('AgentPermissionsApi', () => {
   });
 
   describe('getPermission', () => {
+    const storeGrantAsBob = async (scope: DwnPermissionScope): Promise<PermissionGrantEntry> => {
+      const grant = await testHarness.agent.permissions.createGrant({
+        store       : true,
+        author      : aliceDid.uri,
+        grantedTo   : bobDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope
+      });
+
+      const { encodedData, ...grantMessage } = grant.message;
+      const grantReply = await testHarness.agent.processDwnRequest({
+        target      : bobDid.uri,
+        author      : bobDid.uri,
+        signAsOwner : true,
+        messageType : DwnInterface.RecordsWrite,
+        rawMessage  : grantMessage,
+        dataStream  : new Blob([ Convert.base64Url(encodedData).toUint8Array() ])
+      });
+      expect(grantReply.reply.status.code).toBe(202);
+
+      return grant;
+    };
+
     it('throws an error if no permissions are found', async () => {
       try {
         await testHarness.agent.permissions.getPermissionForRequest({
@@ -105,6 +128,39 @@ describe('AgentPermissionsApi', () => {
         messageType  : DwnInterface.MessagesQuery,
       });
       expect(fetchedMessagesQueryGrant.message.recordId).toBe(messagesQueryGrant.message.recordId);
+    });
+
+    it('uses Records.Read grants for read-like record requests', async () => {
+      const protocol = 'http://example.com/protocol';
+      const readGrant = await storeGrantAsBob({
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Read,
+        protocol
+      });
+
+      for (const messageType of [
+        DwnInterface.RecordsRead,
+        DwnInterface.RecordsQuery,
+        DwnInterface.RecordsSubscribe,
+      ]) {
+        const fetchedGrant = await testHarness.agent.permissions.getPermissionForRequest({
+          connectedDid : aliceDid.uri,
+          delegateDid  : bobDid.uri,
+          messageType,
+          protocol
+        });
+        expect(fetchedGrant.message.recordId).toBe(readGrant.message.recordId);
+      }
+    });
+
+    it('rejects malformed Records.Query permission grants at storage', async () => {
+      const protocol = 'http://example.com/protocol';
+
+      await expect(storeGrantAsBob({
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Query as any,
+        protocol
+      })).rejects.toThrow('PermissionsApi: Failed to create grant');
     });
 
     it('caches and returns the permission grant', async () => {
@@ -1165,42 +1221,10 @@ describe('AgentPermissionsApi', () => {
         }
       });
 
-      const recordsQueryGrant = await grantorAgent.permissions.createGrant({
-        author      : grantor,
-        grantedTo   : grantee,
-        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
-        store       : true,
-        delegated   : true,
-        scope       : {
-          interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Query,
-          protocol,
-          protocolPath,
-          contextId
-        }
-      });
-
-      const recordsSubscribeGrant = await grantorAgent.permissions.createGrant({
-        author      : grantor,
-        grantedTo   : grantee,
-        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
-        store       : true,
-        delegated   : true,
-        scope       : {
-          interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Subscribe,
-          protocol,
-          protocolPath,
-          contextId
-        }
-      });
-
       return {
-        write     : recordsWriteGrant,
-        read      : recordsReadGrant,
-        delete    : recordsDeleteGrant,
-        query     : recordsQueryGrant,
-        subscribe : recordsSubscribeGrant
+        write  : recordsWriteGrant,
+        read   : recordsReadGrant,
+        delete : recordsDeleteGrant
       };
     };
 
@@ -1282,9 +1306,7 @@ describe('AgentPermissionsApi', () => {
       const deviceXRecordGrantsFromAliceArray = [
         deviceXRecordGrantsFromAlice.write,
         deviceXRecordGrantsFromAlice.read,
-        deviceXRecordGrantsFromAlice.delete,
-        deviceXRecordGrantsFromAlice.query,
-        deviceXRecordGrantsFromAlice.subscribe
+        deviceXRecordGrantsFromAlice.delete
       ];
 
       // attempt to match a grant with a different grantee, aliceDeviceY
@@ -1306,9 +1328,7 @@ describe('AgentPermissionsApi', () => {
       const deviceYRecordGrantsFromDeviceXArray = [
         deviceYRecordGrantsFromDeviceX.write,
         deviceYRecordGrantsFromDeviceX.read,
-        deviceYRecordGrantsFromDeviceX.delete,
-        deviceYRecordGrantsFromDeviceX.query,
-        deviceYRecordGrantsFromDeviceX.subscribe
+        deviceYRecordGrantsFromDeviceX.delete
       ];
 
       const notFoundGrantor = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceY.did.uri, {
@@ -1366,9 +1386,7 @@ describe('AgentPermissionsApi', () => {
       const deviceXRecordGrants = [
         recordsGrants.write,
         recordsGrants.read,
-        recordsGrants.delete,
-        recordsGrants.query,
-        recordsGrants.subscribe
+        recordsGrants.delete
       ];
 
       // match a delegated grant
@@ -1727,13 +1745,9 @@ describe('AgentPermissionsApi', () => {
         protocol1Grants.write,
         protocol1Grants.read,
         protocol1Grants.delete,
-        protocol1Grants.query,
-        protocol1Grants.subscribe,
         otherProtocolGrants.write,
         otherProtocolGrants.read,
-        otherProtocolGrants.delete,
-        otherProtocolGrants.query,
-        otherProtocolGrants.subscribe
+        otherProtocolGrants.delete
       ];
 
       const writeGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
@@ -1762,21 +1776,21 @@ describe('AgentPermissionsApi', () => {
         protocol    : protocol1
       }, deviceXRecordGrants);
 
-      expect(queryGrant?.message.recordId).toBe(protocol1Grants.query.message.recordId);
+      expect(queryGrant?.message.recordId).toBe(protocol1Grants.read.message.recordId);
 
       const subscribeGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsSubscribe,
         protocol    : protocol1
       }, deviceXRecordGrants);
 
-      expect(subscribeGrant?.message.recordId).toBe(protocol1Grants.subscribe.message.recordId);
+      expect(subscribeGrant?.message.recordId).toBe(protocol1Grants.read.message.recordId);
 
       const queryGrantOtherProtocol = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsQuery,
         protocol    : protocol2
       }, deviceXRecordGrants);
 
-      expect(queryGrantOtherProtocol?.message.recordId).toBe(otherProtocolGrants.query.message.recordId);
+      expect(queryGrantOtherProtocol?.message.recordId).toBe(otherProtocolGrants.read.message.recordId);
 
       // unknown protocol
       const invalidGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
@@ -1818,13 +1832,9 @@ describe('AgentPermissionsApi', () => {
         fooGrants.write,
         fooGrants.read,
         fooGrants.delete,
-        fooGrants.query,
-        fooGrants.subscribe,
         barGrants.write,
         barGrants.read,
-        barGrants.delete,
-        barGrants.query,
-        barGrants.subscribe
+        barGrants.delete
       ];
 
       const writeFooGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
@@ -1857,7 +1867,7 @@ describe('AgentPermissionsApi', () => {
         protocolPath : 'foo'
       }, protocolGrants);
 
-      expect(queryGrant?.message.recordId).toBe(fooGrants.query.message.recordId);
+      expect(queryGrant?.message.recordId).toBe(fooGrants.read.message.recordId);
 
       const subscribeGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType  : DwnInterface.RecordsSubscribe,
@@ -1865,7 +1875,7 @@ describe('AgentPermissionsApi', () => {
         protocolPath : 'foo'
       }, protocolGrants);
 
-      expect(subscribeGrant?.message.recordId).toBe(fooGrants.subscribe.message.recordId);
+      expect(subscribeGrant?.message.recordId).toBe(fooGrants.read.message.recordId);
 
       const writeBarGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType  : DwnInterface.RecordsWrite,
@@ -1915,13 +1925,9 @@ describe('AgentPermissionsApi', () => {
         abcGrants.write,
         abcGrants.read,
         abcGrants.delete,
-        abcGrants.query,
-        abcGrants.subscribe,
         defGrants.write,
         defGrants.read,
-        defGrants.delete,
-        defGrants.query,
-        defGrants.subscribe
+        defGrants.delete
       ];
 
       const writeFooGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {

@@ -119,7 +119,8 @@ export class GrantAuthorization {
    * Verify that the `interface` and `method` grant scopes match the incoming message.
    *
    * For the Messages interface, a `Read` scope is treated as a unified scope that also authorizes
-   * `Query`, `Subscribe`, and `Sync` operations.
+   * `Query` and `Subscribe` operations. For Records, `Read` is likewise the canonical read-like
+   * scope and authorizes `Read`, `Query`, `Subscribe`, and `Count` operations.
    *
    * @throws {DwnError} if the `interface` and `method` of the incoming message do not match the scope of the permission grant.
    */
@@ -153,6 +154,22 @@ export class GrantAuthorization {
         );
       }
       return;
+    }
+
+    // Records.Read is the only valid read-like Records scope and covers Read, Query,
+    // Subscribe, and Count operations. Reject malformed Records Query/Subscribe/Count
+    // grants instead of treating them as compatible with the canonical Read scope.
+    if (dwnInterface === DwnInterfaceName.Records) {
+      const readLikeMethods = [DwnMethodName.Read, DwnMethodName.Query, DwnMethodName.Subscribe, DwnMethodName.Count];
+      if (readLikeMethods.includes(dwnMethod as DwnMethodName)) {
+        if (permissionGrant.scope.method !== DwnMethodName.Read) {
+          throw new DwnError(
+            DwnErrorCode.GrantAuthorizationMethodMismatch,
+            `records read-like permission grant must have method 'Read', got '${permissionGrant.scope.method}' for grant ${permissionGrant.id}`
+          );
+        }
+        return;
+      }
     }
 
     if (dwnMethod !== permissionGrant.scope.method) {

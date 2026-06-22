@@ -18,7 +18,7 @@ describe('PermissionRequest', () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const scope: RecordsPermissionScope = {
       interface : DwnInterfaceName.Records,
-      method    : DwnMethodName.Query,
+      method    : DwnMethodName.Read,
       protocol  : 'https://example.com/protocol/test'
     };
 
@@ -41,7 +41,7 @@ describe('PermissionRequest', () => {
       const permissionRequest = await PermissionsProtocol.createRequest({
         signer    : Jws.createSigner(alice),
         delegated : true,
-        scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: 'https://example.com/protocol/test' }
+        scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: 'https://example.com/protocol/test' }
       });
 
       const message = { ...permissionRequest.dataEncodedMessage };
@@ -56,7 +56,7 @@ describe('PermissionRequest', () => {
       const permissionRequest = await PermissionsProtocol.createRequest({
         signer    : Jws.createSigner(alice),
         delegated : true,
-        scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: 'https://example.com/protocol/test' }
+        scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: 'https://example.com/protocol/test' }
       });
 
       const message = { ...permissionRequest.dataEncodedMessage };
@@ -71,7 +71,7 @@ describe('PermissionRequest', () => {
       const permissionRequest = await PermissionsProtocol.createRequest({
         signer    : Jws.createSigner(alice),
         delegated : true,
-        scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Query, protocol: 'https://example.com/protocol/test' }
+        scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: 'https://example.com/protocol/test' }
       });
 
       // Re-encode data without `scope`
