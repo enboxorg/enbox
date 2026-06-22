@@ -1,5 +1,11 @@
 # @enbox/agent
 
+## 0.8.3
+
+### Patch Changes
+
+- [#1068](https://github.com/enboxorg/enbox/pull/1068) [`7ee6ff9`](https://github.com/enboxorg/enbox/commit/7ee6ff98bd01a673aab23f46d69db1b90f8ccd91) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Surface one-shot sync failures when remote DWN reconciliation fails.
+
 ## 0.8.2
 
 ### Patch Changes
