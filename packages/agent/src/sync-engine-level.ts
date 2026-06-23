@@ -3736,7 +3736,7 @@ export class SyncEngineLevel implements SyncEngine {
    */
   private static toCanonicalGrantMessage(message: GenericMessage): GenericMessage {
     const authorization = (message as { authorization?: { ownerSignature?: unknown } }).authorization;
-    if (authorization === undefined || authorization.ownerSignature === undefined) {
+    if (authorization?.ownerSignature === undefined) {
       return message;
     }
 
