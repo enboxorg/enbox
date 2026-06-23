@@ -1,5 +1,16 @@
 # @enbox/browser
 
+## 0.3.29
+
+### Patch Changes
+
+- [#1072](https://github.com/enboxorg/enbox/pull/1072) [`25fd7d4`](https://github.com/enboxorg/enbox/commit/25fd7d433055809f4d96543807f0669ab036383f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add bounded, display-only connect session metadata to permission grants and default connect-created grants to a hard 24-hour expiration.
+
+- Updated dependencies [[`25fd7d4`](https://github.com/enboxorg/enbox/commit/25fd7d433055809f4d96543807f0669ab036383f)]:
+  - @enbox/agent@0.8.5
+  - @enbox/api@0.6.43
+  - @enbox/auth@0.6.51
+
 ## 0.3.28
 
 ### Patch Changes
