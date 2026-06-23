@@ -1,5 +1,11 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.4
+
+### Patch Changes
+
+- [#1072](https://github.com/enboxorg/enbox/pull/1072) [`25fd7d4`](https://github.com/enboxorg/enbox/commit/25fd7d433055809f4d96543807f0669ab036383f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add bounded, display-only connect session metadata to permission grants and default connect-created grants to a hard 24-hour expiration.
+
 ## 0.4.3
 
 ### Patch Changes
