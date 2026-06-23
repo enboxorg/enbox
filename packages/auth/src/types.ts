@@ -4,12 +4,12 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, ConnectPermissionRequest, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+import type { AgentSessionIdentity, ConnectClientMetadata, ConnectPermissionRequest, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 import type { PasswordProvider } from './password-provider.js';
 
 // Re-export types that consumers will need
-export type { ConnectPermissionRequest, DelegateContextKey, DelegateDecryptionKey, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+export type { ConnectClientMetadata, ConnectPermissionRequest, DelegateContextKey, DelegateDecryptionKey, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 // Re-export EnboxUserAgent so consumers don't need a direct @enbox/agent dep
 export type { EnboxUserAgent } from '@enbox/agent';
@@ -557,6 +557,12 @@ export type ConnectOptions = HandlerConnectOptions | VaultConnectOptions;
 export interface WalletConnectOptions {
   /** Display name shown in the wallet during the connect flow. */
   displayName: string;
+
+  /** Optional icon URL shown in the wallet during the connect flow. */
+  appIcon?: string;
+
+  /** Optional client/environment metadata for wallet session display. */
+  clientMetadata?: ConnectClientMetadata;
 
   /** URL of the connect relay server. */
   connectServerUrl: string;

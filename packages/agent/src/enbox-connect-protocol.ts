@@ -17,8 +17,8 @@ import type { DerivedPrivateJwk } from '@enbox/dwn-sdk-js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { RequireOnly } from '@enbox/common';
+import type { ConnectSessionMetadata, ConnectSessionTransport, DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition, DwnRecordsPermissionScope } from './types/dwn.js';
 import type { DidDocument, PortableDid } from '@enbox/dids';
-import type { DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition, DwnRecordsPermissionScope } from './types/dwn.js';
 
 /**
  * The protocols of permissions requested, along with the definition and permission scopes for each protocol.
@@ -32,6 +32,45 @@ export type ConnectPermissionRequest = {
 
   /** The scope of the permissions being requested for the given protocol */
   permissionScopes: DwnPermissionScope[];
+};
+
+/**
+ * Client/environment details captured by the connect client for wallet session display.
+ *
+ * This data is self-reported by the requester, unauthenticated, and intended
+ * only as display hints. Wallets must not treat it as verified app identity.
+ */
+export type ConnectClientMetadata = {
+  /** Origin of the requesting app, when known. */
+  origin?: string;
+  /** Browser user agent string, when available. */
+  userAgent?: string;
+  /** Platform/device hint, when available. */
+  platform?: string;
+  /** Primary language, when available. */
+  language?: string;
+  /** Language preference list, when available. */
+  languages?: string[];
+  /** IANA timezone, when available. */
+  timezone?: string;
+};
+
+export type CreateConnectSessionMetadataOptions = {
+  id?: string;
+  appName?: string;
+  appIcon?: string;
+  clientMetadata?: ConnectClientMetadata;
+  transport?: ConnectSessionTransport;
+  createdAt?: string;
+  expiresAt?: string;
+  ttlSeconds?: number;
+};
+
+export type ConnectPermissionGrantOptions = {
+  /** Grant expiration timestamp. Defaults to the connect session expiration. */
+  dateExpires?: string;
+  /** Session metadata attached to every grant created by the approval. */
+  connectSession?: ConnectSessionMetadata;
 };
 
 /**
@@ -112,7 +151,7 @@ import {
   X25519,
   XChaCha20Poly1305,
 } from '@enbox/crypto';
-import { DwnInterfaceName, DwnMethodName, HdKey, KeyDerivationScheme, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, HdKey, KeyDerivationScheme, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
@@ -154,6 +193,27 @@ const CONNECT_REQUEST_TIMEOUT_MS = 10_000;
 /** Log namespace used for wallet-side connect critical-path timings. */
 const CONNECT_PERF_LOG_PREFIX = '[connect.perf]';
 
+/**
+ * Default lifetime for app delegate grants created by a connect approval.
+ *
+ * This is a hard grant expiry. There is intentionally no renewal path in this
+ * protocol layer yet; clients should treat expired connect grants as
+ * reconnect-required.
+ */
+export const CONNECT_SESSION_DEFAULT_TTL_SECONDS = 24 * 60 * 60;
+
+const CONNECT_SESSION_METADATA_LIMITS = {
+  id        : 128,
+  appName   : 128,
+  appIcon   : 2048,
+  origin    : 512,
+  userAgent : 512,
+  platform  : 128,
+  language  : 64,
+  languages : 16,
+  timezone  : 128,
+} as const;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -194,6 +254,12 @@ export type EnboxConnectRequest = {
 
   /** Human-readable name of the requesting application, shown in the consent UI. */
   appName: string;
+
+  /** Optional icon URL for the requesting application, shown in the consent UI. */
+  appIcon?: string;
+
+  /** Optional client/environment metadata for wallet session display. */
+  clientMetadata?: ConnectClientMetadata;
 
   /** DWN protocols and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
@@ -486,6 +552,13 @@ function requireOptionalString(payload: Record<string, unknown>, field: string, 
   }
 }
 
+function requireOptionalObject(payload: Record<string, unknown>, field: string, context: string): void {
+  const value = payload[field];
+  if (value !== undefined && (typeof value !== 'object' || value === null || Array.isArray(value))) {
+    fail(context, field, 'must be an object when present');
+  }
+}
+
 function requireOptionalArray(payload: Record<string, unknown>, field: string, context: string): void {
   if (payload[field] !== undefined && !Array.isArray(payload[field])) {
     fail(context, field, 'must be an array when present');
@@ -510,6 +583,8 @@ function assertConnectRequest(payload: Record<string, unknown>): asserts payload
   const ctx = 'invalid connect request';
   requireString(payload, 'clientDid', ctx);
   requireString(payload, 'appName', ctx);
+  requireOptionalString(payload, 'appIcon', ctx);
+  requireOptionalObject(payload, 'clientMetadata', ctx);
   requireArray(payload, 'permissionRequests', ctx);
   requireString(payload, 'nonce', ctx);
   requireString(payload, 'state', ctx);
@@ -838,6 +913,79 @@ function isConnectReadScope(scope: DwnPermissionScope): scope is DwnRecordsPermi
   return isRecordPermissionScope(scope) && scope.method === DwnMethodName.Read;
 }
 
+function randomSessionId(): string {
+  return Convert.uint8Array(CryptoUtils.randomBytes(16)).toBase64Url();
+}
+
+function boundedSessionString(value: string | undefined, maxLength: number): string | undefined {
+  if (typeof value !== 'string' || value.length === 0) {
+    return undefined;
+  }
+  return value.slice(0, maxLength);
+}
+
+function boundedSessionStringArray(values: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(values)) {
+    return undefined;
+  }
+
+  const bounded = values
+    .filter((value) => typeof value === 'string' && value.length > 0)
+    .slice(0, CONNECT_SESSION_METADATA_LIMITS.languages)
+    .map((value) => value.slice(0, CONNECT_SESSION_METADATA_LIMITS.language));
+
+  return bounded.length > 0 ? bounded : undefined;
+}
+
+function createConnectSessionMetadata(
+  options: CreateConnectSessionMetadataOptions = {},
+): ConnectSessionMetadata {
+  const createdAt = options.createdAt ?? Time.getCurrentTimestamp();
+  const expiresAt = options.expiresAt ?? Time.createOffsetTimestamp({
+    seconds: options.ttlSeconds ?? CONNECT_SESSION_DEFAULT_TTL_SECONDS,
+  }, createdAt);
+  const clientMetadata = options.clientMetadata ?? {};
+  const appName = boundedSessionString(options.appName, CONNECT_SESSION_METADATA_LIMITS.appName);
+  const appIcon = boundedSessionString(options.appIcon, CONNECT_SESSION_METADATA_LIMITS.appIcon);
+  const origin = boundedSessionString(clientMetadata.origin, CONNECT_SESSION_METADATA_LIMITS.origin);
+  const userAgent = boundedSessionString(clientMetadata.userAgent, CONNECT_SESSION_METADATA_LIMITS.userAgent);
+  const platform = boundedSessionString(clientMetadata.platform, CONNECT_SESSION_METADATA_LIMITS.platform);
+  const language = boundedSessionString(clientMetadata.language, CONNECT_SESSION_METADATA_LIMITS.language);
+  const languages = boundedSessionStringArray(clientMetadata.languages);
+  const timezone = boundedSessionString(clientMetadata.timezone, CONNECT_SESSION_METADATA_LIMITS.timezone);
+
+  return {
+    id: boundedSessionString(options.id, CONNECT_SESSION_METADATA_LIMITS.id) ?? randomSessionId(),
+    createdAt,
+    expiresAt,
+    ...(appName ? { appName } : {}),
+    ...(appIcon ? { appIcon } : {}),
+    ...(origin ? { origin } : {}),
+    ...(userAgent ? { userAgent } : {}),
+    ...(platform ? { platform } : {}),
+    ...(language ? { language } : {}),
+    ...(languages ? { languages } : {}),
+    ...(timezone ? { timezone } : {}),
+    ...(options.transport ? { transport: options.transport } : {}),
+  };
+}
+
+function resolveConnectPermissionGrantOptions(
+  options?: ConnectPermissionGrantOptions,
+): { dateExpires: string; connectSession: ConnectSessionMetadata } {
+  if (options?.dateExpires && options.connectSession?.expiresAt && options.dateExpires !== options.connectSession.expiresAt) {
+    throw new Error('Connect grant dateExpires must match connectSession.expiresAt.');
+  }
+
+  const connectSession = options?.connectSession ?? createConnectSessionMetadata({
+    expiresAt: options?.dateExpires,
+  });
+  return {
+    dateExpires: options?.dateExpires ?? connectSession.expiresAt,
+    connectSession,
+  };
+}
+
 /**
  * Creates permission grants that assign the requested scopes to a delegate DID.
  */
@@ -847,8 +995,10 @@ async function createPermissionGrants(
   agent: EnboxPlatformAgent,
   scopes: DwnPermissionScope[],
   delegateKeyDeliveryData?: { rootKeyId: string; publicKeyJwk: Record<string, any> },
+  options?: ConnectPermissionGrantOptions,
 ): Promise<DwnDataEncodedRecordsWriteMessage[]> {
   const permissionsApi = new AgentPermissionsApi({ agent });
+  const { dateExpires, connectSession } = resolveConnectPermissionGrantOptions(options);
 
   logger.log(`Creating permission grants for ${scopes.length} scopes...`);
   for (const scope of scopes) {
@@ -865,12 +1015,13 @@ async function createPermissionGrants(
 
       return permissionsApi.createGrant({
         delegated,
-        store       : true,
-        grantedTo   : delegateBearerDid.uri,
+        store     : true,
+        grantedTo : delegateBearerDid.uri,
         scope,
-        dateExpires : '2040-06-25T16:09:16.693356Z', // TODO: make dateExpires configurable
-        author      : selectedDid,
+        dateExpires,
+        author    : selectedDid,
         delegateKeyDelivery,
+        connectSession,
       });
     })
   );
@@ -1336,6 +1487,12 @@ async function submitConnectResponse(
   try {
     const delegateBearerDid = await timed(`${CONNECT_PERF_LOG_PREFIX} delegateDid.create`, () => DidJwk.create());
     const delegatePortableDid = await delegateBearerDid.export();
+    const connectSession = createConnectSessionMetadata({
+      appName        : connectRequest.appName,
+      appIcon        : connectRequest.appIcon,
+      clientMetadata : connectRequest.clientMetadata,
+      transport      : 'relay',
+    });
 
     // Add X25519 key derived from the delegate's Ed25519 key.
     // did:jwk only supports one verification method, but DWN encryption
@@ -1459,6 +1616,7 @@ async function submitConnectResponse(
               agent,
               permissionScopes,
               delegateKeyDeliveryData,
+              { connectSession },
             );
           }
         );
@@ -1487,6 +1645,9 @@ async function submitConnectResponse(
     // createGrant is local-only (storage + signing) so it's cheap, but we still
     // cap parallelism to avoid head-of-line blocking when sessionGrantCount is
     // large (e.g. dapp requesting many scopes at once).
+    // Revocation grants share the same hard expiry but do not duplicate
+    // connectSession display metadata; session grouping should use the
+    // user-facing permission grants.
     const revGrantResults = await timed(
       `${CONNECT_PERF_LOG_PREFIX} revocationGrants.create (n=${sessionGrantCount})`,
       () => mapConcurrent(
@@ -1503,7 +1664,7 @@ async function submitConnectResponse(
               protocol  : PermissionsProtocol.uri,
               contextId : grantMessage.recordId,
             },
-            dateExpires : '2040-06-25T16:09:16.693356Z',
+            dateExpires : connectSession.expiresAt,
             author      : selectedDid,
           }).then((revGrant) => ({ grantMessage, revGrant })),
       ),
@@ -1650,6 +1811,7 @@ export const EnboxConnectProtocol = {
   createConnectRequest,
   getConnectRequest,
   createConnectResponse,
+  createConnectSessionMetadata,
   createPermissionGrants,
   submitConnectResponse,
   deriveScopedDecryptionKeys,

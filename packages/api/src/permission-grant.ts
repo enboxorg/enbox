@@ -1,4 +1,5 @@
 import type {
+  ConnectSessionMetadata,
   DwnDataEncodedRecordsWriteMessage,
   DwnPermissionConditions,
   DwnPermissionScope,
@@ -69,6 +70,11 @@ export interface PermissionGrantModel {
    * Optional conditions that must be met when the grant is used.
    */
   readonly conditions?: DwnPermissionConditions;
+
+  /**
+   * Optional metadata describing the connect approval session that created this grant.
+   */
+  readonly connectSession?: ConnectSessionMetadata;
 }
 
 /**
@@ -179,6 +185,11 @@ export class PermissionGrant implements PermissionGrantModel {
   /** The conditions under which the grant is valid */
   get conditions(): DwnPermissionConditions {
     return this._grant.conditions;
+  }
+
+  /** Metadata for the connect approval session that created this grant, if present */
+  get connectSession(): ConnectSessionMetadata | undefined {
+    return this._grant.connectSession;
   }
 
   /** The raw `RecordsWrite` DWN message with encoded data that was used to instantiate this grant */
@@ -312,16 +323,17 @@ export class PermissionGrant implements PermissionGrantModel {
    */
   toJSON(): DwnPermissionGrant {
     return {
-      id          : this.id,
-      grantor     : this.grantor,
-      grantee     : this.grantee,
-      dateGranted : this.dateGranted,
-      description : this.description,
-      requestId   : this.requestId,
-      dateExpires : this.dateExpires,
-      delegated   : this.delegated,
-      scope       : this.scope,
-      conditions  : this.conditions
+      id             : this.id,
+      grantor        : this.grantor,
+      grantee        : this.grantee,
+      dateGranted    : this.dateGranted,
+      description    : this.description,
+      requestId      : this.requestId,
+      dateExpires    : this.dateExpires,
+      delegated      : this.delegated,
+      scope          : this.scope,
+      conditions     : this.conditions,
+      connectSession : this.connectSession,
     };
   }
 }

@@ -9,7 +9,7 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage } from '@enbox/agent';
+import type { ConnectClientMetadata, ConnectPermissionRequest, DwnDataEncodedRecordsWriteMessage } from '@enbox/agent';
 import type { ConnectResult, PortableIdentity } from '@enbox/auth';
 
 import type { EncryptedPostMessagePayload } from './dweb-connect-crypto.js';
@@ -56,6 +56,22 @@ export interface DWebConnectClientOptions {
    * from local-DID mode to delegate mode while keeping the same DID.
    */
   portableIdentity?: PortableIdentity;
+}
+
+function collectBrowserClientMetadata(): ConnectClientMetadata {
+  const resolvedOptions = Intl.DateTimeFormat().resolvedOptions();
+  const languages = Array.isArray(globalThis.navigator.languages)
+    ? globalThis.navigator.languages.filter((language) => typeof language === 'string' && language.length > 0)
+    : undefined;
+
+  return {
+    origin    : globalThis.location.origin,
+    userAgent : globalThis.navigator.userAgent,
+    platform  : globalThis.navigator.platform,
+    language  : globalThis.navigator.language,
+    ...(languages && languages.length > 0 ? { languages } : {}),
+    ...(resolvedOptions.timeZone ? { timezone: resolvedOptions.timeZone } : {}),
+  };
 }
 
 /**
@@ -170,6 +186,7 @@ async function initClient(options: DWebConnectClientOptions): Promise<ConnectRes
           ephemeralPublicKey : dappPublicKeyBase64url,
           appName,
           appIcon,
+          clientMetadata     : collectBrowserClientMetadata(),
           portableIdentity,
         }, walletOrigin);
         return;

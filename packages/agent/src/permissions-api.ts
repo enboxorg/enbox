@@ -257,6 +257,9 @@ export class AgentPermissionsApi implements PermissionsApi {
     if (createGrantParams.delegateKeyDelivery) {
       permissionGrantData.delegateKeyDelivery = createGrantParams.delegateKeyDelivery;
     }
+    if (createGrantParams.connectSession) {
+      permissionGrantData.connectSession = createGrantParams.connectSession;
+    }
 
     const permissionsGrantBytes = Convert.object(permissionGrantData).toUint8Array();
 

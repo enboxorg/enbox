@@ -12,7 +12,7 @@
  * @module
  */
 
-import type { ConnectPermissionRequest, DwnPermissionScope, DwnProtocolDefinition } from '@enbox/agent';
+import type { ConnectClientMetadata, ConnectPermissionRequest, DwnPermissionScope, DwnProtocolDefinition } from '@enbox/agent';
 import type { ConnectPushedResponse, EnboxConnectResponse } from '@enbox/agent';
 
 import { CryptoUtils } from '@enbox/crypto';
@@ -31,6 +31,12 @@ import { EnboxConnectProtocol, pollWithTtl } from '@enbox/agent';
 export type WalletConnectClientOptions = {
   /** The user-friendly name of the app, displayed in the wallet consent UI. */
   displayName: string;
+
+  /** Optional icon URL for the app, displayed in the wallet consent UI. */
+  appIcon?: string;
+
+  /** Optional client/environment metadata for wallet session display. */
+  clientMetadata?: ConnectClientMetadata;
 
   /** The URL of the connect server which relays messages between the app and wallet. */
   connectServerUrl: string;
@@ -85,6 +91,8 @@ export type ProtocolPermissionOptions = {
  */
 async function initClient({
   displayName,
+  appIcon,
+  clientMetadata,
   connectServerUrl,
   walletUri,
   permissionRequests,
@@ -121,6 +129,8 @@ async function initClient({
     callbackUrl        : callbackEndpoint,
     permissionRequests : permissionRequests,
     appName            : displayName,
+    appIcon,
+    clientMetadata,
   });
 
   // Sign the request as a JWT.

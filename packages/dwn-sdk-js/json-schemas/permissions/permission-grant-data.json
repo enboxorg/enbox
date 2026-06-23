@@ -38,6 +38,62 @@
           "type": "object"
         }
       }
+    },
+    "connectSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "createdAt", "expiresAt"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "appName": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "appIcon": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "origin": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "userAgent": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "platform": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "language": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "languages": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "timezone": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "transport": {
+          "enum": ["relay", "postMessage"]
+        },
+        "createdAt": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+        },
+        "expiresAt": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
+        }
+      }
     }
   }
 }
