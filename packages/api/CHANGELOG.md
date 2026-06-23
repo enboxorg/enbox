@@ -1,5 +1,13 @@
 # @enbox/api
 
+## 0.6.44
+
+### Patch Changes
+
+- Updated dependencies [[`41233ae`](https://github.com/enboxorg/enbox/commit/41233ae542882a1245734d0bdf9435dfab919793)]:
+  - @enbox/agent@0.8.6
+  - @enbox/auth@0.6.52
+
 ## 0.6.43
 
 ### Patch Changes

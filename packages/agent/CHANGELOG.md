@@ -1,5 +1,11 @@
 # @enbox/agent
 
+## 0.8.6
+
+### Patch Changes
+
+- [#1074](https://github.com/enboxorg/enbox/pull/1074) [`41233ae`](https://github.com/enboxorg/enbox/commit/41233ae542882a1245734d0bdf9435dfab919793) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Fix delegated sync permission grant bootstrap so wallet-connected agents do not need owner signing keys during push reconciliation.
+
 ## 0.8.5
 
 ### Patch Changes
