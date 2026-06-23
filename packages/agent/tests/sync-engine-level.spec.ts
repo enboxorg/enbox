@@ -55,6 +55,77 @@ describe('SyncEngineLevel', () => {
     });
   });
 
+  describe('delegated permission grant bootstrap', () => {
+    it('uses delegate-local grant entries without probing the owner signer', async () => {
+      const ownerDid = 'did:example:owner';
+      const delegateDid = 'did:example:delegate';
+      const permissionGrantId = 'grant-record-id';
+      const dwnUrl = 'https://dwn.example';
+
+      const grantEntry = {
+        authorization : {},
+        descriptor    : { interface: 'Records', method: 'Write' },
+        encodedData   : Convert.uint8Array(Convert.string('grant-data').toUint8Array()).toBase64Url(),
+        recordId      : permissionGrantId,
+      };
+
+      const processRequest = sinon.stub().callsFake(async (request: any) => {
+        if (request.author === ownerDid) {
+          throw new Error(`AgentDwnApi: Unable to get signer for author '${ownerDid}': Key not found`);
+        }
+
+        expect(request.author).toBe(delegateDid);
+        expect(request.target).toBe(delegateDid);
+        expect(request.messageType).toBe(DwnInterface.RecordsQuery);
+        expect(request.messageParams).toEqual({ filter: { recordId: permissionGrantId } });
+
+        return {
+          reply: {
+            status  : { code: 200 },
+            entries : [grantEntry],
+          },
+        };
+      });
+
+      const syncEngine = new SyncEngineLevel({
+        agent : { dwn: { processRequest } } as any,
+        db    : {} as any,
+      });
+      const pushEntries = sinon.stub(syncEngine as any, 'pushMessageEntries').resolves({
+        failed    : [],
+        succeeded : ['grant-cid'],
+      });
+
+      const result = await (syncEngine as any).bootstrapRemotePermissionGrants({
+        authorization: {
+          kind               : 'delegate',
+          delegateDid,
+          permissionGrantIds : [permissionGrantId],
+        },
+        authorizationEpoch : 'epoch',
+        delegateDid,
+        did                : ownerDid,
+        dwnUrl,
+        permissionGrantIds : [permissionGrantId],
+        scope              : { kind: 'protocolSet', protocols: ['https://protocol.example'] },
+      });
+
+      expect(result).toEqual({
+        failures           : [],
+        hasActionableDiffs : true,
+        kind               : 'processed',
+      });
+      expect(processRequest.calledOnce).toBe(true);
+      expect(pushEntries.calledOnce).toBe(true);
+      expect(pushEntries.firstCall.args[0].did).toBe(ownerDid);
+      expect(pushEntries.firstCall.args[0].dwnUrl).toBe(dwnUrl);
+      expect(pushEntries.firstCall.args[0].delegateDid).toBe(delegateDid);
+      expect(pushEntries.firstCall.args[0].permissionGrantIds).toEqual([permissionGrantId]);
+      expect(pushEntries.firstCall.args[0].entries).toHaveLength(1);
+      expect(pushEntries.firstCall.args[0].entries[0].bufferedData).toBeInstanceOf(Uint8Array);
+    });
+  });
+
   describe('with Enbox Platform Agent', () => {
     let alice: BearerIdentity;
     let randomSchema: string;

@@ -24,7 +24,7 @@ import { getProtocolClosureEdges } from './sync-scope-closure.js';
 import { isRecordsWrite } from './utils.js';
 import { ReplicationLedger } from './sync-replication-ledger.js';
 import { computeAuthorizationEpoch, computeProjectionId, isTenantInactivePushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope, singleProtocolForSyncScope, syncScopeFromProtocols } from './types/sync.js';
-import { fetchRemoteMessages, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
+import { fetchRemoteMessages, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, SyncPullAbortedError } from './sync-messages.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, resolveMessagesScopes, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
 export type SyncEngineLevelParams = {
@@ -3618,18 +3618,20 @@ export class SyncEngineLevel implements SyncEngine {
       return { kind: 'processed', failures: [], hasActionableDiffs: false };
     }
 
-    const grantCids = await this.localPermissionGrantCids(target, shouldContinue);
-    if (grantCids === undefined) {
+    const grantEntries = await this.localPermissionGrantBootstrapEntries(target, shouldContinue);
+    if (grantEntries === undefined) {
       return { kind: 'aborted' };
     }
-    if (grantCids.failures.length > 0 || grantCids.messageCids.length === 0) {
-      return { kind: 'processed', failures: grantCids.failures, hasActionableDiffs: false };
+    if (grantEntries.failures.length > 0 || grantEntries.entries.length === 0) {
+      return { kind: 'processed', failures: grantEntries.failures, hasActionableDiffs: false };
     }
 
-    const result = await this.pushMessages({
-      did         : target.did,
-      dwnUrl      : target.dwnUrl,
-      messageCids : grantCids.messageCids,
+    const result = await this.pushMessageEntries({
+      did                : target.did,
+      dwnUrl             : target.dwnUrl,
+      delegateDid        : target.delegateDid,
+      permissionGrantIds : target.permissionGrantIds,
+      entries            : grantEntries.entries,
     });
     return {
       kind               : 'processed',
@@ -3638,11 +3640,11 @@ export class SyncEngineLevel implements SyncEngine {
     };
   }
 
-  private async localPermissionGrantCids(
+  private async localPermissionGrantBootstrapEntries(
     target: SyncTarget,
     shouldContinue?: () => boolean,
-  ): Promise<{ failures: PushFailure[]; messageCids: string[] } | undefined> {
-    const messageCids = new Set<string>();
+  ): Promise<{ failures: PushFailure[]; entries: SyncMessageEntry[] } | undefined> {
+    const entriesByCid = new Map<string, SyncMessageEntry>();
     const failures: PushFailure[] = [];
 
     for (const permissionGrantId of target.permissionGrantIds ?? []) {
@@ -3660,30 +3662,40 @@ export class SyncEngineLevel implements SyncEngine {
       }
 
       for (const entry of entries) {
-        messageCids.add(await Message.getCid(entry));
+        entriesByCid.set(await Message.getCid(entry.message), entry);
       }
     }
 
-    return { failures, messageCids: [...messageCids] };
+    return { failures, entries: [...entriesByCid.values()] };
   }
 
-  private async localPermissionGrantEntries(target: SyncTarget, permissionGrantId: string): Promise<GenericMessage[]> {
-    const ownerEntries = await this.queryLocalPermissionGrantEntries(target, permissionGrantId, target.did);
-    if (ownerEntries.length > 0 || target.delegateDid === undefined) {
-      return ownerEntries;
+  private async localPermissionGrantEntries(target: SyncTarget, permissionGrantId: string): Promise<SyncMessageEntry[]> {
+    if (target.delegateDid === undefined) {
+      return this.queryLocalPermissionGrantEntries(target, permissionGrantId, target.did);
     }
 
-    return this.queryLocalPermissionGrantEntries(target, permissionGrantId, target.delegateDid);
+    const delegateEntries = await this.queryLocalPermissionGrantEntries(
+      target,
+      permissionGrantId,
+      target.delegateDid,
+      target.delegateDid,
+    );
+    if (delegateEntries.length > 0) {
+      return delegateEntries;
+    }
+
+    return this.queryLocalPermissionGrantEntries(target, permissionGrantId, target.delegateDid, target.did);
   }
 
   private async queryLocalPermissionGrantEntries(
     target: SyncTarget,
     permissionGrantId: string,
     author: string,
-  ): Promise<GenericMessage[]> {
+    tenantDid = target.did,
+  ): Promise<SyncMessageEntry[]> {
     const { reply } = await this.agent.dwn.processRequest({
       author,
-      target        : target.did,
+      target        : tenantDid,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : { filter: { recordId: permissionGrantId } },
     });
@@ -3692,16 +3704,34 @@ export class SyncEngineLevel implements SyncEngine {
       return [];
     }
 
-    const messages: GenericMessage[] = [];
+    const entries: SyncMessageEntry[] = [];
     for (const entry of recordsReply.entries) {
       if (entry.initialWrite !== undefined) {
-        messages.push(entry.initialWrite);
+        entries.push({ message: entry.initialWrite });
       }
       const { encodedData: _encodedData, initialWrite: _initialWrite, ...message } = entry;
-      messages.push(message as GenericMessage);
+      const syncEntry: SyncMessageEntry = { message: message as GenericMessage };
+      if (_encodedData !== undefined) {
+        syncEntry.bufferedData = Encoder.base64UrlToBytes(_encodedData);
+      }
+      entries.push(syncEntry);
     }
 
-    return messages;
+    return entries;
+  }
+
+  private async pushMessageEntries({ did, dwnUrl, delegateDid, permissionGrantIds, entries }: {
+    did: string;
+    dwnUrl: string;
+    delegateDid?: string;
+    permissionGrantIds?: string[];
+    entries: SyncMessageEntry[];
+  }): Promise<PushResult> {
+    return pushMessageEntries({
+      did, dwnUrl, delegateDid, permissionGrantIds, entries,
+      agent          : this.agent,
+      permissionsApi : this._permissionsApi,
+    });
   }
 
   private async collectLocalFeedCids(target: SyncTarget, shouldContinue?: () => boolean): Promise<Set<string> | undefined> {
