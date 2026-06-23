@@ -1,4 +1,4 @@
-import type { PermissionScope, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, PermissionScope, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -181,6 +181,9 @@ describe('E2E Multi-Agent Sync', () => {
   let recordsQueryGrant: { grant: any; message: any };
   let recordsWriteGrant: { grant: any; message: any };
 
+  /** Alice-authored notes-protocol configuration, mirrored onto the device. */
+  let notesProtocolConfigure: GenericMessage;
+
   beforeAll(async () => {
     // -----------------------------------------------------------------------
     // Set up TWO independent agent instances.
@@ -220,12 +223,15 @@ describe('E2E Multi-Agent Sync', () => {
     // -----------------------------------------------------------------------
     for (const def of [protocolNotes, protocolProfile]) {
       // Install locally on primary agent.
-      await primaryHarness.agent.dwn.processRequest({
+      const { message } = await primaryHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : { definition: def },
       });
+      if (def.protocol === protocolNotes.protocol) {
+        notesProtocolConfigure = message as GenericMessage;
+      }
       // Install on remote DWN.
       await primaryHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
@@ -323,6 +329,17 @@ describe('E2E Multi-Agent Sync', () => {
           dataStream  : dataBlob(),
         });
       }
+
+      // Mirror Alice's notes protocol into the device's copy of Alice's tenant
+      // (signed as owner) so the delegate can author notes records locally —
+      // exactly as the connect flow seeds protocols on a wallet-connected dapp.
+      await deviceHarness.agent.dwn.processRequest({
+        author      : alice.did.uri,
+        target      : alice.did.uri,
+        messageType : DwnInterface.ProtocolsConfigure,
+        rawMessage  : notesProtocolConfigure,
+        signAsOwner : true,
+      });
     });
 
     it('should push from primary agent and pull on device agent', async () => {

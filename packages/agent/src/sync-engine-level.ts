@@ -3707,10 +3707,10 @@ export class SyncEngineLevel implements SyncEngine {
     const entries: SyncMessageEntry[] = [];
     for (const entry of recordsReply.entries) {
       if (entry.initialWrite !== undefined) {
-        entries.push({ message: entry.initialWrite });
+        entries.push({ message: SyncEngineLevel.toCanonicalGrantMessage(entry.initialWrite) });
       }
       const { encodedData: _encodedData, initialWrite: _initialWrite, ...message } = entry;
-      const syncEntry: SyncMessageEntry = { message: message as GenericMessage };
+      const syncEntry: SyncMessageEntry = { message: SyncEngineLevel.toCanonicalGrantMessage(message as GenericMessage) };
       if (_encodedData !== undefined) {
         syncEntry.bufferedData = Encoder.base64UrlToBytes(_encodedData);
       }
@@ -3718,6 +3718,30 @@ export class SyncEngineLevel implements SyncEngine {
     }
 
     return entries;
+  }
+
+  /**
+   * Reduce a locally-read permission grant to its canonical, owner-authored form
+   * for pushing to the owner's tenant.
+   *
+   * A permission grant is authored (and signed) by the owner. When a
+   * wallet-connected delegate — which does not hold the owner's signing key —
+   * stores the grant on its own tenant, it must attach a `signAsOwner`
+   * `ownerSignature` (the delegate is the tenant owner there). That signature is
+   * tenant-local: pushing such a copy to the owner's tenant is rejected by the
+   * DWN with `RecordsWriteOwnerAndTenantMismatch`, because the ownerSignature's
+   * signer (the delegate) is not the target tenant (the owner). Stripping the
+   * `ownerSignature` restores the exact owner-authored message the owner already
+   * signed, which the owner's tenant accepts on its own authority.
+   */
+  private static toCanonicalGrantMessage(message: GenericMessage): GenericMessage {
+    const authorization = (message as { authorization?: { ownerSignature?: unknown } }).authorization;
+    if (authorization === undefined || authorization.ownerSignature === undefined) {
+      return message;
+    }
+
+    const { ownerSignature: _ownerSignature, ...remainingAuthorization } = authorization;
+    return { ...message, authorization: remainingAuthorization } as GenericMessage;
   }
 
   private async pushMessageEntries({ did, dwnUrl, delegateDid, permissionGrantIds, entries }: {
