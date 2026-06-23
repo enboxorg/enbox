@@ -397,6 +397,26 @@ export async function pushMessages({ did, dwnUrl, delegateDid, permissionGrantId
   return context.push([...new Set(messageCids)]);
 }
 
+export async function pushMessageEntries({ did, dwnUrl, delegateDid, permissionGrantIds, entries, agent, permissionsApi }: {
+  did: string;
+  dwnUrl: string;
+  delegateDid?: string;
+  permissionGrantIds?: string[];
+  entries: SyncMessageEntry[];
+  agent: EnboxPlatformAgent;
+  permissionsApi?: PermissionsApi;
+}): Promise<PushResult> {
+  const context = new RemoteApplyPushContext({
+    did,
+    dwnUrl,
+    delegateDid,
+    permissionGrantIds,
+    agent,
+    permissionsApi,
+  });
+  return context.pushEntries(entries);
+}
+
 /**
  * Reads a message from the local DWN by its CID using MessagesRead.
  */
@@ -461,7 +481,6 @@ class RemoteApplyPushContext {
   }) {}
 
   public async push(rootCids: string[]): Promise<PushResult> {
-    const succeeded: string[] = [];
     const failedByRoot = new Map<string, PushFailure>();
     const rootEntries: SyncMessageEntry[] = [];
 
@@ -476,6 +495,15 @@ class RemoteApplyPushContext {
       }
       rootEntries.push(...root.entries);
     }
+
+    return this.pushEntries(rootEntries, failedByRoot);
+  }
+
+  public async pushEntries(
+    rootEntries: SyncMessageEntry[],
+    failedByRoot = new Map<string, PushFailure>(),
+  ): Promise<PushResult> {
+    const succeeded: string[] = [];
 
     for (const rootEntry of orderMessagesForAdmission(rootEntries)) {
       const rootCid = await this.rememberEntry(rootEntry);

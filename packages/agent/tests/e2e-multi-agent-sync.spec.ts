@@ -1,4 +1,4 @@
-import type { PermissionScope, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, PermissionScope, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -179,6 +179,10 @@ describe('E2E Multi-Agent Sync', () => {
   let messagesReadGrant: { grant: any; message: any };
   let messagesQueryGrant: { grant: any; message: any };
   let recordsQueryGrant: { grant: any; message: any };
+  let recordsWriteGrant: { grant: any; message: any };
+
+  /** Alice-authored notes-protocol configuration, mirrored onto the device. */
+  let notesProtocolConfigure: GenericMessage;
 
   beforeAll(async () => {
     // -----------------------------------------------------------------------
@@ -219,12 +223,15 @@ describe('E2E Multi-Agent Sync', () => {
     // -----------------------------------------------------------------------
     for (const def of [protocolNotes, protocolProfile]) {
       // Install locally on primary agent.
-      await primaryHarness.agent.dwn.processRequest({
+      const { message } = await primaryHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
         messageParams : { definition: def },
       });
+      if (def.protocol === protocolNotes.protocol) {
+        notesProtocolConfigure = message as GenericMessage;
+      }
       // Install on remote DWN.
       await primaryHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
@@ -257,6 +264,13 @@ describe('E2E Multi-Agent Sync', () => {
       grantor   : alice,
       grantee   : aliceDevice,
       scope     : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Read },
+      delegated : true,
+    });
+
+    recordsWriteGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
+      grantor   : alice,
+      grantee   : aliceDevice,
+      scope     : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Write },
       delegated : true,
     });
   });
@@ -296,7 +310,7 @@ describe('E2E Multi-Agent Sync', () => {
       // Re-distribute grants to device agent after its store clear.
       // Each grant must be stored on BOTH the device's own tenant (for
       // getPermissionForRequest) AND Alice's tenant (for DWN authorization).
-      for (const g of [messagesReadGrant, messagesQueryGrant, recordsQueryGrant]) {
+      for (const g of [messagesReadGrant, messagesQueryGrant, recordsQueryGrant, recordsWriteGrant]) {
         const data = g.grant.message.encodedData;
         const dataBlob = (): Blob => new Blob([Convert.base64Url(data).toUint8Array()]);
         await deviceHarness.agent.processDwnRequest({
@@ -315,6 +329,17 @@ describe('E2E Multi-Agent Sync', () => {
           dataStream  : dataBlob(),
         });
       }
+
+      // Mirror Alice's notes protocol into the device's copy of Alice's tenant
+      // (signed as owner) so the delegate can author notes records locally —
+      // exactly as the connect flow seeds protocols on a wallet-connected dapp.
+      await deviceHarness.agent.dwn.processRequest({
+        author      : alice.did.uri,
+        target      : alice.did.uri,
+        messageType : DwnInterface.ProtocolsConfigure,
+        rawMessage  : notesProtocolConfigure,
+        signAsOwner : true,
+      });
     });
 
     it('should push from primary agent and pull on device agent', async () => {
@@ -454,6 +479,43 @@ describe('E2E Multi-Agent Sync', () => {
       const profileRecordIds = profileQuery.reply.entries?.map(e => e.recordId) ?? [];
       expect(profileRecordIds).not.toContain(profileWrite.message!.recordId);
     });
+
+    it('pushes delegated local writes without the owner signing key', async () => {
+      await deviceHarness.agent.sync.registerIdentity({
+        did     : alice.did.uri,
+        options : {
+          protocols   : [protocolNotes.protocol],
+          delegateDid : aliceDevice.did.uri,
+        },
+      });
+
+      const writeResult = await deviceHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        granteeDid    : aliceDevice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat     : 'text/plain',
+          delegatedGrant : recordsWriteGrant.grant.message,
+          protocol       : protocolNotes.protocol,
+          protocolPath   : 'note',
+          schema         : protocolNotes.types.note.schema,
+        },
+        dataStream: new Blob(['Delegate-authored note']),
+      });
+      expect(writeResult.reply.status.code).toBe(202);
+
+      await deviceHarness.agent.sync.sync('push');
+
+      const remoteQuery = await primaryHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { recordId: writeResult.message!.recordId } },
+      });
+      expect(remoteQuery.reply.status.code).toBe(200);
+      expect(remoteQuery.reply.entries?.map(e => e.recordId)).toContain(writeResult.message!.recordId);
+    });
   });
 
   // =========================================================================
@@ -480,7 +542,7 @@ describe('E2E Multi-Agent Sync', () => {
       // Re-distribute grants to device agent after its store clear.
       // Each grant must be stored on BOTH the device's own tenant (for
       // getPermissionForRequest) AND Alice's tenant (for DWN authorization).
-      for (const g of [messagesReadGrant, messagesQueryGrant, recordsQueryGrant]) {
+      for (const g of [messagesReadGrant, messagesQueryGrant, recordsQueryGrant, recordsWriteGrant]) {
         const data = g.grant.message.encodedData;
         const dataBlob = (): Blob => new Blob([Convert.base64Url(data).toUint8Array()]);
         await deviceHarness.agent.processDwnRequest({
