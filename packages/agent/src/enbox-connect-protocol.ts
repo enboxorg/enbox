@@ -331,8 +331,9 @@ export type EnboxConnectResponse = {
    *
    * Contexts created after connect are delivered automatically by
    * `postWriteKeyDelivery()` when the owner creates a new multi-party root
-   * record on the same agent instance (same-process delivery).
-   * Cross-device delivery is a documented follow-up.
+   * record: same-process via direct cache injection, and cross-device via
+   * `contextKey` records written to the owner's DWN for the delegate to
+   * fetch (see #826).
    */
   delegateContextKeys?: DelegateContextKey[];
 
