@@ -736,12 +736,15 @@ export class AgentDwnApi {
 
       // Owner-authored multi-party root records get context-key delivery below
       // (participant, delegate, and cross-device paths). The externally-authored
-      // multi-party root record is the open gap: it lands ProtocolPath-encrypted to
-      // the owner only, so other context-key holders cannot decrypt it. Closing this
-      // needs a normal authored DWN write because a signed message cannot be rewritten
-      // by the owner; the mechanism is still open.
-      // Open issue https://github.com/enboxorg/enbox/issues/923: resolve externally-authored
-      // multi-party root-record context-key access.
+      // multi-party root record remains the open gap: it lands ProtocolPath-encrypted
+      // to the owner only, so other context-key holders cannot decrypt it.
+      //
+      // A prior "reactive upgrade" path had the owner re-encrypt the root under the
+      // context key after the fact, but it bypassed DWN message processing and was
+      // non-atomic, so it was removed (see #109). A correct fix must go through a
+      // normal authored DWN write — a signed message cannot be silently rewritten by
+      // the owner — and no replacement mechanism exists yet. Related open tracking:
+      // #523 (participant context-establishment delivery) and #99 (broader encryption).
       const newParticipants = detectNewParticipantsFn({
         protocolDefinition,
         protocolPath : writeParams.protocolPath,
@@ -1790,8 +1793,10 @@ export class AgentDwnApi {
    * into `_delegateContextKeyCache`. It works when the delegate cache is
    * on the same agent instance that creates the root record.
    *
-   * Cross-device DWN-based delivery (where the owner's agent and the
-   * delegate's agent are separate processes) is a documented follow-up.
+   * Cross-device delivery (where the owner's agent and the delegate's agent
+   * are separate processes) is handled separately by
+   * `deliverContextKeyToDelegatesViaDwn()`, which writes `contextKey` records
+   * to the owner's DWN for the delegate to fetch (see #826).
    *
    * @param protocol - The protocol URI
    * @param rootContextId - The root context ID of the new context
