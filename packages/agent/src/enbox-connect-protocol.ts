@@ -88,13 +88,11 @@ export type ConnectPermissionGrantOptions = {
  *   Issued when the grant is narrowed to a specific `protocolPath`.
  *
  * Common conditions (both kinds):
- * 1. The protocol has `encryptionRequired: true` types (single-party only)
+ * 1. The protocol has `encryptionRequired: true` types
  * 2. The delegate has at least one `Records.Read` scope
- * 3. The protocol does NOT use multi-party / role-based access patterns
  *
  * Out of scope (fail closed):
  * - `contextId`-scoped encrypted delegate reads
- * - multi-party / ProtocolContext encrypted delegate reads
  */
 export type DelegateDecryptionKey =
   | {
@@ -114,29 +112,6 @@ export type DelegateDecryptionKey =
     derivedPrivateKey: DerivedPrivateJwk;
   };
 
-/**
- * A context-scoped decryption key for a multi-party encrypted protocol.
- *
- * Delivered to delegates during the connect flow so they can decrypt
- * ProtocolContext-encrypted records without the owner's root X25519 key.
- *
- * Each key is scoped to one rootContextId — it unlocks all records within
- * that context domain but cannot access other contexts in the protocol.
- *
- * Delivered only when:
- * 1. The protocol has multi-party access patterns (detected by `isMultiPartyContext`)
- * 2. The delegate has a protocol-wide `Records.Read` scope (no protocolPath/contextId)
- * 3. The protocol has `encryptionRequired: true` types
- */
-export type DelegateContextKey = {
-  /** The protocol URI this key belongs to. */
-  protocol: string;
-  /** The root context ID this key unlocks. */
-  contextId: string;
-  /** The derived private key at `[ProtocolContext, rootContextId]`. */
-  derivedPrivateKey: DerivedPrivateJwk;
-};
-
 import type {
   JoseHeaderParams,
   Jwk } from '@enbox/crypto';
@@ -151,14 +126,12 @@ import {
   X25519,
   XChaCha20Poly1305,
 } from '@enbox/crypto';
-import { DwnInterfaceName, DwnMethodName, HdKey, KeyDerivationScheme, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, KeyDerivationScheme, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
 import { getEncryptionKeyInfo } from './dwn-encryption.js';
-import { isMultiPartyContext } from './protocol-utils.js';
 import { isRecordPermissionScope } from './dwn-api.js';
-import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 import { mapConcurrent, mapConcurrentSettled } from './utils.js';
 
 // ---------------------------------------------------------------------------
@@ -320,30 +293,6 @@ export type EnboxConnectResponse = {
    * receive no decryption keys.
    */
   delegateDecryptionKeys?: DelegateDecryptionKey[];
-
-  /**
-   * Context-scoped decryption keys for multi-party encrypted protocols.
-   *
-   * Derived at connect time for each existing rootContextId in multi-party
-   * protocols where the delegate has a protocol-wide `Records.Read` scope.
-   * Each key is scoped to `[ProtocolContext, rootContextId]` and can decrypt
-   * all records within that context domain.
-   *
-   * Contexts created after connect are delivered automatically by
-   * `postWriteKeyDelivery()` when the owner creates a new multi-party root
-   * record: same-process via direct cache injection, and cross-device via
-   * `contextKey` records written to the owner's DWN for the delegate to
-   * fetch (see #826).
-   */
-  delegateContextKeys?: DelegateContextKey[];
-
-  /**
-   * Protocol URIs that have multi-party encrypted access patterns.
-   *
-   * Delivered even when no contexts exist yet (cold-start), so the
-   * delegate's agent can register for future context key delivery.
-   */
-  delegateMultiPartyProtocols?: string[];
 
   /** Per-grant revocation mappings for session-bound self-revocation on disconnect. */
   sessionRevocations?: { grantId: string; revocationGrantId: string }[];
@@ -610,8 +559,6 @@ function assertConnectResponse(payload: Record<string, unknown>): asserts payloa
   requireArray(payload, 'delegateGrants', ctx);
   requireObject(payload, 'delegatePortableDid', ctx);
   requireOptionalArray(payload, 'delegateDecryptionKeys', ctx);
-  requireOptionalArray(payload, 'delegateContextKeys', ctx);
-  requireOptionalArray(payload, 'delegateMultiPartyProtocols', ctx);
   requireOptionalArray(payload, 'sessionRevocations', ctx);
 }
 
@@ -995,7 +942,6 @@ async function createPermissionGrants(
   delegateBearerDid: BearerDid,
   agent: EnboxPlatformAgent,
   scopes: DwnPermissionScope[],
-  delegateKeyDeliveryData?: { rootKeyId: string; publicKeyJwk: Record<string, any> },
   options?: ConnectPermissionGrantOptions,
 ): Promise<DwnDataEncodedRecordsWriteMessage[]> {
   const permissionsApi = new AgentPermissionsApi({ agent });
@@ -1010,10 +956,6 @@ async function createPermissionGrants(
     scopes.map((scope) => {
       const delegated = shouldUseDelegatePermission(scope);
 
-      // Attach delegate key-delivery tags to Records.Read grants so the
-      // owner can encrypt future contextKey records to the delegate.
-      const delegateKeyDelivery = (isConnectReadScope(scope) && delegateKeyDeliveryData) ? delegateKeyDeliveryData : undefined;
-
       return permissionsApi.createGrant({
         delegated,
         store     : true,
@@ -1021,7 +963,6 @@ async function createPermissionGrants(
         scope,
         dateExpires,
         author    : selectedDid,
-        delegateKeyDelivery,
         connectSession,
       });
     })
@@ -1107,7 +1048,7 @@ async function createPermissionGrants(
  * When the protocol is *not* installed locally — a safety fallback for
  * callers that did not pre-install — the protocol is configured locally
  * (with `encryption: true` when any type declares `encryptionRequired: true`,
- * so the agent injects `$encryption` keys derived from the owner's X25519
+ * so the agent injects `$keyAgreement` keys derived from the owner's X25519
  * root key) and then fanned out to every owner DWN endpoint with bounded
  * concurrency and a short per-request budget. Endpoint failures are
  * non-fatal — sync delivers any missing copies eventually.
@@ -1199,7 +1140,6 @@ async function prepareProtocol(
  *     protocol-wide key is emitted and narrower keys are dropped.
  *   - Otherwise one exact-path key is emitted per unique `protocolPath`.
  *   - Scopes with `contextId` cause a fail-closed error.
- *   - Multi-party protocols cause a fail-closed error.
  *
  * @param agent - The platform agent (must hold the owner's KMS keys)
  * @param ownerDid - The DID of the protocol owner
@@ -1213,7 +1153,7 @@ async function deriveScopedDecryptionKeys(
   ownerDid: string,
   protocolUri: string,
   scopes: DwnPermissionScope[],
-  protocolDefinition: DwnProtocolDefinition,
+  _protocolDefinition: DwnProtocolDefinition,
 ): Promise<DelegateDecryptionKey[]> {
   // Collect read-like scopes only. `isRecordPermissionScope` narrows to
   // `DwnRecordsPermissionScope`, which declares `protocolPath?: string`
@@ -1232,18 +1172,6 @@ async function deriveScopedDecryptionKeys(
         `yet; use protocol-wide permissions for protocol '${protocolUri}'.`,
       );
     }
-  }
-
-  // Defense-in-depth: reject if any root is multi-party.
-  // The caller should have already routed multi-party protocols to
-  // deriveContextKeysForDelegate instead.
-  const { multiParty } = classifyProtocolRoots(protocolDefinition);
-  if (multiParty.length > 0) {
-    throw new Error(
-      `deriveScopedDecryptionKeys called for protocol with multi-party ` +
-      `roots [${multiParty.join(', ')}]. Use deriveContextKeysForDelegate ` +
-      `for multi-party protocols.`,
-    );
   }
 
   // Check if any scope is protocol-wide (no protocolPath).
@@ -1301,149 +1229,6 @@ async function deriveScopedDecryptionKeys(
   }
 
   return keys;
-}
-
-/**
- * Detects whether a protocol definition has any root-level type whose subtree
- * triggers multi-party semantics. Delegates to the canonical
- * `isMultiPartyContext()` from `protocol-utils.ts` which checks:
- *
- *   - `$role: true` descendants in the subtree
- *   - Relational `who`/`of` `$actions` rules that grant `read` access
- *
- * These patterns cause the DWN agent to use ProtocolContext encryption at
- * write time, which is not supported in delegate sessions yet.
- */
-/**
- * Classifies root-level types in a protocol definition into multi-party
- * and single-party buckets. Used to detect mixed protocols that cannot
- * be safely modeled with a single key type.
- */
-function classifyProtocolRoots(
-  definition: DwnProtocolDefinition,
-): { multiParty: string[]; singleParty: string[] } {
-  const structure = definition.structure;
-  if (!structure) { return { multiParty: [], singleParty: [] }; }
-
-  const multiParty: string[] = [];
-  const singleParty: string[] = [];
-
-  for (const rootTypeName of Object.keys(structure)) {
-    if (rootTypeName.startsWith('$')) { continue; }
-    if (isMultiPartyContext(definition, rootTypeName)) {
-      multiParty.push(rootTypeName);
-    } else {
-      singleParty.push(rootTypeName);
-    }
-  }
-
-  return { multiParty, singleParty };
-}
-
-/**
- * Derives per-context decryption keys for a delegate's access to a multi-party
- * encrypted protocol. Queries the owner's DWN for all root-level records
- * (thread roots, etc.) and derives a `[ProtocolContext, rootContextId]` key
- * for each.
- *
- * Validates scopes first — only protocol-wide `Records.Read` scopes are accepted.
- * `protocolPath`-scoped and `contextId`-scoped reads throw (not yet supported).
- * Write-only scopes return empty (no decryption keys needed).
- *
- * @param agent - The platform agent (must hold the owner's KMS keys)
- * @param ownerDid - The DID of the protocol owner
- * @param protocolDefinition - The protocol definition
- * @param scopes - The permission scopes for this protocol
- * @returns An array of `DelegateContextKey` (may be empty)
- */
-async function deriveContextKeysForDelegate(
-  agent: EnboxPlatformAgent,
-  ownerDid: string,
-  protocolDefinition: DwnProtocolDefinition,
-  scopes: DwnPermissionScope[],
-): Promise<DelegateContextKey[]> {
-  // `isRecordPermissionScope` narrows to `DwnRecordsPermissionScope`,
-  // which declares `protocolPath?: string` and `contextId?: string` —
-  // no `as any` needed for the field reads below.
-  const readScopes = scopes.filter(isConnectReadScope);
-
-  if (readScopes.length === 0) {
-    return []; // write-only → no context keys
-  }
-
-  // Fail closed: reject contextId-scoped reads.
-  for (const scope of readScopes) {
-    if (scope.contextId) {
-      throw new Error(
-        `Encrypted delegate access scoped by contextId is not supported ` +
-        `yet; use protocol-wide permissions for protocol ` +
-        `'${protocolDefinition.protocol}'.`,
-      );
-    }
-  }
-
-  // Fail closed: reject protocolPath-scoped reads on multi-party protocols.
-  for (const scope of readScopes) {
-    if (scope.protocolPath) {
-      throw new Error(
-        `Encrypted delegate access scoped by protocolPath on multi-party ` +
-        `protocols is not supported yet; use protocol-wide permissions for ` +
-        `protocol '${protocolDefinition.protocol}'.`,
-      );
-    }
-  }
-
-  // All read scopes are protocol-wide. Derive context keys for each
-  // existing root-level context in the protocol.
-  const { keyId, keyUri } = await getEncryptionKeyInfo(agent, ownerDid);
-  const protocolUri = protocolDefinition.protocol;
-
-  // Find root-level types (non-$ keys in structure).
-  const rootTypes = Object.keys(protocolDefinition.structure ?? {})
-    .filter((k) => !k.startsWith('$'));
-
-  const contextKeys: DelegateContextKey[] = [];
-  const seenContextIds = new Set<string>();
-
-  for (const rootType of rootTypes) {
-    // Query all root records for this type.
-    const { reply } = await agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: { protocol: protocolUri, protocolPath: rootType },
-      },
-    });
-
-    for (const entry of reply.entries ?? []) {
-      const rootContextId = entry.contextId?.split('/')[0] ?? entry.recordId;
-
-      if (!rootContextId || seenContextIds.has(rootContextId)) { continue; }
-      seenContextIds.add(rootContextId);
-
-      const derivationPath = [KeyDerivationScheme.ProtocolContext, rootContextId];
-      const derivedBytes = await agent.keyManager.derivePrivateKeyBytes({
-        keyUri, derivationPath,
-      });
-      const derivedJwk = await X25519.bytesToPrivateKey({
-        privateKeyBytes: derivedBytes,
-      });
-
-      contextKeys.push({
-        protocol          : protocolUri,
-        contextId         : rootContextId,
-        derivedPrivateKey : {
-          rootKeyId         : keyId,
-          derivationScheme  : KeyDerivationScheme.ProtocolContext,
-          derivationPath,
-          derivedPrivateKey : derivedJwk as PrivateKeyJwk,
-        },
-      });
-    }
-  }
-
-  return contextKeys;
 }
 
 // ---------------------------------------------------------------------------
@@ -1507,49 +1292,10 @@ async function submitConnectResponse(
     });
     delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
 
-    // Derive the delegate's key-delivery ProtocolPath leaf public key.
-    // This is the pre-derived key that the owner will use later when writing
-    // contextKey records addressed to this delegate. The owner cannot derive
-    // this from the delegate's root public key alone (HKDF needs the private
-    // key), so we compute it now while we have temporary access to the
-    // delegate's private key material.
-    const delegateX25519PrivateKeyBytes = await X25519.privateKeyToBytes({
-      privateKey: delegateX25519PrivateKey,
-    });
-    const keyDeliveryDerivationPath = [
-      KeyDerivationScheme.ProtocolPath,
-      KeyDeliveryProtocolDefinition.protocol,
-      'contextKey',
-    ];
-    const delegateLeafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(
-      delegateX25519PrivateKeyBytes, keyDeliveryDerivationPath,
-    );
-    const delegateLeafPrivateKeyJwk = await X25519.bytesToPrivateKey({
-      privateKeyBytes: delegateLeafPrivateKeyBytes,
-    });
-    const delegateKeyDeliveryLeafPublicKey = await X25519.getPublicKey({
-      key: delegateLeafPrivateKeyJwk,
-    });
-
-    // The rootKeyId is the delegate's keyAgreement VM id (e.g. `did:jwk:...#0`).
-    // For did:jwk this is the Ed25519 VM, but getEncryptionKeyInfo() also returns
-    // this same id after Ed25519→X25519 conversion. The DWN SDK matches the JWE
-    // `kid` header against the KeyDecrypter's `rootKeyId`, so both sides must use
-    // the same id — which they do because both derive from verificationMethod.id
-    // of the keyAgreement relationship.
-    const delegateKeyAgreementVmId = delegateBearerDid.document.verificationMethod![0].id;
-    const delegateKeyDeliveryData = {
-      rootKeyId    : delegateKeyAgreementVmId,
-      publicKeyJwk : delegateKeyDeliveryLeafPublicKey,
-    };
-
     // Derive scope-aware decryption keys for encrypted protocols.
-    // Single-party: ProtocolPath keys (protocol-wide or exact-path).
-    // Multi-party: ProtocolContext keys (per rootContextId).
+    // ProtocolPath keys are either protocol-wide or exact-path.
     // Write-only delegates receive no decryption capability.
     const delegateDecryptionKeys: DelegateDecryptionKey[] = [];
-    const delegateContextKeys: DelegateContextKey[] = [];
-    const delegateMultiPartyProtocols: string[] = [];
 
     const delegateGrants = await timed(
       `${CONNECT_PERF_LOG_PREFIX} permissionGrants.fanout (protocols=${numProtocols})`,
@@ -1571,44 +1317,11 @@ async function submitConnectResponse(
               .some((type: any) => type?.encryptionRequired === true);
 
             if (hasEncryptedTypes) {
-              const { multiParty, singleParty } = classifyProtocolRoots(protocolDefinition);
-
-              if (multiParty.length > 0 && singleParty.length > 0) {
-                // Mixed protocol: some roots are multi-party, others single-party.
-                // We cannot safely model this with either key type alone.
-                throw new Error(
-                  `Encrypted delegate access for protocols with mixed single-party ` +
-                  `and multi-party roots is not supported yet. ` +
-                  `Protocol '${protocolDefinition.protocol}' has multi-party roots ` +
-                  `[${multiParty.join(', ')}] and single-party roots ` +
-                  `[${singleParty.join(', ')}].`,
-                );
-              }
-
-              if (multiParty.length > 0) {
-                // Pure multi-party: derive per-context keys for existing contexts.
-                // Unsupported scope shapes (protocolPath, contextId) throw.
-                const ctxKeys = await deriveContextKeysForDelegate(
-                  agent, selectedDid, protocolDefinition, permissionScopes,
-                );
-                delegateContextKeys.push(...ctxKeys);
-
-                // Only register the protocol for post-connect delivery if the
-                // delegate has at least one Records.Read scope. Write-only delegates
-                // must NOT receive context keys — they have no decryption need.
-                const hasReadLikeScope = permissionScopes.some(isConnectReadScope);
-                if (hasReadLikeScope) {
-                  delegateMultiPartyProtocols.push(protocolDefinition.protocol);
-                }
-              } else {
-                // Pure single-party: derive ProtocolPath keys.
-                // Unsupported scope shapes (contextId) throw.
-                const keys = await deriveScopedDecryptionKeys(
-                  agent, selectedDid, protocolDefinition.protocol,
-                  permissionScopes, protocolDefinition,
-                );
-                delegateDecryptionKeys.push(...keys);
-              }
+              const keys = await deriveScopedDecryptionKeys(
+                agent, selectedDid, protocolDefinition.protocol,
+                permissionScopes, protocolDefinition,
+              );
+              delegateDecryptionKeys.push(...keys);
             }
 
             return EnboxConnectProtocol.createPermissionGrants(
@@ -1616,7 +1329,6 @@ async function submitConnectResponse(
               delegateBearerDid,
               agent,
               permissionScopes,
-              delegateKeyDeliveryData,
               { connectSession },
             );
           }
@@ -1711,16 +1423,14 @@ async function submitConnectResponse(
     const responseObject = await timed(
       `${CONNECT_PERF_LOG_PREFIX} response.build`,
       () => EnboxConnectProtocol.createConnectResponse({
-        providerDid                 : selectedDid,
-        delegateDid                 : delegateBearerDid.uri,
-        aud                         : connectRequest.clientDid,
-        nonce                       : connectRequest.nonce,
+        providerDid            : selectedDid,
+        delegateDid            : delegateBearerDid.uri,
+        aud                    : connectRequest.clientDid,
+        nonce                  : connectRequest.nonce,
         delegateGrants,
         delegatePortableDid,
-        delegateDecryptionKeys      : delegateDecryptionKeys.length > 0 ? delegateDecryptionKeys : undefined,
-        delegateContextKeys         : delegateContextKeys.length > 0 ? delegateContextKeys : undefined,
-        delegateMultiPartyProtocols : delegateMultiPartyProtocols.length > 0 ? delegateMultiPartyProtocols : undefined,
-        sessionRevocations          : sessionRevocations.length > 0 ? sessionRevocations : undefined,
+        delegateDecryptionKeys : delegateDecryptionKeys.length > 0 ? delegateDecryptionKeys : undefined,
+        sessionRevocations     : sessionRevocations.length > 0 ? sessionRevocations : undefined,
       }),
     );
 
@@ -1816,6 +1526,4 @@ export const EnboxConnectProtocol = {
   createPermissionGrants,
   submitConnectResponse,
   deriveScopedDecryptionKeys,
-  deriveContextKeysForDelegate,
-  classifyProtocolRoots,
 };

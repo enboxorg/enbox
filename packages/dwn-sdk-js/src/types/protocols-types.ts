@@ -12,6 +12,7 @@ export type ProtocolsConfigureDescriptor = {
 
 export type ProtocolDefinition = {
   protocol: string;
+  $keyAgreement?: ProtocolKeyAgreement;
   /**
    * Denotes if this Protocol Definition can be returned by unauthenticated or unauthorized `ProtocolsQuery`.
    */
@@ -132,19 +133,14 @@ export type ProtocolActionRule = {
   can: (ProtocolAction | `${ProtocolAction}` | (string & {}))[];
 };
 /**
- * Config for protocol-path encryption scheme.
+ * Public key used for protocol-path content encryption.
  */
-export type ProtocolPathEncryption = {
-
-  /**
-   * The ID of the root key that derives the public key at this protocol path for encrypting the symmetric key used for data encryption.
-   */
-  rootKeyId: string;
-
-  /**
-   * Public key for encrypting the symmetric key used for data encryption.
-   */
+export type ProtocolKeyAgreement = {
   publicKeyJwk: PublicKeyJwk;
+};
+
+export type ProtocolPathEncryption = ProtocolKeyAgreement & {
+  rootKeyId?: string;
 };
 
 /**
@@ -224,6 +220,7 @@ export type ProtocolTagSchema = {
   exclusiveMaximum?: number;
   minLength?: number;
   maxLength?: number;
+  pattern?: string;
   minItems?: number;
   maxItems?: number;
   uniqueItems?: boolean;
@@ -234,7 +231,7 @@ export type ProtocolTagSchema = {
 /**
  * Union of all value types that can appear as properties of a `ProtocolRuleSet`.
  * This includes:
- * - `$`-prefixed directive values (`$encryption`, `$actions`, `$role`, `$ref`, `$size`, `$tags`, `$delivery`)
+ * - `$`-prefixed directive values (`$keyAgreement`, `$actions`, `$role`, `$ref`, `$size`, `$tags`, `$delivery`)
  * - Child `ProtocolRuleSet` entries (non-`$` keys)
  */
 type ProtocolRuleSetValue =
@@ -251,8 +248,9 @@ type ProtocolRuleSetValue =
 
 export type ProtocolRuleSet = {
   /**
-   * Encryption setting for objects that are in this protocol path.
+   * Key agreement setting for records at this protocol path.
    */
+  $keyAgreement?: ProtocolKeyAgreement;
   $encryption?: ProtocolPathEncryption;
   $actions?: ProtocolActionRule[];
 

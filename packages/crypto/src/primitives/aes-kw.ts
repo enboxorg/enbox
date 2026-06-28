@@ -179,6 +179,7 @@ export class AesKw {
     // Map the private key's JOSE algorithm name to the Web Crypto API algorithm identifier.
     const webCryptoAlgorithm = {
       A128KW  : 'AES-KW', A192KW  : 'AES-KW', A256KW  : 'AES-KW',
+      A128CTR : 'AES-CTR', A192CTR : 'AES-CTR', A256CTR : 'AES-CTR',
       A128GCM : 'AES-GCM', A192GCM : 'AES-GCM', A256GCM : 'AES-GCM',
     }[wrappedKeyAlgorithm];
 
@@ -237,6 +238,7 @@ export class AesKw {
     // Map the private key's JOSE algorithm name to the Web Crypto API algorithm identifier.
     const webCryptoAlgorithm = {
       A128KW  : 'AES-KW', A192KW  : 'AES-KW', A256KW  : 'AES-KW',
+      A128CTR : 'AES-CTR', A192CTR : 'AES-CTR', A256CTR : 'AES-CTR',
       A128GCM : 'AES-GCM', A192GCM : 'AES-GCM', A256GCM : 'AES-GCM',
     }[unwrappedKey.alg];
 

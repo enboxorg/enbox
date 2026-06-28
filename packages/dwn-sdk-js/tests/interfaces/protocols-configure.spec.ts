@@ -8,7 +8,7 @@ import { ProtocolsConfigureHandler } from '../../src/handlers/protocols-configur
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message } from '../../src/index.js';
+import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message, Protocols } from '../../src/index.js';
 
 describe('ProtocolsConfigure', () => {
   describe('parse()', () => {
@@ -502,7 +502,7 @@ describe('ProtocolsConfigure', () => {
           capturedWarnings.length = 0;
         });
 
-        it('should warn when encryptionRequired: true and anyone can read at the same path', async () => {
+        it('should reject encryptionRequired: true when anyone can read at the same path', async () => {
           originalWarn = console.warn;
           console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
 
@@ -525,22 +525,18 @@ describe('ProtocolsConfigure', () => {
           };
 
           const alice = await TestDataGenerator.generatePersona();
-          const result = await ProtocolsConfigure.create({
-            signer: Jws.createSigner(alice),
-            definition,
-          });
+          const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+            definition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          );
 
-          // The protocol is still valid — the warning is non-fatal
-          expect(result).toBeDefined();
-
-          // A warning should have been emitted
-          expect(capturedWarnings.length).toBe(1);
-          expect(capturedWarnings[0]).toContain('encryptionRequired: true');
-          expect(capturedWarnings[0]).toContain('anyone');
-          expect(capturedWarnings[0]).toContain('secret');
+          await expect(ProtocolsConfigure.create({
+            signer     : Jws.createSigner(alice),
+            definition : encryptedDefinition,
+          })).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidEncryptedAnyoneRead);
+          expect(capturedWarnings.length).toBe(0);
         });
 
-        it('should warn for nested types with encryptionRequired + anyone-can-read', async () => {
+        it('should reject nested types with encryptionRequired + anyone-can-read', async () => {
           originalWarn = console.warn;
           console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
 
@@ -565,15 +561,15 @@ describe('ProtocolsConfigure', () => {
           };
 
           const alice = await TestDataGenerator.generatePersona();
-          const result = await ProtocolsConfigure.create({
-            signer: Jws.createSigner(alice),
-            definition,
-          });
+          const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+            definition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          );
 
-          expect(result).toBeDefined();
-          expect(capturedWarnings.length).toBe(1);
-          expect(capturedWarnings[0]).toContain('message');
-          expect(capturedWarnings[0]).toContain('thread/message');
+          await expect(ProtocolsConfigure.create({
+            signer     : Jws.createSigner(alice),
+            definition : encryptedDefinition,
+          })).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidEncryptedAnyoneRead);
+          expect(capturedWarnings.length).toBe(0);
         });
 
         it('should not warn when encryptionRequired is absent', async () => {
@@ -594,9 +590,12 @@ describe('ProtocolsConfigure', () => {
           };
 
           const alice = await TestDataGenerator.generatePersona();
+          const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+            definition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          );
           const result = await ProtocolsConfigure.create({
-            signer: Jws.createSigner(alice),
-            definition,
+            signer     : Jws.createSigner(alice),
+            definition : encryptedDefinition,
           });
 
           expect(result).toBeDefined();
@@ -635,9 +634,12 @@ describe('ProtocolsConfigure', () => {
           };
 
           const alice = await TestDataGenerator.generatePersona();
+          const encryptedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+            definition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          );
           const result = await ProtocolsConfigure.create({
-            signer: Jws.createSigner(alice),
-            definition,
+            signer     : Jws.createSigner(alice),
+            definition : encryptedDefinition,
           });
 
           expect(result).toBeDefined();

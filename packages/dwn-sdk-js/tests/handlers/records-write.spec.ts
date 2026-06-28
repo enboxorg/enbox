@@ -3,7 +3,6 @@ import type { EncryptionInput } from '../../src/interfaces/records-write.js';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { GenerateFromRecordsWriteOut } from '../utils/test-data-generator.js';
 import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
-import type { PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { RecordsQueryReplyEntry } from '../../src/types/records-types.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
@@ -42,9 +41,8 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
-import { X25519 } from '@enbox/crypto';
 import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
-import { CoreProtocolRegistry, DataStoreLevel, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, MessageStoreLevel, PermissionsProtocol, RecordsDelete, RecordsQuery } from '../../src/index.js';
+import { CoreProtocolRegistry, DataStoreLevel, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, MessageStoreLevel, PermissionsProtocol, Protocols, RecordsDelete, RecordsQuery } from '../../src/index.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
@@ -2724,10 +2722,14 @@ export function testRecordsWriteHandler(): void {
             }
           };
 
+          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          );
+
           // Alice installs the protocol
           const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
             author             : alice,
-            protocolDefinition : protocolDefinition,
+            protocolDefinition : encryptedProtocolDefinition,
           });
           const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
           expect(configReply.status.code).toBe(202);
@@ -2764,27 +2766,28 @@ export function testRecordsWriteHandler(): void {
             }
           };
 
+          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          );
+
           // Alice installs the protocol
           const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
             author             : alice,
-            protocolDefinition : protocolDefinition,
+            protocolDefinition : encryptedProtocolDefinition,
           });
           const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
           expect(configReply.status.code).toBe(202);
 
-          // Generate an X25519 key pair for encryption (did:key personas use Ed25519 for signing)
-          const encryptionPrivateKey = await X25519.generateKey();
-          const encryptionPublicKey = await X25519.getPublicKey({ key: encryptionPrivateKey }) as PublicKeyJwk;
           const data = Encoder.stringToBytes('encrypted secret');
           const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+          const encryptionPublicKey = encryptedProtocolDefinition.structure.secret.$keyAgreement!.publicKeyJwk;
 
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
-            authenticationTag    : TestDataGenerator.randomBytes(16),
             keyEncryptionInputs  : [{
-              publicKeyId      : alice.keyId,
+              keyId            : await Encryption.getKeyId(encryptionPublicKey),
               publicKey        : encryptionPublicKey,
               derivationScheme : KeyDerivationScheme.ProtocolPath
             }]
@@ -2819,10 +2822,14 @@ export function testRecordsWriteHandler(): void {
             }
           };
 
+          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          );
+
           // Alice installs the protocol
           const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
             author             : alice,
-            protocolDefinition : protocolDefinition,
+            protocolDefinition : encryptedProtocolDefinition,
           });
           const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
           expect(configReply.status.code).toBe(202);
@@ -3117,18 +3124,17 @@ export function testRecordsWriteHandler(): void {
           expect(protocolsConfigureReply.status.code).toBe(202);
 
           const bobMessageBytes = Encoder.stringToBytes('message from bob');
-          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
           const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-          const { ciphertext: bobMessageEncryptedBytes, tag: authenticationTag } = await Encryption.aeadEncrypt(
-            ContentEncryptionAlgorithm.A256GCM, dataEncryptionKey, dataEncryptionInitializationVector, bobMessageBytes
+          const bobMessageEncryptedBytes = await Encryption.encrypt(
+            ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, bobMessageBytes
           );
 
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
-            authenticationTag,
             keyEncryptionInputs  : [{
-              publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
+              keyId            : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
               publicKey        : alice.encryptionKeyPair.publicJwk,
               derivationScheme : KeyDerivationScheme.ProtocolPath
             }]
@@ -3142,8 +3148,8 @@ export function testRecordsWriteHandler(): void {
             encryptionInput
           });
 
-        // replace valid `encryption` property with a mismatching one — mutate the iv to cause CID mismatch
-        message.encryption!.iv = Encoder.stringToBase64Url('any value which will result in a different CID');
+        // replace valid `encryption` property with a mismatching one — mutate the initializationVector to cause CID mismatch
+        message.encryption!.initializationVector = Encoder.stringToBase64Url('any value which will result in a different CID');
 
         const recordsWriteHandler = new RecordsWriteHandler({
           didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,

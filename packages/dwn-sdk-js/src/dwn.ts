@@ -41,6 +41,7 @@ import { Cid } from './utils/cid.js';
 import { CoreProtocolRegistry } from './core/core-protocol.js';
 import { DataStream } from './utils/data-stream.js';
 import { DwnConstant } from './core/dwn-constant.js';
+import { EncryptionProtocol } from './protocols/encryption.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesQueryHandler } from './handlers/messages-query.js';
@@ -115,6 +116,7 @@ export class Dwn {
 
     // Initialize the core protocol registry with built-in system protocols.
     this._coreProtocols = new CoreProtocolRegistry();
+    this._coreProtocols.register(new EncryptionProtocol());
     this._coreProtocols.register(new PermissionsProtocol());
 
     // The single narrow surface through which validation logic reads state (replay-basis closure).
@@ -426,7 +428,7 @@ export class Dwn {
       RecordsWrite.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataBytes.length);
 
       if (coreProtocol?.validateRecord !== undefined) {
-        coreProtocol.validateRecord(message, dataBytes);
+        await coreProtocol.validateRecord(message, dataBytes);
       }
 
       return;

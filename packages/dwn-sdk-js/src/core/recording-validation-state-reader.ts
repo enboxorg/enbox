@@ -88,6 +88,19 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
+  public async fetchAudienceEpoch(input: {
+    tenant: string;
+    protocol: string;
+    contextId: string;
+    role: string;
+    epoch: number;
+    keyId: string;
+  }): Promise<RecordsWriteMessage | undefined> {
+    this.recordedReads.push({ method: 'fetchAudienceEpoch' });
+    return this.inner.fetchAudienceEpoch(input);
+  }
+
+  /** @inheritdoc */
   public async fetchGrant(tenant: string, permissionGrantId: string): Promise<PermissionGrant> {
     this.recordedReads.push({ method: 'fetchGrant' });
     return this.inner.fetchGrant(tenant, permissionGrantId);

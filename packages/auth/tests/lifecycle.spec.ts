@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 
-import { Convert } from '@enbox/common';
 import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
 import { DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError } from '@enbox/agent';
 
@@ -433,7 +432,6 @@ describe('importDelegateAndSetupSync', () => {
   describe('importDelegateDecryptionKeys branch', () => {
     test('imports delegate decryption keys when provided', async () => {
       const importedDecryptionKeys: any[] = [];
-      const importedContextKeys: any[] = [];
 
       const identity = createMockIdentity({
         did      : { uri: 'did:jwk:delegate1' },
@@ -445,26 +443,20 @@ describe('importDelegateAndSetupSync', () => {
         dwnImportDelegateDecryptionKeys : (did: string, keys: any[]) => {
           importedDecryptionKeys.push({ did, keys });
         },
-        dwnImportDelegateContextKeys: (did: string, keys: any[], protocols?: string[]) => {
-          importedContextKeys.push({ did, keys, protocols });
-        },
         dwnProcessRawMessage: async () => ({ status: { code: 202, detail: 'Accepted' } }),
       });
 
       const grants = [buildGrantMessage('https://proto.a', 'grant-a')];
 
       const decryptionKeys = [{ algorithm: 'A256GCM', derivationScheme: 'protocolPath', key: {} }];
-      const contextKeys = [{ contextId: 'ctx-1', key: {} }];
 
       const result = await importDelegateAndSetupSync({
-        userAgent                   : agent,
-        delegatePortableDid         : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
-        connectedDid                : 'did:dht:connected1',
-        delegateGrants              : grants,
-        delegateDecryptionKeys      : decryptionKeys as any,
-        delegateContextKeys         : contextKeys as any,
-        delegateMultiPartyProtocols : ['https://proto.a'],
-        flowName                    : 'test',
+        userAgent              : agent,
+        delegatePortableDid    : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
+        connectedDid           : 'did:dht:connected1',
+        delegateGrants         : grants,
+        delegateDecryptionKeys : decryptionKeys as any,
+        flowName               : 'test',
       });
 
       expect(result).toBeDefined();
@@ -474,9 +466,6 @@ describe('importDelegateAndSetupSync', () => {
       expect(importedDecryptionKeys[0].did).toBe('did:jwk:delegate1');
       expect(importedDecryptionKeys[0].keys).toEqual(decryptionKeys);
 
-      // Context keys should have been imported (lines 458-463).
-      expect(importedContextKeys).toHaveLength(1);
-      expect(importedContextKeys[0].did).toBe('did:jwk:delegate1');
     });
   });
 
@@ -1140,77 +1129,4 @@ describe('finalizeDelegateSession', () => {
     });
   });
 
-  describe('onDelegateContextKeysChanged callback', () => {
-    test('persists updated context keys when callback fires for matching delegate', async () => {
-      const emitter = new AuthEventEmitter();
-      const storage = new MemoryStorage();
-
-      const identity = createMockIdentity({
-        did      : { uri: 'did:jwk:delegate1' },
-        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
-      });
-
-      const exportedKeys = [{ contextId: 'ctx-1', key: {} }];
-      const agent = createMockAgent({
-        dwnExportDelegateContextKeys: () => exportedKeys,
-      });
-
-      const session = await finalizeDelegateSession({
-        userAgent    : agent,
-        emitter,
-        storage,
-        identity     : identity as any,
-        connectedDid : 'did:dht:connected1',
-        delegateDid  : 'did:jwk:delegate1',
-        sync         : '15s',
-      });
-
-      expect(session).toBeDefined();
-
-      // The callback should have been wired.
-      const callback = (agent.dwn as any).onDelegateContextKeysChanged;
-      expect(callback).toBeDefined();
-
-      // Fire the callback with matching delegate DID.
-      await callback('did:jwk:delegate1');
-
-      // Context keys should be persisted in the agent's SecretStore.
-      const stored = await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-      expect(stored).toBeDefined();
-      const parsed = JSON.parse(Convert.uint8Array(stored!).toString());
-      expect(parsed).toEqual(exportedKeys);
-    });
-
-    test('ignores callback when delegate DID does not match', async () => {
-      const emitter = new AuthEventEmitter();
-      const storage = new MemoryStorage();
-
-      const identity = createMockIdentity({
-        did      : { uri: 'did:jwk:delegate1' },
-        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
-      });
-
-      const agent = createMockAgent();
-
-      await finalizeDelegateSession({
-        userAgent    : agent,
-        emitter,
-        storage,
-        identity     : identity as any,
-        connectedDid : 'did:dht:connected1',
-        delegateDid  : 'did:jwk:delegate1',
-        sync         : '15s',
-      });
-
-      const callback = (agent.dwn as any).onDelegateContextKeysChanged;
-      expect(callback).toBeDefined();
-
-      // Fire with non-matching delegate — should be a no-op.
-      await callback('did:jwk:different');
-
-      // No context keys should be stored in SecretStore.
-      const stored = await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-      expect(stored).toBeUndefined();
-    });
-  });
 });

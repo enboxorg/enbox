@@ -16,12 +16,12 @@ export const PERMISSIONS_REVOCATION_PATH = 'grant/revocation';
 export const PERMISSIONS_PROTOCOL_URI = 'https://identity.foundation/dwn/permissions';
 
 /**
- * Well-known key-delivery protocol URI used for encrypted context-key records.
+ * The DWN Encryption protocol URI.
  */
-export const KEY_DELIVERY_PROTOCOL_URI = 'https://identity.foundation/protocols/key-delivery';
+export const ENCRYPTION_PROTOCOL_URI = 'https://identity.foundation/dwn/protocols/encryption';
 
 const RECORDS_PRIMARY_PROJECTION_EXCLUDED_PROTOCOLS = new Set<string>([
-  KEY_DELIVERY_PROTOCOL_URI,
+  ENCRYPTION_PROTOCOL_URI,
   PERMISSIONS_PROTOCOL_URI,
 ]);
 

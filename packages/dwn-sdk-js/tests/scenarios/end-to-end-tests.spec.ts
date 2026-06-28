@@ -1,22 +1,23 @@
 import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ProtocolsConfigureMessage, RecordsReadReply, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, RecordsReadReply, ResumableTaskStore } from '../../src/index.js';
+import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 
-import sinon from 'sinon';
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-
-import { authenticate } from '../../src/core/auth.js';
 import { Encoder } from '../../src/index.js';
-import { HdKey } from '../../src/utils/hd-key.js';
+import { Encryption } from '../../src/utils/encryption.js';
+import { EncryptionProtocol } from '../../src/protocols/encryption.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
+import sinon from 'sinon';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
+import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import { X25519 } from '@enbox/crypto';
 
-import { DataStream, Dwn, Jws, Protocols, ProtocolsConfigure, ProtocolsQuery, Records, RecordsRead } from '../../src/index.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { DataStream, Dwn, Jws, Protocols, Records, RecordsRead, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 export function testEndToEndScenarios(): void {
@@ -55,22 +56,31 @@ export function testEndToEndScenarios(): void {
       await dwn.close();
     });
 
-    it('should support a multi-participant encrypted chat protocol', async () => {
+    it('should support a role-audience encrypted chat protocol', async () => {
       // Scenario:
-      // 1. Alice starts a chat thread
-      // 2. Alice adds Bob as a participant with [symmetric key] encrypted using [Bob's participant-level public key]
-      // 3. Alice writes a chat message(s) in the thread
-      // 4. Alice sends an invite to Bob's DWN with the [context/thread ID]
-      // 5. Bob fetches the invite from his DWN and obtains the [context/thread ID]
-      // 6. Bob fetches the entire thread using the [context/thread ID]
-      // 7. Bob is able to decrypt all thread content
+      // 1. Alice starts a chat thread and adds Bob as a plaintext participant role.
+      // 2. Alice publishes an audience epoch for thread participants.
+      // 3. Alice writes an encrypted chat message with protocol-path and role-audience CEK wraps.
+      // 4. Bob reads the message through his participant role and decrypts with the delivered audience key.
 
       // creating Alice and Bob persona and setting up a stub DID resolver
       const alice = await TestDataGenerator.generatePersona();
       const bob = await TestDataGenerator.generatePersona();
       TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
-      const protocolDefinition: ProtocolDefinition = threadRoleProtocolDefinition as ProtocolDefinition;
+      const protocolDefinition: ProtocolDefinition = structuredClone(threadRoleProtocolDefinition) as ProtocolDefinition;
+      protocolDefinition.types.chat.encryptionRequired = true;
+      const threadRuleSet = protocolDefinition.structure.thread as ProtocolRuleSet;
+      const participantRuleSet = threadRuleSet.participant as ProtocolRuleSet;
+      const chatRuleSet = threadRuleSet.chat as ProtocolRuleSet;
+      participantRuleSet.$actions = [
+        { who: 'author', of: 'thread', can: ['create'] },
+        { role: 'thread/participant', can: ['read', 'create'] },
+      ];
+      chatRuleSet.$actions = [
+        { who: 'author', of: 'thread', can: ['create'] },
+        ...chatRuleSet.$actions!,
+      ];
 
       // Alice configures chat protocol with encryption
       const protocolDefinitionForAlice
@@ -97,82 +107,82 @@ export function testEndToEndScenarios(): void {
       const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfigureForBob.message);
       expect(protocolsConfigureReply.status.code).toBe(202);
 
-      // 1. Alice starts a chat thread writing to her own DWN
+      // 1. Alice starts a plaintext chat thread writing to her own DWN
       const threadBytes = Encoder.objectToBytes({ title: 'Top Secret' });
-      const threadRecord = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-        plaintextBytes                                   : threadBytes,
-        author                                           : alice,
-        protocolDefinition                               : protocolDefinition,
-        protocolPath                                     : 'thread',
-        encryptSymmetricKeyWithProtocolPathDerivedKey    : false,
-        encryptSymmetricKeyWithProtocolContextDerivedKey : true
+      const threadRecord = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'thread',
+        data         : threadBytes,
       });
       const threadRecordReply1 = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
       expect(threadRecordReply1.status.code).toBe(202);
 
-      // 2. Alice adds Bob as a participant giving him the [context-derived private key] encrypted using [Bob's participant-level public key]
-
-      // the context-derived key to be used for encrypting symmetric keys
-      const aliceRootKey = {
-        rootKeyId         : alice.keyId,
-        derivationScheme  : KeyDerivationScheme.ProtocolContext,
-        derivedPrivateKey : alice.encryptionKeyPair.privateJwk
-      };
-      const contextDerivationPath = Records.constructKeyDerivationPathUsingProtocolContextScheme(threadRecord.message.contextId);
-      const contextDerivedPrivateKey: DerivedPrivateJwk = await HdKey.derivePrivateKey(aliceRootKey, contextDerivationPath);
-      const contextDerivedPublicKey = threadRecord.encryptionInput.keyEncryptionInputs[0].publicKey;
-
-      // Alice queries Bob's DWN for Bob's chat protocol definition containing public key declarations
-      const protocolsQuery = await ProtocolsQuery.create({
-        filter: { protocol: threadRoleProtocolDefinition.protocol }
-      });
-      const protocolsQueryReply = await dwn.processMessage(bob.did, protocolsQuery.message);
-      const protocolConfigureMessageOfBobFetched = protocolsQueryReply.entries![0] as ProtocolsConfigureMessage;
-
-      // Alice verifies that the chat protocol definition is authored by Bob
-      await authenticate(protocolConfigureMessageOfBobFetched.authorization, didResolver);
-      const protocolsConfigureOfBobFetched = await ProtocolsConfigure.parse(protocolConfigureMessageOfBobFetched);
-      expect(protocolsConfigureOfBobFetched.author).toBe(bob.did);
-
-      // generate the encrypted participant record using Bob's protocol configuration fetched
-      const participantBobRecord = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-        plaintextBytes                                   : Encoder.objectToBytes(contextDerivedPrivateKey),
-        author                                           : alice,
-        recipient                                        : bob.did,
-        protocolDefinition                               : protocolsConfigureOfBobFetched.message.descriptor.definition,
-        protocolPath                                     : 'thread/participant',
-        protocolParentContextId                          : threadRecord.message.contextId,
-        encryptSymmetricKeyWithProtocolPathDerivedKey    : true,
-        encryptSymmetricKeyWithProtocolContextDerivedKey : false // this could be `true` also, but mostly orthogonal to the scenario
+      // 2. Alice adds Bob as a plaintext participant role.
+      const participantBobRecord = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        data            : Encoder.objectToBytes({ did: bob.did }),
+        parentContextId : threadRecord.message.contextId,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'thread/participant',
+        recipient       : bob.did,
       });
       const participantRecordReply =
         await dwn.processMessage(alice.did, participantBobRecord.message, { dataStream: participantBobRecord.dataStream });
       expect(participantRecordReply.status.code).toBe(202);
 
-      // 3. Alice writes a chat message(s) in the thread
+      // 3. Alice publishes the participant audience epoch.
+      const audiencePrivateKey = await X25519.generateKey() as PrivateKeyJwk;
+      const audiencePublicKey = await X25519.getPublicKey({ key: audiencePrivateKey }) as PublicKeyJwk;
+      const audienceKeyId = await Encryption.getKeyId(audiencePublicKey);
+      const audienceEpoch = {
+        contextId    : threadRecord.message.contextId!,
+        createdAt    : Time.getCurrentTimestamp(),
+        epoch        : 1,
+        keyId        : audienceKeyId,
+        protocol     : protocolDefinition.protocol,
+        publicKeyJwk : audiencePublicKey,
+        role         : 'thread/participant',
+      };
+      const audienceEpochRecord = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        data         : Encoder.objectToBytes(audienceEpoch),
+        dataFormat   : 'application/json',
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.audienceEpochPath,
+        schema       : EncryptionProtocol.definition.types.audienceEpoch.schema,
+        tags         : {
+          contextId : audienceEpoch.contextId,
+          epoch     : audienceEpoch.epoch,
+          keyId     : audienceEpoch.keyId,
+          protocol  : audienceEpoch.protocol,
+          role      : audienceEpoch.role,
+        },
+      });
+      const audienceEpochReply = await dwn.processMessage(alice.did, audienceEpochRecord.message, { dataStream: audienceEpochRecord.dataStream });
+      expect(audienceEpochReply.status.code).toBe(202);
+
+      // 4. Alice writes a chat message in the thread.
       const messageByAlice = 'Message from Alice';
       const chatMessageByAlice = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
         plaintextBytes                                   : Encoder.stringToBytes(messageByAlice),
         author                                           : alice,
-        recipient                                        : alice.did, // this is arguably irrelevant in multi-party communication
-        protocolDefinition                               : protocolDefinition,
+        protocolDefinition                               : protocolDefinitionForAlice,
         protocolPath                                     : 'thread/chat',
         protocolParentContextId                          : threadRecord.message.contextId,
-        protocolContextDerivingRootKeyId                 : aliceRootKey.rootKeyId,
-        protocolContextDerivedPublicKeyJwk               : contextDerivedPublicKey,
-        encryptSymmetricKeyWithProtocolPathDerivedKey    : false,
-        encryptSymmetricKeyWithProtocolContextDerivedKey : true
+        encryptSymmetricKeyWithProtocolPathDerivedKey    : true,
+        encryptSymmetricKeyWithProtocolContextDerivedKey : false,
+        roleAudienceKeyEncryptionInputs                  : [{
+          epoch     : audienceEpoch.epoch,
+          protocol  : audienceEpoch.protocol,
+          publicKey : audiencePublicKey,
+          role      : audienceEpoch.role,
+        }],
       });
       const chatMessageReply = await dwn.processMessage(alice.did, chatMessageByAlice.message, { dataStream: chatMessageByAlice.dataStream });
       expect(chatMessageReply.status.code).toBe(202);
 
-      // Assume the below steps can be done since it is a common DWN usage pattern
-      // 4. Alice sends an invite to Bob's DWN with the [context/thread ID]
-      // 5. Bob fetches the invite from his DWN and obtains the [context/thread ID]
-
-      // 6. Bob fetches the entire thread using the [context/thread ID]
-      // Test that Bob is able to read his 'participant' role to obtain the context-derived private key for message decryption.
-      // He doesn't need to invoke the role because recipients of a record are always authorized to read it
+      // Bob can read his participant role record.
       const participantRead = await RecordsRead.create({
         signer : Jws.createSigner(bob),
         filter : {
@@ -184,7 +194,7 @@ export function testEndToEndScenarios(): void {
       const participantReadReply = await dwn.processMessage(alice.did, participantRead.message) as RecordsReadReply;
       expect(participantReadReply.status.code).toBe(200);
 
-      // Test that Bob is able to read the thread root record
+      // Test that Bob is able to read the thread root record.
       const threadRead = await RecordsRead.create({
         signer : Jws.createSigner(bob),
         filter : {
@@ -197,8 +207,7 @@ export function testEndToEndScenarios(): void {
       expect(threadReadReply.status.code).toBe(200);
       expect(threadReadReply.entry!.recordsWrite).toBeDefined();
 
-      // Test Bob can invoke his 'participant' role to read the chat message
-      // TODO: #555 - We currently lack role-authorized RecordsQuery for a realistic scenario (https://github.com/enboxorg/enbox/issues/555)
+      // Test Bob can invoke his participant role to read the chat message.
       const chatRead = await RecordsRead.create({
         signer : Jws.createSigner(bob),
         filter : {
@@ -211,52 +220,27 @@ export function testEndToEndScenarios(): void {
       expect(chatReadReply.status.code).toBe(200);
       expect(chatReadReply.entry!.recordsWrite).toBeDefined();
 
-      // 7. Bob is able to decrypt all thread content
-      // Bob decrypts the participant message to obtain the context-derived private key
-      const bobRootKey = {
-        rootKeyId         : bob.keyId,
-        derivationScheme  : KeyDerivationScheme.ProtocolPath,
-        derivedPrivateKey : bob.encryptionKeyPair.privateJwk
-      };
-      const participantRecordWriteFetched = participantReadReply.entry!.recordsWrite!;
-      const encryptedContextDerivedPrivateKeyBytes = await DataStream.toBytes(participantReadReply.entry!.data!); // to create streams for testing
-      const derivationPathFromProtocolPath = Records.constructKeyDerivationPathUsingProtocolPathScheme(participantRecordWriteFetched.descriptor);
-      const bobProtocolPathDerivedPrivateKey = await HdKey.derivePrivateKey(bobRootKey, derivationPathFromProtocolPath);
-      const decryptedContextDerivedKeyStream = await Records.decrypt(
-        participantRecordWriteFetched,
-        bobProtocolPathDerivedPrivateKey,
-        DataStream.fromBytes(encryptedContextDerivedPrivateKeyBytes)
-      );
-      const decryptedContextDerivedPrivateKey = await DataStream.toObject(decryptedContextDerivedKeyStream) as DerivedPrivateJwk;
-      expect(decryptedContextDerivedPrivateKey).toEqual(contextDerivedPrivateKey);
-
-      // Arguably unrelated to the scenario, but let's sanity check that Bob's root key can also decrypt the encrypted context-derived private key
-      const decryptedContextDerivedKeyStream2 = await Records.decrypt(
-        participantRecordWriteFetched,
-        bobRootKey,
-        DataStream.fromBytes(encryptedContextDerivedPrivateKeyBytes)
-      );
-      const decryptedContextDerivedPrivateKey2 = await DataStream.toObject(decryptedContextDerivedKeyStream2) as DerivedPrivateJwk;
-      expect(decryptedContextDerivedPrivateKey2).toEqual(contextDerivedPrivateKey);
-
-      // Verify that Bob can now decrypt Alice's chat thread record using the decrypted context-derived key
-      const decryptedChatThread = await Records.decrypt(
-        threadReadReply.entry!.recordsWrite!,
-        decryptedContextDerivedPrivateKey,
-        threadReadReply.entry!.data!
-      );
-      expect(await DataStream.toBytes(decryptedChatThread)).toEqual(threadBytes);
-
-      // Verify that Bob can now decrypt Alice's chat message using the decrypted context-derived key
+      // Bob decrypts Alice's chat message using the delivered audience key.
       const encryptedChatMessageBytes = await DataStream.toBytes(chatReadReply.entry!.data!); // to create streams for testing
+      const bobAudienceKey: DerivedPrivateJwk = {
+        derivedPrivateKey : audiencePrivateKey,
+        derivationScheme  : KeyDerivationScheme.RoleAudience,
+        keyId             : audienceKeyId,
+        rootKeyId         : audienceKeyId,
+      };
       const decryptedChatMessage = await Records.decrypt(
         chatReadReply.entry!.recordsWrite!,
-        decryptedContextDerivedPrivateKey,
+        bobAudienceKey,
         DataStream.fromBytes(encryptedChatMessageBytes)
       );
       expect(await DataStream.toBytes(decryptedChatMessage)).toEqual(Encoder.stringToBytes(messageByAlice));
 
-      // Arguably unrelated to the scenario, but let's also sanity check that Alice's root key can also decrypt the encrypted chat message
+      // Alice can also decrypt through the protocol-path entry.
+      const aliceRootKey: DerivedPrivateJwk = {
+        derivedPrivateKey : alice.encryptionKeyPair.privateJwk,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        rootKeyId         : alice.keyId,
+      };
       const decryptedChatMessageStream2 = await Records.decrypt(
         chatReadReply.entry!.recordsWrite!,
         aliceRootKey,

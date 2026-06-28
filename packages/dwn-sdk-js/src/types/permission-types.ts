@@ -109,16 +109,6 @@ export type PermissionGrantData = {
 
   conditions?: PermissionConditions;
 
-  /**
-   * Optional delegate key-delivery metadata for cross-device context key delivery.
-   * Contains the pre-derived ProtocolPath leaf public key that the owner uses
-   * to encrypt contextKey records addressed to the delegate.
-   */
-  delegateKeyDelivery?: {
-    rootKeyId: string;
-    publicKeyJwk: Record<string, any>;
-  };
-
   /** Optional metadata for the connect session that created this grant. */
   connectSession?: ConnectSessionMetadata;
 };

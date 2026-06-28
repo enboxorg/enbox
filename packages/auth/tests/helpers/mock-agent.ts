@@ -73,9 +73,6 @@ export interface MockAgentOverrides {
   dwnProcessRawMessage?: (tenant: string, message: any, options?: any) => Promise<any>;
   dwnIsRemoteMode?: boolean;
   dwnImportDelegateDecryptionKeys?: (delegateDid: string, keys: any[]) => void;
-  dwnImportDelegateContextKeys?: (delegateDid: string, keys: any[], multiPartyProtocols?: string[]) => void;
-  dwnExportDelegateContextKeys?: (delegateDid: string) => any[];
-  dwnExportDelegateMultiPartyProtocols?: (delegateDid: string) => string[];
   dwnClearDelegateDecryptionKeys?: (delegateDid?: string) => void;
   dwnEnsureKeyDeliveryProtocol?: (tenantDid: string) => Promise<void>;
   syncRegisterIdentity?: (params: any) => Promise<void>;
@@ -181,13 +178,10 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       processRawMessage: overrides.dwnProcessRawMessage
         ?? (async (): Promise<any> => ({ status: { code: 202, detail: 'Accepted' } })),
 
-      isRemoteMode                      : overrides.dwnIsRemoteMode ?? false,
-      importDelegateDecryptionKeys      : overrides.dwnImportDelegateDecryptionKeys ?? ((): void => {}),
-      importDelegateContextKeys         : overrides.dwnImportDelegateContextKeys ?? ((): void => {}),
-      exportDelegateContextKeys         : overrides.dwnExportDelegateContextKeys ?? ((): any[] => []),
-      exportDelegateMultiPartyProtocols : overrides.dwnExportDelegateMultiPartyProtocols ?? ((): string[] => []),
-      clearDelegateDecryptionKeys       : overrides.dwnClearDelegateDecryptionKeys ?? ((): void => {}),
-      ensureKeyDeliveryProtocol         : overrides.dwnEnsureKeyDeliveryProtocol ?? (async (): Promise<void> => {}),
+      isRemoteMode                 : overrides.dwnIsRemoteMode ?? false,
+      importDelegateDecryptionKeys : overrides.dwnImportDelegateDecryptionKeys ?? ((): void => {}),
+      clearDelegateDecryptionKeys  : overrides.dwnClearDelegateDecryptionKeys ?? ((): void => {}),
+      ensureKeyDeliveryProtocol    : overrides.dwnEnsureKeyDeliveryProtocol ?? (async (): Promise<void> => {}),
     },
 
     processDwnRequest,

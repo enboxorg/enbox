@@ -5,7 +5,7 @@ import type { PrivateKeyJwk, PublicKeyJwk } from '@enbox/dwn-sdk-js';
 import { Convert } from '@enbox/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { CryptoErrorCode, CryptoUtils, Ed25519, X25519 } from '@enbox/crypto';
-import { Encryption, HdKey } from '@enbox/dwn-sdk-js';
+import { Encryption, HdKey, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
 
@@ -534,20 +534,19 @@ describe('LocalKeyManager', () => {
           const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
           const leafPublicKeyJwk = await X25519.getPublicKey({ key: leafPrivateKeyJwk }) as PublicKeyJwk;
 
-          // Encrypt (wrap) a CEK using ECDH-ES key agreement
           const plaintext = CryptoUtils.randomBytes(32); // Simulated CEK
-          const ephemeralPrivateKey = await X25519.generateKey();
-          const ephemeralPublicKey = await X25519.getPublicKey({ key: ephemeralPrivateKey }) as PublicKeyJwk;
-          const wrappedKey = await Encryption.ecdhEsWrapKey(
-            ephemeralPrivateKey, leafPublicKeyJwk, plaintext
-          );
+          const wrapped = await Encryption.wrapKey(leafPublicKeyJwk, plaintext, {
+            derivationScheme : KeyDerivationScheme.ProtocolPath,
+            keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
+            publicKey        : leafPublicKeyJwk,
+          });
 
           // Unwrap using the key manager method
           const unwrapped = await testHarness.agent.keyManager.jweKeyUnwrap({
             keyUri,
             derivationPath,
-            encryptedKey: wrappedKey,
-            ephemeralPublicKey,
+            encryptedKey       : wrapped.encryptedKey,
+            ephemeralPublicKey : wrapped.ephemeralPublicKey,
           });
 
           // Verify unwrapping succeeded — the unwrapped bytes should match the original CEK
@@ -572,13 +571,12 @@ describe('LocalKeyManager', () => {
           const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
           const leafPublicKeyJwk = await X25519.getPublicKey({ key: leafPrivateKeyJwk }) as PublicKeyJwk;
 
-          // Wrap a CEK
           const plaintext = CryptoUtils.randomBytes(32);
-          const ephemeralPrivateKey = await X25519.generateKey();
-          const ephemeralPublicKey = await X25519.getPublicKey({ key: ephemeralPrivateKey }) as PublicKeyJwk;
-          const wrappedKey = await Encryption.ecdhEsWrapKey(
-            ephemeralPrivateKey, leafPublicKeyJwk, plaintext
-          );
+          const wrapped = await Encryption.wrapKey(leafPublicKeyJwk, plaintext, {
+            derivationScheme : KeyDerivationScheme.ProtocolPath,
+            keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
+            publicKey        : leafPublicKeyJwk,
+          });
 
           // Attempt to unwrap with wrong derivation path
           const wrongPath = ['wrong', 'path'];
@@ -586,9 +584,9 @@ describe('LocalKeyManager', () => {
           try {
             await testHarness.agent.keyManager.jweKeyUnwrap({
               keyUri,
-              derivationPath : wrongPath,
-              encryptedKey   : wrappedKey,
-              ephemeralPublicKey,
+              derivationPath     : wrongPath,
+              encryptedKey       : wrapped.encryptedKey,
+              ephemeralPublicKey : wrapped.ephemeralPublicKey,
             });
             throw new Error('Expected unwrap to fail with wrong derivation path');
           } catch (error: any) {

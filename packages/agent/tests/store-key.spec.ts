@@ -1,18 +1,16 @@
 import type { BearerDid } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
-
-import { Convert } from '@enbox/common';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { DidDht, DidJwk } from '@enbox/dids';
-import { Encoder, PrivateKeySigner, RecordsWrite } from '@enbox/dwn-sdk-js';
-
 import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
+import { Convert } from '@enbox/common';
 import { DwnInterface } from '../src/types/dwn.js';
 import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
 import { LocalKeyManager } from '../src/local-key-manager.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { ContentEncryptionAlgorithm, Encoder, KeyDerivationScheme, PrivateKeySigner, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { DidDht, DidJwk } from '@enbox/dids';
 import { DwnKeyStore, InMemoryKeyStore } from '../src/store-key.js';
 
 describe('KeyStore', () => {
@@ -309,7 +307,7 @@ describe('KeyStore', () => {
     });
 
     describe('encryption at rest', () => {
-      it('installs the JWK protocol with $encryption keys', async () => {
+      it('installs the JWK protocol with $keyAgreement keys', async () => {
         // Trigger protocol installation by initializing the store.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
@@ -326,12 +324,13 @@ describe('KeyStore', () => {
         expect(reply.status.code).toBe(200);
         expect(reply.entries).toHaveLength(1);
 
-        // Verify $encryption was injected into the protocol definition.
+        // Verify $keyAgreement was injected into the protocol definition.
         const installedDefinition = reply.entries![0].descriptor.definition;
         const privateJwkRuleSet = installedDefinition.structure.privateJwk;
-        expect(privateJwkRuleSet).toHaveProperty('$encryption');
-        expect(privateJwkRuleSet.$encryption).toHaveProperty('rootKeyId');
-        expect(privateJwkRuleSet.$encryption).toHaveProperty('publicKeyJwk');
+        expect(installedDefinition).toHaveProperty('$keyAgreement');
+        expect(installedDefinition.$keyAgreement.publicKeyJwk.crv).toBe('X25519');
+        expect(privateJwkRuleSet).toHaveProperty('$keyAgreement');
+        expect(privateJwkRuleSet.$keyAgreement.publicKeyJwk.crv).toBe('X25519');
       });
 
       it('encrypts key records in the DWN and decrypts them on read', async () => {
@@ -358,16 +357,13 @@ describe('KeyStore', () => {
         expect(queryReply.entries).toHaveLength(1);
 
         // The raw query entry should have encryption metadata, indicating the
-        // record is encrypted at the DWN level (JWE format with protected header).
+        // record is encrypted at the DWN level.
         const rawRecord = queryReply.entries![0];
         expect(rawRecord.encryption).toBeDefined();
-        expect(rawRecord.encryption!.protected).toBeDefined();
-        // Decode the protected header and verify algorithm fields.
-        const protectedHeader = JSON.parse(
-          Buffer.from(rawRecord.encryption!.protected, 'base64url').toString()
-        );
-        expect(protectedHeader.alg).toBe('ECDH-ES+A256KW');
-        expect(protectedHeader.enc).toBe('A256GCM');
+        expect(rawRecord.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
+        expect(rawRecord.encryption!.initializationVector).toBeDefined();
+        expect(rawRecord.encryption!.keyEncryption).toHaveLength(1);
+        expect(rawRecord.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
 
         // Read back through the store API — should be decrypted transparently.
         const storedKey = await keyStore.get({ id: keyUri, agent: testHarness.agent });
@@ -493,8 +489,8 @@ describe('KeyStore', () => {
     });
 
     describe('protocol re-initialization', () => {
-      it('should detect $encryption from an already-installed protocol after cache clear', async () => {
-        // First call — installs the protocol with $encryption (secp256k1 agent DID).
+      it('should detect $keyAgreement from an already-installed protocol after cache clear', async () => {
+        // First call — installs the protocol with $keyAgreement.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
         // Verify encryption is active.
@@ -506,31 +502,22 @@ describe('KeyStore', () => {
         // Also clear the encryption active cache so it must be re-detected.
         (keyStore as any)._tenantEncryptionActive?.clear();
 
-        // Second call — protocol is already installed, should detect $encryption.
+        // Second call — protocol is already installed, should detect $keyAgreement.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
         // Encryption should still be detected as active.
         expect((keyStore as any).isEncryptionActive(tenantDid)).toBe(true);
       });
 
-      it('should detect no encryption from a legacy protocol without $encryption', async () => {
+      it('should reject an encrypted protocol without $keyAgreement', async () => {
         const tenantDid = testHarness.agent.agentDid.uri;
 
-        // Install the protocol WITHOUT $encryption (bypass the encrypted installProtocol).
-        await testHarness.agent.dwn.processRequest({
+        await expect(testHarness.agent.dwn.processRequest({
           author        : tenantDid,
           target        : tenantDid,
           messageType   : DwnInterface.ProtocolsConfigure,
           messageParams : { definition: JwkProtocolDefinition },
-        });
-
-        // Create a new DwnKeyStore (no caches populated).
-        const freshKeyStore = new DwnKeyStore();
-
-        // Initialize — should find the existing protocol and detect no $encryption.
-        await (freshKeyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
-
-        expect((freshKeyStore as any).isEncryptionActive(tenantDid)).toBe(false);
+        })).rejects.toThrow('ProtocolsConfigureMissingTopLevelKeyAgreement');
       });
 
       it('should still decrypt old records after re-initialization', async () => {

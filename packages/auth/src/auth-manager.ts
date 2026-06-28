@@ -1069,11 +1069,11 @@ export class AuthManager {
     // 5. Import delegate DID, process grants, set up sync.
     const {
       delegatePortableDid, connectedDid, delegateGrants, delegateDecryptionKeys,
-      delegateContextKeys, delegateMultiPartyProtocols, sessionRevocations,
+      sessionRevocations,
     } = result;
     const identity = await importDelegateAndSetupSync({
       userAgent, delegatePortableDid, connectedDid, delegateGrants,
-      delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols,
+      delegateDecryptionKeys,
       flowName: 'Connect',
     });
 
@@ -1086,8 +1086,6 @@ export class AuthManager {
       connectedDid, delegateDid   : delegatePortableDid.uri, sync,
       delegateState : {
         delegateDecryptionKeys,
-        delegateContextKeys,
-        delegateMultiPartyProtocols,
         sessionRevocations,
       },
     });

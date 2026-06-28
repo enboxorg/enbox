@@ -1,10 +1,14 @@
 import type { DerivedPrivateJwk } from './hd-key.js';
 import type { Jwk } from '@enbox/crypto';
 import type { KeyDecrypter } from '../types/encryption-types.js';
+import type { KeyEncryption } from './encryption.js';
+import type { PublicKeyJwk } from '../types/jose-types.js';
 import type { Filter, KeyValues, StartsWithFilter } from '../types/query-types.js';
 import type { GenericMessage, GenericSignaturePayload, MessageSort } from '../types/message-types.js';
 import type { RecordsCountMessage, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteDescriptor, RecordsWriteMessage, RecordsWriteTags, RecordsWriteTagsFilter } from '../types/records-types.js';
 
+import { Cid } from './cid.js';
+import { DataStream } from './data-stream.js';
 import { DateSort } from '../types/records-types.js';
 import { Encoder } from './encoder.js';
 import { Encryption } from './encryption.js';
@@ -92,59 +96,96 @@ export class Records {
       );
     }
 
-    const isCallback = 'decrypt' in keyOrDecrypter;
+    const ciphertext = await DataStream.toBytes(cipherStream);
+    const actualDataCid = await Cid.computeDagPbCidFromBytes(ciphertext);
+    Records.validateEncryptedDataIntegrity(recordsWrite, actualDataCid, ciphertext.byteLength);
 
-    // Parse the JWE protected header to determine the content encryption algorithm
-    const protectedHeader = Encryption.parseProtectedHeader(encryption.protected);
-    const enc = protectedHeader.enc;
+    const { fullDerivationPath, leafPrivateKey, matchingKeyEncryption } =
+      await Records.findMatchingKeyEncryption(recordsWrite, keyOrDecrypter);
 
-    // Find matching recipient entry by rootKeyId and derivationScheme
-    const matchingRecipient = encryption.recipients.find(r =>
-      r.header.kid === keyOrDecrypter.rootKeyId &&
-      r.header.derivationScheme === keyOrDecrypter.derivationScheme
-    );
-    if (matchingRecipient === undefined) {
+    if (matchingKeyEncryption === undefined) {
       throw new DwnError(
         DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound,
-        `Unable to find a JWE recipient matching key \
-        with ID '${keyOrDecrypter.rootKeyId}' and '${keyOrDecrypter.derivationScheme}' derivation scheme.`
+        `Unable to find a matching key encryption entry for '${keyOrDecrypter.rootKeyId}' and '${keyOrDecrypter.derivationScheme}'.`
       );
     }
-
-    // Construct the full derivation path
-    const fullDerivationPath = Records.constructKeyDerivationPath(
-      matchingRecipient.header.derivationScheme, recordsWrite,
-    );
 
     let cek: Uint8Array;
 
-    if (isCallback) {
-      // Callback-based: delegate HKDF + ECDH-ES + AES Key Unwrap to the KeyDecrypter
-      const encryptedKeyBytes = Encoder.base64UrlToBytes(matchingRecipient.encrypted_key);
-
+    if ('decrypt' in keyOrDecrypter) {
       cek = await keyOrDecrypter.decrypt(fullDerivationPath, {
-        encryptedKey       : encryptedKeyBytes,
-        ephemeralPublicKey : matchingRecipient.header.epk,
+        encryptedKey       : Encoder.base64UrlToBytes(matchingKeyEncryption.encryptedKey),
+        ephemeralPublicKey : matchingKeyEncryption.ephemeralPublicKey,
+        keyEncryption      : matchingKeyEncryption,
       });
     } else {
-      // Raw-key path: derive the leaf private key, then ECDH-ES + AES Key Unwrap
-      const leafPrivateKeyBytes = await Records.derivePrivateKey(keyOrDecrypter, fullDerivationPath);
-      const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
-      const wrappedKeyBytes = Encoder.base64UrlToBytes(matchingRecipient.encrypted_key);
+      cek = await Encryption.unwrapKey(leafPrivateKey!, matchingKeyEncryption);
+    }
 
-      cek = await Encryption.ecdhEsUnwrapKey(
-        leafPrivateKeyJwk,
-        matchingRecipient.header.epk as Jwk,
-        wrappedKeyBytes,
+    const iv = Encoder.base64UrlToBytes(encryption.initializationVector);
+    const plaintext = await Encryption.decrypt(encryption.algorithm, cek, iv, ciphertext);
+    const plaintextStream = DataStream.fromBytes(plaintext);
+
+    return plaintextStream;
+  }
+
+  private static async findMatchingKeyEncryption(
+    recordsWrite: RecordsWriteMessage,
+    keyOrDecrypter: DerivedPrivateJwk | KeyDecrypter,
+  ): Promise<{ fullDerivationPath: string[]; leafPrivateKey?: Jwk; matchingKeyEncryption?: KeyEncryption }> {
+    const { encryption } = recordsWrite;
+    const fullDerivationPath = Records.constructKeyDerivationPath(keyOrDecrypter.derivationScheme, recordsWrite);
+
+    if ('decrypt' in keyOrDecrypter) {
+      const publicKey = await keyOrDecrypter.derivePublicKey(fullDerivationPath);
+      const keyId = await Encryption.getKeyId(publicKey);
+      return {
+        fullDerivationPath,
+        matchingKeyEncryption: encryption!.keyEncryption.find((entry): boolean =>
+          entry.derivationScheme === keyOrDecrypter.derivationScheme && entry.keyId === keyId
+        ),
+      };
+    }
+
+    let leafPrivateKey: Jwk;
+    if (keyOrDecrypter.derivationScheme === KeyDerivationScheme.ProtocolPath) {
+      const leafPrivateKeyBytes = await Records.derivePrivateKey(keyOrDecrypter, fullDerivationPath);
+      leafPrivateKey = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
+    } else {
+      leafPrivateKey = keyOrDecrypter.derivedPrivateKey as Jwk;
+    }
+
+    const publicKey = await X25519.getPublicKey({ key: leafPrivateKey });
+    const keyId = keyOrDecrypter.keyId ?? await Encryption.getKeyId(publicKey as PublicKeyJwk);
+
+    return {
+      fullDerivationPath,
+      leafPrivateKey,
+      matchingKeyEncryption: encryption!.keyEncryption.find((entry): boolean =>
+        entry.derivationScheme === keyOrDecrypter.derivationScheme && entry.keyId === keyId
+      ),
+    };
+  }
+
+  private static validateEncryptedDataIntegrity(
+    recordsWrite: RecordsWriteMessage,
+    actualDataCid: string,
+    actualDataSize: number,
+  ): void {
+    const { dataCid, dataSize } = recordsWrite.descriptor;
+    if (dataCid !== actualDataCid) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteDataCidMismatch,
+        `actual data CID ${actualDataCid} does not match dataCid in descriptor: ${dataCid}`
       );
     }
 
-    // AEAD decrypt data using the CEK
-    const iv = Encoder.base64UrlToBytes(encryption.iv);
-    const tag = Encoder.base64UrlToBytes(encryption.tag);
-    const plaintextStream = await Encryption.aeadDecryptStream(enc, cek, iv, cipherStream, tag);
-
-    return plaintextStream;
+    if (dataSize !== actualDataSize) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteDataSizeMismatch,
+        `actual data size ${actualDataSize} bytes does not match dataSize in descriptor: ${dataSize}`
+      );
+    }
   }
 
   /**
@@ -161,6 +202,12 @@ export class Records {
     let fullDerivationPath;
     if (keyDerivationScheme === KeyDerivationScheme.ProtocolPath) {
       fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
+    } else if (keyDerivationScheme === KeyDerivationScheme.RoleAudience) {
+      fullDerivationPath = [
+        KeyDerivationScheme.RoleAudience,
+        descriptor.protocol,
+        descriptor.protocolPath
+      ];
     } else {
       // `protocolContext` scheme
       fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolContextScheme(contextId);

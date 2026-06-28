@@ -15,7 +15,7 @@ import { Time } from '../utils/time.js';
 import { validateProtocolTagSchemaDefinition } from '../utils/protocol-tags.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 import { normalizeProtocolUrl, normalizeSchemaUrl, validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
 import { ProtocolAction, ProtocolActor, ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
@@ -150,6 +150,14 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
     // gather all declared record types
     const recordTypes = Object.keys(definition.types);
 
+    const hasEncryptedTypes = Object.values(definition.types).some((type): boolean => type.encryptionRequired === true);
+    if (hasEncryptedTypes && definition.$keyAgreement === undefined) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureMissingTopLevelKeyAgreement,
+        `Protocol '${definition.protocol}' declares encrypted types but has no top-level $keyAgreement.`
+      );
+    }
+
     // gather all roles (local roles only — cross-protocol roles are validated by alias existence)
     const roles = ProtocolsConfigure.fetchAllRolePathsRecursively('', definition.structure as ProtocolRuleSet, []);
 
@@ -161,6 +169,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       roles,
       uses,
       types               : definition.types,
+      rootStructure       : definition.structure,
     });
   }
 
@@ -207,10 +216,10 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
   private static validateRuleSetRecursively(
     input: {
       ruleSet: ProtocolRuleSet, ruleSetProtocolPath: string, recordTypes: string[],
-      roles: string[], uses?: ProtocolUses, types: ProtocolTypes
+      roles: string[], uses?: ProtocolUses, types: ProtocolTypes, rootStructure: { [key: string]: ProtocolRuleSet }
     }
   ): void {
-    const { ruleSet, ruleSetProtocolPath, recordTypes, roles, uses, types } = input;
+    const { ruleSet, ruleSetProtocolPath, recordTypes, roles, uses, types, rootStructure } = input;
 
     // Validate $ref constraints: $ref is only supported at root level (no `/` in protocol path),
     // and a $ref node is a pure attachment point with no other directives.
@@ -412,22 +421,39 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
       }
     }
 
-    // Warn when `encryptionRequired: true` is combined with `{ who: 'anyone', can: ['read'] }`.
-    // Authorization allows anyone to read the record, but encryption prevents them from
-    // decrypting the data — almost certainly unintentional. (issue #115)
     if (ruleSetProtocolPath !== '') {
       const typeName = ruleSetProtocolPath.split('/').pop()!;
       const protocolType = types[typeName];
       if (protocolType?.encryptionRequired === true) {
+        if (ruleSet.$keyAgreement === undefined) {
+          throw new DwnError(
+            DwnErrorCode.ProtocolsConfigureMissingEncryptedPathKeyAgreement,
+            `Encrypted protocol path '${ruleSetProtocolPath}' has no $keyAgreement.`
+          );
+        }
+
         const anyoneCanRead = actionRules.some(
           (rule: ProtocolActionRule): boolean => rule.who === ProtocolActor.Anyone && rule.can.includes(ProtocolAction.Read)
         );
         if (anyoneCanRead) {
-          console.warn(
-            `ProtocolsConfigure: type '${typeName}' at path '${ruleSetProtocolPath}' has ` +
-            `encryptionRequired: true but allows { who: 'anyone', can: ['read'] }. ` +
-            `Anyone can read the record but no one outside the key holders can decrypt it.`
+          throw new DwnError(
+            DwnErrorCode.ProtocolsConfigureInvalidEncryptedAnyoneRead,
+            `Encrypted protocol path '${ruleSetProtocolPath}' allows { who: 'anyone', can: ['read'] }.`
           );
+        }
+
+        for (const actionRule of actionRules) {
+          if (actionRule.role === undefined || !actionRule.can.includes(ProtocolAction.Read) || isCrossProtocolRef(actionRule.role)) {
+            continue;
+          }
+
+          const roleRuleSet = getRuleSetAtPath(actionRule.role, rootStructure);
+          if (roleRuleSet?.$keyAgreement === undefined) {
+            throw new DwnError(
+              DwnErrorCode.ProtocolsConfigureInvalidEncryptedRoleMissingKeyAgreement,
+              `Encrypted protocol path '${ruleSetProtocolPath}' references role '${actionRule.role}' with no $keyAgreement.`
+            );
+          }
         }
       }
     }
@@ -490,13 +516,14 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         roles,
         uses,
         types,
+        rootStructure,
       });
     }
   }
 
   /**
    * Validates that a `$ref` node is a pure attachment point: it must NOT have
-   * `$actions`, `$role`, `$size`, `$tags`, or `$encryption`.
+   * `$actions`, `$role`, `$size`, `$tags`, or `$keyAgreement`.
    * Also validates that the `$ref` alias exists in the `uses` map.
    */
   private static validateRefNode(ruleSet: ProtocolRuleSet, ruleSetProtocolPath: string, uses: ProtocolUses | undefined): void {
@@ -519,7 +546,7 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
     }
 
     // validate that `$ref` nodes do not have other directives
-    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$encryption', '$recordLimit', '$immutable', '$delivery', '$squash'] as const;
+    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$keyAgreement', '$encryption', '$recordLimit', '$immutable', '$delivery', '$squash'] as const;
     for (const directive of forbiddenDirectives) {
       if (ruleSet[directive] !== undefined) {
         throw new DwnError(

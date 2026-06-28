@@ -8,10 +8,12 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 export enum KeyDerivationScheme {
   ProtocolContext = 'protocolContext',
   ProtocolPath = 'protocolPath',
+  RoleAudience = 'roleAudience',
 }
 
 export type DerivedPrivateJwk = {
   rootKeyId: string,
+  keyId?: string,
   derivationScheme: KeyDerivationScheme;
   derivationPath?: string[];
   derivedPrivateKey: PrivateKeyJwk,

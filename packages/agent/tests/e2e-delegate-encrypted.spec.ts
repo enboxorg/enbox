@@ -6,18 +6,18 @@
  * Verifies that protocols with `encryptionRequired: true` behave correctly
  * in delegate (wallet-connect) sessions:
  *
- *   1. Protocol installation during connect injects `$encryption` keys
+ *   1. Protocol installation during connect injects `$keyAgreement` keys
  *   2. Delegate writes produce encrypted records (not plaintext)
  *   3. Delegate reads decrypt ciphertext back to plaintext
  *   4. Owner/local encrypted protocol baseline still works
- *   5. Protocol definition equality ignores injected `$encryption`
+ *   5. Protocol definition equality ignores injected `$keyAgreement`
  */
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import { ContentEncryptionAlgorithm, DataStream, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxConnectProtocol } from '../src/enbox-connect-protocol.js';
@@ -122,9 +122,9 @@ describe('e2e: delegate + encrypted protocol', () => {
   // ─── 1. Protocol installation during connect ────────────────
 
   describe('protocol installation during connect', () => {
-    it('should inject $encryption keys when prepareProtocol is called with an encrypted protocol', async () => {
+    it('should inject $keyAgreement keys when prepareProtocol is called with an encrypted protocol', async () => {
       // Simulate the wallet-side connect flow: prepareProtocol installs the
-      // protocol with encryption: true, injecting $encryption keys.
+      // protocol with encryption: true, injecting $keyAgreement keys.
       // We call the internal function by invoking submitConnectResponse
       // through the connect protocol helper.
 
@@ -139,7 +139,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       });
       expect(reply.status.code).toBe(202);
 
-      // Query back and verify $encryption was injected
+      // Query back and verify $keyAgreement was injected.
       const { reply: queryReply } = await walletHarness.agent.processDwnRequest({
         author        : walletIdentity.did.uri,
         target        : walletIdentity.did.uri,
@@ -149,9 +149,8 @@ describe('e2e: delegate + encrypted protocol', () => {
       expect(queryReply.entries).toHaveLength(1);
 
       const installedDef = (queryReply.entries![0] as any).descriptor.definition;
-      expect(installedDef.structure.note.$encryption).toBeDefined();
-      expect(installedDef.structure.note.$encryption.rootKeyId).toContain('#enc');
-      expect(installedDef.structure.note.$encryption.publicKeyJwk).toBeDefined();
+      expect(installedDef.$keyAgreement.publicKeyJwk).toHaveProperty('crv', 'X25519');
+      expect(installedDef.structure.note.$keyAgreement.publicKeyJwk).toHaveProperty('crv', 'X25519');
     });
   });
 
@@ -194,12 +193,12 @@ describe('e2e: delegate + encrypted protocol', () => {
       );
       expect(rawEntry).toBeDefined();
       expect(rawEntry!.encryption).toBeDefined();
-      expect(rawEntry!.encryption!.recipients).toBeDefined();
-      expect(rawEntry!.encryption!.recipients.length).toBeGreaterThan(0);
+      expect(rawEntry!.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
+      expect(rawEntry!.encryption!.keyEncryption).toHaveLength(1);
 
       // Verify the encryption uses ProtocolPath scheme
-      const recipient = rawEntry!.encryption!.recipients[0];
-      expect(recipient.header.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      const keyEncryption = rawEntry!.encryption!.keyEncryption[0];
+      expect(keyEncryption.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
   });
 
@@ -386,14 +385,13 @@ describe('e2e: delegate + encrypted protocol', () => {
 
   describe('prepareProtocol with encryption', () => {
     it('should detect encryptionRequired types and pass encryption: true', async () => {
-      // Use the agent's processDwnRequest to simulate what prepareProtocol
-      // does (check for existing, install if missing, with encryption).
+      // Use the local agent path to simulate what prepareProtocol does
+      // (check for existing, install if missing, with encryption).
       const needsEncryption = Object.values(encryptedNoteProtocol.types ?? {})
         .some((type: any) => type?.encryptionRequired === true);
       expect(needsEncryption).toBe(true);
 
-      // Install via the same path prepareProtocol uses
-      const { reply: sendReply } = await walletHarness.agent.sendDwnRequest({
+      const { reply: sendReply } = await walletHarness.agent.processDwnRequest({
         author        : walletIdentity.did.uri,
         target        : walletIdentity.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
@@ -478,10 +476,9 @@ describe('e2e: delegate + encrypted protocol', () => {
       ).rejects.toThrow('contextId is not supported');
     });
 
-    it('should throw for multi-party encrypted protocols (recipient who/of read)', async () => {
+    it('should derive a protocol-wide key for multi-party protocols with actor-chain reads', async () => {
       const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
 
-      // Protocol with relational recipient read access → multi-party
       const multiPartyProtocol: ProtocolDefinition = {
         published : true,
         protocol  : 'https://protocol.xyz/multi-party-encrypted-relational',
@@ -504,18 +501,20 @@ describe('e2e: delegate + encrypted protocol', () => {
         { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: multiPartyProtocol.protocol },
       ];
 
-      await expect(
-        EnboxConnectProtocol.deriveScopedDecryptionKeys(
-          walletHarness.agent, walletIdentity.did.uri,
-          multiPartyProtocol.protocol, readScopes as any, multiPartyProtocol,
-        )
-      ).rejects.toThrow('multi-party');
+      const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
+        walletHarness.agent, walletIdentity.did.uri,
+        multiPartyProtocol.protocol, readScopes as any, multiPartyProtocol,
+      );
+      expect(keys).toHaveLength(1);
+      expect(keys[0].derivedPrivateKey.derivationPath).toEqual([
+        KeyDerivationScheme.ProtocolPath,
+        multiPartyProtocol.protocol,
+      ]);
     });
 
-    it('should throw for multi-party encrypted protocols ($role descendants)', async () => {
+    it('should derive a protocol-wide key for multi-party protocols with role reads', async () => {
       const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
 
-      // Protocol with $role record → multi-party via role-based access
       const roleProtocol: ProtocolDefinition = {
         published : true,
         protocol  : 'https://protocol.xyz/multi-party-encrypted-role',
@@ -539,12 +538,15 @@ describe('e2e: delegate + encrypted protocol', () => {
         { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: roleProtocol.protocol },
       ];
 
-      await expect(
-        EnboxConnectProtocol.deriveScopedDecryptionKeys(
-          walletHarness.agent, walletIdentity.did.uri,
-          roleProtocol.protocol, readScopes as any, roleProtocol,
-        )
-      ).rejects.toThrow('multi-party');
+      const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
+        walletHarness.agent, walletIdentity.did.uri,
+        roleProtocol.protocol, readScopes as any, roleProtocol,
+      );
+      expect(keys).toHaveLength(1);
+      expect(keys[0].derivedPrivateKey.derivationPath).toEqual([
+        KeyDerivationScheme.ProtocolPath,
+        roleProtocol.protocol,
+      ]);
     });
   });
 
@@ -722,8 +724,9 @@ describe('e2e: delegate + encrypted protocol', () => {
         decrypter.decrypt(
           [KeyDerivationScheme.ProtocolPath, multiTypeProtocol.protocol, 'comment'],
           {
-            ephemeralPublicKey : (commentWrite.encryption!.recipients[0].header as any).ephemeralPublicKey,
-            encryptedKey       : (commentWrite.encryption!.recipients[0] as any).encrypted_key,
+            encryptedKey       : new Uint8Array(),
+            ephemeralPublicKey : commentWrite.encryption!.keyEncryption[0].ephemeralPublicKey,
+            keyEncryption      : commentWrite.encryption!.keyEncryption[0],
           },
         )
       ).rejects.toThrow();
@@ -961,7 +964,7 @@ describe('e2e: delegate + encrypted protocol', () => {
 
       // Build the exact-path decrypter and call decrypt() with matching path
       const decrypter = buildExactProtocolPathDecrypter(keys[0].derivedPrivateKey);
-      const recipient = recordsWrite.encryption!.recipients[0];
+      const keyEncryption = recordsWrite.encryption!.keyEncryption[0];
       const fullPath = [
         KeyDerivationScheme.ProtocolPath,
         encryptedNoteProtocol.protocol,
@@ -969,11 +972,11 @@ describe('e2e: delegate + encrypted protocol', () => {
       ];
 
       // This exercises the happy path of buildExactProtocolPathDecrypter:
-      // path matches → Records.derivePrivateKey → ecdhEsUnwrapKey
-      const { Encoder } = await import('@enbox/dwn-sdk-js');
+      // path matches -> Records.derivePrivateKey -> Encryption.unwrapKey.
       const dek = await decrypter.decrypt(fullPath, {
-        ephemeralPublicKey : (recipient.header as any).epk,
-        encryptedKey       : Encoder.base64UrlToBytes((recipient as any).encrypted_key),
+        encryptedKey       : new Uint8Array(),
+        ephemeralPublicKey : keyEncryption.ephemeralPublicKey,
+        keyEncryption,
       });
       expect(dek).toBeInstanceOf(Uint8Array);
       expect(dek.length).toBeGreaterThan(0);

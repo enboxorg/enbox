@@ -7,9 +7,11 @@ import type { ValidationStateReader } from '../types/validation-state-reader.js'
 import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
 import type { ProtocolDefinition, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
+import { EncryptionProtocol } from '../protocols/encryption.js';
 import { FilterUtility } from '../utils/filter.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
+import { Records } from '../utils/records.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
@@ -163,6 +165,34 @@ export class StoreValidationStateReader implements ValidationStateReader {
     const filter = StoreValidationStateReader.constructRoleRecordFilter({ ...input, latestStateOnly: true });
     const { messages: matchingMessages } = await this.messageStore.query(input.tenant, [filter]);
     return matchingMessages as RecordsWriteMessage[];
+  }
+
+  /** @inheritdoc */
+  public async fetchAudienceEpoch(input: {
+    tenant: string;
+    protocol: string;
+    contextId: string;
+    role: string;
+    epoch: number;
+    keyId: string;
+  }): Promise<RecordsWriteMessage | undefined> {
+    const filter: Filter = {
+      interface         : DwnInterfaceName.Records,
+      isLatestBaseState : true,
+      method            : DwnMethodName.Write,
+      protocol          : EncryptionProtocol.uri,
+      protocolPath      : EncryptionProtocol.audienceEpochPath,
+      ...Records.convertTagsFilter({
+        contextId : input.contextId,
+        epoch     : input.epoch,
+        keyId     : input.keyId,
+        protocol  : input.protocol,
+        role      : input.role,
+      }),
+    };
+
+    const { messages } = await this.messageStore.query(input.tenant, [filter], undefined, { limit: 1 });
+    return messages[0] as RecordsWriteMessage | undefined;
   }
 
   /** @inheritdoc */

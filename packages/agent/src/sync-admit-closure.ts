@@ -16,7 +16,6 @@ import type { SyncScope } from './types/sync.js';
 
 import { classifySyncMessageScope } from './sync-scope-acceptance.js';
 import { DwnInterface } from './types/dwn.js';
-import { KeyDeliveryProtocolDefinition } from './store-data-protocols.js';
 import { orderMessagesForAdmission } from './sync-admission-order.js';
 
 import {
@@ -315,8 +314,8 @@ class AdmitClosureContext {
         return this.fetchRoleRecord(ref);
       case 'Grant':
         return this.fetchGrantRecord(ref.permissionGrantId);
-      case 'KeyDelivery':
-        return this.fetchKeyDeliveryRecord(ref);
+      case 'EncryptionProtocol':
+        return [];
       case 'RecordData':
         return this.fetchRecordData(ref);
       default:
@@ -405,31 +404,6 @@ class AdmitClosureContext {
     return this.entriesFromRecordsQueryReply(reply);
   }
 
-  private async fetchKeyDeliveryRecord(ref: Extract<DependencyRef, { type: 'KeyDelivery' }>): Promise<SyncMessageEntry[]> {
-    const { message } = await this.deps.agent.dwn.processRequest({
-      author        : this.deps.delegateDid ?? this.deps.did,
-      messageParams : {
-        filter: {
-          protocol     : KeyDeliveryProtocolDefinition.protocol,
-          protocolPath : 'contextKey',
-          tags         : {
-            protocol  : ref.protocol,
-            contextId : ref.contextId,
-          },
-        },
-      },
-      messageType : DwnInterface.RecordsQuery,
-      store       : false,
-      target      : this.deps.did,
-    });
-
-    const reply = await this.deps.agent.rpc.sendDwnRequest({
-      dwnUrl    : this.deps.dwnUrl,
-      message,
-      targetDid : this.deps.did,
-    }) as RecordsQueryReply;
-    return this.entriesFromRecordsQueryReply(reply);
-  }
 
   private async entriesFromRecordsQueryReply(reply: RecordsQueryReply): Promise<SyncMessageEntry[]> {
     if (reply.status.code !== 200 || reply.entries === undefined) {

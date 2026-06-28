@@ -260,11 +260,10 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
       const installed = await this.installProtocol(tenantDid, agent);
       encryptionActive = installed.encryptionActive;
     } else if (this.encryptionRequired) {
-      // Protocol already installed — determine if it has $encryption keys
-      // by inspecting the installed definition.
       const definition = entries![0].descriptor?.definition;
       const firstType = Object.keys(definition?.structure ?? {})[0];
-      encryptionActive = !!(firstType && definition?.structure[firstType]?.$encryption);
+      encryptionActive = definition?.$keyAgreement !== undefined &&
+        !!(firstType && definition?.structure[firstType]?.$keyAgreement);
     }
 
     // Set both caches atomically so they always expire together. This
@@ -350,7 +349,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
   /**
    * Install the protocol for the given tenant using a `ProtocolsConfigure` message.
    * When any type in the protocol definition has `encryptionRequired: true`,
-   * `$encryption` keys are derived and injected into the protocol definition.
+   * `$keyAgreement` keys are derived and injected into the protocol definition.
    * If the tenant DID lacks an X25519 keyAgreement key, the error propagates
    * — plaintext fallback is not allowed.
    */
@@ -377,16 +376,6 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
 
     if (status.code !== 202) {
       throw new Error(`Failed to install protocol: ${status.code} - ${status.detail}`);
-    }
-
-    // When the protocol has encrypted types, install the KeyDeliveryProtocol
-    // proactively. Replication admission requires it to be present before
-    // encrypted records can be committed (pull) or pushed.
-    // Without this, there's a race: postWriteKeyDelivery installs it lazily
-    // after the first encrypted write, but the DWN event fires before that
-    // completes and the sync engine sees a missing dependency.
-    if (encryptionActive) {
-      await agent.dwn.ensureKeyDeliveryProtocol(tenant);
     }
 
     return { encryptionActive };

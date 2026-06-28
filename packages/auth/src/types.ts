@@ -4,12 +4,12 @@
  */
 
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, ConnectClientMetadata, ConnectPermissionRequest, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+import type { AgentSessionIdentity, ConnectClientMetadata, ConnectPermissionRequest, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxUserAgent, HdIdentityVault, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 import type { PasswordProvider } from './password-provider.js';
 
 // Re-export types that consumers will need
-export type { ConnectClientMetadata, ConnectPermissionRequest, DelegateContextKey, DelegateDecryptionKey, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
+export type { ConnectClientMetadata, ConnectPermissionRequest, DelegateDecryptionKey, HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 // Re-export EnboxUserAgent so consumers don't need a direct @enbox/agent dep
 export type { EnboxUserAgent } from '@enbox/agent';
@@ -251,18 +251,6 @@ export interface ConnectResult {
    * receive no decryption keys.
    */
   delegateDecryptionKeys?: DelegateDecryptionKey[];
-
-  /**
-   * Context-scoped decryption keys for multi-party encrypted protocols.
-   * Each key unlocks one rootContextId for records using ProtocolContext encryption.
-   */
-  delegateContextKeys?: DelegateContextKey[];
-
-  /**
-   * Protocol URIs that have multi-party encrypted access patterns.
-   * Delivered even when no contexts exist yet (cold-start).
-   */
-  delegateMultiPartyProtocols?: string[];
 
   /** Per-grant revocation mappings for session-bound self-revocation on disconnect. */
   sessionRevocations?: { grantId: string; revocationGrantId: string }[];
@@ -721,17 +709,10 @@ export const STORAGE_KEYS = {
    */
   DELEGATE_DECRYPTION_KEYS: 'enbox:auth:delegateDecryptionKeys',
 
-  /**
-   * JSON-serialised `DelegateContextKey[]` for multi-party encrypted protocol
-   * records. Persisted for session restore.
-   */
+  /** Legacy context key cache key, retained for cleanup during session restore. */
   DELEGATE_CONTEXT_KEYS: 'enbox:auth:delegateContextKeys',
 
-  /**
-   * JSON-serialised `string[]` of multi-party protocol URIs for delegate
-   * context key eligibility. Persisted for session restore so cold-start
-   * delegates (who connected with zero contexts) still receive future keys.
-   */
+  /** Legacy multi-party protocol cache key, retained for cleanup during session restore. */
   DELEGATE_MULTI_PARTY_PROTOCOLS: 'enbox:auth:delegateMultiPartyProtocols',
 
   /**

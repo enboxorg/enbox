@@ -3,7 +3,18 @@ import type { JwkParamsOkpPublic, PrivateKeyJwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
 import { DidDht } from '@enbox/dids';
-import { DataStream, DwnInterfaceName, DwnMethodName, Message, Records, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import {
+  ContentEncryptionAlgorithm,
+  DataStream,
+  DwnInterfaceName,
+  DwnMethodName,
+  Encryption,
+  KeyDerivationScheme,
+  Message,
+  Records,
+  TestDataGenerator,
+  Time
+} from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -2623,7 +2634,7 @@ describe('Encryption Callback Factories', () => {
     });
 
     it('should decrypt ECDH-ES payload through KMS when callback is invoked', async () => {
-      const { Encryption, HdKey } = await import('@enbox/dwn-sdk-js');
+      const { Encryption, HdKey, KeyDerivationScheme } = await import('@enbox/dwn-sdk-js');
       const { X25519 } = await import('@enbox/crypto');
 
       // Get the encryption key info
@@ -2640,13 +2651,25 @@ describe('Encryption Callback Factories', () => {
       // Wrap a random 32-byte CEK using ECDH-ES key agreement (AES Key Wrap requires ≥16-byte key)
       const { CryptoUtils } = await import('@enbox/crypto');
       const cek = CryptoUtils.randomBytes(32);
-      const ephemeralPrivateKey = await X25519.generateKey();
-      const ephemeralPublicKey = await X25519.getPublicKey({ key: ephemeralPrivateKey }) as PublicKeyJwk;
-      const wrappedKey = await Encryption.ecdhEsWrapKey(ephemeralPrivateKey, leafPublicKeyJwk, cek);
+      const wrapped = await Encryption.wrapKey(leafPublicKeyJwk, cek, {
+        derivationScheme : KeyDerivationScheme.ProtocolPath,
+        keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
+        publicKey        : leafPublicKeyJwk,
+      });
 
       // Get key decrypter and decrypt
       const keyDecrypter = await testHarness.agent.dwn['getKeyDecrypter'](alice.did.uri);
-      const decrypted = await keyDecrypter.decrypt(derivationPath, { encryptedKey: wrappedKey, ephemeralPublicKey });
+      const decrypted = await keyDecrypter.decrypt(derivationPath, {
+        encryptedKey       : wrapped.encryptedKey,
+        ephemeralPublicKey : wrapped.ephemeralPublicKey,
+        keyEncryption      : {
+          algorithm          : 'X25519-HKDF-SHA256+A256KW',
+          derivationScheme   : KeyDerivationScheme.ProtocolPath,
+          encryptedKey       : Convert.uint8Array(wrapped.encryptedKey).toBase64Url(),
+          ephemeralPublicKey : wrapped.ephemeralPublicKey,
+          keyId              : await Encryption.getKeyId(leafPublicKeyJwk),
+        },
+      });
 
       expect(Convert.uint8Array(decrypted).toHex()).toBe(Convert.uint8Array(cek).toHex());
     });
@@ -2761,7 +2784,7 @@ describe('Encryption Callback Factories', () => {
       }
     };
 
-    it('should auto-inject $encryption on ProtocolsConfigure', async () => {
+    it('should auto-inject $keyAgreement on ProtocolsConfigure', async () => {
       // Configure protocol with encryption: true
       const { reply: { status } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -2774,7 +2797,7 @@ describe('Encryption Callback Factories', () => {
       });
       expect(status.code).toBe(202);
 
-      // Query to verify $encryption was injected
+      // Query to verify $keyAgreement was injected
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -2788,12 +2811,11 @@ describe('Encryption Callback Factories', () => {
       expect(queryReply.entries).toHaveLength(1);
 
       const storedDefinition = queryReply.entries![0].descriptor.definition;
-      // Verify $encryption was injected at the 'note' level
-      expect(storedDefinition.structure.note).toHaveProperty('$encryption');
-      expect(storedDefinition.structure.note.$encryption).toHaveProperty('rootKeyId');
-      expect(storedDefinition.structure.note.$encryption!.rootKeyId).toContain('#enc');
-      expect(storedDefinition.structure.note.$encryption).toHaveProperty('publicKeyJwk');
-      expect(storedDefinition.structure.note.$encryption!.publicKeyJwk).toHaveProperty('crv', 'X25519');
+      // Verify $keyAgreement was injected at the protocol root and 'note' level.
+      expect(storedDefinition).toHaveProperty('$keyAgreement');
+      expect(storedDefinition.$keyAgreement!.publicKeyJwk).toHaveProperty('crv', 'X25519');
+      expect(storedDefinition.structure.note).toHaveProperty('$keyAgreement');
+      expect(storedDefinition.structure.note.$keyAgreement!.publicKeyJwk).toHaveProperty('crv', 'X25519');
     });
 
     it('should auto-encrypt data on RecordsWrite', async () => {
@@ -2831,14 +2853,10 @@ describe('Encryption Callback Factories', () => {
       // Verify the message has encryption metadata
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
       expect(recordsWriteMessage).toHaveProperty('encryption');
-      expect(recordsWriteMessage.encryption).toHaveProperty('protected');
-      expect(recordsWriteMessage.encryption).toHaveProperty('iv');
-      expect(recordsWriteMessage.encryption).toHaveProperty('tag');
-      expect(recordsWriteMessage.encryption).toHaveProperty('recipients');
-      expect(recordsWriteMessage.encryption!.recipients).toHaveLength(1);
-      expect(recordsWriteMessage.encryption!.recipients[0].header).toHaveProperty('kid');
-      expect(recordsWriteMessage.encryption!.recipients[0].header.kid).toContain('#enc');
-      expect(recordsWriteMessage.encryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolPath');
+      expect(recordsWriteMessage.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
+      expect(recordsWriteMessage.encryption!.initializationVector).toBeDefined();
+      expect(recordsWriteMessage.encryption!.keyEncryption).toHaveLength(1);
+      expect(recordsWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
 
       // Read the raw data without decryption to verify it's encrypted
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -3085,7 +3103,7 @@ describe('Encryption Callback Factories', () => {
         encryptedProtocolDefinition.protocol
       );
       expect(def1).toBeDefined();
-      expect(def1!.structure.note).toHaveProperty('$encryption');
+      expect(def1!.structure.note).toHaveProperty('$keyAgreement');
 
       // Reconfigure (should invalidate cache)
       await testHarness.agent.dwn.processRequest({
@@ -3104,7 +3122,7 @@ describe('Encryption Callback Factories', () => {
         encryptedProtocolDefinition.protocol
       );
       expect(def2).toBeDefined();
-      expect(def2!.structure.note).toHaveProperty('$encryption');
+      expect(def2!.structure.note).toHaveProperty('$keyAgreement');
     });
 
     it('should handle nested protocol paths', async () => {
@@ -3140,7 +3158,7 @@ describe('Encryption Callback Factories', () => {
       });
       expect(status.code).toBe(202);
 
-      // Query to verify $encryption was injected at all levels
+      // Query to verify $keyAgreement was injected at all levels
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3151,12 +3169,13 @@ describe('Encryption Callback Factories', () => {
       });
 
       const storedDef = queryReply.entries![0].descriptor.definition;
-      // Verify $encryption exists at 'thread' level
-      expect(storedDef.structure.thread).toHaveProperty('$encryption');
-      expect(storedDef.structure.thread.$encryption!.publicKeyJwk).toHaveProperty('crv', 'X25519');
-      // Verify $encryption exists at 'thread/message' level
-      expect(storedDef.structure.thread.message).toHaveProperty('$encryption');
-      expect(storedDef.structure.thread.message.$encryption!.publicKeyJwk).toHaveProperty('crv', 'X25519');
+      // Verify $keyAgreement exists at the protocol root, 'thread', and 'thread/message' levels.
+      expect(storedDef).toHaveProperty('$keyAgreement');
+      expect(storedDef.$keyAgreement!.publicKeyJwk).toHaveProperty('crv', 'X25519');
+      expect(storedDef.structure.thread).toHaveProperty('$keyAgreement');
+      expect(storedDef.structure.thread.$keyAgreement!.publicKeyJwk).toHaveProperty('crv', 'X25519');
+      expect(storedDef.structure.thread.message).toHaveProperty('$keyAgreement');
+      expect(storedDef.structure.thread.message.$keyAgreement!.publicKeyJwk).toHaveProperty('crv', 'X25519');
     });
 
     it('should full round-trip: configure, write, read, query with encryption', async () => {
@@ -3289,12 +3308,12 @@ describe('Encryption Callback Factories', () => {
 
       const updateWriteMessage = updateMessage as RecordsWriteMessage;
       expect(updateWriteMessage).toHaveProperty('encryption');
-      expect(updateWriteMessage.encryption!.recipients).toHaveLength(1);
-      expect(updateWriteMessage.encryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolPath');
+      expect(updateWriteMessage.encryption!.keyEncryption).toHaveLength(1);
+      expect(updateWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
 
       // The update should have a different initialization vector (fresh DEK)
-      expect(updateWriteMessage.encryption!.iv)
-        .not.toBe(initialEncryption!.iv);
+      expect(updateWriteMessage.encryption!.initializationVector)
+        .not.toBe(initialEncryption!.initializationVector);
 
       // Read back with decryption — should get the UPDATED plaintext
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -3377,7 +3396,7 @@ describe('Encryption Callback Factories', () => {
       const chatRecordId = chatWriteMessage.recordId;
       const chatEncryption = chatWriteMessage.encryption;
       expect(chatEncryption).toBeDefined();
-      expect(chatEncryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolContext');
+      expect(chatEncryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
 
       // Update the chat message
       const updatedChat = 'Updated chat message';
@@ -3400,10 +3419,10 @@ describe('Encryption Callback Factories', () => {
 
       expect(status.code).toBe(202);
 
-      // Updated message should still use ProtocolContext scheme
+      // Updated message should still use the protocol path scheme.
       const updatedEncryption = (updatedChatMessage as RecordsWriteMessage).encryption;
       expect(updatedEncryption).toBeDefined();
-      expect(updatedEncryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolContext');
+      expect(updatedEncryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
 
       // Read back with decryption
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -3472,7 +3491,7 @@ describe('Encryption Callback Factories', () => {
       expect(isMultiPartyContext(singlePartyProtocolDefinition, 'note')).toBe(false);
     });
 
-    it('should encrypt root record with ProtocolContext for multi-party protocol', async () => {
+    it('should encrypt root record with protocol path keys for multi-party protocol', async () => {
       // Configure protocol with encryption
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -3484,7 +3503,7 @@ describe('Encryption Callback Factories', () => {
         encryption: true
       });
 
-      // Write a root record (thread) — should use deferred ProtocolContext encryption
+      // Write a root record (thread).
       const plaintextString = 'Thread root message';
       const dataBytes = Convert.string(plaintextString).toUint8Array();
 
@@ -3506,14 +3525,14 @@ describe('Encryption Callback Factories', () => {
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
       expect(recordsWriteMessage).toHaveProperty('encryption');
-      expect(recordsWriteMessage.encryption!.recipients).toHaveLength(1);
-      expect(recordsWriteMessage.encryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolContext');
+      expect(recordsWriteMessage.encryption!.keyEncryption).toHaveLength(1);
+      expect(recordsWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
 
       // contextId should equal recordId for root records
       expect(recordsWriteMessage.contextId).toBe(recordsWriteMessage.recordId);
     });
 
-    it('should encrypt non-root record with ProtocolContext for multi-party protocol', async () => {
+    it('should encrypt non-root record with protocol path keys for multi-party protocol', async () => {
       // Configure protocol with encryption
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -3542,7 +3561,7 @@ describe('Encryption Callback Factories', () => {
 
       const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
 
-      // Write a child record (chat) — should use ProtocolContext
+      // Write a child record (chat).
       const plaintextString = 'Hello from the chat!';
       const dataBytes = Convert.string(plaintextString).toUint8Array();
 
@@ -3565,8 +3584,8 @@ describe('Encryption Callback Factories', () => {
 
       const chatWriteMessage = chatMessage as RecordsWriteMessage;
       expect(chatWriteMessage).toHaveProperty('encryption');
-      expect(chatWriteMessage.encryption!.recipients).toHaveLength(1);
-      expect(chatWriteMessage.encryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolContext');
+      expect(chatWriteMessage.encryption!.keyEncryption).toHaveLength(1);
+      expect(chatWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
 
     it('should still use ProtocolPath for single-party protocols', async () => {
@@ -3601,7 +3620,7 @@ describe('Encryption Callback Factories', () => {
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
       expect(recordsWriteMessage).toHaveProperty('encryption');
-      expect(recordsWriteMessage.encryption!.recipients[0]).toHaveProperty(['header', 'derivationScheme'], 'protocolPath');
+      expect(recordsWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
 
     it('context creator should decrypt root record via RecordsRead', async () => {
@@ -3845,7 +3864,7 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       // Act: install key delivery protocol
       await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
 
-      // After: verify protocol is installed with $encryption keys
+      // After: verify protocol is installed with $keyAgreement keys
       const { reply: afterReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3859,12 +3878,12 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       const definition = afterReply.entries![0].descriptor.definition;
       expect(definition.protocol).toBe('https://identity.foundation/protocols/key-delivery');
 
-      // Verify $encryption keys were injected at the contextKey path
+      // Verify $keyAgreement keys were injected at the protocol root and contextKey path.
       const contextKeyRuleSet = definition.structure.contextKey as any;
-      expect(contextKeyRuleSet).toHaveProperty('$encryption');
-      expect(contextKeyRuleSet.$encryption).toHaveProperty('rootKeyId');
-      expect(contextKeyRuleSet.$encryption).toHaveProperty('publicKeyJwk');
-      expect(contextKeyRuleSet.$encryption.rootKeyId).toContain('#enc');
+      expect(definition).toHaveProperty('$keyAgreement');
+      expect(definition.$keyAgreement.publicKeyJwk).toHaveProperty('crv', 'X25519');
+      expect(contextKeyRuleSet).toHaveProperty('$keyAgreement');
+      expect(contextKeyRuleSet.$keyAgreement.publicKeyJwk).toHaveProperty('crv', 'X25519');
     });
 
     it('should skip installation on subsequent calls (cache hit)', async () => {
@@ -3931,11 +3950,11 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
 
       // Verify the record is encrypted
       expect(entry).toHaveProperty('encryption');
-      expect(entry.encryption).toHaveProperty('recipients');
-      expect(entry.encryption!.recipients).toHaveLength(1);
+      expect(entry.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
+      expect(entry.encryption!.keyEncryption).toHaveLength(1);
 
       // Fallback path encrypts to the owner's ProtocolPath key
-      expect(entry.encryption!.recipients[0].header.derivationScheme).toBe('protocolPath');
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
 
       // Verify recipient
       expect(entry.descriptor).toHaveProperty('recipient', bob.did.uri);
@@ -3990,8 +4009,8 @@ describe('Key Delivery Protocol Infrastructure (PR A)', () => {
       });
 
       const entry = queryReply.entries![0] as RecordsWriteMessage;
-      expect(entry.encryption!.recipients[0].header.derivationScheme).toBe('protocolPath');
-      expect(entry.encryption!.recipients[0].header.kid).toBe(bobKeyInfo.keyId);
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(entry.encryption!.keyEncryption[0].keyId).toBe(await Encryption.getKeyId(bobKeyDeliveryPubKey));
 
       // Verify Bob can decrypt it
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -4565,7 +4584,7 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
     },
   };
 
-  it('should write a contextKey record when adding a $role participant', async () => {
+  it('should not write a legacy contextKey record when adding a $role participant', async () => {
     const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
 
     // Install the chat protocol with encryption for both Alice and Bob
@@ -4601,7 +4620,7 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
 
     const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
 
-    // Add Bob as a participant ($role record) — should trigger key delivery
+    // Add Bob as a participant ($role record).
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -4618,7 +4637,8 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
       encryption : true,
     });
 
-    // Verify a contextKey record was created for Bob on Alice's DWN
+    // The current encryption model does not mint legacy ProtocolContext keys
+    // as a side effect of role-record writes.
     const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -4632,8 +4652,7 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
       }
     });
 
-    expect(queryReply.entries).toHaveLength(1);
-    expect(queryReply.entries![0].descriptor).toHaveProperty('recipient', bob.did.uri);
+    expect(queryReply.entries).toHaveLength(0);
   }, 10000);
 
   it('should preserve user data in $role records (no longer replaces with key payload)', async () => {
@@ -4818,7 +4837,7 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
     expect(readReply.entries).toHaveLength(1);
     const entry = readReply.entries![0];
     expect(entry.encryption).toBeDefined();
-    expect(entry.encryption!.recipients[0].header.derivationScheme).toBe('protocolContext');
+    expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
 
     // Verify auto-decryption produced the original plaintext
     if (entry.encodedData) {
@@ -4828,7 +4847,7 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
     }
   }, 10000);
 
-  it('should use fetchContextKeyRecord in resolveKeyDecrypter Case 2 (participant path)', async () => {
+  it('should not resolve a legacy context key for a role participant', async () => {
     const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
 
     // Configure protocol for Alice
@@ -4857,7 +4876,7 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
 
     const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
 
-    // Add Bob as participant — triggers contextKey delivery (PR C)
+    // Add Bob as participant.
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -4874,7 +4893,7 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
       encryption : true,
     });
 
-    // Verify a contextKey was written to Alice's DWN for Bob
+    // Verify no legacy contextKey was written to Alice's DWN for Bob.
     const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -4887,59 +4906,16 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
         }
       }
     });
-    expect(ckQuery.entries).toHaveLength(1);
-
-    // Read the contextKey with decryption to verify it contains a valid DerivedPrivateJwk
-    const ckRecordId = ckQuery.entries![0].recordId;
-    const { reply: ckRead } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsRead,
-      messageParams : { filter: { recordId: ckRecordId } },
-      encryption    : true,
-    });
-    const ckReadResult = ckRead as any;
-    const ckDataBytes = await DataStream.toBytes(ckReadResult.entry.data);
-    const contextKeyPayload = JSON.parse(new TextDecoder().decode(ckDataBytes));
-
-    // Verify the contextKey payload has the expected DerivedPrivateJwk shape
-    expect(contextKeyPayload).toHaveProperty('rootKeyId');
-    expect(contextKeyPayload).toHaveProperty('derivationScheme', 'protocolContext');
-    expect(contextKeyPayload).toHaveProperty('derivationPath');
-    expect(contextKeyPayload).toHaveProperty('derivedPrivateKey');
-    expect(contextKeyPayload.derivedPrivateKey).toHaveProperty('kty', 'OKP');
-    expect(contextKeyPayload.derivedPrivateKey).toHaveProperty('crv', 'X25519');
-    expect(contextKeyPayload.derivedPrivateKey).toHaveProperty('d'); // private key component
-
-    // Verify the derivation path is correct for this context
     const rootContextId = threadContextId.split('/')[0];
-    expect(contextKeyPayload.derivationPath).toEqual([
-      'protocolContext', rootContextId,
-    ]);
+    expect(ckQuery.entries).toHaveLength(0);
 
-    // Verify that fetchContextKeyRecord can also retrieve it
-    // (Bob fetching his own key from Alice's DWN — here we test the local path
-    // by writing Bob's key to Bob's DWN first, simulating sync)
-    await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
-    await testHarness.agent.dwn.writeContextKeyRecord({
-      tenantDid       : bob.did.uri,
-      recipientDid    : bob.did.uri,
-      contextKeyData  : contextKeyPayload,
-      sourceProtocol  : chatProtocol.protocol,
-      sourceContextId : rootContextId,
-    });
-
-    // Bob can fetch his own contextKey from his local DWN
     const bobKey = await testHarness.agent.dwn.fetchContextKeyRecord({
-      ownerDid        : bob.did.uri,
+      ownerDid        : alice.did.uri,
       requesterDid    : bob.did.uri,
       sourceProtocol  : chatProtocol.protocol,
       sourceContextId : rootContextId,
     });
-    expect(bobKey).toBeDefined();
-    expect(bobKey!.rootKeyId).toBe(contextKeyPayload.rootKeyId);
-    expect(bobKey!.derivationScheme).toBe('protocolContext');
-    expect(bobKey!.derivedPrivateKey).toEqual(contextKeyPayload.derivedPrivateKey);
+    expect(bobKey).toBeUndefined();
   }, 30000);
 });
 
@@ -5142,11 +5118,9 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     const recordsWriteMessage = threadMessage as RecordsWriteMessage;
     expect(recordsWriteMessage.encryption).toBeDefined();
 
-    // For cross-DWN root records, the encryption should use ProtocolPath
-    // (the external author cannot derive the target's context key)
-    const recipients = recordsWriteMessage.encryption!.recipients;
-    expect(recipients).toHaveLength(1);
-    expect(recipients[0].header.derivationScheme).toBe('protocolPath');
+    const keyEncryption = recordsWriteMessage.encryption!.keyEncryption;
+    expect(keyEncryption).toHaveLength(1);
+    expect(keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
   }, 15000);
 
   it('Alice should decrypt cross-DWN root record via ProtocolPath', async () => {
@@ -5195,13 +5169,7 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(decryptedText).toBe(threadText);
   }, 15000);
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // E2E Gap Tests: verify that participants can actually DECRYPT records,
-  // not just that keys are delivered with the right shape.
-  // ──────────────────────────────────────────────────────────────────────────
-
-  it('E2E: participant (Bob) should decrypt a record via contextKey in multi-party $role protocol', async () => {
-    // Configure chat protocol for Alice with encryption
+  it('should not create legacy contextKey delivery records for role participants', async () => {
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -5210,8 +5178,6 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       encryption    : true,
     });
 
-    // Alice creates a root thread
-    const threadText = '{"title":"Secret Thread for Bob"}';
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -5222,31 +5188,11 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
         dataFormat   : 'application/json',
         schema       : 'https://schemas.xyz/thread',
       },
-      dataStream : new Blob([new TextEncoder().encode(threadText)]),
+      dataStream : new Blob([new TextEncoder().encode('{"title":"Secret Thread for Bob"}')]),
       encryption : true,
     });
     const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
-    const rootContextId = threadContextId.split('/')[0];
 
-    // Alice writes a chat message in the thread
-    const chatText = 'Top secret chat message';
-    const { message: chatMessage } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/chat',
-        parentContextId : threadContextId,
-        dataFormat      : 'text/plain',
-        schema          : 'https://schemas.xyz/chat',
-      },
-      dataStream : new Blob([new TextEncoder().encode(chatText)]),
-      encryption : true,
-    });
-    const chatRecordId = (chatMessage as RecordsWriteMessage).recordId;
-
-    // Alice adds Bob as participant — triggers contextKey delivery to Bob
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -5263,7 +5209,6 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       encryption : true,
     });
 
-    // Read the contextKey that was written for Bob on Alice's DWN
     const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -5276,49 +5221,8 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
         }
       }
     });
-    expect(ckQuery.entries).toHaveLength(1);
-
-    // Decrypt the contextKey record to get the DerivedPrivateJwk
-    const ckRecordId = ckQuery.entries![0].recordId;
-    const { reply: ckRead } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsRead,
-      messageParams : { filter: { recordId: ckRecordId } },
-      encryption    : true,
-    });
-    const ckDataBytes = await DataStream.toBytes((ckRead as any).entry.data);
-    const contextKeyPayload = JSON.parse(new TextDecoder().decode(ckDataBytes));
-
-    // Simulate sync: copy the contextKey to Bob's local DWN
-    await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
-    await testHarness.agent.dwn.writeContextKeyRecord({
-      tenantDid       : bob.did.uri,
-      recipientDid    : bob.did.uri,
-      contextKeyData  : contextKeyPayload,
-      sourceProtocol  : chatProtocol.protocol,
-      sourceContextId : rootContextId,
-    });
-
-    // Bob reads Alice's chat message with encryption — should auto-decrypt.
-    // Bob must invoke his participant role to be authorized for the read.
-    const { reply: bobReadReply } = await testHarness.agent.dwn.processRequest({
-      author        : bob.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsRead,
-      messageParams : {
-        filter       : { recordId: chatRecordId },
-        protocolRole : 'thread/participant',
-      },
-      encryption: true,
-    });
-
-    const bobReadResult = bobReadReply as any;
-    expect(bobReadResult.status.code).toBe(200);
-    const decryptedBytes = await DataStream.toBytes(bobReadResult.entry.data);
-    const decryptedText = new TextDecoder().decode(decryptedBytes);
-    expect(decryptedText).toBe(chatText);
-  }, 30000);
+    expect(ckQuery.entries).toHaveLength(0);
+  }, 15000);
 
 });
 

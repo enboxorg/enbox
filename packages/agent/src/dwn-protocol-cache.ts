@@ -23,8 +23,6 @@ import type {
   MessageHandler,
 } from './types/dwn.js';
 
-import { KeyDerivationScheme } from '@enbox/dwn-sdk-js';
-
 import { DwnInterface as DwnInterfaceEnum, dwnMessageConstructors } from './types/dwn.js';
 
 // ---------------------------------------------------------------------------
@@ -157,11 +155,7 @@ export async function fetchRemoteProtocolDefinition(
 }
 
 /**
- * Extracts the `derivedPublicKey` from an existing `ProtocolContext`-encrypted
- * record in a context on a remote DWN.
- *
- * This key allows an external author to encrypt new records in the same
- * context without knowing the context private key.
+ * Compatibility helper for the retired record-derived public key lookup.
  *
  * @param targetDid      - The DWN owner's DID
  * @param protocolUri    - The protocol URI to search
@@ -170,8 +164,7 @@ export async function fetchRemoteProtocolDefinition(
  * @param getDwnEndpointUrls - Callback to resolve DWN endpoint URLs (with local discovery)
  * @param getSigner      - Callback to obtain the signer for `requesterDid`
  * @param sendDwnRpcRequest - Callback to send the RPC query
- * @returns The rootKeyId and derivedPublicKey, or `undefined` if no
- *          `ProtocolContext` record exists yet
+ * @returns Always `undefined` for the current encryption envelope
  */
 export async function extractDerivedPublicKey(
   targetDid: string,
@@ -204,22 +197,7 @@ export async function extractDerivedPublicKey(
     return undefined;
   }
 
-  // Search entries for one with a ProtocolContext recipient entry
-  // that includes derivedPublicKey
-  for (const entry of queryReply.entries) {
-    if (entry.encryption?.recipients) {
-      const contextEntry = entry.encryption.recipients.find(
-        (r: { header: { derivationScheme: string; derivedPublicKey?: PublicKeyJwk } }) =>
-          r.header.derivationScheme === KeyDerivationScheme.ProtocolContext && r.header.derivedPublicKey
-      );
-      if (contextEntry?.header.derivedPublicKey) {
-        return {
-          rootKeyId        : contextEntry.header.kid,
-          derivedPublicKey : contextEntry.header.derivedPublicKey,
-        };
-      }
-    }
-  }
+  void queryReply;
 
   return undefined;
 }

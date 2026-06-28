@@ -2,6 +2,7 @@ import type { Jwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
 import { afterAll, describe, expect, it } from 'bun:test';
+import { ContentEncryptionAlgorithm, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
@@ -16,9 +17,9 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
  * underlying key material is deterministically derived from a BIP-39 seed phrase.
  *
  * Layer 2 (DWN record-level): Private keys stored in the DWN via DwnKeyStore are
- * encrypted using JWE (ECDH-ES+A256KW) with the agent DID's X25519 `#enc` key. The protocol
- * definition for JWK storage has `encryptionRequired: true`, which triggers
- * `$encryption` key injection at protocol install time.
+ * encrypted using DWN protocol-path key agreement. The protocol definition for
+ * JWK storage has `encryptionRequired: true`, which triggers `$keyAgreement`
+ * key injection at protocol install time.
  *
  * Recovery path: seed phrase → deterministic agent DID → X25519 `#enc` key →
  * decrypt DWN key records.
@@ -111,7 +112,7 @@ describe('e2e: two-layer encryption recovery', () => {
 
     it('should generate keys that are encrypted at the DWN level (Layer 2)', async () => {
       // Generate multiple keys through the key manager — each is stored via
-      // DwnKeyStore which encrypts them using the protocol's $encryption keys.
+      // DwnKeyStore which encrypts them using the protocol's $keyAgreement keys.
       const keyUri1 = await harness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
       const keyUri2 = await harness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
       const keyUri3 = await harness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
@@ -127,10 +128,10 @@ describe('e2e: two-layer encryption recovery', () => {
       }
     });
 
-    it('should have $encryption injected into the installed JWK protocol', async () => {
+    it('should have $keyAgreement injected into the installed JWK protocol', async () => {
       // The JwkProtocolDefinition has `encryptionRequired: true` on the privateJwk
       // type. When installed, DwnDataStore.installProtocol() derives and injects
-      // `$encryption` keys into the protocol structure. Verify this happened.
+      // `$keyAgreement` keys into the protocol structure. Verify this happened.
       const { reply } = await harness.agent.dwn.processRequest({
         author        : originalAgentDidUri,
         target        : originalAgentDidUri,
@@ -143,17 +144,13 @@ describe('e2e: two-layer encryption recovery', () => {
       expect(reply.status.code).toBe(200);
       expect(reply.entries).toHaveLength(1);
 
-      // Verify $encryption was injected into the privateJwk rule set.
+      // Verify $keyAgreement was injected into the protocol root and privateJwk rule set.
       const installedDefinition = reply.entries![0].descriptor.definition;
       const privateJwkRuleSet = installedDefinition.structure.privateJwk;
-      expect(privateJwkRuleSet).toHaveProperty('$encryption');
-      const encryptionBlock = privateJwkRuleSet.$encryption;
-      expect(encryptionBlock).toHaveProperty('rootKeyId');
-      expect(encryptionBlock).toHaveProperty('publicKeyJwk');
-
-      // The rootKeyId should reference the agent DID's #enc key.
-      expect(encryptionBlock!.rootKeyId).toContain(originalAgentDidUri);
-      expect(encryptionBlock!.rootKeyId).toContain('#enc');
+      expect(installedDefinition).toHaveProperty('$keyAgreement');
+      expect(installedDefinition.$keyAgreement.publicKeyJwk).toHaveProperty('crv', 'X25519');
+      expect(privateJwkRuleSet).toHaveProperty('$keyAgreement');
+      expect(privateJwkRuleSet.$keyAgreement.publicKeyJwk).toHaveProperty('crv', 'X25519');
     });
 
     it('should have encryption metadata on raw DWN records with ciphertext', async () => {
@@ -175,14 +172,11 @@ describe('e2e: two-layer encryption recovery', () => {
       expect(reply.entries).toHaveLength(3);
 
       for (const entry of reply.entries!) {
-        // Verify encryption metadata is present (JWE format with protected header).
+        // Verify encryption metadata is present.
         expect(entry.encryption).toBeDefined();
-        expect(entry.encryption!.protected).toBeDefined();
-        const protectedHeader = JSON.parse(
-          Buffer.from(entry.encryption!.protected, 'base64url').toString()
-        );
-        expect(protectedHeader.alg).toBe('ECDH-ES+A256KW');
-        expect(protectedHeader.enc).toBe('A256GCM');
+        expect(entry.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
+        expect(entry.encryption!.keyEncryption).toHaveLength(1);
+        expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
 
         // Verify the raw data is ciphertext, not readable JSON. Encrypted records
         // may have encodedData (base64url ciphertext) — if present, decoding it

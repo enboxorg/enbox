@@ -44,7 +44,7 @@ import {
 import type { PrivateKeyJwk } from '@enbox/dwn-sdk-js';
 
 import { X25519 } from '@enbox/crypto';
-import { Encryption, HdKey } from '@enbox/dwn-sdk-js';
+import { Encoder, Encryption, HdKey, KeyAgreementAlgorithm, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import type { AgentDataStore } from './store-data.js';
 import type { AgentKeyManager } from './types/key-manager.js';
@@ -447,11 +447,18 @@ export class LocalKeyManager implements AgentKeyManager {
       derivationPath
     );
 
-    // Convert leaf bytes to X25519 JWK for ECDH-ES unwrap
+    // Convert leaf bytes to X25519 JWK for unwrap
     const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
+    const leafPublicKeyJwk = await X25519.getPublicKey({ key: leafPrivateKeyJwk }) as PublicKeyJwk;
+    const keyId = await Encryption.getKeyId(leafPublicKeyJwk);
 
-    // Perform ECDH-ES key agreement and AES-256 Key Unwrap
-    return Encryption.ecdhEsUnwrapKey(leafPrivateKeyJwk, ephemeralPublicKey, encryptedKey);
+    return Encryption.unwrapKey(leafPrivateKeyJwk as PrivateKeyJwk, {
+      algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+      derivationScheme : KeyDerivationScheme.ProtocolPath,
+      encryptedKey     : Encoder.bytesToBase64Url(encryptedKey),
+      ephemeralPublicKey,
+      keyId,
+    });
   }
 
   /**

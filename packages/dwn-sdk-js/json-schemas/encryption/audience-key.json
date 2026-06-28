@@ -1,0 +1,86 @@
+{
+  "$id": "https://identity.foundation/dwn/json-schemas/encryption/audience-key.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "contextId",
+    "role",
+    "epoch",
+    "keyId",
+    "publicKeyJwk",
+    "privateKeyJwk"
+  ],
+  "properties": {
+    "protocol": {
+      "type": "string"
+    },
+    "contextId": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string"
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "keyId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "publicKeyJwk": {
+      "allOf": [
+        {
+          "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "kty",
+        "crv",
+        "x"
+      ],
+      "properties": {
+        "kty": {
+          "const": "OKP"
+        },
+        "crv": {
+          "const": "X25519"
+        },
+        "x": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+        }
+      }
+    },
+    "privateKeyJwk": {
+      "allOf": [
+        {
+          "$ref": "https://identity.foundation/dwn/json-schemas/general-jwk.json"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "kty",
+        "crv",
+        "x",
+        "d"
+      ],
+      "properties": {
+        "kty": {
+          "const": "OKP"
+        },
+        "crv": {
+          "const": "X25519"
+        },
+        "x": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+        },
+        "d": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+        }
+      }
+    }
+  }
+}

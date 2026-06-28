@@ -16,7 +16,7 @@
 
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 import type { PortableDid } from '@enbox/dids';
-import type { AgentSessionIdentity, BearerIdentity, DelegateContextKey, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent, PermissionGrantEntry } from '@enbox/agent';
+import type { AgentSessionIdentity, BearerIdentity, DelegateDecryptionKey, DwnDataEncodedRecordsWriteMessage, EnboxUserAgent, PermissionGrantEntry } from '@enbox/agent';
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
@@ -24,7 +24,7 @@ import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOp
 
 import { Convert } from '@enbox/common';
 import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
-import { DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError, KeyDeliveryProtocolDefinition } from '@enbox/agent';
+import { DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError } from '@enbox/agent';
 
 import { AuthSession } from '../identity-session.js';
 import { RecoveryPhraseMismatchError } from '../errors.js';
@@ -584,13 +584,11 @@ export async function importDelegateAndSetupSync(params: {
   connectedDid: string;
   delegateGrants: DwnDataEncodedRecordsWriteMessage[];
   delegateDecryptionKeys?: DelegateDecryptionKey[];
-  delegateContextKeys?: DelegateContextKey[];
-  delegateMultiPartyProtocols?: string[];
   flowName: string;
 }): Promise<BearerIdentity> {
   const {
     userAgent, delegatePortableDid, connectedDid, delegateGrants,
-    delegateDecryptionKeys, delegateContextKeys, delegateMultiPartyProtocols,
+    delegateDecryptionKeys,
     flowName,
   } = params;
 
@@ -615,36 +613,11 @@ export async function importDelegateAndSetupSync(params: {
       grants      : delegateGrants,
     });
 
-    // Install the key-delivery protocol on the delegate's local DWN so the
-    // sync engine's closure validator doesn't flag encrypted records as
-    // missing the `keyDeliveryProtocol` dependency.  This is a best-effort
-    // install — the protocol only needs to exist locally (it is never sent
-    // to the remote DWN for delegates).
-    try {
-      await userAgent.processDwnRequest({
-        author        : connectedDid,
-        target        : connectedDid,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: KeyDeliveryProtocolDefinition },
-      });
-    } catch { /* best effort — closure will fall back to repairing */ }
-
     // Import delegate protocol path decryption keys if the wallet provided
     // them. These enable the delegate to decrypt ProtocolPath-encrypted
     // records without possessing the owner's root X25519 private key.
     if (delegateDecryptionKeys && delegateDecryptionKeys.length > 0) {
       userAgent.dwn.importDelegateDecryptionKeys(delegatePortableDid.uri, delegateDecryptionKeys);
-    }
-
-    // Import context-scoped decryption keys for multi-party encrypted protocols.
-    // Always register multi-party protocols (even with zero keys) so the
-    // agent can deliver context keys for contexts created after connect.
-    if ((delegateContextKeys && delegateContextKeys.length > 0) || (delegateMultiPartyProtocols && delegateMultiPartyProtocols.length > 0)) {
-      userAgent.dwn.importDelegateContextKeys(
-        delegatePortableDid.uri,
-        delegateContextKeys ?? [],
-        delegateMultiPartyProtocols,
-      );
     }
 
     // Register (or update) the identity for protocol-scoped sync.
@@ -720,8 +693,6 @@ export async function importDelegateAndSetupSync(params: {
  */
 export type DelegateSessionState = {
   delegateDecryptionKeys?: DelegateDecryptionKey[];
-  delegateContextKeys?: DelegateContextKey[];
-  delegateMultiPartyProtocols?: string[];
   sessionRevocations?: { grantId: string; revocationGrantId: string }[];
 };
 
@@ -762,18 +733,6 @@ export async function finalizeDelegateSession(params: {
   // from prior sessions prevents a reconnect with fewer capabilities
   // from retaining old decryption material.
   await persistOrClearDelegateSecrets(userAgent, storage, extraStorageKeys, delegateState);
-
-  // Wire post-connect context key persistence: when the owner creates a
-  // new multi-party context, the agent injects the key into the delegate
-  // cache and fires this callback so we persist the updated keys.
-  userAgent.dwn.onDelegateContextKeysChanged = async (changedDelegateDid: string): Promise<void> => {
-    if (changedDelegateDid !== delegateDid) { return; }
-    try {
-      const keys = userAgent.dwn.exportDelegateContextKeys(delegateDid);
-      const bytes = Convert.string(JSON.stringify(keys)).toUint8Array();
-      await userAgent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, bytes);
-    } catch { /* best effort — keys will be re-derived on next connect */ }
-  };
 
   return finalizeSession({
     userAgent,
@@ -883,8 +842,6 @@ async function persistOrClearDelegateSecrets(
 ): Promise<void> {
   const {
     delegateDecryptionKeys,
-    delegateContextKeys,
-    delegateMultiPartyProtocols,
     sessionRevocations,
   } = delegateState;
 
@@ -899,19 +856,14 @@ async function persistOrClearDelegateSecrets(
     }
   };
   putOrDelete(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS, delegateDecryptionKeys);
-  putOrDelete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, delegateContextKeys);
+  secretWrites.push(userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).then(() => {}).catch(() => {}));
+  secretWrites.push(storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}));
+  secretWrites.push(storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS).catch(() => {}));
   await Promise.all(secretWrites);
 
   // Best-effort cleanup of legacy plaintext copies when new keys were written.
-  if (delegateDecryptionKeys?.length || delegateContextKeys?.length) {
+  if (delegateDecryptionKeys?.length) {
     try { await storage.remove(STORAGE_KEYS.DELEGATE_DECRYPTION_KEYS); } catch { /* best-effort */ }
-    try { await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS); } catch { /* best-effort */ }
-  }
-
-  if (delegateMultiPartyProtocols?.length) {
-    extraStorageKeys[STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS] = JSON.stringify(delegateMultiPartyProtocols);
-  } else {
-    try { await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS); } catch { /* best-effort */ }
   }
 
   if (sessionRevocations?.length) {
