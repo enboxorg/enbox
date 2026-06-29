@@ -36,7 +36,7 @@ import {
   ResumableTaskStoreLevel,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
-import { Convert, TtlCache } from '@enbox/common';
+import { Convert, logger, TtlCache } from '@enbox/common';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 
@@ -496,10 +496,17 @@ export class AgentDwnApi {
     if (reply.status.code === 202 &&
         isDwnRequest(request, DwnInterface.RecordsWrite) &&
         !request.rawMessage) {
-      await this.provisionAudienceKeyForAcceptedRoleRecord(
-        request,
-        message as RecordsWriteMessage,
-      );
+      try {
+        await this.provisionAudienceKeyForAcceptedRoleRecord(
+          request,
+          message as RecordsWriteMessage,
+        );
+      } catch (error) {
+        logger.log(
+          `AgentDwnApi: deferred audienceKey provisioning for role record '${(message as RecordsWriteMessage).recordId}': ` +
+          `${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
 
     await this.maybeDecryptReply(request, reply);

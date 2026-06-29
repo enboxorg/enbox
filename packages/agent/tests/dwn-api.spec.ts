@@ -4060,6 +4060,10 @@ describe('Role record write behavior', () => {
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
   });
 
+  afterEach(() => {
+    sinon.restore();
+  });
+
   afterAll(async () => {
     await testHarness.clearStorage();
     await testHarness.closeStorage();
@@ -4160,6 +4164,53 @@ describe('Role record write behavior', () => {
       const decodedString = new TextDecoder().decode(decodedBytes);
       expect(decodedString).toBe(participantData);
     }
+  }, 10000);
+
+  it('should accept a role record when audience key delivery is retryable', async () => {
+    const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+    const roleKeyLookupStub = sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
+      .rejects(new Error('recipient protocol not installed'));
+
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+
+    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'application/json',
+        schema       : 'https://schemas.xyz/thread',
+      },
+      dataStream : new Blob([new TextEncoder().encode('{"title":"Retryable"}')]),
+      encryption : true,
+    });
+
+    const { reply: roleReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        recipient       : bob.did.uri,
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/participant',
+        parentContextId : (threadMessage as RecordsWriteMessage).contextId,
+        dataFormat      : 'application/json',
+        schema          : 'https://schemas.xyz/participant',
+      },
+      dataStream : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
+      encryption : true,
+    });
+
+    expect(roleReply.status.code).toBe(202);
+    expect(roleKeyLookupStub.calledOnce).toBe(true);
   }, 10000);
 
   it('should not provision audience keys for role records without key agreement', async () => {

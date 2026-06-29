@@ -3,4 +3,4 @@
 "@enbox/agent": patch
 ---
 
-Add role-audience encryption key delivery and decryption support.
+Add initial role-audience encryption key delivery and decryption support. Epoch rotation for membership changes remains tracked separately.

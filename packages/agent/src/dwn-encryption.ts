@@ -923,39 +923,12 @@ async function buildRecipientRolePathDecrypter(params: {
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
 }): Promise<KeyDecrypter | undefined> {
   const derivationPath = getScopeDerivationPath(params.protocol, params.role);
-  let privateKeyJwk: PrivateKeyJwk | undefined;
-
-  if (params.granteeDid !== undefined) {
-    const cacheKey = `ddk~${params.granteeDid}`;
-    let delegateKeys = params.delegateDecryptionKeyCache?.get(cacheKey) ?? [];
-    let coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.role);
-
-    if (coveringKey === undefined && params.delegateDecryptionKeyCache?.set !== undefined) {
-      const hydratedKeys = await resolveGrantKeyRecords({
-        agent        : params.agent,
-        grantorDid   : params.recipientDid,
-        granteeDid   : params.granteeDid,
-        protocol     : params.protocol,
-        protocolPath : params.role,
-      });
-      delegateKeys = mergeDelegateDecryptionKeys(delegateKeys, hydratedKeys);
-      params.delegateDecryptionKeyCache.set(cacheKey, delegateKeys);
-      coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.role);
-    }
-
-    if (coveringKey === undefined) {
-      return undefined;
-    }
-
-    const privateKeyBytes = await Records.derivePrivateKey(coveringKey.derivedPrivateKey, derivationPath);
-    privateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes }) as PrivateKeyJwk;
-  } else {
-    const { keyUri } = await getEncryptionKeyInfo(params.agent, params.recipientDid);
-    const privateKeyBytes = await params.agent.keyManager.derivePrivateKeyBytes({
-      keyUri,
-      derivationPath,
-    });
-    privateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes }) as PrivateKeyJwk;
+  const privateKeyJwk = await getRecipientRolePathPrivateKey({
+    ...params,
+    derivationPath,
+  });
+  if (privateKeyJwk === undefined) {
+    return undefined;
   }
 
   const publicKeyJwk = await X25519.getPublicKey({ key: privateKeyJwk }) as PublicKeyJwk;
@@ -965,6 +938,49 @@ async function buildRecipientRolePathDecrypter(params: {
     privateKeyJwk,
     publicKeyJwk,
   });
+}
+
+async function getRecipientRolePathPrivateKey(params: {
+  agent: EnboxPlatformAgent;
+  recipientDid: string;
+  protocol: string;
+  role: string;
+  derivationPath: string[];
+  granteeDid?: string;
+  delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
+}): Promise<PrivateKeyJwk | undefined> {
+  if (params.granteeDid === undefined) {
+    const { keyUri } = await getEncryptionKeyInfo(params.agent, params.recipientDid);
+    const privateKeyBytes = await params.agent.keyManager.derivePrivateKeyBytes({
+      keyUri,
+      derivationPath: params.derivationPath,
+    });
+    return X25519.bytesToPrivateKey({ privateKeyBytes }) as Promise<PrivateKeyJwk>;
+  }
+
+  const cacheKey = `ddk~${params.granteeDid}`;
+  let delegateKeys = params.delegateDecryptionKeyCache?.get(cacheKey) ?? [];
+  let coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.role);
+
+  if (coveringKey === undefined && params.delegateDecryptionKeyCache?.set !== undefined) {
+    const hydratedKeys = await resolveGrantKeyRecords({
+      agent        : params.agent,
+      grantorDid   : params.recipientDid,
+      granteeDid   : params.granteeDid,
+      protocol     : params.protocol,
+      protocolPath : params.role,
+    });
+    delegateKeys = mergeDelegateDecryptionKeys(delegateKeys, hydratedKeys);
+    params.delegateDecryptionKeyCache.set(cacheKey, delegateKeys);
+    coveringKey = findCoveringDelegateKey(delegateKeys, params.protocol, params.role);
+  }
+
+  if (coveringKey === undefined) {
+    return undefined;
+  }
+
+  const privateKeyBytes = await Records.derivePrivateKey(coveringKey.derivedPrivateKey, params.derivationPath);
+  return X25519.bytesToPrivateKey({ privateKeyBytes }) as Promise<PrivateKeyJwk>;
 }
 
 async function getAudienceKeyEncryptedData(
@@ -1005,6 +1021,8 @@ async function verifyAudienceKeyPayload(params: {
   const { payload, audienceKeyMessage } = params;
   const tags = audienceKeyMessage.descriptor.tags ?? {};
 
+  assertAudienceKeyPayload(payload);
+
   if (audienceKeyMessage.descriptor.recipient !== params.recipientDid ||
       payload.protocol !== tags.protocol ||
       payload.contextId !== tags.contextId ||
@@ -1025,6 +1043,23 @@ async function verifyAudienceKeyPayload(params: {
   if (payload.keyId !== publicKeyId || payload.keyId !== privateKeyId) {
     throw new Error('audienceKey keyId does not match delivered key material.');
   }
+}
+
+function assertAudienceKeyPayload(payload: unknown): asserts payload is AudienceKeyPayload {
+  if (!isObject(payload) ||
+      typeof payload.protocol !== 'string' ||
+      typeof payload.contextId !== 'string' ||
+      typeof payload.role !== 'string' ||
+      !Number.isInteger(payload.epoch) ||
+      typeof payload.keyId !== 'string' ||
+      !isObject(payload.publicKeyJwk) ||
+      !isObject(payload.privateKeyJwk)) {
+    throw new Error('audienceKey payload is malformed.');
+  }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 async function getCachedAudienceKey(params: {
