@@ -11,6 +11,11 @@
     "hasMatchingRoleRecord",
     "queryLatestRoleRecords"
   ],
+  "live: encrypted role-audience write": [
+    "fetchParentRecord",
+    "fetchProtocolDefinition",
+    "queryAudienceEpochs"
+  ],
   "live: composed protocol configure": [
     "fetchProtocolDefinition"
   ],
