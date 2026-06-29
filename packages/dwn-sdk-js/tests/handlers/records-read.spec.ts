@@ -4,7 +4,6 @@ import type { EncryptionInput } from '../../src/interfaces/records-write.js';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ProtocolDefinition, ProtocolsConfigureMessage, ResumableTaskStore } from '../../src/index.js';
 
-import chatProtocolDefinition from '../vectors/protocol-definitions/chat.json' with { type: 'json' };
 import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
 import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
 import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
@@ -1854,167 +1853,6 @@ export function testRecordsReadHandler(): void {
       });
 
       describe('encryption scenarios', () => {
-        it('should only be able to decrypt record with a correct derived private key  - `protocol-context` derivation scheme', async () => {
-          // scenario: Bob initiated an encrypted chat thread with Alice,
-          // bob is able to decrypt subsequent messages from Alice using the `protocol-context` derived private key
-
-          // creating Alice and Bob persona and setting up a stub DID resolver
-          const alice = await TestDataGenerator.generatePersona();
-          const bob = await TestDataGenerator.generatePersona();
-          TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
-
-          // Alice configures chat protocol with encryption
-          const protocolDefinition: ProtocolDefinition = chatProtocolDefinition as ProtocolDefinition;
-
-          const protocolDefinitionForAlice
-                      = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk);
-          const protocolsConfigureForAlice = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : protocolDefinitionForAlice
-          });
-
-          const protocolsConfigureForAliceReply = await dwn.processMessage(
-            alice.did,
-            protocolsConfigureForAlice.message
-          );
-          expect(protocolsConfigureForAliceReply.status.code).toBe(202);
-
-          // Bob configures chat protocol with encryption
-          const protocolDefinitionForBob
-          = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, bob.keyId, bob.encryptionKeyPair.privateJwk);
-          const protocolsConfigureForBob = await TestDataGenerator.generateProtocolsConfigure({
-            author             : bob,
-            protocolDefinition : protocolDefinitionForBob
-          });
-
-          const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfigureForBob.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
-
-          // Bob queries for Alice's chat protocol definition
-          const protocolsQuery = await ProtocolsQuery.create({
-            filter: { protocol: chatProtocolDefinition.protocol }
-          });
-          const protocolsQueryReply = await dwn.processMessage(alice.did, protocolsQuery.message);
-          const protocolsConfigureMessageReceived = protocolsQueryReply.entries![0] as ProtocolsConfigureMessage;
-
-          // Bob verifies that the chat protocol definition is authored by Alice
-          await authenticate(protocolsConfigureMessageReceived.authorization, didResolver);
-          const protocolsConfigureFetched = await ProtocolsConfigure.parse(protocolsConfigureMessageReceived);
-          expect(protocolsConfigureFetched.author).toBe(alice.did);
-
-          // Bob creates an initiating a chat thread RecordsWrite
-          const plaintextMessageToAlice = TestDataGenerator.randomBytes(100);
-          const { message: threadMessage, dataStream, recordsWrite, encryptedDataBytes, encryptionInput } =
-          await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-            plaintextBytes                                   : plaintextMessageToAlice,
-            author                                           : bob,
-            protocolDefinition                               : protocolsConfigureForAlice.message.descriptor.definition,
-            protocolPath                                     : 'thread',
-            encryptSymmetricKeyWithProtocolPathDerivedKey    : true,
-            encryptSymmetricKeyWithProtocolContextDerivedKey : true
-          });
-
-          // Bob writes the encrypted chat thread to Alice's DWN
-          const bobToAliceWriteReply = await dwn.processMessage(alice.did, threadMessage, { dataStream });
-          expect(bobToAliceWriteReply.status.code).toBe(202);
-
-          // Bob also needs to write the same encrypted chat thread to his own DWN
-          // Opportunity here to create a much nicer utility method for this entire block
-          const bobToBobRecordsWrite = await RecordsWrite.createFrom({
-            recordsWriteMessage : recordsWrite.message,
-            messageTimestamp    : recordsWrite.message.descriptor.messageTimestamp
-          });
-
-          const bobRootPrivateKey: DerivedPrivateJwk = {
-            rootKeyId         : bob.keyId,
-            derivationScheme  : KeyDerivationScheme.ProtocolContext,
-            derivedPrivateKey : bob.encryptionKeyPair.privateJwk
-          };
-
-          const protocolPathDerivationPath = Records.constructKeyDerivationPathUsingProtocolPathScheme(recordsWrite.message.descriptor);
-          const protocolPathDerivedPublicJwkForBobsDwn = await HdKey.derivePublicKey(bobRootPrivateKey, protocolPathDerivationPath);
-          const protocolPathDerivedKeyEncryptionInputForBobsDwn = {
-            publicKeyId      : bob.keyId, // reusing signing key for encryption purely as a convenience
-            publicKey        : protocolPathDerivedPublicJwkForBobsDwn,
-            derivationScheme : KeyDerivationScheme.ProtocolPath
-          };
-
-          const encryptionInputForBobsDwn: EncryptionInput = encryptionInput;
-          const indexOfKeyEncryptionInputToReplace
-            = encryptionInputForBobsDwn.keyEncryptionInputs.findIndex(input => input.derivationScheme === KeyDerivationScheme.ProtocolPath);
-          encryptionInputForBobsDwn.keyEncryptionInputs[indexOfKeyEncryptionInputToReplace] = protocolPathDerivedKeyEncryptionInputForBobsDwn;
-
-          await bobToBobRecordsWrite.encryptSymmetricEncryptionKey(encryptionInputForBobsDwn);
-          await bobToBobRecordsWrite.sign({ signer: Jws.createSigner(bob) });
-
-          const dataStreamForBobsDwn = DataStream.fromBytes(encryptedDataBytes);
-          const bobToBobWriteReply = await dwn.processMessage(bob.did, bobToBobRecordsWrite.message, { dataStream: dataStreamForBobsDwn });
-          expect(bobToBobWriteReply.status.code).toBe(202);
-
-          // NOTE: we know Alice is able to decrypt the message using protocol-path derived key through other tests, so we won't verify it again
-
-          // test that anyone with the protocol-context derived private key is able to decrypt the message
-          const recordsRead = await RecordsRead.create({
-            filter: {
-              recordId: threadMessage.recordId,
-            },
-            signer: Jws.createSigner(alice)
-          });
-          const readReply = await dwn.processMessage(alice.did, recordsRead.message);
-          expect(readReply.status.code).toBe(200);
-
-          const fetchedRecordsWrite = readReply.entry!.recordsWrite!;
-          const cipherStream = readReply.entry!.data!;
-
-          const derivationPathFromReadContext = Records.constructKeyDerivationPathUsingProtocolContextScheme(fetchedRecordsWrite.contextId);
-          const protocolContextDerivedPrivateJwk = await HdKey.derivePrivateKey(bobRootPrivateKey, derivationPathFromReadContext);
-          const plaintextDataStream = await Records.decrypt(fetchedRecordsWrite, protocolContextDerivedPrivateJwk, cipherStream);
-          const plaintextBytes = await DataStream.toBytes(plaintextDataStream);
-          expect(ArrayUtility.byteArraysEqual(plaintextBytes, plaintextMessageToAlice)).toBe(true);
-
-          // verify that Alice is able to send an encrypted message using the protocol-context derived public key and Bob is able to decrypt it
-          // NOTE: we will skip verification of Bob's protocol configuration because we have test the such scenario above as well as in other tests
-          const matchingRecipient = fetchedRecordsWrite.encryption!.recipients.find(
-            recipient => recipient.header.derivationScheme === KeyDerivationScheme.ProtocolContext
-          )!;
-          const protocolContextDerivedPublicJwkReturned = matchingRecipient.header.derivedPublicKey;
-          const protocolContextDerivingRootKeyIdReturned = matchingRecipient.header.kid;
-
-          const plaintextMessageToBob = TestDataGenerator.randomBytes(100);
-          const recordsWriteToBob = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-            plaintextBytes                                   : plaintextMessageToBob,
-            author                                           : alice,
-            protocolDefinition                               : protocolsConfigureForBob.message.descriptor.definition,
-            protocolPath                                     : 'thread/message',
-            protocolParentContextId                          : fetchedRecordsWrite.contextId,
-            protocolContextDerivingRootKeyId                 : protocolContextDerivingRootKeyIdReturned,
-            protocolContextDerivedPublicKeyJwk               : protocolContextDerivedPublicJwkReturned!,
-            encryptSymmetricKeyWithProtocolPathDerivedKey    : true,
-            encryptSymmetricKeyWithProtocolContextDerivedKey : true
-          });
-
-          // Alice sends the message to Bob
-          const aliceWriteReply = await dwn.processMessage(bob.did, recordsWriteToBob.message, { dataStream: recordsWriteToBob.dataStream });
-          expect(aliceWriteReply.status.code).toBe(202);
-
-          // test that Bob is able to read and decrypt Alice's message
-          const recordsReadByBob = await RecordsRead.create({
-            filter: {
-              recordId: recordsWriteToBob.message.recordId,
-            },
-            signer: Jws.createSigner(bob)
-          });
-          const readByBobReply = await dwn.processMessage(bob.did, recordsReadByBob.message);
-          expect(readByBobReply.status.code).toBe(200);
-
-          const fetchedRecordsWrite2 = readByBobReply.entry!.recordsWrite!;
-          const cipherStream2 = readByBobReply.entry!.data!;
-
-          const plaintextDataStream2 = await Records.decrypt(fetchedRecordsWrite2, protocolContextDerivedPrivateJwk, cipherStream2);
-          const plaintextBytes2 = await DataStream.toBytes(plaintextDataStream2);
-          expect(ArrayUtility.byteArraysEqual(plaintextBytes2, plaintextMessageToBob)).toBe(true);
-        });
-
         it('should only be able to decrypt record with a correct derived private key  - `protocols` derivation scheme', async () => {
           // scenario: Bob writes into Alice's DWN an encrypted "email", alice is able to decrypt it
 
@@ -2049,22 +1887,21 @@ export function testRecordsReadHandler(): void {
 
           // Bob encrypts his email to Alice with a randomly generated symmetric key
           const bobMessageBytes = TestDataGenerator.randomBytes(100);
-          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12);
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
           const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-          const { ciphertext: bobMessageEncryptedBytes, tag: authenticationTag } = await Encryption.aeadEncrypt(
-            ContentEncryptionAlgorithm.A256GCM, dataEncryptionKey, dataEncryptionInitializationVector, bobMessageBytes
+          const bobMessageEncryptedBytes = await Encryption.encrypt(
+            ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, bobMessageBytes
           );
 
           // Bob generates an encrypted RecordsWrite,
           // the public encryption key designated by Alice is used to encrypt the symmetric key Bob generated above
-          const publicJwk = protocolsConfigureFetched.message.descriptor.definition.structure.email.$encryption?.publicKeyJwk;
+          const publicJwk = protocolsConfigureFetched.message.descriptor.definition.structure.email.$keyAgreement?.publicKeyJwk;
           expect(publicJwk).toBeDefined();
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
-            authenticationTag,
             keyEncryptionInputs  : [{
-              publicKeyId      : alice.keyId, // reusing signing key for encryption purely as a convenience
+              keyId            : await Encryption.getKeyId(publicJwk!),
               publicKey        : publicJwk!,
               derivationScheme : KeyDerivationScheme.ProtocolPath
             }]
@@ -2127,9 +1964,9 @@ export function testRecordsReadHandler(): void {
           // test unable to decrypt the message if derived key has an unexpected path
           const invalidDerivationPath = [KeyDerivationScheme.ProtocolPath, protocolDefinition.protocol, 'invalidContextId'];
           const inValidDescendantPrivateKey: DerivedPrivateJwk = await HdKey.derivePrivateKey(rootPrivateKey, invalidDerivationPath);
-          await expect(Records.decrypt(fetchedRecordsWrite, inValidDescendantPrivateKey, cipherStream)).rejects.toThrow(
-            DwnErrorCode.RecordsInvalidAncestorKeyDerivationSegment
-          );
+          await expect(
+            Records.decrypt(fetchedRecordsWrite, inValidDescendantPrivateKey, DataStream.fromBytes(bobMessageEncryptedBytes))
+          ).rejects.toThrow(DwnErrorCode.RecordsInvalidAncestorKeyDerivationSegment);
 
           // test unable to decrypt the message if no derivation scheme used by the message matches the scheme used by the given private key
           const privateKeyWithMismatchingDerivationScheme: DerivedPrivateJwk = {
@@ -2137,19 +1974,20 @@ export function testRecordsReadHandler(): void {
             derivationScheme  : 'scheme-that-is-not-protocol-context' as any,
             derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
-          await expect(Records.decrypt(fetchedRecordsWrite, privateKeyWithMismatchingDerivationScheme, cipherStream)).rejects.toThrow(
-            DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound
-          );
+          await expect(
+            Records.decrypt(fetchedRecordsWrite, privateKeyWithMismatchingDerivationScheme, DataStream.fromBytes(bobMessageEncryptedBytes))
+          ).rejects.toThrow(DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound);
 
           // test unable to decrypt the message if public key ID does not match the derived private key
           const privateKeyWithMismatchingKeyId: DerivedPrivateJwk = {
             rootKeyId         : 'mismatchingKeyId',
+            keyId             : 'mismatchingKeyId',
             derivationScheme  : KeyDerivationScheme.ProtocolPath,
             derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
-          await expect(Records.decrypt(fetchedRecordsWrite, privateKeyWithMismatchingKeyId, cipherStream)).rejects.toThrow(
-            DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound
-          );
+          await expect(
+            Records.decrypt(fetchedRecordsWrite, privateKeyWithMismatchingKeyId, DataStream.fromBytes(bobMessageEncryptedBytes))
+          ).rejects.toThrow(DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound);
         });
       });
     });

@@ -212,7 +212,7 @@ describe('dwn-protocol-cache', () => {
       expect(result).toBeUndefined();
     });
 
-    it('should return the derived public key from a matching entry', async () => {
+    it('should ignore legacy derived public key metadata on matching entries', async () => {
       const getSigner = await createRealSigner();
       const sendDwnRpcRequest = sinon.stub().resolves({
         status  : { code: 200 },
@@ -233,9 +233,7 @@ describe('dwn-protocol-cache', () => {
         targetDid, protocolUri, rootContextId, requesterDid,
         getDwnEndpointUrls, getSigner, sendDwnRpcRequest,
       );
-      expect(result).toBeDefined();
-      expect(result!.rootKeyId).toBe('root-key-1');
-      expect(result!.derivedPublicKey).toEqual(mockDerivedPublicKey);
+      expect(result).toBeUndefined();
     });
 
     it('should return undefined when entries have no ProtocolContext recipient', async () => {

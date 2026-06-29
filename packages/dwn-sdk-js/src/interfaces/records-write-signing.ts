@@ -11,11 +11,7 @@ import { Jws } from '../utils/jws.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
-/**
- * Creates the JWE `encryption` property if encryption input is given. Else `undefined` is returned.
- * Uses ECDH-ES+A256KW key agreement with X25519 and AEAD content encryption (A256GCM or XC20P).
- * @param encryptionInput The encryption input containing CEK, IV, authentication tag, and recipient key encryption inputs.
- */
+/** Creates the RecordsWrite `encryption` property if encryption input is given. */
 export async function createEncryptionProperty(
   encryptionInput: EncryptionInput | undefined,
 ): Promise<JweEncryption | undefined> {
@@ -23,10 +19,7 @@ export async function createEncryptionProperty(
     return undefined;
   }
 
-  // Build the JWE structure. The authentication tag comes from the AEAD encryption of record data.
-  const jwe = await Encryption.buildJwe(encryptionInput, encryptionInput.authenticationTag);
-
-  return jwe;
+  return Encryption.buildEncryptionProperty(encryptionInput);
 }
 
 /**

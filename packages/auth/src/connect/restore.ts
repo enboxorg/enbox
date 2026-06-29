@@ -249,8 +249,8 @@ export async function restoreSession(
     try { await userAgent.sync.unregisterIdentity(connectedDid); } catch { /* already gone or store error */ }
   }
 
-  // Restore delegate decryption/context keys BEFORE starting sync so that
-  // the first sync cycle can decrypt encrypted records.
+  // Restore delegate decryption keys BEFORE starting sync so that the first
+  // sync cycle can decrypt encrypted records.
   //
   // Keys are loaded from the vault-backed SecretStore (preferred). When
   // the SecretStore is empty, we fall back to the legacy StorageAdapter
@@ -269,40 +269,9 @@ export async function restoreSession(
       } catch { /* best effort — keys will be refreshed on next connect */ }
     }
 
-    // Restore context keys for multi-party encrypted protocols.
-    const contextKeysJson = await loadDelegateKeysWithFallback(userAgent, storage, STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-    // Restore multi-party protocol registrations (not encrypted — no key material).
-    const mpProtocolsJson = await storage.get(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
-    let multiPartyProtocols: string[] | undefined;
-    if (mpProtocolsJson) {
-      try {
-        const parsed = JSON.parse(mpProtocolsJson);
-        if (Array.isArray(parsed)) { multiPartyProtocols = parsed; }
-      } catch { /* best effort */ }
-    }
-
-    if (contextKeysJson || multiPartyProtocols) {
-      try {
-        const ctxKeys = contextKeysJson ? JSON.parse(contextKeysJson) : [];
-        userAgent.dwn.importDelegateContextKeys(
-          delegateDid,
-          Array.isArray(ctxKeys) ? ctxKeys : [],
-          multiPartyProtocols,
-        );
-      } catch { /* best effort — keys will be refreshed on next connect */ }
-    }
-
-    // Wire post-connect context key persistence so keys delivered after
-    // restore survive the next restart. Same callback as finalizeDelegateSession.
-    const restoreDelegateDid = delegateDid;
-    userAgent.dwn.onDelegateContextKeysChanged = async (changedDelegateDid: string): Promise<void> => {
-      if (changedDelegateDid !== restoreDelegateDid) { return; }
-      try {
-        const keys = userAgent.dwn.exportDelegateContextKeys(restoreDelegateDid);
-        const bytes = Convert.string(JSON.stringify(keys)).toUint8Array();
-        await userAgent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, bytes);
-      } catch { /* best effort — keys will be re-derived on next connect */ }
-    };
+    await storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS).catch(() => {});
+    await userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {});
+    await storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {});
   }
 
   // Start sync only if the registration repair succeeded (or was not needed).

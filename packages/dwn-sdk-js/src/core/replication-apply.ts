@@ -47,7 +47,14 @@ export type DependencyRef =
   | { type: 'Ancestor'; recordId: string; protocol?: string; messageCid?: string; terminal?: boolean }
   | { type: 'Role'; protocol: string; protocolPath: string; recipient: string; contextPrefix?: string; messageCid?: string; terminal?: boolean }
   | { type: 'Grant'; permissionGrantId: string; messageCid?: string; terminal?: boolean }
-  | { type: 'KeyDelivery'; protocol: string; contextId: string; messageCid?: string; terminal?: boolean }
+  | {
+      type: 'EncryptionProtocol';
+      protocolPath: 'audienceEpoch' | 'audienceKey' | 'grantKey';
+      tags?: Record<string, string | number>;
+      recipient?: string;
+      messageCid?: string;
+      terminal?: boolean;
+    }
   | { type: 'CrossProtocolRef'; protocol: string; recordId: string; messageCid?: string; terminal?: boolean }
   | { type: 'RecordData'; recordId: string; dataCid: string; protocol?: string; messageCid?: string; terminal?: boolean };
 

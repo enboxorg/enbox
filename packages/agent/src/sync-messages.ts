@@ -719,10 +719,7 @@ class RemoteApplyPushContext {
         return this.fetchRecordsByRecordId(ref.permissionGrantId);
       case 'RecordData':
         return this.fetchRecordData(ref);
-      case 'KeyDelivery':
-        // dependencyRefFromStatus() does not currently emit KeyDelivery for push.
-        // Key delivery is installed proactively with encrypted protocols, so keep
-        // this documented no-op instead of building an unexercised fetch path.
+      case 'EncryptionProtocol':
         return { kind: 'fetched', entries: [] };
       default:
         return unreachable(ref);

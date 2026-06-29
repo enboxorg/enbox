@@ -35,7 +35,7 @@ export interface CoreProtocol {
    * Called after protocol authorization but before storage.
    * @throws DwnError to reject the write with the appropriate status code.
    */
-  validateRecord?(message: RecordsWriteMessage, dataBytes: Uint8Array): void;
+  validateRecord?(message: RecordsWriteMessage, dataBytes: Uint8Array): Promise<void> | void;
 
   /**
    * Pre-processing hook: runs before storing a record under this protocol.

@@ -1408,7 +1408,7 @@ describe('enbox connect', () => {
       ).rejects.toThrow('contextId is not supported');
     });
 
-    it('should abort the connect flow for mixed single-party + multi-party encrypted protocol', async () => {
+    it('should include protocol-wide decryption keys for mixed encrypted protocols', async () => {
       const mixedProtocol: DwnProtocolDefinition = {
         protocol  : 'http://mixed-encrypted.xyz',
         published : true,
@@ -1434,6 +1434,10 @@ describe('enbox connect', () => {
       }];
 
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
       sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
       sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
 
@@ -1452,14 +1456,47 @@ describe('enbox connect', () => {
         messageCid : '',
         reply      : { status: { code: 202, detail: 'OK' } }
       });
-      sinon.stub(testHarness.agent, 'processDwnRequest')
-        .resolves({ messageCid: '', reply: { status: { code: 200, detail: 'OK' }, entries: [{}] as any } });
+      const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      processDwnRequestStub
+        .onFirstCall()
+        .resolves({
+          messageCid : '',
+          reply      : {
+            status  : { code: 200, detail: 'OK' },
+            entries : [{ descriptor: { interface: 'Protocols', method: 'Configure', definition: mixedProtocol } }] as any,
+          },
+        });
+      processDwnRequestStub.resolves({ messageCid: '', reply: { status: { code: 202, detail: 'OK' } } });
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response());
 
-      await expect(
-        EnboxConnectProtocol.submitConnectResponse(
-          providerIdentity.did.uri, connectRequest, randomPin, testHarness.agent,
-        )
-      ).rejects.toThrow('mixed single-party');
+      await EnboxConnectProtocol.submitConnectResponse(
+        providerIdentity.did.uri, connectRequest, randomPin, testHarness.agent,
+      );
+
+      const callbackCall = fetchStub.getCalls().find(
+        call => call.args[0] === callbackUrl
+      );
+      expect(callbackCall).toBeDefined();
+      const options = callbackCall!.args[1] as RequestInit;
+      const body = new URLSearchParams(options.body as string);
+      const idToken = body.get('id_token');
+      expect(typeof idToken).toBe('string');
+
+      const responseJwt = await EnboxConnectProtocol.decryptResponse(
+        clientEphemeralBearerDid,
+        idToken!,
+        randomPin,
+      );
+      const response = (await EnboxConnectProtocol.verifyJwt({
+        jwt: responseJwt,
+      })) as EnboxConnectResponse;
+
+      expect(response.delegateDecryptionKeys).toHaveLength(1);
+      expect(response.delegateDecryptionKeys![0].scope.kind).toBe('protocol');
+      expect(response.delegateDecryptionKeys![0].derivedPrivateKey.derivationPath).toEqual([
+        'protocolPath',
+        mixedProtocol.protocol,
+      ]);
     });
 
     it('should throw if a grant that is included in the request does not match the protocol definition', async () => {

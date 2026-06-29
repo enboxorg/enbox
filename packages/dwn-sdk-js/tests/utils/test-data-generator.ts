@@ -1,4 +1,3 @@
-import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolutionResult } from '@enbox/dids';
 import type { Dwn } from '../../src/dwn.js';
 import type { GeneralJws } from '../../src/types/jws-types.js';
@@ -30,6 +29,7 @@ import { DidKey } from '@enbox/dids';
 import { ed25519 } from '../../src/jose/algorithms/signing/ed25519.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { Jws } from '../../src/utils/jws.js';
+import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { MessagesQuery } from '../../src/interfaces/messages-query.js';
 import { MessagesRead } from '../../src/interfaces/messages-read.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
@@ -37,7 +37,6 @@ import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { PrivateKeySigner } from '../../src/utils/private-key-signer.js';
 import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
 import { ProtocolsQuery } from '../../src/interfaces/protocols-query.js';
-import { Records } from '../../src/utils/records.js';
 import { RecordsCount } from '../../src/interfaces/records-count.js';
 import { RecordsDelete } from '../../src/interfaces/records-delete.js';
 import { RecordsQuery } from '../../src/interfaces/records-query.js';
@@ -50,7 +49,6 @@ import { Time } from '../../src/utils/time.js';
 import { X25519 } from '@enbox/crypto';
 import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
-import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 
 /**
  * A logical grouping of user data used to generate test messages.
@@ -563,6 +561,12 @@ export class TestDataGenerator {
     protocolContextDerivedPublicKeyJwk?: PublicKeyJwk,
     encryptSymmetricKeyWithProtocolPathDerivedKey: boolean,
     encryptSymmetricKeyWithProtocolContextDerivedKey: boolean,
+    roleAudienceKeyEncryptionInputs?: Array<{
+      protocol: string;
+      role: string;
+      epoch: number;
+      publicKey: PublicKeyJwk;
+    }>,
   }): Promise<{
     message: RecordsWriteMessage;
     dataStream: ReadableStream<Uint8Array>;
@@ -582,10 +586,10 @@ export class TestDataGenerator {
     } = input;
 
     // encrypt the plaintext data for the target with a randomly generated symmetric key
-    const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(12); // 12 bytes for AES-GCM
+    const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
     const dataEncryptionKey = TestDataGenerator.randomBytes(32);
-    const { ciphertext: encryptedDataBytes, tag: authenticationTag } = await Encryption.aeadEncrypt(
-      ContentEncryptionAlgorithm.A256GCM, dataEncryptionKey, dataEncryptionInitializationVector, plaintextBytes
+    const encryptedDataBytes = await Encryption.encrypt(
+      ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, plaintextBytes
     );
 
     // author generates a RecordsWrite using the encrypted data
@@ -608,7 +612,6 @@ export class TestDataGenerator {
     const encryptionInput: EncryptionInput = {
       initializationVector : dataEncryptionInitializationVector,
       key                  : dataEncryptionKey,
-      authenticationTag,
       keyEncryptionInputs  : []
     };
 
@@ -619,10 +622,9 @@ export class TestDataGenerator {
         protocolRuleSetSegment = protocolRuleSetSegment[pathSegment] as ProtocolRuleSet;
       }
 
-      const protocolPathDerivedPublicKeyJwk = protocolRuleSetSegment.$encryption?.publicKeyJwk;
-      const protocolPathDerivationRootKeyId = protocolRuleSetSegment.$encryption?.rootKeyId;
+      const protocolPathDerivedPublicKeyJwk = protocolRuleSetSegment.$keyAgreement?.publicKeyJwk;
       const protocolPathDerivedKeyEncryptionInput: KeyEncryptionInput = {
-        publicKeyId      : protocolPathDerivationRootKeyId as string,
+        keyId            : await Encryption.getKeyId(protocolPathDerivedPublicKeyJwk!),
         publicKey        : protocolPathDerivedPublicKeyJwk!,
         derivationScheme : KeyDerivationScheme.ProtocolPath
       };
@@ -630,40 +632,19 @@ export class TestDataGenerator {
       encryptionInput.keyEncryptionInputs.push(protocolPathDerivedKeyEncryptionInput);
     }
 
-    if (input.encryptSymmetricKeyWithProtocolContextDerivedKey) {
-      // generate key encryption input that will encrypt the symmetric encryption key using protocol-context derived public key
-      let protocolContextDerivedKeyEncryptionInput: KeyEncryptionInput;
-      if (protocolParentContextId === undefined) {
-      // author generates protocol-context derived public key for encrypting symmetric key
-        const authorRootPrivateKey: DerivedPrivateJwk = {
-          rootKeyId         : author.keyId,
-          derivationScheme  : KeyDerivationScheme.ProtocolContext,
-          derivedPrivateKey : author.encryptionKeyPair.privateJwk
-        };
+    void protocolContextDerivingRootKeyId;
+    void protocolContextDerivedPublicKeyJwk;
+    void input.encryptSymmetricKeyWithProtocolContextDerivedKey;
 
-        const contextId = await RecordsWrite.getEntryId(author.did, message.descriptor);
-        const contextDerivationPath = Records.constructKeyDerivationPathUsingProtocolContextScheme(contextId);
-        const authorGeneratedProtocolContextDerivedPublicKeyJwk = await HdKey.derivePublicKey(authorRootPrivateKey, contextDerivationPath);
-
-        protocolContextDerivedKeyEncryptionInput = {
-          publicKeyId      : author.keyId,
-          publicKey        : authorGeneratedProtocolContextDerivedPublicKeyJwk,
-          derivationScheme : KeyDerivationScheme.ProtocolContext
-        };
-      } else {
-        if (protocolContextDerivingRootKeyId === undefined ||
-          protocolContextDerivedPublicKeyJwk === undefined) {
-          throw new Error ('`protocolContextDerivingRootKeyId` and `protocolContextDerivedPublicKeyJwk` must both be defined if `protocolContextId` is given');
-        }
-
-        protocolContextDerivedKeyEncryptionInput = {
-          publicKeyId      : protocolContextDerivingRootKeyId!,
-          publicKey        : protocolContextDerivedPublicKeyJwk!,
-          derivationScheme : KeyDerivationScheme.ProtocolContext
-        };
-      }
-
-      encryptionInput.keyEncryptionInputs.push(protocolContextDerivedKeyEncryptionInput);
+    for (const roleAudienceInput of input.roleAudienceKeyEncryptionInputs ?? []) {
+      encryptionInput.keyEncryptionInputs.push({
+        derivationScheme : KeyDerivationScheme.RoleAudience,
+        epoch            : roleAudienceInput.epoch,
+        keyId            : await Encryption.getKeyId(roleAudienceInput.publicKey),
+        protocol         : roleAudienceInput.protocol,
+        publicKey        : roleAudienceInput.publicKey,
+        role             : roleAudienceInput.role,
+      });
     }
 
     await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput);

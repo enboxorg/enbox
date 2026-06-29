@@ -24,66 +24,140 @@
     "encryption": {
       "type": "object",
       "properties": {
-        "protected": {
+        "algorithm": {
+          "type": "string",
+          "enum": [
+            "A256CTR"
+          ]
+        },
+        "initializationVector": {
           "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
         },
-        "iv": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
-        },
-        "tag": {
-          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
-        },
-        "recipients": {
+        "keyEncryption": {
           "type": "array",
           "minItems": 1,
           "items": {
             "type": "object",
             "properties": {
-              "header": {
-                "type": "object",
-                "properties": {
-                  "kid": {
-                    "type": "string"
-                  },
-                  "epk": {
-                    "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
-                  },
-                  "derivationScheme": {
-                    "type": "string",
-                    "enum": [
-                      "protocolContext",
-                      "protocolPath"
-                    ]
-                  },
-                  "derivedPublicKey": {
-                    "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
-                  }
-                },
-                "additionalProperties": false,
-                "required": [
-                  "kid",
-                  "epk",
-                  "derivationScheme"
+              "algorithm": {
+                "type": "string",
+                "enum": [
+                  "X25519-HKDF-SHA256+A256KW"
                 ]
               },
-              "encrypted_key": {
+              "keyId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{43}$"
+              },
+              "derivationScheme": {
+                "type": "string",
+                "enum": [
+                  "protocolPath",
+                  "roleAudience"
+                ]
+              },
+              "protocol": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "ephemeralPublicKey": {
+                "allOf": [
+                  {
+                    "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+                  }
+                ],
+                "type": "object",
+                "required": [
+                  "kty",
+                  "crv",
+                  "x"
+                ],
+                "properties": {
+                  "kty": {
+                    "const": "OKP"
+                  },
+                  "crv": {
+                    "const": "X25519"
+                  },
+                  "x": {
+                    "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+                  }
+                }
+              },
+              "encryptedKey": {
                 "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
               }
             },
             "additionalProperties": false,
             "required": [
-              "header",
-              "encrypted_key"
+              "algorithm",
+              "keyId",
+              "derivationScheme",
+              "ephemeralPublicKey",
+              "encryptedKey"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "derivationScheme": {
+                      "const": "roleAudience"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "protocol",
+                    "role",
+                    "epoch"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "derivationScheme": {
+                      "const": "protocolPath"
+                    }
+                  }
+                },
+                "then": {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "protocol"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "role"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "epoch"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
             ]
           }
         }
       },
       "additionalProperties": false,
       "required": [
-        "protected",
-        "iv",
-        "tag",
-        "recipients"
+        "algorithm",
+        "initializationVector",
+        "keyEncryption"
       ]
     },
     "descriptor": {

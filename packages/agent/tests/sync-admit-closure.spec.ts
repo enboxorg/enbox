@@ -5,7 +5,6 @@ import { DwnErrorCode, Encoder, Message, TestDataGenerator } from '@enbox/dwn-sd
 
 import { admitClosure } from '../src/sync-admit-closure.js';
 import { DwnInterface } from '../src/types/dwn.js';
-import { KeyDeliveryProtocolDefinition } from '../src/store-data-protocols.js';
 
 describe('admitClosure', () => {
   afterEach(() => {
@@ -413,31 +412,18 @@ describe('admitClosure', () => {
     expect(agent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(referenced.message);
   });
 
-  it('fetches key-delivery context-key records for encrypted dependency admission', async () => {
+  it('defers encryption-protocol dependencies that are not admission-repairable', async () => {
     const protocol = 'https://example.com/protocol';
     const contextId = 'root-context';
     const root = await TestDataGenerator.generateRecordsWrite({ protocol });
-    const contextKey = await TestDataGenerator.generateRecordsWrite({
-      protocol     : KeyDeliveryProtocolDefinition.protocol,
-      protocolPath : 'contextKey',
-      recipient    : 'did:example:delegate',
-      tags         : { protocol, contextId },
-    });
     const rootCid = await Message.getCid(root.message);
-    const contextKeyCid = await Message.getCid(contextKey.message);
     const agent = createMockAgent();
 
-    agent.rpc.sendDwnRequest.resolves({
-      status  : { code: 200 },
-      entries : [contextKey.message],
-    });
     agent.dwn.applyReplicatedMessage
       .onFirstCall().resolves({
         kind    : 'Incomplete',
-        missing : [{ type: 'KeyDelivery', protocol, contextId }],
-      })
-      .onSecondCall().resolves({ kind: 'Applied' })
-      .onThirdCall().resolves({ kind: 'Applied' });
+        missing : [{ type: 'EncryptionProtocol', protocol, contextId }],
+      });
 
     const outcome = await admitClosure(rootCid, {
       did         : 'did:example:alice',
@@ -447,19 +433,12 @@ describe('admitClosure', () => {
       prefetched  : [{ message: root.message }],
     });
 
-    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [contextKeyCid, rootCid] });
-    expect(agent.dwn.processRequest.firstCall.args[0]).toMatchObject({
-      author        : 'did:example:delegate',
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : KeyDeliveryProtocolDefinition.protocol,
-          protocolPath : 'contextKey',
-          tags         : { protocol, contextId },
-        },
-      },
+    expect(outcome).toEqual({
+      kind   : 'deferred',
+      rootCid,
+      detail : JSON.stringify({ type: 'EncryptionProtocol', protocol, contextId }),
     });
-    expect(agent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(contextKey.message);
+    expect(agent.dwn.processRequest.called).toBe(false);
   });
 
   it('fetches record data with RecordsRead and retries with the data stream', async () => {

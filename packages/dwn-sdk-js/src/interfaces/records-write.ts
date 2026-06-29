@@ -3,7 +3,6 @@ import type { KeyValues } from '../types/query-types.js';
 import type { MessageInterface } from '../types/message-interface.js';
 import type { MessageSigner } from '../types/signer.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { PublicKeyJwk } from '../types/jose-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type {
   DataEncodedRecordsWriteMessage,
@@ -87,16 +86,6 @@ export type RecordsWriteOptions = {
    */
   squash?: true;
 
-  /**
-   * The author's ProtocolPath-derived public key for key delivery.
-   * When set, this is attached to the authorization model so the DWN owner
-   * can encrypt context keys back to the author without querying the
-   * author's DWN.
-   */
-  authorKeyDeliveryPublicKey?: {
-    rootKeyId: string;
-    publicKeyJwk: PublicKeyJwk;
-  };
 };
 
 export type { EncryptionInput, KeyEncryptionInput } from '../utils/encryption.js';
@@ -377,11 +366,10 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
     if (options.signer !== undefined) {
       await recordsWrite.sign({
-        signer                     : options.signer,
-        delegatedGrant             : options.delegatedGrant,
+        signer         : options.signer,
+        delegatedGrant : options.delegatedGrant,
         ...permissionGrantInvocation,
-        protocolRole               : options.protocolRole,
-        authorKeyDeliveryPublicKey : options.authorKeyDeliveryPublicKey,
+        protocolRole   : options.protocolRole,
       });
     }
 
@@ -498,51 +486,16 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   }
 
   /**
-   * Encrypts the symmetric encryption key using the public keys given and attach the resulting `encryption` property to the RecordsWrite.
-   *
-   * @param options.append - When `true`, appends new `recipients` entries to the existing
-   *   `encryption` property instead of replacing it. Requires `this._message.encryption` to
-   *   already exist (i.e., the record must already be encrypted).
+   * Encrypts the symmetric encryption key using the public keys given and attaches the resulting `encryption` property.
    */
   public async encryptSymmetricEncryptionKey(
     encryptionInput: EncryptionInput,
-    options?: { append?: boolean },
   ): Promise<void> {
-    if (options?.append) {
-      if (!this._message.encryption) {
-        throw new DwnError(
-          DwnErrorCode.RecordsWriteMissingEncryption,
-          'Cannot append recipients: record does not have an existing `encryption` property.'
-        );
-      }
+    this._message.encryption = await createEncryptionProperty(encryptionInput);
 
-      // Build only the new recipients (reuses createEncryptionProperty for ECDH-ES+A256KW logic)
-      const newEncryption = await createEncryptionProperty(encryptionInput);
-      if (newEncryption) {
-        this._message.encryption.recipients.push(...newEncryption.recipients);
-      }
-
-      // In append mode, preserve the author's identity and authorization so
-      // that signAsOwner() can be called afterwards. The author's signature
-      // payload will have a stale encryptionCid (since we just appended new
-      // recipients), but the owner's signature vouches for the
-      // updated state. validateIntegrity() skips the encryptionCid check on
-      // the author's signature when an ownerSignature is present.
-      //
-      // NOTE: An alternative design would deliver the DEK out-of-band via the
-      // key-delivery protocol (as a field on the contextKey record) instead of
-      // mutating the record's encryption property. That avoids the stale
-      // encryptionCid issue entirely but adds complexity to the read path and
-      // the contextKey schema. We chose the in-record approach because it keeps
-      // records self-contained and the read/decrypt path unchanged.
-    } else {
-      this._message.encryption = await createEncryptionProperty(encryptionInput);
-
-      // Full replacement invalidates the authorization — caller must re-sign.
-      delete this._message.authorization;
-      this._signaturePayload = undefined;
-      this._author = undefined;
-    }
+    delete this._message.authorization;
+    this._signaturePayload = undefined;
+    this._author = undefined;
   }
 
   /**
@@ -553,9 +506,8 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     delegatedGrant?: DataEncodedRecordsWriteMessage,
     permissionGrantId?: string,
     protocolRole?: string,
-    authorKeyDeliveryPublicKey?: { rootKeyId: string; publicKeyJwk: PublicKeyJwk },
   }): Promise<void> {
-    const { signer, delegatedGrant, permissionGrantId, protocolRole, authorKeyDeliveryPublicKey } = options;
+    const { signer, delegatedGrant, permissionGrantId, protocolRole } = options;
 
     // compute delegated grant ID and author if delegated grant is given
     let delegatedGrantId;
@@ -599,10 +551,6 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
     if (delegatedGrant !== undefined) {
       this._message.authorization.authorDelegatedGrant = delegatedGrant;
-    }
-
-    if (authorKeyDeliveryPublicKey !== undefined) {
-      this._message.authorization.authorKeyDeliveryPublicKey = authorKeyDeliveryPublicKey;
     }
 
     // there is opportunity to optimize here as the payload is constructed within `createAuthorization(...)`
@@ -719,14 +667,8 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       }
     }
 
-    // If `encryption` is given in message, make sure the correct `encryptionCid`
-    // is in the payload of the message signature — UNLESS the message has an
-    // ownerSignature. When the DWN owner appends recipients to an externally-authored
-    // record before normal admission, the author's encryptionCid becomes stale. The
-    // owner's signature vouches for the updated encryption property, so the mismatch
-    // is expected and safe.
-    const hasOwnerSignature = this.message.authorization?.ownerSignature !== undefined;
-    if (signaturePayload.encryptionCid !== undefined && !hasOwnerSignature) {
+    // if `encryption` is given in message, make sure the correct `encryptionCid` is in the payload of the message signature
+    if (signaturePayload.encryptionCid !== undefined) {
       const expectedEncryptionCid = await Cid.computeCid(this.message.encryption);
       const actualEncryptionCid = signaturePayload.encryptionCid;
       if (actualEncryptionCid !== expectedEncryptionCid) {

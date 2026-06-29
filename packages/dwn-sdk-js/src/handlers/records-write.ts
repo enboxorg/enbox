@@ -244,7 +244,7 @@ export class RecordsWriteHandler implements MethodHandler {
         ? undefined
         : this.deps.coreProtocols?.get(message.descriptor.protocol);
       if (coreProtocol?.validateRecord !== undefined) {
-        coreProtocol.validateRecord(message, dataBytes);
+        await coreProtocol.validateRecord(message, dataBytes);
       }
 
       messageWithOptionalEncodedData = await this.cloneAndAddEncodedData(message, dataBytes);

@@ -79,6 +79,20 @@ export interface ValidationStateReader {
   }): Promise<RecordsWriteMessage[]>;
 
   /**
+   * Fetches an accepted audience epoch record for encrypted role-audience delivery.
+   * The match is exact across the application protocol, role audience context, role path,
+   * epoch number, and public key thumbprint.
+   */
+  fetchAudienceEpoch(input: {
+    tenant: string;
+    protocol: string;
+    contextId: string;
+    role: string;
+    epoch: number;
+    keyId: string;
+  }): Promise<RecordsWriteMessage | undefined>;
+
+  /**
    * Fetches the permission grant with the given record ID, with its scope parsed from grant data.
    * @throws {DwnError} with `GrantAuthorizationGrantMissing` when the grant does not exist.
    */

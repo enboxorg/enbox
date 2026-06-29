@@ -556,10 +556,9 @@ describe('walletConnect', () => {
     );
 
     expect(session.did).toBe('did:dht:connected456');
-    // 2 calls: 1 key-delivery ProtocolsConfigure + 1 grant stored in
-    // delegate partition via processDwnRequest
-    // (connected partition goes through dwn.processRawMessage)
-    expect(processCalls).toHaveLength(2);
+    // Grant stored in delegate partition via processDwnRequest.
+    // Connected partition goes through dwn.processRawMessage.
+    expect(processCalls).toHaveLength(1);
   });
 
   test('cleans up on identity import failure', async () => {
@@ -692,123 +691,6 @@ describe('walletConnect', () => {
 
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].interval).toBe('45s');
-  });
-
-  test('passes delegateMultiPartyProtocols from initClient to importDelegateContextKeys', async () => {
-    const emitter = new AuthEventEmitter();
-    const storage = new MemoryStorage();
-    let importedKeys: any[] | undefined;
-    let importedProtocols: string[] | undefined;
-    const identity = createMockIdentity({
-      did      : { uri: 'did:dht:delegate123' },
-      metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected456' },
-    });
-
-    const agent = createMockAgent({
-      firstLaunch                  : async () => false,
-      identityImport               : async () => identity,
-      dwnImportDelegateContextKeys : (_did: string, keys: any[], protocols?: string[]): void => {
-        importedKeys = keys;
-        importedProtocols = protocols;
-      },
-    });
-
-    // Return a result that includes multi-party protocols but no context keys (cold-start)
-    initClientStub.onFirstCall().resolves({
-      ...createInitClientResult(),
-      delegateMultiPartyProtocols: ['https://multi-party.example/chat'],
-    });
-
-    await walletConnect(
-      { userAgent: agent, emitter, storage, defaultSync: '15s' },
-      {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
-      },
-    );
-
-    expect(importedKeys).toEqual([]);
-    expect(importedProtocols).toEqual(['https://multi-party.example/chat']);
-  });
-
-  test('persists delegateMultiPartyProtocols to storage after walletConnect', async () => {
-    const emitter = new AuthEventEmitter();
-    const storage = new MemoryStorage();
-    const identity = createMockIdentity({
-      did      : { uri: 'did:dht:delegate123' },
-      metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected456' },
-    });
-
-    const agent = createMockAgent({
-      firstLaunch    : async () => false,
-      identityImport : async () => identity,
-    });
-
-    const ctxKeys = [{ protocol: 'https://proto.example', contextId: 'ctx-1', derivedPrivateKey: { rootKeyId: 'k1' } }];
-    initClientStub.onFirstCall().resolves({
-      ...createInitClientResult(),
-      delegateContextKeys         : ctxKeys,
-      delegateMultiPartyProtocols : ['https://proto.example'],
-    });
-
-    await walletConnect(
-      { userAgent: agent, emitter, storage, defaultSync: '15s' },
-      {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
-      },
-    );
-
-    // Both context keys and multi-party protocols should be persisted.
-    // Context keys are stored in the vault-backed SecretStore; multi-party protocols are plain JSON.
-    const ctxKeysBytes = await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-    expect(ctxKeysBytes).toBeDefined();
-    expect(JSON.parse(new TextDecoder().decode(ctxKeysBytes!))).toEqual(ctxKeys);
-
-    const mpProtocolsJson = await storage.get(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
-    expect(mpProtocolsJson).toBeDefined();
-    expect(JSON.parse(mpProtocolsJson!)).toEqual(['https://proto.example']);
-  });
-
-  test('wires onDelegateContextKeysChanged callback during finalization', async () => {
-    const emitter = new AuthEventEmitter();
-    const storage = new MemoryStorage();
-    const identity = createMockIdentity({
-      did      : { uri: 'did:dht:delegate123' },
-      metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected456' },
-    });
-
-    const agent = createMockAgent({
-      firstLaunch    : async () => false,
-      identityImport : async () => identity,
-    });
-
-    initClientStub.onFirstCall().resolves({
-      ...createInitClientResult(),
-      delegateMultiPartyProtocols: ['https://proto.example'],
-    });
-
-    await walletConnect(
-      { userAgent: agent, emitter, storage, defaultSync: '15s' },
-      {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
-      },
-    );
-
-    // The onDelegateContextKeysChanged callback should be set on the agent's dwn
-    const callback = (agent.dwn as any).onDelegateContextKeysChanged;
-    expect(callback).toBeDefined();
-    expect(typeof callback).toBe('function');
   });
 
   test('does not call sync.sync pull after registering identity (deferred to startSync)', async () => {

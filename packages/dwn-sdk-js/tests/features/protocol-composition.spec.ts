@@ -2320,7 +2320,7 @@ export function testProtocolComposition(): void {
         encryptionRootKeyId = 'did:example:alice#enc';
       });
 
-      it('should skip `$encryption` injection on `$ref` nodes but inject on their children (raw-key path)', async () => {
+      it('should skip `$keyAgreement` injection on `$ref` nodes but inject on their children (raw-key path)', async () => {
         const composingProtocol: ProtocolDefinition = {
           protocol  : 'https://comments.example.com',
           published : true,
@@ -2346,22 +2346,22 @@ export function testProtocolComposition(): void {
           composingProtocol, encryptionRootKeyId, encryptionPrivateJwk,
         );
 
-        // $ref node must NOT have $encryption
-        expect(result.structure.thread.$encryption).toBeUndefined();
+        expect(result.$keyAgreement).toBeDefined();
 
-        // Children of $ref node MUST have $encryption
+        // $ref node must NOT have $keyAgreement
+        expect(result.structure.thread.$keyAgreement).toBeUndefined();
+
+        // Children of $ref node MUST have $keyAgreement
         const commentRuleSet = result.structure.thread.comment as ProtocolRuleSet;
-        expect(commentRuleSet.$encryption).toBeDefined();
-        expect(commentRuleSet.$encryption!.rootKeyId).toBe(encryptionRootKeyId);
-        expect(commentRuleSet.$encryption!.publicKeyJwk).toBeDefined();
+        expect(commentRuleSet.$keyAgreement).toBeDefined();
+        expect(commentRuleSet.$keyAgreement!.publicKeyJwk).toBeDefined();
 
         // Grandchild of $ref node
         const reactionRuleSet = commentRuleSet.reaction as ProtocolRuleSet;
-        expect(reactionRuleSet.$encryption).toBeDefined();
-        expect(reactionRuleSet.$encryption!.rootKeyId).toBe(encryptionRootKeyId);
+        expect(reactionRuleSet.$keyAgreement).toBeDefined();
       });
 
-      it('should skip `$encryption` injection on `$ref` nodes but inject on their children (callback path)', async () => {
+      it('should skip `$keyAgreement` injection on `$ref` nodes but inject on their children (callback path)', async () => {
         const composingProtocol: ProtocolDefinition = {
           protocol  : 'https://comments.example.com',
           published : true,
@@ -2400,13 +2400,15 @@ export function testProtocolComposition(): void {
           composingProtocol, keyDeriver,
         );
 
-        // $ref node must NOT have $encryption
-        expect(result.structure.thread.$encryption).toBeUndefined();
+        expect(result.$keyAgreement).toBeDefined();
 
-        // Children of $ref node MUST have $encryption
+        // $ref node must NOT have $keyAgreement
+        expect(result.structure.thread.$keyAgreement).toBeUndefined();
+
+        // Children of $ref node MUST have $keyAgreement
         const commentRuleSet = result.structure.thread.comment as ProtocolRuleSet;
-        expect(commentRuleSet.$encryption).toBeDefined();
-        expect((commentRuleSet.reaction as ProtocolRuleSet).$encryption).toBeDefined();
+        expect(commentRuleSet.$keyAgreement).toBeDefined();
+        expect((commentRuleSet.reaction as ProtocolRuleSet).$keyAgreement).toBeDefined();
 
         // derivePublicKey should NOT have been called for the $ref node itself
         const threadPath = [KeyDerivationScheme.ProtocolPath, 'https://comments.example.com', 'thread'];
@@ -2419,7 +2421,7 @@ export function testProtocolComposition(): void {
         expect(calledPaths).toContainEqual(reactionPath);
       });
 
-      it('should produce identical $encryption for children across both overloads', async () => {
+      it('should produce identical $keyAgreement for children across both overloads', async () => {
         const composingProtocol: ProtocolDefinition = {
           protocol  : 'https://comments.example.com',
           published : true,
@@ -2457,23 +2459,20 @@ export function testProtocolComposition(): void {
         );
 
         // Both paths must skip $ref
-        expect(resultA.structure.thread.$encryption).toBeUndefined();
-        expect(resultB.structure.thread.$encryption).toBeUndefined();
+        expect(resultA.structure.thread.$keyAgreement).toBeUndefined();
+        expect(resultB.structure.thread.$keyAgreement).toBeUndefined();
 
-        // Both paths must produce identical $encryption on children
+        // Both paths must produce identical $keyAgreement on children
         const commentA = resultA.structure.thread.comment as ProtocolRuleSet;
         const commentB = resultB.structure.thread.comment as ProtocolRuleSet;
-        expect(commentA.$encryption!.publicKeyJwk).toEqual(
-          commentB.$encryption!.publicKeyJwk,
-        );
-        expect(commentA.$encryption!.rootKeyId).toBe(
-          commentB.$encryption!.rootKeyId,
+        expect(commentA.$keyAgreement!.publicKeyJwk).toEqual(
+          commentB.$keyAgreement!.publicKeyJwk,
         );
       });
 
       it('should successfully install a composing protocol with encryption after $ref skip', async () => {
-        // This test verifies the full pipeline: inject encryption keys → ProtocolsConfigure.create()
-        // → validateRefNode() passes because $ref node has no $encryption.
+        // This test verifies the full pipeline: inject encryption keys -> ProtocolsConfigure.create()
+        // -> validateRefNode() passes because $ref node has no $keyAgreement.
         const alice = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice]);
 
@@ -2490,10 +2489,10 @@ export function testProtocolComposition(): void {
           commentsProtocol, alice.keyId, alice.encryptionKeyPair.privateJwk,
         );
 
-        // $ref node should not have $encryption
-        expect(encryptedComments.structure.thread.$encryption).toBeUndefined();
-        // Children should have $encryption
-        expect((encryptedComments.structure.thread.comment as ProtocolRuleSet).$encryption).toBeDefined();
+        // $ref node should not have $keyAgreement
+        expect(encryptedComments.structure.thread.$keyAgreement).toBeUndefined();
+        // Children should have $keyAgreement
+        expect((encryptedComments.structure.thread.comment as ProtocolRuleSet).$keyAgreement).toBeDefined();
 
         // ProtocolsConfigure.create() should NOT throw — validateRefNode() will pass
         // because $ref node has no forbidden directives
@@ -2589,7 +2588,7 @@ export function testProtocolComposition(): void {
         expect(Encoder.bytesToString(decryptedBytes)).toBe(plaintext);
       });
 
-      it('should not inject `$encryption` on the original protocol definition (immutability)', async () => {
+      it('should not inject `$keyAgreement` on the original protocol definition (immutability)', async () => {
         const composingProtocol: ProtocolDefinition = {
           protocol  : 'https://comments.example.com',
           published : true,
@@ -2610,8 +2609,9 @@ export function testProtocolComposition(): void {
         );
 
         // Original must be unmodified
-        expect(composingProtocol.structure.thread.$encryption).toBeUndefined();
-        expect((composingProtocol.structure.thread.comment as ProtocolRuleSet).$encryption).toBeUndefined();
+        expect(composingProtocol.$keyAgreement).toBeUndefined();
+        expect(composingProtocol.structure.thread.$keyAgreement).toBeUndefined();
+        expect((composingProtocol.structure.thread.comment as ProtocolRuleSet).$keyAgreement).toBeUndefined();
       });
     });
   });

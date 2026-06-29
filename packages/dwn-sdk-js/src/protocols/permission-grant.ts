@@ -62,11 +62,6 @@ export class PermissionGrant {
   public readonly conditions?: PermissionConditions;
 
   /**
-   * Optional delegate key-delivery metadata for cross-device context key delivery.
-   */
-  public readonly delegateKeyDelivery?: { rootKeyId: string; publicKeyJwk: Record<string, any> };
-
-  /**
    * Optional metadata describing the connect approval session that created this grant.
    */
   public readonly connectSession?: ConnectSessionMetadata;
@@ -142,7 +137,6 @@ export class PermissionGrant {
     this.requestId = permissionGrant.requestId;
     this.scope = permissionGrant.scope;
     this.conditions = permissionGrant.conditions;
-    this.delegateKeyDelivery = permissionGrant.delegateKeyDelivery;
     this.connectSession = permissionGrant.connectSession;
   }
 }

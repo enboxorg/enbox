@@ -1,17 +1,17 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { ProtocolDefinition, RecordsQueryReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
-import { DataStream } from '@enbox/dwn-sdk-js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { ContentEncryptionAlgorithm, DataStream, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
+import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { JwkProtocolDefinition, KeyDeliveryProtocolDefinition } from '../src/store-data-protocols.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 const syncConvergenceRetryDelaysMs = [500, 1_000, 2_000, 4_000, 8_000, 16_000];
@@ -170,7 +170,7 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     );
   }
 
-  it('should install the encrypted protocol locally with $encryption keys', async () => {
+  it('should install the encrypted protocol locally with $keyAgreement keys', async () => {
     // Configure the protocol locally with encryption enabled.
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -181,7 +181,7 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     });
     expect(reply.status.code).toBe(202);
 
-    // Verify $encryption was injected.
+    // Verify $keyAgreement was injected.
     const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -189,8 +189,12 @@ describe('e2e: encrypted data survives sync round-trip', () => {
       messageParams : { filter: { protocol: encryptedNoteProtocol.protocol } },
     });
     expect(queryReply.entries).toHaveLength(1);
-    const noteRuleSet = queryReply.entries![0].descriptor.definition.structure.note;
-    expect(noteRuleSet).toHaveProperty('$encryption');
+    const definition = queryReply.entries![0].descriptor.definition;
+    const noteRuleSet = definition.structure.note;
+    expect(definition).toHaveProperty('$keyAgreement');
+    expect(definition.$keyAgreement.publicKeyJwk).toHaveProperty('crv', 'X25519');
+    expect(noteRuleSet).toHaveProperty('$keyAgreement');
+    expect(noteRuleSet.$keyAgreement.publicKeyJwk).toHaveProperty('crv', 'X25519');
   }, 30_000);
 
   it('should write encrypted records locally', async () => {
@@ -218,7 +222,8 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     expect(queryReply.entries).toHaveLength(3);
     for (const entry of queryReply.entries!) {
       expect(entry.encryption).toBeDefined();
-      expect(entry.encryption!.protected).toBeDefined();
+      expect(entry.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     }
   }, 30_000);
 
@@ -231,10 +236,11 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     expect(remoteQueryReply.status.code).toBe(200);
     expect(remoteQueryReply.entries).toHaveLength(3);
 
-    // Remote records should also have encryption metadata (JWE format).
+    // Remote records should also have encryption metadata.
     for (const entry of remoteQueryReply.entries!) {
       expect(entry.encryption).toBeDefined();
-      expect(entry.encryption!.protected).toBeDefined();
+      expect(entry.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     }
   }, 60_000);
 
@@ -534,7 +540,7 @@ describe('e2e: multi-party encrypted thread with key delivery', () => {
     expect(queryReply.entries![0].encryption).toBeDefined();
   }, 30_000);
 
-  it('should auto-deliver context key to Bob when added as participant', async () => {
+  it('should not auto-deliver legacy context keys when Bob is added as participant', async () => {
     // Full setup: install protocol, create thread, write chat, add Bob.
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -560,7 +566,7 @@ describe('e2e: multi-party encrypted thread with key delivery', () => {
     const threadContextId = (threadMsg as RecordsWriteMessage).contextId!;
 
     const chatText = 'Top secret message for Bob';
-    const { message: chatMsg } = await testHarness.agent.dwn.processRequest({
+    const { reply: chatReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
@@ -574,9 +580,9 @@ describe('e2e: multi-party encrypted thread with key delivery', () => {
       dataStream : new Blob([new TextEncoder().encode(chatText)]),
       encryption : true,
     });
-    const chatRecordId = (chatMsg as RecordsWriteMessage).recordId;
+    expect(chatReply.status.code).toBe(202);
 
-    // Add Bob as a participant — this auto-triggers context key delivery.
+    // Add Bob as a participant.
     const { reply: participantReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -594,62 +600,20 @@ describe('e2e: multi-party encrypted thread with key delivery', () => {
     });
     expect(participantReply.status.code).toBe(202);
 
-    // Verify a contextKey record was written for Bob on Alice's DWN.
+    // The current design does not mint legacy ProtocolContext key-delivery
+    // records as a side effect of role writes.
     const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : KeyDeliveryProtocolDefinition.protocol,
+          protocol     : 'https://identity.foundation/protocols/key-delivery',
           protocolPath : 'contextKey',
           recipient    : bob.did.uri,
         }
       },
     });
-    expect(ckQuery.entries).toHaveLength(1);
-    expect(ckQuery.entries![0].encryption).toBeDefined();
-
-    // Decrypt the context key to get the DerivedPrivateJwk.
-    const ckRecordId = ckQuery.entries![0].recordId;
-    const { reply: ckRead } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsRead,
-      messageParams : { filter: { recordId: ckRecordId } },
-      encryption    : true,
-    });
-    const ckBytes = await DataStream.toBytes(ckRead.entry!.data!);
-    const contextKeyPayload = JSON.parse(new TextDecoder().decode(ckBytes));
-    expect(contextKeyPayload).toHaveProperty('rootKeyId');
-    expect(contextKeyPayload).toHaveProperty('derivationScheme');
-    expect(contextKeyPayload).toHaveProperty('derivedPrivateKey');
-
-    // Simulate sync: write the context key to Bob's local DWN.
-    await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
-    await testHarness.agent.dwn.writeContextKeyRecord({
-      tenantDid       : bob.did.uri,
-      recipientDid    : bob.did.uri,
-      contextKeyData  : contextKeyPayload,
-      sourceProtocol  : chatProtocol.protocol,
-      sourceContextId : threadContextId.split('/')[0],
-    });
-
-    // Bob reads Alice's encrypted chat using his role authorization.
-    const { reply: bobReadReply } = await testHarness.agent.dwn.processRequest({
-      author        : bob.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsRead,
-      messageParams : {
-        filter       : { recordId: chatRecordId },
-        protocolRole : 'thread/participant',
-      },
-      encryption: true,
-    });
-    expect(bobReadReply.status.code).toBe(200);
-
-    const decryptedBytes = await DataStream.toBytes(bobReadReply.entry!.data!);
-    const decryptedText = new TextDecoder().decode(decryptedBytes);
-    expect(decryptedText).toBe(chatText);
+    expect(ckQuery.entries).toHaveLength(0);
   }, 30_000);
 });

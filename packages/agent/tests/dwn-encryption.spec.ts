@@ -24,41 +24,28 @@ describe('dwn-encryption', () => {
   });
 
   describe('ivLength', () => {
-    it('should return 24 for XC20P', () => {
-      expect(ivLength(ContentEncryptionAlgorithm.XC20P)).toBe(24);
-    });
-
-    it('should return 12 for A256GCM', () => {
-      expect(ivLength(ContentEncryptionAlgorithm.A256GCM)).toBe(12);
+    it('should return 16 for A256CTR', () => {
+      expect(ivLength(ContentEncryptionAlgorithm.A256CTR)).toBe(16);
     });
   });
 
   describe('buildEncryptionInput', () => {
     it('should build an encryption input object', () => {
       const dek = new Uint8Array(32);
-      const iv = new Uint8Array(12);
-      const publicKeyId = 'did:example:alice#enc';
+      const iv = new Uint8Array(16);
+      const keyId = 'mock-key-id';
       const publicKey = { kty: 'OKP', crv: 'X25519', x: 'mock-x' } as any;
 
       const result = buildEncryptionInput(
-        dek, iv, publicKeyId, publicKey, KeyDerivationScheme.ProtocolPath,
+        dek, iv, keyId, publicKey, KeyDerivationScheme.ProtocolPath,
       );
 
       expect(result.initializationVector).toBe(iv);
       expect(result.key).toBe(dek);
       expect(result.keyEncryptionInputs).toHaveLength(1);
-      expect(result.keyEncryptionInputs[0].publicKeyId).toBe(publicKeyId);
+      expect(result.keyEncryptionInputs[0].keyId).toBe(keyId);
       expect(result.keyEncryptionInputs[0].publicKey).toBe(publicKey);
       expect(result.keyEncryptionInputs[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
-    });
-
-    it('should support ProtocolContext derivation scheme', () => {
-      const result = buildEncryptionInput(
-        new Uint8Array(32), new Uint8Array(12),
-        'key-id', { kty: 'OKP', crv: 'X25519', x: 'x' } as any,
-        KeyDerivationScheme.ProtocolContext,
-      );
-      expect(result.keyEncryptionInputs[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolContext);
     });
   });
 
@@ -66,7 +53,7 @@ describe('dwn-encryption', () => {
     it('should encrypt plaintext and return encrypted data with CID', async () => {
       const plaintext = new TextEncoder().encode('hello world');
       const dek = crypto.getRandomValues(new Uint8Array(32));
-      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const iv = crypto.getRandomValues(new Uint8Array(16));
 
       const result = await encryptAndComputeCid(plaintext, dek, iv);
 
@@ -75,7 +62,6 @@ describe('dwn-encryption', () => {
       expect(typeof result.dataCid).toBe('string');
       expect(result.dataCid.length).toBeGreaterThan(0);
       expect(result.dataSize).toBe(result.encryptedBytes.length);
-      expect(result.authenticationTag).toBeInstanceOf(Uint8Array);
     });
   });
 
@@ -102,9 +88,7 @@ describe('dwn-encryption', () => {
         keyManager: { jweKeyUnwrap: jweKeyUnwrapStub },
       } as any;
 
-      const decrypter = buildKmsDecryptCallback(
-        mockAgent, 'root-key-id', 'key-uri', KeyDerivationScheme.ProtocolContext,
-      );
+      const decrypter = buildKmsDecryptCallback(mockAgent, 'root-key-id', 'key-uri', KeyDerivationScheme.ProtocolPath);
 
       const mockPayload = {
         encryptedKey       : new Uint8Array(48),
@@ -518,19 +502,17 @@ describe('dwn-encryption', () => {
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
 
-    it('should return KMS decrypter when context key matches author enc key', async () => {
+    it('should return ProtocolPath KMS decrypter for protocol-path records', async () => {
       const mockAgent = makeAliceAgent();
 
       const recordsWrite = {
-        recordId   : 'rec-ctx-1',
-        contextId  : 'root-ctx/sub',
+        recordId   : 'rec-path-1',
+        contextId  : 'rec-path-1',
         descriptor : { protocol: 'https://proto.example.com' },
         encryption : {
-          recipients: [{
-            header: {
-              derivationScheme : KeyDerivationScheme.ProtocolContext,
-              kid              : 'did:example:alice#enc', // matches the agent's enc key
-            },
+          keyEncryption: [{
+            derivationScheme : KeyDerivationScheme.ProtocolPath,
+            keyId            : 'did:example:alice#enc',
           }],
         },
       } as unknown as RecordsWriteMessage;
@@ -541,206 +523,77 @@ describe('dwn-encryption', () => {
         sinon.stub(),
       );
 
-      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolContext);
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(result.rootKeyId).toBe('did:example:alice#enc');
     });
 
-    it('should return cached context key decrypter when available', async () => {
+    it('should return exact delegate key decrypter when available', async () => {
       const mockAgent = makeAliceAgent();
 
       const cachedKey: DerivedPrivateJwk = {
         rootKeyId         : 'cached-root',
-        derivationScheme  : KeyDerivationScheme.ProtocolContext,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
         derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
+        derivationPath    : [KeyDerivationScheme.ProtocolPath, 'https://proto.example.com', 'message'],
       };
-      const cache = {
-        get : sinon.stub().returns(cachedKey),
-        set : sinon.stub(),
+      const delegateCache = {
+        get: sinon.stub().returns([{
+          derivedPrivateKey : cachedKey,
+          protocol          : 'https://proto.example.com',
+          scope             : { kind: 'protocolPath', match: 'exact', protocolPath: 'message' },
+        }]),
       };
 
       const recordsWrite = {
-        recordId   : 'rec-ctx-2',
-        contextId  : 'root-ctx/sub',
-        descriptor : { protocol: 'https://proto.example.com' },
-        encryption : {
-          recipients: [{
-            header: {
-              derivationScheme : KeyDerivationScheme.ProtocolContext,
-              kid              : 'other-key', // does NOT match enc key
-            },
-          }],
-        },
+        recordId   : 'rec-exact',
+        contextId  : 'rec-exact',
+        descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        cache, sinon.stub(),
+        { get: sinon.stub().returns(undefined), set: sinon.stub() },
+        sinon.stub(),
+        delegateCache,
+        'did:example:delegate',
       );
 
-      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolContext);
-      expect(cache.get.calledOnce).toBe(true);
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(delegateCache.get.calledOnce).toBe(true);
     });
 
-    it('should fetch context key locally when not cached', async () => {
+    it('should return protocol-wide delegate key decrypter when available', async () => {
       const mockAgent = makeAliceAgent();
 
-      const contextKey: DerivedPrivateJwk = {
-        rootKeyId         : 'fetched-root',
-        derivationScheme  : KeyDerivationScheme.ProtocolContext,
+      const protocolKey: DerivedPrivateJwk = {
+        rootKeyId         : 'protocol-root',
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
         derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
+        derivationPath    : [KeyDerivationScheme.ProtocolPath, 'https://proto.example.com'],
       };
-      const fetchFn = sinon.stub().resolves(contextKey);
-      const cache = {
-        get : sinon.stub().returns(undefined),
-        set : sinon.stub(),
+      const delegateCache = {
+        get: sinon.stub().returns([{
+          derivedPrivateKey : protocolKey,
+          protocol          : 'https://proto.example.com',
+          scope             : { kind: 'protocol' },
+        }]),
       };
 
       const recordsWrite = {
-        recordId   : 'rec-ctx-3',
-        contextId  : 'root-ctx/sub',
-        descriptor : { protocol: 'https://proto.example.com' },
-        encryption : {
-          recipients: [{
-            header: {
-              derivationScheme : KeyDerivationScheme.ProtocolContext,
-              kid              : 'other-key',
-            },
-          }],
-        },
+        recordId   : 'rec-wide',
+        contextId  : 'rec-wide',
+        descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
       } as unknown as RecordsWriteMessage;
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        cache, fetchFn,
+        { get: sinon.stub().returns(undefined), set: sinon.stub() },
+        sinon.stub(),
+        delegateCache,
+        'did:example:delegate',
       );
 
-      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolContext);
-      expect(fetchFn.calledOnce).toBe(true);
-      expect(cache.set.calledOnce).toBe(true);
-    });
-
-    it('should try remote fetch when local fetch returns undefined', async () => {
-      const mockAgent = makeAliceAgent();
-
-      const contextKey: DerivedPrivateJwk = {
-        rootKeyId         : 'remote-root',
-        derivationScheme  : KeyDerivationScheme.ProtocolContext,
-        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
-      };
-      const fetchFn = sinon.stub()
-        .onFirstCall().resolves(undefined)
-        .onSecondCall().resolves(contextKey);
-      const cache = {
-        get : sinon.stub().returns(undefined),
-        set : sinon.stub(),
-      };
-
-      const recordsWrite = {
-        recordId      : 'rec-ctx-4',
-        contextId     : 'root-ctx/sub',
-        descriptor    : { protocol: 'https://proto.example.com' },
-        authorization : {
-          signature: {
-            signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:example:bob#sig' })) }],
-          },
-        },
-        encryption: {
-          recipients: [{
-            header: {
-              derivationScheme : KeyDerivationScheme.ProtocolContext,
-              kid              : 'other-key',
-            },
-          }],
-        },
-      } as unknown as RecordsWriteMessage;
-
-      const result = await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, 'did:example:bob',
-        cache, fetchFn,
-      );
-
-      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolContext);
-      expect(fetchFn.callCount).toBe(2);
-      // Second call should use targetDid (did:example:bob) as ownerDid
-      expect(fetchFn.secondCall.args[0].ownerDid).toBe('did:example:bob');
-    });
-
-    it('should throw when no context key found locally or remotely', async () => {
-      const mockAgent = makeAliceAgent();
-
-      const fetchFn = sinon.stub().resolves(undefined);
-      const cache = {
-        get : sinon.stub().returns(undefined),
-        set : sinon.stub(),
-      };
-
-      const recordsWrite = {
-        recordId      : 'rec-ctx-fail',
-        contextId     : 'root-ctx/sub',
-        descriptor    : { protocol: 'https://proto.example.com' },
-        authorization : {
-          signature: {
-            signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:example:bob#sig' })) }],
-          },
-        },
-        encryption: {
-          recipients: [{
-            header: {
-              derivationScheme : KeyDerivationScheme.ProtocolContext,
-              kid              : 'other-key',
-            },
-          }],
-        },
-      } as unknown as RecordsWriteMessage;
-
-      await expect(resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        cache, fetchFn,
-      )).rejects.toThrow('Failed to decrypt record');
-    });
-
-    it('should use signer DID as context owner when targetDid is not provided', async () => {
-      const mockAgent = makeAliceAgent();
-
-      const contextKey: DerivedPrivateJwk = {
-        rootKeyId         : 'signer-root',
-        derivationScheme  : KeyDerivationScheme.ProtocolContext,
-        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
-      };
-      const fetchFn = sinon.stub()
-        .onFirstCall().resolves(undefined)
-        .onSecondCall().resolves(contextKey);
-      const cache = {
-        get : sinon.stub().returns(undefined),
-        set : sinon.stub(),
-      };
-
-      const recordsWrite = {
-        recordId      : 'rec-ctx-signer',
-        contextId     : 'root-ctx/sub',
-        descriptor    : { protocol: 'https://proto.example.com' },
-        authorization : {
-          signature: {
-            signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:example:signer#sig' })) }],
-          },
-        },
-        encryption: {
-          recipients: [{
-            header: {
-              derivationScheme : KeyDerivationScheme.ProtocolContext,
-              kid              : 'other-key',
-            },
-          }],
-        },
-      } as unknown as RecordsWriteMessage;
-
-      await resolveKeyDecrypter(
-        mockAgent, 'did:example:alice', recordsWrite, undefined,
-        cache, fetchFn,
-      );
-
-      // When targetDid is undefined, falls back to Jws.getSignerDid
-      expect(fetchFn.callCount).toBe(2);
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
   });
 });

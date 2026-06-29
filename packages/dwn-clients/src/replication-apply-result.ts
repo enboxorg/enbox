@@ -87,8 +87,10 @@ function isDependencyRef(value: unknown): value is DependencyRef {
         isOptionalString(value.contextPrefix);
     case 'Grant':
       return typeof value.permissionGrantId === 'string';
-    case 'KeyDelivery':
-      return typeof value.protocol === 'string' && typeof value.contextId === 'string';
+    case 'EncryptionProtocol':
+      return ['audienceEpoch', 'audienceKey', 'grantKey'].includes(value.protocolPath as string) &&
+        isOptionalObject(value.tags) &&
+        isOptionalString(value.recipient);
     case 'CrossProtocolRef':
       return typeof value.protocol === 'string' && typeof value.recordId === 'string';
     case 'RecordData':
@@ -121,4 +123,8 @@ function isOptionalString(value: unknown): value is string | undefined {
 
 function isOptionalBoolean(value: unknown): value is boolean | undefined {
   return value === undefined || typeof value === 'boolean';
+}
+
+function isOptionalObject(value: unknown): value is Record<string, unknown> | undefined {
+  return value === undefined || isObject(value);
 }

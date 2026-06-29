@@ -15,6 +15,7 @@ import type {
 import {
   ContentEncryptionAlgorithm,
   DataStream,
+  Encryption,
   KeyDerivationScheme,
   Message,
   Protocols,
@@ -56,7 +57,7 @@ type ProcessRequestFn = <T extends DwnInterface>(
 
 /**
  * Ensures the key delivery protocol is installed on the given tenant's DWN,
- * with `$encryption` keys injected. Uses the same lazy initialization pattern
+ * with `$keyAgreement` keys injected. Uses the same lazy initialization pattern
  * as `DwnDataStore.initialize()`.
  *
  * @param agent - The platform agent
@@ -81,7 +82,7 @@ export async function ensureKeyDeliveryProtocol(
   const existing = await getProtocolDefinition(tenantDid, protocolUri);
 
   if (!existing) {
-    // Derive and inject $encryption keys for each type path
+    // Derive and inject $keyAgreement keys for each type path.
     const keyDeriver = await getEncryptionKeyDeriver(agent, tenantDid);
     const definitionWithKeys = await Protocols.deriveAndInjectPublicEncryptionKeys(
       KeyDeliveryProtocolDefinition,
@@ -157,22 +158,19 @@ export async function writeContextKeyRecord(
     // --- Encrypt to the recipient's ProtocolPath key (cross-DWN delivery) ---
     // Manually build encryption input targeting the recipient's key so the
     // record is decryptable only by the recipient.
-    const algorithm = ContentEncryptionAlgorithm.A256GCM;
+    const algorithm = ContentEncryptionAlgorithm.A256CTR;
     const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
     const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(ivLength(algorithm)));
 
-    const { encryptedBytes, dataCid, dataSize, authenticationTag } =
+    const { encryptedBytes, dataCid, dataSize } =
       await encryptAndComputeCid(plaintextBytes, dataEncryptionKey, dataEncryptionIV, algorithm);
 
-    const encryptionInput = {
-      ...buildEncryptionInput(
-        dataEncryptionKey, dataEncryptionIV,
-        recipientKeyDeliveryPublicKey.rootKeyId,
-        recipientKeyDeliveryPublicKey.publicKeyJwk,
-        KeyDerivationScheme.ProtocolPath,
-      ),
-      authenticationTag,
-    } as EncryptionInput;
+    const encryptionInput = buildEncryptionInput(
+      dataEncryptionKey, dataEncryptionIV,
+      await Encryption.getKeyId(recipientKeyDeliveryPublicKey.publicKeyJwk),
+      recipientKeyDeliveryPublicKey.publicKeyJwk,
+      KeyDerivationScheme.ProtocolPath,
+    ) as EncryptionInput;
 
     ({ message, reply: { status } } = await processRequest({
       author        : tenantDid,
