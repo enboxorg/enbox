@@ -28,18 +28,7 @@ export type ProtocolPathKeyEncryption = {
   encryptedKey: string;
 };
 
-export type RoleAudienceKeyEncryption = {
-  algorithm: KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
-  keyId: string;
-  derivationScheme: KeyDerivationScheme.RoleAudience;
-  protocol: string;
-  role: string;
-  epoch: number;
-  ephemeralPublicKey: PublicKeyJwk;
-  encryptedKey: string;
-};
-
-export type KeyEncryption = ProtocolPathKeyEncryption | RoleAudienceKeyEncryption;
+export type KeyEncryption = ProtocolPathKeyEncryption;
 
 export type DwnEncryption = {
   algorithm: ContentEncryptionAlgorithm.A256CTR;
@@ -53,16 +42,7 @@ export type ProtocolPathKeyEncryptionInput = {
   derivationScheme: KeyDerivationScheme.ProtocolPath;
 };
 
-export type RoleAudienceKeyEncryptionInput = {
-  keyId: string;
-  publicKey: PublicKeyJwk;
-  derivationScheme: KeyDerivationScheme.RoleAudience;
-  protocol: string;
-  role: string;
-  epoch: number;
-};
-
-export type KeyEncryptionInput = ProtocolPathKeyEncryptionInput | RoleAudienceKeyEncryptionInput;
+export type KeyEncryptionInput = ProtocolPathKeyEncryptionInput;
 
 export type EncryptionInput = {
   algorithm?: ContentEncryptionAlgorithm;
@@ -185,26 +165,13 @@ export class Encryption {
         keyInput,
       );
       const common = {
-        algorithm    : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-        encryptedKey : Encoder.bytesToBase64Url(encryptedKey),
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+        derivationScheme : KeyDerivationScheme.ProtocolPath,
+        encryptedKey     : Encoder.bytesToBase64Url(encryptedKey),
         ephemeralPublicKey,
-        keyId        : keyInput.keyId,
+        keyId            : keyInput.keyId,
       };
-
-      if (keyInput.derivationScheme === KeyDerivationScheme.RoleAudience) {
-        keyEncryption.push({
-          ...common,
-          derivationScheme : KeyDerivationScheme.RoleAudience,
-          epoch            : keyInput.epoch,
-          protocol         : keyInput.protocol,
-          role             : keyInput.role,
-        });
-      } else {
-        keyEncryption.push({
-          ...common,
-          derivationScheme: KeyDerivationScheme.ProtocolPath,
-        });
-      }
+      keyEncryption.push(common);
     }
 
     return {
@@ -234,10 +201,6 @@ export class Encryption {
   }
 
   private static getKekInfo(keyEncryption: KeyEncryptionInput | KeyEncryption): string {
-    if (keyEncryption.derivationScheme === KeyDerivationScheme.RoleAudience) {
-      return `${KEK_INFO_PREFIX}|roleAudience|${keyEncryption.protocol}|${keyEncryption.role}|${keyEncryption.epoch}|${keyEncryption.keyId}`;
-    }
-
     return `${KEK_INFO_PREFIX}|protocolPath|${keyEncryption.keyId}`;
   }
 

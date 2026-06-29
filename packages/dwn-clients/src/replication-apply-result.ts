@@ -88,7 +88,7 @@ function isDependencyRef(value: unknown): value is DependencyRef {
     case 'Grant':
       return typeof value.permissionGrantId === 'string';
     case 'EncryptionProtocol':
-      return ['audienceEpoch', 'audienceKey', 'grantKey'].includes(value.protocolPath as string) &&
+      return value.protocolPath === 'grantKey' &&
         isOptionalObject(value.tags) &&
         isOptionalString(value.recipient);
     case 'CrossProtocolRef':

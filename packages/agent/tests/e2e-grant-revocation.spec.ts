@@ -97,6 +97,76 @@ describe('e2e: grant revocation stops future delivery', () => {
     return reply;
   }
 
+  it('should reject grant-authorized reads after revocation', async () => {
+    const ownerDid = ownerIdentity.did.uri;
+    const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
+    const { DidJwk } = await import('@enbox/dids');
+
+    await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+      encryption    : true,
+    });
+
+    const delegateBearerDid = await DidJwk.create();
+    await ownerHarness.agent.did.import({
+      portableDid : await delegateBearerDid.export(),
+      tenant      : ownerHarness.agent.agentDid.uri,
+    });
+
+    const readGrant = await permissionsApi.createGrant({
+      delegated   : true,
+      store       : true,
+      grantedTo   : delegateBearerDid.uri,
+      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+      dateExpires : '2040-06-25T16:09:16.693356Z',
+      author      : ownerDid,
+    });
+
+    const { message: thread } = await ownerHarness.agent.processDwnRequest({
+      author        : ownerDid,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'thread',
+        schema       : 'https://schemas.xyz/thread',
+        dataFormat   : 'application/json',
+        data         : new TextEncoder().encode(JSON.stringify({ topic: 'Revocation authorization check' })),
+      },
+      encryption: true,
+    });
+
+    const readParams = {
+      filter            : { recordId: (thread as RecordsWriteMessage).recordId },
+      permissionGrantId : readGrant.grant.id,
+    };
+
+    const { reply: beforeRevocationRead } = await ownerHarness.agent.processDwnRequest({
+      author        : delegateBearerDid.uri,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : readParams,
+    });
+    expect(beforeRevocationRead.status.code).toBe(200);
+
+    await permissionsApi.createRevocation({
+      author : ownerDid,
+      store  : true,
+      grant  : readGrant.grant,
+    });
+
+    const { reply: afterRevocationRead } = await ownerHarness.agent.processDwnRequest({
+      author        : delegateBearerDid.uri,
+      target        : ownerDid,
+      messageType   : DwnInterface.RecordsRead,
+      messageParams : readParams,
+    });
+    expect(afterRevocationRead.status.code).toBe(401);
+  });
+
   it('should not deliver legacy context keys for delegated read grants', async () => {
     const ownerDid = ownerIdentity.did.uri;
     const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });

@@ -177,7 +177,7 @@ export function buildKmsDecryptCallback(
   agent: EnboxPlatformAgent,
   keyId: string,
   keyUri: KeyIdentifier,
-  derivationScheme: typeof KeyDerivationScheme.ProtocolPath | typeof KeyDerivationScheme.RoleAudience,
+  derivationScheme: typeof KeyDerivationScheme.ProtocolPath,
 ): KeyDecrypter {
   const keyManager = agent.keyManager;
   return {
@@ -352,12 +352,12 @@ export async function resolveKeyDecrypter(
   void fetchContextKeyRecordFn;
   void delegateContextKeyCache;
 
-  if (delegateDecryptionKeyCache && granteeDid) {
+  if (granteeDid !== undefined) {
     const protocol = recordsWrite.descriptor.protocol;
     const protocolPath = recordsWrite.descriptor.protocolPath;
     if (protocol) {
       const cacheKey = `ddk~${granteeDid}`;
-      const allKeys = delegateDecryptionKeyCache.get(cacheKey);
+      const allKeys = delegateDecryptionKeyCache?.get(cacheKey);
       if (allKeys) {
         const keysForProtocol = allKeys.filter((key) => key.protocol === protocol);
 

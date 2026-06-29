@@ -556,12 +556,6 @@ export class TestDataGenerator {
     protocolPath: string,
     protocolParentContextId?: string,
     encryptSymmetricKeyWithProtocolPathDerivedKey: boolean,
-    roleAudienceKeyEncryptionInputs?: Array<{
-      protocol: string;
-      role: string;
-      epoch: number;
-      publicKey: PublicKeyJwk;
-    }>,
   }): Promise<{
     message: RecordsWriteMessage;
     dataStream: ReadableStream<Uint8Array>;
@@ -623,17 +617,6 @@ export class TestDataGenerator {
       };
 
       encryptionInput.keyEncryptionInputs.push(protocolPathDerivedKeyEncryptionInput);
-    }
-
-    for (const roleAudienceInput of input.roleAudienceKeyEncryptionInputs ?? []) {
-      encryptionInput.keyEncryptionInputs.push({
-        derivationScheme : KeyDerivationScheme.RoleAudience,
-        epoch            : roleAudienceInput.epoch,
-        keyId            : await Encryption.getKeyId(roleAudienceInput.publicKey),
-        protocol         : roleAudienceInput.protocol,
-        publicKey        : roleAudienceInput.publicKey,
-        role             : roleAudienceInput.role,
-      });
     }
 
     await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput);

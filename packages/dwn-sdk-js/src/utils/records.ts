@@ -147,13 +147,8 @@ export class Records {
       };
     }
 
-    let leafPrivateKey: Jwk;
-    if (keyOrDecrypter.derivationScheme === KeyDerivationScheme.ProtocolPath) {
-      const leafPrivateKeyBytes = await Records.derivePrivateKey(keyOrDecrypter, fullDerivationPath);
-      leafPrivateKey = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
-    } else {
-      leafPrivateKey = keyOrDecrypter.derivedPrivateKey as Jwk;
-    }
+    const leafPrivateKeyBytes = await Records.derivePrivateKey(keyOrDecrypter, fullDerivationPath);
+    const leafPrivateKey = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
 
     const publicKey = await X25519.getPublicKey({ key: leafPrivateKey });
     const keyId = keyOrDecrypter.keyId ?? await Encryption.getKeyId(publicKey as PublicKeyJwk);
@@ -199,14 +194,6 @@ export class Records {
     const descriptor = recordsWriteMessage.descriptor;
     if (keyDerivationScheme === KeyDerivationScheme.ProtocolPath) {
       return Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
-    }
-
-    if (keyDerivationScheme === KeyDerivationScheme.RoleAudience) {
-      return [
-        KeyDerivationScheme.RoleAudience,
-        descriptor.protocol,
-        descriptor.protocolPath
-      ];
     }
 
     throw new DwnError(

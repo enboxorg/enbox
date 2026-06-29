@@ -32,7 +32,7 @@ describe('GrantKey Schema', () => {
 
   it('should reject derivation paths that do not start with protocolPath', () => {
     const invalidGrantKey = structuredClone(grantKey);
-    invalidGrantKey.derivationPath[0] = 'roleAudience';
+    invalidGrantKey.derivationPath[0] = 'unsupported';
 
     expect(
       () => validateJsonSchema('GrantKey', invalidGrantKey)

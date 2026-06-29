@@ -52,19 +52,8 @@
               "derivationScheme": {
                 "type": "string",
                 "enum": [
-                  "protocolPath",
-                  "roleAudience"
+                  "protocolPath"
                 ]
-              },
-              "protocol": {
-                "type": "string"
-              },
-              "role": {
-                "type": "string"
-              },
-              "epoch": {
-                "type": "integer",
-                "minimum": 1
               },
               "ephemeralPublicKey": {
                 "allOf": [
@@ -101,54 +90,6 @@
               "derivationScheme",
               "ephemeralPublicKey",
               "encryptedKey"
-            ],
-            "allOf": [
-              {
-                "if": {
-                  "properties": {
-                    "derivationScheme": {
-                      "const": "roleAudience"
-                    }
-                  }
-                },
-                "then": {
-                  "required": [
-                    "protocol",
-                    "role",
-                    "epoch"
-                  ]
-                }
-              },
-              {
-                "if": {
-                  "properties": {
-                    "derivationScheme": {
-                      "const": "protocolPath"
-                    }
-                  }
-                },
-                "then": {
-                  "not": {
-                    "anyOf": [
-                      {
-                        "required": [
-                          "protocol"
-                        ]
-                      },
-                      {
-                        "required": [
-                          "role"
-                        ]
-                      },
-                      {
-                        "required": [
-                          "epoch"
-                        ]
-                      }
-                    ]
-                  }
-                }
-              }
             ]
           }
         }

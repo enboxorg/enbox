@@ -627,5 +627,24 @@ describe('dwn-encryption', () => {
 
       expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
     });
+
+    it('should fail closed for a delegate when no delegate key cache is provided', async () => {
+      const mockAgent = makeAliceAgent();
+      const recordsWrite = {
+        recordId   : 'rec-no-cache',
+        contextId  : 'rec-no-cache',
+        descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
+      } as unknown as RecordsWriteMessage;
+
+      await expect(resolveKeyDecrypter(
+        mockAgent, 'did:example:alice', recordsWrite, undefined,
+        { get: sinon.stub().returns(undefined), set: sinon.stub() },
+        sinon.stub(),
+        undefined,
+        'did:example:delegate',
+      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+
+      expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
+    });
   });
 });

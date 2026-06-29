@@ -49,7 +49,7 @@ export type DependencyRef =
   | { type: 'Grant'; permissionGrantId: string; messageCid?: string; terminal?: boolean }
   | {
       type: 'EncryptionProtocol';
-      protocolPath: 'audienceEpoch' | 'audienceKey' | 'grantKey';
+      protocolPath: 'grantKey';
       tags?: Record<string, string | number>;
       recipient?: string;
       messageCid?: string;

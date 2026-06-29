@@ -39,7 +39,7 @@ export { Encoder } from './utils/encoder.js';
 export { MessagesSubscribe } from './interfaces/messages-subscribe.js';
 export type { MessagesSubscribeOptions } from './interfaces/messages-subscribe.js';
 export { Encryption, ContentEncryptionAlgorithm, KeyAgreementAlgorithm } from './utils/encryption.js';
-export type { DwnEncryption, KeyEncryption, KeyUnwrapPayload, ProtocolPathKeyEncryption, RoleAudienceKeyEncryption } from './utils/encryption.js';
+export type { DwnEncryption, KeyEncryption, KeyUnwrapPayload, ProtocolPathKeyEncryption } from './utils/encryption.js';
 export { RecordsWrite } from './interfaces/records-write.js';
 export type { EncryptionInput, KeyEncryptionInput, RecordsWriteOptions, CreateFromOptions } from './interfaces/records-write.js';
 export { executeUnlessAborted } from './utils/abort.js';
