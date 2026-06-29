@@ -503,7 +503,7 @@ export class AgentDwnApi {
         );
       } catch (error) {
         logger.log(
-          `AgentDwnApi: deferred audienceKey provisioning for role record '${(message as RecordsWriteMessage).recordId}': ` +
+          `AgentDwnApi: audienceKey provisioning failed after accepting role record '${(message as RecordsWriteMessage).recordId}': ` +
           `${error instanceof Error ? error.message : String(error)}`
         );
       }
