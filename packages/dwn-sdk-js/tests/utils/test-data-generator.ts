@@ -14,7 +14,7 @@ import type { RecordsCountOptions } from '../../src/interfaces/records-count.js'
 import type { RecordsQueryOptions } from '../../src/interfaces/records-query.js';
 import type { RecordsSubscribeOptions } from '../../src/interfaces/records-subscribe.js';
 import type { AuthorizationModel, Pagination } from '../../src/types/message-types.js';
-import type { CreateFromOptions, EncryptionInput, KeyEncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
+import type { CreateFromOptions, EncryptionInput, ProtocolPathKeyEncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
 import type { DataEncodedRecordsWriteMessage, DateSort, RecordsCountMessage, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsWriteTags } from '../../src/types/records-types.js';
 import type { MessagesFilter, MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../../src/types/messages-types.js';
 import type { PermissionConditions, PermissionScope } from '../../src/types/permission-types.js';
@@ -610,7 +610,7 @@ export class TestDataGenerator {
       }
 
       const protocolPathDerivedPublicKeyJwk = protocolRuleSetSegment.$keyAgreement?.publicKeyJwk;
-      const protocolPathDerivedKeyEncryptionInput: KeyEncryptionInput = {
+      const protocolPathDerivedKeyEncryptionInput: ProtocolPathKeyEncryptionInput = {
         keyId            : await Encryption.getKeyId(protocolPathDerivedPublicKeyJwk!),
         publicKey        : protocolPathDerivedPublicKeyJwk!,
         derivationScheme : KeyDerivationScheme.ProtocolPath

@@ -93,7 +93,7 @@ export type RecordsWriteOptions = {
 
 };
 
-export type { EncryptionInput, KeyEncryptionInput } from '../utils/encryption.js';
+export type { EncryptionInput, ProtocolPathKeyEncryptionInput } from '../utils/encryption.js';
 
 export type CreateFromOptions = {
   recordsWriteMessage: RecordsWriteMessage,

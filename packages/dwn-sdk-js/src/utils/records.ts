@@ -1,7 +1,7 @@
 import type { DerivedPrivateJwk } from './hd-key.js';
 import type { Jwk } from '@enbox/crypto';
 import type { KeyDecrypter } from '../types/encryption-types.js';
-import type { KeyEncryption } from './encryption.js';
+import type { ProtocolPathKeyEncryption } from './encryption.js';
 import type { PublicKeyJwk } from '../types/jose-types.js';
 import type { Filter, KeyValues, StartsWithFilter } from '../types/query-types.js';
 import type { GenericMessage, GenericSignaturePayload, MessageSort } from '../types/message-types.js';
@@ -132,7 +132,7 @@ export class Records {
   private static async findMatchingKeyEncryption(
     recordsWrite: RecordsWriteMessage,
     keyOrDecrypter: DerivedPrivateJwk | KeyDecrypter,
-  ): Promise<{ fullDerivationPath: string[]; leafPrivateKey?: Jwk; matchingKeyEncryption?: KeyEncryption }> {
+  ): Promise<{ fullDerivationPath: string[]; leafPrivateKey?: Jwk; matchingKeyEncryption?: ProtocolPathKeyEncryption }> {
     const { encryption } = recordsWrite;
     const fullDerivationPath = Records.constructKeyDerivationPath(keyOrDecrypter.derivationScheme, recordsWrite);
 

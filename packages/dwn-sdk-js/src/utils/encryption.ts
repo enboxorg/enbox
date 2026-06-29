@@ -28,12 +28,10 @@ export type ProtocolPathKeyEncryption = {
   encryptedKey: string;
 };
 
-export type KeyEncryption = ProtocolPathKeyEncryption;
-
 export type DwnEncryption = {
   algorithm: ContentEncryptionAlgorithm.A256CTR;
   initializationVector: string;
-  keyEncryption: KeyEncryption[];
+  keyEncryption: ProtocolPathKeyEncryption[];
 };
 
 export type ProtocolPathKeyEncryptionInput = {
@@ -42,19 +40,17 @@ export type ProtocolPathKeyEncryptionInput = {
   derivationScheme: KeyDerivationScheme.ProtocolPath;
 };
 
-export type KeyEncryptionInput = ProtocolPathKeyEncryptionInput;
-
 export type EncryptionInput = {
   algorithm?: ContentEncryptionAlgorithm;
   key: Uint8Array;
   initializationVector: Uint8Array;
-  keyEncryptionInputs: KeyEncryptionInput[];
+  keyEncryptionInputs: ProtocolPathKeyEncryptionInput[];
 };
 
 export type KeyUnwrapPayload = {
   encryptedKey: Uint8Array;
   ephemeralPublicKey: PublicKeyJwk;
-  keyEncryption: KeyEncryption;
+  keyEncryption: ProtocolPathKeyEncryption;
 };
 
 export class Encryption {
@@ -113,7 +109,7 @@ export class Encryption {
   public static async wrapKey(
     recipientPublicKey: PublicKeyJwk,
     cek: Uint8Array,
-    keyInput: KeyEncryptionInput,
+    keyInput: ProtocolPathKeyEncryptionInput,
     ephemeralPrivateKey?: Jwk,
   ): Promise<{ encryptedKey: Uint8Array; ephemeralPublicKey: PublicKeyJwk }> {
     Encryption.validateContentEncryptionKey(cek);
@@ -134,7 +130,7 @@ export class Encryption {
 
   public static async unwrapKey(
     recipientPrivateKey: Jwk,
-    keyEncryption: KeyEncryption,
+    keyEncryption: ProtocolPathKeyEncryption,
   ): Promise<Uint8Array> {
     const sharedSecret = await X25519.sharedSecret({
       privateKeyA : recipientPrivateKey,
@@ -157,7 +153,7 @@ export class Encryption {
     const algorithm = encryptionInput.algorithm ?? ContentEncryptionAlgorithm.A256CTR;
     Encryption.validateContentEncryptionParameters(algorithm, encryptionInput.key, encryptionInput.initializationVector);
 
-    const keyEncryption: KeyEncryption[] = [];
+    const keyEncryption: ProtocolPathKeyEncryption[] = [];
     for (const keyInput of encryptionInput.keyEncryptionInputs) {
       const { encryptedKey, ephemeralPublicKey } = await Encryption.wrapKey(
         keyInput.publicKey,
@@ -187,7 +183,7 @@ export class Encryption {
 
   private static async deriveKek(
     sharedSecret: Uint8Array,
-    keyEncryption: KeyEncryptionInput | KeyEncryption,
+    keyEncryption: ProtocolPathKeyEncryptionInput | ProtocolPathKeyEncryption,
   ): Promise<Uint8Array> {
     Encryption.validateSharedSecret(sharedSecret);
     const info = Encryption.getKekInfo(keyEncryption);
@@ -200,7 +196,7 @@ export class Encryption {
     });
   }
 
-  private static getKekInfo(keyEncryption: KeyEncryptionInput | KeyEncryption): string {
+  private static getKekInfo(keyEncryption: ProtocolPathKeyEncryptionInput | ProtocolPathKeyEncryption): string {
     return `${KEK_INFO_PREFIX}|protocolPath|${keyEncryption.keyId}`;
   }
 

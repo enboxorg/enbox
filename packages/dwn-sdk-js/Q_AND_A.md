@@ -53,7 +53,7 @@
 
 ## Encryption
 
-- Why is `keyId` required in `KeyEncryptionInput`?
+- Why is `keyId` required in `ProtocolPathKeyEncryptionInput`?
 
   (Last updated: 2026/06/29)
 
@@ -64,7 +64,7 @@
   1. The DWN owner might have published multiple encryption keys, and a wrong encryption key is chosen.
   1. The key used to encrypt the record might not be the DWN owner's key at all. For instance, a sender's encryption key is used instead.
 
-- Instead of introducing yet another property `keyId` in `KeyEncryptionInput`, why do we not just use the `kid` property in the public JWK?
+- Instead of introducing yet another property `keyId` in `ProtocolPathKeyEncryptionInput`, why do we not just use the `kid` property in the public JWK?
 
   (Last updated: 2023/05/19)
 

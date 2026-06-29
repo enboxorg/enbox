@@ -49,9 +49,7 @@ export class EncryptionProtocol implements CoreProtocol {
     return EncryptionProtocol.definition;
   }
 
-  public async validateRecord(message: RecordsWriteMessage, dataBytes: Uint8Array): Promise<void> {
-    void dataBytes;
-
+  public async validateRecord(message: RecordsWriteMessage, _dataBytes: Uint8Array): Promise<void> {
     if (message.descriptor.protocolPath === EncryptionProtocol.grantKeyPath) {
       if (message.encryption === undefined) {
         throw new DwnError(

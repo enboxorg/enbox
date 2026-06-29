@@ -5,6 +5,8 @@ import type { ExpressionBuilder, OperandExpression, RawBuilder, SelectQueryBuild
 import { DynamicModule, sql } from 'kysely';
 import { sanitizedValue, sanitizeFiltersAndSeparateTags } from './sanitize.js';
 
+const SQL_LIKE_ESCAPE = String.fromCharCode(92);
+
 /**
  * Takes multiple Filters and returns a single query.
  * Each filter is evaluated as an OR operation.
@@ -104,7 +106,10 @@ function getPrefixRangeFilterPrefix(value: object): string | undefined {
  * they are matched literally.
  */
 function escapeLikePattern(input: string): string {
-  return input.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  return input
+    .split(SQL_LIKE_ESCAPE).join(`${SQL_LIKE_ESCAPE}${SQL_LIKE_ESCAPE}`)
+    .split('%').join(`${SQL_LIKE_ESCAPE}%`)
+    .split('_').join(`${SQL_LIKE_ESCAPE}_`);
 }
 
 /**
