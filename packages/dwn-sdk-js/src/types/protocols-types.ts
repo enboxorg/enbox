@@ -139,10 +139,6 @@ export type ProtocolKeyAgreement = {
   publicKeyJwk: PublicKeyJwk;
 };
 
-export type ProtocolPathEncryption = ProtocolKeyAgreement & {
-  rootKeyId?: string;
-};
-
 /**
  * Size constraints for records at a given protocol path.
  */
@@ -237,7 +233,7 @@ export type ProtocolTagSchema = {
 type ProtocolRuleSetValue =
   | ProtocolRuleSet
   | ProtocolActionRule[]
-  | ProtocolPathEncryption
+  | ProtocolKeyAgreement
   | ProtocolTagsDefinition
   | ProtocolSizeDefinition
   | ProtocolRecordLimitDefinition
@@ -251,7 +247,6 @@ export type ProtocolRuleSet = {
    * Key agreement setting for records at this protocol path.
    */
   $keyAgreement?: ProtocolKeyAgreement;
-  $encryption?: ProtocolPathEncryption;
   $actions?: ProtocolActionRule[];
 
   /**
@@ -266,7 +261,7 @@ export type ProtocolRuleSet = {
    * and `typePath` is the protocol path of the type in the external protocol's structure.
    *
    * A `$ref` node is a pure attachment point — it must NOT have `$actions`, `$role`, `$size`,
-   * `$tags`, or `$encryption`. Authorization for the referenced type is governed by its own
+   * `$tags`, or `$keyAgreement`. Authorization for the referenced type is governed by its own
    * protocol. Only children defined under the `$ref` node get `$actions` from the composing protocol.
    *
    * Example:

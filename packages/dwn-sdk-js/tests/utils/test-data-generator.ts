@@ -547,8 +547,6 @@ export class TestDataGenerator {
    * @param input.encryptSymmetricKeyWithProtocolPathDerivedKey
    *        Set to `true` to attach the symmetric key encrypted by the protocol path derived public key
    *
-   * @param input.encryptSymmetricKeyWithProtocolContextDerivedKey
-   *        Set to `true` to attach the symmetric key encrypted by the protocol context derived public key
    */
   public static async generateProtocolEncryptedRecordsWrite(input: {
     plaintextBytes: Uint8Array,
@@ -557,10 +555,7 @@ export class TestDataGenerator {
     protocolDefinition: ProtocolDefinition,
     protocolPath: string,
     protocolParentContextId?: string,
-    protocolContextDerivingRootKeyId?: string,
-    protocolContextDerivedPublicKeyJwk?: PublicKeyJwk,
     encryptSymmetricKeyWithProtocolPathDerivedKey: boolean,
-    encryptSymmetricKeyWithProtocolContextDerivedKey: boolean,
     roleAudienceKeyEncryptionInputs?: Array<{
       protocol: string;
       role: string;
@@ -581,8 +576,6 @@ export class TestDataGenerator {
       protocolDefinition,
       protocolPath,
       protocolParentContextId,
-      protocolContextDerivingRootKeyId,
-      protocolContextDerivedPublicKeyJwk,
     } = input;
 
     // encrypt the plaintext data for the target with a randomly generated symmetric key
@@ -631,10 +624,6 @@ export class TestDataGenerator {
 
       encryptionInput.keyEncryptionInputs.push(protocolPathDerivedKeyEncryptionInput);
     }
-
-    void protocolContextDerivingRootKeyId;
-    void protocolContextDerivedPublicKeyJwk;
-    void input.encryptSymmetricKeyWithProtocolContextDerivedKey;
 
     for (const roleAudienceInput of input.roleAudienceKeyEncryptionInputs ?? []) {
       encryptionInput.keyEncryptionInputs.push({

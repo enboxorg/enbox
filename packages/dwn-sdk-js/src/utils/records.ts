@@ -197,23 +197,22 @@ export class Records {
   ): string[] {
 
     const descriptor = recordsWriteMessage.descriptor;
-    const contextId = recordsWriteMessage.contextId;
-
-    let fullDerivationPath;
     if (keyDerivationScheme === KeyDerivationScheme.ProtocolPath) {
-      fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
-    } else if (keyDerivationScheme === KeyDerivationScheme.RoleAudience) {
-      fullDerivationPath = [
+      return Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
+    }
+
+    if (keyDerivationScheme === KeyDerivationScheme.RoleAudience) {
+      return [
         KeyDerivationScheme.RoleAudience,
         descriptor.protocol,
         descriptor.protocolPath
       ];
-    } else {
-      // `protocolContext` scheme
-      fullDerivationPath = Records.constructKeyDerivationPathUsingProtocolContextScheme(contextId);
     }
 
-    return fullDerivationPath;
+    throw new DwnError(
+      DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound,
+      `Unsupported key derivation scheme '${keyDerivationScheme as string}'.`
+    );
   }
 
   /**
@@ -230,28 +229,6 @@ export class Records {
       KeyDerivationScheme.ProtocolPath,
       descriptor.protocol,
       ...protocolPathSegments
-    ];
-
-    return fullDerivationPath;
-  }
-
-  /**
-   * Constructs the full key derivation path using `protocolContext` scheme.
-   *
-   * NOTE on protocol composition: When a context tree spans two protocols via `$ref` composition,
-   * the root `contextId` segment (the `$ref` parent record's ID) is shared across both protocols.
-   * This means ProtocolContext-encrypted records from the composing protocol and the referenced
-   * protocol derive the same context key. This is by design — it enables multi-party access within
-   * a shared context (e.g., thread participants can decrypt messages from both the threads protocol
-   * and composing protocols that attach to those threads).
-   */
-  public static constructKeyDerivationPathUsingProtocolContextScheme(contextId: string): string[] {
-    // TODO: Extend key derivation support to include the full contextId (https://github.com/enboxorg/enbox/issues/99)
-    const firstContextSegment = contextId.split('/')[0];
-
-    const fullDerivationPath = [
-      KeyDerivationScheme.ProtocolContext,
-      firstContextSegment
     ];
 
     return fullDerivationPath;

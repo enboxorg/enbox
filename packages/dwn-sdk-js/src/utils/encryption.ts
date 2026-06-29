@@ -77,22 +77,6 @@ export type KeyUnwrapPayload = {
   keyEncryption: KeyEncryption;
 };
 
-export type JweKeyUnwrapPayload = KeyUnwrapPayload;
-export type JweEncryption = DwnEncryption;
-export type JweProtectedHeader = {
-  alg: KeyAgreementAlgorithm;
-  enc: ContentEncryptionAlgorithm;
-};
-export type JweRecipientHeader = {
-  derivationScheme: KeyDerivationScheme;
-  epk?: PublicKeyJwk;
-  kid?: string;
-};
-export type JweRecipient = {
-  encrypted_key?: string;
-  header: JweRecipientHeader;
-};
-
 export class Encryption {
   public static async encrypt(
     algorithm: ContentEncryptionAlgorithm,
@@ -232,13 +216,6 @@ export class Encryption {
 
   public static async getKeyId(publicKeyJwk: PublicKeyJwk): Promise<string> {
     return computeJwkThumbprint({ jwk: publicKeyJwk });
-  }
-
-  public static parseProtectedHeader(_protectedBase64url: string): JweProtectedHeader {
-    return {
-      alg : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-      enc : ContentEncryptionAlgorithm.A256CTR,
-    };
   }
 
   private static async deriveKek(

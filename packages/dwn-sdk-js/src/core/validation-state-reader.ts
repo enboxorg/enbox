@@ -183,20 +183,16 @@ export class StoreValidationStateReader implements ValidationStateReader {
       protocol          : EncryptionProtocol.uri,
       protocolPath      : EncryptionProtocol.audienceEpochPath,
       ...Records.convertTagsFilter({
-        keyId: input.keyId,
+        contextId : input.contextId,
+        epoch     : input.epoch,
+        keyId     : input.keyId,
+        protocol  : input.protocol,
+        role      : input.role,
       }),
     };
 
-    const { messages } = await this.messageStore.query(input.tenant, [filter]);
-
-    return (messages as RecordsWriteMessage[]).find((message) => {
-      const tags = message.descriptor.tags;
-      return tags?.contextId === input.contextId &&
-        tags?.epoch === input.epoch &&
-        tags?.keyId === input.keyId &&
-        tags?.protocol === input.protocol &&
-        tags?.role === input.role;
-    });
+    const { messages } = await this.messageStore.query(input.tenant, [filter], undefined, { limit: 1 });
+    return messages[0] as RecordsWriteMessage | undefined;
   }
 
   /** @inheritdoc */

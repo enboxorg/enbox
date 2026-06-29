@@ -376,6 +376,11 @@ export async function resolveKeyDecrypter(
         }
       }
     }
+
+    throw new Error(
+      `AgentDwnApi: no delivered decryption key covers encrypted record ` +
+      `'${recordsWrite.recordId}' for delegate '${granteeDid}'.`
+    );
   }
 
   return getKeyDecrypter(agent, authorDid);

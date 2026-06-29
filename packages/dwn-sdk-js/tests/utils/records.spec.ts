@@ -39,13 +39,6 @@ describe('Records', () => {
     });
   });
 
-  describe('constructKeyDerivationPathUsingProtocolContextScheme()', () => {
-    it('should construct a valid key derivation path using protocol context scheme', async () => {
-      const path = Records.constructKeyDerivationPathUsingProtocolContextScheme('rootId/childId');
-      expect(path).toEqual([KeyDerivationScheme.ProtocolContext, 'rootId']);
-    });
-  });
-
   describe('convertDateSort()', () => {
     it('should return messageTimestamp descending when no dateSort is given', () => {
       const result = Records.convertDateSort(undefined);

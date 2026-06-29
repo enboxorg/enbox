@@ -221,7 +221,7 @@ describe('dwn-protocol-cache', () => {
             recipients: [{
               header: {
                 kid              : 'root-key-1',
-                derivationScheme : KeyDerivationScheme.ProtocolContext,
+                derivationScheme : 'protocolContext',
                 derivedPublicKey : mockDerivedPublicKey,
               },
             }],
@@ -236,7 +236,7 @@ describe('dwn-protocol-cache', () => {
       expect(result).toBeUndefined();
     });
 
-    it('should return undefined when entries have no ProtocolContext recipient', async () => {
+    it('should return undefined when entries have no legacy context recipient', async () => {
       const getSigner = await createRealSigner();
       const sendDwnRpcRequest = sinon.stub().resolves({
         status  : { code: 200 },

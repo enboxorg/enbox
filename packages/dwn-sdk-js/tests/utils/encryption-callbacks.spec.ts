@@ -111,12 +111,11 @@ describe('Encryption callback interfaces', () => {
       const plaintext = 'This is a secret message';
       const plaintextBytes = Encoder.stringToBytes(plaintext);
       const encryptedRecord = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-        author                                           : alice,
-        encryptSymmetricKeyWithProtocolContextDerivedKey : false,
-        encryptSymmetricKeyWithProtocolPathDerivedKey    : true,
+        author                                        : alice,
+        encryptSymmetricKeyWithProtocolPathDerivedKey : true,
         plaintextBytes,
         protocolDefinition,
-        protocolPath                                     : 'note',
+        protocolPath                                  : 'note',
       });
       const rootKey = {
         derivedPrivateKey : privateJwk,
@@ -128,12 +127,11 @@ describe('Encryption callback interfaces', () => {
       const plaintextA = await DataStream.toBytes(decryptedStreamA);
       const keyDecrypter = createKeyDecrypter(privateJwk, rootKeyId);
       const encryptedRecord2 = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-        author                                           : alice,
-        encryptSymmetricKeyWithProtocolContextDerivedKey : false,
-        encryptSymmetricKeyWithProtocolPathDerivedKey    : true,
+        author                                        : alice,
+        encryptSymmetricKeyWithProtocolPathDerivedKey : true,
         plaintextBytes,
         protocolDefinition,
-        protocolPath                                     : 'note',
+        protocolPath                                  : 'note',
       });
       const decryptedStreamB = await Records.decrypt(encryptedRecord2.message, keyDecrypter, encryptedRecord2.dataStream);
       const plaintextB = await DataStream.toBytes(decryptedStreamB);
@@ -159,12 +157,11 @@ describe('Encryption callback interfaces', () => {
       }, rootKeyId, privateJwk);
       const alice = await TestDataGenerator.generatePersona();
       const encryptedRecord = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-        author                                           : alice,
-        encryptSymmetricKeyWithProtocolContextDerivedKey : false,
-        encryptSymmetricKeyWithProtocolPathDerivedKey    : true,
-        plaintextBytes                                   : Encoder.stringToBytes('secret'),
+        author                                        : alice,
+        encryptSymmetricKeyWithProtocolPathDerivedKey : true,
+        plaintextBytes                                : Encoder.stringToBytes('secret'),
         protocolDefinition,
-        protocolPath                                     : 'note',
+        protocolPath                                  : 'note',
       });
       const otherPrivateKey = await X25519.generateKey() as PrivateKeyJwk;
 

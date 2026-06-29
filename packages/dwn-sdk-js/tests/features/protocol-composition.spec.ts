@@ -2551,12 +2551,11 @@ export function testProtocolComposition(): void {
 
         const encryptedComment = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
           plaintextBytes,
-          author                                           : alice,
-          protocolDefinition                               : encryptedComments,
-          protocolPath                                     : 'thread/comment',
-          protocolParentContextId                          : threadContextId,
-          encryptSymmetricKeyWithProtocolPathDerivedKey    : true,
-          encryptSymmetricKeyWithProtocolContextDerivedKey : false,
+          author                                        : alice,
+          protocolDefinition                            : encryptedComments,
+          protocolPath                                  : 'thread/comment',
+          protocolParentContextId                       : threadContextId,
+          encryptSymmetricKeyWithProtocolPathDerivedKey : true,
         });
 
         const commentWriteReply = await dwn.processMessage(

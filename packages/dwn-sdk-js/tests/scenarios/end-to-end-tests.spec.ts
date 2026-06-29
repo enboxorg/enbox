@@ -165,14 +165,13 @@ export function testEndToEndScenarios(): void {
       // 4. Alice writes a chat message in the thread.
       const messageByAlice = 'Message from Alice';
       const chatMessageByAlice = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-        plaintextBytes                                   : Encoder.stringToBytes(messageByAlice),
-        author                                           : alice,
-        protocolDefinition                               : protocolDefinitionForAlice,
-        protocolPath                                     : 'thread/chat',
-        protocolParentContextId                          : threadRecord.message.contextId,
-        encryptSymmetricKeyWithProtocolPathDerivedKey    : true,
-        encryptSymmetricKeyWithProtocolContextDerivedKey : false,
-        roleAudienceKeyEncryptionInputs                  : [{
+        plaintextBytes                                : Encoder.stringToBytes(messageByAlice),
+        author                                        : alice,
+        protocolDefinition                            : protocolDefinitionForAlice,
+        protocolPath                                  : 'thread/chat',
+        protocolParentContextId                       : threadRecord.message.contextId,
+        encryptSymmetricKeyWithProtocolPathDerivedKey : true,
+        roleAudienceKeyEncryptionInputs               : [{
           epoch     : audienceEpoch.epoch,
           protocol  : audienceEpoch.protocol,
           publicKey : audiencePublicKey,

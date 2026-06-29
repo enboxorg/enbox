@@ -12,7 +12,7 @@ import type {
   RecordsWriteSignaturePayload,
   RecordsWriteTags
 } from '../types/records-types.js';
-import type { EncryptionInput, JweEncryption } from '../utils/encryption.js';
+import type { DwnEncryption, EncryptionInput } from '../utils/encryption.js';
 import type { GenericMessage, GenericSignaturePayload } from '../types/message-types.js';
 
 import { Cid } from '../utils/cid.js';
@@ -813,7 +813,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     contextId: string,
     descriptorCid: string,
     attestation: GeneralJws | undefined,
-    encryption: JweEncryption | undefined,
+    encryption: DwnEncryption | undefined,
     signer: MessageSigner,
     delegatedGrantId?: string,
     permissionGrantId?: string,

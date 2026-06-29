@@ -60,8 +60,8 @@ async function raceAgainstTick<T>(
 
 const mockContextKeyData: DerivedPrivateJwk = {
   rootKeyId         : 'root-1',
-  derivationScheme  : KeyDerivationScheme.ProtocolContext,
-  derivationPath    : [KeyDerivationScheme.ProtocolContext, 'ctx-1'],
+  derivationScheme  : KeyDerivationScheme.ProtocolPath,
+  derivationPath    : [KeyDerivationScheme.ProtocolPath, 'https://proto.example.com'],
   derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
 };
 

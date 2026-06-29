@@ -90,7 +90,7 @@ describe('dwn-key-delivery', () => {
   describe('writeContextKeyRecord', () => {
     const contextKeyData: DerivedPrivateJwk = {
       rootKeyId         : 'root-key-1',
-      derivationScheme  : KeyDerivationScheme.ProtocolContext,
+      derivationScheme  : KeyDerivationScheme.ProtocolPath,
       derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
     };
 
@@ -302,7 +302,7 @@ describe('dwn-key-delivery', () => {
     it('should fetch context key locally when ownerDid === requesterDid', async () => {
       const contextKeyData: DerivedPrivateJwk = {
         rootKeyId         : 'root-1',
-        derivationScheme  : KeyDerivationScheme.ProtocolContext,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
         derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
       };
       const encoded = new TextEncoder().encode(JSON.stringify(contextKeyData));

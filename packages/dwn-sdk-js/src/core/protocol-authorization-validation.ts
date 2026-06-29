@@ -1,17 +1,16 @@
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
-import type { RoleAudienceKeyEncryption } from '../utils/encryption.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
-import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet, ProtocolType, ProtocolTypes } from '../types/protocols-types.js';
+import type { ProtocolDefinition, ProtocolRuleSet, ProtocolType, ProtocolTypes } from '../types/protocols-types.js';
 
-import { ProtocolAction, ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
+import { ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
 import { Encryption } from '../utils/encryption.js';
 import { KeyDerivationScheme } from '../utils/hd-key.js';
 import { Records } from '../utils/records.js';
 import { validateProtocolTags } from '../utils/protocol-tags.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
-import { getRuleSetAtPath, getTypeName, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRuleSetAtPath, getTypeName, parseCrossProtocolRef } from '../utils/protocols.js';
 
 /**
  * Verifies the `protocolPath` declared in the given message matches the path of actual record chain.
@@ -175,12 +174,9 @@ export async function verifyTypeWithComposition(
 
   const protocolType = verifyType(inboundMessage, protocolTypes, declaredTypeName);
   await verifyProtocolPathEncryptionIfNeeded(
-    tenant,
     inboundMessage,
     protocolDefinition,
     protocolType,
-    validationStateReader,
-    protocolDefinitionTimestamp,
   );
 }
 
@@ -270,12 +266,9 @@ export function verifyType(
 }
 
 async function verifyProtocolPathEncryptionIfNeeded(
-  tenant: string,
   inboundMessage: RecordsWriteMessage,
   protocolDefinition: ProtocolDefinition,
   protocolType: ProtocolType,
-  validationStateReader: ValidationStateReader,
-  protocolDefinitionTimestamp?: string,
 ): Promise<void> {
   if (protocolType.encryptionRequired !== true) {
     return;
@@ -300,120 +293,6 @@ async function verifyProtocolPathEncryptionIfNeeded(
       DwnErrorCode.ProtocolAuthorizationEncryptionProtocolPathEntryMissing,
       `encrypted record is missing a protocolPath keyEncryption entry for '${inboundMessage.descriptor.protocolPath}'`
     );
-  }
-
-  const exactRuleSet = ruleSet!;
-  const roleReadRules = exactRuleSet.$actions?.filter(ProtocolAuthorizationValidation.isRoleReadRule) ?? [];
-  for (const roleRule of roleReadRules) {
-    const roleAudience = await ProtocolAuthorizationValidation.resolveRoleAudience(
-      tenant,
-      inboundMessage.contextId,
-      roleRule.role!,
-      protocolDefinition,
-      validationStateReader,
-      protocolDefinitionTimestamp,
-    );
-    const matchingEntries = inboundMessage.encryption!.keyEncryption.filter((entry): entry is RoleAudienceKeyEncryption =>
-      entry.derivationScheme === KeyDerivationScheme.RoleAudience &&
-      entry.protocol === roleAudience.protocol &&
-      entry.role === roleAudience.role
-    );
-
-    if (matchingEntries.length === 0) {
-      throw new DwnError(
-        DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEntryMissing,
-        `encrypted record is missing a roleAudience keyEncryption entry for role '${roleAudience.role}'`
-      );
-    }
-
-    let matchingEpochFound = false;
-    for (const entry of matchingEntries) {
-      const audienceEpoch = await validationStateReader.fetchAudienceEpoch({
-        tenant,
-        contextId : roleAudience.contextId,
-        epoch     : entry.epoch,
-        keyId     : entry.keyId,
-        protocol  : roleAudience.protocol,
-        role      : roleAudience.role,
-      });
-
-      if (audienceEpoch !== undefined) {
-        matchingEpochFound = true;
-        break;
-      }
-    }
-
-    if (!matchingEpochFound) {
-      throw new DwnError(
-        DwnErrorCode.ProtocolAuthorizationEncryptionAudienceEpochMissing,
-        `encrypted record references no accepted audience epoch for role '${roleAudience.role}'`
-      );
-    }
-  }
-}
-
-class ProtocolAuthorizationValidation {
-  public static isRoleReadRule(actionRule: ProtocolActionRule): boolean {
-    return actionRule.role !== undefined && actionRule.can.includes(ProtocolAction.Read);
-  }
-
-  public static async resolveRoleAudience(
-    tenant: string,
-    sourceContextId: string,
-    protocolRole: string,
-    protocolDefinition: ProtocolDefinition,
-    validationStateReader: ValidationStateReader,
-    protocolDefinitionTimestamp?: string,
-  ): Promise<{ protocol: string; role: string; contextId: string }> {
-    let roleProtocol = protocolDefinition.protocol;
-    let rolePath = protocolRole;
-
-    if (isCrossProtocolRef(protocolRole)) {
-      const parsedRole = parseCrossProtocolRef(protocolRole);
-      if (parsedRole === undefined || protocolDefinition.uses?.[parsedRole.alias] === undefined) {
-        throw new DwnError(
-          DwnErrorCode.ProtocolAuthorizationNotARole,
-          `Cross-protocol role '${protocolRole}' could not be resolved.`
-        );
-      }
-
-      roleProtocol = protocolDefinition.uses[parsedRole.alias];
-      rolePath = parsedRole.protocolPath;
-    }
-
-    const roleDefinition = roleProtocol === protocolDefinition.protocol
-      ? protocolDefinition
-      : await validationStateReader.fetchProtocolDefinition(tenant, roleProtocol, protocolDefinitionTimestamp);
-    const roleRuleSet = getRuleSetAtPath(rolePath, roleDefinition.structure);
-    if (!roleRuleSet?.$role) {
-      throw new DwnError(
-        DwnErrorCode.ProtocolAuthorizationNotARole,
-        `Protocol path ${protocolRole} does not match role record type.`
-      );
-    }
-
-    return {
-      contextId : ProtocolAuthorizationValidation.deriveRoleAudienceContextId(rolePath, sourceContextId),
-      protocol  : roleProtocol,
-      role      : rolePath,
-    };
-  }
-
-  public static deriveRoleAudienceContextId(rolePath: string, sourceContextId: string): string {
-    const roleAncestorSegmentCount = rolePath.split('/').length - 1;
-    if (roleAncestorSegmentCount === 0) {
-      return '';
-    }
-
-    const sourceContextSegments = sourceContextId.split('/');
-    if (sourceContextSegments.length < roleAncestorSegmentCount) {
-      throw new DwnError(
-        DwnErrorCode.ProtocolAuthorizationMissingContextId,
-        `Could not derive role audience context for '${rolePath}'.`
-      );
-    }
-
-    return sourceContextSegments.slice(0, roleAncestorSegmentCount).join('/');
   }
 }
 

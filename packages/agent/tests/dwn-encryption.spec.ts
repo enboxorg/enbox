@@ -111,14 +111,14 @@ describe('dwn-encryption', () => {
     it('should return a KeyDecrypter with correct rootKeyId and derivationScheme', () => {
       const contextKey: DerivedPrivateJwk = {
         rootKeyId         : 'ctx-root-key',
-        derivationScheme  : KeyDerivationScheme.ProtocolContext,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
         derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
       };
 
       const result = buildContextKeyDecrypter(contextKey);
 
       expect(result.rootKeyId).toBe('ctx-root-key');
-      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolContext);
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(typeof result.decrypt).toBe('function');
     });
   });
@@ -594,6 +594,38 @@ describe('dwn-encryption', () => {
       );
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+    });
+
+    it('should fail closed for a delegate when no delivered key covers the record', async () => {
+      const mockAgent = makeAliceAgent();
+      const delegateCache = {
+        get: sinon.stub().returns([{
+          derivedPrivateKey: {
+            rootKeyId         : 'other-root',
+            derivationScheme  : KeyDerivationScheme.ProtocolPath,
+            derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
+            derivationPath    : [KeyDerivationScheme.ProtocolPath, 'https://other.example.com'],
+          },
+          protocol : 'https://other.example.com',
+          scope    : { kind: 'protocol' },
+        }]),
+      };
+
+      const recordsWrite = {
+        recordId   : 'rec-uncovered',
+        contextId  : 'rec-uncovered',
+        descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
+      } as unknown as RecordsWriteMessage;
+
+      await expect(resolveKeyDecrypter(
+        mockAgent, 'did:example:alice', recordsWrite, undefined,
+        { get: sinon.stub().returns(undefined), set: sinon.stub() },
+        sinon.stub(),
+        delegateCache,
+        'did:example:delegate',
+      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+
+      expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
     });
   });
 });

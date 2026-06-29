@@ -1,6 +1,6 @@
 import type { GeneralJws } from '../types/jws-types.js';
 import type { MessageSigner } from '../types/signer.js';
-import type { EncryptionInput, JweEncryption } from '../utils/encryption.js';
+import type { DwnEncryption, EncryptionInput } from '../utils/encryption.js';
 import type { RecordsWriteAttestationPayload, RecordsWriteMessage, RecordsWriteSignaturePayload } from '../types/records-types.js';
 
 import { Cid } from '../utils/cid.js';
@@ -14,7 +14,7 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 /** Creates the RecordsWrite `encryption` property if encryption input is given. */
 export async function createEncryptionProperty(
   encryptionInput: EncryptionInput | undefined,
-): Promise<JweEncryption | undefined> {
+): Promise<DwnEncryption | undefined> {
   if (encryptionInput === undefined) {
     return undefined;
   }
@@ -45,7 +45,7 @@ export async function createSignerSignature(input: {
   contextId: string,
   descriptorCid: string,
   attestation: GeneralJws | undefined,
-  encryption: JweEncryption | undefined,
+  encryption: DwnEncryption | undefined,
   signer: MessageSigner,
   delegatedGrantId?: string,
   permissionGrantId?: string,

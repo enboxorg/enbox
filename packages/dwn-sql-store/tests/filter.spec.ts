@@ -386,6 +386,49 @@ describe('filterSelectQuery', () => {
       expect(results[0].messageCid).toBe('cid-1');
     });
 
+    it('should require all tag predicates to match the same message', async () => {
+      const id1 = await insertMessage({ tenant: 't1', messageCid: 'cid-1' });
+      const id2 = await insertMessage({ tenant: 't1', messageCid: 'cid-2' });
+      const id3 = await insertMessage({ tenant: 't1', messageCid: 'cid-3' });
+
+      await insertTag(id1, 'protocol', 'https://example.com/chat');
+      await insertTag(id1, 'contextId', 'thread1');
+      await insertTag(id1, 'role', 'thread/participant');
+      await insertTag(id1, 'epoch', undefined, 1);
+      await insertTag(id1, 'keyId', 'key1');
+
+      await insertTag(id2, 'protocol', 'https://example.com/chat');
+      await insertTag(id2, 'contextId', 'thread1');
+      await insertTag(id2, 'role', 'thread/moderator');
+      await insertTag(id2, 'epoch', undefined, 1);
+      await insertTag(id2, 'keyId', 'key1');
+
+      await insertTag(id3, 'protocol', 'https://example.com/chat');
+      await insertTag(id3, 'contextId', 'thread2');
+      await insertTag(id3, 'role', 'thread/participant');
+      await insertTag(id3, 'epoch', undefined, 1);
+      await insertTag(id3, 'keyId', 'key1');
+
+      const filters: Filter[] = [{
+        'tag.contextId' : 'thread1',
+        'tag.epoch'     : 1,
+        'tag.keyId'     : 'key1',
+        'tag.protocol'  : 'https://example.com/chat',
+        'tag.role'      : 'thread/participant',
+      }];
+
+      let query = db
+        .selectFrom('messageStoreMessages')
+        .select('messageCid')
+        .distinct()
+        .where('tenant', '=', 't1');
+
+      query = filterSelectQuery(filters, query);
+      const results = await query.execute();
+
+      expect(results).toEqual([{ messageCid: 'cid-1' }]);
+    });
+
     it('should filter tags with range operators on numbers', async () => {
       const id1 = await insertMessage({ tenant: 't1', messageCid: 'cid-1' });
       const id2 = await insertMessage({ tenant: 't1', messageCid: 'cid-2' });

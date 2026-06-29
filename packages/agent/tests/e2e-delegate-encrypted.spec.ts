@@ -700,36 +700,18 @@ describe('e2e: delegate + encrypted protocol', () => {
       });
       const commentWrite = recQuery.entries![0] as RecordsWriteMessage;
 
-      // resolveKeyDecrypter with granteeDid pointing to our delegate:
-      // The cache has a 'note' key but the record is at 'comment'.
-      // No exact-path match for 'comment', no protocol-wide key →
-      // falls through to KMS. But we use the DELEGATE agent which
-      // does NOT have the owner's X25519 key → the decrypter's decrypt()
-      // call will fail at runtime.
-      const decrypter = await resolveKeyDecrypter(
-        delegateHarness.agent,
-        walletIdentity.did.uri,
-        commentWrite,
-        walletIdentity.did.uri,
-        new TtlCache({ ttl: 60_000 }),
-        async () => undefined,
-        cache,
-        siblingDelegateDid,
-      );
-
-      // The decrypter was resolved (KMS fallback), but calling decrypt()
-      // will fail because the delegate agent has no owner key. This
-      // proves the delegate cache correctly refused the sibling path.
       await expect(
-        decrypter.decrypt(
-          [KeyDerivationScheme.ProtocolPath, multiTypeProtocol.protocol, 'comment'],
-          {
-            encryptedKey       : new Uint8Array(),
-            ephemeralPublicKey : commentWrite.encryption!.keyEncryption[0].ephemeralPublicKey,
-            keyEncryption      : commentWrite.encryption!.keyEncryption[0],
-          },
+        resolveKeyDecrypter(
+          delegateHarness.agent,
+          walletIdentity.did.uri,
+          commentWrite,
+          walletIdentity.did.uri,
+          new TtlCache({ ttl: 60_000 }),
+          async () => undefined,
+          cache,
+          siblingDelegateDid,
         )
-      ).rejects.toThrow();
+      ).rejects.toThrow('no delivered decryption key covers encrypted record');
     });
 
     it('should reject decryption when exact-path key does not match record path', async () => {
