@@ -1,5 +1,4 @@
 import type {
-  DerivedPrivateJwk,
   DwnConfig,
   EncryptionKeyDeriver,
   EventLog,
@@ -77,14 +76,6 @@ import {
   detectNewParticipants as detectNewParticipantsFn,
 } from './protocol-utils.js';
 
-// Import extracted key delivery functions
-import {
-  eagerSendContextKeyRecord as eagerSendContextKeyRecordFn,
-  ensureKeyDeliveryProtocol as ensureKeyDeliveryProtocolFn,
-  fetchContextKeyRecord as fetchContextKeyRecordFn,
-  writeContextKeyRecord as writeContextKeyRecordFn,
-} from './dwn-key-delivery.js';
-
 // Import extracted protocol definition fetching functions
 import {
   fetchRemoteProtocolDefinition as fetchRemoteProtocolDefinitionFn,
@@ -154,15 +145,6 @@ export class AgentDwnApi {
   });
 
   /**
-   * Context-derived private key cache — stores DerivedPrivateJwk for contexts
-   * where the current user is a participant (not the creator).
-   * Keyed by `ctx~${authorDid}~${rootContextId}`. TTL 30 minutes.
-   */
-  private readonly _contextDerivedKeyCache = new TtlCache<string, DerivedPrivateJwk>({
-    ttl: 30 * 60 * 1000
-  });
-
-  /**
    * Delegate decryption key cache — stores scope-aware decryption keys
    * delivered to delegates during the connect flow. These keys enable
    * delegates to decrypt encrypted records without possessing the owner's
@@ -189,17 +171,6 @@ export class AgentDwnApi {
 
   /** Lazy-initialized local DWN discovery instance. */
   private _localDwnDiscovery?: LocalDwnDiscovery;
-
-  /**
-   * Tracks fire-and-forget eager-send promises dispatched by
-   * `writeContextKeyRecord`. The set is consumed by `drainPendingEagerSends()`
-   * during test-harness teardown so orphan promises cannot outlive the agent
-   * and touch closed LevelDB handles or nulled state.
-   *
-   * Entries auto-remove on settlement via the `.finally` attached in
-   * `trackEagerSend`.
-   */
-  private readonly _pendingEagerSends: Set<Promise<void>> = new Set();
 
   constructor(params: DwnApiParams) {
     const { agent, localDwnStrategy = 'prefer' } = params;
@@ -501,11 +472,7 @@ export class AgentDwnApi {
       });
     }
 
-    // Post-write key delivery and reply decryption are independent — run in parallel.
-    await Promise.all([
-      this.postWriteKeyDelivery(request, message, reply),
-      this.maybeDecryptReply(request, reply),
-    ]);
+    await this.maybeDecryptReply(request, reply);
 
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
@@ -635,17 +602,6 @@ export class AgentDwnApi {
     // Returns an object containing the reply from processing the message, the original message,
     // and the content identifier (CID) of the message.
     return { reply, message, messageCid };
-  }
-
-  /** Current DWN encryption does not emit post-write legacy key-delivery records. */
-  private async postWriteKeyDelivery<T extends DwnInterface>(
-    request: ProcessDwnRequest<T>,
-    message: DwnMessage[T],
-    reply: DwnMessageReply[T],
-  ): Promise<void> {
-    void request;
-    void message;
-    void reply;
   }
 
   private async sendDwnRpcRequest<T extends DwnInterface>({
@@ -1038,10 +994,10 @@ export class AgentDwnApi {
   }
 
   /**
-   * Analyses a record write to determine which DIDs need context key delivery.
+   * Analyses a record write to determine which DIDs join the readable audience.
    *
    * @param params - Parameters for participant detection
-   * @returns Set of DIDs that need context key delivery
+   * @returns Set of DIDs that join the readable audience
    */
   public detectNewParticipants(params: {
     protocolDefinition: ProtocolDefinition;
@@ -1134,8 +1090,6 @@ export class AgentDwnApi {
   ): Promise<void> {
     return maybeDecryptReplyFn(
       request, reply, this.agent,
-      this._contextDerivedKeyCache,
-      this.fetchContextKeyRecord.bind(this),
       this._delegateDecryptionKeyCache,
     );
   }
@@ -1191,35 +1145,6 @@ export class AgentDwnApi {
     return dwnMessageWithData;
   }
 
-  // ---------------------------------------------------------------------------
-  // Key Delivery Protocol
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Cache for key delivery protocol installation status per tenant.
-   * Once confirmed installed, we skip re-checking for 21 days.
-   */
-  private readonly _keyDeliveryProtocolInstalledCache = new TtlCache<string, boolean>({
-    ttl : 21 * 24 * 60 * 60 * 1000,
-    max : 1000,
-  });
-
-  /**
-   * Ensures the key delivery protocol is installed on the given tenant's DWN,
-   * with `$keyAgreement` keys injected.
-   *
-   * @param tenantDid - The DID of the DWN owner
-   */
-  public async ensureKeyDeliveryProtocol(tenantDid: string): Promise<void> {
-    return ensureKeyDeliveryProtocolFn(
-      this.agent, tenantDid,
-      this.processRequest.bind(this),
-      this.getProtocolDefinition.bind(this),
-      this._keyDeliveryProtocolInstalledCache,
-      this._protocolDefinitionCache,
-    );
-  }
-
   /**
    * Imports scope-aware decryption keys for delegate sessions.
    *
@@ -1255,106 +1180,5 @@ export class AgentDwnApi {
     } else {
       this._delegateDecryptionKeyCache.clear();
     }
-  }
-
-  /**
-   * Registers a fire-and-forget eager-send promise in the in-flight tracker so
-   * it can be awaited by `drainPendingEagerSends()` during teardown. The entry
-   * auto-removes on settlement via `.finally`.
-   *
-   * The promise is returned **unchanged** so callers can still chain `.catch`
-   * on it for observability (e.g. the existing `console.warn` on failure).
-   *
-   * @param p - The eager-send promise to track. Must always resolve (callers
-   *   are expected to attach a `.catch` handler before passing).
-   * @returns The same `p`, unchanged.
-   */
-  private trackEagerSend(p: Promise<void>): Promise<void> {
-    this._pendingEagerSends.add(p);
-    p.finally((): void => { this._pendingEagerSends.delete(p); });
-    return p;
-  }
-
-  /**
-   * Waits for all currently-tracked eager-send promises to settle. Used by
-   * the test harness during teardown (`clearStorage()`/`closeStorage()`) to
-   * prevent orphan promises from touching closed stores or nulled state.
-   *
-   * Snapshot semantics: awaits only the sends tracked at the moment of
-   * invocation. Sends registered **after** this call begins are not joined
-   * into its drain — a subsequent `drainPendingEagerSends()` is needed to
-   * await them.
-   *
-   * Fast path: when no sends are tracked, resolves immediately without
-   * invoking `Promise.allSettled([])`.
-   *
-   * @returns A promise that resolves to `undefined` once all snapshotted
-   *   sends have settled. Never rejects (uses `allSettled` semantics).
-   */
-  public async drainPendingEagerSends(): Promise<void> {
-    if (this._pendingEagerSends.size === 0) {
-      return;
-    }
-    const snapshot = [...this._pendingEagerSends];
-    await Promise.allSettled(snapshot);
-  }
-
-  /**
-   * Writes a `contextKey` record to the owner's DWN, delivering an encrypted
-   * context key to a participant.
-   *
-   * @param params - The write parameters
-   * @returns The recordId of the written contextKey record
-   */
-  public async writeContextKeyRecord(params: {
-    tenantDid: string;
-    recipientDid: string;
-    contextKeyData: DerivedPrivateJwk;
-    sourceProtocol: string;
-    sourceContextId: string;
-    recipientKeyDeliveryPublicKey?: { rootKeyId: string; publicKeyJwk: PublicKeyJwk };
-  }): Promise<string> {
-    return writeContextKeyRecordFn(
-      this.agent, params,
-      this.processRequest.bind(this),
-      this.ensureKeyDeliveryProtocol.bind(this),
-      this.eagerSendContextKeyRecord.bind(this),
-      this.trackEagerSend.bind(this),
-    );
-  }
-
-  /**
-   * Eagerly sends a contextKey record to the tenant's remote DWN.
-   * This is best-effort — sync guarantees eventual consistency regardless.
-   */
-  private async eagerSendContextKeyRecord(
-    tenantDid: string,
-    contextKeyMessage: DwnMessage[DwnInterface.RecordsWrite],
-  ): Promise<void> {
-    return eagerSendContextKeyRecordFn(
-      this.agent, tenantDid, contextKeyMessage,
-      this.getDwnMessage.bind(this),
-      this.sendDwnRpcRequest.bind(this),
-      this.getDwnEndpointUrlsForTarget.bind(this),
-    );
-  }
-
-  /**
-   * Fetches and decrypts a `contextKey` record from a DWN, returning the
-   * `DerivedPrivateJwk` payload.
-   *
-   * @param params - The fetch parameters
-   * @returns The decrypted `DerivedPrivateJwk`, or `undefined` if no matching record found
-   */
-  public async fetchContextKeyRecord(params: {
-    ownerDid: string;
-    requesterDid: string;
-    sourceProtocol: string;
-    sourceContextId: string;
-  }): Promise<DerivedPrivateJwk | undefined> {
-    return fetchContextKeyRecordFn(
-      this.agent, params,
-      this.processRequest.bind(this),
-    );
   }
 }

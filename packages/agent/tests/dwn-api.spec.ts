@@ -1,4 +1,4 @@
-import type { Dwn, ProtocolDefinition, RecordsReadReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { JwkParamsOkpPublic, PrivateKeyJwk } from '@enbox/crypto';
 
 import { Convert } from '@enbox/common';
@@ -8,10 +8,8 @@ import {
   DataStream,
   DwnInterfaceName,
   DwnMethodName,
-  Encryption,
   KeyDerivationScheme,
   Message,
-  Records,
   TestDataGenerator,
   Time
 } from '@enbox/dwn-sdk-js';
@@ -28,7 +26,6 @@ import type { DwnPermissionScope } from '../src/types/dwn.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
 import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
-import { KeyDeliveryProtocolDefinition } from '../src/store-data-protocols.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -2633,7 +2630,7 @@ describe('Encryption Callback Factories', () => {
       expect(typeof keyDecrypter.decrypt).toBe('function');
     });
 
-    it('should decrypt ECDH-ES payload through KMS when callback is invoked', async () => {
+    it('should decrypt wrapped CEK payload through KMS when callback is invoked', async () => {
       const { Encryption, HdKey, KeyDerivationScheme } = await import('@enbox/dwn-sdk-js');
       const { X25519 } = await import('@enbox/crypto');
 
@@ -2648,7 +2645,7 @@ describe('Encryption Callback Factories', () => {
       const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
       const leafPublicKeyJwk = await X25519.getPublicKey({ key: leafPrivateKeyJwk });
 
-      // Wrap a random 32-byte CEK using ECDH-ES key agreement (AES Key Wrap requires ≥16-byte key)
+      // Wrap a random 32-byte CEK using the DWN key-agreement envelope.
       const { CryptoUtils } = await import('@enbox/crypto');
       const cek = CryptoUtils.randomBytes(32);
       const wrapped = await Encryption.wrapKey(leafPublicKeyJwk, cek, {
@@ -2747,7 +2744,7 @@ describe('Encryption Callback Factories', () => {
     });
   });
 
-  describe('Auto-Encryption (PR #4)', () => {
+  describe('Auto-Encryption', () => {
     const encryptedProtocolDefinition = {
       published : true,
       protocol  : 'https://protocol.xyz/encrypted-notes',
@@ -3419,7 +3416,7 @@ describe('Encryption Callback Factories', () => {
     });
   });
 
-  describe('Multi-Party Context Encryption (PR #5)', () => {
+  describe('Protocol-path encryption for readable audiences', () => {
     // A protocol with $role records — indicates multi-party intent
     const multiPartyProtocolDefinition = {
       published : true,
@@ -3601,7 +3598,7 @@ describe('Encryption Callback Factories', () => {
       expect(recordsWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
 
-    it('context creator should decrypt root record via RecordsRead', async () => {
+    it('owner should decrypt root record via RecordsRead', async () => {
       // Configure protocol
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -3633,7 +3630,7 @@ describe('Encryption Callback Factories', () => {
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
 
-      // Read with auto-decrypt — context creator path
+      // Read with auto-decrypt through the owner's protocol-path key.
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -3649,7 +3646,7 @@ describe('Encryption Callback Factories', () => {
       expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
     });
 
-    it('full round-trip: root + child with context encryption', async () => {
+    it('full round-trip: root + child with protocol-path encryption', async () => {
       // Configure protocol
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -3803,484 +3800,6 @@ describe('Encryption Callback Factories', () => {
   });
 });
 
-describe('Key Delivery Protocol Infrastructure (PR A)', () => {
-  let testHarness: PlatformAgentTestHarness;
-  let alice: BearerIdentity;
-
-  beforeAll(async () => {
-    testHarness = await PlatformAgentTestHarness.setup({
-      agentClass  : TestAgent,
-      agentStores : 'dwn'
-    });
-  });
-
-  beforeEach(async () => {
-    sinon.restore();
-    await testHarness.clearStorage();
-    await testHarness.createAgentDid();
-    alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
-  });
-
-  afterAll(async () => {
-    await testHarness.clearStorage();
-    await testHarness.closeStorage();
-  });
-
-  describe('ensureKeyDeliveryProtocol()', () => {
-    it('should install the key delivery protocol on first call', async () => {
-      // Before: verify protocol is not installed
-      const { reply: beforeReply } = await testHarness.agent.dwn.processRequest({
-        author        : alice.did.uri,
-        target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
-        messageParams : {
-          filter: { protocol: KeyDeliveryProtocolDefinition.protocol }
-        }
-      });
-      expect(beforeReply.entries).toHaveLength(0);
-
-      // Act: install key delivery protocol
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
-
-      // After: verify protocol is installed with $keyAgreement keys
-      const { reply: afterReply } = await testHarness.agent.dwn.processRequest({
-        author        : alice.did.uri,
-        target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
-        messageParams : {
-          filter: { protocol: KeyDeliveryProtocolDefinition.protocol }
-        }
-      });
-      expect(afterReply.entries).toHaveLength(1);
-
-      const definition = afterReply.entries![0].descriptor.definition;
-      expect(definition.protocol).toBe('https://identity.foundation/protocols/key-delivery');
-
-      // Verify $keyAgreement keys were injected at the protocol root and contextKey path.
-      const contextKeyRuleSet = definition.structure.contextKey as any;
-      expect(definition).toHaveProperty('$keyAgreement');
-      expect(definition.$keyAgreement.publicKeyJwk).toHaveProperty('crv', 'X25519');
-      expect(contextKeyRuleSet).toHaveProperty('$keyAgreement');
-      expect(contextKeyRuleSet.$keyAgreement.publicKeyJwk).toHaveProperty('crv', 'X25519');
-    });
-
-    it('should skip installation on subsequent calls (cache hit)', async () => {
-      // First call — installs
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
-
-      // Spy on processRequest to detect further calls
-      const processRequestSpy = spyOn(testHarness.agent.dwn, 'processRequest');
-
-      // Second call — should be cached, no processRequest for ProtocolsConfigure
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
-
-      // processRequest should not have been called at all (cache returns early)
-      expect(processRequestSpy.mock.calls.length).toBe(0);
-
-      processRequestSpy.mockRestore();
-    });
-  });
-
-  describe('writeContextKeyRecord()', () => {
-    it('should write an encrypted contextKey record with correct tags (fallback path)', async () => {
-      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
-
-      // Ensure Bob's key delivery protocol is also installed (for recipient key resolution)
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
-
-      // Create a mock DerivedPrivateJwk payload
-      const mockContextKey = {
-        rootKeyId         : `${alice.did.uri}#enc`,
-        derivationScheme  : 'protocolContext',
-        derivationPath    : ['protocolContext', 'mock-context-id-123'],
-        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'test', d: 'test' },
-      };
-
-      // No recipientKeyDeliveryPublicKey → fallback to owner's ProtocolPath key
-      const recordId = await testHarness.agent.dwn.writeContextKeyRecord({
-        tenantDid       : alice.did.uri,
-        recipientDid    : bob.did.uri,
-        contextKeyData  : mockContextKey as any,
-        sourceProtocol  : 'https://protocol.xyz/multi-party-chat',
-        sourceContextId : 'mock-context-id-123',
-      });
-
-      expect(typeof recordId).toBe('string');
-      expect(recordId).not.toHaveLength(0);
-
-      // Verify the record was written — query as Alice (the owner)
-      const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
-        author        : alice.did.uri,
-        target        : alice.did.uri,
-        messageType   : DwnInterface.RecordsQuery,
-        messageParams : {
-          filter: {
-            protocol     : KeyDeliveryProtocolDefinition.protocol,
-            protocolPath : 'contextKey',
-          }
-        }
-      });
-
-      expect(queryReply.entries).toHaveLength(1);
-
-      const entry = queryReply.entries![0] as RecordsWriteMessage;
-      expect(entry.recordId).toBe(recordId);
-
-      // Verify the record is encrypted
-      expect(entry).toHaveProperty('encryption');
-      expect(entry.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
-      expect(entry.encryption!.keyEncryption).toHaveLength(1);
-
-      // Fallback path encrypts to the owner's ProtocolPath key
-      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
-
-      // Verify recipient
-      expect(entry.descriptor).toHaveProperty('recipient', bob.did.uri);
-    }, 10000);
-
-    it('should encrypt contextKey to the recipient\'s key when recipientKeyDeliveryPublicKey is provided', async () => {
-      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
-
-      // Install key delivery protocol for both
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
-
-      // Derive Bob's key-delivery ProtocolPath public key
-      const bobKeyInfo = await (testHarness.agent.dwn as any).getEncryptionKeyInfo(bob.did.uri);
-      const bobKeyDeliveryPubKey = await testHarness.agent.keyManager.derivePublicKey({
-        keyUri         : bobKeyInfo.keyUri,
-        derivationPath : ['protocolPath', KeyDeliveryProtocolDefinition.protocol, 'contextKey'],
-      });
-
-      const mockContextKey = {
-        rootKeyId         : `${alice.did.uri}#enc`,
-        derivationScheme  : 'protocolContext',
-        derivationPath    : ['protocolContext', 'test-context-id-789'],
-        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'test', d: 'test' },
-      };
-
-      const recordId = await testHarness.agent.dwn.writeContextKeyRecord({
-        tenantDid                     : alice.did.uri,
-        recipientDid                  : bob.did.uri,
-        contextKeyData                : mockContextKey as any,
-        sourceProtocol                : 'https://protocol.xyz/multi-party-chat',
-        sourceContextId               : 'test-context-id-789',
-        recipientKeyDeliveryPublicKey : {
-          rootKeyId    : bobKeyInfo.keyId,
-          publicKeyJwk : bobKeyDeliveryPubKey,
-        },
-      });
-
-      expect(typeof recordId).toBe('string');
-
-      // Verify encryption uses ProtocolPath with Bob's rootKeyId
-      const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
-        author        : alice.did.uri,
-        target        : alice.did.uri,
-        messageType   : DwnInterface.RecordsQuery,
-        messageParams : {
-          filter: {
-            protocol     : KeyDeliveryProtocolDefinition.protocol,
-            protocolPath : 'contextKey',
-          }
-        }
-      });
-
-      const entry = queryReply.entries![0] as RecordsWriteMessage;
-      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
-      expect(entry.encryption!.keyEncryption[0].keyId).toBe(await Encryption.getKeyId(bobKeyDeliveryPubKey));
-
-      // Verify Bob can decrypt it
-      const { reply: readReply } = await testHarness.agent.dwn.processRequest({
-        author        : alice.did.uri,
-        target        : alice.did.uri,
-        messageType   : DwnInterface.RecordsRead,
-        messageParams : { filter: { recordId } },
-      });
-
-      const readResult = readReply as RecordsReadReply;
-      const recordsWrite = readResult.entry!.recordsWrite!;
-      const keyDecrypter = await (testHarness.agent.dwn as any).getKeyDecrypter(bob.did.uri);
-      const decryptedStream = await Records.decrypt(
-        recordsWrite,
-        keyDecrypter,
-        readResult.entry!.data as ReadableStream<Uint8Array>,
-      );
-      const decryptedBytes = await DataStream.toBytes(decryptedStream);
-      const payload = JSON.parse(new TextDecoder().decode(decryptedBytes));
-      expect(payload.rootKeyId).toBe(mockContextKey.rootKeyId);
-      expect(payload.derivationScheme).toBe(mockContextKey.derivationScheme);
-    }, 10000);
-
-    it('should eagerly send the contextKey record to the tenant\'s remote DWN', async () => {
-      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
-
-      // Stub DID dereference to return a DWN service endpoint for Alice
-      sinon.stub(testHarness.agent.did, 'dereference').resolves({
-        dereferencingMetadata : {},
-        contentMetadata       : {},
-        contentStream         : {
-          id              : '#dwn',
-          type            : 'DecentralizedWebNode',
-          serviceEndpoint : ['https://dwn.example.com'],
-        }
-      });
-
-      // Stub the RPC sendDwnRequest to capture the eager send call
-      const sendDwnRequestStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').resolves({
-        status: { code: 202, detail: 'Accepted' },
-      });
-
-      const mockContextKey = {
-        rootKeyId         : `${alice.did.uri}#enc`,
-        derivationScheme  : 'protocolContext',
-        derivationPath    : ['protocolContext', 'eager-send-context-id'],
-        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'test', d: 'test' },
-      };
-
-      const recordId = await testHarness.agent.dwn.writeContextKeyRecord({
-        tenantDid       : alice.did.uri,
-        recipientDid    : bob.did.uri,
-        contextKeyData  : mockContextKey as any,
-        sourceProtocol  : 'https://protocol.xyz/eager-test',
-        sourceContextId : 'eager-send-context-id',
-      });
-
-      expect(typeof recordId).toBe('string');
-
-      // The eager send is fire-and-forget — deterministically await the
-      // in-flight promise via the AgentDwnApi tracker instead of timing hacks.
-      await testHarness.agent.dwn.drainPendingEagerSends();
-
-      // Verify the RPC send was called with the contextKey message
-      expect(sendDwnRequestStub.called).toBe(true);
-      const rpcCallArgs = sendDwnRequestStub.firstCall.args[0];
-      expect(rpcCallArgs.targetDid).toBe(alice.did.uri);
-      expect(rpcCallArgs.dwnUrl).toBe('https://dwn.example.com');
-      expect(rpcCallArgs.message).toHaveProperty('recordId', recordId);
-      // Verify data stream is included (the encrypted contextKey payload).
-      expect(rpcCallArgs.data).toBeInstanceOf(ReadableStream);
-    }, 10000);
-
-    it('should not fail when eager send encounters an error', async () => {
-      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
-
-      // Stub DID dereference to return a DWN service endpoint
-      sinon.stub(testHarness.agent.did, 'dereference').resolves({
-        dereferencingMetadata : {},
-        contentMetadata       : {},
-        contentStream         : {
-          id              : '#dwn',
-          type            : 'DecentralizedWebNode',
-          serviceEndpoint : ['https://dwn.example.com'],
-        }
-      });
-
-      // Stub RPC to reject — simulating a network error
-      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').rejects(
-        new Error('Network error: connection refused')
-      );
-
-      // Capture console.warn to verify the warning message
-      const warnStub = sinon.stub(console, 'warn');
-
-      const mockContextKey = {
-        rootKeyId         : `${alice.did.uri}#enc`,
-        derivationScheme  : 'protocolContext',
-        derivationPath    : ['protocolContext', 'error-context-id'],
-        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'test', d: 'test' },
-      };
-
-      // Should NOT throw despite the RPC error — the local write succeeds
-      const recordId = await testHarness.agent.dwn.writeContextKeyRecord({
-        tenantDid       : alice.did.uri,
-        recipientDid    : bob.did.uri,
-        contextKeyData  : mockContextKey as any,
-        sourceProtocol  : 'https://protocol.xyz/error-test',
-        sourceContextId : 'error-context-id',
-      });
-
-      expect(typeof recordId).toBe('string');
-
-      // Deterministically await the fire-and-forget eager-send to settle
-      // via the AgentDwnApi tracker instead of a timing hack.
-      await testHarness.agent.dwn.drainPendingEagerSends();
-
-      // Verify a warning was logged about the failed eager send
-      expect(warnStub.called).toBe(true);
-      const warnMessage = warnStub.args.find(
-        (args: any[]) => typeof args[0] === 'string' && args[0].includes('Eager send')
-      );
-      expect(warnMessage).toBeDefined();
-
-      warnStub.restore();
-    }, 10000);
-
-    it('should handle concurrent contextKey writes for different recipients gracefully', async () => {
-      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
-      const carol = await testHarness.createIdentity({ name: 'Carol', testDwnUrls });
-
-      // Install key delivery protocol for all participants
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(carol.did.uri);
-
-      const contextId = 'concurrent-context-id';
-      const mockContextKey = {
-        rootKeyId         : `${alice.did.uri}#enc`,
-        derivationScheme  : 'protocolContext',
-        derivationPath    : ['protocolContext', contextId],
-        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'test', d: 'test' },
-      };
-
-      // Fire two contextKey writes concurrently for different recipients
-      const [bobRecordId, carolRecordId] = await Promise.all([
-        testHarness.agent.dwn.writeContextKeyRecord({
-          tenantDid       : alice.did.uri,
-          recipientDid    : bob.did.uri,
-          contextKeyData  : mockContextKey as any,
-          sourceProtocol  : 'https://protocol.xyz/concurrent-test',
-          sourceContextId : contextId,
-        }),
-        testHarness.agent.dwn.writeContextKeyRecord({
-          tenantDid       : alice.did.uri,
-          recipientDid    : carol.did.uri,
-          contextKeyData  : mockContextKey as any,
-          sourceProtocol  : 'https://protocol.xyz/concurrent-test',
-          sourceContextId : contextId,
-        }),
-      ]);
-
-      // Both writes should succeed with distinct record IDs
-      expect(typeof bobRecordId).toBe('string');
-      expect(typeof carolRecordId).toBe('string');
-      expect(bobRecordId).not.toBe(carolRecordId);
-
-      // Verify both records exist
-      const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
-        author        : alice.did.uri,
-        target        : alice.did.uri,
-        messageType   : DwnInterface.RecordsQuery,
-        messageParams : {
-          filter: {
-            protocol     : KeyDeliveryProtocolDefinition.protocol,
-            protocolPath : 'contextKey',
-          }
-        }
-      });
-
-      expect(queryReply.entries).toHaveLength(2);
-
-      const recipientDids = queryReply.entries!.map(
-        (entry: any) => entry.descriptor.recipient as string
-      );
-      expect(recipientDids).toContain(bob.did.uri);
-      expect(recipientDids).toContain(carol.did.uri);
-    }, 15000);
-  });
-
-  describe('fetchContextKeyRecord()', () => {
-    it('should round-trip write + fetch for the local path (owner queries own DWN)', async () => {
-      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
-
-      // Install key delivery protocol for both Alice and Bob
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
-
-      // Create a realistic DerivedPrivateJwk payload
-      const mockContextKey = {
-        rootKeyId         : `${alice.did.uri}#enc`,
-        derivationScheme  : 'protocolContext',
-        derivationPath    : ['protocolContext', 'test-context-id-456'],
-        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'AAAA', d: 'BBBB' },
-      };
-
-      // Write the contextKey record (encrypted)
-      await testHarness.agent.dwn.writeContextKeyRecord({
-        tenantDid       : alice.did.uri,
-        recipientDid    : alice.did.uri, // Alice is the recipient for local test
-        contextKeyData  : mockContextKey as any,
-        sourceProtocol  : 'https://protocol.xyz/chat',
-        sourceContextId : 'test-context-id-456',
-      });
-
-      // Fetch it back — local path (ownerDid === requesterDid)
-      const result = await testHarness.agent.dwn.fetchContextKeyRecord({
-        ownerDid        : alice.did.uri,
-        requesterDid    : alice.did.uri,
-        sourceProtocol  : 'https://protocol.xyz/chat',
-        sourceContextId : 'test-context-id-456',
-      });
-
-      expect(result).toBeDefined();
-      expect(result!.rootKeyId).toBe(mockContextKey.rootKeyId);
-      expect(result!.derivationScheme).toBe(mockContextKey.derivationScheme);
-      expect(result!.derivationPath).toEqual(mockContextKey.derivationPath);
-      expect(result!.derivedPrivateKey).toEqual(mockContextKey.derivedPrivateKey);
-    });
-
-    it('should return undefined when no matching contextKey record exists', async () => {
-      const result = await testHarness.agent.dwn.fetchContextKeyRecord({
-        ownerDid        : alice.did.uri,
-        requesterDid    : alice.did.uri,
-        sourceProtocol  : 'https://protocol.xyz/nonexistent',
-        sourceContextId : 'nonexistent-context-id',
-      });
-
-      expect(result).toBeUndefined();
-    });
-
-    it('should find contextKey by specific tag filters (protocol + contextId)', async () => {
-      const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(alice.did.uri);
-      await testHarness.agent.dwn.ensureKeyDeliveryProtocol(bob.did.uri);
-
-      // Write two contextKey records for different contexts
-      const contextKey1 = {
-        rootKeyId         : `${alice.did.uri}#enc`,
-        derivationScheme  : 'protocolContext',
-        derivationPath    : ['protocolContext', 'context-aaa'],
-        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'key1x', d: 'key1d' },
-      };
-      const contextKey2 = {
-        rootKeyId         : `${alice.did.uri}#enc`,
-        derivationScheme  : 'protocolContext',
-        derivationPath    : ['protocolContext', 'context-bbb'],
-        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'key2x', d: 'key2d' },
-      };
-
-      await testHarness.agent.dwn.writeContextKeyRecord({
-        tenantDid       : alice.did.uri,
-        recipientDid    : alice.did.uri,
-        contextKeyData  : contextKey1 as any,
-        sourceProtocol  : 'https://protocol.xyz/chat',
-        sourceContextId : 'context-aaa',
-      });
-
-      await testHarness.agent.dwn.writeContextKeyRecord({
-        tenantDid       : alice.did.uri,
-        recipientDid    : alice.did.uri,
-        contextKeyData  : contextKey2 as any,
-        sourceProtocol  : 'https://protocol.xyz/chat',
-        sourceContextId : 'context-bbb',
-      });
-
-      // Fetch context-bbb specifically
-      const result = await testHarness.agent.dwn.fetchContextKeyRecord({
-        ownerDid        : alice.did.uri,
-        requesterDid    : alice.did.uri,
-        sourceProtocol  : 'https://protocol.xyz/chat',
-        sourceContextId : 'context-bbb',
-      });
-
-      expect(result).toBeDefined();
-      expect(result!.derivationPath).toEqual(['protocolContext', 'context-bbb']);
-      expect(result!.derivedPrivateKey).toEqual(contextKey2.derivedPrivateKey);
-    });
-  });
-});
 describe('Participant Detection (PR B)', () => {
   let testHarness: PlatformAgentTestHarness;
 
@@ -4523,7 +4042,7 @@ describe('Participant Detection (PR B)', () => {
   });
 });
 
-describe('Unified Key Delivery - Write Side (PR C)', () => {
+describe('Role record write behavior', () => {
   let testHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
 
@@ -4561,77 +4080,6 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
       },
     },
   };
-
-  it('should not write a legacy contextKey record when adding a $role participant', async () => {
-    const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
-
-    // Install the chat protocol with encryption for both Alice and Bob
-    await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
-      encryption    : true,
-    });
-    await testHarness.agent.dwn.processRequest({
-      author        : bob.did.uri,
-      target        : bob.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
-      encryption    : true,
-    });
-
-    // Create a thread (root record)
-    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'application/json',
-        schema       : 'https://schemas.xyz/thread',
-      },
-      dataStream : new Blob([new TextEncoder().encode('{"title":"Secret"}')]),
-      encryption : true,
-    });
-
-    const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
-
-    // Add Bob as a participant ($role record).
-    await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
-        parentContextId : threadContextId,
-        dataFormat      : 'application/json',
-        schema          : 'https://schemas.xyz/participant',
-        recipient       : bob.did.uri,
-      },
-      dataStream : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
-      encryption : true,
-    });
-
-    // The current encryption model does not mint legacy ProtocolContext keys
-    // as a side effect of role-record writes.
-    const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : KeyDeliveryProtocolDefinition.protocol,
-          protocolPath : 'contextKey',
-          recipient    : bob.did.uri,
-        }
-      }
-    });
-
-    expect(queryReply.entries).toHaveLength(0);
-  }, 10000);
 
   it('should preserve user data in $role records (no longer replaces with key payload)', async () => {
     const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
@@ -4714,7 +4162,7 @@ describe('Unified Key Delivery - Write Side (PR C)', () => {
   }, 10000);
 });
 
-describe('Unified Key Retrieval - Read Side (PR D)', () => {
+describe('Owner encrypted read behavior', () => {
   let testHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
 
@@ -4753,7 +4201,7 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
     },
   };
 
-  it('owner should auto-decrypt multi-party records via resolveKeyDecrypter Case 1 (context creator)', async () => {
+  it('owner should auto-decrypt multi-party records via protocol-path keys', async () => {
     // Configure protocol
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -4797,7 +4245,7 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
       encryption : true,
     });
 
-    // Read back with auto-decryption — owner uses Case 1 (context creator path)
+    // Read back with auto-decryption through the owner's protocol-path key.
     const { reply: readReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -4825,76 +4273,6 @@ describe('Unified Key Retrieval - Read Side (PR D)', () => {
     }
   }, 10000);
 
-  it('should not resolve a legacy context key for a role participant', async () => {
-    const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
-
-    // Configure protocol for Alice
-    await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
-      encryption    : true,
-    });
-
-    // Create thread (root record)
-    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'application/json',
-        schema       : 'https://schemas.xyz/thread',
-      },
-      dataStream : new Blob([new TextEncoder().encode('{"title":"Secret Thread"}')]),
-      encryption : true,
-    });
-
-    const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
-
-    // Add Bob as participant.
-    await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
-        parentContextId : threadContextId,
-        dataFormat      : 'application/json',
-        schema          : 'https://schemas.xyz/participant',
-        recipient       : bob.did.uri,
-      },
-      dataStream : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
-      encryption : true,
-    });
-
-    // Verify no legacy contextKey was written to Alice's DWN for Bob.
-    const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : KeyDeliveryProtocolDefinition.protocol,
-          protocolPath : 'contextKey',
-          recipient    : bob.did.uri,
-        }
-      }
-    });
-    const rootContextId = threadContextId.split('/')[0];
-    expect(ckQuery.entries).toHaveLength(0);
-
-    const bobKey = await testHarness.agent.dwn.fetchContextKeyRecord({
-      ownerDid        : alice.did.uri,
-      requesterDid    : bob.did.uri,
-      sourceProtocol  : chatProtocol.protocol,
-      sourceContextId : rootContextId,
-    });
-    expect(bobKey).toBeUndefined();
-  }, 30000);
 });
 
 describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
@@ -5111,420 +4489,4 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     expect(decryptedText).toBe(threadText);
   }, 15000);
 
-  it('should not create legacy contextKey delivery records for role participants', async () => {
-    await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
-      encryption    : true,
-    });
-
-    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'application/json',
-        schema       : 'https://schemas.xyz/thread',
-      },
-      dataStream : new Blob([new TextEncoder().encode('{"title":"Secret Thread for Bob"}')]),
-      encryption : true,
-    });
-    const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
-
-    await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
-        parentContextId : threadContextId,
-        dataFormat      : 'application/json',
-        schema          : 'https://schemas.xyz/participant',
-        recipient       : bob.did.uri,
-      },
-      dataStream : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
-      encryption : true,
-    });
-
-    const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : KeyDeliveryProtocolDefinition.protocol,
-          protocolPath : 'contextKey',
-          recipient    : bob.did.uri,
-        }
-      }
-    });
-    expect(ckQuery.entries).toHaveLength(0);
-  }, 15000);
-
-});
-
-/**
- * Unit tests for the eager-send tracker on `AgentDwnApi`.
- *
- * These tests exercise the public `drainPendingEagerSends()` API and the
- * tracker wiring around `writeContextKeyRecord` using stubs on the
- * instance's internal methods. They avoid a real `PlatformAgentTestHarness`
- * so that behavior can be verified deterministically.
- *
- * The tracker's `_pendingEagerSends` Set is **never** inspected directly —
- * verification is always through observable behavior of `drainPendingEagerSends()`.
- *
- * Validation contract: VAL-TRACKER-001 through VAL-TRACKER-010.
- */
-describe('AgentDwnApi.drainPendingEagerSends', () => {
-  type Deferred<T> = {
-    promise: Promise<T>;
-    resolve: (value: T) => void;
-    reject: (err: Error) => void;
-  };
-
-  function createDeferred<T>(): Deferred<T> {
-    let resolve!: (value: T) => void;
-    let reject!: (err: Error) => void;
-    const promise = new Promise<T>((res, rej): void => {
-      resolve = res;
-      reject = rej;
-    });
-    return { promise, resolve, reject };
-  }
-
-  /**
-   * Races a drain promise against a macrotask sentinel (setTimeout 0). Returns
-   * `'drain'` when the drain already resolved (microtask beats macrotask),
-   * `'tick'` when the drain is still pending by the time the sentinel fires.
-   *
-   * The drain promise is not consumed by this race — callers may still await it.
-   */
-  async function raceAgainstTick(drain: Promise<void>): Promise<'drain' | 'tick'> {
-    const TICK = 'tick' as const;
-    const winner = await Promise.race<'drain' | 'tick'>([
-      drain.then((): 'drain' => 'drain'),
-      new Promise<'tick'>((resolve): void => { setTimeout((): void => resolve(TICK), 0); }),
-    ]);
-    return winner;
-  }
-
-  const baseWriteParams = {
-    tenantDid      : 'did:example:alice',
-    recipientDid   : 'did:example:bob',
-    contextKeyData : {
-      rootKeyId         : 'root-1',
-      derivationScheme  : 'protocolContext',
-      derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' },
-    } as any,
-    sourceProtocol  : 'https://proto.example.com',
-    sourceContextId : 'ctx-1',
-  };
-
-  let dwnApi: AgentDwnApi;
-  let eagerSendStub: sinon.SinonStub;
-
-  beforeEach(() => {
-    const mockAgent: any = {
-      rpc      : {},
-      agentDid : 'did:example:agent',
-      did      : {},
-    };
-    const mockDwn = ({} as unknown) as Dwn;
-    dwnApi = new AgentDwnApi({ agent: mockAgent, dwn: mockDwn });
-
-    // Stub processRequest so writeContextKeyRecord's local write succeeds
-    // with a fresh recordId per invocation.
-    let recordCounter = 0;
-    sinon.stub(dwnApi as any, 'processRequest').callsFake(async (): Promise<any> => {
-      recordCounter += 1;
-      return {
-        reply      : { status: { code: 202, detail: 'Accepted' } },
-        message    : { recordId: `rec-${recordCounter}` },
-        messageCid : `cid-${recordCounter}`,
-      };
-    });
-
-    // Stub ensureKeyDeliveryProtocol to resolve immediately — no real protocol install.
-    sinon.stub(dwnApi as any, 'ensureKeyDeliveryProtocol').resolves();
-
-    // Stub eagerSendContextKeyRecord — each test sets up return behavior.
-    eagerSendStub = sinon.stub(dwnApi as any, 'eagerSendContextKeyRecord');
-  });
-
-  afterEach(() => {
-    sinon.restore();
-  });
-
-  it('should resolve immediately when no sends are pending', async () => {
-    // VAL-TRACKER-001
-    const drain = dwnApi.drainPendingEagerSends();
-    expect(await raceAgainstTick(drain)).toBe('drain');
-    await expect(drain).resolves.toBeUndefined();
-  });
-
-  it('should wait for a single in-flight successful eager send', async () => {
-    // VAL-TRACKER-002
-    const deferred = createDeferred<void>();
-    eagerSendStub.returns(deferred.promise);
-
-    await dwnApi.writeContextKeyRecord(baseWriteParams);
-
-    const drain = dwnApi.drainPendingEagerSends();
-    expect(await raceAgainstTick(drain)).toBe('tick');
-
-    deferred.resolve();
-    await expect(drain).resolves.toBeUndefined();
-  });
-
-  it('should wait for a single in-flight eager send that rejects', async () => {
-    // VAL-TRACKER-003
-    const deferred = createDeferred<void>();
-    eagerSendStub.returns(deferred.promise);
-    const warnStub = sinon.stub(console, 'warn');
-
-    await dwnApi.writeContextKeyRecord(baseWriteParams);
-
-    const drain = dwnApi.drainPendingEagerSends();
-    expect(await raceAgainstTick(drain)).toBe('tick');
-
-    deferred.reject(new Error('boom'));
-    await expect(drain).resolves.toBeUndefined();
-
-    expect(warnStub.callCount).toBe(1);
-    warnStub.restore();
-  });
-
-  it('should wait for all concurrently in-flight eager sends', async () => {
-    // VAL-TRACKER-004
-    const d1 = createDeferred<void>();
-    const d2 = createDeferred<void>();
-    eagerSendStub.onFirstCall().returns(d1.promise);
-    eagerSendStub.onSecondCall().returns(d2.promise);
-
-    await dwnApi.writeContextKeyRecord(baseWriteParams);
-    await dwnApi.writeContextKeyRecord({ ...baseWriteParams, recipientDid: 'did:example:carol' });
-
-    const drain = dwnApi.drainPendingEagerSends();
-    expect(await raceAgainstTick(drain)).toBe('tick');
-
-    d1.resolve();
-    expect(await raceAgainstTick(drain)).toBe('tick');
-
-    d2.resolve();
-    await expect(drain).resolves.toBeUndefined();
-  });
-
-  it('should not reject even when every tracked send rejects', async () => {
-    // VAL-TRACKER-005
-    const d1 = createDeferred<void>();
-    const d2 = createDeferred<void>();
-    eagerSendStub.onFirstCall().returns(d1.promise);
-    eagerSendStub.onSecondCall().returns(d2.promise);
-    const warnStub = sinon.stub(console, 'warn');
-
-    await dwnApi.writeContextKeyRecord(baseWriteParams);
-    await dwnApi.writeContextKeyRecord({ ...baseWriteParams, recipientDid: 'did:example:carol' });
-
-    const drain = dwnApi.drainPendingEagerSends();
-    d1.reject(new Error('first failed'));
-    d2.reject(new Error('second failed'));
-
-    await expect(drain).resolves.toBeUndefined();
-    expect(warnStub.callCount).toBe(2);
-    warnStub.restore();
-  });
-
-  it('should be idempotent after the tracker has drained', async () => {
-    // VAL-TRACKER-006
-    const deferred = createDeferred<void>();
-    eagerSendStub.returns(deferred.promise);
-
-    await dwnApi.writeContextKeyRecord(baseWriteParams);
-
-    const drain1 = dwnApi.drainPendingEagerSends();
-    deferred.resolve();
-    await drain1;
-
-    const drain2 = dwnApi.drainPendingEagerSends();
-    expect(await raceAgainstTick(drain2)).toBe('drain');
-    await expect(drain2).resolves.toBeUndefined();
-
-    const drain3 = dwnApi.drainPendingEagerSends();
-    expect(await raceAgainstTick(drain3)).toBe('drain');
-    await expect(drain3).resolves.toBeUndefined();
-  });
-
-  it('should use a snapshot taken at drain-start and not await sends registered after', async () => {
-    // VAL-TRACKER-007
-    const d1 = createDeferred<void>();
-    const d2 = createDeferred<void>();
-    eagerSendStub.onFirstCall().returns(d1.promise);
-    eagerSendStub.onSecondCall().returns(d2.promise);
-
-    await dwnApi.writeContextKeyRecord(baseWriteParams);
-
-    const drain = dwnApi.drainPendingEagerSends();
-    expect(await raceAgainstTick(drain)).toBe('tick');
-
-    // Register a new send AFTER the drain has started.
-    await dwnApi.writeContextKeyRecord({ ...baseWriteParams, recipientDid: 'did:example:carol' });
-
-    // Settling d1 should be sufficient to resolve the first drain — it does
-    // NOT wait for d2, which was registered after the drain snapshot.
-    d1.resolve();
-    await expect(drain).resolves.toBeUndefined();
-
-    // A fresh drain should still be blocked by d2.
-    const drain2 = dwnApi.drainPendingEagerSends();
-    expect(await raceAgainstTick(drain2)).toBe('tick');
-
-    d2.resolve();
-    await expect(drain2).resolves.toBeUndefined();
-  });
-
-  it('should release settled entries so new sends can be drained independently', async () => {
-    // VAL-TRACKER-008
-    const d1 = createDeferred<void>();
-    const d2 = createDeferred<void>();
-    eagerSendStub.onFirstCall().returns(d1.promise);
-    eagerSendStub.onSecondCall().returns(d2.promise);
-
-    await dwnApi.writeContextKeyRecord(baseWriteParams);
-    d1.resolve();
-    await dwnApi.drainPendingEagerSends();
-
-    // After the first drain, the first entry should be released. A second
-    // `writeContextKeyRecord` should queue d2 and d2 alone — the new drain
-    // must not resolve until d2 settles.
-    await dwnApi.writeContextKeyRecord({ ...baseWriteParams, recipientDid: 'did:example:carol' });
-
-    const drain2 = dwnApi.drainPendingEagerSends();
-    expect(await raceAgainstTick(drain2)).toBe('tick');
-
-    d2.resolve();
-    await expect(drain2).resolves.toBeUndefined();
-  });
-
-  it('should preserve the console.warn message on eager-send failure', async () => {
-    // VAL-TRACKER-010
-    const warnStub = sinon.stub(console, 'warn');
-    eagerSendStub.rejects(new Error('boom'));
-
-    await dwnApi.writeContextKeyRecord(baseWriteParams);
-    await dwnApi.drainPendingEagerSends();
-
-    expect(warnStub.called).toBe(true);
-    const warnArgs = warnStub.args.map((args: any[]): unknown => args[0]);
-    const matchedArg = warnArgs.find(
-      (msg: unknown): boolean => typeof msg === 'string'
-        && /AgentDwnApi: Eager send of contextKey record '.+' to remote DWN failed: .+\. Sync will deliver it later\./.test(msg),
-    );
-    expect(matchedArg).toBeDefined();
-    expect(matchedArg as string).toContain('boom');
-    warnStub.restore();
-  });
-});
-
-/**
- * Separate describe block for VAL-TRACKER-009 so the test path matches
- * `AgentDwnApi.writeContextKeyRecord > returns the recordId ...` (as called
- * out in the feature's `verificationSteps`). This assertion is about
- * `writeContextKeyRecord`'s return contract under the tracker wrapping,
- * not the drain API itself.
- */
-describe('AgentDwnApi.writeContextKeyRecord', () => {
-  type Deferred<T> = {
-    promise: Promise<T>;
-    resolve: (value: T) => void;
-    reject: (err: Error) => void;
-  };
-
-  function createDeferred<T>(): Deferred<T> {
-    let resolve!: (value: T) => void;
-    let reject!: (err: Error) => void;
-    const promise = new Promise<T>((res, rej): void => {
-      resolve = res;
-      reject = rej;
-    });
-    return { promise, resolve, reject };
-  }
-
-  async function raceAgainstTick(drain: Promise<void>): Promise<'drain' | 'tick'> {
-    const TICK = 'tick' as const;
-    return Promise.race<'drain' | 'tick'>([
-      drain.then((): 'drain' => 'drain'),
-      new Promise<'tick'>((resolve): void => { setTimeout((): void => resolve(TICK), 0); }),
-    ]);
-  }
-
-  let dwnApi: AgentDwnApi;
-  let eagerSendStub: sinon.SinonStub;
-
-  const baseWriteParams = {
-    tenantDid      : 'did:example:alice',
-    recipientDid   : 'did:example:bob',
-    contextKeyData : {
-      rootKeyId         : 'root-1',
-      derivationScheme  : 'protocolContext',
-      derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' },
-    } as any,
-    sourceProtocol  : 'https://proto.example.com',
-    sourceContextId : 'ctx-1',
-  };
-
-  beforeEach(() => {
-    const mockAgent: any = {
-      rpc      : {},
-      agentDid : 'did:example:agent',
-      did      : {},
-    };
-    const mockDwn = ({} as unknown) as Dwn;
-    dwnApi = new AgentDwnApi({ agent: mockAgent, dwn: mockDwn });
-
-    let recordCounter = 0;
-    sinon.stub(dwnApi as any, 'processRequest').callsFake(async (): Promise<any> => {
-      recordCounter += 1;
-      return {
-        reply      : { status: { code: 202, detail: 'Accepted' } },
-        message    : { recordId: `rec-${recordCounter}` },
-        messageCid : `cid-${recordCounter}`,
-      };
-    });
-    sinon.stub(dwnApi as any, 'ensureKeyDeliveryProtocol').resolves();
-    eagerSendStub = sinon.stub(dwnApi as any, 'eagerSendContextKeyRecord');
-  });
-
-  afterEach(() => {
-    sinon.restore();
-  });
-
-  it('returns the recordId synchronously with the local write and does not block on the tracked eager send', async () => {
-    // VAL-TRACKER-009
-    const deferred = createDeferred<void>();
-    eagerSendStub.returns(deferred.promise);
-
-    // The local write should resolve well before the eager-send deferred.
-    const recordIdPromise = dwnApi.writeContextKeyRecord(baseWriteParams);
-    const recordId = await Promise.race<string>([
-      recordIdPromise,
-      new Promise<string>((_, reject): void => {
-        setTimeout((): void => reject(new Error('writeContextKeyRecord blocked on eager send')), 250);
-      }),
-    ]);
-    expect(typeof recordId).toBe('string');
-    expect(recordId.length).toBeGreaterThan(0);
-
-    // The tracker should still hold a pending entry — drain must block on it.
-    const drain = dwnApi.drainPendingEagerSends();
-    expect(await raceAgainstTick(drain)).toBe('tick');
-
-    deferred.resolve();
-    await expect(drain).resolves.toBeUndefined();
-  });
 });

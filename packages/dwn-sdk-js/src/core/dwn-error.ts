@@ -119,6 +119,8 @@ export enum DwnErrorCode {
   ProtocolAuthorizationEncryptionRequired = 'ProtocolAuthorizationEncryptionRequired',
   ProtocolAuthorizationEncryptionKeyAgreementMissing = 'ProtocolAuthorizationEncryptionKeyAgreementMissing',
   ProtocolAuthorizationEncryptionProtocolPathEntryMissing = 'ProtocolAuthorizationEncryptionProtocolPathEntryMissing',
+  ProtocolAuthorizationEncryptionRoleAudienceEntryMissing = 'ProtocolAuthorizationEncryptionRoleAudienceEntryMissing',
+  ProtocolAuthorizationEncryptionRoleAudienceEpochMissing = 'ProtocolAuthorizationEncryptionRoleAudienceEpochMissing',
   ProtocolAuthorizationImmutableRecord = 'ProtocolAuthorizationImmutableRecord',
   ProtocolAuthorizationInvalidSchema = 'ProtocolAuthorizationInvalidSchema',
   ProtocolAuthorizationInvalidType = 'ProtocolAuthorizationInvalidType',
@@ -228,7 +230,6 @@ export enum DwnErrorCode {
   RecordsWriteMissingSigner = 'RecordsWriteMissingSigner',
   RecordsWriteMissingDataInPrevious = 'RecordsWriteMissingDataInPrevious',
   RecordsWriteMissingEncodedDataInPrevious = 'RecordsWriteMissingEncodedDataInPrevious',
-  RecordsWriteMissingEncryption = 'RecordsWriteMissingEncryption',
 
   RecordsWriteNotAllowedAfterDelete = 'RecordsWriteNotAllowedAfterDelete',
   RecordsWriteOwnerAndTenantMismatch = 'RecordsWriteOwnerAndTenantMismatch',

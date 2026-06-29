@@ -3,8 +3,17 @@ import type { DerivedPrivateJwk, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
-import { ContentEncryptionAlgorithm, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import {
+  ContentEncryptionAlgorithm,
+  DataStream,
+  Encoder,
+  Encryption,
+  HdKey,
+  KeyDerivationScheme,
+  TestDataGenerator,
+} from '@enbox/dwn-sdk-js';
 
+import { DwnInterface } from '../src/types/dwn.js';
 import {
   buildEncryptionInput,
   buildKmsDecryptCallback,
@@ -129,14 +138,14 @@ describe('dwn-encryption', () => {
       const reply = {} as any;
 
       // Should not throw and should return without doing anything.
-      await maybeDecryptReply(request, reply, {} as any, { get: sinon.stub(), set: sinon.stub() }, sinon.stub());
+      await maybeDecryptReply(request, reply, {} as any);
     });
 
     it('should return immediately when encryption is false', async () => {
       const request = { author: 'did:example:alice', target: 'did:example:alice', encryption: false } as any;
       const reply = {} as any;
 
-      await maybeDecryptReply(request, reply, {} as any, { get: sinon.stub(), set: sinon.stub() }, sinon.stub());
+      await maybeDecryptReply(request, reply, {} as any);
     });
 
     it('should throw wrapped error when RecordsRead decryption fails', async () => {
@@ -194,8 +203,6 @@ describe('dwn-encryption', () => {
       await expect(
         maybeDecryptReply(
           request, reply, mockAgent,
-          { get: sinon.stub().returns(undefined), set: sinon.stub() },
-          sinon.stub(),
         )
       ).rejects.toThrow('AgentDwnApi: Failed to decrypt record \'rec-fail-read\'');
     });
@@ -253,10 +260,82 @@ describe('dwn-encryption', () => {
       await expect(
         maybeDecryptReply(
           request, reply, mockAgent,
-          { get: sinon.stub().returns(undefined), set: sinon.stub() },
-          sinon.stub(),
         )
       ).rejects.toThrow('AgentDwnApi: Failed to decrypt record \'rec-fail-query\'');
+    });
+
+    it('should decrypt RecordsRead replies using delivered delegate keys without owner KMS fallback', async () => {
+      const owner = await TestDataGenerator.generateDidKeyPersona();
+      const protocol = 'https://example.com/delegate-delivered-key';
+      const plaintext = Encoder.stringToBytes('delivered key plaintext');
+      const rootKey: DerivedPrivateJwk = {
+        rootKeyId         : owner.keyId,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivedPrivateKey : owner.encryptionKeyPair.privateJwk,
+      };
+      const protocolKey = await HdKey.derivePrivateKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocol]);
+      const leafPublicKey = await HdKey.derivePublicKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocol, 'note']);
+
+      const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
+      const dataEncryptionInitializationVector = crypto.getRandomValues(new Uint8Array(16));
+      const encryptedData = await Encryption.encrypt(
+        ContentEncryptionAlgorithm.A256CTR,
+        dataEncryptionKey,
+        dataEncryptionInitializationVector,
+        plaintext,
+      );
+      const encryptionInput = buildEncryptionInput(
+        dataEncryptionKey,
+        dataEncryptionInitializationVector,
+        await Encryption.getKeyId(leafPublicKey),
+        leafPublicKey,
+        KeyDerivationScheme.ProtocolPath,
+      );
+      const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+        author       : owner,
+        data         : encryptedData,
+        encryptionInput,
+        protocol,
+        protocolPath : 'note',
+      });
+      const request = {
+        author      : owner.did,
+        encryption  : true,
+        granteeDid  : 'did:example:delegate',
+        messageType : DwnInterface.RecordsRead,
+        target      : owner.did,
+      } as any;
+      const reply = {
+        status : { code: 200 },
+        entry  : {
+          recordsWrite : recordsWrite.message,
+          data         : DataStream.fromBytes(encryptedData),
+        },
+      } as any;
+      const mockAgent = {
+        keyManager: {
+          getKeyUri    : sinon.stub().rejects(new Error('owner KMS fallback should not be used')),
+          jweKeyUnwrap : sinon.stub().rejects(new Error('owner KMS fallback should not be used')),
+        },
+      } as any;
+      const delegateCache = {
+        get: sinon.stub().returns([{
+          derivedPrivateKey : protocolKey,
+          protocol,
+          scope             : { kind: 'protocol' },
+        }]),
+      };
+
+      await maybeDecryptReply(
+        request,
+        reply,
+        mockAgent,
+        delegateCache,
+      );
+
+      expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
+      expect(mockAgent.keyManager.jweKeyUnwrap.called).toBe(false);
+      expect(Encoder.bytesToString(await DataStream.toBytes(reply.entry.data))).toBe('delivered key plaintext');
     });
   });
 
@@ -495,8 +574,6 @@ describe('dwn-encryption', () => {
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        { get: sinon.stub().returns(undefined), set: sinon.stub() },
-        sinon.stub(),
       );
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
@@ -519,8 +596,6 @@ describe('dwn-encryption', () => {
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        { get: sinon.stub().returns(undefined), set: sinon.stub() },
-        sinon.stub(),
       );
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
@@ -552,8 +627,6 @@ describe('dwn-encryption', () => {
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        { get: sinon.stub().returns(undefined), set: sinon.stub() },
-        sinon.stub(),
         delegateCache,
         'did:example:delegate',
       );
@@ -587,8 +660,6 @@ describe('dwn-encryption', () => {
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        { get: sinon.stub().returns(undefined), set: sinon.stub() },
-        sinon.stub(),
         delegateCache,
         'did:example:delegate',
       );
@@ -622,8 +693,6 @@ describe('dwn-encryption', () => {
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        { get: sinon.stub().returns(undefined), set: sinon.stub() },
-        sinon.stub(),
         delegateCache,
         'did:example:delegate',
       );
@@ -654,8 +723,6 @@ describe('dwn-encryption', () => {
 
       await expect(resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        { get: sinon.stub().returns(undefined), set: sinon.stub() },
-        sinon.stub(),
         delegateCache,
         'did:example:delegate',
       )).rejects.toThrow('no delivered decryption key covers encrypted record');
@@ -673,8 +740,6 @@ describe('dwn-encryption', () => {
 
       await expect(resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        { get: sinon.stub().returns(undefined), set: sinon.stub() },
-        sinon.stub(),
         undefined,
         'did:example:delegate',
       )).rejects.toThrow('no delivered decryption key covers encrypted record');

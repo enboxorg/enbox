@@ -469,7 +469,6 @@ describe('E2E: same-owner identity discovery and profile sync convergence', () =
     expect(walletB.agent.agentDid.uri).toBe(walletA.agent.agentDid.uri);
 
     for (const wallet of [walletA, walletB]) {
-      await wallet.agent.dwn.ensureKeyDeliveryProtocol(wallet.agent.agentDid.uri);
       await wallet.agent.sync.registerIdentity({
         did     : wallet.agent.agentDid.uri,
         options : { protocols: agentDidSyncProtocols },

@@ -64,7 +64,7 @@ export class Records {
    * Decrypts the encrypted data in a message reply.
    *
    * Overload 1 (callback-based): Accepts a KeyDecrypter that performs
-   * HKDF derivation + ECDH-ES key agreement + AES Key Unwrap internally.
+   * X25519-HKDF key agreement + AES Key Unwrap internally.
    */
   public static async decrypt(
     recordsWrite: RecordsWriteMessage,
@@ -82,7 +82,7 @@ export class Records {
     cipherStream: ReadableStream<Uint8Array>,
   ): Promise<ReadableStream<Uint8Array>>;
 
-  // Implementation dispatches based on argument type
+  // Implementation dispatches based on argument type.
   public static async decrypt(
     recordsWrite: RecordsWriteMessage,
     keyOrDecrypter: DerivedPrivateJwk | KeyDecrypter,

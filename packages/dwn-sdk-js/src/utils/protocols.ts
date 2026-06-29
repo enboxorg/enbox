@@ -93,8 +93,7 @@ export class Protocols {
   ): Promise<ProtocolDefinition>;
 
   /**
-   * Overload 2 (raw-key, existing): Takes rootKeyId and raw PrivateKeyJwk directly.
-   * Preserved for backward compatibility with tests and non-KMS callers.
+   * Overload 2 (raw-key): Takes rootKeyId and raw PrivateKeyJwk directly.
    */
   public static async deriveAndInjectPublicEncryptionKeys(
     protocolDefinition: ProtocolDefinition,
@@ -102,7 +101,7 @@ export class Protocols {
     privateJwk: PrivateKeyJwk,
   ): Promise<ProtocolDefinition>;
 
-  // Implementation dispatches based on argument type
+  // Implementation dispatches based on argument type.
   public static async deriveAndInjectPublicEncryptionKeys(
     protocolDefinition: ProtocolDefinition,
     rootKeyIdOrKeyDeriver: string | EncryptionKeyDeriver,

@@ -7,6 +7,7 @@ import { DwnErrorCode } from './dwn-error.js';
 import { Encoder } from '../utils/encoder.js';
 import { EncryptionProtocol } from '../protocols/encryption.js';
 import { Message } from './message.js';
+import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 
@@ -200,6 +201,8 @@ function dependencyRefsFromStatus(
     return toRefList(roleDependencyFromMessage(message, context));
   case DwnErrorCode.EncryptionProtocolValidateAudienceEpochMissing:
     return toRefList(encryptionProtocolDependencyFromMessage(message, EncryptionProtocol.audienceEpochPath));
+  case DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing:
+    return toRefList(encryptionProtocolDependencyFromRoleAudienceEntry(message, detail));
   case DwnErrorCode.EncryptionProtocolValidateAudienceKeyRoleRecordMissing:
     return toRefList(roleDependencyFromEncryptionAudienceRecipient(message));
   case DwnErrorCode.RecordsWriteMissingDataInPrevious:
@@ -426,6 +429,54 @@ function encryptionProtocolDependencyFromMessage(
     : { type: 'EncryptionProtocol', protocolPath, tags };
 }
 
+function encryptionProtocolDependencyFromRoleAudienceEntry(
+  message: GenericMessage,
+  detail: string,
+): DependencyRef | undefined {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  const messageContextId = (message as { contextId?: unknown }).contextId;
+  const contextId = typeof messageContextId === 'string' ? messageContextId : descriptor.contextId;
+  const keyEncryption = (message as {
+    encryption?: {
+      keyEncryption?: Record<string, unknown>[];
+    };
+  }).encryption?.keyEncryption;
+  if (typeof contextId !== 'string' || !Array.isArray(keyEncryption)) {
+    return undefined;
+  }
+
+  const missingRole = /role '([^']+)'/.exec(detail)?.[1];
+  const entry = keyEncryption.find((candidate): boolean =>
+    candidate.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
+    typeof candidate.protocol === 'string' &&
+    typeof candidate.role === 'string' &&
+    (missingRole === undefined || candidate.role === missingRole) &&
+    typeof candidate.epoch === 'number' &&
+    typeof candidate.keyId === 'string'
+  );
+  if (entry === undefined) {
+    return undefined;
+  }
+
+  const role = entry.role as string;
+  const audienceContextId = roleAudienceContextId(role, contextId);
+  if (audienceContextId === undefined) {
+    return undefined;
+  }
+
+  return {
+    type         : 'EncryptionProtocol',
+    protocolPath : EncryptionProtocol.audienceEpochPath,
+    tags         : {
+      protocol  : entry.protocol as string,
+      contextId : audienceContextId,
+      role,
+      epoch     : entry.epoch as number,
+      keyId     : entry.keyId as string,
+    },
+  };
+}
+
 function roleDependencyFromEncryptionAudienceRecipient(message: GenericMessage): DependencyRef | undefined {
   const tags = encryptionAudienceTagsFromMessage(message);
   const recipient = (message.descriptor as Record<string, unknown>).recipient;
@@ -526,6 +577,20 @@ function roleContextPrefix(rolePath: string, contextId: string): string | undefi
   }
 
   return contextId.split('/').slice(0, roleSegments).join('/');
+}
+
+function roleAudienceContextId(rolePath: string, contextId: string): string | undefined {
+  const roleSegments = rolePath.split('/').length - 1;
+  if (roleSegments === 0) {
+    return '';
+  }
+
+  const contextSegments = contextId.split('/');
+  if (contextSegments.length < roleSegments) {
+    return undefined;
+  }
+
+  return contextSegments.slice(0, roleSegments).join('/');
 }
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {

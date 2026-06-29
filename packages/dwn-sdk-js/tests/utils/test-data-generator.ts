@@ -324,7 +324,7 @@ export class TestDataGenerator {
     // generate persona signing key pair if not given (secp256k1 for ES256K signatures)
     const keyPair = input?.keyPair ?? await Secp256k1.generateKeyPair();
 
-    // generate persona encryption key pair if not given (X25519 for ECDH-ES key agreement)
+    // generate persona encryption key pair if not given (X25519 for DWN encryption)
     let encryptionKeyPair = input?.encryptionKeyPair;
     if (!encryptionKeyPair) {
       const encPrivateKey = await X25519.generateKey();

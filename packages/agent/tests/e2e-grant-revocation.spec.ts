@@ -4,7 +4,7 @@
  * Tests for https://github.com/enboxorg/enbox/issues/828
  *
  * Uses real PlatformAgentTestHarness (not mocks) to prove revocation flows
- * remain valid while legacy context-key delivery is inactive.
+ * remain valid.
  */
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
@@ -167,394 +167,6 @@ describe('e2e: grant revocation stops future delivery', () => {
     expect(afterRevocationRead.status.code).toBe(401);
   });
 
-  it('should not deliver legacy context keys for delegated read grants', async () => {
-    const ownerDid = ownerIdentity.did.uri;
-    const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
-
-    // 1. Install the multi-party encrypted protocol
-    await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
-      encryption    : true,
-    });
-
-    // 2. Create a delegated grant for the delegate (simulates connect)
-    const { DidJwk } = await import('@enbox/dids');
-
-    const delegateBearerDid = await DidJwk.create();
-    const readGrant = await permissionsApi.createGrant({
-      delegated   : true,
-      store       : true,
-      grantedTo   : delegateBearerDid.uri,
-      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
-      dateExpires : '2040-06-25T16:09:16.693356Z',
-      author      : ownerDid,
-    });
-
-    // 3. Verify: creating a new context does not deliver legacy contextKey records.
-    await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
-
-    const { message: thread1 } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        schema       : 'https://schemas.xyz/thread',
-        dataFormat   : 'application/json',
-        data         : new TextEncoder().encode(JSON.stringify({ topic: 'Before revocation' })),
-      },
-      encryption: true,
-    });
-    const thread1Id = (thread1 as RecordsWriteMessage).recordId;
-
-    const { reply: beforeQuery } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : 'https://identity.foundation/protocols/key-delivery',
-          protocolPath : 'contextKey',
-          recipient    : delegateBearerDid.uri,
-        },
-      },
-    });
-    const beforeKeys = (beforeQuery.entries ?? []).filter(
-      (e: any) => e.descriptor?.tags?.contextId === thread1Id,
-    );
-    expect(beforeKeys).toHaveLength(0);
-
-    // 4. Revoke the grant
-    await permissionsApi.createRevocation({
-      author : ownerDid,
-      store  : true,
-      grant  : readGrant.grant,
-    });
-
-    // 5. Create another new context AFTER revocation
-    const { message: thread2 } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        schema       : 'https://schemas.xyz/thread',
-        dataFormat   : 'application/json',
-        data         : new TextEncoder().encode(JSON.stringify({ topic: 'After revocation' })),
-      },
-      encryption: true,
-    });
-    const thread2Id = (thread2 as RecordsWriteMessage).recordId;
-
-    // 6. Verify: NO contextKey was delivered for the post-revocation context
-    const { reply: afterQuery } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : 'https://identity.foundation/protocols/key-delivery',
-          protocolPath : 'contextKey',
-          recipient    : delegateBearerDid.uri,
-        },
-      },
-    });
-    const afterKeys = (afterQuery.entries ?? []).filter(
-      (e: any) => e.descriptor?.tags?.contextId === thread2Id,
-    );
-    expect(afterKeys).toHaveLength(0);
-  });
-
-  it('should not deliver legacy context keys to revoked or non-revoked delegates', async () => {
-    const ownerDid = ownerIdentity.did.uri;
-    const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
-
-    await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
-      encryption    : true,
-    });
-
-    const { DidJwk } = await import('@enbox/dids');
-    // Helper: create a delegate with a read grant.
-    const createDelegate = async (): Promise<{ did: string; grant: any }> => {
-      const did = await DidJwk.create();
-      const grant = await permissionsApi.createGrant({
-        delegated   : true,
-        store       : true,
-        grantedTo   : did.uri,
-        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
-        dateExpires : '2040-06-25T16:09:16.693356Z',
-        author      : ownerDid,
-      });
-      return { did: did.uri, grant };
-    };
-
-    await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
-
-    const delegateA = await createDelegate();
-    const delegateB = await createDelegate();
-
-    // Revoke delegate A only
-    await permissionsApi.createRevocation({
-      author : ownerDid,
-      store  : true,
-      grant  : delegateA.grant.grant,
-    });
-
-    // Create a new context
-    const { message: thread } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        schema       : 'https://schemas.xyz/thread',
-        dataFormat   : 'application/json',
-        data         : new TextEncoder().encode(JSON.stringify({ topic: 'Selective revocation' })),
-      },
-      encryption: true,
-    });
-    const threadId = (thread as RecordsWriteMessage).recordId;
-
-    // Delegate A (revoked) should NOT receive a contextKey
-    const { reply: queryA } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : 'https://identity.foundation/protocols/key-delivery',
-          protocolPath : 'contextKey',
-          recipient    : delegateA.did,
-        },
-      },
-    });
-    const keysA = (queryA.entries ?? []).filter(
-      (e: any) => e.descriptor?.tags?.contextId === threadId,
-    );
-    expect(keysA).toHaveLength(0);
-
-    // Delegate B is not revoked, but legacy contextKey delivery is not used.
-    const { reply: queryB } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : 'https://identity.foundation/protocols/key-delivery',
-          protocolPath : 'contextKey',
-          recipient    : delegateB.did,
-        },
-      },
-    });
-    const keysB = (queryB.entries ?? []).filter(
-      (e: any) => e.descriptor?.tags?.contextId === threadId,
-    );
-    expect(keysB).toHaveLength(0);
-  });
-
-  it('should not require context-key self-heal when revocation fanout was missed', async () => {
-    const ownerDid = ownerIdentity.did.uri;
-    const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
-
-    // 1. Install protocol + key-delivery
-    await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
-      encryption    : true,
-    });
-    await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
-
-    // 2. Create delegate + session grant + revocation grant
-    const { DidJwk } = await import('@enbox/dids');
-
-    const delegateBearerDid = await DidJwk.create();
-    // Session grant.
-    const sessionGrant = await permissionsApi.createGrant({
-      delegated   : true,
-      store       : true,
-      grantedTo   : delegateBearerDid.uri,
-      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
-      dateExpires : '2040-06-25T16:09:16.693356Z',
-      author      : ownerDid,
-    });
-
-    // Revocation grant — stored locally ONLY (simulate fanout failure)
-    const revGrant = await permissionsApi.createGrant({
-      delegated : true,
-      store     : true,
-      grantedTo : delegateBearerDid.uri,
-      scope     : {
-        interface : DwnInterfaceName.Records,
-        method    : DwnMethodName.Write,
-        protocol  : PermissionsProtocol.uri,
-        contextId : sessionGrant.message.recordId,
-      },
-      dateExpires : '2040-06-25T16:09:16.693356Z',
-      author      : ownerDid,
-    });
-    // Deliberately do NOT send revGrant to remote — simulates best-effort fanout failure
-
-    // 3. Verify no legacy delivery happens before revocation.
-    const { message: thread1 } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        schema       : 'https://schemas.xyz/thread',
-        dataFormat   : 'application/json',
-        data         : new TextEncoder().encode(JSON.stringify({ topic: 'Before self-heal' })),
-      },
-      encryption: true,
-    });
-    const thread1Id = (thread1 as RecordsWriteMessage).recordId;
-
-    const { reply: beforeQ } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: { protocol: 'https://identity.foundation/protocols/key-delivery', protocolPath: 'contextKey', recipient: delegateBearerDid.uri },
-      },
-    });
-    expect((beforeQ.entries ?? []).filter((e: any) => e.descriptor?.tags?.contextId === thread1Id)).toHaveLength(0);
-    expect(revGrant.message.recordId).toBeDefined();
-
-    // 5. Now revoke the session grant (owner-authored for simplicity)
-    await permissionsApi.createRevocation({
-      author : ownerDid,
-      store  : true,
-      grant  : sessionGrant.grant,
-    });
-
-    // 6. Create another context AFTER revocation
-    const { message: thread2 } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        schema       : 'https://schemas.xyz/thread',
-        dataFormat   : 'application/json',
-        data         : new TextEncoder().encode(JSON.stringify({ topic: 'After self-heal revocation' })),
-      },
-      encryption: true,
-    });
-    const thread2Id = (thread2 as RecordsWriteMessage).recordId;
-
-    // 7. Verify: NO contextKey delivered for the revoked delegate
-    const { reply: afterQ } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: { protocol: 'https://identity.foundation/protocols/key-delivery', protocolPath: 'contextKey', recipient: delegateBearerDid.uri },
-      },
-    });
-    const afterKeys = (afterQ.entries ?? []).filter((e: any) => e.descriptor?.tags?.contextId === thread2Id);
-    expect(afterKeys).toHaveLength(0);
-  });
-
-  it('should block delivery when revoked via delegated authorization (AuthManager disconnect path)', async () => {
-    const ownerDid = ownerIdentity.did.uri;
-    const permissionsApi = new AgentPermissionsApi({ agent: ownerHarness.agent });
-    const { DidJwk } = await import('@enbox/dids');
-
-    // 1. Install protocol + key-delivery
-    await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
-      encryption    : true,
-    });
-    await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
-
-    // 2. Create delegate with session grant + per-grant revocation grant
-    const delegateBearerDid = await DidJwk.create();
-    const dp = await delegateBearerDid.export();
-
-    // Import delegate keys into owner agent's KMS (needed for delegated signing)
-    await ownerHarness.agent.did.import({
-      portableDid : dp,
-      tenant      : ownerHarness.agent.agentDid.uri,
-    });
-
-    const sessionGrant = await permissionsApi.createGrant({
-      delegated   : true,
-      store       : true,
-      grantedTo   : delegateBearerDid.uri,
-      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
-      dateExpires : '2040-06-25T16:09:16.693356Z',
-      author      : ownerDid,
-    });
-
-    const revGrant = await permissionsApi.createGrant({
-      delegated : true,
-      store     : true,
-      grantedTo : delegateBearerDid.uri,
-      scope     : {
-        interface : DwnInterfaceName.Records,
-        method    : DwnMethodName.Write,
-        protocol  : PermissionsProtocol.uri,
-        contextId : sessionGrant.message.recordId,
-      },
-      dateExpires : '2040-06-25T16:09:16.693356Z',
-      author      : ownerDid,
-    });
-
-    // 3. Revoke using DELEGATED authorization (same code path as AuthManager.disconnect)
-    await permissionsApi.createRevocation({
-      author            : ownerDid,
-      store             : true,
-      grant             : sessionGrant.grant,
-      granteeDid        : delegateBearerDid.uri,
-      permissionGrantId : revGrant.message.recordId,
-    });
-
-    // 4. Create new context after delegated revocation
-    const { message: thread } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        schema       : 'https://schemas.xyz/thread',
-        dataFormat   : 'application/json',
-        data         : new TextEncoder().encode(JSON.stringify({ topic: 'After delegated revocation' })),
-      },
-      encryption: true,
-    });
-    const threadId = (thread as RecordsWriteMessage).recordId;
-
-    // 5. Verify: no contextKey delivered for the revoked delegate
-    const { reply: q } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerDid,
-      target        : ownerDid,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: { protocol: 'https://identity.foundation/protocols/key-delivery', protocolPath: 'contextKey', recipient: delegateBearerDid.uri },
-      },
-    });
-    const keys = (q.entries ?? []).filter((e: any) => e.descriptor?.tags?.contextId === threadId);
-    expect(keys).toHaveLength(0);
-  });
-
   it('should revoke from a separate delegate agent without owner signing keys', async () => {
     // This test uses TWO separate agent harnesses to prove the real
     // wallet-connect disconnect path: the delegate agent does NOT have
@@ -582,7 +194,6 @@ describe('e2e: grant revocation stops future delivery', () => {
         messageParams : { definition: chatProtocol },
         encryption    : true,
       });
-      await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
 
       const delegateBearerDid = await DidJwk.create();
       const dp = await delegateBearerDid.export();
@@ -690,12 +301,8 @@ describe('e2e: grant revocation stops future delivery', () => {
         permissionGrantId : revGrant.message.recordId,
       });
 
-      // --- VERIFY: copy revocation back to owner's DWN and check delivery stops ---
+      // --- VERIFY: copy revocation back to owner's DWN ---
       // Query for the revocation on the delegate's local DWN
-      // Verify the revocation took effect by copying it to the owner's
-      // DWN and verifying that deliverContextKeyToDelegatesViaDwn no
-      // longer delivers to this delegate.
-      //
       // Note: The revocation IS stored on the delegate's local DWN, but
       // the delegate can't query for it via RecordsQuery (DWN protocol
       // authorization doesn't allow delegate-signed queries on revocation
@@ -760,33 +367,6 @@ describe('e2e: grant revocation stops future delivery', () => {
         }
       }
 
-      // Owner creates a new context AFTER the delegated revocation
-      const { message: thread } = await ownerHarness.agent.processDwnRequest({
-        author        : ownerDid,
-        target        : ownerDid,
-        messageType   : DwnInterface.RecordsWrite,
-        messageParams : {
-          protocol     : chatProtocol.protocol,
-          protocolPath : 'thread',
-          schema       : 'https://schemas.xyz/thread',
-          dataFormat   : 'application/json',
-          data         : new TextEncoder().encode(JSON.stringify({ topic: 'After cross-agent delegated revocation' })),
-        },
-        encryption: true,
-      });
-      const threadId = (thread as RecordsWriteMessage).recordId;
-
-      // NO contextKey should be delivered for the revoked delegate
-      const { reply: ctxQ } = await ownerHarness.agent.processDwnRequest({
-        author        : ownerDid,
-        target        : ownerDid,
-        messageType   : DwnInterface.RecordsQuery,
-        messageParams : {
-          filter: { protocol: 'https://identity.foundation/protocols/key-delivery', protocolPath: 'contextKey', recipient: delegateBearerDid.uri },
-        },
-      });
-      const ctxKeys = (ctxQ.entries ?? []).filter((e: any) => e.descriptor?.tags?.contextId === threadId);
-      expect(ctxKeys).toHaveLength(0);
     } finally {
       await delegateHarness.clearStorage();
       await delegateHarness.closeStorage();
@@ -798,7 +378,7 @@ describe('e2e: grant revocation stops future delivery', () => {
     // 1. Partial disconnect persists retry context
     // 2. Relaunch → restoreSession retry path runs
     // 3. Retry succeeds using delegate signing only (no owner keys)
-    // 4. Future context-key delivery is blocked
+    // 4. Retry context is cleared
     const ownerDid = ownerIdentity.did.uri;
     const { DidJwk } = await import('@enbox/dids');
 
@@ -812,7 +392,6 @@ describe('e2e: grant revocation stops future delivery', () => {
       messageParams : { definition: chatProtocol },
       encryption    : true,
     });
-    await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
 
     const delegateBearerDid = await DidJwk.create();
     const dp = await delegateBearerDid.export();
@@ -959,31 +538,6 @@ describe('e2e: grant revocation stops future delivery', () => {
         }
       }
 
-      // Owner creates new context — should NOT deliver to revoked delegate
-      const { message: thread } = await ownerHarness.agent.processDwnRequest({
-        author        : ownerDid,
-        target        : ownerDid,
-        messageType   : DwnInterface.RecordsWrite,
-        messageParams : {
-          protocol     : chatProtocol.protocol,
-          protocolPath : 'thread',
-          schema       : 'https://schemas.xyz/thread',
-          dataFormat   : 'application/json',
-          data         : new TextEncoder().encode(JSON.stringify({ topic: 'After retry revocation' })),
-        },
-        encryption: true,
-      });
-      const threadId = (thread as RecordsWriteMessage).recordId;
-
-      const { reply: ctxQ } = await ownerHarness.agent.processDwnRequest({
-        author        : ownerDid,
-        target        : ownerDid,
-        messageType   : DwnInterface.RecordsQuery,
-        messageParams : {
-          filter: { protocol: 'https://identity.foundation/protocols/key-delivery', protocolPath: 'contextKey', recipient: delegateBearerDid.uri },
-        },
-      });
-      expect((ctxQ.entries ?? []).filter((e: any) => e.descriptor?.tags?.contextId === threadId)).toHaveLength(0);
     } finally {
       await delegateHarness.clearStorage();
       await delegateHarness.closeStorage();
@@ -1010,7 +564,6 @@ describe('e2e: grant revocation stops future delivery', () => {
       messageParams : { definition: chatProtocol },
       encryption    : true,
     });
-    await ownerHarness.agent.dwn.ensureKeyDeliveryProtocol(ownerDid);
 
     const delegateBearerDid = await DidJwk.create();
     const dp = await delegateBearerDid.export();
@@ -1144,7 +697,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       // In CI, remote DWN send may be flaky — assert the local revocation.
       expect((revQ.entries ?? []).length).toBeGreaterThanOrEqual(1);
 
-      // Copy revocation to owner's DWN and verify delivery is blocked
+      // Copy revocation to owner's DWN.
       for (const entry of revQ.entries ?? []) {
         const { reply: rr } = await delegateHarness.agent.dwn.processRequest({
           author        : ownerDid,
@@ -1161,30 +714,6 @@ describe('e2e: grant revocation stops future delivery', () => {
         }
       }
 
-      const { message: thread } = await ownerHarness.agent.processDwnRequest({
-        author        : ownerDid,
-        target        : ownerDid,
-        messageType   : DwnInterface.RecordsWrite,
-        messageParams : {
-          protocol     : chatProtocol.protocol,
-          protocolPath : 'thread',
-          schema       : 'https://schemas.xyz/thread',
-          dataFormat   : 'application/json',
-          data         : new TextEncoder().encode(JSON.stringify({ topic: 'After auth-layer retry' })),
-        },
-        encryption: true,
-      });
-      const threadId = (thread as RecordsWriteMessage).recordId;
-
-      const { reply: ctxQ } = await ownerHarness.agent.processDwnRequest({
-        author        : ownerDid,
-        target        : ownerDid,
-        messageType   : DwnInterface.RecordsQuery,
-        messageParams : {
-          filter: { protocol: 'https://identity.foundation/protocols/key-delivery', protocolPath: 'contextKey', recipient: delegateBearerDid.uri },
-        },
-      });
-      expect((ctxQ.entries ?? []).filter((e: any) => e.descriptor?.tags?.contextId === threadId)).toHaveLength(0);
     } finally {
       await delegateHarness.clearStorage();
       await delegateHarness.closeStorage();

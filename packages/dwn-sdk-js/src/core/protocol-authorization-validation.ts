@@ -1,16 +1,16 @@
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { RoleAudienceKeyEncryption } from '../utils/encryption.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
-import type { ProtocolDefinition, ProtocolRuleSet, ProtocolType, ProtocolTypes } from '../types/protocols-types.js';
+import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet, ProtocolType, ProtocolTypes } from '../types/protocols-types.js';
 
-import { ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
-
-import { Encryption } from '../utils/encryption.js';
 import { KeyDerivationScheme } from '../utils/hd-key.js';
 import { Records } from '../utils/records.js';
 import { validateProtocolTags } from '../utils/protocol-tags.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
+import { Encryption, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { getRuleSetAtPath, getTypeName, parseCrossProtocolRef } from '../utils/protocols.js';
+import { ProtocolAction, ProtocolRecordLimitStrategy } from '../types/protocols-types.js';
 
 /**
  * Verifies the `protocolPath` declared in the given message matches the path of actual record chain.
@@ -174,9 +174,11 @@ export async function verifyTypeWithComposition(
 
   const protocolType = verifyType(inboundMessage, protocolTypes, declaredTypeName);
   await verifyProtocolPathEncryptionIfNeeded(
+    tenant,
     inboundMessage,
     protocolDefinition,
     protocolType,
+    validationStateReader,
   );
 }
 
@@ -266,23 +268,25 @@ export function verifyType(
 }
 
 async function verifyProtocolPathEncryptionIfNeeded(
+  tenant: string,
   inboundMessage: RecordsWriteMessage,
   protocolDefinition: ProtocolDefinition,
   protocolType: ProtocolType,
+  validationStateReader: ValidationStateReader,
 ): Promise<void> {
   if (protocolType.encryptionRequired !== true) {
     return;
   }
 
   const ruleSet = getRuleSetAtPath(inboundMessage.descriptor.protocolPath, protocolDefinition.structure);
-  const publicKeyJwk = ruleSet?.$keyAgreement?.publicKeyJwk;
-  if (publicKeyJwk === undefined) {
+  if (ruleSet === undefined || ruleSet.$keyAgreement?.publicKeyJwk === undefined) {
     throw new DwnError(
       DwnErrorCode.ProtocolAuthorizationEncryptionKeyAgreementMissing,
       `encrypted protocol path '${inboundMessage.descriptor.protocolPath}' has no $keyAgreement`
     );
   }
 
+  const publicKeyJwk = ruleSet.$keyAgreement.publicKeyJwk;
   const keyId = await Encryption.getKeyId(publicKeyJwk);
   const hasProtocolPathEntry = inboundMessage.encryption!.keyEncryption.some((entry): boolean =>
     entry.derivationScheme === KeyDerivationScheme.ProtocolPath && entry.keyId === keyId
@@ -294,6 +298,101 @@ async function verifyProtocolPathEncryptionIfNeeded(
       `encrypted record is missing a protocolPath keyEncryption entry for '${inboundMessage.descriptor.protocolPath}'`
     );
   }
+
+  await verifyRoleAudienceEncryptionIfNeeded(tenant, inboundMessage, protocolDefinition, ruleSet, validationStateReader);
+}
+
+async function verifyRoleAudienceEncryptionIfNeeded(
+  tenant: string,
+  inboundMessage: RecordsWriteMessage,
+  protocolDefinition: ProtocolDefinition,
+  ruleSet: ProtocolRuleSet,
+  validationStateReader: ValidationStateReader,
+): Promise<void> {
+  const readRoleRules = (ruleSet.$actions ?? []).filter((actionRule): boolean =>
+    actionRule.role !== undefined && actionRule.can.includes(ProtocolAction.Read)
+  );
+
+  for (const actionRule of readRoleRules) {
+    const roleAudience = resolveRoleAudience(actionRule, inboundMessage, protocolDefinition);
+    if (roleAudience === undefined) {
+      continue;
+    }
+
+    const matchingEntry = inboundMessage.encryption!.keyEncryption.find((entry): entry is RoleAudienceKeyEncryption =>
+      entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
+      entry.protocol === roleAudience.protocol &&
+      entry.role === roleAudience.role
+    );
+
+    if (matchingEntry === undefined) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEntryMissing,
+        `encrypted record is missing a roleAudience keyEncryption entry for role '${roleAudience.role}'`
+      );
+    }
+
+    const matchingEpochs = await validationStateReader.queryAudienceEpochs({
+      tenant,
+      protocol  : roleAudience.protocol,
+      contextId : roleAudience.contextId,
+      role      : roleAudience.role,
+      epoch     : matchingEntry.epoch,
+      keyId     : matchingEntry.keyId,
+    });
+
+    if (matchingEpochs.length === 0) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing,
+        `encrypted record references a missing audienceEpoch for role '${roleAudience.role}'`
+      );
+    }
+  }
+}
+
+function resolveRoleAudience(
+  actionRule: ProtocolActionRule,
+  inboundMessage: RecordsWriteMessage,
+  protocolDefinition: ProtocolDefinition,
+): { protocol: string; role: string; contextId: string } | undefined {
+  const roleRef = actionRule.role;
+  if (roleRef === undefined) {
+    return undefined;
+  }
+
+  const parsed = parseCrossProtocolRef(roleRef);
+  const protocol = parsed === undefined
+    ? inboundMessage.descriptor.protocol
+    : protocolDefinition.uses?.[parsed.alias];
+  const role = parsed === undefined ? roleRef : parsed.protocolPath;
+  if (protocol === undefined) {
+    return undefined;
+  }
+
+  const contextId = getRoleAudienceContextId(inboundMessage, role);
+  return contextId === undefined ? undefined : { protocol, role, contextId };
+}
+
+function getRoleAudienceContextId(
+  inboundMessage: RecordsWriteMessage,
+  rolePath: string,
+): string | undefined {
+  const parentDepth = rolePath.split('/').length - 1;
+  if (parentDepth === 0) {
+    return '';
+  }
+
+  const contextId = inboundMessage.contextId;
+  if (typeof contextId !== 'string') {
+    return undefined;
+  }
+
+  const contextSegments = contextId.split('/');
+  if (contextSegments.length < parentDepth) {
+    return undefined;
+  }
+
+  return contextSegments.slice(0, parentDepth).join('/');
 }
 
 /**

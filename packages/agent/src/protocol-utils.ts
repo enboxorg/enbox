@@ -26,16 +26,6 @@ export function getRuleSetAtPath(
 }
 
 /**
- * Extracts the root context ID from a contextId or parentContextId.
- * e.g. 'abc/def/ghi' -> 'abc', 'abc' -> 'abc'
- * @param contextId - The context ID to extract the root from
- * @returns The root context ID
- */
-export function getRootContextId(contextId: string): string {
-  return contextId.split('/')[0] || contextId;
-}
-
-/**
  * Checks if a protocol path represents a multi-party context.
  * Returns true if the root path's subtree contains $role descendants
  * or relational who/of $actions rules that grant read access.
@@ -70,7 +60,7 @@ export function isMultiPartyContext(
   // (b) Check for relational who/of read rules anywhere in the protocol
   //     that reference a path within this subtree. A rule like
   //     { who: 'recipient', of: 'email', can: ['read'] } on any record
-  //     type means the email recipient needs a context key.
+  //     type means the email recipient is part of the readable audience.
   return hasRelationalReadAccess(
     undefined, rootProtocolPath, protocolDefinition,
   );
@@ -135,25 +125,25 @@ export function hasRelationalReadAccess(
 }
 
 /**
- * Analyses a record write to determine which DIDs need context key delivery.
+ * Analyses a record write to determine which DIDs join the readable audience.
  *
- * Returns a set of participant DIDs that should receive `contextKey` records.
- * The DWN owner (tenantDid) is always excluded — they have ProtocolPath access.
+ * Returns a set of participant DIDs. The DWN owner (tenantDid) is always
+ * excluded because they have ProtocolPath access.
  *
  * Cases handled:
  *   1. `$role` record with a recipient -> recipient is a participant
  *   2. Record has a recipient and a relational read rule grants access
  *      via `{ who: 'recipient', of: '<path>', can: ['read'] }`
  *   3. Record is authored by an external party -> if `{ who: 'author', of:
- *      '<path>', can: ['read'] }` rules grant read access, the author needs
- *      a context key.
+ *      '<path>', can: ['read'] }` rules grant read access, the author is
+ *      part of the readable audience.
  *
  * @param params.protocolDefinition - The installed protocol definition
  * @param params.protocolPath       - The written record's protocol path
  * @param params.recipient          - Recipient DID from the record, if any
  * @param params.tenantDid          - The DWN owner's DID (excluded from results)
  * @param params.authorDid          - Author DID if externally authored, undefined otherwise
- * @returns Set of DIDs that need context key delivery
+ * @returns Set of DIDs that join the readable audience
  */
 export function detectNewParticipants({ protocolDefinition, protocolPath, recipient, tenantDid, authorDid }: {
   protocolDefinition: ProtocolDefinition;
@@ -182,7 +172,7 @@ export function detectNewParticipants({ protocolDefinition, protocolPath, recipi
 
   // Case 3: External author -> check if author-based relational read rules exist.
   // If `{ who: 'author', of: '<path>', can: ['read'] }` is defined anywhere
-  // in the protocol, the external author needs a context key to decrypt.
+  // in the protocol, the external author joins the readable audience.
   if (authorDid && authorDid !== tenantDid) {
     if (hasRelationalReadAccess('author', protocolPath, protocolDefinition)) {
       participants.add(authorDid);

@@ -16,8 +16,10 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
+import sinon from 'sinon';
+
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { ContentEncryptionAlgorithm, DataStream, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import { ContentEncryptionAlgorithm, DataStream, DwnInterfaceName, DwnMethodName, Encoder, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxConnectProtocol } from '../src/enbox-connect-protocol.js';
@@ -30,6 +32,19 @@ import { testDwnUrl } from './utils/test-config.js';
 const encryptedNoteProtocol: ProtocolDefinition = {
   published : true,
   protocol  : 'https://protocol.xyz/e2e-delegate-encrypted-notes',
+  types     : {
+    note: {
+      schema             : 'https://schemas.xyz/note',
+      dataFormats        : ['text/plain'],
+      encryptionRequired : true,
+    },
+  },
+  structure: { note: {} },
+};
+
+const delegateReadableEncryptedNoteProtocol: ProtocolDefinition = {
+  published : true,
+  protocol  : 'https://protocol.xyz/e2e-delegate-delivered-key-notes',
   types     : {
     note: {
       schema             : 'https://schemas.xyz/note',
@@ -205,13 +220,13 @@ describe('e2e: delegate + encrypted protocol', () => {
   // ─── 3. Delegate reads decrypt ciphertext ───────────────────
 
   describe('delegate encrypted reads with delivered key', () => {
-    it('should decrypt records using a delivered protocol path key', async () => {
+    it('should decrypt records using only a delivered protocol path key from a distinct delegate KMS', async () => {
       // Step 1: Install encrypted protocol on wallet
       await walletHarness.agent.processDwnRequest({
         author        : walletIdentity.did.uri,
         target        : walletIdentity.did.uri,
         messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: encryptedNoteProtocol },
+        messageParams : { definition: delegateReadableEncryptedNoteProtocol },
         encryption    : true,
       });
 
@@ -222,7 +237,7 @@ describe('e2e: delegate + encrypted protocol', () => {
         target        : walletIdentity.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : encryptedNoteProtocol.protocol,
+          protocol     : delegateReadableEncryptedNoteProtocol.protocol,
           protocolPath : 'note',
           schema       : 'https://schemas.xyz/note',
           dataFormat   : 'text/plain',
@@ -233,13 +248,12 @@ describe('e2e: delegate + encrypted protocol', () => {
 
       // Step 3: Derive keys through the real deriveScopedDecryptionKeys path
       // — same code that submitConnectResponse calls during the connect flow.
-      const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
       const readScopes = [
-        { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: encryptedNoteProtocol.protocol },
+        { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: delegateReadableEncryptedNoteProtocol.protocol },
       ];
       const delegateKeys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
         walletHarness.agent, walletIdentity.did.uri,
-        encryptedNoteProtocol.protocol, readScopes as any, encryptedNoteProtocol,
+        delegateReadableEncryptedNoteProtocol.protocol, readScopes as any, delegateReadableEncryptedNoteProtocol,
       );
       expect(delegateKeys).toHaveLength(1);
 
@@ -250,37 +264,51 @@ describe('e2e: delegate + encrypted protocol', () => {
         delegateDid, delegateKeys,
       );
 
-      // Step 5: Import the wallet identity into the delegate agent so it can
-      // sign messages as the wallet DID. In a real flow, the delegate would
-      // use a delegated grant; here we import the identity for simplicity.
-      const walletPortableDid = await walletIdentity.did.export();
-      await delegateHarness.agent.did.import({
-        portableDid : walletPortableDid,
-        tenant      : delegateHarness.agent.agentDid.uri,
+      const readGrant = await walletHarness.agent.permissions.createGrant({
+        author      : walletIdentity.did.uri,
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        delegated   : true,
+        grantedTo   : delegateDid,
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Read,
+          protocol  : delegateReadableEncryptedNoteProtocol.protocol,
+        },
+        store: true,
       });
+      const { encodedData: encodedGrantData, ...grantMessage } = readGrant.message as any;
+      const grantApplyReply = await delegateHarness.agent.dwn.processRawMessage(
+        walletIdentity.did.uri,
+        grantMessage,
+        { dataStream: DataStream.fromBytes(Encoder.base64UrlToBytes(encodedGrantData)) },
+      );
+      expect(grantApplyReply.status.code).toBe(202);
 
-      // Step 6: Copy the encrypted protocol + record to the delegate's DWN
+      const kmsUnwrapSpy = sinon.spy(delegateHarness.agent.keyManager, 'jweKeyUnwrap');
+
+      // Step 5: Copy the encrypted protocol + record to the delegate's DWN
       // (simulates sync bringing over the data)
       const { reply: protoQueryReply } = await walletHarness.agent.processDwnRequest({
         author        : walletIdentity.did.uri,
         target        : walletIdentity.did.uri,
         messageType   : DwnInterface.ProtocolsQuery,
-        messageParams : { filter: { protocol: encryptedNoteProtocol.protocol } },
+        messageParams : { filter: { protocol: delegateReadableEncryptedNoteProtocol.protocol } },
       });
       const protocolMessage = protoQueryReply.entries![0];
 
       // Install protocol on delegate's local DWN
-      await delegateHarness.agent.dwn.processRawMessage(
+      const protocolApplyReply = await delegateHarness.agent.dwn.processRawMessage(
         walletIdentity.did.uri,
         protocolMessage as any,
       );
+      expect(protocolApplyReply.status.code).toBe(202);
 
       // Copy the encrypted record to delegate's local DWN
       const { reply: recordQueryReply } = await walletHarness.agent.processDwnRequest({
         author        : walletIdentity.did.uri,
         target        : walletIdentity.did.uri,
         messageType   : DwnInterface.RecordsQuery,
-        messageParams : { filter: { protocol: encryptedNoteProtocol.protocol } },
+        messageParams : { filter: { protocol: delegateReadableEncryptedNoteProtocol.protocol } },
       });
 
       for (const entry of recordQueryReply.entries ?? []) {
@@ -294,28 +322,29 @@ describe('e2e: delegate + encrypted protocol', () => {
 
         if (readReply.entry?.recordsWrite && readReply.entry?.data) {
           const dataBytes = await DataStream.toBytes(readReply.entry.data);
-          await delegateHarness.agent.dwn.processRawMessage(
+          const recordApplyReply = await delegateHarness.agent.dwn.processRawMessage(
             walletIdentity.did.uri,
             readReply.entry.recordsWrite as any,
             { dataStream: DataStream.fromBytes(dataBytes) },
           );
+          expect(recordApplyReply.status.code).toBe(202);
         }
       }
 
-      // Step 6: Read with auto-decrypt using the delegate's agent.
-      // The delegate has the wallet identity imported for signing. The
-      // decryption works via KMS fallback (owner key in delegate's KMS).
-      // In a real flow with granteeDid, the delegate key cache would be
-      // used instead — but processDwnRequest with granteeDid requires a
-      // real grant. The cache path is proven by the sibling rejection test.
+      // Step 6: Read with auto-decrypt using the delegate's own DID.
+      // The delegate does not hold the wallet PortableDid. `granteeDid` forces
+      // the delivered-key path and fails closed if the cache does not cover
+      // the encrypted record.
       const { reply: decryptedReply } = await delegateHarness.agent.processDwnRequest({
-        author        : walletIdentity.did.uri,
+        author        : delegateDid,
         target        : walletIdentity.did.uri,
         messageType   : DwnInterface.RecordsRead,
         messageParams : {
-          filter: { protocol: encryptedNoteProtocol.protocol },
+          filter            : { protocol: delegateReadableEncryptedNoteProtocol.protocol },
+          permissionGrantId : readGrant.grant.id,
         },
-        encryption: true,
+        encryption : true,
+        granteeDid : delegateDid,
       });
 
       expect(decryptedReply.status.code).toBe(200);
@@ -324,6 +353,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       const decryptedBytes = await DataStream.toBytes(decryptedReply.entry!.data!);
       const decryptedText = new TextDecoder().decode(decryptedBytes);
       expect(decryptedText).toBe(noteData);
+      expect(kmsUnwrapSpy.called).toBe(false);
     });
   });
 
@@ -706,8 +736,6 @@ describe('e2e: delegate + encrypted protocol', () => {
           walletIdentity.did.uri,
           commentWrite,
           walletIdentity.did.uri,
-          new TtlCache({ ttl: 60_000 }),
-          async () => undefined,
           cache,
           siblingDelegateDid,
         )
@@ -811,7 +839,6 @@ describe('e2e: delegate + encrypted protocol', () => {
       const decrypter = await resolveKeyDecrypter(
         delegateHarness.agent, walletIdentity.did.uri,
         recordsWrite, walletIdentity.did.uri,
-        new TtlCache({ ttl: 60_000 }), async () => undefined,
         pathCache, delegateDid,
       );
       expect(decrypter.rootKeyId).toBe(keys[0].derivedPrivateKey.rootKeyId);
@@ -876,7 +903,6 @@ describe('e2e: delegate + encrypted protocol', () => {
       const decrypter = await resolveKeyDecrypter(
         delegateHarness.agent, walletIdentity.did.uri,
         recordsWrite, walletIdentity.did.uri,
-        new TtlCache({ ttl: 60_000 }), async () => undefined,
         pathCache, delegateDid,
       );
       // The path-subtree decrypter has the key's rootKeyId

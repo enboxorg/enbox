@@ -290,8 +290,6 @@ export type DelegateDecryptionKeyEntry = {
  * @param authorDid - The DID of the author attempting to decrypt
  * @param recordsWrite - The records write message containing encryption info
  * @param targetDid - The target DID (DWN owner), if known
- * @param contextDerivedKeyCache - Legacy compatibility cache, ignored
- * @param fetchContextKeyRecordFn - Legacy compatibility fetcher, ignored
  * @param delegateDecryptionKeyCache - Cache for scope-aware delegate decryption keys
  * @param granteeDid - The delegate DID (if this is a delegated request)
  */
@@ -300,21 +298,10 @@ export async function resolveKeyDecrypter(
   authorDid: string,
   recordsWrite: RecordsWriteMessage,
   targetDid: string | undefined,
-  contextDerivedKeyCache: { get(key: string): DerivedPrivateJwk | undefined; set(key: string, value: DerivedPrivateJwk): void },
-  fetchContextKeyRecordFn: (params: {
-    ownerDid: string;
-    requesterDid: string;
-    sourceProtocol: string;
-    sourceContextId: string;
-  }) => Promise<DerivedPrivateJwk | undefined>,
   delegateDecryptionKeyCache?: { get(key: string): DelegateDecryptionKeyEntry[] | undefined },
   granteeDid?: string,
-  delegateContextKeyCache?: { get(key: string): DerivedPrivateJwk | undefined; set(key: string, value: DerivedPrivateJwk): void },
 ): Promise<KeyDecrypter> {
   void targetDid;
-  void contextDerivedKeyCache;
-  void fetchContextKeyRecordFn;
-  void delegateContextKeyCache;
 
   if (granteeDid !== undefined) {
     const protocol = recordsWrite.descriptor.protocol;
@@ -370,23 +357,13 @@ export async function resolveKeyDecrypter(
  * @param request - The original DWN request
  * @param reply - The DWN reply to process
  * @param agent - The platform agent
- * @param contextDerivedKeyCache - Cache for context-derived private keys
- * @param fetchContextKeyRecordFn - Function to fetch context key records
  * @param delegateDecryptionKeyCache - Cache for scope-aware delegate decryption keys
  */
 export async function maybeDecryptReply<T extends DwnInterface>(
   request: ProcessDwnRequest<T> | SendDwnRequest<T>,
   reply: DwnMessageReply[T],
   agent: EnboxPlatformAgent,
-  contextDerivedKeyCache: { get(key: string): DerivedPrivateJwk | undefined; set(key: string, value: DerivedPrivateJwk): void },
-  fetchContextKeyRecordFn: (params: {
-    ownerDid: string;
-    requesterDid: string;
-    sourceProtocol: string;
-    sourceContextId: string;
-  }) => Promise<DerivedPrivateJwk | undefined>,
   delegateDecryptionKeyCache?: { get(key: string): DelegateDecryptionKeyEntry[] | undefined },
-  delegateContextKeyCache?: { get(key: string): DerivedPrivateJwk | undefined; set(key: string, value: DerivedPrivateJwk): void },
 ): Promise<void> {
   if (!('encryption' in request) || !request.encryption) {
     return;
@@ -408,8 +385,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
         && readReply.entry?.data) {
       const keyDecrypter = await resolveKeyDecrypter(
         agent, encryptedRequest.author, readReply.entry.recordsWrite, encryptedRequest.target,
-        contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
-        granteeDid, delegateContextKeyCache,
+        delegateDecryptionKeyCache, granteeDid,
       );
 
       try {
@@ -436,8 +412,7 @@ export async function maybeDecryptReply<T extends DwnInterface>(
         if (entry.encryption && entry.encodedData) {
           const keyDecrypter = await resolveKeyDecrypter(
             agent, encryptedRequest.author, entry as RecordsWriteMessage, encryptedRequest.target,
-            contextDerivedKeyCache, fetchContextKeyRecordFn, delegateDecryptionKeyCache,
-            granteeDid, delegateContextKeyCache,
+            delegateDecryptionKeyCache, granteeDid,
           );
 
           try {

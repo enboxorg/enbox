@@ -315,7 +315,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
     }
 
     // Read the record from the store. If encryption is active for this tenant,
-    // the agent's auto-decryption pipeline handles ECIES key unwrapping and AES decryption.
+    // the agent's auto-decryption pipeline handles key unwrapping and AES decryption.
     //
     // When the protocol definition declares `encryptionRequired: true`, always
     // request decryption — even if `initialize()` has not been called for this

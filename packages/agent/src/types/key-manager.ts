@@ -47,8 +47,8 @@ export interface AgentKeyManager extends KeyManager,
    *
    * This method:
    * 1. Derives the leaf private key via HKDF through the derivation path
-   * 2. Performs ECDH-ES key agreement with the ephemeral public key
-   * 3. Derives the KEK via Concat KDF and unwraps the CEK with AES-256 Key Unwrap
+   * 2. Performs X25519 key agreement with the ephemeral public key
+   * 3. Derives the KEK via HKDF-SHA256 and unwraps the CEK with AES-256 Key Unwrap
    *
    * The derived private key is used internally and discarded after unwrapping.
    *
@@ -70,12 +70,11 @@ export interface AgentKeyManager extends KeyManager,
    * iteratively through the given derivation path segments.
    *
    * Unlike derivePublicKey(), this returns the derived private key bytes.
-   * This is used ONLY for context-derived key sharing in multi-party
-   * encryption, where the derived key must be serialized and delivered
-   * to another participant.
+   * This is used for scoped decryption-key delivery, where the derived key
+   * must be serialized and delivered to another participant.
    *
    * Security: The ROOT private key never leaves the KMS — only the derived
-   * child key (scoped to a single context) is exported. The child key is
+   * child key (scoped to a grant) is exported. The child key is
    * immediately encrypted with the recipient's public key and the raw bytes
    * are discarded after encryption.
    *

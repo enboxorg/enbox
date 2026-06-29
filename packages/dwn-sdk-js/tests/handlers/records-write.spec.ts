@@ -2,9 +2,9 @@ import type { DidResolver } from '@enbox/dids';
 import type { EncryptionInput } from '../../src/interfaces/records-write.js';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { GenerateFromRecordsWriteOut } from '../utils/test-data-generator.js';
-import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
 import type { RecordsQueryReplyEntry } from '../../src/types/records-types.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
+import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
 
 import anyoneCollaborateProtocolDefinition from '../vectors/protocol-definitions/anyone-collaborate.json' with { type: 'json' };
 import authorCanProtocolDefinition from '../vectors/protocol-definitions/author-can.json' with { type: 'json' };
@@ -41,8 +41,8 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
-import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
-import { CoreProtocolRegistry, DataStoreLevel, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, MessageStoreLevel, PermissionsProtocol, Protocols, RecordsDelete, RecordsQuery } from '../../src/index.js';
+import { ContentEncryptionAlgorithm, Encryption, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
+import { CoreProtocolRegistry, DataStoreLevel, DwnConstant, DwnInterfaceName, DwnMethodName, EncryptionProtocol, KeyDerivationScheme, MessageStoreLevel, PermissionsProtocol, Protocols, RecordsDelete, RecordsQuery } from '../../src/index.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
@@ -2802,6 +2802,204 @@ export function testRecordsWriteHandler(): void {
             protocolPath : 'secret',
             schema       : 'http://secret-schema',
             data         : encryptedData,
+            encryptionInput,
+          });
+
+          const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
+          expect(writeReply.status.code).toBe(202);
+        });
+
+        it('should reject an encrypted role-readable RecordsWrite without a roleAudience keyEncryption entry', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition: ProtocolDefinition = {
+            protocol  : 'http://role-audience-entry-required.xyz',
+            published : false,
+            types     : {
+              thread      : { schema: 'http://thread-schema', dataFormats: ['application/json'] },
+              participant : { schema: 'http://participant-schema', dataFormats: ['application/json'] },
+              chat        : { schema: 'http://chat-schema', dataFormats: ['text/plain'], encryptionRequired: true },
+            },
+            structure: {
+              thread: {
+                participant : { $role: true },
+                chat        : {
+                  $actions: [
+                    { role: 'thread/participant', can: ['read'] },
+                  ],
+                },
+              },
+            },
+          };
+
+          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          );
+
+          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : encryptedProtocolDefinition,
+          });
+          expect((await dwn.processMessage(alice.did, protocolConfig.message)).status.code).toBe(202);
+
+          const thread = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'thread',
+            schema       : 'http://thread-schema',
+            dataFormat   : 'application/json',
+            data         : Encoder.stringToBytes('{"title":"secret"}'),
+          });
+          expect((await dwn.processMessage(alice.did, thread.message, { dataStream: thread.dataStream })).status.code).toBe(202);
+
+          const data = Encoder.stringToBytes('encrypted chat');
+          const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+          const encryptedData = await Encryption.encrypt(
+            ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, data
+          );
+          const threadRuleSet = encryptedProtocolDefinition.structure.thread;
+          const chatRuleSet = threadRuleSet.chat as ProtocolRuleSet;
+          const protocolPathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
+          const encryptionInput: EncryptionInput = {
+            initializationVector : dataEncryptionInitializationVector,
+            key                  : dataEncryptionKey,
+            keyEncryptionInputs  : [{
+              keyId            : await Encryption.getKeyId(protocolPathPublicKey),
+              publicKey        : protocolPathPublicKey,
+              derivationScheme : KeyDerivationScheme.ProtocolPath,
+            }],
+          };
+
+          const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol        : protocolDefinition.protocol,
+            protocolPath    : 'thread/chat',
+            parentContextId : thread.message.contextId,
+            schema          : 'http://chat-schema',
+            dataFormat      : 'text/plain',
+            data            : encryptedData,
+            encryptionInput,
+          });
+
+          const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
+          expect(writeReply.status.code).toBe(400);
+          expect(writeReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEntryMissing);
+        });
+
+        it('should accept an encrypted role-readable RecordsWrite with a matching audienceEpoch', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition: ProtocolDefinition = {
+            protocol  : 'http://role-audience-entry-accepted.xyz',
+            published : false,
+            types     : {
+              thread      : { schema: 'http://thread-schema', dataFormats: ['application/json'] },
+              participant : { schema: 'http://participant-schema', dataFormats: ['application/json'] },
+              chat        : { schema: 'http://chat-schema', dataFormats: ['text/plain'], encryptionRequired: true },
+            },
+            structure: {
+              thread: {
+                participant : { $role: true },
+                chat        : {
+                  $actions: [
+                    { role: 'thread/participant', can: ['read'] },
+                  ],
+                },
+              },
+            },
+          };
+
+          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+            protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+          );
+
+          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+            author             : alice,
+            protocolDefinition : encryptedProtocolDefinition,
+          });
+          expect((await dwn.processMessage(alice.did, protocolConfig.message)).status.code).toBe(202);
+
+          const thread = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'thread',
+            schema       : 'http://thread-schema',
+            dataFormat   : 'application/json',
+            data         : Encoder.stringToBytes('{"title":"secret"}'),
+          });
+          expect((await dwn.processMessage(alice.did, thread.message, { dataStream: thread.dataStream })).status.code).toBe(202);
+
+          const role = 'thread/participant';
+          const threadRuleSet = encryptedProtocolDefinition.structure.thread;
+          const participantRuleSet = threadRuleSet.participant as ProtocolRuleSet;
+          const rolePublicKey = participantRuleSet.$keyAgreement!.publicKeyJwk;
+          const roleKeyId = await Encryption.getKeyId(rolePublicKey);
+          const audienceEpochData = Encoder.objectToBytes({
+            protocol     : protocolDefinition.protocol,
+            contextId    : thread.message.contextId,
+            role,
+            epoch        : 1,
+            keyId        : roleKeyId,
+            publicKeyJwk : rolePublicKey,
+          });
+          const audienceEpoch = await RecordsWrite.create({
+            data         : audienceEpochData,
+            dataFormat   : 'application/json',
+            protocol     : EncryptionProtocol.uri,
+            protocolPath : EncryptionProtocol.audienceEpochPath,
+            schema       : EncryptionProtocol.definition.types.audienceEpoch.schema,
+            signer       : Jws.createSigner(alice),
+            tags         : {
+              protocol  : protocolDefinition.protocol,
+              contextId : thread.message.contextId!,
+              role,
+              epoch     : 1,
+              keyId     : roleKeyId,
+            },
+          });
+          expect((await dwn.processMessage(
+            alice.did,
+            audienceEpoch.message,
+            { dataStream: DataStream.fromBytes(audienceEpochData) }
+          )).status.code).toBe(202);
+
+          const data = Encoder.stringToBytes('encrypted chat');
+          const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+          const encryptedData = await Encryption.encrypt(
+            ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, data
+          );
+          const chatRuleSet = threadRuleSet.chat as ProtocolRuleSet;
+          const protocolPathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
+          const encryptionInput: EncryptionInput = {
+            initializationVector : dataEncryptionInitializationVector,
+            key                  : dataEncryptionKey,
+            keyEncryptionInputs  : [
+              {
+                keyId            : await Encryption.getKeyId(protocolPathPublicKey),
+                publicKey        : protocolPathPublicKey,
+                derivationScheme : KeyDerivationScheme.ProtocolPath,
+              },
+              {
+                keyId            : roleKeyId,
+                publicKey        : rolePublicKey,
+                derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+                protocol         : protocolDefinition.protocol,
+                role,
+                epoch            : 1,
+              },
+            ],
+          };
+
+          const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+            author          : alice,
+            protocol        : protocolDefinition.protocol,
+            protocolPath    : 'thread/chat',
+            parentContextId : thread.message.contextId,
+            schema          : 'http://chat-schema',
+            dataFormat      : 'text/plain',
+            data            : encryptedData,
             encryptionInput,
           });
 
