@@ -1,7 +1,7 @@
 import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, RecordsReadReply, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, EncryptionInput, MessageStore, ProtocolDefinition, ProtocolRuleSet, RecordsReadReply, ResumableTaskStore } from '../../src/index.js';
 
 import { Encoder } from '../../src/index.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
@@ -13,7 +13,19 @@ import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, Dwn, Jws, Protocols, Records, RecordsRead } from '../../src/index.js';
+import {
+  ContentEncryptionAlgorithm,
+  DataStream,
+  Dwn,
+  Encryption,
+  EncryptionProtocol,
+  Jws,
+  Protocols,
+  Records,
+  RecordsRead,
+  RecordsWrite,
+  ROLE_AUDIENCE_DERIVATION_SCHEME
+} from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 export function testEndToEndScenarios(): void {
@@ -81,6 +93,9 @@ export function testEndToEndScenarios(): void {
       // Alice configures chat protocol with encryption
       const protocolDefinitionForAlice
         = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk);
+      const encryptedThreadRuleSet = protocolDefinitionForAlice.structure.thread as ProtocolRuleSet;
+      const encryptedParticipantRuleSet = encryptedThreadRuleSet.participant as ProtocolRuleSet;
+      const encryptedChatRuleSet = encryptedThreadRuleSet.chat as ProtocolRuleSet;
       const protocolsConfigureForAlice = await TestDataGenerator.generateProtocolsConfigure({
         author             : alice,
         protocolDefinition : protocolDefinitionForAlice
@@ -116,15 +131,76 @@ export function testEndToEndScenarios(): void {
         await dwn.processMessage(alice.did, participantBobRecord.message, { dataStream: participantBobRecord.dataStream });
       expect(participantRecordReply.status.code).toBe(202);
 
+      const role = 'thread/participant';
+      const rolePublicKey = encryptedParticipantRuleSet.$keyAgreement!.publicKeyJwk;
+      const roleKeyId = await Encryption.getKeyId(rolePublicKey);
+      const audienceEpochData = Encoder.objectToBytes({
+        protocol     : protocolDefinition.protocol,
+        contextId    : threadRecord.message.contextId,
+        role,
+        epoch        : 1,
+        keyId        : roleKeyId,
+        publicKeyJwk : rolePublicKey,
+      });
+      const audienceEpoch = await RecordsWrite.create({
+        data         : audienceEpochData,
+        dataFormat   : 'application/json',
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.audienceEpochPath,
+        schema       : EncryptionProtocol.definition.types.audienceEpoch.schema,
+        signer       : Jws.createSigner(alice),
+        tags         : {
+          protocol  : protocolDefinition.protocol,
+          contextId : threadRecord.message.contextId!,
+          role,
+          epoch     : 1,
+          keyId     : roleKeyId,
+        },
+      });
+      const audienceEpochReply = await dwn.processMessage(
+        alice.did,
+        audienceEpoch.message,
+        { dataStream: DataStream.fromBytes(audienceEpochData) }
+      );
+      expect(audienceEpochReply.status.code).toBe(202);
+
       // 3. Alice writes a chat message in the thread.
       const messageByAlice = 'Message from Alice';
-      const chatMessageByAlice = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-        plaintextBytes                                : Encoder.stringToBytes(messageByAlice),
-        author                                        : alice,
-        protocolDefinition                            : protocolDefinitionForAlice,
-        protocolPath                                  : 'thread/chat',
-        protocolParentContextId                       : threadRecord.message.contextId,
-        encryptSymmetricKeyWithProtocolPathDerivedKey : true,
+      const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+      const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+      const encryptedData = await Encryption.encrypt(
+        ContentEncryptionAlgorithm.A256CTR,
+        dataEncryptionKey,
+        dataEncryptionInitializationVector,
+        Encoder.stringToBytes(messageByAlice)
+      );
+      const protocolPathPublicKey = encryptedChatRuleSet.$keyAgreement!.publicKeyJwk;
+      const encryptionInput: EncryptionInput = {
+        initializationVector : dataEncryptionInitializationVector,
+        key                  : dataEncryptionKey,
+        keyEncryptionInputs  : [
+          {
+            keyId            : await Encryption.getKeyId(protocolPathPublicKey),
+            publicKey        : protocolPathPublicKey,
+            derivationScheme : KeyDerivationScheme.ProtocolPath,
+          },
+          {
+            keyId            : roleKeyId,
+            publicKey        : rolePublicKey,
+            derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+            protocol         : protocolDefinition.protocol,
+            role,
+            epoch            : 1,
+          },
+        ],
+      };
+      const chatMessageByAlice = await TestDataGenerator.generateRecordsWrite({
+        author          : alice,
+        protocol        : protocolDefinition.protocol,
+        protocolPath    : 'thread/chat',
+        parentContextId : threadRecord.message.contextId,
+        data            : encryptedData,
+        encryptionInput,
       });
       const chatMessageReply = await dwn.processMessage(alice.did, chatMessageByAlice.message, { dataStream: chatMessageByAlice.dataStream });
       expect(chatMessageReply.status.code).toBe(202);
