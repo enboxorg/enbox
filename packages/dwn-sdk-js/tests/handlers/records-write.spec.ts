@@ -2781,6 +2781,9 @@ export function testRecordsWriteHandler(): void {
           const data = Encoder.stringToBytes('encrypted secret');
           const dataEncryptionKey = TestDataGenerator.randomBytes(32);
           const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+          const encryptedData = await Encryption.encrypt(
+            ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, data
+          );
           const encryptionPublicKey = encryptedProtocolDefinition.structure.secret.$keyAgreement!.publicKeyJwk;
 
           const encryptionInput: EncryptionInput = {
@@ -2798,7 +2801,7 @@ export function testRecordsWriteHandler(): void {
             protocol     : protocolDefinition.protocol,
             protocolPath : 'secret',
             schema       : 'http://secret-schema',
-            data,
+            data         : encryptedData,
             encryptionInput,
           });
 
@@ -3159,6 +3162,63 @@ export function testRecordsWriteHandler(): void {
 
         expect(writeReply.status.code).toBe(400);
         expect(writeReply.status.detail).toContain(DwnErrorCode.RecordsWriteValidateIntegrityEncryptionCidMismatch);
+        });
+
+        it('should 400 if `encryption` is present without a signed encryptionCid', async () => {
+          const alice = await TestDataGenerator.generatePersona();
+          TestStubGenerator.stubDidResolver(didResolver, [alice]);
+
+          const protocolDefinition = emailProtocolDefinition as ProtocolDefinition;
+          const protocol = protocolDefinition.protocol;
+          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            author: alice,
+            protocolDefinition
+          });
+
+          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
+          expect(protocolsConfigureReply.status.code).toBe(202);
+
+          const messageBytes = Encoder.stringToBytes('encrypted message');
+          const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
+          const dataEncryptionKey = TestDataGenerator.randomBytes(32);
+          const encryptedBytes = await Encryption.encrypt(
+            ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, messageBytes
+          );
+
+          const encryptionInput: EncryptionInput = {
+            initializationVector : dataEncryptionInitializationVector,
+            key                  : dataEncryptionKey,
+            keyEncryptionInputs  : [{
+              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              keyId            : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
+              publicKey        : alice.encryptionKeyPair.publicJwk,
+            }],
+          };
+          const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            data         : encryptedBytes,
+            encryptionInput,
+            protocol,
+            protocolPath : 'email',
+            schema       : 'email',
+          });
+
+          const signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature);
+          delete signaturePayload.encryptionCid;
+          message.authorization.signature.payload = Encoder.stringToBase64Url(JSON.stringify(signaturePayload));
+
+          const recordsWriteHandler = new RecordsWriteHandler({
+            coreProtocols         : new CoreProtocolRegistry(),
+            dataStore,
+            didResolver,
+            eventLog,
+            messageStore,
+            validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
+          });
+          const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
+
+          expect(writeReply.status.code).toBe(400);
+          expect(writeReply.status.detail).toContain(DwnErrorCode.RecordsWriteValidateIntegrityEncryptionCidMissing);
         });
 
         it('should return 400 if protocol is not normalized', async () => {

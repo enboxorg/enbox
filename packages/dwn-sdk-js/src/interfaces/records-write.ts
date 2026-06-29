@@ -76,6 +76,11 @@ export type RecordsWriteOptions = {
   delegatedGrant?: DataEncodedRecordsWriteMessage;
 
   attestationSigners?: MessageSigner[];
+
+  /**
+   * Pre-built encryption envelope. Use `encryptionInput` when wrapping a CEK from plaintext/ciphertext inputs.
+   */
+  encryption?: DwnEncryption;
   encryptionInput?: EncryptionInput;
   permissionGrantId?: string;
 
@@ -305,6 +310,13 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       throw new DwnError(DwnErrorCode.RecordsWriteCreateMissingSigner, '`signer` must be given when `delegatedGrant` is given');
     }
 
+    if (options.encryption !== undefined && options.encryptionInput !== undefined) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteCreateEncryptionAndEncryptionInputMutuallyExclusive,
+        '`encryption` and `encryptionInput` cannot both be defined'
+      );
+    }
+
     const dataCid = options.dataCid ?? await Cid.computeDagPbCidFromBytes(options.data!);
     const dataSize = options.dataSize ?? options.data!.length;
 
@@ -351,7 +363,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     const attestation = await createAttestation(descriptorCid, options.attestationSigners);
 
     // `encryption` generation
-    const encryption = await createEncryptionProperty(options.encryptionInput);
+    const encryption = options.encryption ?? await createEncryptionProperty(options.encryptionInput);
 
     const message: InternalRecordsWriteMessage = {
       recordId,
@@ -442,7 +454,9 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       delegatedGrant     : options.delegatedGrant,
       // finally still need signers
       signer             : options.signer,
-      attestationSigners : options.attestationSigners
+      attestationSigners : options.attestationSigners,
+      encryption         : options.encryptionInput === undefined && options.data === undefined ? sourceMessage.encryption : undefined,
+      encryptionInput    : options.encryptionInput,
     };
 
     const recordsWrite = await RecordsWrite.create(createOptions);
@@ -668,9 +682,23 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     }
 
     // if `encryption` is given in message, make sure the correct `encryptionCid` is in the payload of the message signature
-    if (signaturePayload.encryptionCid !== undefined) {
+    if (this.message.encryption !== undefined && signaturePayload.encryptionCid === undefined) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteValidateIntegrityEncryptionCidMissing,
+        'encryptionCid must be present in the authorization payload when encryption is present in the message'
+      );
+    }
+
+    if (this.message.encryption === undefined && signaturePayload.encryptionCid !== undefined) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteValidateIntegrityEncryptionCidMissing,
+        'encryption must be present in the message when encryptionCid is present in the authorization payload'
+      );
+    }
+
+    if (this.message.encryption !== undefined) {
       const expectedEncryptionCid = await Cid.computeCid(this.message.encryption);
-      const actualEncryptionCid = signaturePayload.encryptionCid;
+      const actualEncryptionCid = signaturePayload.encryptionCid!;
       if (actualEncryptionCid !== expectedEncryptionCid) {
         throw new DwnError(
           DwnErrorCode.RecordsWriteValidateIntegrityEncryptionCidMismatch,
