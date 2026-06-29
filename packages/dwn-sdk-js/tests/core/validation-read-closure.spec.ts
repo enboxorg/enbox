@@ -33,6 +33,7 @@ const VALIDATION_READER_METHODS = new Set<string>([
   'fetchParentRecord',
   'hasMatchingRoleRecord',
   'queryLatestRoleRecords',
+  'queryAudienceEpochs',
   'fetchGrant',
   'fetchOldestGrantRevocation',
   'fetchNewestRecordsWrite',
