@@ -18,6 +18,7 @@ import type {
   SendDwnRequest,
 } from './types/dwn.js';
 
+import { logger } from '@enbox/common';
 import {
   Cid,
   ContentEncryptionAlgorithm,
@@ -740,7 +741,11 @@ async function resolveGrantKeyRecords(params: {
           derivedPrivateKey : payload.privateKeyJwk,
         },
       });
-    } catch {
+    } catch (error) {
+      logger.log(
+        `AgentDwnApi: skipped grantKey '${grantKeyMessage.recordId}' while resolving delegate decryption key: ` +
+        `${error instanceof Error ? error.message : String(error)}`
+      );
       continue;
     }
   }

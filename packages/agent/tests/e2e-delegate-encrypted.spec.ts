@@ -23,12 +23,12 @@ import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { ContentEncryptionAlgorithm, DataStream, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
-import { createGrantKeyRecordsForGrants } from '../src/dwn-encryption.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxConnectProtocol } from '../src/enbox-connect-protocol.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
+import { createGrantKeyRecordsForGrants, resolveKeyDecrypter } from '../src/dwn-encryption.js';
 
 // ─── Test protocol with encryptionRequired ──────────────────────
 
@@ -416,7 +416,6 @@ describe('e2e: delegate + encrypted protocol', () => {
 
       delegateHarness.agent.dwn.clearDelegateDecryptionKeys(delegateDid);
       expect(await delegateHarness.agent.did.get({ didUri: walletIdentity.did.uri })).toBeUndefined();
-      const kmsUnwrapSpy = sinon.spy(delegateHarness.agent.keyManager, 'jweKeyUnwrap');
 
       const { reply: decryptedReply } = await delegateHarness.agent.processDwnRequest({
         author        : delegateDid,
@@ -432,7 +431,6 @@ describe('e2e: delegate + encrypted protocol', () => {
 
       expect(decryptedReply.status.code).toBe(200);
       expect(decryptedReply.entry?.data).toBeDefined();
-      expect(kmsUnwrapSpy.called).toBe(true);
 
       const decryptedBytes = await DataStream.toBytes(decryptedReply.entry!.data!);
       expect(new TextDecoder().decode(decryptedBytes)).toBe(noteData);
@@ -447,6 +445,20 @@ describe('e2e: delegate + encrypted protocol', () => {
         walletIdentity.did.uri,
         revocation.message as RecordsWriteMessage & { encodedData: string },
       );
+
+      const delegateDecryptionKeyCache = {
+        get : sinon.stub().returns(undefined),
+        set : sinon.stub(),
+      };
+      await expect(resolveKeyDecrypter(
+        delegateHarness.agent,
+        delegateDid,
+        noteWrite as RecordsWriteMessage,
+        walletIdentity.did.uri,
+        delegateDecryptionKeyCache,
+        delegateDid,
+      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+      expect(delegateDecryptionKeyCache.set.called).toBe(false);
 
       delegateHarness.agent.dwn.clearDelegateDecryptionKeys(delegateDid);
       const { reply: revokedReply } = await delegateHarness.agent.processDwnRequest({

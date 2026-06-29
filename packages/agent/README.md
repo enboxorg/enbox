@@ -18,6 +18,11 @@ The agent is the core runtime that ties everything together. It manages:
 - **Permissions** — DWN permission grants, requests, and revocations (`AgentPermissionsApi`)
 - **Wallet connect** — OIDC/SIOPv2-based connection flow for external wallets (`WalletConnect`, `Oidc`)
 
+Durable `grantKey` records hydrate delegate decryption keys for encrypted read grants.
+They are usable only while the referenced permission grant is active. Revocation is
+observed from the grantee's local DWN state, so enforcement follows delivery or sync
+of the revocation record.
+
 ## Installation
 
 ```bash
