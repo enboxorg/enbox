@@ -23,6 +23,7 @@ import {
 } from '../../src/index.js';
 
 type EncodedRecordsWriteMessage = RecordsWriteMessage & { encodedData: string };
+type RoleRecordMatchInput = Parameters<ValidationStateReader['hasMatchingRoleRecord']>[0];
 
 describe('EncryptionProtocol', () => {
   it('should expose the encryption protocol uri and definition', () => {
@@ -985,13 +986,7 @@ function createValidationStateReader(input: {
   protocolDefinition?: ProtocolDefinition;
   audienceEpochs?: RecordsWriteMessage[];
   hasMatchingRole?: boolean;
-  hasMatchingRoleRecord?: (input: {
-    tenant: string;
-    protocol: string;
-    protocolPath: string;
-    recipient: string;
-    contextIdPrefix?: string;
-  }) => boolean;
+  hasMatchingRoleRecord?: (input: RoleRecordMatchInput) => boolean;
   revocation?: GenericMessage;
 }): ValidationStateReader {
   return {
@@ -999,8 +994,10 @@ function createValidationStateReader(input: {
     fetchGrant                 : async (): Promise<PermissionGrant> => input.grant!,
     fetchOldestGrantRevocation : async (): Promise<GenericMessage | undefined> => input.revocation,
     fetchProtocolDefinition    : async (): Promise<ProtocolDefinition> => input.protocolDefinition!,
-    hasMatchingRoleRecord      : async (roleInput): Promise<boolean> => input.hasMatchingRoleRecord?.(roleInput) ?? input.hasMatchingRole ?? true,
-    queryAudienceEpochs        : async (): Promise<RecordsWriteMessage[]> => input.audienceEpochs ?? [],
+    hasMatchingRoleRecord      : async (roleInput: RoleRecordMatchInput): Promise<boolean> => {
+      return input.hasMatchingRoleRecord?.(roleInput) ?? input.hasMatchingRole ?? true;
+    },
+    queryAudienceEpochs: async (): Promise<RecordsWriteMessage[]> => input.audienceEpochs ?? [],
   } as unknown as ValidationStateReader;
 }
 
