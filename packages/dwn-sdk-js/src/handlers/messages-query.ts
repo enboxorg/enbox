@@ -190,7 +190,7 @@ export class MessagesQueryHandler implements MethodHandler {
     for (const protocol of protocols) {
       scopes.push(
         Replication.protocolDomain(protocol),
-        ...Replication.taggedCoreProtocolDomains(protocol),
+        ...Replication.taggedCoreProtocolDomains(protocol, protocols),
       );
     }
 

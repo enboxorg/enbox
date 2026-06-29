@@ -29,15 +29,19 @@ export class Replication {
     return `enc:${protocolUri}`;
   }
 
-  public static taggedCoreProtocolDomains(protocolUri: string): string[] {
+  public static taggedCoreProtocolDomains(protocolUri: string, protocolsInScope: ReadonlySet<string> = new Set()): string[] {
     if (Replication.isCoreProtocolUri(protocolUri)) {
       return [];
     }
 
-    return [
-      Replication.permissionDomain(protocolUri),
-      Replication.encryptionDomain(protocolUri),
-    ];
+    const domains: string[] = [];
+    if (!protocolsInScope.has(PermissionsProtocol.uri)) {
+      domains.push(Replication.permissionDomain(protocolUri));
+    }
+    if (!protocolsInScope.has(EncryptionProtocol.uri)) {
+      domains.push(Replication.encryptionDomain(protocolUri));
+    }
+    return domains;
   }
 
   public static async deriveStreamId(tenant: string): Promise<string> {
