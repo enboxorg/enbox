@@ -700,14 +700,13 @@ describe('Record', () => {
     };
 
     const encryptionInput: DwnMessageParams[DwnInterface.RecordsWrite]['encryptionInput'] = {
-      algorithm            : DwnContentEncryptionAlgorithm.A256GCM,
-      initializationVector : TestDataGenerator.randomBytes(12),
+      algorithm            : DwnContentEncryptionAlgorithm.A256CTR,
+      initializationVector : TestDataGenerator.randomBytes(16),
       key                  : TestDataGenerator.randomBytes(32),
-      authenticationTag    : TestDataGenerator.randomBytes(16),
       keyEncryptionInputs  : [{
         derivationScheme : DwnKeyDerivationScheme.ProtocolPath,
+        keyId            : encryptionKeyId,
         publicKey        : encryptionPublicKeyJwk as DwnPublicKeyJwk,
-        publicKeyId      : encryptionKeyId
       }]
     };
 
@@ -761,7 +760,7 @@ describe('Record', () => {
     expect(record.id).toBe(recordsWrite.message.recordId);
     expect(record.encryption).toBeDefined();
     expect(record.encryption).toEqual(recordsWrite.message.encryption);
-    expect(record.encryption!.recipients.find(r => r.header.derivationScheme === DwnKeyDerivationScheme.ProtocolPath));
+    expect(record.encryption!.keyEncryption.find(r => r.derivationScheme === DwnKeyDerivationScheme.ProtocolPath));
     expect(record.attestation).toBeDefined();
     expect(record.attestation).toHaveProperty('signatures');
 
@@ -2387,14 +2386,13 @@ describe('Record', () => {
       };
 
       const encryptionInput: DwnMessageParams[DwnInterface.RecordsWrite]['encryptionInput'] = {
-        algorithm            : DwnContentEncryptionAlgorithm.A256GCM,
-        initializationVector : TestDataGenerator.randomBytes(12),
+        algorithm            : DwnContentEncryptionAlgorithm.A256CTR,
+        initializationVector : TestDataGenerator.randomBytes(16),
         key                  : TestDataGenerator.randomBytes(32),
-        authenticationTag    : TestDataGenerator.randomBytes(16),
         keyEncryptionInputs  : [{
           derivationScheme : DwnKeyDerivationScheme.ProtocolPath,
+          keyId            : encryptionKeyId,
           publicKey        : encryptionPublicKeyJwk as DwnPublicKeyJwk,
-          publicKeyId      : encryptionKeyId
         }]
       };
 
@@ -2451,7 +2449,7 @@ describe('Record', () => {
       expect(record.id).toBe(recordsWrite.message.recordId);
       expect(record.encryption).toBeDefined();
       expect(record.encryption).toEqual(recordsWrite.message.encryption);
-      expect(record.encryption!.recipients.find(r => r.header.derivationScheme === DwnKeyDerivationScheme.ProtocolPath));
+      expect(record.encryption!.keyEncryption.find(r => r.derivationScheme === DwnKeyDerivationScheme.ProtocolPath));
       expect(record.attestation).toBeDefined();
       expect(record.attestation).toHaveProperty('signatures');
 
@@ -3330,7 +3328,7 @@ describe('Record', () => {
       expect(record!.encryption).toBeDefined();
 
       // Save original encryption metadata for comparison
-      const originalIV = record!.encryption!.iv;
+      const originalIV = record!.encryption!.initializationVector;
 
       // Update the record — encryption should be auto-detected
       const updatedPlaintext = 'Updated secret note';
@@ -3339,7 +3337,7 @@ describe('Record', () => {
 
       // Verify the record's encryption metadata was updated
       expect(updatedRecord!.encryption).toBeDefined();
-      expect(updatedRecord!.encryption!.iv).not.toBe(originalIV);
+      expect(updatedRecord!.encryption!.initializationVector).not.toBe(originalIV);
 
       // Read back with decryption to verify the updated plaintext
       const { status: readStatus, record: readRecord } = await dwnAlice.records.read({
