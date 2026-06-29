@@ -7,12 +7,14 @@ import type {
   MessageStore,
   ProgressToken,
   ProtocolDefinition,
+  ProtocolRuleSet,
+  RecordsWriteMessage,
   ReplicationApplyResult,
+  RoleAudienceKeyEncryptionInput,
 } from '@enbox/dwn-sdk-js';
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
-import type { KeyIdentifier, PublicKeyJwk } from '@enbox/crypto';
+import type { KeyIdentifier, PrivateKeyJwk, PublicKeyJwk } from '@enbox/crypto';
 
-import { CryptoUtils } from '@enbox/crypto';
 import {
   Cid,
   ContentEncryptionAlgorithm,
@@ -21,20 +23,26 @@ import {
   DurableEventLog,
   Dwn,
   DwnMethodName,
+  Encoder,
   Encryption,
+  EncryptionProtocol,
   EventEmitterWakePublisher,
+  getRuleSetAtPath,
   KeyDerivationScheme,
   Message,
   MessageStoreLevel,
+  parseCrossProtocolRef,
   Protocols,
   ResumableTaskStoreLevel,
+  ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
 import { Convert, TtlCache } from '@enbox/common';
+import { CryptoUtils, X25519 } from '@enbox/crypto';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 
-import type { DelegateDecryptionKeyEntry } from './dwn-encryption.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { LocalDwnStrategy } from './local-dwn.js';
+import type { AudienceDecryptionKeyEntry, AudienceKeyPayload, DelegateDecryptionKeyEntry } from './dwn-encryption.js';
 import type {
   DwnMessage,
   DwnMessageInstance,
@@ -63,7 +71,11 @@ import { isDwnRequest } from './dwn-type-guards.js';
 // Import extracted encryption functions
 import {
   buildEncryptionInput as buildEncryptionInputFn,
+  cacheAudienceDecryptionKey as cacheAudienceDecryptionKeyFn,
+  createAudienceEpochRecord as createAudienceEpochRecordFn,
+  createAudienceKeyRecord as createAudienceKeyRecordFn,
   encryptAndComputeCid as encryptAndComputeCidFn,
+  getCachedAudienceDecryptionKey as getCachedAudienceDecryptionKeyFn,
   getEncryptionKeyDeriver as getEncryptionKeyDeriverFn,
   getEncryptionKeyInfo as getEncryptionKeyInfoFn,
   getKeyDecrypter as getKeyDecrypterFn,
@@ -155,6 +167,15 @@ export class AgentDwnApi {
    * TTL 24 hours (keys are re-populated on session restore).
    */
   private readonly _delegateDecryptionKeyCache = new TtlCache<string, DelegateDecryptionKeyEntry[]>({
+    ttl: 24 * 60 * 60 * 1000
+  });
+
+  /**
+   * Role-audience private keys hydrated from durable audienceKey records.
+   * The vault-backed secret store is the durable cache; this TTL cache avoids
+   * re-reading and re-decrypting the same key during a session.
+   */
+  private readonly _audienceDecryptionKeyCache = new TtlCache<string, AudienceDecryptionKeyEntry>({
     ttl: 24 * 60 * 60 * 1000
   });
 
@@ -472,6 +493,15 @@ export class AgentDwnApi {
       });
     }
 
+    if (reply.status.code === 202 &&
+        isDwnRequest(request, DwnInterface.RecordsWrite) &&
+        !request.rawMessage) {
+      await this.provisionAudienceKeyForAcceptedRoleRecord(
+        request,
+        message as RecordsWriteMessage,
+      );
+    }
+
     await this.maybeDecryptReply(request, reply);
 
     // Returns an object containing the reply from processing the message, the original message,
@@ -666,6 +696,293 @@ export class AgentDwnApi {
     throw new Error(`Failed to send DWN RPC request: ${JSON.stringify(errorMessages)}`);
   }
 
+  private async provisionAudienceKeyForAcceptedRoleRecord(
+    request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
+    recordsWrite: RecordsWriteMessage,
+  ): Promise<void> {
+    const descriptor = recordsWrite.descriptor;
+    if (descriptor.protocol === EncryptionProtocol.uri ||
+        descriptor.protocol === undefined ||
+        descriptor.protocolPath === undefined ||
+        descriptor.recipient === undefined) {
+      return;
+    }
+
+    const protocolDefinition = await this.getProtocolDefinition(request.target, descriptor.protocol, request.granteeDid);
+    if (protocolDefinition === undefined) {
+      return;
+    }
+
+    const ruleSet = getRuleSetAtPath(descriptor.protocolPath, protocolDefinition.structure);
+    if (ruleSet?.$role !== true) {
+      return;
+    }
+
+    const contextId = this.getRoleAudienceContextIdForRecord(recordsWrite, descriptor.protocolPath);
+    if (contextId === undefined) {
+      throw new Error(`AgentDwnApi: Unable to determine role audience context for '${descriptor.protocolPath}'.`);
+    }
+
+    const audienceKey = await this.getOrCreateAudienceKey({
+      authorDid    : request.author,
+      contextId,
+      protocol     : descriptor.protocol,
+      protocolRole : request.messageParams?.protocolRole,
+      role         : descriptor.protocolPath,
+      sourceDid    : request.target,
+    });
+    const recipientRolePublicKey = await this.getRecipientRolePublicKey({
+      protocol     : descriptor.protocol,
+      recipientDid : descriptor.recipient,
+      role         : descriptor.protocolPath,
+    });
+
+    await createAudienceKeyRecordFn({
+      agent        : this.agent,
+      audienceKey,
+      authorDid    : request.author,
+      protocolRole : request.messageParams?.protocolRole,
+      recipientDid : descriptor.recipient,
+      recipientRolePublicKey,
+      sourceDid    : request.target,
+    });
+  }
+
+  private async getRoleAudienceKeyEncryptionInputs(params: {
+    authorDid: string;
+    sourceDid: string;
+    protocol: string;
+    parentContextId?: string;
+    protocolDefinition: ProtocolDefinition;
+    sourceRuleSet: ProtocolRuleSet;
+  }): Promise<RoleAudienceKeyEncryptionInput[]> {
+    const inputs: RoleAudienceKeyEncryptionInput[] = [];
+    const readRules = params.sourceRuleSet.$actions?.filter((rule): boolean =>
+      rule.role !== undefined && rule.can?.includes('read')
+    ) ?? [];
+
+    for (const rule of readRules) {
+      const roleAudience = this.resolveRoleAudienceRule(rule.role!, params.protocolDefinition, params.parentContextId);
+      if (roleAudience === undefined) {
+        continue;
+      }
+
+      const audienceEpoch = await this.queryLatestAudienceEpoch({
+        authorDid : params.authorDid,
+        contextId : roleAudience.contextId,
+        protocol  : roleAudience.protocol,
+        role      : roleAudience.role,
+        sourceDid : params.sourceDid,
+      });
+      if (audienceEpoch === undefined) {
+        throw new Error(
+          `AgentDwnApi: Missing audienceEpoch for encrypted role audience ` +
+          `'${roleAudience.protocol}/${roleAudience.role}' at context '${roleAudience.contextId}'.`
+        );
+      }
+
+      inputs.push({
+        derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+        epoch            : audienceEpoch.epoch,
+        keyId            : audienceEpoch.keyId,
+        protocol         : audienceEpoch.protocol,
+        publicKey        : audienceEpoch.publicKeyJwk,
+        role             : audienceEpoch.role,
+      });
+    }
+
+    return inputs;
+  }
+
+  private resolveRoleAudienceRule(
+    roleRef: string,
+    protocolDefinition: ProtocolDefinition,
+    parentContextId: string | undefined,
+  ): { protocol: string; role: string; contextId: string } | undefined {
+    const parsed = parseCrossProtocolRef(roleRef);
+    const protocol = parsed === undefined
+      ? protocolDefinition.protocol
+      : protocolDefinition.uses?.[parsed.alias];
+    const role = parsed === undefined ? roleRef : parsed.protocolPath;
+    if (protocol === undefined) {
+      return undefined;
+    }
+
+    const contextId = this.getRoleAudienceContextIdForWrite(role, parentContextId);
+    return contextId === undefined ? undefined : { protocol, role, contextId };
+  }
+
+  private getRoleAudienceContextIdForRecord(
+    recordsWrite: RecordsWriteMessage,
+    rolePath: string,
+  ): string | undefined {
+    const parentDepth = rolePath.split('/').length - 1;
+    if (parentDepth === 0) {
+      return '';
+    }
+
+    const contextId = recordsWrite.contextId;
+    if (typeof contextId !== 'string') {
+      return undefined;
+    }
+
+    const contextSegments = contextId.split('/');
+    if (contextSegments.length < parentDepth) {
+      return undefined;
+    }
+
+    return contextSegments.slice(0, parentDepth).join('/');
+  }
+
+  private getRoleAudienceContextIdForWrite(
+    rolePath: string,
+    parentContextId: string | undefined,
+  ): string | undefined {
+    const parentDepth = rolePath.split('/').length - 1;
+    if (parentDepth === 0) {
+      return '';
+    }
+
+    if (parentContextId === undefined) {
+      return undefined;
+    }
+
+    const contextSegments = parentContextId.split('/');
+    if (contextSegments.length < parentDepth) {
+      return undefined;
+    }
+
+    return contextSegments.slice(0, parentDepth).join('/');
+  }
+
+  private async getOrCreateAudienceKey(params: {
+    authorDid: string;
+    sourceDid: string;
+    protocol: string;
+    contextId: string;
+    role: string;
+    protocolRole?: string;
+  }): Promise<AudienceKeyPayload> {
+    const existingEpoch = await this.queryLatestAudienceEpoch(params);
+    if (existingEpoch !== undefined) {
+      const cached = await getCachedAudienceDecryptionKeyFn({
+        agent                      : this.agent,
+        audienceDecryptionKeyCache : this._audienceDecryptionKeyCache,
+        sourceDid                  : params.sourceDid,
+        recipientDid               : params.authorDid,
+        protocol                   : existingEpoch.protocol,
+        contextId                  : existingEpoch.contextId,
+        role                       : existingEpoch.role,
+        epoch                      : existingEpoch.epoch,
+        keyId                      : existingEpoch.keyId,
+      });
+      if (cached === undefined) {
+        throw new Error(
+          `AgentDwnApi: Audience epoch '${existingEpoch.keyId}' exists, but no local private key is available to deliver it.`
+        );
+      }
+      return cached;
+    }
+
+    const privateKeyJwk = await X25519.generateKey() as PrivateKeyJwk;
+    const publicKeyJwk = await X25519.getPublicKey({ key: privateKeyJwk }) as PublicKeyJwk;
+    const audienceKey: AudienceKeyPayload = {
+      protocol  : params.protocol,
+      contextId : params.contextId,
+      role      : params.role,
+      epoch     : 1,
+      keyId     : await Encryption.getKeyId(publicKeyJwk),
+      publicKeyJwk,
+      privateKeyJwk,
+    };
+
+    await createAudienceEpochRecordFn({
+      agent        : this.agent,
+      audienceKey,
+      authorDid    : params.authorDid,
+      protocolRole : params.protocolRole,
+      sourceDid    : params.sourceDid,
+    });
+    await cacheAudienceDecryptionKeyFn({
+      agent                      : this.agent,
+      audienceDecryptionKeyCache : this._audienceDecryptionKeyCache,
+      entry                      : {
+        ...audienceKey,
+        recipientDid : params.authorDid,
+        sourceDid    : params.sourceDid,
+      },
+    });
+
+    return audienceKey;
+  }
+
+  private async queryLatestAudienceEpoch(params: {
+    authorDid: string;
+    sourceDid: string;
+    protocol: string;
+    contextId: string;
+    role: string;
+  }): Promise<Omit<AudienceKeyPayload, 'privateKeyJwk'> | undefined> {
+    const { reply } = await this.processRequest({
+      author        : params.authorDid,
+      target        : params.sourceDid,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : EncryptionProtocol.uri,
+          protocolPath : EncryptionProtocol.audienceEpochPath,
+          tags         : {
+            protocol  : params.protocol,
+            contextId : params.contextId,
+            role      : params.role,
+          },
+        },
+      },
+    });
+
+    if (reply.status.code !== 200 || reply.entries === undefined || reply.entries.length === 0) {
+      return undefined;
+    }
+
+    const epochs = reply.entries
+      .map((entry): Omit<AudienceKeyPayload, 'privateKeyJwk'> | undefined => {
+        if (entry.encodedData === undefined) {
+          return undefined;
+        }
+        return Encoder.base64UrlToObject(entry.encodedData) as Omit<AudienceKeyPayload, 'privateKeyJwk'>;
+      })
+      .filter((entry): entry is Omit<AudienceKeyPayload, 'privateKeyJwk'> => entry !== undefined)
+      .sort((a, b): number => b.epoch - a.epoch);
+
+    return epochs[0];
+  }
+
+  private async getRecipientRolePublicKey(params: {
+    recipientDid: string;
+    protocol: string;
+    role: string;
+  }): Promise<PublicKeyJwk> {
+    let protocolDefinition: ProtocolDefinition | undefined;
+    try {
+      protocolDefinition = await this.getProtocolDefinition(params.recipientDid, params.protocol);
+    } catch {
+      protocolDefinition = undefined;
+    }
+
+    protocolDefinition ??= await this.fetchRemoteProtocolDefinition(params.recipientDid, params.protocol);
+
+    const roleRuleSet = getRuleSetAtPath(params.role, protocolDefinition.structure);
+    const publicKeyJwk = roleRuleSet?.$keyAgreement?.publicKeyJwk;
+    if (publicKeyJwk === undefined) {
+      throw new Error(
+        `AgentDwnApi: Recipient '${params.recipientDid}' has no encryption key for role path ` +
+        `'${params.protocol}/${params.role}'.`
+      );
+    }
+
+    return publicKeyJwk;
+  }
+
   private async constructDwnMessage<T extends DwnInterface>({ request }: {
     request: ProcessDwnRequest<T>
   }): Promise<DwnMessageWithData<T>> {
@@ -807,6 +1124,14 @@ export class AgentDwnApi {
           await Encryption.getKeyId(protocolPathPublicKey), protocolPathPublicKey,
           KeyDerivationScheme.ProtocolPath,
         );
+        encryptionInput.keyEncryptionInputs.push(...await this.getRoleAudienceKeyEncryptionInputs({
+          authorDid       : request.author,
+          parentContextId : messageParams.parentContextId,
+          protocol        : messageParams.protocol,
+          protocolDefinition,
+          sourceDid       : request.target,
+          sourceRuleSet   : ruleSet,
+        }));
 
         // 6. Encrypt data and compute CID.
         const { encryptedBytes, dataCid, dataSize } =
@@ -1091,6 +1416,7 @@ export class AgentDwnApi {
     return maybeDecryptReplyFn(
       request, reply, this.agent,
       this._delegateDecryptionKeyCache,
+      this._audienceDecryptionKeyCache,
     );
   }
 

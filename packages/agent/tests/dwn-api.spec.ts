@@ -4049,7 +4049,7 @@ describe('Role record write behavior', () => {
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
       agentClass  : TestAgent,
-      agentStores : 'dwn'
+      agentStores : 'memory'
     });
   });
 

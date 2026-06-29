@@ -90,7 +90,7 @@ export { Secp256r1 } from './utils/secp256r1.js';
 export type { SupportedCurve } from './jose/algorithms/signing/signature-algorithms.js';
 export type { MessageSigner } from './types/signer.js';
 export { SortDirection } from './types/query-types.js';
-export type { EncryptionKeyDeriver, KeyDecrypter } from './types/encryption-types.js';
+export type { EncryptionKeyDeriver, KeyDecrypter, KeyDecrypterDerivationScheme } from './types/encryption-types.js';
 export { Time } from './utils/time.js';
 export * from './types/permission-types.js';
 export * from './types/records-types.js';
