@@ -1434,6 +1434,7 @@ describe('enbox connect', () => {
       }];
 
       sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      const grantKeyStub = sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([]);
       sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
         grant   : {} as any,
         message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
@@ -1493,6 +1494,7 @@ describe('enbox connect', () => {
 
       expect(response.delegateDecryptionKeys).toHaveLength(1);
       expect(response.delegateDecryptionKeys![0].scope.kind).toBe('protocol');
+      expect(grantKeyStub.calledOnce).toBe(true);
       expect(response.delegateDecryptionKeys![0].derivedPrivateKey.derivationPath).toEqual([
         'protocolPath',
         mixedProtocol.protocol,
