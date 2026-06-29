@@ -884,7 +884,7 @@ export function testMessagesReadHandler(): void {
           expect(messagesReadReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
         });
 
-        it('authorizes Records messages with exact protocolPath Messages.Read grants', async () => {
+        it('authorizes Records messages with protocolPath subtree Messages.Read grants', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
           const protocolDefinition = { ...freeForAll, protocol: 'http://messages-read-path-scope' };
@@ -970,7 +970,7 @@ export function testMessagesReadHandler(): void {
             messageCid         : await Message.getCid(attachment.message),
             permissionGrantIds : [grantId],
           });
-          expect((await dwn.processMessage(alice.did, attachmentRead.message)).status.code).toBe(401);
+          expect((await dwn.processMessage(alice.did, attachmentRead.message)).status.code).toBe(200);
 
           const otherProtocolRead = await TestDataGenerator.generateMessagesRead({
             author             : bob,

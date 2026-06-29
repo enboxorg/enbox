@@ -3151,17 +3151,17 @@ export function testRecordsWriteHandler(): void {
             encryptionInput
           });
 
-        // replace valid `encryption` property with a mismatching one — mutate the initializationVector to cause CID mismatch
-        message.encryption!.initializationVector = Encoder.stringToBase64Url('any value which will result in a different CID');
+          // Replace valid `encryption` property with a mismatching one while keeping the envelope schema-valid.
+          message.encryption!.initializationVector = Encoder.bytesToBase64Url(TestDataGenerator.randomBytes(16));
 
-        const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,
-          validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
-        });
-        const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
+          const recordsWriteHandler = new RecordsWriteHandler({
+            didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+            validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
+          });
+          const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
 
-        expect(writeReply.status.code).toBe(400);
-        expect(writeReply.status.detail).toContain(DwnErrorCode.RecordsWriteValidateIntegrityEncryptionCidMismatch);
+          expect(writeReply.status.code).toBe(400);
+          expect(writeReply.status.detail).toContain(DwnErrorCode.RecordsWriteValidateIntegrityEncryptionCidMismatch);
         });
 
         it('should 400 if `encryption` is present without a signed encryptionCid', async () => {

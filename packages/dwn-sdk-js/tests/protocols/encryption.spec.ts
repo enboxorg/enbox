@@ -1,7 +1,7 @@
 import type { PermissionGrant } from '../../src/protocols/permission-grant.js';
-import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
 import type { ValidationStateReader } from '../../src/types/validation-state-reader.js';
 import type { MessageSigner, PublicKeyJwk, RecordsWriteMessage } from '../../src/index.js';
+import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { describe, expect, it } from 'bun:test';
@@ -67,6 +67,94 @@ describe('EncryptionProtocol', () => {
           protocolDefinition,
         }))
       ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateAudienceEpochMissing);
+    });
+
+    it('should reject audienceEpoch records for role paths without key agreement', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol/chat';
+      const rolePublicKey = alice.encryptionKeyPair.publicJwk;
+      const protocolDefinition = createRoleProtocolDefinition(protocol, rolePublicKey, { keyAgreement: false });
+      const message = await createAudienceEpochMessage({
+        protocol,
+        role         : 'chat/member',
+        contextId    : 'chat1',
+        epoch        : 1,
+        publicKeyJwk : rolePublicKey,
+        signer       : Jws.createSigner(alice),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.preProcessWrite(alice.did, message, createValidationStateReader({ protocolDefinition }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateRoleAudienceInvalid);
+    });
+
+    it('should reject audienceKey records without a recipient', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol/chat';
+      const rolePublicKey = alice.encryptionKeyPair.publicJwk;
+      const protocolDefinition = createRoleProtocolDefinition(protocol, rolePublicKey);
+      const audienceEpoch = await createAudienceEpochMessage({
+        protocol,
+        role         : 'chat/member',
+        contextId    : 'chat1',
+        epoch        : 1,
+        publicKeyJwk : rolePublicKey,
+        signer       : Jws.createSigner(alice),
+      });
+      const message = await createAudienceKeyMessage({
+        protocol,
+        role         : 'chat/member',
+        contextId    : 'chat1',
+        epoch        : 1,
+        publicKeyJwk : rolePublicKey,
+        signer       : Jws.createSigner(alice),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.preProcessWrite(alice.did, message, createValidationStateReader({
+          audienceEpochs: [audienceEpoch],
+          protocolDefinition,
+        }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateAudienceKeyRecipientMissing);
+    });
+
+    it('should reject audienceKey records for recipients without the referenced role', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol/chat';
+      const rolePublicKey = alice.encryptionKeyPair.publicJwk;
+      const protocolDefinition = createRoleProtocolDefinition(protocol, rolePublicKey);
+      const audienceEpoch = await createAudienceEpochMessage({
+        protocol,
+        role         : 'chat/member',
+        contextId    : 'chat1',
+        epoch        : 1,
+        publicKeyJwk : rolePublicKey,
+        signer       : Jws.createSigner(alice),
+      });
+      const message = await createAudienceKeyMessage({
+        protocol,
+        role         : 'chat/member',
+        contextId    : 'chat1',
+        epoch        : 1,
+        publicKeyJwk : rolePublicKey,
+        recipient    : bob.did,
+        signer       : Jws.createSigner(alice),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.preProcessWrite(alice.did, message, createValidationStateReader({
+          audienceEpochs  : [audienceEpoch],
+          hasMatchingRole : false,
+          protocolDefinition,
+        }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateAudienceKeyRoleRecordMissing);
     });
 
     it('should accept grantKey records covered by an ancestor protocolPath read grant', async () => {
@@ -142,6 +230,56 @@ describe('EncryptionProtocol', () => {
         encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }))
       ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateGrantKeyRecipientMismatch);
     });
+
+    it('should reject grantKey records not authored by the grantor', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const carol = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol';
+      const grant = createGrant({
+        grantor : alice.did,
+        grantee : bob.did,
+        id      : 'grant1',
+        protocol,
+      });
+      const message = await createGrantKeyMessage({
+        grant,
+        protocol,
+        recipient : bob.did,
+        signer    : Jws.createSigner(carol),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateGrantKeyAuthorMismatch);
+    });
+
+    it('should reject grantKey records for non-read permission grants', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol';
+      const grant = createGrant({
+        grantor : alice.did,
+        grantee : bob.did,
+        id      : 'grant1',
+        method  : DwnMethodName.Write,
+        protocol,
+      });
+      const message = await createGrantKeyMessage({
+        grant,
+        protocol,
+        recipient : bob.did,
+        signer    : Jws.createSigner(alice),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch);
+    });
   });
 
   describe('validateRecord()', () => {
@@ -165,6 +303,35 @@ describe('EncryptionProtocol', () => {
         encryptionProtocol.validateRecord(message, Encoder.base64UrlToBytes(message.encodedData!))
       ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateAudienceEpochKeyIdMismatch);
     });
+
+    it('should reject audienceEpoch records whose payload does not match tags', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol/chat';
+      const keyId = await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk);
+      const message = await createAudienceEpochMessage({
+        protocol,
+        role         : 'chat/member',
+        contextId    : 'chat1',
+        epoch        : 1,
+        publicKeyJwk : alice.encryptionKeyPair.publicJwk,
+        keyId,
+        signer       : Jws.createSigner(alice),
+      });
+      const mismatchingPayload = Encoder.objectToBytes({
+        protocol,
+        contextId    : 'chat2',
+        role         : 'chat/member',
+        epoch        : 1,
+        keyId,
+        publicKeyJwk : alice.encryptionKeyPair.publicJwk,
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.validateRecord(message, mismatchingPayload)
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateAudienceTagsMismatch);
+    });
   });
 });
 
@@ -174,6 +341,7 @@ function createGrant(input: {
   grantee: string;
   protocol: string;
   protocolPath?: string;
+  method?: DwnMethodName;
 }): PermissionGrant {
   return {
     conditions  : undefined,
@@ -187,7 +355,7 @@ function createGrant(input: {
     requestId   : undefined,
     scope       : {
       interface    : DwnInterfaceName.Records,
-      method       : DwnMethodName.Read,
+      method       : input.method ?? DwnMethodName.Read,
       protocol     : input.protocol,
       protocolPath : input.protocolPath,
     },
@@ -210,7 +378,20 @@ function createValidationStateReader(input: {
   } as unknown as ValidationStateReader;
 }
 
-function createRoleProtocolDefinition(protocol: string, publicKeyJwk: PublicKeyJwk): ProtocolDefinition {
+function createRoleProtocolDefinition(
+  protocol: string,
+  publicKeyJwk: PublicKeyJwk,
+  options: { keyAgreement?: boolean } = {},
+): ProtocolDefinition {
+  const memberRuleSet = {
+    $actions : [{ can: ['create'], who: 'anyone' }],
+    $role    : true,
+  } as ProtocolRuleSet;
+
+  if (options.keyAgreement !== false) {
+    memberRuleSet.$keyAgreement = { publicKeyJwk };
+  }
+
   return {
     published : true,
     protocol,
@@ -220,11 +401,7 @@ function createRoleProtocolDefinition(protocol: string, publicKeyJwk: PublicKeyJ
     },
     structure: {
       chat: {
-        member: {
-          $actions      : [{ can: ['create'], who: 'anyone' }],
-          $keyAgreement : { publicKeyJwk },
-          $role         : true,
-        },
+        member: memberRuleSet,
       },
     },
   } as ProtocolDefinition;
@@ -275,7 +452,7 @@ async function createAudienceKeyMessage(input: {
   contextId: string;
   epoch: number;
   publicKeyJwk: PublicKeyJwk;
-  recipient: string;
+  recipient?: string;
   signer: MessageSigner;
 }): Promise<RecordsWriteMessage> {
   const keyId = await Encryption.getKeyId(input.publicKeyJwk);
