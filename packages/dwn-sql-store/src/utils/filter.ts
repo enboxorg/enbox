@@ -5,7 +5,7 @@ import type { ExpressionBuilder, OperandExpression, RawBuilder, SelectQueryBuild
 import { DynamicModule, sql } from 'kysely';
 import { sanitizedValue, sanitizeFiltersAndSeparateTags } from './sanitize.js';
 
-const SQL_LIKE_ESCAPE = String.fromCharCode(92);
+const SQL_LIKE_ESCAPE = String.fromCodePoint(92);
 
 /**
  * Takes multiple Filters and returns a single query.
