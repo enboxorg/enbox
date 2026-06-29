@@ -453,7 +453,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       expect(keys[0].scope.kind).toBe('protocolPath');
       if (keys[0].scope.kind === 'protocolPath') {
         expect(keys[0].scope.protocolPath).toBe('note');
-        expect(keys[0].scope.match).toBe('subtree');
+        expect(keys[0].scope).toEqual({ kind: 'protocolPath', protocolPath: 'note' });
       }
     });
 

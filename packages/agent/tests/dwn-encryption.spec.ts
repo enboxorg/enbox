@@ -6,9 +6,9 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { ContentEncryptionAlgorithm, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import {
-  buildContextKeyDecrypter,
   buildEncryptionInput,
   buildKmsDecryptCallback,
+  buildProtocolPathSubtreeDecrypter,
   encryptAndComputeCid,
   getEncryptionKeyDeriver,
   getEncryptionKeyInfo,
@@ -107,15 +107,15 @@ describe('dwn-encryption', () => {
     });
   });
 
-  describe('buildContextKeyDecrypter', () => {
+  describe('buildProtocolPathSubtreeDecrypter', () => {
     it('should return a KeyDecrypter with correct rootKeyId and derivationScheme', () => {
-      const contextKey: DerivedPrivateJwk = {
+      const protocolPathKey: DerivedPrivateJwk = {
         rootKeyId         : 'ctx-root-key',
         derivationScheme  : KeyDerivationScheme.ProtocolPath,
         derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
       };
 
-      const result = buildContextKeyDecrypter(contextKey);
+      const result = buildProtocolPathSubtreeDecrypter(protocolPathKey);
 
       expect(result.rootKeyId).toBe('ctx-root-key');
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
@@ -540,7 +540,7 @@ describe('dwn-encryption', () => {
         get: sinon.stub().returns([{
           derivedPrivateKey : cachedKey,
           protocol          : 'https://proto.example.com',
-          scope             : { kind: 'protocolPath', match: 'subtree', protocolPath: 'message' },
+          scope             : { kind: 'protocolPath', protocolPath: 'message' },
         }]),
       };
 
@@ -575,7 +575,7 @@ describe('dwn-encryption', () => {
         get: sinon.stub().returns([{
           derivedPrivateKey : cachedKey,
           protocol          : 'https://proto.example.com',
-          scope             : { kind: 'protocolPath', match: 'subtree', protocolPath: 'message' },
+          scope             : { kind: 'protocolPath', protocolPath: 'message' },
         }]),
       };
 

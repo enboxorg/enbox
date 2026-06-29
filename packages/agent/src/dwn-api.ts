@@ -33,6 +33,7 @@ import {
 import { Convert, TtlCache } from '@enbox/common';
 import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox/dids';
 
+import type { DelegateDecryptionKeyEntry } from './dwn-encryption.js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { LocalDwnStrategy } from './local-dwn.js';
 import type {
@@ -171,11 +172,7 @@ export class AgentDwnApi {
    * granted read scopes for that delegate session.
    * TTL 24 hours (keys are re-populated on session restore).
    */
-  private readonly _delegateDecryptionKeyCache = new TtlCache<string, {
-    protocol: string;
-    scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'subtree' };
-    derivedPrivateKey: DerivedPrivateJwk;
-  }[]>({
+  private readonly _delegateDecryptionKeyCache = new TtlCache<string, DelegateDecryptionKeyEntry[]>({
     ttl: 24 * 60 * 60 * 1000
   });
 
@@ -1240,11 +1237,7 @@ export class AgentDwnApi {
 
   public importDelegateDecryptionKeys(
     delegateDid: string,
-    keys: {
-      protocol: string;
-      scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'subtree' };
-      derivedPrivateKey: DerivedPrivateJwk;
-    }[],
+    keys: DelegateDecryptionKeyEntry[],
   ): void {
     const cacheKey = `ddk~${delegateDid}`;
     this._delegateDecryptionKeyCache.set(cacheKey, keys);

@@ -107,7 +107,7 @@ export type DelegateDecryptionKey =
     /** The protocol URI this key is scoped to. */
     protocol: string;
     /** Protocol-path subtree decryption scope. */
-    scope: { kind: 'protocolPath'; protocolPath: string; match: 'subtree' };
+    scope: { kind: 'protocolPath'; protocolPath: string };
     /** The derived private key material for ProtocolPath decryption. */
     derivedPrivateKey: DerivedPrivateJwk;
   };
@@ -1218,7 +1218,7 @@ async function deriveScopedDecryptionKeys(
 
     keys.push({
       protocol          : protocolUri,
-      scope             : { kind: 'protocolPath', protocolPath, match: 'subtree' },
+      scope             : { kind: 'protocolPath', protocolPath },
       derivedPrivateKey : {
         rootKeyId         : keyId,
         derivationScheme  : KeyDerivationScheme.ProtocolPath,

@@ -107,7 +107,7 @@ describe('e2e: delegate + encrypted role protocol', () => {
     );
 
     expect(keys).toHaveLength(1);
-    expect(keys[0].scope).toEqual({ kind: 'protocolPath', protocolPath: 'thread/chat', match: 'subtree' });
+    expect(keys[0].scope).toEqual({ kind: 'protocolPath', protocolPath: 'thread/chat' });
     expect(keys[0].derivedPrivateKey.derivationPath).toEqual([
       KeyDerivationScheme.ProtocolPath,
       chatProtocol.protocol,

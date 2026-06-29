@@ -248,24 +248,24 @@ export async function getKeyDecrypter(
 /**
  * Builds a KeyDecrypter from a delivered protocol/path-derived private key.
  *
- * @param contextKey - The delivered derived private key
+ * @param key - The delivered derived private key
  */
-export function buildContextKeyDecrypter(
-  contextKey: DerivedPrivateJwk,
+export function buildProtocolPathSubtreeDecrypter(
+  key: DerivedPrivateJwk,
 ): KeyDecrypter {
   return {
-    rootKeyId        : contextKey.rootKeyId,
-    derivationScheme : contextKey.derivationScheme,
+    rootKeyId        : key.rootKeyId,
+    derivationScheme : key.derivationScheme,
     derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
       const leafPrivateKeyBytes = await Records.derivePrivateKey(
-        contextKey, fullDerivationPath,
+        key, fullDerivationPath,
       );
       const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
       return await X25519.getPublicKey({ key: leafPrivateKeyJwk }) as PublicKeyJwk;
     },
     decrypt: async (fullDerivationPath, keyUnwrapPayload): Promise<Uint8Array> => {
       const leafPrivateKeyBytes = await Records.derivePrivateKey(
-        contextKey, fullDerivationPath,
+        key, fullDerivationPath,
       );
       const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
       return Encryption.unwrapKey(leafPrivateKeyJwk as any, keyUnwrapPayload.keyEncryption);
@@ -276,20 +276,9 @@ export function buildContextKeyDecrypter(
 /** Cache entry shape for scope-aware delegate decryption keys. */
 export type DelegateDecryptionKeyEntry = {
   protocol: string;
-  scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'subtree' };
+  scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string };
   derivedPrivateKey: DerivedPrivateJwk;
 };
-
-/**
- * Builds a KeyDecrypter for a path-subtree delegate key.
- */
-export function buildProtocolPathSubtreeDecrypter(
-  key: DerivedPrivateJwk,
-): KeyDecrypter {
-  return buildContextKeyDecrypter(key);
-}
-
-export const buildExactProtocolPathDecrypter = buildProtocolPathSubtreeDecrypter;
 
 /**
  * Resolves the appropriate KeyDecrypter for a record's encryption scheme.
@@ -346,7 +335,7 @@ export async function resolveKeyDecrypter(
 
           const ancestorKey = keysForProtocol
             .filter((key): key is DelegateDecryptionKeyEntry & {
-              scope: { kind: 'protocolPath'; protocolPath: string; match: 'subtree' }
+              scope: { kind: 'protocolPath'; protocolPath: string }
             } =>
               key.scope.kind === 'protocolPath' &&
               protocolPath.startsWith(key.scope.protocolPath + '/')
@@ -359,7 +348,7 @@ export async function resolveKeyDecrypter(
 
         const wideKey = keysForProtocol.find((key) => key.scope.kind === 'protocol');
         if (wideKey) {
-          return buildContextKeyDecrypter(wideKey.derivedPrivateKey);
+          return buildProtocolPathSubtreeDecrypter(wideKey.derivedPrivateKey);
         }
       }
     }
