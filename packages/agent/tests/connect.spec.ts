@@ -6,6 +6,7 @@ import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { CryptoUtils } from '@enbox/crypto';
+import { EncryptionProtocol } from '@enbox/dwn-sdk-js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -1499,6 +1500,175 @@ describe('enbox connect', () => {
         'protocolPath',
         mixedProtocol.protocol,
       ]);
+    });
+
+    it('should fan out durable grantKey records with their encrypted data during connect', async () => {
+      const encryptedProtocol: DwnProtocolDefinition = {
+        protocol  : 'http://grantkey-fanout-encrypted.xyz',
+        published : true,
+        types     : {
+          note: {
+            schema             : 'http://grantkey-fanout-encrypted.xyz/note',
+            dataFormats        : ['text/plain'],
+            encryptionRequired : true,
+          },
+        },
+        structure: { note: {} },
+      };
+      const readScopes: RecordsPermissionScope[] = [{
+        interface : 'Records' as any,
+        method    : 'Read' as any,
+        protocol  : encryptedProtocol.protocol,
+      }];
+      const grantKeyData = new Uint8Array([9, 8, 7, 6]);
+      const grantKeyRecord = {
+        recordId   : 'grant-key-fanout-record-id',
+        descriptor : {
+          interface    : 'Records',
+          method       : 'Write',
+          recipient    : delegateBearerDid.uri,
+          protocol     : EncryptionProtocol.uri,
+          protocolPath : EncryptionProtocol.grantKeyPath,
+          dataFormat   : 'application/json',
+          tags         : { protocol: encryptedProtocol.protocol },
+        },
+        encodedData: Convert.uint8Array(grantKeyData).toBase64Url(),
+      };
+      const endpoints = ['https://dwn-a.example/', 'https://dwn-b.example/'];
+
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
+      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      connectRequest = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
+        callbackUrl,
+      });
+
+      const endpointStub = sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget');
+      endpointStub.onFirstCall().resolves(endpoints);
+      endpointStub.onSecondCall().resolves([]);
+      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
+        messageCid : '',
+        reply      : { status: { code: 202, detail: 'OK' } }
+      });
+      const processDwnRequestStub = sinon.stub(testHarness.agent, 'processDwnRequest');
+      processDwnRequestStub.resolves({
+        messageCid : '',
+        reply      : {
+          status  : { code: 200, detail: 'OK' },
+          entries : [{ descriptor: { interface: 'Protocols', method: 'Configure', definition: encryptedProtocol } }] as any,
+        },
+      });
+      const rpcSendRequestStub = sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
+        .resolves({ status: { code: 202, detail: 'Accepted' } } as any);
+      sinon.stub(globalThis, 'fetch').resolves(new Response());
+
+      await EnboxConnectProtocol.submitConnectResponse(
+        providerIdentity.did.uri, connectRequest, randomPin, testHarness.agent,
+      );
+
+      expect(rpcSendRequestStub.callCount).toBe(endpoints.length);
+      for (const [index, call] of rpcSendRequestStub.getCalls().entries()) {
+        const request = call.args[0];
+        expect(request.dwnUrl).toBe(endpoints[index]);
+        expect(request.targetDid).toBe(providerIdentity.did.uri);
+        expect((request.message as any).encodedData).toBeUndefined();
+        expect((request.message as any).recordId).toBe(grantKeyRecord.recordId);
+        expect(request.signal).toBeInstanceOf(AbortSignal);
+
+        const sentBytes = new Uint8Array(await (request.data as Blob).arrayBuffer());
+        expect([...sentBytes]).toEqual([...grantKeyData]);
+      }
+    });
+
+    it('should stop connect response delivery when durable grantKey fanout fails for every endpoint', async () => {
+      const encryptedProtocol: DwnProtocolDefinition = {
+        protocol  : 'http://grantkey-fanout-fail-encrypted.xyz',
+        published : true,
+        types     : {
+          note: {
+            schema             : 'http://grantkey-fanout-fail-encrypted.xyz/note',
+            dataFormats        : ['text/plain'],
+            encryptionRequired : true,
+          },
+        },
+        structure: { note: {} },
+      };
+      const readScopes: RecordsPermissionScope[] = [{
+        interface : 'Records' as any,
+        method    : 'Read' as any,
+        protocol  : encryptedProtocol.protocol,
+      }];
+      const grantKeyRecord = {
+        recordId   : 'grant-key-fanout-fail-record-id',
+        descriptor : {
+          interface    : 'Records',
+          method       : 'Write',
+          recipient    : delegateBearerDid.uri,
+          protocol     : EncryptionProtocol.uri,
+          protocolPath : EncryptionProtocol.grantKeyPath,
+          dataFormat   : 'application/json',
+          tags         : { protocol: encryptedProtocol.protocol },
+        },
+        encodedData: Convert.uint8Array(new Uint8Array([1, 2, 3])).toBase64Url(),
+      };
+
+      sinon.stub(EnboxConnectProtocol, 'createPermissionGrants').resolves(permissionGrants as any);
+      sinon.stub(EnboxConnectProtocol, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
+      sinon.stub(AgentPermissionsApi.prototype, 'createGrant').resolves({
+        grant   : {} as any,
+        message : { recordId: 'mock-revocation-grant-id', encodedData: btoa('{}') } as any,
+      });
+      sinon.stub(CryptoUtils, 'randomBytes').returns(encryptionNonce);
+      sinon.stub(DidJwk, 'create').resolves(delegateBearerDid);
+
+      const callbackUrl = EnboxConnectProtocol.buildConnectUrl({
+        baseURL  : 'http://localhost:3000',
+        endpoint : 'callback',
+      });
+      connectRequest = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Sample App',
+        clientDid          : clientEphemeralPortableDid.uri,
+        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
+        callbackUrl,
+      });
+
+      sinon.stub(testHarness.agent.dwn, 'getDwnEndpointUrlsForTarget')
+        .resolves(['https://dwn-a.example/', 'https://dwn-b.example/']);
+      sinon.stub(testHarness.agent, 'sendDwnRequest').resolves({
+        messageCid : '',
+        reply      : { status: { code: 202, detail: 'OK' } }
+      });
+      sinon.stub(testHarness.agent, 'processDwnRequest').resolves({
+        messageCid : '',
+        reply      : {
+          status  : { code: 200, detail: 'OK' },
+          entries : [{ descriptor: { interface: 'Protocols', method: 'Configure', definition: encryptedProtocol } }] as any,
+        },
+      });
+      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest')
+        .resolves({ status: { code: 500, detail: 'nope' } } as any);
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response());
+
+      await expect(
+        EnboxConnectProtocol.submitConnectResponse(
+          providerIdentity.did.uri, connectRequest, randomPin, testHarness.agent,
+        )
+      ).rejects.toThrow('Could not send grantKey record to any DWN endpoint.');
+
+      expect(fetchStub.called).toBe(false);
     });
 
     it('should throw if a grant that is included in the request does not match the protocol definition', async () => {

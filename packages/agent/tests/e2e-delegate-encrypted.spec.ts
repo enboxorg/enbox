@@ -21,7 +21,7 @@ import { Ed25519 } from '@enbox/crypto';
 import sinon from 'sinon';
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { ContentEncryptionAlgorithm, DataStream, DwnInterfaceName, DwnMethodName, Encoder, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import { ContentEncryptionAlgorithm, DataStream, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import { createGrantKeyRecordsForGrants } from '../src/dwn-encryption.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -108,6 +108,70 @@ async function applyDataEncodedRecord(
   );
 
   expect([202, 409]).toContain(applyReply.status.code);
+}
+
+async function createImportedDelegateDid(
+  harness: PlatformAgentTestHarness,
+): Promise<{ delegateDid: string; delegateX25519PrivateKey: any }> {
+  const delegateBearerDid = await DidJwk.create();
+  const delegatePortableDid = await delegateBearerDid.export();
+  const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+    privateKey: delegatePortableDid.privateKeys![0],
+  });
+  delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
+  await harness.agent.did.import({
+    portableDid : delegatePortableDid,
+    tenant      : harness.agent.agentDid.uri,
+  });
+
+  return {
+    delegateDid: delegateBearerDid.uri,
+    delegateX25519PrivateKey,
+  };
+}
+
+async function copyProtocolToHarness(
+  source: PlatformAgentTestHarness,
+  destination: PlatformAgentTestHarness,
+  tenantDid: string,
+  protocol: string,
+): Promise<void> {
+  const { reply } = await source.agent.processDwnRequest({
+    author        : tenantDid,
+    target        : tenantDid,
+    messageType   : DwnInterface.ProtocolsQuery,
+    messageParams : { filter: { protocol } },
+  });
+  const applyReply = await destination.agent.dwn.processRawMessage(
+    tenantDid,
+    reply.entries![0] as any,
+  );
+  expect(applyReply.status.code).toBe(202);
+}
+
+async function copyRecordToHarness(
+  source: PlatformAgentTestHarness,
+  destination: PlatformAgentTestHarness,
+  tenantDid: string,
+  recordId: string,
+): Promise<void> {
+  const { reply } = await source.agent.processDwnRequest({
+    author        : tenantDid,
+    target        : tenantDid,
+    messageType   : DwnInterface.RecordsRead,
+    messageParams : { filter: { recordId } },
+  });
+  expect(reply.status.code).toBe(200);
+  expect(reply.entry?.recordsWrite).toBeDefined();
+  expect(reply.entry?.data).toBeDefined();
+
+  const dataBytes = await DataStream.toBytes(reply.entry!.data!);
+  const applyReply = await destination.agent.dwn.processRawMessage(
+    tenantDid,
+    reply.entry!.recordsWrite as any,
+    { dataStream: DataStream.fromBytes(dataBytes) },
+  );
+  expect(applyReply.status.code).toBe(202);
 }
 
 // ─── Tests ──────────────────────────────────────────────────────
@@ -398,6 +462,110 @@ describe('e2e: delegate + encrypted protocol', () => {
       });
 
       expect(revokedReply.status.code).toBe(401);
+    });
+
+    it('should hydrate a protocolPath durable grantKey and decrypt only with the delegate KMS', async () => {
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: multiTypeProtocol },
+        encryption    : true,
+      });
+
+      const noteData = 'Secret path-scoped note from durable grantKey';
+      const { message: noteWrite } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : multiTypeProtocol.protocol,
+          protocolPath : 'note',
+          schema       : 'https://schemas.xyz/note',
+          dataFormat   : 'text/plain',
+          data         : new TextEncoder().encode(noteData),
+        },
+        encryption: true,
+      });
+      const noteRecordId = (noteWrite as RecordsWriteMessage).recordId;
+
+      const { delegateDid, delegateX25519PrivateKey } = await createImportedDelegateDid(delegateHarness);
+      const readGrant = await walletHarness.agent.permissions.createGrant({
+        author      : walletIdentity.did.uri,
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        delegated   : true,
+        grantedTo   : delegateDid,
+        scope       : {
+          interface    : DwnInterfaceName.Records,
+          method       : DwnMethodName.Read,
+          protocol     : multiTypeProtocol.protocol,
+          protocolPath : 'note',
+        },
+        store: true,
+      });
+
+      await applyDataEncodedRecord(
+        delegateHarness,
+        walletIdentity.did.uri,
+        readGrant.message as RecordsWriteMessage & { encodedData: string },
+      );
+
+      const grantKeyRecords = await createGrantKeyRecordsForGrants({
+        agent                 : walletHarness.agent,
+        ownerDid              : walletIdentity.did.uri,
+        granteeDid            : delegateDid,
+        granteeRootPrivateKey : delegateX25519PrivateKey,
+        grantMessages         : [readGrant.message as any],
+      });
+      expect(grantKeyRecords).toHaveLength(1);
+      expect(grantKeyRecords[0].descriptor.protocol).toBe(EncryptionProtocol.uri);
+      expect(grantKeyRecords[0].descriptor.protocolPath).toBe(EncryptionProtocol.grantKeyPath);
+      expect(grantKeyRecords[0].descriptor.recipient).toBe(delegateDid);
+      expect(grantKeyRecords[0].descriptor.tags).toEqual({
+        grantId      : readGrant.grant.id,
+        protocol     : multiTypeProtocol.protocol,
+        protocolPath : 'note',
+        keyId        : grantKeyRecords[0].descriptor.tags!.keyId,
+      });
+
+      await applyDataEncodedRecord(
+        delegateHarness,
+        walletIdentity.did.uri,
+        grantKeyRecords[0] as RecordsWriteMessage & { encodedData: string },
+      );
+      await copyProtocolToHarness(
+        walletHarness,
+        delegateHarness,
+        walletIdentity.did.uri,
+        multiTypeProtocol.protocol,
+      );
+      await copyRecordToHarness(
+        walletHarness,
+        delegateHarness,
+        walletIdentity.did.uri,
+        noteRecordId,
+      );
+
+      delegateHarness.agent.dwn.clearDelegateDecryptionKeys(delegateDid);
+      expect(await delegateHarness.agent.did.get({ didUri: walletIdentity.did.uri })).toBeUndefined();
+
+      const { reply: decryptedReply } = await delegateHarness.agent.processDwnRequest({
+        author        : delegateDid,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter            : { recordId: noteRecordId },
+          permissionGrantId : readGrant.grant.id,
+        },
+        encryption : true,
+        granteeDid : delegateDid,
+      });
+
+      expect(decryptedReply.status.code).toBe(200);
+      expect(decryptedReply.entry?.data).toBeDefined();
+
+      const decryptedBytes = await DataStream.toBytes(decryptedReply.entry!.data!);
+      expect(new TextDecoder().decode(decryptedBytes)).toBe(noteData);
     });
 
     it('should decrypt records using only a delivered protocol path key from a distinct delegate KMS', async () => {
