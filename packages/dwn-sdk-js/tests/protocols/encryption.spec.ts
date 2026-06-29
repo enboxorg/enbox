@@ -25,6 +25,13 @@ import {
 type EncodedRecordsWriteMessage = RecordsWriteMessage & { encodedData: string };
 
 describe('EncryptionProtocol', () => {
+  it('should expose the encryption protocol uri and definition', () => {
+    const encryptionProtocol = new EncryptionProtocol();
+
+    expect(encryptionProtocol.uri).toBe(EncryptionProtocol.uri);
+    expect(encryptionProtocol.definition).toBe(EncryptionProtocol.definition);
+  });
+
   describe('preProcessWrite()', () => {
     it('should ignore records outside the encryption protocol paths', async () => {
       const alice = await TestDataGenerator.generatePersona();
@@ -188,6 +195,116 @@ describe('EncryptionProtocol', () => {
         epoch        : 1,
         publicKeyJwk : rolePublicKey,
         signer       : Jws.createSigner(alice),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ protocolDefinition }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateAudienceWriterUnauthorized);
+    });
+
+    it('should accept audienceEpoch records authored through an active local role', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol/chat';
+      const rolePublicKey = alice.encryptionKeyPair.publicJwk;
+      const protocolDefinition = createRoleProtocolDefinition(protocol, rolePublicKey, {
+        memberActions: [{ can: ['create'], role: 'chat/admin' }],
+      });
+      const message = await createAudienceEpochMessage({
+        protocol,
+        role         : 'chat/member',
+        contextId    : 'chat1',
+        epoch        : 1,
+        publicKeyJwk : rolePublicKey,
+        signer       : Jws.createSigner(alice),
+        protocolRole : 'chat/admin',
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({
+        hasMatchingRoleRecord: (input): boolean => {
+          return input.protocol === protocol &&
+            input.protocolPath === 'chat/admin' &&
+            input.recipient === alice.did &&
+            input.contextIdPrefix === 'chat1';
+        },
+        protocolDefinition,
+      }));
+    });
+
+    it('should reject audienceEpoch records when the invoked role does not match the create rule', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol/chat';
+      const rolePublicKey = alice.encryptionKeyPair.publicJwk;
+      const protocolDefinition = createRoleProtocolDefinition(protocol, rolePublicKey, {
+        memberActions: [{ can: ['create'], role: 'chat/admin' }],
+      });
+      const message = await createAudienceEpochMessage({
+        protocol,
+        role         : 'chat/member',
+        contextId    : 'chat1',
+        epoch        : 1,
+        publicKeyJwk : rolePublicKey,
+        signer       : Jws.createSigner(alice),
+        protocolRole : 'chat/moderator',
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ protocolDefinition }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateAudienceWriterUnauthorized);
+    });
+
+    it('should accept audienceEpoch records authored through an active cross-protocol role', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol/chat';
+      const roleProtocol = 'https://example.com/protocol/roles';
+      const rolePublicKey = alice.encryptionKeyPair.publicJwk;
+      const protocolDefinition = createRoleProtocolDefinition(protocol, rolePublicKey, {
+        memberActions : [{ can: ['create'], role: 'roles:admin' }],
+        uses          : { roles: roleProtocol },
+      });
+      const message = await createAudienceEpochMessage({
+        protocol,
+        role         : 'chat/member',
+        contextId    : 'chat1',
+        epoch        : 1,
+        publicKeyJwk : rolePublicKey,
+        signer       : Jws.createSigner(alice),
+        protocolRole : 'roles:admin',
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({
+        hasMatchingRoleRecord: (input): boolean => {
+          return input.protocol === roleProtocol &&
+            input.protocolPath === 'admin' &&
+            input.recipient === alice.did &&
+            input.contextIdPrefix === undefined;
+        },
+        protocolDefinition,
+      }));
+    });
+
+    it('should reject audienceEpoch records that invoke a cross-protocol role with an unknown alias', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const protocol = 'https://example.com/protocol/chat';
+      const rolePublicKey = alice.encryptionKeyPair.publicJwk;
+      const protocolDefinition = createRoleProtocolDefinition(protocol, rolePublicKey, {
+        memberActions: [{ can: ['create'], role: 'roles:admin' }],
+      });
+      const message = await createAudienceEpochMessage({
+        protocol,
+        role         : 'chat/member',
+        contextId    : 'chat1',
+        epoch        : 1,
+        publicKeyJwk : rolePublicKey,
+        signer       : Jws.createSigner(alice),
+        protocolRole : 'roles:admin',
       });
 
       const encryptionProtocol = new EncryptionProtocol();
@@ -868,6 +985,13 @@ function createValidationStateReader(input: {
   protocolDefinition?: ProtocolDefinition;
   audienceEpochs?: RecordsWriteMessage[];
   hasMatchingRole?: boolean;
+  hasMatchingRoleRecord?: (input: {
+    tenant: string;
+    protocol: string;
+    protocolPath: string;
+    recipient: string;
+    contextIdPrefix?: string;
+  }) => boolean;
   revocation?: GenericMessage;
 }): ValidationStateReader {
   return {
@@ -875,7 +999,7 @@ function createValidationStateReader(input: {
     fetchGrant                 : async (): Promise<PermissionGrant> => input.grant!,
     fetchOldestGrantRevocation : async (): Promise<GenericMessage | undefined> => input.revocation,
     fetchProtocolDefinition    : async (): Promise<ProtocolDefinition> => input.protocolDefinition!,
-    hasMatchingRoleRecord      : async (): Promise<boolean> => input.hasMatchingRole ?? true,
+    hasMatchingRoleRecord      : async (roleInput): Promise<boolean> => input.hasMatchingRoleRecord?.(roleInput) ?? input.hasMatchingRole ?? true,
     queryAudienceEpochs        : async (): Promise<RecordsWriteMessage[]> => input.audienceEpochs ?? [],
   } as unknown as ValidationStateReader;
 }
@@ -886,27 +1010,36 @@ function createRoleProtocolDefinition(
   options: {
     keyAgreement?: boolean;
     memberActions?: ProtocolActionRule[];
+    uses?: Record<string, string>;
   } = {},
 ): ProtocolDefinition {
+  const adminRuleSet = {
+    $actions : [{ can: ['create'], who: 'anyone' }],
+    $role    : true,
+  } as ProtocolRuleSet;
   const memberRuleSet = {
     $actions : options.memberActions ?? [{ can: ['create'], who: 'anyone' }],
     $role    : true,
   } as ProtocolRuleSet;
 
   if (options.keyAgreement !== false) {
+    adminRuleSet.$keyAgreement = { publicKeyJwk };
     memberRuleSet.$keyAgreement = { publicKeyJwk };
   }
 
   return {
     published : true,
     protocol,
+    uses      : options.uses,
     types     : {
+      admin  : { dataFormats: ['application/json'] },
       chat   : { dataFormats: ['application/json'] },
       member : { dataFormats: ['application/json'] },
     },
     structure: {
       chat: {
-        member: memberRuleSet,
+        admin  : adminRuleSet,
+        member : memberRuleSet,
       },
     },
   } as ProtocolDefinition;
@@ -920,6 +1053,7 @@ async function createAudienceEpochMessage(input: {
   publicKeyJwk: PublicKeyJwk;
   keyId?: string;
   signer: MessageSigner;
+  protocolRole?: string;
 }): Promise<EncodedRecordsWriteMessage> {
   const keyId = input.keyId ?? await Encryption.getKeyId(input.publicKeyJwk);
   const data = Encoder.objectToBytes({
@@ -935,6 +1069,7 @@ async function createAudienceEpochMessage(input: {
     dataFormat   : 'application/json',
     protocol     : EncryptionProtocol.uri,
     protocolPath : EncryptionProtocol.audienceEpochPath,
+    protocolRole : input.protocolRole,
     signer       : input.signer,
     tags         : {
       protocol  : input.protocol,
