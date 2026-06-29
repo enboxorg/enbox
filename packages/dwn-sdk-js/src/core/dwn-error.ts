@@ -20,7 +20,6 @@ export enum DwnErrorCode {
   ComputeCidCodecNotSupported = 'ComputeCidCodecNotSupported',
   ComputeCidMultihashNotSupported = 'ComputeCidMultihashNotSupported',
   Ed25519InvalidJwk = 'Ed25519InvalidJwk',
-  EncryptionProtocolValidateAudienceEpochConflict = 'EncryptionProtocolValidateAudienceEpochConflict',
   EncryptionProtocolValidateAudienceEpochEncrypted = 'EncryptionProtocolValidateAudienceEpochEncrypted',
   EncryptionProtocolValidateAudienceEpochKeyIdMismatch = 'EncryptionProtocolValidateAudienceEpochKeyIdMismatch',
   EncryptionProtocolValidateAudienceEpochMissing = 'EncryptionProtocolValidateAudienceEpochMissing',

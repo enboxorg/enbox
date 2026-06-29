@@ -433,6 +433,7 @@ async function expectFingerprintsEqual(
   const protocolScopes = [
     Replication.protocolDomain(protocol),
     Replication.permissionDomain(protocol),
+    Replication.encryptionDomain(protocol),
   ];
   expect(await replica.fingerprint(tenant, protocolScopes)).toBe(await source.fingerprint(tenant, protocolScopes));
 }

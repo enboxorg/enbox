@@ -9,7 +9,6 @@ import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesQuery } from '../interfaces/messages-query.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
 import { Replication } from '../utils/replication.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -187,10 +186,12 @@ export class MessagesQueryHandler implements MethodHandler {
       protocols.add(filter.protocol);
     }
 
-    const protocolList = [...protocols];
-    const scopes = protocolList.map(protocol => Replication.protocolDomain(protocol));
-    if (!protocols.has(PermissionsProtocol.uri)) {
-      scopes.push(...protocolList.map(protocol => Replication.permissionDomain(protocol)));
+    const scopes: string[] = [];
+    for (const protocol of protocols) {
+      scopes.push(
+        Replication.protocolDomain(protocol),
+        ...Replication.taggedCoreProtocolDomains(protocol),
+      );
     }
 
     return scopes;

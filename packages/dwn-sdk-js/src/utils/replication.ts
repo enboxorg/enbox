@@ -1,6 +1,7 @@
 import type { GenericMessage } from '../types/message-types.js';
 import type { KeyValues } from '../types/query-types.js';
 
+import { EncryptionProtocol } from '../protocols/encryption.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -24,6 +25,21 @@ export class Replication {
     return `perm:${protocolUri}`;
   }
 
+  public static encryptionDomain(protocolUri: string): string {
+    return `enc:${protocolUri}`;
+  }
+
+  public static taggedCoreProtocolDomains(protocolUri: string): string[] {
+    if (Replication.isCoreProtocolUri(protocolUri)) {
+      return [];
+    }
+
+    return [
+      Replication.permissionDomain(protocolUri),
+      Replication.encryptionDomain(protocolUri),
+    ];
+  }
+
   public static async deriveStreamId(tenant: string): Promise<string> {
     const bytes = new TextEncoder().encode(tenant);
     const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
@@ -39,11 +55,13 @@ export class Replication {
     if (typeof protocol === 'string') {
       scopes.push(Replication.protocolDomain(protocol));
 
-      if (protocol === PermissionsProtocol.uri) {
-        const indexedTaggedProtocol = indexes['tag.protocol'];
-        const taggedProtocol = indexedTaggedProtocol ?? descriptor.tags?.protocol;
-        if (typeof taggedProtocol === 'string') {
+      const indexedTaggedProtocol = indexes['tag.protocol'];
+      const taggedProtocol = indexedTaggedProtocol ?? descriptor.tags?.protocol;
+      if (typeof taggedProtocol === 'string') {
+        if (protocol === PermissionsProtocol.uri) {
           scopes.push(Replication.permissionDomain(taggedProtocol));
+        } else if (protocol === EncryptionProtocol.uri) {
+          scopes.push(Replication.encryptionDomain(taggedProtocol));
         }
       }
     }
@@ -76,6 +94,10 @@ export class Replication {
       DwnErrorCode.MessageStoreFingerprintScopeMutation,
       `index replacement for message ${messageCid} would change its persisted fingerprint scopes`
     );
+  }
+
+  private static isCoreProtocolUri(protocolUri: string): boolean {
+    return protocolUri === PermissionsProtocol.uri || protocolUri === EncryptionProtocol.uri;
   }
 
   public static async hashMessageCid(messageCid: string): Promise<Uint8Array> {

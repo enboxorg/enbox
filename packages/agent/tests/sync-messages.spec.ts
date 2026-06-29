@@ -4,7 +4,7 @@ import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { EncryptionProtocol, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import {
@@ -66,6 +66,7 @@ function createLocalAgentFixture({
   recordsByRecordId = new Map(),
   recordsByFilter = new Map(),
   recordsReadByRecordId = new Map(),
+  messageFeedEntries = [],
   applyResults,
 }: {
   messagesByCid: Map<string, { message: any; data?: ReadableStream<Uint8Array> }>;
@@ -73,6 +74,7 @@ function createLocalAgentFixture({
   recordsByRecordId?: Map<string, any[]>;
   recordsByFilter?: Map<string, any[]>;
   recordsReadByRecordId?: Map<string, { recordsWrite: any; data: ReadableStream<Uint8Array> }>;
+  messageFeedEntries?: any[];
   applyResults: ReplicationApplyResult[] | ((message: any) => Promise<ReplicationApplyResult> | ReplicationApplyResult);
 }): LocalAgentFixture {
   const processRequestStub = sinon.stub().callsFake(async ({ messageType, messageParams }: any): Promise<any> => {
@@ -113,6 +115,15 @@ function createLocalAgentFixture({
         reply: entry === undefined
           ? { status: { code: 404, detail: 'not found' } }
           : { status: { code: 200 }, entry },
+      };
+    }
+
+    if (messageType === DwnInterface.MessagesQuery) {
+      return {
+        reply: {
+          status  : { code: 200 },
+          entries : messageFeedEntries,
+        },
       };
     }
 
@@ -807,6 +818,67 @@ describe('sync-messages', () => {
       expect(result).toEqual({ succeeded: [rootCid], failed: [] });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
         Message.getCid(call.args[0].message)))).toEqual([rootCid, grantCid, rootCid]);
+    });
+
+    it('should fetch an encryption protocol dependency from the tagged protocol feed', async () => {
+      const protocol = 'https://example.com/encrypted-audience-push';
+      const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+      const audienceEpoch = await TestDataGenerator.generateRecordsWrite({
+        author       : root.author,
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.audienceEpochPath,
+        tags         : {
+          contextId : '',
+          epoch     : 1,
+          keyId     : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          protocol,
+          role      : 'member',
+        },
+      });
+      const rootCid = await Message.getCid(root.message);
+      const audienceEpochCid = await Message.getCid(audienceEpoch.message);
+      const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
+        messagesByCid      : new Map([[rootCid, { message: root.message }]]),
+        messageFeedEntries : [{
+          isLatestBaseState : true,
+          message           : audienceEpoch.message,
+          messageCid        : audienceEpochCid,
+          protocol          : EncryptionProtocol.uri,
+        }],
+        applyResults: [
+          {
+            kind    : 'Incomplete',
+            missing : [{
+              type         : 'EncryptionProtocol',
+              protocolPath : EncryptionProtocol.audienceEpochPath,
+              tags         : {
+                contextId : '',
+                epoch     : 1,
+                keyId     : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                protocol,
+                role      : 'member',
+              },
+            }],
+          },
+          { kind: 'Applied' },
+          { kind: 'Applied' },
+        ],
+      });
+
+      const result = await pushMessages({
+        did         : root.author.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [rootCid],
+        agent,
+      });
+
+      expect(result).toEqual({ succeeded: [rootCid], failed: [] });
+      expect(processRequestStub.withArgs(sinon.match({
+        messageParams : sinon.match({ filters: [{ protocol }] }),
+        messageType   : DwnInterface.MessagesQuery,
+      })).calledOnce).toBe(true);
+      expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
+        Message.getCid(call.args[0].message)))).toEqual([rootCid, audienceEpochCid, rootCid]);
     });
 
     it('should query a missing role dependency with contextPrefix', async () => {

@@ -9,7 +9,7 @@ import { DidKey, UniversalResolver } from '@enbox/dids';
 import { Message } from '../../src/core/message.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
-import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Replication } from '../../src/index.js';
+import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, Replication } from '../../src/index.js';
 
 function getFeedReader(messageStore: MessageStore): ReplicationFeedReader | undefined {
   const candidate = messageStore as Partial<ReplicationFeedReader>;
@@ -169,6 +169,7 @@ export function testMessagesQueryHandler(): void {
       expect(protocolReply.fingerprint).toBe(await feedReader.fingerprint(alice.did, [
         Replication.protocolDomain(protocol),
         Replication.permissionDomain(protocol),
+        Replication.encryptionDomain(protocol),
       ]));
 
       const nonCanonicalQuery = await TestDataGenerator.generateMessagesQuery({
@@ -203,7 +204,7 @@ export function testMessagesQueryHandler(): void {
       expect(reply.error?.reason).toBe('stream_mismatch');
     });
 
-    it('allows delegated protocol-scoped queries and includes permission shadow records', async () => {
+    it('allows delegated protocol-scoped queries and includes tagged core protocol records', async () => {
       if (getFeedReader(messageStore) === undefined) {
         return;
       }
@@ -240,6 +241,20 @@ export function testMessagesQueryHandler(): void {
       const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
       expect(writeReply.status.code).toBe(202);
 
+      const audienceEpoch = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.audienceEpochPath,
+        tags         : {
+          contextId : '',
+          epoch     : 1,
+          keyId     : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          protocol  : protocolDefinition.protocol,
+          role      : 'friend',
+        },
+      });
+      await messageStore.put(alice.did, audienceEpoch.message, await audienceEpoch.recordsWrite.constructIndexes(true));
+
       const { message: query } = await TestDataGenerator.generateMessagesQuery({
         author             : bob,
         filters            : [{ protocol: protocolDefinition.protocol }],
@@ -251,6 +266,7 @@ export function testMessagesQueryHandler(): void {
       expect(reply.status.code).toBe(200);
       expect(reply.entries!.map(entry => entry.messageCid).sort()).toEqual([
         await Message.getCid(protocolConfigure),
+        await Message.getCid(audienceEpoch.message),
         await Message.getCid(grant.message),
         await Message.getCid(record.message),
       ].sort());

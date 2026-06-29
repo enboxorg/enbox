@@ -1,7 +1,7 @@
 import type { GenericMessage, GenericSignaturePayload, ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
-import { DwnInterfaceName, DwnMethodName, isCrossProtocolRef, Jws, Message, parseCrossProtocolRef, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, isCrossProtocolRef, Jws, Message, parseCrossProtocolRef, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 type DescriptorWithRecordId = GenericMessage['descriptor'] & {
   recordId?: string;
@@ -13,10 +13,19 @@ type RecordsDescriptor = GenericMessage['descriptor'] & {
   protocol?: string;
   protocolPath?: string;
   recipient?: string;
+  tags?: Record<string, unknown>;
 };
 
 type ProtocolsConfigureDescriptor = GenericMessage['descriptor'] & {
   definition?: Partial<ProtocolDefinition>;
+};
+
+type AudienceTags = {
+  protocol: string;
+  contextId: string;
+  role: string;
+  epoch: number;
+  keyId: string;
 };
 
 type MessageDependencyGraph<T> = {
@@ -31,6 +40,7 @@ type DependencyIndexes<T> = {
   initialWriteIndex: Map<string, number>;
   grantIndex: Map<string, number>;
   roleIndex: Map<string, number>;
+  audienceEpochIndex: Map<string, number>;
 };
 
 type DependencyEdges = {
@@ -101,7 +111,7 @@ function getContextId(message: GenericMessage): string | undefined {
 
 export function getRoleContextPrefix(protocolPath: string, contextId?: string): string | undefined {
   const ancestorSegmentCount = protocolPath.split('/').length - 1;
-  if (ancestorSegmentCount === 0 || contextId === undefined) {
+  if (ancestorSegmentCount === 0 || contextId === undefined || contextId === '') {
     return undefined;
   }
 
@@ -126,6 +136,62 @@ function getRoleRecordKey(message: GenericMessage): string | undefined {
   return getRoleKey(protocol, protocolPath, recipient, getRoleContextPrefix(protocolPath, getContextId(message)));
 }
 
+function getAudienceEpochKey(message: GenericMessage): string | undefined {
+  const tags = getAudienceTags(message);
+  return tags === undefined
+    ? undefined
+    : `${tags.protocol}|${tags.contextId}|${tags.role}|${tags.epoch}|${tags.keyId}`;
+}
+
+function getAudienceRoleKey(message: GenericMessage): string | undefined {
+  const tags = getAudienceTags(message);
+  const recipient = (message.descriptor as RecordsDescriptor).recipient;
+  if (tags === undefined || recipient === undefined) {
+    return undefined;
+  }
+
+  return getRoleKey(tags.protocol, tags.role, recipient, tags.contextId === '' ? undefined : tags.contextId);
+}
+
+function getAudienceTags(message: GenericMessage): AudienceTags | undefined {
+  const { descriptor } = message;
+  if (!isRecordsWriteDescriptor(descriptor) || descriptor.protocol !== EncryptionProtocol.uri) {
+    return undefined;
+  }
+
+  const tags = descriptor.tags;
+  if (!isRecordObject(tags)) {
+    return undefined;
+  }
+
+  const { protocol, contextId, role, epoch, keyId } = tags;
+  if (
+    typeof protocol !== 'string' ||
+    typeof contextId !== 'string' ||
+    typeof role !== 'string' ||
+    typeof epoch !== 'number' ||
+    typeof keyId !== 'string'
+  ) {
+    return undefined;
+  }
+
+  return { protocol, contextId, role, epoch, keyId };
+}
+
+function getStringTag(message: GenericMessage, tag: string): string | undefined {
+  const tags = (message.descriptor as RecordsDescriptor).tags;
+  if (!isRecordObject(tags)) {
+    return undefined;
+  }
+
+  const value = tags[tag];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 export function getSignaturePayload(message: GenericMessage): GenericSignaturePayload | undefined {
   if (message.authorization === undefined) {
     return undefined;
@@ -147,19 +213,22 @@ function getInvokedRoleKey(
     return undefined;
   }
 
+  const audienceTags = getAudienceTags(message);
+  const baseProtocol = audienceTags?.protocol ?? descriptor.protocol;
+  const contextId = audienceTags?.contextId ?? getContextId(message);
   const protocolRole = getSignaturePayload(message)?.protocolRole;
   const recipient = Message.getAuthor(message);
   if (typeof protocolRole !== 'string' || recipient === undefined) {
     return undefined;
   }
 
-  let roleProtocol = descriptor.protocol;
+  let roleProtocol = baseProtocol;
   let roleProtocolPath = protocolRole;
   if (isCrossProtocolRef(protocolRole)) {
     const parsed = parseCrossProtocolRef(protocolRole);
     const referencedProtocol = parsed === undefined
       ? undefined
-      : protocolDefinitionsByProtocol.get(descriptor.protocol)?.uses?.[parsed.alias];
+      : protocolDefinitionsByProtocol.get(baseProtocol)?.uses?.[parsed.alias];
     if (parsed === undefined || referencedProtocol === undefined) {
       return undefined;
     }
@@ -168,7 +237,7 @@ function getInvokedRoleKey(
     roleProtocolPath = parsed.protocolPath;
   }
 
-  return getRoleKey(roleProtocol, roleProtocolPath, recipient, getRoleContextPrefix(roleProtocolPath, getContextId(message)));
+  return getRoleKey(roleProtocol, roleProtocolPath, recipient, getRoleContextPrefix(roleProtocolPath, contextId));
 }
 
 /**
@@ -216,6 +285,7 @@ function buildDependencyIndexes<T extends { message: GenericMessage }>(messages:
     initialWriteIndex             : new Map(),
     grantIndex                    : new Map(),
     roleIndex                     : new Map(),
+    audienceEpochIndex            : new Map(),
   };
 
   for (let i = 0; i < messages.length; i++) {
@@ -257,6 +327,11 @@ function indexRecordsWrite<T>(message: GenericMessage, index: number, indexes: D
   }
   if (desc.protocol === PermissionsProtocol.uri && desc.protocolPath === PermissionsProtocol.grantPath) {
     indexes.grantIndex.set(recordId, index);
+  }
+
+  const audienceEpochKey = getAudienceEpochKey(message);
+  if (desc.protocol === EncryptionProtocol.uri && desc.protocolPath === EncryptionProtocol.audienceEpochPath && audienceEpochKey !== undefined) {
+    indexes.audienceEpochIndex.set(audienceEpochKey, index);
   }
 
   const roleKey = getRoleRecordKey(message);
@@ -326,6 +401,7 @@ function addDependencyEdgesForMessage<T>(
   addInitialWriteEdge(index, message, desc, indexes, addEdge);
   addDeleteEdge(index, desc, indexes, addEdge);
   addPermissionGrantEdges(index, message, indexes, addEdge);
+  addEncryptionProtocolEdges(index, message, indexes, addEdge);
   addRoleEdge(index, message, indexes, addEdge);
 }
 
@@ -425,6 +501,43 @@ function addPermissionGrantEdges<T>(
     if (grantIndex !== undefined) {
       addEdge(grantIndex, index);
     }
+  }
+}
+
+function addEncryptionProtocolEdges<T>(
+  index: number,
+  message: GenericMessage,
+  indexes: DependencyIndexes<T>,
+  addEdge: AddDependencyEdge,
+): void {
+  const desc = message.descriptor;
+  if (!isRecordsWriteDescriptor(desc) || desc.protocol !== EncryptionProtocol.uri) {
+    return;
+  }
+
+  if (desc.protocolPath === EncryptionProtocol.grantKeyPath) {
+    const grantId = getStringTag(message, 'grantId');
+    const grantIndex = grantId === undefined ? undefined : indexes.grantIndex.get(grantId);
+    if (grantIndex !== undefined) {
+      addEdge(grantIndex, index);
+    }
+    return;
+  }
+
+  if (desc.protocolPath !== EncryptionProtocol.audienceKeyPath) {
+    return;
+  }
+
+  const epochKey = getAudienceEpochKey(message);
+  const epochIndex = epochKey === undefined ? undefined : indexes.audienceEpochIndex.get(epochKey);
+  if (epochIndex !== undefined) {
+    addEdge(epochIndex, index);
+  }
+
+  const roleKey = getAudienceRoleKey(message);
+  const roleIndex = roleKey === undefined ? undefined : indexes.roleIndex.get(roleKey);
+  if (roleIndex !== undefined) {
+    addEdge(roleIndex, index);
   }
 }
 

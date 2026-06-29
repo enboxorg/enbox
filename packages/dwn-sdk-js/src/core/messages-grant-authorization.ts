@@ -8,6 +8,7 @@ import type { DataEncodedRecordsWriteMessage, RecordsDeleteMessage, RecordsWrite
 import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
 
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
+import { EncryptionProtocol } from '../protocols/encryption.js';
 import { GrantAuthorization } from './grant-authorization.js';
 import { PermissionScopeMatcher } from '../utils/permission-scope.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
@@ -240,6 +241,10 @@ export class MessagesGrantAuthorization {
       );
     }
 
+    if (recordsWriteMessage.descriptor.protocol === EncryptionProtocol.uri) {
+      return MessagesGrantAuthorization.isEncryptionRecordScopeAuthorized(recordsWriteMessage, incomingScope);
+    }
+
     return PermissionScopeMatcher.matches(incomingScope, MessagesGrantAuthorization.getRecordsScopeTarget(recordsWriteMessage));
   }
 
@@ -261,6 +266,23 @@ export class MessagesGrantAuthorization {
 
     return PermissionsProtocol.hasProtocolScope(permissionScope)
       && PermissionScopeMatcher.matches(incomingScope, permissionScope);
+  }
+
+  private static isEncryptionRecordScopeAuthorized(
+    recordsWriteMessage: RecordsWriteMessage,
+    incomingScope: MessagesPermissionScope,
+  ): boolean {
+    const tags = recordsWriteMessage.descriptor.tags;
+    const protocol = tags?.protocol;
+    if (typeof protocol !== 'string') {
+      return false;
+    }
+
+    return PermissionScopeMatcher.matches(incomingScope, {
+      protocol,
+      protocolPath : MessagesGrantAuthorization.getStringTag(recordsWriteMessage, 'protocolPath'),
+      contextId    : MessagesGrantAuthorization.getStringTag(recordsWriteMessage, 'contextId'),
+    });
   }
 
   private static isProtocolsConfigureScopeAuthorized(
@@ -289,6 +311,11 @@ export class MessagesGrantAuthorization {
     const { protocol, protocolPath } = recordsWriteMessage.descriptor;
     const { contextId } = recordsWriteMessage;
     return { protocol, protocolPath, contextId };
+  }
+
+  private static getStringTag(recordsWriteMessage: RecordsWriteMessage, tag: string): string | undefined {
+    const value = recordsWriteMessage.descriptor.tags?.[tag];
+    return typeof value === 'string' ? value : undefined;
   }
 
   private static isSubtreeScope(scope: MessagesPermissionScope): boolean {

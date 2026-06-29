@@ -1,6 +1,7 @@
 import type {
   DependencyRef,
   GenericMessage,
+  MessagesQueryReply,
   ProtocolsConfigureMessage,
   ProtocolsQueryReply,
   RecordsQueryReply,
@@ -22,6 +23,7 @@ import {
   capRecordsWriteDataStream,
   fetchRemoteMessages,
   getMessageCid,
+  queryRemoteMessageFeed,
   SyncDataSizeLimitExceededError,
   SyncPullAbortedError,
 } from './sync-messages.js';
@@ -29,6 +31,7 @@ import {
   dependencyKey,
   hasTerminalDependency,
   isTenantProtocolConfig,
+  matchesEncryptionProtocolDependency,
   missingDependencyDetail,
   newestProtocolConfig,
   resolveDelegatePermissionGrantId,
@@ -315,7 +318,7 @@ class AdmitClosureContext {
       case 'Grant':
         return this.fetchGrantRecord(ref.permissionGrantId);
       case 'EncryptionProtocol':
-        return [];
+        return this.fetchEncryptionProtocolRecord(ref);
       case 'RecordData':
         return this.fetchRecordData(ref);
       default:
@@ -404,6 +407,38 @@ class AdmitClosureContext {
     return this.entriesFromRecordsQueryReply(reply);
   }
 
+  private async fetchEncryptionProtocolRecord(ref: Extract<DependencyRef, { type: 'EncryptionProtocol' }>): Promise<SyncMessageEntry[]> {
+    const protocol = typeof ref.tags?.protocol === 'string' ? ref.tags.protocol : undefined;
+    if (protocol === undefined) {
+      return [];
+    }
+
+    const reply = await queryRemoteMessageFeed({
+      did                : this.deps.did,
+      dwnUrl             : this.deps.dwnUrl,
+      delegateDid        : this.deps.delegateDid,
+      permissionGrantIds : this.deps.permissionGrantIds,
+      filters            : [{ protocol }],
+      agent              : this.deps.agent,
+    });
+    if (reply.status.code !== 200 || reply.entries === undefined) {
+      return [];
+    }
+
+    const entries: SyncMessageEntry[] = [];
+    for (const entry of reply.entries) {
+      if (!matchesEncryptionProtocolDependency(entry.message, ref)) {
+        continue;
+      }
+
+      entries.push(this.entryFromMessageFeedEntry(entry));
+    }
+
+    const dedupedEntries = await dedupeEntries(entries);
+    await this.rememberEntries(dedupedEntries);
+    return dedupedEntries;
+  }
+
 
   private async entriesFromRecordsQueryReply(reply: RecordsQueryReply): Promise<SyncMessageEntry[]> {
     if (reply.status.code !== 200 || reply.entries === undefined) {
@@ -427,6 +462,38 @@ class AdmitClosureContext {
     const dedupedEntries = await dedupeEntries(entries);
     await this.rememberEntries(dedupedEntries);
     return dedupedEntries;
+  }
+
+  private entryFromMessageFeedEntry(entry: NonNullable<MessagesQueryReply['entries']>[number]): SyncMessageEntry {
+    if (entry.message === undefined) {
+      throw new Error(`SyncEngineLevel: remote feed entry ${entry.messageCid} did not include a message.`);
+    }
+
+    const messageWithEncodedData = { ...entry.message } as GenericMessage & { encodedData?: string };
+    const encodedData = entry.encodedData ?? messageWithEncodedData.encodedData;
+    delete messageWithEncodedData.encodedData;
+
+    const syncEntry: SyncMessageEntry = {
+      message           : messageWithEncodedData,
+      isLatestBaseState : entry.isLatestBaseState,
+    };
+    if (encodedData !== undefined) {
+      syncEntry.bufferedData = Encoder.base64UrlToBytes(encodedData);
+    } else if (recordsWriteRequiresData(messageWithEncodedData)) {
+      syncEntry.dataStreamFactory = async (): Promise<ReadableStream<Uint8Array> | undefined> => {
+        const fetched = await fetchRemoteMessages({
+          did                : this.deps.did,
+          dwnUrl             : this.deps.dwnUrl,
+          delegateDid        : this.deps.delegateDid,
+          permissionGrantIds : this.deps.permissionGrantIds,
+          messageCids        : [entry.messageCid],
+          agent              : this.deps.agent,
+        });
+        return fetched[0]?.dataStream;
+      };
+    }
+
+    return syncEntry;
   }
 
   private async fetchRecordData(ref: Extract<DependencyRef, { type: 'RecordData' }>): Promise<SyncMessageEntry[]> {

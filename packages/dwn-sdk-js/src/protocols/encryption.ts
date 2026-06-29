@@ -176,20 +176,6 @@ export class EncryptionProtocol implements CoreProtocol {
       validationStateReader,
     });
 
-    const existingEpochs = await validationStateReader.queryAudienceEpochs({
-      tenant,
-      protocol  : tags.protocol,
-      contextId : tags.contextId,
-      role      : tags.role,
-      epoch     : tags.epoch,
-    });
-
-    if (existingEpochs.some((epoch): boolean => epoch.descriptor.tags?.keyId !== tags.keyId)) {
-      throw new DwnError(
-        DwnErrorCode.EncryptionProtocolValidateAudienceEpochConflict,
-        'audienceEpoch conflicts with an accepted epoch for the same role audience.'
-      );
-    }
   }
 
   private static async preProcessAudienceKey(

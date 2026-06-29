@@ -151,7 +151,7 @@ describe('EncryptionProtocol', () => {
       ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateRoleAudienceContextInvalid);
     });
 
-    it('should reject conflicting audienceEpoch records', async () => {
+    it('should accept same-coordinate audienceEpoch records with different keyIds', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const other = await TestDataGenerator.generatePersona();
       const protocol = 'https://example.com/protocol/chat';
@@ -176,12 +176,10 @@ describe('EncryptionProtocol', () => {
 
       const encryptionProtocol = new EncryptionProtocol();
 
-      await expect(
-        encryptionProtocol.preProcessWrite(alice.did, message, createValidationStateReader({
-          audienceEpochs: [conflictingEpoch],
-          protocolDefinition,
-        }))
-      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateAudienceEpochConflict);
+      await encryptionProtocol.preProcessWrite(alice.did, message, createValidationStateReader({
+        audienceEpochs: [conflictingEpoch],
+        protocolDefinition,
+      }));
     });
 
     it('should reject audienceEpoch records authored by DIDs that cannot create the role', async () => {
