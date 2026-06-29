@@ -16,11 +16,14 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
+import { DidJwk } from '@enbox/dids';
+import { Ed25519 } from '@enbox/crypto';
 import sinon from 'sinon';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { ContentEncryptionAlgorithm, DataStream, DwnInterfaceName, DwnMethodName, Encoder, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
+import { createGrantKeyRecordsForGrants } from '../src/dwn-encryption.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxConnectProtocol } from '../src/enbox-connect-protocol.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
@@ -92,6 +95,21 @@ async function queryRawEntry(
   return reply.entries?.[0] as RecordsWriteMessage | undefined;
 }
 
+async function applyDataEncodedRecord(
+  harness: PlatformAgentTestHarness,
+  tenantDid: string,
+  record: RecordsWriteMessage & { encodedData: string },
+): Promise<void> {
+  const { encodedData, ...rawMessage } = record;
+  const applyReply = await harness.agent.dwn.processRawMessage(
+    tenantDid,
+    rawMessage as any,
+    { dataStream: DataStream.fromBytes(Encoder.base64UrlToBytes(encodedData)) },
+  );
+
+  expect([202, 409]).toContain(applyReply.status.code);
+}
+
 // ─── Tests ──────────────────────────────────────────────────────
 
 describe('e2e: delegate + encrypted protocol', () => {
@@ -132,6 +150,10 @@ describe('e2e: delegate + encrypted protocol', () => {
       name        : 'Alice',
       testDwnUrls : [testDwnUrl],
     });
+  });
+
+  afterEach(() => {
+    sinon.restore();
   });
 
   // ─── 1. Protocol installation during connect ────────────────
@@ -220,6 +242,164 @@ describe('e2e: delegate + encrypted protocol', () => {
   // ─── 3. Delegate reads decrypt ciphertext ───────────────────
 
   describe('delegate encrypted reads with delivered key', () => {
+    it('should hydrate delivered keys from durable grantKey records on cache miss', async () => {
+      await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: delegateReadableEncryptedNoteProtocol },
+        encryption    : true,
+      });
+
+      const noteData = 'Secret note from durable grantKey';
+      const { message: noteWrite } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          protocol     : delegateReadableEncryptedNoteProtocol.protocol,
+          protocolPath : 'note',
+          schema       : 'https://schemas.xyz/note',
+          dataFormat   : 'text/plain',
+          data         : new TextEncoder().encode(noteData),
+        },
+        encryption: true,
+      });
+      const noteRecordId = (noteWrite as RecordsWriteMessage).recordId;
+
+      const delegateBearerDid = await DidJwk.create();
+      const delegatePortableDid = await delegateBearerDid.export();
+      const delegateX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+        privateKey: delegatePortableDid.privateKeys![0],
+      });
+      delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
+      await delegateHarness.agent.did.import({
+        portableDid : delegatePortableDid,
+        tenant      : delegateHarness.agent.agentDid.uri,
+      });
+
+      const delegateDid = delegateBearerDid.uri;
+      const readGrant = await walletHarness.agent.permissions.createGrant({
+        author      : walletIdentity.did.uri,
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        delegated   : true,
+        grantedTo   : delegateDid,
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Read,
+          protocol  : delegateReadableEncryptedNoteProtocol.protocol,
+        },
+        store: true,
+      });
+
+      await applyDataEncodedRecord(
+        delegateHarness,
+        walletIdentity.did.uri,
+        readGrant.message as RecordsWriteMessage & { encodedData: string },
+      );
+
+      const grantKeyRecords = await createGrantKeyRecordsForGrants({
+        agent                 : walletHarness.agent,
+        ownerDid              : walletIdentity.did.uri,
+        granteeDid            : delegateDid,
+        granteeRootPrivateKey : delegateX25519PrivateKey as any,
+        grantMessages         : [readGrant.message as any],
+      });
+      expect(grantKeyRecords).toHaveLength(1);
+      await applyDataEncodedRecord(
+        delegateHarness,
+        walletIdentity.did.uri,
+        grantKeyRecords[0] as RecordsWriteMessage & { encodedData: string },
+      );
+
+      const { reply: protoQueryReply } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { protocol: delegateReadableEncryptedNoteProtocol.protocol } },
+      });
+      const protocolApplyReply = await delegateHarness.agent.dwn.processRawMessage(
+        walletIdentity.did.uri,
+        protoQueryReply.entries![0] as any,
+      );
+      expect(protocolApplyReply.status.code).toBe(202);
+
+      const { reply: recordQueryReply } = await walletHarness.agent.processDwnRequest({
+        author        : walletIdentity.did.uri,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: delegateReadableEncryptedNoteProtocol.protocol } },
+      });
+
+      for (const entry of recordQueryReply.entries ?? []) {
+        const { reply: readReply } = await walletHarness.agent.processDwnRequest({
+          author        : walletIdentity.did.uri,
+          target        : walletIdentity.did.uri,
+          messageType   : DwnInterface.RecordsRead,
+          messageParams : { filter: { recordId: (entry as RecordsWriteMessage).recordId } },
+        });
+
+        if (readReply.entry?.recordsWrite && readReply.entry?.data) {
+          const dataBytes = await DataStream.toBytes(readReply.entry.data);
+          const recordApplyReply = await delegateHarness.agent.dwn.processRawMessage(
+            walletIdentity.did.uri,
+            readReply.entry.recordsWrite as any,
+            { dataStream: DataStream.fromBytes(dataBytes) },
+          );
+          expect(recordApplyReply.status.code).toBe(202);
+        }
+      }
+
+      delegateHarness.agent.dwn.clearDelegateDecryptionKeys(delegateDid);
+      expect(await delegateHarness.agent.did.get({ didUri: walletIdentity.did.uri })).toBeUndefined();
+      const kmsUnwrapSpy = sinon.spy(delegateHarness.agent.keyManager, 'jweKeyUnwrap');
+
+      const { reply: decryptedReply } = await delegateHarness.agent.processDwnRequest({
+        author        : delegateDid,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter            : { recordId: noteRecordId },
+          permissionGrantId : readGrant.grant.id,
+        },
+        encryption : true,
+        granteeDid : delegateDid,
+      });
+
+      expect(decryptedReply.status.code).toBe(200);
+      expect(decryptedReply.entry?.data).toBeDefined();
+      expect(kmsUnwrapSpy.called).toBe(true);
+
+      const decryptedBytes = await DataStream.toBytes(decryptedReply.entry!.data!);
+      expect(new TextDecoder().decode(decryptedBytes)).toBe(noteData);
+
+      const revocation = await walletHarness.agent.permissions.createRevocation({
+        author : walletIdentity.did.uri,
+        grant  : readGrant.grant,
+        store  : true,
+      });
+      await applyDataEncodedRecord(
+        delegateHarness,
+        walletIdentity.did.uri,
+        revocation.message as RecordsWriteMessage & { encodedData: string },
+      );
+
+      delegateHarness.agent.dwn.clearDelegateDecryptionKeys(delegateDid);
+      const { reply: revokedReply } = await delegateHarness.agent.processDwnRequest({
+        author        : delegateDid,
+        target        : walletIdentity.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter            : { recordId: noteRecordId },
+          permissionGrantId : readGrant.grant.id,
+        },
+        encryption : true,
+        granteeDid : delegateDid,
+      });
+
+      expect(revokedReply.status.code).toBe(401);
+    });
+
     it('should decrypt records using only a delivered protocol path key from a distinct delegate KMS', async () => {
       // Step 1: Install encrypted protocol on wallet
       await walletHarness.agent.processDwnRequest({
@@ -735,7 +915,7 @@ describe('e2e: delegate + encrypted protocol', () => {
           delegateHarness.agent,
           walletIdentity.did.uri,
           commentWrite,
-          walletIdentity.did.uri,
+          undefined,
           cache,
           siblingDelegateDid,
         )

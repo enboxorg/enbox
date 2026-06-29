@@ -15,10 +15,10 @@
 
 import type { DerivedPrivateJwk } from '@enbox/dwn-sdk-js';
 import type { EnboxPlatformAgent } from './types/agent.js';
-import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { RequireOnly } from '@enbox/common';
+import type { BearerDid, DidDocument, PortableDid } from '@enbox/dids';
 import type { ConnectSessionMetadata, ConnectSessionTransport, DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnProtocolDefinition, DwnRecordsPermissionScope } from './types/dwn.js';
-import type { DidDocument, PortableDid } from '@enbox/dids';
+import type { JoseHeaderParams, Jwk, PrivateKeyJwk } from '@enbox/crypto';
 
 /**
  * The protocols of permissions requested, along with the definition and permission scopes for each protocol.
@@ -112,11 +112,7 @@ export type DelegateDecryptionKey =
     derivedPrivateKey: DerivedPrivateJwk;
   };
 
-import type {
-  JoseHeaderParams,
-  Jwk } from '@enbox/crypto';
-
-import { type BearerDid, DidJwk } from '@enbox/dids';
+import { DidJwk } from '@enbox/dids';
 import { concatenateUrl, Convert, logger, nowMs, timed } from '@enbox/common';
 import {
   CryptoUtils,
@@ -130,8 +126,8 @@ import { DwnInterfaceName, DwnMethodName, KeyDerivationScheme, PermissionsProtoc
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { DwnInterface } from './types/dwn.js';
-import { getEncryptionKeyInfo } from './dwn-encryption.js';
 import { isRecordPermissionScope } from './dwn-api.js';
+import { createGrantKeyRecordsForGrants as createGrantKeyRecordsForGrantsFn, getEncryptionKeyInfo } from './dwn-encryption.js';
 import { mapConcurrent, mapConcurrentSettled } from './utils.js';
 
 // ---------------------------------------------------------------------------
@@ -1028,6 +1024,61 @@ async function createPermissionGrants(
   return permissionGrants.map((g) => g.message);
 }
 
+async function fanOutDataEncodedRecords(
+  ownerDid: string,
+  agent: EnboxPlatformAgent,
+  records: DwnDataEncodedRecordsWriteMessage[],
+): Promise<void> {
+  if (records.length === 0) {
+    return;
+  }
+
+  const dwnEndpointUrls = await agent.dwn.getDwnEndpointUrlsForTarget(ownerDid);
+  const sendTasks = records.flatMap((record, recordIndex) => {
+    const { encodedData, ...rawMessage } = record;
+    const data = Convert.base64Url(encodedData).toUint8Array();
+    return dwnEndpointUrls.map((dwnUrl) => ({ recordIndex, dwnUrl, rawMessage, data }));
+  });
+
+  const settled = await mapConcurrentSettled(
+    sendTasks,
+    CONNECT_FANOUT_CONCURRENCY,
+    async ({ recordIndex, dwnUrl, rawMessage, data }) => {
+      const reply = await agent.rpc.sendDwnRequest({
+        dwnUrl,
+        targetDid : ownerDid,
+        message   : rawMessage,
+        data      : new Blob([data as BlobPart]),
+        signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
+      });
+      return { recordIndex, dwnUrl, reply };
+    },
+  );
+
+  const successPerRecord = new Array<boolean>(records.length).fill(false);
+  for (let i = 0; i < settled.length; i++) {
+    const result = settled[i];
+    if (result.status === 'rejected') {
+      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      logger.error(`Record send to ${sendTasks[i].dwnUrl} failed: ${reason}`);
+      continue;
+    }
+
+    const { recordIndex, dwnUrl, reply } = result.value;
+    if (reply.status.code === 202 || reply.status.code === 409) {
+      successPerRecord[recordIndex] = true;
+    } else {
+      logger.error(`Record send to ${dwnUrl} returned ${reply.status.code}: ${reply.status.detail}`);
+    }
+  }
+
+  for (let i = 0; i < successPerRecord.length; i++) {
+    if (!successPerRecord[i]) {
+      throw new Error('Could not send grantKey record to any DWN endpoint.');
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Protocol installation
 // ---------------------------------------------------------------------------
@@ -1296,6 +1347,7 @@ async function submitConnectResponse(
     // ProtocolPath keys are either protocol-wide or path-subtree.
     // Write-only delegates receive no decryption capability.
     const delegateDecryptionKeys: DelegateDecryptionKey[] = [];
+    const durableGrantKeyRecords: DwnDataEncodedRecordsWriteMessage[] = [];
 
     const delegateGrants = await timed(
       `${CONNECT_PERF_LOG_PREFIX} permissionGrants.fanout (protocols=${numProtocols})`,
@@ -1315,8 +1367,9 @@ async function submitConnectResponse(
 
             const hasEncryptedTypes = Object.values(protocolDefinition.types ?? {})
               .some((type: any) => type?.encryptionRequired === true);
+            const hasEncryptedReadScopes = hasEncryptedTypes && permissionScopes.some(isConnectReadScope);
 
-            if (hasEncryptedTypes) {
+            if (hasEncryptedReadScopes) {
               const keys = await deriveScopedDecryptionKeys(
                 agent, selectedDid, protocolDefinition.protocol,
                 permissionScopes, protocolDefinition,
@@ -1324,18 +1377,36 @@ async function submitConnectResponse(
               delegateDecryptionKeys.push(...keys);
             }
 
-            return EnboxConnectProtocol.createPermissionGrants(
+            const grants = await EnboxConnectProtocol.createPermissionGrants(
               selectedDid,
               delegateBearerDid,
               agent,
               permissionScopes,
               { connectSession },
             );
+
+            if (hasEncryptedReadScopes) {
+              const grantKeyRecords = await EnboxConnectProtocol.createGrantKeyRecordsForGrants({
+                agent,
+                ownerDid              : selectedDid,
+                granteeDid            : delegateBearerDid.uri,
+                granteeRootPrivateKey : delegateX25519PrivateKey as PrivateKeyJwk,
+                grantMessages         : grants,
+              });
+              durableGrantKeyRecords.push(...grantKeyRecords);
+            }
+
+            return grants;
           }
         );
 
         return (await Promise.all(delegateGrantPromises)).flat();
       },
+    );
+
+    await timed(
+      `${CONNECT_PERF_LOG_PREFIX} grantKeys.fanout (n=${durableGrantKeyRecords.length})`,
+      () => fanOutDataEncodedRecords(selectedDid, agent, durableGrantKeyRecords),
     );
 
     // Create per-grant contextId-scoped revocation grants.
@@ -1524,6 +1595,7 @@ export const EnboxConnectProtocol = {
   createConnectResponse,
   createConnectSessionMetadata,
   createPermissionGrants,
+  createGrantKeyRecordsForGrants: createGrantKeyRecordsForGrantsFn,
   submitConnectResponse,
   deriveScopedDecryptionKeys,
 };
