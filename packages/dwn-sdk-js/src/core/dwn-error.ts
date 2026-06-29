@@ -166,6 +166,7 @@ export enum DwnErrorCode {
   RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch = 'RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch',
   RecordsAuthorDelegatedGrantNotADelegatedGrant = 'RecordsAuthorDelegatedGrantNotADelegatedGrant',
   RecordsDecryptNoMatchingKeyEncryptedFound = 'RecordsDecryptNoMatchingKeyEncryptedFound',
+  RecordsDecryptUnsupportedKeyDerivationScheme = 'RecordsDecryptUnsupportedKeyDerivationScheme',
   RecordsCountFilterMissingRequiredProperties = 'RecordsCountFilterMissingRequiredProperties',
   RecordsCountNestedProtocolPathContextIdInvalid = 'RecordsCountNestedProtocolPathContextIdInvalid',
 

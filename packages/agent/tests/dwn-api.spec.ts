@@ -2747,28 +2747,6 @@ describe('Encryption Callback Factories', () => {
     });
   });
 
-  describe('extractDerivedPublicKey()', () => {
-    afterEach(() => { sinon.restore(); });
-
-    it('should delegate to the standalone function and return undefined when no records exist', async () => {
-      // Stub sendDwnRpcRequest to route to the local DWN.
-      const dwnApi = testHarness.agent.dwn;
-      sinon.stub(dwnApi as any, 'sendDwnRpcRequest')
-        .callsFake(async (params: any): Promise<any> => {
-          return dwnApi['_dwn'].processMessage(params.targetDid, params.message);
-        });
-
-      const result = await dwnApi['extractDerivedPublicKey'](
-        alice.did.uri,
-        'https://protocol.xyz/nonexistent',
-        'root-context-id-abc',
-        alice.did.uri,
-      );
-
-      expect(result).toBeUndefined();
-    });
-  });
-
   describe('Auto-Encryption (PR #4)', () => {
     const encryptedProtocolDefinition = {
       published : true,
@@ -2998,7 +2976,7 @@ describe('Encryption Callback Factories', () => {
       }
     });
 
-    it('should throw if protocol path has no $encryption configured', async () => {
+    it('should throw if protocol path has no $keyAgreement configured', async () => {
       // Install protocol WITHOUT encryption
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -3007,7 +2985,7 @@ describe('Encryption Callback Factories', () => {
         messageParams : {
           definition: encryptedProtocolDefinition
         }
-        // No encryption: true, so no $encryption injected
+        // No encryption: true, so no $keyAgreement injected
       });
 
       const dataBytes = Convert.string('secret').toUint8Array();
@@ -4947,42 +4925,6 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       .callsFake(async (...args: any[]) => {
         const [targetDid, protocolUri] = args as [string, string];
         return dwnApi['getProtocolDefinition'](targetDid, protocolUri);
-      });
-
-    // Stub extractDerivedPublicKey: in the local test env there's no
-    // remote DWN to query, so query the local DWN instead.
-    sinon.stub(dwnApi as any, 'extractDerivedPublicKey')
-      .callsFake(async (...args: any[]) => {
-        const [targetDid, protocolUri, rootContextId] = args as [string, string, string, string];
-        // Query the local DWN for records in this context
-        const { reply } = await dwnApi.processRequest({
-          author        : targetDid,
-          target        : targetDid,
-          messageType   : DwnInterface.RecordsQuery,
-          messageParams : {
-            filter: {
-              protocol  : protocolUri,
-              contextId : rootContextId,
-            },
-          },
-        });
-
-        const entries = (reply as any).entries ?? [];
-        for (const entry of entries) {
-          const encryption = entry.encryption ?? entry.recordsWrite?.encryption;
-          if (encryption?.recipients) {
-            const contextEntry = encryption.recipients.find(
-              (k: any) => k.header.derivationScheme === 'protocolContext' && k.header.derivedPublicKey
-            );
-            if (contextEntry?.header.derivedPublicKey) {
-              return {
-                rootKeyId        : contextEntry.header.kid,
-                derivedPublicKey : contextEntry.header.derivedPublicKey,
-              };
-            }
-          }
-        }
-        return undefined;
       });
   });
 

@@ -26,7 +26,7 @@ export function filterSelectQuery<DB = DwnDatabaseType, TB extends keyof DB = ke
       const andOperands: OperandExpression<SqlBool>[] = [];
 
       processFilter(eb, andOperands, filter);
-      processTags(eb, andOperands, tags);
+      processTags(andOperands, tags);
 
       return eb.and(andOperands);
     }))
@@ -59,7 +59,7 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
       const prefixRangeFilterPrefix = getPrefixRangeFilterPrefix(value);
       if (prefixRangeFilterPrefix !== undefined) {
         const prefix = escapeLikePattern(prefixRangeFilterPrefix);
-        andOperands.push(sql`${sql.ref(property)} LIKE ${prefix + '%'}`);
+        andOperands.push(sql`${sql.ref(property)} LIKE ${prefix + '%'} ESCAPE ${'\\'}`);
         continue;
       }
 
@@ -104,19 +104,17 @@ function getPrefixRangeFilterPrefix(value: object): string | undefined {
  * they are matched literally.
  */
 function escapeLikePattern(input: string): string {
-  return input.replace(/%/g, '\\%').replace(/_/g, '\\_');
+  return input.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
 /**
  * Processes each property in the tags filter as an AND operand and adds it to the `andOperands` array.
  * If a property has an array of values it will treat it as a OneOf (IN) within the overall AND query.
  *
- * @param eb The ExpressionBuilder from the query.
  * @param andOperands The array of AND operands to append to.
  * @param tag The tags filter to be evaluated.
  */
-function processTags<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
-  _eb: ExpressionBuilder<DB, TB>,
+function processTags(
   andOperands: OperandExpression<SqlBool>[],
   tags: Filter
 ): void {
@@ -164,7 +162,7 @@ function tagObjectPredicate(value: RangeFilter): RawBuilder<SqlBool> {
   const prefixRangeFilterPrefix = getPrefixRangeFilterPrefix(value);
   if (prefixRangeFilterPrefix !== undefined) {
     const prefix = escapeLikePattern(prefixRangeFilterPrefix);
-    return sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} LIKE ${prefix + '%'}`;
+    return sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} LIKE ${prefix + '%'} ESCAPE ${'\\'}`;
   }
 
   const operands: RawBuilder<SqlBool>[] = [];

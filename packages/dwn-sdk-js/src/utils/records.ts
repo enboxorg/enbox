@@ -197,7 +197,7 @@ export class Records {
     }
 
     throw new DwnError(
-      DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound,
+      DwnErrorCode.RecordsDecryptUnsupportedKeyDerivationScheme,
       `Unsupported key derivation scheme '${keyDerivationScheme as string}'.`
     );
   }

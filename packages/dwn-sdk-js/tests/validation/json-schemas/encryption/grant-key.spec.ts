@@ -47,4 +47,36 @@ describe('GrantKey Schema', () => {
       () => validateJsonSchema('GrantKey', invalidGrantKey)
     ).toThrow();
   });
+
+  it('should reject derivation paths with too many segments', () => {
+    const invalidGrantKey = structuredClone(grantKey);
+    invalidGrantKey.derivationPath = [
+      'protocolPath',
+      'https://example.com/protocol',
+      'a',
+      'b',
+      'c',
+      'd',
+      'e',
+      'f',
+      'g',
+      'h',
+      'i',
+      'j',
+      'k',
+    ];
+
+    expect(
+      () => validateJsonSchema('GrantKey', invalidGrantKey)
+    ).toThrow();
+  });
+
+  it('should reject key IDs that are not base64url thumbprints', () => {
+    const invalidGrantKey = structuredClone(grantKey);
+    invalidGrantKey.keyId = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEF!';
+
+    expect(
+      () => validateJsonSchema('GrantKey', invalidGrantKey)
+    ).toThrow();
+  });
 });

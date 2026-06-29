@@ -17,7 +17,7 @@ export function getRuleSetAtPath(
   for (const segment of rest) {
     if (!ruleSet) { return undefined; }
     // Nested rule sets index into a `ProtocolRuleSet`'s child map.
-    // `ProtocolRuleSet` has typed `$encryption`/`$actions`/etc. fields
+    // `ProtocolRuleSet` has typed `$keyAgreement`/`$actions`/etc. fields
     // alongside the child index signature, so the index access here
     // returns a union; narrow it back to `ProtocolRuleSet | undefined`.
     ruleSet = ruleSet[segment] as ProtocolRuleSet | undefined;

@@ -7,12 +7,10 @@
  * @module
  */
 
-import type { PublicKeyJwk } from '@enbox/crypto';
 import type { TtlCache } from '@enbox/common';
 import type {
   ProtocolDefinition,
   ProtocolsQueryReply,
-  RecordsQueryReply,
 } from '@enbox/dwn-sdk-js';
 
 import type {
@@ -152,52 +150,4 @@ export async function fetchRemoteProtocolDefinition(
   const definition = reply.entries[0].descriptor.definition;
   cache.set(cacheKey, definition);
   return definition;
-}
-
-/**
- * Compatibility helper for the retired record-derived public key lookup.
- *
- * @param targetDid      - The DWN owner's DID
- * @param protocolUri    - The protocol URI to search
- * @param rootContextId  - The root context ID
- * @param requesterDid   - The DID of the requester (used for signing the query)
- * @param getDwnEndpointUrls - Callback to resolve DWN endpoint URLs (with local discovery)
- * @param getSigner      - Callback to obtain the signer for `requesterDid`
- * @param sendDwnRpcRequest - Callback to send the RPC query
- * @returns Always `undefined` for the current encryption envelope
- */
-export async function extractDerivedPublicKey(
-  targetDid: string,
-  protocolUri: string,
-  rootContextId: string,
-  requesterDid: string,
-  getDwnEndpointUrls: GetDwnEndpointUrlsFn,
-  getSigner: GetSignerFn,
-  sendDwnRpcRequest: SendDwnRpcRequestFn,
-): Promise<{ rootKeyId: string; derivedPublicKey: PublicKeyJwk } | undefined> {
-  const signer = await getSigner(requesterDid);
-
-  // Query the target's DWN for any record in this context
-  const recordsQuery = await dwnMessageConstructors[DwnInterfaceEnum.RecordsQuery].create({
-    signer,
-    filter: {
-      protocol  : protocolUri,
-      contextId : rootContextId,
-    },
-  });
-
-  const dwnEndpointUrls = await getDwnEndpointUrls(targetDid);
-  const queryReply = await sendDwnRpcRequest<DwnInterfaceEnum.RecordsQuery>({
-    targetDid,
-    dwnEndpointUrls,
-    message: recordsQuery.message,
-  }) as RecordsQueryReply;
-
-  if (queryReply.status.code !== 200 || !queryReply.entries?.length) {
-    return undefined;
-  }
-
-  void queryReply;
-
-  return undefined;
 }

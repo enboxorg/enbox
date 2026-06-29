@@ -86,7 +86,6 @@ import {
 
 // Import extracted protocol definition fetching functions
 import {
-  extractDerivedPublicKey as extractDerivedPublicKeyFn,
   fetchRemoteProtocolDefinition as fetchRemoteProtocolDefinitionFn,
   getProtocolDefinition as getProtocolDefinitionFn,
 } from './dwn-protocol-cache.js';
@@ -1125,28 +1124,6 @@ export class AgentDwnApi {
     return fetchRemoteProtocolDefinitionFn(
       targetDid, protocolUri, this.getDwnEndpointUrlsForTarget.bind(this),
       this.sendDwnRpcRequest.bind(this), this._protocolDefinitionCache,
-    );
-  }
-
-  /**
-   * Compatibility wrapper for the retired record-derived public key lookup.
-   *
-   * @param targetDid      - The DWN owner's DID
-   * @param protocolUri    - The protocol URI to search
-   * @param rootContextId  - The root context ID
-   * @param requesterDid   - The DID of the requester (used for signing the query)
-   * @returns Always `undefined` for the current encryption envelope
-   */
-  private async extractDerivedPublicKey(
-    targetDid: string,
-    protocolUri: string,
-    rootContextId: string,
-    requesterDid: string,
-  ): Promise<{ rootKeyId: string; derivedPublicKey: PublicKeyJwk } | undefined> {
-    return extractDerivedPublicKeyFn(
-      targetDid, protocolUri, rootContextId, requesterDid,
-      this.getDwnEndpointUrlsForTarget.bind(this), this.getSigner.bind(this),
-      this.sendDwnRpcRequest.bind(this),
     );
   }
 

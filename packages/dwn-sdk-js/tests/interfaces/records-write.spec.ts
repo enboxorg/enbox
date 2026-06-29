@@ -4,8 +4,10 @@ import type { MessageSigner, PermissionScope } from '../../src/index.js';
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
+import { DataStream } from '../../src/utils/data-stream.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encryption } from '../../src/utils/encryption.js';
+import { Records } from '../../src/utils/records.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -16,6 +18,7 @@ import {
   DwnInterfaceName,
   DwnMethodName,
   Encoder,
+  HdKey,
   Jws,
   KeyDerivationScheme,
   Message,
@@ -460,7 +463,14 @@ describe('RecordsWrite', () => {
       const encryptedData = await Encryption.encrypt(
         ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, plaintext
       );
-      const publicKey = alice.encryptionKeyPair.publicJwk;
+      const protocol = 'https://example.com/protocol';
+      const protocolPath = 'message';
+      const rootKey = {
+        derivedPrivateKey : alice.encryptionKeyPair.privateJwk,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        rootKeyId         : 'unused',
+      };
+      const publicKey = await HdKey.derivePublicKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocol, protocolPath]);
       const encryptionInput: EncryptionInput = {
         initializationVector : dataEncryptionInitializationVector,
         key                  : dataEncryptionKey,
@@ -471,12 +481,12 @@ describe('RecordsWrite', () => {
         }],
       };
       const initialWrite = await RecordsWrite.create({
-        data         : encryptedData,
-        dataFormat   : 'application/octet-stream',
+        data       : encryptedData,
+        dataFormat : 'application/octet-stream',
         encryptionInput,
-        protocol     : 'https://example.com/protocol',
-        protocolPath : 'message',
-        signer       : Jws.createSigner(alice),
+        protocol,
+        protocolPath,
+        signer     : Jws.createSigner(alice),
       });
 
       const updateWrite = await RecordsWrite.createFrom({
@@ -487,6 +497,13 @@ describe('RecordsWrite', () => {
 
       expect(updateWrite.message.encryption).toEqual(initialWrite.message.encryption);
       expect(updateWrite.signaturePayload!.encryptionCid).toBe(initialWrite.signaturePayload!.encryptionCid);
+
+      const decryptedStream = await Records.decrypt(
+        updateWrite.message,
+        rootKey,
+        DataStream.fromBytes(encryptedData)
+      );
+      expect(await DataStream.toBytes(decryptedStream)).toEqual(plaintext);
     });
   });
 

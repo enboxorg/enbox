@@ -252,7 +252,7 @@ describe('KeyStore', () => {
         // a legacy record whose encodedData is missing from query results.
         const keyBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
 
-        // Initialize the storage protocol (which now includes $encryption keys).
+        // Initialize the storage protocol (which now includes $keyAgreement keys).
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
         // Build an unencrypted RecordsWrite and inject it directly into the
@@ -548,7 +548,7 @@ describe('KeyStore', () => {
       it('should re-derive encryption state after natural TTL expiry', async () => {
         const { TtlCache } = await import('@enbox/common');
 
-        // First call — installs the protocol with $encryption.
+        // First call — installs the protocol with $keyAgreement.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
         const tenantDid = testHarness.agent.agentDid.uri;
@@ -599,7 +599,7 @@ describe('KeyStore', () => {
       it('should re-query protocol after both caches expire together', async () => {
         const { TtlCache } = await import('@enbox/common');
 
-        // First call — installs the protocol with $encryption.
+        // First call — installs the protocol with $keyAgreement.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
         const tenantDid = testHarness.agent.agentDid.uri;

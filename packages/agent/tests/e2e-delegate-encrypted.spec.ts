@@ -1187,23 +1187,21 @@ describe('e2e: delegate + encrypted protocol', () => {
     });
   });
 
-  // ─── 9. Protocol definition equality ignores $encryption ────
+  // ─── 9. Protocol definition equality ignores runtime encryption metadata ────
 
   describe('protocol definition equality', () => {
-    it('should treat definitions with and without $encryption as logically equal', async () => {
+    it('should treat definitions with and without $keyAgreement as logically equal', async () => {
       // Uses the production definitionsEqual() exported from @enbox/api.
       const { definitionsEqual } = await import('../../api/src/typed-enbox.js');
 
       const sourceDefinition = encryptedNoteProtocol;
 
-      // Simulate an installed definition with $encryption injected
+      // Simulate an installed definition with $keyAgreement injected.
       const installedDefinition = JSON.parse(JSON.stringify(sourceDefinition));
-      installedDefinition.structure.note.$encryption = {
-        rootKeyId    : 'did:dht:alice#enc',
-        publicKeyJwk : { kty: 'OKP', crv: 'X25519', x: 'fake-key' },
+      installedDefinition.structure.note.$keyAgreement = {
+        publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'fake-key' },
       };
 
-      // Production definitionsEqual strips $encryption before comparing
       expect(definitionsEqual(installedDefinition, sourceDefinition)).toBe(true);
 
       // Verify it still detects real differences

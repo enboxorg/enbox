@@ -283,6 +283,31 @@ describe('filterSelectQuery', () => {
       expect(cids).toEqual(['cid-child-1', 'cid-child-2', 'cid-root']);
     });
 
+    it('should match prefix filters with literal LIKE metacharacters', async () => {
+      const rootContextId = 'ctx%_root';
+      const childContextId = rootContextId + '/child';
+      const wildcardLookalike = 'ctxAAroot/child';
+
+      await insertMessage({ tenant: 't1', messageCid: 'cid-root', contextId: rootContextId });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-child', contextId: childContextId });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-lookalike', contextId: wildcardLookalike });
+
+      const filters: Filter[] = [{ contextId: { gte: rootContextId, lt: rootContextId + '\uffff' } }];
+
+      let query = db
+        .selectFrom('messageStoreMessages')
+        .leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id')
+        .select('messageCid')
+        .distinct()
+        .where('tenant', '=', 't1');
+
+      query = filterSelectQuery(filters, query);
+      const results = await query.execute();
+
+      const cids = results.map((r) => r.messageCid).sort();
+      expect(cids).toEqual(['cid-child', 'cid-root']);
+    });
+
     it('should NOT convert a range filter that does not use the \\uffff sentinel', async () => {
       await insertMessage({ tenant: 't1', messageCid: 'cid-1', dateCreated: '2024-01-01' });
       await insertMessage({ tenant: 't1', messageCid: 'cid-2', dateCreated: '2024-06-01' });
@@ -478,6 +503,31 @@ describe('filterSelectQuery', () => {
 
       expect(results.length).toBe(1);
       expect(results[0].messageCid).toBe('cid-2');
+    });
+
+    it('should filter tag prefix ranges with literal LIKE metacharacters', async () => {
+      const id1 = await insertMessage({ tenant: 't1', messageCid: 'cid-1' });
+      const id2 = await insertMessage({ tenant: 't1', messageCid: 'cid-2' });
+      const id3 = await insertMessage({ tenant: 't1', messageCid: 'cid-3' });
+
+      await insertTag(id1, 'keyId', 'kid%_root');
+      await insertTag(id2, 'keyId', 'kid%_root/child');
+      await insertTag(id3, 'keyId', 'kidAAroot/child');
+
+      const filters: Filter[] = [{ 'tag.keyId': { gte: 'kid%_root', lt: 'kid%_root' + '\uffff' } }];
+
+      let query = db
+        .selectFrom('messageStoreMessages')
+        .leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id')
+        .select('messageCid')
+        .distinct()
+        .where('tenant', '=', 't1');
+
+      query = filterSelectQuery(filters, query);
+      const results = await query.execute();
+
+      const cids = results.map((r) => r.messageCid).sort();
+      expect(cids).toEqual(['cid-1', 'cid-2']);
     });
 
     it('should filter tags with OneOfFilter containing numbers', async () => {

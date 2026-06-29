@@ -5,12 +5,12 @@
  * via DWeb Connect to an external wallet:
  *
  *   1. Wallet agent creates a did:dht identity with Ed25519 + X25519 keys.
- *   2. Wallet installs a protocol WITH `$encryption` keys on the remote DWN.
+ *   2. Wallet installs a protocol WITH `$keyAgreement` keys on the remote DWN.
  *   3. Wallet creates a delegate did:jwk and grants permissions.
  *   4. Dapp agent imports the delegate, processes grants.
  *   5. Dapp uses `Enbox.using(Protocol).records.create(...)` to write records.
- *   6. Auto-configure fetches the remote protocol definition (with `$encryption`).
- *   7. The delegate encrypts records using only the public keys from `$encryption`.
+ *   6. Auto-configure fetches the remote protocol definition (with `$keyAgreement`).
+ *   7. The delegate encrypts records using only the public keys from `$keyAgreement`.
  *
  * The test validates:
  *   - The delegate agent has NO owner private signing key.
@@ -188,14 +188,14 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
     delegateDid: PortableDid;
     dappEnbox: Enbox;
   }> {
-    // 1. Wallet installs the protocol WITH encryption (derives `$encryption` keys).
+    // 1. Wallet installs the protocol WITH encryption (derives `$keyAgreement` keys).
     const { status: configStatus, protocol: walletProtocol } = await walletDwn.protocols.configure({
       definition : protocolDef,
       encryption : true,
     });
     expect(configStatus.code).toBe(202);
 
-    // Send the protocol (with `$encryption`) to the wallet's remote DWN.
+    // Send the protocol (with `$keyAgreement`) to the wallet's remote DWN.
     // This is what real wallets do in `prepareProtocol()`.
     const { status: sendStatus } = await walletProtocol!.send(walletDid.uri);
     expect(sendStatus.code).toBe(202);

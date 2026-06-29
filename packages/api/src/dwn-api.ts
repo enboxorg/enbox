@@ -59,7 +59,7 @@ export type FetchGrantsRequest = Omit<FetchPermissionsParams, 'author' | 'target
  * This request type is used to specify the configuration options for the protocol.
  */
 export type ProtocolsConfigureRequest = Omit<DwnMessageParams[DwnInterface.ProtocolsConfigure], 'signer'> & {
-  /** When true, derives and injects $encryption public keys into the protocol definition. */
+  /** When true, derives and injects $keyAgreement public keys into the protocol definition. */
   encryption?: boolean;
 };
 
