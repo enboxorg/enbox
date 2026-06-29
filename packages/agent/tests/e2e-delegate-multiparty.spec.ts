@@ -92,7 +92,7 @@ describe('e2e: delegate + encrypted role protocol', () => {
     ]);
   });
 
-  it('should derive an exact path decryption key for a protocolPath read grant', async () => {
+  it('should derive a path-subtree decryption key for a protocolPath read grant', async () => {
     const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
       walletHarness.agent,
       walletIdentity.did.uri,
@@ -107,7 +107,7 @@ describe('e2e: delegate + encrypted role protocol', () => {
     );
 
     expect(keys).toHaveLength(1);
-    expect(keys[0].scope).toEqual({ kind: 'protocolPath', protocolPath: 'thread/chat', match: 'exact' });
+    expect(keys[0].scope).toEqual({ kind: 'protocolPath', protocolPath: 'thread/chat', match: 'subtree' });
     expect(keys[0].derivedPrivateKey.derivationPath).toEqual([
       KeyDerivationScheme.ProtocolPath,
       chatProtocol.protocol,

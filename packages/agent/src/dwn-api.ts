@@ -173,7 +173,7 @@ export class AgentDwnApi {
    */
   private readonly _delegateDecryptionKeyCache = new TtlCache<string, {
     protocol: string;
-    scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'exact' };
+    scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'subtree' };
     derivedPrivateKey: DerivedPrivateJwk;
   }[]>({
     ttl: 24 * 60 * 60 * 1000
@@ -1242,7 +1242,7 @@ export class AgentDwnApi {
     delegateDid: string,
     keys: {
       protocol: string;
-      scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'exact' };
+      scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'subtree' };
       derivedPrivateKey: DerivedPrivateJwk;
     }[],
   ): void {

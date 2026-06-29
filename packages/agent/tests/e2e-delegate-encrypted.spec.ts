@@ -434,7 +434,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       expect(keys[0].derivedPrivateKey.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
 
-    it('should return exact-path key for protocolPath-scoped read', async () => {
+    it('should return path-subtree key for protocolPath-scoped read', async () => {
       const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
       const pathScopes = [
         {
@@ -453,7 +453,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       expect(keys[0].scope.kind).toBe('protocolPath');
       if (keys[0].scope.kind === 'protocolPath') {
         expect(keys[0].scope.protocolPath).toBe('note');
-        expect(keys[0].scope.match).toBe('exact');
+        expect(keys[0].scope.match).toBe('subtree');
       }
     });
 
@@ -552,7 +552,7 @@ describe('e2e: delegate + encrypted protocol', () => {
 
   // ─── 8. Exact-path delegate decryption ───────────────────────
 
-  describe('exact protocolPath-scoped delegate decryption', () => {
+  describe('path-subtree protocolPath-scoped delegate decryption', () => {
     it('should decrypt records at the granted protocolPath', async () => {
       // Install multi-type protocol and write a 'note'
       await walletHarness.agent.processDwnRequest({
@@ -578,7 +578,7 @@ describe('e2e: delegate + encrypted protocol', () => {
         encryption: true,
       });
 
-      // Derive exact-path key for 'note' only
+      // Derive path-subtree key for 'note' only
       const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
       const noteReadScopes = [{
         interface    : DwnInterfaceName.Records,
@@ -648,7 +648,7 @@ describe('e2e: delegate + encrypted protocol', () => {
     });
 
     it('should NOT decrypt sibling protocolPath records (resolveKeyDecrypter)', async () => {
-      // Derive exact-path key for 'note' only — NOT 'comment'
+      // Derive path-subtree key for 'note' only — NOT sibling 'comment'
       const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
       const { resolveKeyDecrypter } = await import('../src/dwn-encryption.js');
       const { TtlCache } = await import('@enbox/common');
@@ -714,32 +714,26 @@ describe('e2e: delegate + encrypted protocol', () => {
       ).rejects.toThrow('no delivered decryption key covers encrypted record');
     });
 
-    it('should reject decryption when exact-path key does not match record path', async () => {
-      const { buildExactProtocolPathDecrypter } = await import('../src/dwn-encryption.js');
+    it('should reject decryption when path-subtree key does not cover record path', async () => {
+      const { buildProtocolPathSubtreeDecrypter } = await import('../src/dwn-encryption.js');
       const { X25519 } = await import('@enbox/crypto');
 
       const fakeKeyBytes = new Uint8Array(32);
       crypto.getRandomValues(fakeKeyBytes);
       const fakeJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: fakeKeyBytes });
 
-      const decrypter = buildExactProtocolPathDecrypter({
+      const decrypter = buildProtocolPathSubtreeDecrypter({
         rootKeyId         : 'did:example:alice#enc',
         derivationScheme  : KeyDerivationScheme.ProtocolPath,
         derivationPath    : [KeyDerivationScheme.ProtocolPath, 'https://example.com/proto', 'note'],
         derivedPrivateKey : fakeJwk as any,
       });
 
-      // Try to decrypt with a SIBLING path — should throw
+      // Try to decrypt with a sibling path — should throw.
       const siblingPath = [KeyDerivationScheme.ProtocolPath, 'https://example.com/proto', 'comment'];
       await expect(
         decrypter.decrypt(siblingPath, { ephemeralPublicKey: {} as any, encryptedKey: new Uint8Array(0) })
-      ).rejects.toThrow('out of scope');
-
-      // Try to decrypt with a DESCENDANT path — should also throw
-      const descendantPath = [KeyDerivationScheme.ProtocolPath, 'https://example.com/proto', 'note', 'child'];
-      await expect(
-        decrypter.decrypt(descendantPath, { ephemeralPublicKey: {} as any, encryptedKey: new Uint8Array(0) })
-      ).rejects.toThrow('out of scope');
+      ).rejects.toThrow('Ancestor key derivation segment');
     });
 
     it('should collapse to protocol-wide key when mixed scopes include unrestricted read', async () => {
@@ -824,7 +818,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       expect(decrypter.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
     });
 
-    it('should use exact-path delegate key for matching ProtocolPath-encrypted record', async () => {
+    it('should use path-subtree delegate key for matching ProtocolPath-encrypted record', async () => {
       const { resolveKeyDecrypter } = await import('../src/dwn-encryption.js');
       const { TtlCache } = await import('@enbox/common');
       const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
@@ -846,7 +840,7 @@ describe('e2e: delegate + encrypted protocol', () => {
           protocolPath : 'note',
           schema       : 'https://schemas.xyz/note',
           dataFormat   : 'text/plain',
-          data         : new TextEncoder().encode('exact-path cache test'),
+          data         : new TextEncoder().encode('path-subtree cache test'),
         },
         encryption: true,
       });
@@ -859,7 +853,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       });
       const recordsWrite = q.entries![0] as RecordsWriteMessage;
 
-      // Derive exact-path key for 'note'
+      // Derive path-subtree key for 'note'
       const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
         walletHarness.agent, walletIdentity.did.uri,
         multiTypeProtocol.protocol,
@@ -885,17 +879,17 @@ describe('e2e: delegate + encrypted protocol', () => {
         new TtlCache({ ttl: 60_000 }), async () => undefined,
         pathCache, delegateDid,
       );
-      // The exact-path decrypter has the key's rootKeyId
+      // The path-subtree decrypter has the key's rootKeyId
       expect(decrypter.rootKeyId).toBe(keys[0].derivedPrivateKey.rootKeyId);
     });
   });
 
-  // ─── 10. buildExactProtocolPathDecrypter happy path ──────────
+  // ─── 10. buildProtocolPathSubtreeDecrypter happy path ────────
 
-  describe('buildExactProtocolPathDecrypter decrypt success', () => {
-    it('should successfully decrypt when path matches exactly', async () => {
+  describe('buildProtocolPathSubtreeDecrypter decrypt success', () => {
+    it('should successfully decrypt when path is in scope', async () => {
       const { DwnInterfaceName, DwnMethodName } = await import('@enbox/dwn-sdk-js');
-      const { buildExactProtocolPathDecrypter } = await import('../src/dwn-encryption.js');
+      const { buildProtocolPathSubtreeDecrypter } = await import('../src/dwn-encryption.js');
 
       // Install protocol and write encrypted note
       await walletHarness.agent.processDwnRequest({
@@ -905,7 +899,7 @@ describe('e2e: delegate + encrypted protocol', () => {
         messageParams : { definition: encryptedNoteProtocol },
         encryption    : true,
       });
-      const noteData = 'exact-path decrypt test';
+      const noteData = 'path-subtree decrypt test';
       await walletHarness.agent.processDwnRequest({
         author        : walletIdentity.did.uri,
         target        : walletIdentity.did.uri,
@@ -930,7 +924,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       const recordsWrite = q.entries![0] as RecordsWriteMessage;
       expect(recordsWrite.encryption).toBeDefined();
 
-      // Derive exact-path key for 'note'
+      // Derive path-subtree key for 'note'
       const keys = await EnboxConnectProtocol.deriveScopedDecryptionKeys(
         walletHarness.agent, walletIdentity.did.uri,
         encryptedNoteProtocol.protocol,
@@ -944,8 +938,8 @@ describe('e2e: delegate + encrypted protocol', () => {
       );
       expect(keys[0].scope.kind).toBe('protocolPath');
 
-      // Build the exact-path decrypter and call decrypt() with matching path
-      const decrypter = buildExactProtocolPathDecrypter(keys[0].derivedPrivateKey);
+      // Build the path-subtree decrypter and call decrypt() with matching path.
+      const decrypter = buildProtocolPathSubtreeDecrypter(keys[0].derivedPrivateKey);
       const keyEncryption = recordsWrite.encryption!.keyEncryption[0];
       const fullPath = [
         KeyDerivationScheme.ProtocolPath,
@@ -953,8 +947,8 @@ describe('e2e: delegate + encrypted protocol', () => {
         'note',
       ];
 
-      // This exercises the happy path of buildExactProtocolPathDecrypter:
-      // path matches -> Records.derivePrivateKey -> Encryption.unwrapKey.
+      // This exercises the happy path:
+      // path is in scope -> Records.derivePrivateKey -> Encryption.unwrapKey.
       const dek = await decrypter.decrypt(fullPath, {
         encryptedKey       : new Uint8Array(),
         ephemeralPublicKey : keyEncryption.ephemeralPublicKey,

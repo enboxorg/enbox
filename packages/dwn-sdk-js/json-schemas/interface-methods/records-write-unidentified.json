@@ -37,59 +37,126 @@
           "type": "array",
           "minItems": 1,
           "items": {
-            "type": "object",
-            "properties": {
-              "algorithm": {
-                "type": "string",
-                "enum": [
-                  "X25519-HKDF-SHA256+A256KW"
-                ]
-              },
-              "keyId": {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9_-]{43}$"
-              },
-              "derivationScheme": {
-                "type": "string",
-                "enum": [
-                  "protocolPath"
-                ]
-              },
-              "ephemeralPublicKey": {
-                "allOf": [
-                  {
-                    "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
-                  }
-                ],
+            "oneOf": [
+              {
                 "type": "object",
-                "required": [
-                  "kty",
-                  "crv",
-                  "x"
-                ],
                 "properties": {
-                  "kty": {
-                    "const": "OKP"
+                  "algorithm": {
+                    "type": "string",
+                    "enum": [
+                      "X25519-HKDF-SHA256+A256KW"
+                    ]
                   },
-                  "crv": {
-                    "const": "X25519"
+                  "keyId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{43}$"
                   },
-                  "x": {
+                  "derivationScheme": {
+                    "const": "protocolPath"
+                  },
+                  "ephemeralPublicKey": {
+                    "allOf": [
+                      {
+                        "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+                      }
+                    ],
+                    "type": "object",
+                    "required": [
+                      "kty",
+                      "crv",
+                      "x"
+                    ],
+                    "properties": {
+                      "kty": {
+                        "const": "OKP"
+                      },
+                      "crv": {
+                        "const": "X25519"
+                      },
+                      "x": {
+                        "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+                      }
+                    }
+                  },
+                  "encryptedKey": {
                     "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
                   }
-                }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "algorithm",
+                  "keyId",
+                  "derivationScheme",
+                  "ephemeralPublicKey",
+                  "encryptedKey"
+                ]
               },
-              "encryptedKey": {
-                "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+              {
+                "type": "object",
+                "properties": {
+                  "algorithm": {
+                    "type": "string",
+                    "enum": [
+                      "X25519-HKDF-SHA256+A256KW"
+                    ]
+                  },
+                  "keyId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{43}$"
+                  },
+                  "derivationScheme": {
+                    "const": "roleAudience"
+                  },
+                  "protocol": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "epoch": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "ephemeralPublicKey": {
+                    "allOf": [
+                      {
+                        "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+                      }
+                    ],
+                    "type": "object",
+                    "required": [
+                      "kty",
+                      "crv",
+                      "x"
+                    ],
+                    "properties": {
+                      "kty": {
+                        "const": "OKP"
+                      },
+                      "crv": {
+                        "const": "X25519"
+                      },
+                      "x": {
+                        "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+                      }
+                    }
+                  },
+                  "encryptedKey": {
+                    "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "algorithm",
+                  "keyId",
+                  "derivationScheme",
+                  "protocol",
+                  "role",
+                  "epoch",
+                  "ephemeralPublicKey",
+                  "encryptedKey"
+                ]
               }
-            },
-            "additionalProperties": false,
-            "required": [
-              "algorithm",
-              "keyId",
-              "derivationScheme",
-              "ephemeralPublicKey",
-              "encryptedKey"
             ]
           }
         }

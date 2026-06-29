@@ -276,51 +276,26 @@ export function buildContextKeyDecrypter(
 /** Cache entry shape for scope-aware delegate decryption keys. */
 export type DelegateDecryptionKeyEntry = {
   protocol: string;
-  scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'exact' };
+  scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string; match: 'subtree' };
   derivedPrivateKey: DerivedPrivateJwk;
 };
 
 /**
- * Builds a KeyDecrypter for an exact-path delegate key that enforces the
- * record's full derivation path matches the key's path exactly — siblings
- * and descendants are NOT accessible.
+ * Builds a KeyDecrypter for a path-subtree delegate key.
  */
-export function buildExactProtocolPathDecrypter(
+export function buildProtocolPathSubtreeDecrypter(
   key: DerivedPrivateJwk,
 ): KeyDecrypter {
-  return {
-    rootKeyId        : key.rootKeyId,
-    derivationScheme : key.derivationScheme,
-    derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
-      const leafPrivateKeyBytes = await Records.derivePrivateKey(key, fullDerivationPath);
-      const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
-      return await X25519.getPublicKey({ key: leafPrivateKeyJwk }) as PublicKeyJwk;
-    },
-    decrypt: async (
-      fullDerivationPath: string[],
-      keyUnwrapPayload,
-    ): Promise<Uint8Array> => {
-      const keyPath = key.derivationPath ?? [];
-      if (keyPath.length !== fullDerivationPath.length ||
-          !keyPath.every((seg: string, i: number) => seg === fullDerivationPath[i])) {
-        throw new Error(
-          'Delegate decryption key is out of scope for this protocol path. ' +
-          `Key path: [${keyPath.join(', ')}], ` +
-          `record path: [${fullDerivationPath.join(', ')}].`
-        );
-      }
-      const leafPrivateKeyBytes = await Records.derivePrivateKey(key, fullDerivationPath);
-      const leafPrivateKeyJwk = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
-      return Encryption.unwrapKey(leafPrivateKeyJwk as any, keyUnwrapPayload.keyEncryption);
-    },
-  };
+  return buildContextKeyDecrypter(key);
 }
+
+export const buildExactProtocolPathDecrypter = buildProtocolPathSubtreeDecrypter;
 
 /**
  * Resolves the appropriate KeyDecrypter for a record's encryption scheme.
  *
  * Owners derive protocol-path keys directly from KMS. Delegates use delivered
- * protocol-wide or exact-path decryption keys when available.
+ * protocol-wide or path-subtree decryption keys when available.
  *
  * @param agent - The platform agent
  * @param authorDid - The DID of the author attempting to decrypt
@@ -366,7 +341,19 @@ export async function resolveKeyDecrypter(
             (key) => key.scope.kind === 'protocolPath' && key.scope.protocolPath === protocolPath
           );
           if (exactKey) {
-            return buildExactProtocolPathDecrypter(exactKey.derivedPrivateKey);
+            return buildProtocolPathSubtreeDecrypter(exactKey.derivedPrivateKey);
+          }
+
+          const ancestorKey = keysForProtocol
+            .filter((key): key is DelegateDecryptionKeyEntry & {
+              scope: { kind: 'protocolPath'; protocolPath: string; match: 'subtree' }
+            } =>
+              key.scope.kind === 'protocolPath' &&
+              protocolPath.startsWith(key.scope.protocolPath + '/')
+            )
+            .sort((a, b): number => b.scope.protocolPath.length - a.scope.protocolPath.length)[0];
+          if (ancestorKey !== undefined) {
+            return buildProtocolPathSubtreeDecrypter(ancestorKey.derivedPrivateKey);
           }
         }
 

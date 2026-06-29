@@ -16,9 +16,9 @@ export type ProtocolScope = {
  *
  * Matching fails closed for invalid combinations: `protocolPath` and
  * `contextId` are mutually exclusive, and either field requires `protocol`.
- * `protocol` and `protocolPath` match by exact equality. `contextId` scopes
- * match a context subtree: the target context must equal the scoped context or
- * begin with the scoped context followed by `/`.
+ * `protocol` matches by exact equality. `protocolPath` and `contextId` scopes
+ * match subtrees: the target value must equal the scoped value or begin with the
+ * scoped value followed by `/`.
  */
 export class PermissionScopeMatcher {
   /**
@@ -38,7 +38,7 @@ export class PermissionScopeMatcher {
     }
 
     if (scope.protocolPath !== undefined) {
-      return scope.protocolPath === target.protocolPath;
+      return PermissionScopeMatcher.matchesSubtree(scope.protocolPath, target.protocolPath);
     }
 
     if (scope.contextId !== undefined) {
@@ -49,7 +49,11 @@ export class PermissionScopeMatcher {
   }
 
   private static matchesContextId(scopeContextId: string, candidateContextId: unknown): boolean {
-    return typeof candidateContextId === 'string' &&
-      (candidateContextId === scopeContextId || candidateContextId.startsWith(scopeContextId + '/'));
+    return PermissionScopeMatcher.matchesSubtree(scopeContextId, candidateContextId);
+  }
+
+  private static matchesSubtree(scopeValue: string, candidateValue: unknown): boolean {
+    return typeof candidateValue === 'string' &&
+      (candidateValue === scopeValue || candidateValue.startsWith(scopeValue + '/'));
   }
 }

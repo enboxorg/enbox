@@ -16,6 +16,7 @@ import type { DwnEncryption, EncryptionInput } from '../utils/encryption.js';
 import type { GenericMessage, GenericSignaturePayload } from '../types/message-types.js';
 
 import { Cid } from '../utils/cid.js';
+import { Encryption } from '../utils/encryption.js';
 import { Jws } from '../utils/jws.js';
 import { Message } from '../core/message.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
@@ -93,7 +94,12 @@ export type RecordsWriteOptions = {
 
 };
 
-export type { EncryptionInput, ProtocolPathKeyEncryptionInput } from '../utils/encryption.js';
+export type {
+  EncryptionInput,
+  KeyEncryptionInput,
+  ProtocolPathKeyEncryptionInput,
+  RoleAudienceKeyEncryptionInput,
+} from '../utils/encryption.js';
 
 export type CreateFromOptions = {
   recordsWriteMessage: RecordsWriteMessage,
@@ -256,6 +262,9 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     //   - `initialWrite`: the initial RecordsWrite when this message is an update
     const { encodedData: _, initialWrite: __, ...messageToValidate } = message as RecordsWriteMessage & Record<string, unknown>;
     Message.validateJsonSchema(messageToValidate);
+    if (message.encryption !== undefined) {
+      Encryption.validateEncryptionProperty(message.encryption);
+    }
 
     // asynchronous checks that are required by the constructor to initialize members properly
 

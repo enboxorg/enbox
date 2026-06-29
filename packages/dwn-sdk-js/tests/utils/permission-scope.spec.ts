@@ -18,7 +18,7 @@ describe('PermissionScopeMatcher', () => {
     )).toBe(false);
   });
 
-  it('matches protocolPath scopes exactly', () => {
+  it('matches protocolPath scopes by subtree', () => {
     const scope = {
       protocol     : 'https://example.com/protocol',
       protocolPath : 'thread/message',
@@ -31,6 +31,10 @@ describe('PermissionScopeMatcher', () => {
     expect(PermissionScopeMatcher.matches(scope, {
       protocol     : 'https://example.com/protocol',
       protocolPath : 'thread/message/reaction',
+    })).toBe(true);
+    expect(PermissionScopeMatcher.matches(scope, {
+      protocol     : 'https://example.com/protocol',
+      protocolPath : 'thread/messageEvil',
     })).toBe(false);
   });
 

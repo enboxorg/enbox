@@ -38,8 +38,17 @@ export { DwnInterfaceName, DwnMethodName } from './enums/dwn-interface-method.js
 export { Encoder } from './utils/encoder.js';
 export { MessagesSubscribe } from './interfaces/messages-subscribe.js';
 export type { MessagesSubscribeOptions } from './interfaces/messages-subscribe.js';
-export { Encryption, ContentEncryptionAlgorithm, KeyAgreementAlgorithm } from './utils/encryption.js';
-export type { DwnEncryption, KeyUnwrapPayload, ProtocolPathKeyEncryption, ProtocolPathKeyEncryptionInput } from './utils/encryption.js';
+export { Encryption, ContentEncryptionAlgorithm, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from './utils/encryption.js';
+export type {
+  DwnEncryption,
+  KeyEncryption,
+  KeyEncryptionInput,
+  KeyUnwrapPayload,
+  ProtocolPathKeyEncryption,
+  ProtocolPathKeyEncryptionInput,
+  RoleAudienceKeyEncryption,
+  RoleAudienceKeyEncryptionInput,
+} from './utils/encryption.js';
 export { RecordsWrite } from './interfaces/records-write.js';
 export type { EncryptionInput, RecordsWriteOptions, CreateFromOptions } from './interfaces/records-write.js';
 export { executeUnlessAborted } from './utils/abort.js';

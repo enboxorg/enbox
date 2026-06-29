@@ -24,6 +24,7 @@ import {
   Message,
   MessageStoreLevel,
   PermissionsProtocol,
+  ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '../../src/index.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
@@ -370,6 +371,66 @@ describe('RecordsWrite', () => {
       });
 
       await expect(createPromise).rejects.toThrow(DwnErrorCode.RecordsWriteCreateEncryptionAndEncryptionInputMutuallyExclusive);
+    });
+
+    it('should reject encrypted messages whose initializationVector has the wrong decoded length', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const publicKey = alice.encryptionKeyPair.publicJwk;
+      const recordsWrite = await RecordsWrite.create({
+        data            : TestDataGenerator.randomBytes(32),
+        dataFormat      : 'application/octet-stream',
+        encryptionInput : {
+          initializationVector : TestDataGenerator.randomBytes(16),
+          key                  : TestDataGenerator.randomBytes(32),
+          keyEncryptionInputs  : [{
+            derivationScheme : KeyDerivationScheme.ProtocolPath,
+            keyId            : await Encryption.getKeyId(publicKey),
+            publicKey,
+          }],
+        },
+        protocol     : 'https://example.com/protocol',
+        protocolPath : 'message',
+        signer       : Jws.createSigner(alice),
+      });
+
+      const message = structuredClone(recordsWrite.message);
+      message.encryption!.initializationVector = Encoder.bytesToBase64Url(TestDataGenerator.randomBytes(15));
+
+      await expect(RecordsWrite.parse(message)).rejects.toThrow(
+        DwnErrorCode.RecordsWriteValidateIntegrityEncryptionInitializationVectorInvalid
+      );
+    });
+
+    it('should create and parse encrypted messages with roleAudience key encryption entries', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const publicKey = alice.encryptionKeyPair.publicJwk;
+      const recordsWrite = await RecordsWrite.create({
+        data            : TestDataGenerator.randomBytes(32),
+        dataFormat      : 'application/octet-stream',
+        encryptionInput : {
+          initializationVector : TestDataGenerator.randomBytes(16),
+          key                  : TestDataGenerator.randomBytes(32),
+          keyEncryptionInputs  : [{
+            derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+            epoch            : 1,
+            keyId            : await Encryption.getKeyId(publicKey),
+            protocol         : 'https://example.com/protocol',
+            publicKey,
+            role             : 'thread/member',
+          }],
+        },
+        protocol     : 'https://example.com/protocol',
+        protocolPath : 'message',
+        signer       : Jws.createSigner(alice),
+      });
+
+      await RecordsWrite.parse(recordsWrite.message);
+
+      const keyEncryption = recordsWrite.message.encryption!.keyEncryption[0];
+      expect(keyEncryption.derivationScheme).toBe(ROLE_AUDIENCE_DERIVATION_SCHEME);
+      expect('epoch' in keyEncryption && keyEncryption.epoch).toBe(1);
+      expect('protocol' in keyEncryption && keyEncryption.protocol).toBe('https://example.com/protocol');
+      expect('role' in keyEncryption && keyEncryption.role).toBe('thread/member');
     });
   });
 

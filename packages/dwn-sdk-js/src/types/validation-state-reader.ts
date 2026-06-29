@@ -79,6 +79,19 @@ export interface ValidationStateReader {
   }): Promise<RecordsWriteMessage[]>;
 
   /**
+   * Queries accepted audience epoch records in the Encryption Protocol.
+   * The optional `keyId` narrows the lookup to one published audience key.
+   */
+  queryAudienceEpochs(input: {
+    tenant: string;
+    protocol: string;
+    contextId: string;
+    role: string;
+    epoch: number;
+    keyId?: string;
+  }): Promise<RecordsWriteMessage[]>;
+
+  /**
    * Fetches the permission grant with the given record ID, with its scope parsed from grant data.
    * @throws {DwnError} with `GrantAuthorizationGrantMissing` when the grant does not exist.
    */
