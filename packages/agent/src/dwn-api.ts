@@ -717,6 +717,9 @@ export class AgentDwnApi {
     if (ruleSet?.$role !== true) {
       return;
     }
+    if (ruleSet.$keyAgreement?.publicKeyJwk === undefined) {
+      return;
+    }
 
     const contextId = this.getRoleAudienceContextIdForRecord(recordsWrite, descriptor.protocolPath);
     if (contextId === undefined) {

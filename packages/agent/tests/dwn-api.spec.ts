@@ -8,6 +8,7 @@ import {
   DataStream,
   DwnInterfaceName,
   DwnMethodName,
+  EncryptionProtocol,
   KeyDerivationScheme,
   Message,
   TestDataGenerator,
@@ -4160,6 +4161,59 @@ describe('Role record write behavior', () => {
       expect(decodedString).toBe(participantData);
     }
   }, 10000);
+
+  it('should not provision audience keys for role records without key agreement', async () => {
+    const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
+
+    await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: chatProtocol },
+    });
+
+    const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        protocol     : chatProtocol.protocol,
+        protocolPath : 'thread',
+        dataFormat   : 'application/json',
+        schema       : 'https://schemas.xyz/thread',
+      },
+      dataStream: new Blob([new TextEncoder().encode('{"title":"Plain Chat"}')]),
+    });
+
+    const { reply: roleReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        recipient       : bob.did.uri,
+        protocol        : chatProtocol.protocol,
+        protocolPath    : 'thread/participant',
+        parentContextId : (threadMessage as RecordsWriteMessage).contextId,
+        dataFormat      : 'application/json',
+        schema          : 'https://schemas.xyz/participant',
+      },
+      dataStream: new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
+    });
+    expect(roleReply.status.code).toBe(202);
+
+    const { reply: audienceKeyReply } = await testHarness.agent.dwn.processRequest({
+      author        : alice.did.uri,
+      target        : alice.did.uri,
+      messageType   : DwnInterface.RecordsQuery,
+      messageParams : {
+        filter: {
+          protocol     : EncryptionProtocol.uri,
+          protocolPath : EncryptionProtocol.audienceKeyPath,
+        },
+      },
+    });
+    expect(audienceKeyReply.entries ?? []).toHaveLength(0);
+  });
 });
 
 describe('Owner encrypted read behavior', () => {
