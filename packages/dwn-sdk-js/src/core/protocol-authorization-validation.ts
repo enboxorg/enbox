@@ -279,7 +279,7 @@ async function verifyProtocolPathEncryptionIfNeeded(
   }
 
   const ruleSet = getRuleSetAtPath(inboundMessage.descriptor.protocolPath, protocolDefinition.structure);
-  if (ruleSet === undefined || ruleSet.$keyAgreement?.publicKeyJwk === undefined) {
+  if (ruleSet?.$keyAgreement?.publicKeyJwk === undefined) {
     throw new DwnError(
       DwnErrorCode.ProtocolAuthorizationEncryptionKeyAgreementMissing,
       `encrypted protocol path '${inboundMessage.descriptor.protocolPath}' has no $keyAgreement`
