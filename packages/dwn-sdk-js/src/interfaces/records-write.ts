@@ -292,30 +292,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
    *                                If not given, it means this write is for a root protocol record.
    */
   public static async create(options: RecordsWriteOptions): Promise<RecordsWrite> {
-    if (options.protocol === undefined || options.protocolPath === undefined) {
-      throw new DwnError(DwnErrorCode.RecordsWriteCreateMissingProtocol, '`protocol` and `protocolPath` are required');
-    }
-
-    if ((options.data === undefined && options.dataCid === undefined) ||
-      (options.data !== undefined && options.dataCid !== undefined)) {
-      throw new DwnError(DwnErrorCode.RecordsWriteCreateDataAndDataCidMutuallyExclusive, 'one and only one parameter between `data` and `dataCid` is required');
-    }
-
-    if ((options.dataCid === undefined && options.dataSize !== undefined) ||
-      (options.dataCid !== undefined && options.dataSize === undefined)) {
-      throw new DwnError(DwnErrorCode.RecordsWriteCreateDataCidAndDataSizeMutuallyInclusive, '`dataCid` and `dataSize` must both be defined or undefined at the same time');
-    }
-
-    if (options.signer === undefined && options.delegatedGrant !== undefined) {
-      throw new DwnError(DwnErrorCode.RecordsWriteCreateMissingSigner, '`signer` must be given when `delegatedGrant` is given');
-    }
-
-    if (options.encryption !== undefined && options.encryptionInput !== undefined) {
-      throw new DwnError(
-        DwnErrorCode.RecordsWriteCreateEncryptionAndEncryptionInputMutuallyExclusive,
-        '`encryption` and `encryptionInput` cannot both be defined'
-      );
-    }
+    RecordsWrite.validateCreateOptions(options);
 
     const dataCid = options.dataCid ?? await Cid.computeDagPbCidFromBytes(options.data!);
     const dataSize = options.dataSize ?? options.data!.length;
@@ -386,6 +363,33 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     }
 
     return recordsWrite;
+  }
+
+  private static validateCreateOptions(options: RecordsWriteOptions): void {
+    if (options.protocol === undefined || options.protocolPath === undefined) {
+      throw new DwnError(DwnErrorCode.RecordsWriteCreateMissingProtocol, '`protocol` and `protocolPath` are required');
+    }
+
+    if ((options.data === undefined && options.dataCid === undefined) ||
+      (options.data !== undefined && options.dataCid !== undefined)) {
+      throw new DwnError(DwnErrorCode.RecordsWriteCreateDataAndDataCidMutuallyExclusive, 'one and only one parameter between `data` and `dataCid` is required');
+    }
+
+    if ((options.dataCid === undefined && options.dataSize !== undefined) ||
+      (options.dataCid !== undefined && options.dataSize === undefined)) {
+      throw new DwnError(DwnErrorCode.RecordsWriteCreateDataCidAndDataSizeMutuallyInclusive, '`dataCid` and `dataSize` must both be defined or undefined at the same time');
+    }
+
+    if (options.signer === undefined && options.delegatedGrant !== undefined) {
+      throw new DwnError(DwnErrorCode.RecordsWriteCreateMissingSigner, '`signer` must be given when `delegatedGrant` is given');
+    }
+
+    if (options.encryption !== undefined && options.encryptionInput !== undefined) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteCreateEncryptionAndEncryptionInputMutuallyExclusive,
+        '`encryption` and `encryptionInput` cannot both be defined'
+      );
+    }
   }
 
   private static getRecordIdFromContextId(contextId: string | undefined): string | undefined {

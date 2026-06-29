@@ -1,5 +1,5 @@
 import type { DwnDatabaseType } from '../types.js';
-import type { Filter } from '@enbox/dwn-sdk-js';
+import type { EqualFilter, Filter, RangeFilter } from '@enbox/dwn-sdk-js';
 import type { ExpressionBuilder, OperandExpression, RawBuilder, SelectQueryBuilder, SqlBool } from 'kysely';
 
 import { DynamicModule, sql } from 'kysely';
@@ -84,16 +84,18 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
  * Returns `true` if the given RangeFilter matches the pattern produced by
  * `constructPrefixFilterAsRangeFilter`: `{ gte: <prefix>, lt: <prefix> + '\uffff' }`.
  */
-function isPrefixRangeFilter(value: Record<string, unknown>): boolean {
-  if (typeof value.gte !== 'string' || typeof value.lt !== 'string') {
+function isPrefixRangeFilter(value: object): value is { gte: string; lt: string } {
+  const range = value as Record<string, unknown>;
+
+  if (typeof range.gte !== 'string' || typeof range.lt !== 'string') {
     return false;
   }
   // Only two keys: gte and lt (no gt, lte, or other properties)
-  const keys = Object.keys(value);
+  const keys = Object.keys(range);
   if (keys.length !== 2 || !keys.includes('gte') || !keys.includes('lt')) {
     return false;
   }
-  return value.lt === value.gte + '\uffff';
+  return range.lt === range.gte + '\uffff';
 }
 
 /**
@@ -131,52 +133,71 @@ function processTags<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
 
 function tagValuePredicate(value: Filter[string]): RawBuilder<SqlBool> {
   if (Array.isArray(value)) {
-    const sanitizedValues = value.map((item) => sanitizedValue(item));
-    const numberValues = sanitizedValues.filter((item): item is number => typeof item === 'number');
-    const stringValues = sanitizedValues.filter((item): item is string => typeof item === 'string');
-    const operands: RawBuilder<SqlBool>[] = [];
-
-    if (numberValues.length > 0) {
-      operands.push(sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueNumber')} in (${sql.join(numberValues)})`);
-    }
-    if (stringValues.length > 0) {
-      operands.push(sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} in (${sql.join(stringValues)})`);
-    }
-
-    return operands.length === 0 ? sql<SqlBool>`false` : sql<SqlBool>`(${sql.join(operands, sql` or `)})`;
+    return tagOneOfPredicate(value);
   }
 
   if (typeof value === 'object') {
-    if (isPrefixRangeFilter(value)) {
-      const prefix = escapeLikePattern(value.gte as string);
-      return sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} LIKE ${prefix + '%'}`;
-    }
-
-    const operands: RawBuilder<SqlBool>[] = [];
-    if (value.gt) {
-      operands.push(tagRangePredicate('>', value.gt));
-    }
-    if (value.gte) {
-      operands.push(tagRangePredicate('>=', value.gte));
-    }
-    if (value.lt) {
-      operands.push(tagRangePredicate('<', value.lt));
-    }
-    if (value.lte) {
-      operands.push(tagRangePredicate('<=', value.lte));
-    }
-
-    return operands.length === 0 ? sql<SqlBool>`true` : sql<SqlBool>`(${sql.join(operands, sql` and `)})`;
+    return tagObjectPredicate(value);
   }
 
+  return tagEqualPredicate(value);
+}
+
+function tagOneOfPredicate(values: EqualFilter[]): RawBuilder<SqlBool> {
+  const sanitizedValues = values.map((item) => sanitizedValue(item));
+  const numberValues = sanitizedValues.filter((item): item is number => typeof item === 'number');
+  const stringValues = sanitizedValues.filter((item): item is string => typeof item === 'string');
+  const operands: RawBuilder<SqlBool>[] = [];
+
+  if (numberValues.length > 0) {
+    operands.push(sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueNumber')} in (${sql.join(numberValues)})`);
+  }
+  if (stringValues.length > 0) {
+    operands.push(sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} in (${sql.join(stringValues)})`);
+  }
+
+  return joinTagPredicates(operands, 'or', false);
+}
+
+function tagObjectPredicate(value: RangeFilter): RawBuilder<SqlBool> {
+  if (isPrefixRangeFilter(value)) {
+    const prefix = escapeLikePattern(value.gte);
+    return sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} LIKE ${prefix + '%'}`;
+  }
+
+  const operands: RawBuilder<SqlBool>[] = [];
+  addTagRangePredicate(operands, '>', value.gt);
+  addTagRangePredicate(operands, '>=', value.gte);
+  addTagRangePredicate(operands, '<', value.lt);
+  addTagRangePredicate(operands, '<=', value.lte);
+
+  return joinTagPredicates(operands, 'and', true);
+}
+
+function tagEqualPredicate(value: EqualFilter): RawBuilder<SqlBool> {
   const sanitized = sanitizedValue(value);
   return typeof sanitized === 'number'
     ? sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueNumber')} = ${sanitized}`
     : sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} = ${sanitized}`;
 }
 
+function addTagRangePredicate(operands: RawBuilder<SqlBool>[], operator: '>' | '>=' | '<' | '<=', value?: string | number): void {
+  if (value !== undefined) {
+    operands.push(tagRangePredicate(operator, value));
+  }
+}
+
 function tagRangePredicate(operator: '>' | '>=' | '<' | '<=', value: string | number): RawBuilder<SqlBool> {
   return typeof value === 'number'
     ? sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueNumber')} ${sql.raw(operator)} ${value}`
     : sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} ${sql.raw(operator)} ${String(value)}`;
+}
+
+function joinTagPredicates(operands: RawBuilder<SqlBool>[], operator: 'and' | 'or', emptyResult: boolean): RawBuilder<SqlBool> {
+  if (operands.length === 0) {
+    return emptyResult ? sql<SqlBool>`true` : sql<SqlBool>`false`;
+  }
+
+  const separator = operator === 'and' ? sql.raw(' and ') : sql.raw(' or ');
+  return sql<SqlBool>`(${sql.join(operands, separator)})`;
 }
