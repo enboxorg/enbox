@@ -19,6 +19,7 @@ import { DataStream, DwnConstant } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../../src/test-harness.js';
+import { requireDwnServer } from '../utils/require-dwn-server.js';
 import { TestAgent } from '../utils/test-agent.js';
 import { testDwnUrl } from '../utils/test-config.js';
 
@@ -53,6 +54,10 @@ async function waitFor(
 }
 
 describe('E2E: live sync convergence', () => {
+  beforeAll(async () => {
+    await requireDwnServer();
+  });
+
   let harness: PlatformAgentTestHarness;
   let aliceDid: string;
   let recordId: string;

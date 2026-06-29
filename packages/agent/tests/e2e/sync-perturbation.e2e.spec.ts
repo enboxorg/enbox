@@ -15,6 +15,7 @@ import type { GenericMessage, MessageSigner, ProtocolDefinition, ProtocolsConfig
 
 import { PlatformAgentTestHarness as AgentTestHarness } from '../../src/test-harness.js';
 import { DwnInterface } from '../../src/types/dwn.js';
+import { requireDwnServer } from '../utils/require-dwn-server.js';
 import { SyncEngineLevel } from '../../src/sync-engine-level.js';
 import { TestAgent } from '../utils/test-agent.js';
 import { testDwnUrl } from '../utils/test-config.js';
@@ -84,6 +85,10 @@ const harnessProtocolV2: ProtocolDefinition = {
 };
 
 describe('E2E: two-device durable feed perturbation convergence', () => {
+  beforeAll(async () => {
+    await requireDwnServer();
+  });
+
   let aliceDid: string;
   let deviceA: Device;
   let deviceB: Device;

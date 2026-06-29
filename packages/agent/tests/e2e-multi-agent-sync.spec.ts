@@ -8,6 +8,7 @@ import type { BearerIdentity } from '../src/bearer-identity.js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { requireDwnServer } from './utils/require-dwn-server.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
@@ -163,6 +164,10 @@ async function createAndDistributeGrant(
 // at the cost of a DID:DHT publish round-trip per block.
 
 describe('E2E Multi-Agent Sync', () => {
+  beforeAll(async () => {
+    await requireDwnServer();
+  });
+
   /** Primary harness — the "canonical" agent that owns Alice's keys directly. */
   let primaryHarness: PlatformAgentTestHarness;
 

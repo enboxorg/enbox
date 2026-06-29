@@ -24,6 +24,7 @@ import type { PlatformAgentTestHarness } from '../../src/test-harness.js';
 
 import { PlatformAgentTestHarness as AgentTestHarness } from '../../src/test-harness.js';
 import { DwnInterface } from '../../src/types/dwn.js';
+import { requireDwnServer } from '../utils/require-dwn-server.js';
 import { testDwnUrl } from '../utils/test-config.js';
 import { EnboxUserAgent as UserAgent } from '../../src/enbox-user-agent.js';
 import { IdentityProtocolDefinition, JwkProtocolDefinition } from '../../src/store-data-protocols.js';
@@ -246,6 +247,10 @@ async function readRecordBytes(
 }
 
 describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => {
+  beforeAll(async () => {
+    await requireDwnServer();
+  });
+
   const password = 'e2e-live-autopull-password';
   const discoveredIdentityName = 'Live Autopull Identity';
 

@@ -229,13 +229,32 @@ Before any commits get pushed and PRs opened, ALL of the following MUST pass:
 
 1. **Lint** — `bun run lint` (use `bun run lint:fix` to auto-fix issues)
 2. **Build** — `bun run --filter @enbox/agent build` (rebuild `dwn-sdk-js` first if changed)
-3. **Tests** — `export DID_DHT_GATEWAY_URI=http://localhost:7527 DID_DHT_ALLOW_PRIVATE_GATEWAY=1 && bun run test:node` from `packages/agent/`
+3. **Tests** — bring up the dev environment once with `bun run dev:ensure` (gateway + live-reload `:3000` server + `.env.test`), then `bun run test:node` from `packages/agent/`. Without `dev:ensure`, export the vars manually: `export DID_DHT_GATEWAY_URI=http://localhost:7527 DID_DHT_ALLOW_PRIVATE_GATEWAY=1` (note: the `e2e-*` specs still need a `:3000` server).
 
 Do not push or open a PR until all three checks pass locally. See [Local Test Infrastructure](#local-test-infrastructure) for required services.
 
 ## Running Tests
 
 Most packages use **`bun test`** (Bun's native test runner). **`@enbox/browser`** uses **Vitest** with the browser runner instead (see table below).
+
+### One command to start the dev environment
+
+Before running any suite that needs the did:dht gateway or a remote DWN (`agent`, `api`, `dids`, `dwn-clients`, `dwn-server`), bring up the local dev environment **once** instead of starting services by hand:
+
+```bash
+bun run dev          # humans: gateway + live-reload DWN server, then tail server logs
+bun run dev:ensure   # agents/CI: same, but idempotent and returns immediately
+bun run dev:status   # show gateway / DWN server / container state
+bun run dev:down     # stop the dev DWN server
+```
+
+`scripts/dev.sh` (what those wrap):
+
+- ensures the **did:dht gateway** (Pkarr relay) is reachable — it is external infra, started if down but never rebuilt;
+- runs the **DWN server on `:3000` straight from TypeScript source under `bun --watch`**, so edits to `packages/dwn-server` reload live with no build step (storage is ephemeral LevelDB + an in-memory SQLite TTL cache — no database container needed);
+- writes a git-ignored **`.env.test`** into each test package, which `bun test` auto-loads — so `DID_DHT_GATEWAY_URI`, `DID_DHT_ALLOW_PRIVATE_GATEWAY`, `TEST_DWN_URL`, and `NATS_URL` are set with **no manual exports**.
+
+After `bun run dev:ensure`, just run the suite — the `export DID_DHT_*` lines elsewhere in this doc become an optional fallback. For the DB-backed suites (`dwn-sql-store`, `dwn-server`), also run `scripts/dev.sh infra` to bring up Postgres x2 / MySQL / NATS / MinIO. Full details: [`docs/TESTING.md`](docs/TESTING.md).
 
 ### Test framework by package
 
@@ -257,7 +276,9 @@ Most packages use **`bun test`** (Bun's native test runner). **`@enbox/browser`*
 
 ### Agent / API / Auth tests (bun:test)
 
-**Important:** Always set `DID_DHT_GATEWAY_URI` and `DID_DHT_ALLOW_PRIVATE_GATEWAY=1` before running **agent**, **api**, or **auth** tests against the local Pkarr relay. Without them, a large subset of tests will fail with Pkarr / `did:dht` publishing errors or local-gateway URL validation errors.
+**Important:** these suites need `DID_DHT_GATEWAY_URI` and `DID_DHT_ALLOW_PRIVATE_GATEWAY=1` (the local Pkarr relay), and the `agent`/`api` `e2e-*` suites also need a DWN server on `:3000`. `bun run dev:ensure` sets all of this up — the gateway, the live-reload `:3000` server, and a `.env.test` that supplies these vars automatically. Run it once and skip the manual exports below. (Without these vars, a large subset of tests fail with Pkarr / `did:dht` publishing errors or local-gateway URL validation errors; without the `:3000` server, the `e2e-*` specs fail to connect.)
+
+The manual equivalent, if you are not using `dev:ensure`:
 
 ```bash
 export DID_DHT_GATEWAY_URI=http://localhost:7527
@@ -289,7 +310,7 @@ bun run lint
 
 ## Local test infrastructure
 
-Setting up Docker services (Pkarr relay, Postgres x2, MySQL, NATS, MinIO), required environment variables (`DID_DHT_GATEWAY_URI`, `DID_DHT_ALLOW_PRIVATE_GATEWAY`, `NATS_URL`), running a local DWN server on `:3000`, browser-test setup, and the CI coverage pipeline all live in [`docs/TESTING.md`](docs/TESTING.md). Read it before running the full test suite for `agent`, `api`, `auth`, `dids`, `dwn-server`, or `dwn-sql-store`, or before debugging a `Failed to put Pkarr record` error.
+For everyday local work, `bun run dev` / `bun run dev:ensure` (see [One command to start the dev environment](#one-command-to-start-the-dev-environment)) handles the gateway, the live-reload `:3000` DWN server, and the test env vars. Setting up the underlying Docker services (Pkarr relay, Postgres x2, MySQL, NATS, MinIO), the required environment variables (`DID_DHT_GATEWAY_URI`, `DID_DHT_ALLOW_PRIVATE_GATEWAY`, `NATS_URL`), running a local DWN server on `:3000` by hand, browser-test setup, and the CI coverage pipeline all live in [`docs/TESTING.md`](docs/TESTING.md). Read it before running the full test suite for `agent`, `api`, `auth`, `dids`, `dwn-server`, or `dwn-sql-store`, or before debugging a `Failed to put Pkarr record` error.
 
 ## Releasing & Publishing Packages
 

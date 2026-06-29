@@ -8,6 +8,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { requireDwnServer } from './utils/require-dwn-server.js';
 import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { TestAgent } from './utils/test-agent.js';
@@ -36,6 +37,10 @@ function sleep(ms: number): Promise<void> {
 // Test 1: Encrypted data survives sync round-trip
 // -------------------------------------------------------------------
 describe('e2e: encrypted data survives sync round-trip', () => {
+  beforeAll(async () => {
+    await requireDwnServer();
+  });
+
 
   let testHarness: PlatformAgentTestHarness;
   let syncEngine: SyncEngineLevel;
