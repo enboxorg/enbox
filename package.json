@@ -21,6 +21,10 @@
     "apps/docs"
   ],
   "scripts": {
+    "dev": "./scripts/dev.sh up",
+    "dev:ensure": "./scripts/dev.sh ensure",
+    "dev:down": "./scripts/dev.sh down",
+    "dev:status": "./scripts/dev.sh status",
     "clean": "bun run --filter '*' clean && bun run clean:modules && bun run clean:data",
     "clean:modules": "find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +",
     "clean:all": "find . -name dist -not -path '*/node_modules/*' -type d -exec rm -rf {} + && bun run clean:data && bun run clean:modules && bun pm cache rm && rm -rf .turbo packages/*/.turbo",

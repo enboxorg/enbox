@@ -23,6 +23,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import { DwnInterface } from '../../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../../src/test-harness.js';
+import { requireDwnServer } from '../utils/require-dwn-server.js';
 import { TestAgent } from '../utils/test-agent.js';
 import { testDwnUrl } from '../utils/test-config.js';
 
@@ -56,6 +57,10 @@ function killAllWebSockets(): void {
 }
 
 describe('E2E: pull subscription recovery after WebSocket drop', () => {
+  beforeAll(async () => {
+    await requireDwnServer();
+  });
+
   let harness: PlatformAgentTestHarness;
   let did: string;
 

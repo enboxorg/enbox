@@ -18,6 +18,7 @@ import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, Permissio
 import { AgentPermissionsApi } from '../src/permissions-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { requireDwnServer } from './utils/require-dwn-server.js';
 import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -55,6 +56,10 @@ const chatProtocol: ProtocolDefinition = {
 };
 
 describe('e2e: grant revocation stops future delivery', () => {
+  beforeAll(async () => {
+    await requireDwnServer();
+  });
+
   let ownerHarness: PlatformAgentTestHarness;
   let ownerIdentity: BearerIdentity;
 

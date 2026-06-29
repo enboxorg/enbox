@@ -2,7 +2,37 @@
 
 This document covers the full test infrastructure for the Enbox monorepo.
 
-## Quick Start
+## Local dev environment (recommended)
+
+One command brings up everything the local test suites need — the did:dht gateway, a live-reload DWN server on `:3000`, and the test env vars — so you don't start services by hand or forget `DID_DHT_*` exports:
+
+```bash
+bun run dev          # gateway + live-reload :3000 DWN server, then tail server logs (Ctrl-C detaches)
+bun run dev:ensure   # same, but idempotent and returns immediately — use this in agents/CI
+bun run dev:status   # show gateway / DWN server / container state
+bun run dev:down     # stop the dev DWN server (containers keep running)
+```
+
+What `scripts/dev.sh` does, idempotently:
+
+- **did:dht gateway (Pkarr relay)** — ensures it is reachable at `http://localhost:7527`. It is treated as external infrastructure: started from `docker-compose.test.yaml` if down, but never rebuilt.
+- **DWN server on `:3000`** — runs straight from TypeScript source under `bun --watch`, so edits to `packages/dwn-server` reload live with **no build step**. Storage is ephemeral LevelDB plus an in-memory SQLite TTL cache, so **no database container is required** (registration is disabled — it is an open dev node). Its workspace dependencies (`dwn-sdk-js`, `dwn-clients`, …) are imported from `dist/`, so they are built once via Turbo on first run; rebuild a dependency yourself after editing it.
+- **`.env.test`** — writes a git-ignored `.env.test` into each test package (`dids`, `agent`, `api`, `dwn-clients`, `dwn-server`) and the repo root. `bun test` auto-loads it, so `DID_DHT_GATEWAY_URI`, `DID_DHT_ALLOW_PRIVATE_GATEWAY`, `TEST_DWN_URL`, and `NATS_URL` are set with **zero manual exports**.
+
+```bash
+bun run dev:ensure                        # one-time: gateway + :3000 server + .env.test
+cd packages/agent && bun run test:node    # just works — no exports needed
+
+# DB-backed suites (dwn-sql-store, dwn-server) also need Postgres/MySQL/NATS/MinIO:
+scripts/dev.sh infra                      # bring the full container stack up
+scripts/dev.sh infra down                 # stop the container stack
+```
+
+End-to-end specs that genuinely require the `:3000` server call a shared `requireDwnServer()` preflight, so if you forget to start the dev environment they fail fast with `DWN server not reachable … run bun run dev:ensure` instead of an opaque timeout.
+
+`eval "$(scripts/dev.sh env)"` prints the same vars as `export` lines if you prefer them in your shell instead of via `.env.test`.
+
+## Quick Start (manual)
 
 ```bash
 # Start test services
@@ -87,13 +117,13 @@ Without `DID_DHT_GATEWAY_URI`, tests will fail with `DidError: internalError: Fa
 
 ### DWN Server (localhost:3000)
 
-A local DWN server is required for `agent` and `api` tests. Check if it's running:
+A local DWN server is required for the `agent` and `api` `e2e-*` specs. The simplest way to run one is `bun run dev:ensure` (see [Local dev environment](#local-dev-environment-recommended)) — it runs the server from source with live-reload and ephemeral LevelDB storage. Check if it's running:
 
 ```bash
 curl -sf http://localhost:3000/info && echo "DWN server is running"
 ```
 
-If not running, start it:
+To start one by hand against the Postgres container instead (production-parity storage):
 
 ```bash
 export DID_DHT_GATEWAY_URI=http://localhost:7527

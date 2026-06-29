@@ -10,11 +10,16 @@
 import { JsonRpcSocket } from '@enbox/dwn-clients';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
+import { requireDwnServer } from '../utils/require-dwn-server.js';
 import { testDwnUrl } from '../utils/test-config.js';
 
 const wsUrl = testDwnUrl.replace('http', 'ws');
 
 describe('E2E: WebSocket heartbeat', () => {
+  beforeAll(async () => {
+    await requireDwnServer();
+  });
+
   let client: JsonRpcSocket;
 
   beforeAll(async () => {

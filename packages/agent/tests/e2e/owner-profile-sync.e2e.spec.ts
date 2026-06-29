@@ -21,6 +21,7 @@ import type { PlatformAgentTestHarness } from '../../src/test-harness.js';
 
 import { PlatformAgentTestHarness as AgentTestHarness } from '../../src/test-harness.js';
 import { DwnInterface } from '../../src/types/dwn.js';
+import { requireDwnServer } from '../utils/require-dwn-server.js';
 import { TestAgent } from '../utils/test-agent.js';
 import { testDwnUrl } from '../utils/test-config.js';
 import { EnboxUserAgent as UserAgent } from '../../src/enbox-user-agent.js';
@@ -334,6 +335,10 @@ async function expectIdentityDiscovered(
 }
 
 describe('E2E: same-owner profile sync convergence', () => {
+  beforeAll(async () => {
+    await requireDwnServer();
+  });
+
   let walletA: PlatformAgentTestHarness;
   let walletB: PlatformAgentTestHarness;
   let identity: BearerIdentity;
