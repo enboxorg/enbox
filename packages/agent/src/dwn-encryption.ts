@@ -18,6 +18,7 @@ import type {
   SendDwnRequest,
 } from './types/dwn.js';
 
+import { logger } from '@enbox/common';
 import {
   Cid,
   ContentEncryptionAlgorithm,
@@ -32,6 +33,7 @@ import {
   KeyDerivationScheme,
   Message,
   Records,
+  Time,
 } from '@enbox/dwn-sdk-js';
 import { Ed25519, X25519 } from '@enbox/crypto';
 
@@ -714,6 +716,7 @@ async function resolveGrantKeyRecords(params: {
       );
       const payload = Encoder.bytesToObject(await DataStream.toBytes(decryptedStream)) as GrantKeyPayload;
       const grant = await readPermissionGrant(params.agent, params.granteeDid, params.grantorDid, payload.grantId);
+      await verifyPermissionGrantActive(params.agent, params.granteeDid, params.grantorDid, grant);
 
       await verifyGrantKeyPayload({
         payload,
@@ -738,7 +741,11 @@ async function resolveGrantKeyRecords(params: {
           derivedPrivateKey : payload.privateKeyJwk,
         },
       });
-    } catch {
+    } catch (error) {
+      logger.log(
+        `AgentDwnApi: skipped grantKey '${grantKeyMessage.recordId}' while resolving delegate decryption key: ` +
+        `${error instanceof Error ? error.message : String(error)}`
+      );
       continue;
     }
   }
@@ -792,6 +799,27 @@ async function readPermissionGrant(
     ...reply.entry.recordsWrite,
     encodedData: Encoder.bytesToBase64Url(grantData),
   } as DataEncodedRecordsWriteMessage);
+}
+
+async function verifyPermissionGrantActive(
+  agent: EnboxPlatformAgent,
+  granteeDid: string,
+  grantorDid: string,
+  grant: PermissionGrant,
+): Promise<void> {
+  const now = Time.getCurrentTimestamp();
+  if (now < grant.dateGranted || now >= grant.dateExpires) {
+    throw new Error('grantKey references an inactive permission grant.');
+  }
+
+  const revoked = await agent.permissions.isGrantRevoked({
+    author        : granteeDid,
+    target        : grantorDid,
+    grantRecordId : grant.id,
+  });
+  if (revoked) {
+    throw new Error('grantKey references a revoked permission grant.');
+  }
 }
 
 async function verifyGrantKeyPayload(params: {
