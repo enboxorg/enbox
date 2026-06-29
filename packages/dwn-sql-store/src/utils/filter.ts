@@ -56,8 +56,9 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
       // which uses `{ gte: prefix, lt: prefix + '\uffff' }`. The U+FFFF sentinel does not
       // sort correctly under ICU/libc collation rules (e.g. PostgreSQL's en_US.UTF-8),
       // so we convert these to a collation-safe SQL LIKE expression.
-      if (isPrefixRangeFilter(value)) {
-        const prefix = escapeLikePattern(value.gte as string);
+      const prefixRangeFilterPrefix = getPrefixRangeFilterPrefix(value);
+      if (prefixRangeFilterPrefix !== undefined) {
+        const prefix = escapeLikePattern(prefixRangeFilterPrefix);
         andOperands.push(sql`${sql.ref(property)} LIKE ${prefix + '%'}`);
         continue;
       }
@@ -81,21 +82,21 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
 }
 
 /**
- * Returns `true` if the given RangeFilter matches the pattern produced by
+ * Returns the prefix if the given RangeFilter matches the pattern produced by
  * `constructPrefixFilterAsRangeFilter`: `{ gte: <prefix>, lt: <prefix> + '\uffff' }`.
  */
-function isPrefixRangeFilter(value: object): value is { gte: string; lt: string } {
+function getPrefixRangeFilterPrefix(value: object): string | undefined {
   const range = value as Record<string, unknown>;
 
   if (typeof range.gte !== 'string' || typeof range.lt !== 'string') {
-    return false;
+    return undefined;
   }
   // Only two keys: gte and lt (no gt, lte, or other properties)
   const keys = Object.keys(range);
   if (keys.length !== 2 || !keys.includes('gte') || !keys.includes('lt')) {
-    return false;
+    return undefined;
   }
-  return range.lt === range.gte + '\uffff';
+  return range.lt === range.gte + '\uffff' ? range.gte : undefined;
 }
 
 /**
@@ -160,8 +161,9 @@ function tagOneOfPredicate(values: EqualFilter[]): RawBuilder<SqlBool> {
 }
 
 function tagObjectPredicate(value: RangeFilter): RawBuilder<SqlBool> {
-  if (isPrefixRangeFilter(value)) {
-    const prefix = escapeLikePattern(value.gte);
+  const prefixRangeFilterPrefix = getPrefixRangeFilterPrefix(value);
+  if (prefixRangeFilterPrefix !== undefined) {
+    const prefix = escapeLikePattern(prefixRangeFilterPrefix);
     return sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} LIKE ${prefix + '%'}`;
   }
 
