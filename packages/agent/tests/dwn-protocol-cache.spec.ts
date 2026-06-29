@@ -1,13 +1,11 @@
-import type { ProtocolDefinition, ProtocolsQueryReply, RecordsQueryReply } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition, ProtocolsQueryReply } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
-import { KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 import { TtlCache } from '@enbox/common';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import {
-  extractDerivedPublicKey,
   fetchRemoteProtocolDefinition,
   getProtocolDefinition,
 } from '../src/dwn-protocol-cache.js';
@@ -162,115 +160,4 @@ describe('dwn-protocol-cache', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // extractDerivedPublicKey
-  // ---------------------------------------------------------------------------
-  describe('extractDerivedPublicKey', () => {
-    const targetDid = 'did:example:bob';
-    const protocolUri = 'https://example.com/protocol';
-    const rootContextId = 'ctx-123';
-    const requesterDid = 'did:example:alice';
-    const mockDerivedPublicKey = { kty: 'OKP', crv: 'X25519', x: 'mock-x' };
-
-    /**
-     * Creates a real DWN signer from TestDataGenerator so that
-     * dwnMessageConstructors[DwnInterface.RecordsQuery].create() succeeds.
-     */
-    async function createRealSigner(): Promise<sinon.SinonStub> {
-      const { TestDataGenerator } = await import('@enbox/dwn-sdk-js');
-      const persona = await TestDataGenerator.generatePersona();
-      return sinon.stub().resolves(persona.signer);
-    }
-
-    const getDwnEndpointUrls = sinon.stub().resolves(['https://dwn.example.com']);
-
-    it('should return undefined when query returns non-200', async () => {
-      const getSigner = await createRealSigner();
-      const sendDwnRpcRequest = sinon.stub().resolves({
-        status  : { code: 404 },
-        entries : [],
-      } as unknown as RecordsQueryReply);
-
-      const result = await extractDerivedPublicKey(
-        targetDid, protocolUri, rootContextId, requesterDid,
-        getDwnEndpointUrls, getSigner, sendDwnRpcRequest,
-      );
-      expect(result).toBeUndefined();
-    });
-
-    it('should return undefined when query returns empty entries', async () => {
-      const getSigner = await createRealSigner();
-      const sendDwnRpcRequest = sinon.stub().resolves({
-        status  : { code: 200 },
-        entries : [],
-      } as unknown as RecordsQueryReply);
-
-      const result = await extractDerivedPublicKey(
-        targetDid, protocolUri, rootContextId, requesterDid,
-        getDwnEndpointUrls, getSigner, sendDwnRpcRequest,
-      );
-      expect(result).toBeUndefined();
-    });
-
-    it('should ignore legacy derived public key metadata on matching entries', async () => {
-      const getSigner = await createRealSigner();
-      const sendDwnRpcRequest = sinon.stub().resolves({
-        status  : { code: 200 },
-        entries : [{
-          encryption: {
-            recipients: [{
-              header: {
-                kid              : 'root-key-1',
-                derivationScheme : KeyDerivationScheme.ProtocolContext,
-                derivedPublicKey : mockDerivedPublicKey,
-              },
-            }],
-          },
-        }],
-      } as unknown as RecordsQueryReply);
-
-      const result = await extractDerivedPublicKey(
-        targetDid, protocolUri, rootContextId, requesterDid,
-        getDwnEndpointUrls, getSigner, sendDwnRpcRequest,
-      );
-      expect(result).toBeUndefined();
-    });
-
-    it('should return undefined when entries have no ProtocolContext recipient', async () => {
-      const getSigner = await createRealSigner();
-      const sendDwnRpcRequest = sinon.stub().resolves({
-        status  : { code: 200 },
-        entries : [{
-          encryption: {
-            recipients: [{
-              header: {
-                kid              : 'root-key-1',
-                derivationScheme : KeyDerivationScheme.ProtocolPath,
-              },
-            }],
-          },
-        }],
-      } as unknown as RecordsQueryReply);
-
-      const result = await extractDerivedPublicKey(
-        targetDid, protocolUri, rootContextId, requesterDid,
-        getDwnEndpointUrls, getSigner, sendDwnRpcRequest,
-      );
-      expect(result).toBeUndefined();
-    });
-
-    it('should return undefined when entries have no encryption field', async () => {
-      const getSigner = await createRealSigner();
-      const sendDwnRpcRequest = sinon.stub().resolves({
-        status  : { code: 200 },
-        entries : [{ descriptor: {} }],
-      } as unknown as RecordsQueryReply);
-
-      const result = await extractDerivedPublicKey(
-        targetDid, protocolUri, rootContextId, requesterDid,
-        getDwnEndpointUrls, getSigner, sendDwnRpcRequest,
-      );
-      expect(result).toBeUndefined();
-    });
-  });
 });

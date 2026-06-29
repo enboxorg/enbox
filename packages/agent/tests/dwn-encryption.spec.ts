@@ -3,12 +3,21 @@ import type { DerivedPrivateJwk, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
-import { ContentEncryptionAlgorithm, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
-
 import {
-  buildContextKeyDecrypter,
+  ContentEncryptionAlgorithm,
+  DataStream,
+  Encoder,
+  Encryption,
+  HdKey,
+  KeyDerivationScheme,
+  TestDataGenerator,
+} from '@enbox/dwn-sdk-js';
+
+import { DwnInterface } from '../src/types/dwn.js';
+import {
   buildEncryptionInput,
   buildKmsDecryptCallback,
+  buildProtocolPathSubtreeDecrypter,
   encryptAndComputeCid,
   getEncryptionKeyDeriver,
   getEncryptionKeyInfo,
@@ -107,18 +116,18 @@ describe('dwn-encryption', () => {
     });
   });
 
-  describe('buildContextKeyDecrypter', () => {
+  describe('buildProtocolPathSubtreeDecrypter', () => {
     it('should return a KeyDecrypter with correct rootKeyId and derivationScheme', () => {
-      const contextKey: DerivedPrivateJwk = {
+      const protocolPathKey: DerivedPrivateJwk = {
         rootKeyId         : 'ctx-root-key',
-        derivationScheme  : KeyDerivationScheme.ProtocolContext,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
         derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
       };
 
-      const result = buildContextKeyDecrypter(contextKey);
+      const result = buildProtocolPathSubtreeDecrypter(protocolPathKey);
 
       expect(result.rootKeyId).toBe('ctx-root-key');
-      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolContext);
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(typeof result.decrypt).toBe('function');
     });
   });
@@ -129,14 +138,14 @@ describe('dwn-encryption', () => {
       const reply = {} as any;
 
       // Should not throw and should return without doing anything.
-      await maybeDecryptReply(request, reply, {} as any, { get: sinon.stub(), set: sinon.stub() }, sinon.stub());
+      await maybeDecryptReply(request, reply, {} as any);
     });
 
     it('should return immediately when encryption is false', async () => {
       const request = { author: 'did:example:alice', target: 'did:example:alice', encryption: false } as any;
       const reply = {} as any;
 
-      await maybeDecryptReply(request, reply, {} as any, { get: sinon.stub(), set: sinon.stub() }, sinon.stub());
+      await maybeDecryptReply(request, reply, {} as any);
     });
 
     it('should throw wrapped error when RecordsRead decryption fails', async () => {
@@ -194,8 +203,6 @@ describe('dwn-encryption', () => {
       await expect(
         maybeDecryptReply(
           request, reply, mockAgent,
-          { get: sinon.stub().returns(undefined), set: sinon.stub() },
-          sinon.stub(),
         )
       ).rejects.toThrow('AgentDwnApi: Failed to decrypt record \'rec-fail-read\'');
     });
@@ -253,10 +260,82 @@ describe('dwn-encryption', () => {
       await expect(
         maybeDecryptReply(
           request, reply, mockAgent,
-          { get: sinon.stub().returns(undefined), set: sinon.stub() },
-          sinon.stub(),
         )
       ).rejects.toThrow('AgentDwnApi: Failed to decrypt record \'rec-fail-query\'');
+    });
+
+    it('should decrypt RecordsRead replies using delivered delegate keys without owner KMS fallback', async () => {
+      const owner = await TestDataGenerator.generateDidKeyPersona();
+      const protocol = 'https://example.com/delegate-delivered-key';
+      const plaintext = Encoder.stringToBytes('delivered key plaintext');
+      const rootKey: DerivedPrivateJwk = {
+        rootKeyId         : owner.keyId,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivedPrivateKey : owner.encryptionKeyPair.privateJwk,
+      };
+      const protocolKey = await HdKey.derivePrivateKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocol]);
+      const leafPublicKey = await HdKey.derivePublicKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocol, 'note']);
+
+      const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
+      const dataEncryptionInitializationVector = crypto.getRandomValues(new Uint8Array(16));
+      const encryptedData = await Encryption.encrypt(
+        ContentEncryptionAlgorithm.A256CTR,
+        dataEncryptionKey,
+        dataEncryptionInitializationVector,
+        plaintext,
+      );
+      const encryptionInput = buildEncryptionInput(
+        dataEncryptionKey,
+        dataEncryptionInitializationVector,
+        await Encryption.getKeyId(leafPublicKey),
+        leafPublicKey,
+        KeyDerivationScheme.ProtocolPath,
+      );
+      const recordsWrite = await TestDataGenerator.generateRecordsWrite({
+        author       : owner,
+        data         : encryptedData,
+        encryptionInput,
+        protocol,
+        protocolPath : 'note',
+      });
+      const request = {
+        author      : owner.did,
+        encryption  : true,
+        granteeDid  : 'did:example:delegate',
+        messageType : DwnInterface.RecordsRead,
+        target      : owner.did,
+      } as any;
+      const reply = {
+        status : { code: 200 },
+        entry  : {
+          recordsWrite : recordsWrite.message,
+          data         : DataStream.fromBytes(encryptedData),
+        },
+      } as any;
+      const mockAgent = {
+        keyManager: {
+          getKeyUri    : sinon.stub().rejects(new Error('owner KMS fallback should not be used')),
+          jweKeyUnwrap : sinon.stub().rejects(new Error('owner KMS fallback should not be used')),
+        },
+      } as any;
+      const delegateCache = {
+        get: sinon.stub().returns([{
+          derivedPrivateKey : protocolKey,
+          protocol,
+          scope             : { kind: 'protocol' },
+        }]),
+      };
+
+      await maybeDecryptReply(
+        request,
+        reply,
+        mockAgent,
+        delegateCache,
+      );
+
+      expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
+      expect(mockAgent.keyManager.jweKeyUnwrap.called).toBe(false);
+      expect(Encoder.bytesToString(await DataStream.toBytes(reply.entry.data))).toBe('delivered key plaintext');
     });
   });
 
@@ -495,8 +574,6 @@ describe('dwn-encryption', () => {
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        { get: sinon.stub().returns(undefined), set: sinon.stub() },
-        sinon.stub(),
       );
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
@@ -519,15 +596,13 @@ describe('dwn-encryption', () => {
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        { get: sinon.stub().returns(undefined), set: sinon.stub() },
-        sinon.stub(),
       );
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(result.rootKeyId).toBe('did:example:alice#enc');
     });
 
-    it('should return exact delegate key decrypter when available', async () => {
+    it('should return path-subtree delegate key decrypter when available', async () => {
       const mockAgent = makeAliceAgent();
 
       const cachedKey: DerivedPrivateJwk = {
@@ -540,7 +615,7 @@ describe('dwn-encryption', () => {
         get: sinon.stub().returns([{
           derivedPrivateKey : cachedKey,
           protocol          : 'https://proto.example.com',
-          scope             : { kind: 'protocolPath', match: 'exact', protocolPath: 'message' },
+          scope             : { kind: 'protocolPath', protocolPath: 'message' },
         }]),
       };
 
@@ -552,14 +627,45 @@ describe('dwn-encryption', () => {
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        { get: sinon.stub().returns(undefined), set: sinon.stub() },
-        sinon.stub(),
         delegateCache,
         'did:example:delegate',
       );
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
       expect(delegateCache.get.calledOnce).toBe(true);
+    });
+
+    it('should return ancestor path-subtree delegate key decrypter for descendant records', async () => {
+      const mockAgent = makeAliceAgent();
+
+      const cachedKey: DerivedPrivateJwk = {
+        rootKeyId         : 'cached-root',
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
+        derivationPath    : [KeyDerivationScheme.ProtocolPath, 'https://proto.example.com', 'message'],
+      };
+      const delegateCache = {
+        get: sinon.stub().returns([{
+          derivedPrivateKey : cachedKey,
+          protocol          : 'https://proto.example.com',
+          scope             : { kind: 'protocolPath', protocolPath: 'message' },
+        }]),
+      };
+
+      const recordsWrite = {
+        recordId   : 'rec-descendant',
+        contextId  : 'rec-descendant',
+        descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message/reply' },
+      } as unknown as RecordsWriteMessage;
+
+      const result = await resolveKeyDecrypter(
+        mockAgent, 'did:example:alice', recordsWrite, undefined,
+        delegateCache,
+        'did:example:delegate',
+      );
+
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(result.rootKeyId).toBe('cached-root');
     });
 
     it('should return protocol-wide delegate key decrypter when available', async () => {
@@ -587,13 +693,58 @@ describe('dwn-encryption', () => {
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:alice', recordsWrite, undefined,
-        { get: sinon.stub().returns(undefined), set: sinon.stub() },
-        sinon.stub(),
         delegateCache,
         'did:example:delegate',
       );
 
       expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+    });
+
+    it('should fail closed for a delegate when no delivered key covers the record', async () => {
+      const mockAgent = makeAliceAgent();
+      const delegateCache = {
+        get: sinon.stub().returns([{
+          derivedPrivateKey: {
+            rootKeyId         : 'other-root',
+            derivationScheme  : KeyDerivationScheme.ProtocolPath,
+            derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
+            derivationPath    : [KeyDerivationScheme.ProtocolPath, 'https://other.example.com'],
+          },
+          protocol : 'https://other.example.com',
+          scope    : { kind: 'protocol' },
+        }]),
+      };
+
+      const recordsWrite = {
+        recordId   : 'rec-uncovered',
+        contextId  : 'rec-uncovered',
+        descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
+      } as unknown as RecordsWriteMessage;
+
+      await expect(resolveKeyDecrypter(
+        mockAgent, 'did:example:alice', recordsWrite, undefined,
+        delegateCache,
+        'did:example:delegate',
+      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+
+      expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
+    });
+
+    it('should fail closed for a delegate when no delegate key cache is provided', async () => {
+      const mockAgent = makeAliceAgent();
+      const recordsWrite = {
+        recordId   : 'rec-no-cache',
+        contextId  : 'rec-no-cache',
+        descriptor : { protocol: 'https://proto.example.com', protocolPath: 'message' },
+      } as unknown as RecordsWriteMessage;
+
+      await expect(resolveKeyDecrypter(
+        mockAgent, 'did:example:alice', recordsWrite, undefined,
+        undefined,
+        'did:example:delegate',
+      )).rejects.toThrow('no delivered decryption key covers encrypted record');
+
+      expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
     });
   });
 });

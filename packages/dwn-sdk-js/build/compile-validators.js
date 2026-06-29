@@ -100,7 +100,11 @@ const schemas = {
   StringRangeFilter
 };
 
-const ajv = new Ajv({ code: { source: true, esm: true }, allowUnionTypes: true });
+const ajv = new Ajv({
+  allowUnionTypes : true,
+  code            : { source: true, esm: true },
+  strictTuples    : false,
+});
 
 for (const schemaName in schemas) {
   ajv.addSchema(schemas[schemaName], schemaName);

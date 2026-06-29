@@ -3,7 +3,7 @@ import type { ProtocolDefinition } from '../../src/index.js';
 import { describe, expect, it } from 'bun:test';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { DwnErrorCode, replicationApplyResultFromReply } from '../../src/index.js';
+import { DwnErrorCode, EncryptionProtocol, replicationApplyResultFromReply, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/index.js';
 
 describe('replicationApplyResultFromReply', () => {
   it('classifies successful and idempotent replies', async () => {
@@ -274,6 +274,154 @@ describe('replicationApplyResultFromReply', () => {
         protocol      : roleProtocol,
         protocolPath  : 'thread/member',
         recipient     : author.did,
+      }],
+    });
+  });
+
+  it('classifies encryption protocol dependencies from tagged application protocol coordinates', async () => {
+    const protocol = 'https://example.com/protocol';
+    const tags = {
+      protocol,
+      contextId : 'chat-record',
+      role      : 'chat/member',
+      epoch     : 2,
+      keyId     : 'abc',
+    };
+    const { author, message } = await TestDataGenerator.generateRecordsWrite({
+      protocol     : EncryptionProtocol.uri,
+      protocolPath : EncryptionProtocol.audienceKeyPath,
+      recipient    : 'did:example:bob',
+      tags,
+    });
+
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 400,
+        detail : `${DwnErrorCode.ProtocolAuthorizationProtocolNotFound}: protocol is not installed`,
+      },
+    })).toEqual({
+      kind    : 'Incomplete',
+      missing : [{ type: 'Protocol', protocol }],
+    });
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 400,
+        detail : `${DwnErrorCode.EncryptionProtocolValidateAudienceEpochMissing}: audienceEpoch is missing`,
+      },
+    })).toEqual({
+      kind    : 'Incomplete',
+      missing : [{
+        type         : 'EncryptionProtocol',
+        protocolPath : EncryptionProtocol.audienceEpochPath,
+        tags,
+      }],
+    });
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 400,
+        detail : `${DwnErrorCode.EncryptionProtocolValidateAudienceKeyRoleRecordMissing}: role holder is missing`,
+      },
+    })).toEqual({
+      kind    : 'Incomplete',
+      missing : [{
+        type          : 'Role',
+        contextPrefix : 'chat-record',
+        protocol,
+        protocolPath  : 'chat/member',
+        recipient     : 'did:example:bob',
+      }],
+    });
+
+    const writerRoleMessage = await TestDataGenerator.generateRecordsWrite({
+      author,
+      protocol     : EncryptionProtocol.uri,
+      protocolPath : EncryptionProtocol.audienceEpochPath,
+      protocolRole : 'chat/admin',
+      tags,
+    });
+    expect(replicationApplyResultFromReply(writerRoleMessage.message, {
+      status: {
+        code   : 400,
+        detail : `${DwnErrorCode.EncryptionProtocolValidateAudienceWriterUnauthorized}: writer role is missing`,
+      },
+    })).toEqual({
+      kind    : 'Incomplete',
+      missing : [{
+        type          : 'Role',
+        contextPrefix : 'chat-record',
+        protocol,
+        protocolPath  : 'chat/admin',
+        recipient     : author.did,
+      }],
+    });
+  });
+
+  it('classifies grantKey grant dependencies from tags', async () => {
+    const grantId = 'grant-record-id';
+    const { message } = await TestDataGenerator.generateRecordsWrite({
+      protocol     : EncryptionProtocol.uri,
+      protocolPath : EncryptionProtocol.grantKeyPath,
+      tags         : {
+        grantId,
+        protocol : 'https://example.com/protocol',
+        keyId    : 'abc',
+      },
+    });
+
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code   : 400,
+        detail : `${DwnErrorCode.GrantAuthorizationGrantMissing}: grant was not found`,
+      },
+    })).toEqual({
+      kind    : 'Incomplete',
+      missing : [{ type: 'Grant', permissionGrantId: grantId }],
+    });
+  });
+
+  it('classifies roleAudience audienceEpoch dependencies from encrypted application records', async () => {
+    const protocol = 'https://example.com/encrypted-chat';
+    const role = 'thread/member';
+    const { message } = await TestDataGenerator.generateRecordsWrite({
+      protocol,
+      protocolPath: 'thread/chat',
+    });
+    message.contextId = 'thread-record/chat-record';
+    message.encryption = {
+      algorithm            : 'A256CTR',
+      initializationVector : 'iv',
+      keyEncryption        : [{
+        algorithm          : 'X25519-HKDF-SHA256+A256KW',
+        derivationScheme   : ROLE_AUDIENCE_DERIVATION_SCHEME,
+        encryptedKey       : 'encrypted-key',
+        ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
+        epoch              : 3,
+        keyId              : 'abc',
+        protocol,
+        role,
+      }],
+    } as any;
+
+    const detail = `${DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing}: ` +
+      `encrypted record references a missing audienceEpoch for role '${role}'`;
+
+    expect(replicationApplyResultFromReply(message, {
+      status: {
+        code: 400,
+        detail,
+      },
+    })).toEqual({
+      kind    : 'Incomplete',
+      missing : [{
+        type         : 'EncryptionProtocol',
+        protocolPath : EncryptionProtocol.audienceEpochPath,
+        tags         : {
+          protocol,
+          contextId : 'thread-record',
+          role,
+          epoch     : 3,
+          keyId     : 'abc',
+        },
       }],
     });
   });

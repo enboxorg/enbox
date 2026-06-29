@@ -2,11 +2,11 @@
  * e2e: cross-device encrypted delegate grants
  *
  * Cross-device delegates receive protocol/path-scoped decryption keys in the
- * connect response. Legacy contextKey records are not produced.
+ * connect response.
  */
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
-import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DwnInterfaceName, DwnMethodName, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
@@ -72,7 +72,7 @@ describe('e2e: cross-device encrypted delegate grants', () => {
     });
   });
 
-  it('should derive protocolPath keys without producing legacy contextKey records', async () => {
+  it('should derive protocolPath keys for cross-device delegate grants', async () => {
     await ownerHarness.agent.processDwnRequest({
       author        : ownerIdentity.did.uri,
       target        : ownerIdentity.did.uri,
@@ -96,37 +96,5 @@ describe('e2e: cross-device encrypted delegate grants', () => {
 
     expect(keys).toHaveLength(1);
     expect(keys[0].derivedPrivateKey.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
-
-    const { message: threadMessage } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerIdentity.did.uri,
-      target        : ownerIdentity.did.uri,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        schema       : 'https://schemas.xyz/thread',
-        dataFormat   : 'application/json',
-        data         : new TextEncoder().encode(JSON.stringify({ topic: 'No context key' })),
-      },
-      encryption: true,
-    });
-    const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
-
-    const { reply } = await ownerHarness.agent.processDwnRequest({
-      author        : ownerIdentity.did.uri,
-      target        : ownerIdentity.did.uri,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : 'https://identity.foundation/protocols/key-delivery',
-          protocolPath : 'contextKey',
-        },
-      },
-    });
-
-    const matchingKeys = (reply.entries ?? []).filter(
-      (entry: any) => entry.descriptor?.tags?.contextId === threadContextId,
-    );
-    expect(matchingKeys).toHaveLength(0);
   });
 });

@@ -15,7 +15,7 @@ import { RecordsWrite } from '../interfaces/records-write.js';
 import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRuleSetAtPath, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRuleSetAtPath, getTypeName, parseCrossProtocolRef } from '../utils/protocols.js';
 
 type StoredInitialWriteConfigValidity = 'valid' | 'invalid' | 'unknown';
 
@@ -291,7 +291,12 @@ export class ProtocolsConfigureHandler implements MethodHandler {
     }
 
     // Walk the structure and validate all $ref paths and cross-protocol role references
-    ProtocolsConfigureHandler.validateRefsAndRolesRecursively(definition.structure as ProtocolRuleSet, '', referencedDefinitions);
+    ProtocolsConfigureHandler.validateRefsAndRolesRecursively(
+      definition,
+      definition.structure as ProtocolRuleSet,
+      '',
+      referencedDefinitions,
+    );
   }
 
   /**
@@ -300,6 +305,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
    * - Cross-protocol `role` references point to valid `$role: true` paths in the referenced protocol
    */
   private static validateRefsAndRolesRecursively(
+    definition: ProtocolDefinition,
     ruleSet: ProtocolRuleSet,
     protocolPath: string,
     referencedDefinitions: Map<string, ProtocolDefinition>
@@ -362,6 +368,8 @@ export class ProtocolsConfigureHandler implements MethodHandler {
 
       // Validate cross-protocol references in $actions (roles and `of` paths)
       const actionRules = childRuleSet.$actions ?? [];
+      const typeName = getTypeName(childProtocolPath);
+      const isEncryptedPath = definition.types[typeName]?.encryptionRequired === true;
       for (const actionRule of actionRules) {
         // Validate cross-protocol role references
         if (actionRule.role !== undefined) {
@@ -383,6 +391,14 @@ export class ProtocolsConfigureHandler implements MethodHandler {
                 DwnErrorCode.ProtocolsConfigureInvalidCrossProtocolRole,
                 `cross-protocol role '${actionRule.role}' at protocol path '${childProtocolPath}' ` +
                 `does not point to a valid role ($role: true) in protocol '${refDefinition.protocol}'.`
+              );
+            }
+
+            if (isEncryptedPath && actionRule.can.includes('read') && roleRuleSet.$keyAgreement === undefined) {
+              throw new DwnError(
+                DwnErrorCode.ProtocolsConfigureInvalidEncryptedRoleMissingKeyAgreement,
+                `encrypted protocol path '${childProtocolPath}' references cross-protocol role '${actionRule.role}' ` +
+                `with no $keyAgreement.`
               );
             }
           }
@@ -414,7 +430,7 @@ export class ProtocolsConfigureHandler implements MethodHandler {
       }
 
       // Recurse into children
-      ProtocolsConfigureHandler.validateRefsAndRolesRecursively(childRuleSet, childProtocolPath, referencedDefinitions);
+      ProtocolsConfigureHandler.validateRefsAndRolesRecursively(definition, childRuleSet, childProtocolPath, referencedDefinitions);
     }
   }
 }

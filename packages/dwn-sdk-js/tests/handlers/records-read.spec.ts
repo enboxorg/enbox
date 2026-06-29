@@ -1971,12 +1971,12 @@ export function testRecordsReadHandler(): void {
           // test unable to decrypt the message if no derivation scheme used by the message matches the scheme used by the given private key
           const privateKeyWithMismatchingDerivationScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
-            derivationScheme  : 'scheme-that-is-not-protocol-context' as any,
+            derivationScheme  : 'scheme-that-is-not-protocol-path' as any,
             derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
           await expect(
             Records.decrypt(fetchedRecordsWrite, privateKeyWithMismatchingDerivationScheme, DataStream.fromBytes(bobMessageEncryptedBytes))
-          ).rejects.toThrow(DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound);
+          ).rejects.toThrow(DwnErrorCode.RecordsDecryptUnsupportedKeyDerivationScheme);
 
           // test unable to decrypt the message if public key ID does not match the derived private key
           const privateKeyWithMismatchingKeyId: DerivedPrivateJwk = {

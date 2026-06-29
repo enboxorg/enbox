@@ -2,7 +2,7 @@ import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { ProtocolDefinition, RecordsQueryReply, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { ContentEncryptionAlgorithm, DataStream, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import { ContentEncryptionAlgorithm, DataStream, DwnErrorCode, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
@@ -22,7 +22,7 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * End-to-end tests for encrypted data through sync, agent lifecycle with
- * encrypted stores, and multi-party encrypted protocols with key delivery.
+ * encrypted stores, and encrypted role-audience protocol boundaries.
  *
  * These tests require:
  * - A Pkarr gateway (for did:dht publishing via createIdentity)
@@ -418,13 +418,12 @@ describe('e2e: agent lifecycle with encrypted stores', () => {
 });
 
 // -------------------------------------------------------------------
-// Test 3: Multi-party encrypted thread with key delivery
+// Test 3: encrypted role-audience records require delivered audience keys
 // -------------------------------------------------------------------
-describe('e2e: multi-party encrypted thread with key delivery', () => {
+describe('e2e: encrypted role-audience records require audience keys', () => {
 
   let testHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
-  let bob: BearerIdentity;
 
   // Multi-party chat protocol with $role participants and encrypted data.
   const chatProtocol: ProtocolDefinition = {
@@ -433,7 +432,7 @@ describe('e2e: multi-party encrypted thread with key delivery', () => {
     types     : {
       thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
       participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
-      chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] },
+      chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'], encryptionRequired: true },
     },
     structure: {
       thread: {
@@ -459,7 +458,6 @@ describe('e2e: multi-party encrypted thread with key delivery', () => {
     await testHarness.clearStorage();
     await testHarness.createAgentDid();
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
-    bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
   });
 
   afterAll(async () => {
@@ -478,7 +476,7 @@ describe('e2e: multi-party encrypted thread with key delivery', () => {
     expect(reply.status.code).toBe(202);
   }, 30_000);
 
-  it('should let Alice create an encrypted thread and chat message', async () => {
+  it('should reject a role-readable encrypted chat message without a roleAudience entry', async () => {
     // Install protocol first.
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -488,7 +486,7 @@ describe('e2e: multi-party encrypted thread with key delivery', () => {
       encryption    : true,
     });
 
-    // Alice creates a thread (root record).
+    // Alice creates a plaintext thread (root record).
     const { message: threadMsg } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
@@ -499,13 +497,12 @@ describe('e2e: multi-party encrypted thread with key delivery', () => {
         dataFormat   : 'application/json',
         schema       : 'https://schemas.xyz/thread',
       },
-      dataStream : new Blob([new TextEncoder().encode('{"title":"Secret Chat"}')]),
-      encryption : true,
+      dataStream: new Blob([new TextEncoder().encode('{"title":"Secret Chat"}')]),
     });
     expect(threadMsg).toBeDefined();
     const threadContextId = (threadMsg as RecordsWriteMessage).contextId!;
 
-    // Alice writes an encrypted chat message in the thread.
+    // The agent does not yet produce role-audience entries, so the DWN must reject.
     const chatText = 'Hello Bob, this is encrypted!';
     const { reply: chatReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
@@ -521,99 +518,8 @@ describe('e2e: multi-party encrypted thread with key delivery', () => {
       dataStream : new Blob([new TextEncoder().encode(chatText)]),
       encryption : true,
     });
-    expect(chatReply.status.code).toBe(202);
-
-    // Alice can read her own encrypted message back.
-    const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : chatProtocol.protocol,
-          protocolPath : 'thread/chat',
-          contextId    : threadContextId,
-        }
-      },
-    });
-    expect(queryReply.entries).toHaveLength(1);
-    expect(queryReply.entries![0].encryption).toBeDefined();
+    expect(chatReply.status.code).toBe(400);
+    expect(chatReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEntryMissing);
   }, 30_000);
 
-  it('should not auto-deliver legacy context keys when Bob is added as participant', async () => {
-    // Full setup: install protocol, create thread, write chat, add Bob.
-    await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
-      encryption    : true,
-    });
-
-    const { message: threadMsg } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'application/json',
-        schema       : 'https://schemas.xyz/thread',
-      },
-      dataStream : new Blob([new TextEncoder().encode('{"title":"Thread for Bob"}')]),
-      encryption : true,
-    });
-    const threadContextId = (threadMsg as RecordsWriteMessage).contextId!;
-
-    const chatText = 'Top secret message for Bob';
-    const { reply: chatReply } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/chat',
-        parentContextId : threadContextId,
-        dataFormat      : 'text/plain',
-        schema          : 'https://schemas.xyz/chat',
-      },
-      dataStream : new Blob([new TextEncoder().encode(chatText)]),
-      encryption : true,
-    });
-    expect(chatReply.status.code).toBe(202);
-
-    // Add Bob as a participant.
-    const { reply: participantReply } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
-        parentContextId : threadContextId,
-        dataFormat      : 'application/json',
-        schema          : 'https://schemas.xyz/participant',
-        recipient       : bob.did.uri,
-      },
-      dataStream : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
-      encryption : true,
-    });
-    expect(participantReply.status.code).toBe(202);
-
-    // The current design does not mint legacy ProtocolContext key-delivery
-    // records as a side effect of role writes.
-    const { reply: ckQuery } = await testHarness.agent.dwn.processRequest({
-      author        : alice.did.uri,
-      target        : alice.did.uri,
-      messageType   : DwnInterface.RecordsQuery,
-      messageParams : {
-        filter: {
-          protocol     : 'https://identity.foundation/protocols/key-delivery',
-          protocolPath : 'contextKey',
-          recipient    : bob.did.uri,
-        }
-      },
-    });
-    expect(ckQuery.entries).toHaveLength(0);
-  }, 30_000);
 });

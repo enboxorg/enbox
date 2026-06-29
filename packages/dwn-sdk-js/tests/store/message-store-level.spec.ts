@@ -4,6 +4,7 @@ import type { CreateLevelDatabaseOptions, LevelDatabase } from '../../src/store/
 
 import { createLevelDatabase } from '../../src/store/level-wrapper.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
+import { EncryptionProtocol } from '../../src/protocols/encryption.js';
 import { EventEmitterWakePublisher } from '../../src/event-stream/event-emitter-wake-publisher.js';
 import { Message } from '../../src/core/message.js';
 import { MessageStoreLevel } from '../../src/store/message-store-level.js';
@@ -366,7 +367,7 @@ describe('MessageStoreLevel Test Suite', () => {
   });
 
   describe('fingerprints', () => {
-    it('should fold global, protocol, and permission domains and unfold deletes', async () => {
+    it('should fold global, protocol, permission, and encryption domains and unfold deletes', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const photosProtocol = 'https://example.com/photos';
 
@@ -379,18 +380,32 @@ describe('MessageStoreLevel Test Suite', () => {
       await messageStore.put(alice.did, grant.message, grantIndexes);
       const grantFingerprint = await cidFingerprint(grant.messageCid);
 
-      expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(xorHex(photoFingerprint, grantFingerprint));
+      const audienceKey = await generateStoredMessage({ protocol: EncryptionProtocol.uri, tags: { protocol: photosProtocol } });
+      const audienceKeyIndexes = audienceKey.indexes;
+      await messageStore.put(alice.did, audienceKey.message, audienceKeyIndexes);
+      const audienceKeyFingerprint = await cidFingerprint(audienceKey.messageCid);
+
+      expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain]))
+        .toBe(xorHex(xorHex(photoFingerprint, grantFingerprint), audienceKeyFingerprint));
       expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)])).toBe(photoFingerprint);
       expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(PermissionsProtocol.uri)])).toBe(grantFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(EncryptionProtocol.uri)])).toBe(audienceKeyFingerprint);
       expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(photosProtocol)])).toBe(grantFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.encryptionDomain(photosProtocol)])).toBe(audienceKeyFingerprint);
 
       const { 'tag.protocol': _tag, ...demotedGrantIndexes } = grantIndexes;
       await messageStore.updateIndexes(alice.did, grant.messageCid, { ...demotedGrantIndexes, isLatestBaseState: false });
       expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(photosProtocol)])).toBe(grantFingerprint);
 
+      const { 'tag.protocol': _encryptionTag, ...demotedAudienceKeyIndexes } = audienceKeyIndexes;
+      await messageStore.updateIndexes(alice.did, audienceKey.messageCid, { ...demotedAudienceKeyIndexes, isLatestBaseState: false });
+      expect(await messageStore.fingerprint(alice.did, [Replication.encryptionDomain(photosProtocol)])).toBe(audienceKeyFingerprint);
+
       await messageStore.delete(alice.did, grant.messageCid);
+      await messageStore.delete(alice.did, audienceKey.messageCid);
       expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(photoFingerprint);
       expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(photosProtocol)])).toBe(ZERO_FINGERPRINT);
+      expect(await messageStore.fingerprint(alice.did, [Replication.encryptionDomain(photosProtocol)])).toBe(ZERO_FINGERPRINT);
     });
 
     it('should fold protocol configs and tombstones into their protocol domain', async () => {
@@ -441,12 +456,15 @@ describe('MessageStoreLevel Test Suite', () => {
         const configIndexes = ProtocolsConfigureHandler.constructIndexes(config.protocolsConfigure, true);
         const photo = await generateStoredMessage({ protocol: photosProtocol });
         const grant = await generateStoredMessage({ protocol: PermissionsProtocol.uri, tags: { protocol: photosProtocol } });
+        const audienceKey = await generateStoredMessage({ protocol: EncryptionProtocol.uri, tags: { protocol: photosProtocol } });
 
         await messageStore.put(alice.did, config.message, configIndexes);
         await messageStore.put(alice.did, photo.message, photo.indexes);
         await messageStore.put(alice.did, grant.message, grant.indexes);
+        await messageStore.put(alice.did, audienceKey.message, audienceKey.indexes);
 
         await peerStore.put(alice.did, grant.message, grant.indexes);
+        await peerStore.put(alice.did, audienceKey.message, audienceKey.indexes);
         await peerStore.put(alice.did, config.message, configIndexes);
         await peerStore.put(alice.did, photo.message, photo.indexes);
 
@@ -454,7 +472,9 @@ describe('MessageStoreLevel Test Suite', () => {
           Replication.globalDomain,
           Replication.protocolDomain(photosProtocol),
           Replication.protocolDomain(PermissionsProtocol.uri),
+          Replication.protocolDomain(EncryptionProtocol.uri),
           Replication.permissionDomain(photosProtocol),
+          Replication.encryptionDomain(photosProtocol),
         ];
 
         for (const scope of scopes) {

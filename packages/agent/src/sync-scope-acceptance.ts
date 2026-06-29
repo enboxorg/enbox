@@ -1,6 +1,6 @@
 import type { GenericMessage, MessageEvent, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
-import { DwnInterfaceName, DwnMethodName, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 import type { SyncScope } from './types/sync.js';
 
@@ -58,8 +58,8 @@ function classifyProtocolSetScope(
     return 'unknown';
   }
 
-  const permissionRecordClassification = classifyTaggedPermissionRecord(scopedDescriptor, scope.protocols);
-  if (permissionRecordClassification !== undefined) { return permissionRecordClassification; }
+  const taggedCoreRecordClassification = classifyTaggedCoreProtocolRecord(scopedDescriptor, scope.protocols);
+  if (taggedCoreRecordClassification !== undefined) { return taggedCoreRecordClassification; }
 
   const protocolClassification = classifyProtocolField(scopedDescriptor.protocol, scope.protocols);
   if (protocolClassification !== undefined) { return protocolClassification; }
@@ -67,11 +67,14 @@ function classifyProtocolSetScope(
   return classifyProtocolsConfigureDescriptor(descriptor, scope.protocols);
 }
 
-function classifyTaggedPermissionRecord(
+function classifyTaggedCoreProtocolRecord(
   descriptor: Record<string, unknown>,
   protocols: readonly string[],
 ): SyncScopeClassification | undefined {
-  if (descriptor.protocol !== PermissionsProtocol.uri || !isRecordObject(descriptor.tags)) {
+  if (
+    (descriptor.protocol !== PermissionsProtocol.uri && descriptor.protocol !== EncryptionProtocol.uri) ||
+    !isRecordObject(descriptor.tags)
+  ) {
     return undefined;
   }
 

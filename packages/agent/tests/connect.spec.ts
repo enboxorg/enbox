@@ -1275,7 +1275,7 @@ describe('enbox connect', () => {
       // Scenario: the agent's safety-fallback installs a protocol whose types
       // declare `encryptionRequired: true`. The LOCAL configure (via
       // `processDwnRequest`) must carry `encryption: true` so the local DWN
-      // derives and injects `$encryption` keys from the owner's X25519 root.
+      // derives and injects `$keyAgreement` keys from the owner's X25519 root.
       // The remote fan-out then re-uses the resulting raw message — no
       // `encryption` flag is needed on the per-endpoint sends.
 

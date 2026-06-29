@@ -1,7 +1,7 @@
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 
 import { describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 import { orderMessagesForAdmission } from '../src/sync-admission-order.js';
 
@@ -323,6 +323,85 @@ describe('orderMessagesForAdmission', () => {
     const result = orderMessagesForAdmission([dependentMsg, otherRole, matchingRole]);
     expect(result.indexOf(matchingRole)).toBeLessThan(result.indexOf(dependentMsg));
     expect(result.includes(otherRole)).toBe(true);
+  });
+
+  it('should place audienceEpoch and role records before audienceKey records', () => {
+    const protocol = 'https://example.com/encrypted-chat';
+    const tags = {
+      protocol,
+      contextId : 'chat-1',
+      role      : 'chat/member',
+      epoch     : 1,
+      keyId     : 'key-1',
+    };
+    const audienceKey: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol     : EncryptionProtocol.uri,
+          protocolPath : EncryptionProtocol.audienceKeyPath,
+          recipient    : 'did:example:bob',
+          tags,
+        }),
+        recordId: 'audience-key',
+      } as unknown as GenericMessage,
+    };
+    const audienceEpoch: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol     : EncryptionProtocol.uri,
+          protocolPath : EncryptionProtocol.audienceEpochPath,
+          tags,
+        }),
+        recordId: 'audience-epoch',
+      } as unknown as GenericMessage,
+    };
+    const role: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol,
+          protocolPath : 'chat/member',
+          recipient    : 'did:example:bob',
+        }),
+        recordId  : 'member-role',
+        contextId : 'chat-1/member-role',
+      } as unknown as GenericMessage,
+    };
+
+    const result = orderMessagesForAdmission([audienceKey, audienceEpoch, role]);
+
+    expect(result.indexOf(audienceEpoch)).toBeLessThan(result.indexOf(audienceKey));
+    expect(result.indexOf(role)).toBeLessThan(result.indexOf(audienceKey));
+  });
+
+  it('should place permission grants before grantKey records', () => {
+    const grant: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol     : PermissionsProtocol.uri,
+          protocolPath : PermissionsProtocol.grantPath,
+        }),
+        recordId: 'grant-rec-id',
+      } as unknown as GenericMessage,
+    };
+    const grantKey: SortEntry = {
+      message: {
+        ...makeMessage({
+          protocol     : EncryptionProtocol.uri,
+          protocolPath : EncryptionProtocol.grantKeyPath,
+          tags         : {
+            grantId  : 'grant-rec-id',
+            protocol : 'https://example.com/encrypted-chat',
+            keyId    : 'key-1',
+          },
+        }),
+        recordId: 'grant-key',
+      } as unknown as GenericMessage,
+    };
+
+    const result = orderMessagesForAdmission([grantKey, grant]);
+
+    expect(result[0]).toBe(grant);
+    expect(result[1]).toBe(grantKey);
   });
 
   it('should handle self-referencing edge (from === to) without infinite loop', () => {

@@ -424,8 +424,8 @@ export class LocalKeyManager implements AgentKeyManager {
 
   /**
    * Unwraps a JWE-encrypted Content Encryption Key (CEK) using a derived X25519 private key.
-   * Performs ECDH-ES key agreement with the ephemeral public key, derives the KEK via
-   * Concat KDF, and unwraps the CEK with AES-256 Key Unwrap.
+   * Performs X25519 key agreement with the ephemeral public key, derives the KEK via
+   * HKDF-SHA256, and unwraps the CEK with AES-256 Key Unwrap.
    */
   public async jweKeyUnwrap({
     keyUri,
@@ -464,7 +464,7 @@ export class LocalKeyManager implements AgentKeyManager {
   /**
    * Derives an HD child private key bytes from a stored private key.
    * Unlike derivePublicKey(), this returns the derived private key bytes.
-   * Used ONLY for context-derived key sharing in multi-party encryption.
+   * Used for scoped decryption-key delivery.
    */
   public async derivePrivateKeyBytes({ keyUri, derivationPath }: {
     keyUri: KeyIdentifier;

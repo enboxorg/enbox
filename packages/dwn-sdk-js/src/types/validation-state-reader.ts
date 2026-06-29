@@ -79,18 +79,17 @@ export interface ValidationStateReader {
   }): Promise<RecordsWriteMessage[]>;
 
   /**
-   * Fetches an accepted audience epoch record for encrypted role-audience delivery.
-   * The match is exact across the application protocol, role audience context, role path,
-   * epoch number, and public key thumbprint.
+   * Queries accepted audience epoch records in the Encryption Protocol.
+   * The optional `keyId` narrows the lookup to one published audience key.
    */
-  fetchAudienceEpoch(input: {
+  queryAudienceEpochs(input: {
     tenant: string;
     protocol: string;
     contextId: string;
     role: string;
     epoch: number;
-    keyId: string;
-  }): Promise<RecordsWriteMessage | undefined>;
+    keyId?: string;
+  }): Promise<RecordsWriteMessage[]>;
 
   /**
    * Fetches the permission grant with the given record ID, with its scope parsed from grant data.

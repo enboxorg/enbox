@@ -1,5 +1,5 @@
+import type { DwnEncryption } from '../utils/encryption.js';
 import type { GeneralJws } from './jws-types.js';
-import type { JweEncryption } from '../utils/encryption.js';
 import type { AuthorizationModel, GenericMessage, GenericMessageReply, GenericSignaturePayload, MessageSubscription, Pagination } from './message-types.js';
 import type { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import type { PaginationCursor, RangeCriterion, RangeFilter, StartsWithFilter } from './query-types.js';
@@ -60,7 +60,7 @@ export type InternalRecordsWriteMessage = GenericMessage & {
   contextId?: string;
   descriptor: RecordsWriteDescriptor;
   attestation?: GeneralJws;
-  encryption?: JweEncryption;
+  encryption?: DwnEncryption;
 };
 
 export type RecordsWriteMessage = {
@@ -69,7 +69,7 @@ export type RecordsWriteMessage = {
   contextId: string;
   descriptor: RecordsWriteDescriptor;
   attestation?: GeneralJws;
-  encryption?: JweEncryption;
+  encryption?: DwnEncryption;
 };
 
 /**

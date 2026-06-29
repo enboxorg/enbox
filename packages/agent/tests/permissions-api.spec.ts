@@ -1686,7 +1686,7 @@ describe('AgentPermissionsApi', () => {
         protocol,
         protocolPath : 'post/comment'
       }, grants);
-      expect(childPathMatch).toBeUndefined();
+      expect(childPathMatch?.message.recordId).toBe(pathGrant.message.recordId);
 
       const wrongProtocolPathMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType  : DwnInterface.MessagesRead,

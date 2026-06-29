@@ -37,8 +37,19 @@
     "derivationPath": {
       "type": "array",
       "minItems": 2,
+      "maxItems": 12,
+      "prefixItems": [
+        {
+          "const": "protocolPath"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ],
       "items": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       }
     },
     "keyId": {

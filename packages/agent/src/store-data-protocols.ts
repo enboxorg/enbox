@@ -23,29 +23,6 @@ export const IdentityProtocolDefinition: ProtocolDefinition = {
   }
 };
 
-export const KeyDeliveryProtocolDefinition: ProtocolDefinition = {
-  protocol  : 'https://identity.foundation/protocols/key-delivery',
-  published : false,
-  types     : {
-    contextKey: {
-      dataFormats: ['application/json']
-    }
-  },
-  structure: {
-    contextKey: {
-      $actions: [
-        { who: 'recipient', of: 'contextKey', can: ['read'] },
-      ],
-      $tags: {
-        $requiredTags       : ['protocol', 'contextId'],
-        $allowUndefinedTags : false,
-        protocol            : { type: 'string' },
-        contextId           : { type: 'string' },
-      },
-    }
-  }
-};
-
 export const JwkProtocolDefinition: ProtocolDefinition = {
   protocol  : 'https://identity.foundation/protocols/web5/jwk-store',
   published : false,

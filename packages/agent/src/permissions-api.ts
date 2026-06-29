@@ -11,6 +11,11 @@ import { DwnInterfaceName, DwnMethodName, PermissionScopeMatcher, PermissionsPro
 
 const REVOCATION_CHECK_CONCURRENCY = 8;
 
+type GrantMatchRank = {
+  exactMessageType: boolean;
+  specificity: number;
+};
+
 export class AgentPermissionsApi implements PermissionsApi {
 
   /** cache for fetching a permission {@link PermissionGrant}, keyed by a specific MessageType and protocol */
@@ -405,10 +410,8 @@ export class AgentPermissionsApi implements PermissionsApi {
     grants: PermissionGrantEntry[],
     delegated: boolean = false
   ): Promise<PermissionGrantEntry | undefined> {
-    // Two-pass matching: prefer exact scope matches over unified read-scope fallbacks.
-    // Messages.Read and Records.Read are canonical scopes for read-like methods, but
-    // the exact-match path preserves normal behavior for non-read-like grants.
-    let unifiedFallback: PermissionGrantEntry | undefined;
+    let bestEntry: PermissionGrantEntry | undefined;
+    let bestRank: GrantMatchRank | undefined;
 
     for (const entry of grants) {
       const { grant, message } = entry;
@@ -418,19 +421,45 @@ export class AgentPermissionsApi implements PermissionsApi {
       const { messageType, protocol, protocolPath, contextId } = messageParams;
 
       if (this.matchScopeFromGrant(grantor, grantee, messageType, grant, protocol, protocolPath, contextId)) {
-        const scopeMessageType = grant.scope.interface + grant.scope.method;
-        // Exact match — return immediately
-        if (scopeMessageType === messageType) {
-          return { grant, message };
-        }
-        // Unified fallback match — hold for later in case an exact match is found
-        if (!unifiedFallback) {
-          unifiedFallback = { grant, message };
+        const rank = AgentPermissionsApi.getGrantMatchRank(messageType, grant);
+        if (bestRank === undefined || AgentPermissionsApi.isGrantMatchRankBetter(rank, bestRank)) {
+          bestEntry = { grant, message };
+          bestRank = rank;
         }
       }
     }
 
-    return unifiedFallback;
+    return bestEntry;
+  }
+
+  private static getGrantMatchRank<T extends DwnInterface>(messageType: T, grant: PermissionGrant): GrantMatchRank {
+    const scopeMessageType = grant.scope.interface + grant.scope.method;
+    return {
+      exactMessageType : scopeMessageType === messageType,
+      specificity      : AgentPermissionsApi.getScopeSpecificity(grant),
+    };
+  }
+
+  private static getScopeSpecificity(grant: PermissionGrant): number {
+    const scope = grant.scope;
+    if ('protocolPath' in scope && typeof scope.protocolPath === 'string') {
+      return 2_000 + scope.protocolPath.split('/').length;
+    }
+    if ('contextId' in scope && typeof scope.contextId === 'string') {
+      return 1_000 + scope.contextId.split('/').length;
+    }
+    if ('protocol' in scope && typeof scope.protocol === 'string') {
+      return 1;
+    }
+    return 0;
+  }
+
+  private static isGrantMatchRankBetter(candidate: GrantMatchRank, current: GrantMatchRank): boolean {
+    if (candidate.exactMessageType !== current.exactMessageType) {
+      return candidate.exactMessageType;
+    }
+
+    return candidate.specificity > current.specificity;
   }
 
   private static matchScopeFromGrant<T extends DwnInterface>(

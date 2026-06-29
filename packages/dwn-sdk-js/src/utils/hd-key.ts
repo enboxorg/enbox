@@ -6,9 +6,7 @@ import { X25519 } from '@enbox/crypto';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export enum KeyDerivationScheme {
-  ProtocolContext = 'protocolContext',
   ProtocolPath = 'protocolPath',
-  RoleAudience = 'roleAudience',
 }
 
 export type DerivedPrivateJwk = {

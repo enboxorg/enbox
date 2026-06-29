@@ -14,7 +14,7 @@ import type { RecordsCountOptions } from '../../src/interfaces/records-count.js'
 import type { RecordsQueryOptions } from '../../src/interfaces/records-query.js';
 import type { RecordsSubscribeOptions } from '../../src/interfaces/records-subscribe.js';
 import type { AuthorizationModel, Pagination } from '../../src/types/message-types.js';
-import type { CreateFromOptions, EncryptionInput, KeyEncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
+import type { CreateFromOptions, EncryptionInput, ProtocolPathKeyEncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
 import type { DataEncodedRecordsWriteMessage, DateSort, RecordsCountMessage, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsWriteTags } from '../../src/types/records-types.js';
 import type { MessagesFilter, MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../../src/types/messages-types.js';
 import type { PermissionConditions, PermissionScope } from '../../src/types/permission-types.js';
@@ -324,7 +324,7 @@ export class TestDataGenerator {
     // generate persona signing key pair if not given (secp256k1 for ES256K signatures)
     const keyPair = input?.keyPair ?? await Secp256k1.generateKeyPair();
 
-    // generate persona encryption key pair if not given (X25519 for ECDH-ES key agreement)
+    // generate persona encryption key pair if not given (X25519 for DWN encryption)
     let encryptionKeyPair = input?.encryptionKeyPair;
     if (!encryptionKeyPair) {
       const encPrivateKey = await X25519.generateKey();
@@ -547,8 +547,6 @@ export class TestDataGenerator {
    * @param input.encryptSymmetricKeyWithProtocolPathDerivedKey
    *        Set to `true` to attach the symmetric key encrypted by the protocol path derived public key
    *
-   * @param input.encryptSymmetricKeyWithProtocolContextDerivedKey
-   *        Set to `true` to attach the symmetric key encrypted by the protocol context derived public key
    */
   public static async generateProtocolEncryptedRecordsWrite(input: {
     plaintextBytes: Uint8Array,
@@ -557,16 +555,7 @@ export class TestDataGenerator {
     protocolDefinition: ProtocolDefinition,
     protocolPath: string,
     protocolParentContextId?: string,
-    protocolContextDerivingRootKeyId?: string,
-    protocolContextDerivedPublicKeyJwk?: PublicKeyJwk,
     encryptSymmetricKeyWithProtocolPathDerivedKey: boolean,
-    encryptSymmetricKeyWithProtocolContextDerivedKey: boolean,
-    roleAudienceKeyEncryptionInputs?: Array<{
-      protocol: string;
-      role: string;
-      epoch: number;
-      publicKey: PublicKeyJwk;
-    }>,
   }): Promise<{
     message: RecordsWriteMessage;
     dataStream: ReadableStream<Uint8Array>;
@@ -581,8 +570,6 @@ export class TestDataGenerator {
       protocolDefinition,
       protocolPath,
       protocolParentContextId,
-      protocolContextDerivingRootKeyId,
-      protocolContextDerivedPublicKeyJwk,
     } = input;
 
     // encrypt the plaintext data for the target with a randomly generated symmetric key
@@ -623,28 +610,13 @@ export class TestDataGenerator {
       }
 
       const protocolPathDerivedPublicKeyJwk = protocolRuleSetSegment.$keyAgreement?.publicKeyJwk;
-      const protocolPathDerivedKeyEncryptionInput: KeyEncryptionInput = {
+      const protocolPathDerivedKeyEncryptionInput: ProtocolPathKeyEncryptionInput = {
         keyId            : await Encryption.getKeyId(protocolPathDerivedPublicKeyJwk!),
         publicKey        : protocolPathDerivedPublicKeyJwk!,
         derivationScheme : KeyDerivationScheme.ProtocolPath
       };
 
       encryptionInput.keyEncryptionInputs.push(protocolPathDerivedKeyEncryptionInput);
-    }
-
-    void protocolContextDerivingRootKeyId;
-    void protocolContextDerivedPublicKeyJwk;
-    void input.encryptSymmetricKeyWithProtocolContextDerivedKey;
-
-    for (const roleAudienceInput of input.roleAudienceKeyEncryptionInputs ?? []) {
-      encryptionInput.keyEncryptionInputs.push({
-        derivationScheme : KeyDerivationScheme.RoleAudience,
-        epoch            : roleAudienceInput.epoch,
-        keyId            : await Encryption.getKeyId(roleAudienceInput.publicKey),
-        protocol         : roleAudienceInput.protocol,
-        publicKey        : roleAudienceInput.publicKey,
-        role             : roleAudienceInput.role,
-      });
     }
 
     await recordsWrite.encryptSymmetricEncryptionKey(encryptionInput);

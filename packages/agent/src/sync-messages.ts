@@ -32,6 +32,7 @@ import {
   dependencyKey,
   hasTerminalDependency,
   isTenantProtocolConfig,
+  matchesEncryptionProtocolDependency,
   missingDependencyDetail,
   newestProtocolConfig,
   resolveDelegatePermissionGrantId,
@@ -720,7 +721,7 @@ class RemoteApplyPushContext {
       case 'RecordData':
         return this.fetchRecordData(ref);
       case 'EncryptionProtocol':
-        return { kind: 'fetched', entries: [] };
+        return this.fetchEncryptionProtocolRecord(ref);
       default:
         return unreachable(ref);
     }
@@ -834,6 +835,39 @@ class RemoteApplyPushContext {
     return { kind: 'fetched', entries: await this.entriesFromRecordsQueryEntries(recordsReply.entries) };
   }
 
+  private async fetchEncryptionProtocolRecord(ref: Extract<DependencyRef, { type: 'EncryptionProtocol' }>): Promise<FetchDependencyResult> {
+    const protocol = typeof ref.tags?.protocol === 'string' ? ref.tags.protocol : undefined;
+    if (protocol === undefined) {
+      return { kind: 'failed', detail: `encryption protocol dependency is missing protocol tag` };
+    }
+
+    const reply = await queryLocalMessageFeed({
+      did                : this.deps.did,
+      delegateDid        : this.deps.delegateDid,
+      permissionGrantIds : this.deps.permissionGrantIds,
+      filters            : [{ protocol }],
+      agent              : this.deps.agent,
+    });
+    if (reply.status.code !== 200 || reply.entries === undefined) {
+      return {
+        kind   : 'failed',
+        detail : `local encryption protocol feed query failed for ${protocol}: ${reply.status.code} ${reply.status.detail ?? ''}`,
+      };
+    }
+
+    const entries: SyncMessageEntry[] = [];
+    for (const entry of reply.entries) {
+      if (!matchesEncryptionProtocolDependency(entry.message, ref)) {
+        continue;
+      }
+
+      entries.push(await this.entryForMessageFeedEntry(entry));
+    }
+
+    await this.rememberEntries(entries);
+    return { kind: 'fetched', entries };
+  }
+
   private async fetchRecordData(ref: Extract<DependencyRef, { type: 'RecordData' }>): Promise<FetchDependencyResult> {
     const permissionGrantId = ref.protocol === undefined
       ? undefined
@@ -890,6 +924,40 @@ class RemoteApplyPushContext {
     const dedupedEntries = await dedupeEntries(entries);
     await this.rememberEntries(dedupedEntries);
     return dedupedEntries;
+  }
+
+  private async entryForMessageFeedEntry(entry: NonNullable<MessagesQueryReply['entries']>[number]): Promise<SyncMessageEntry> {
+    if (entry.message === undefined) {
+      throw new Error(`SyncEngineLevel: local feed entry ${entry.messageCid} did not include a message.`);
+    }
+
+    const messageWithEncodedData = { ...entry.message } as GenericMessage & { encodedData?: string };
+    const encodedData = entry.encodedData ?? messageWithEncodedData.encodedData;
+    delete messageWithEncodedData.encodedData;
+
+    const syncEntry: SyncMessageEntry = {
+      message           : messageWithEncodedData,
+      isLatestBaseState : entry.isLatestBaseState,
+    };
+    if (encodedData !== undefined) {
+      syncEntry.bufferedData = Encoder.base64UrlToBytes(encodedData);
+      return syncEntry;
+    }
+
+    if (isRecordsWriteMessage(messageWithEncodedData) && messageWithEncodedData.descriptor.dataCid !== undefined) {
+      const hydrated = await getLocalMessage({
+        author             : this.deps.did,
+        delegateDid        : this.deps.delegateDid,
+        permissionGrantIds : this.deps.permissionGrantIds,
+        messageCid         : entry.messageCid,
+        agent              : this.deps.agent,
+      });
+      if (hydrated !== undefined) {
+        return hydrated;
+      }
+    }
+
+    return syncEntry;
   }
 
   private async entryForRecordsQueryMessage(message: GenericMessage, encodedData?: string): Promise<SyncMessageEntry> {

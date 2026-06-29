@@ -59,7 +59,7 @@ export type FetchGrantsRequest = Omit<FetchPermissionsParams, 'author' | 'target
  * This request type is used to specify the configuration options for the protocol.
  */
 export type ProtocolsConfigureRequest = Omit<DwnMessageParams[DwnInterface.ProtocolsConfigure], 'signer'> & {
-  /** When true, derives and injects $encryption public keys into the protocol definition. */
+  /** When true, derives and injects $keyAgreement public keys into the protocol definition. */
   encryption?: boolean;
 };
 
@@ -195,7 +195,7 @@ export type RecordsSubscribeResponse = DwnResponseStatus & {
  * additional message parameters required for the write operation, and an optional flag to indicate
  * whether the record should be immediately stored.
  */
-export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.RecordsWrite]>, 'signer' | 'data' | 'protocol' | 'protocolPath'> &
+export type RecordsWriteRequest = Omit<Partial<DwnMessageParams[DwnInterface.RecordsWrite]>, 'signer' | 'data' | 'protocol' | 'protocolPath' | 'encryption'> &
   Pick<DwnMessageParams[DwnInterface.RecordsWrite], 'protocol' | 'protocolPath'> & {
   /** The data payload for the record, which can be of any type. */
   data: unknown;

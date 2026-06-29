@@ -82,9 +82,9 @@ export type ConnectPermissionGrantOptions = {
  *   Can derive leaf keys for any type path within the protocol.
  *   Issued when the grant covers the entire protocol (no `protocolPath`).
  *
- * - **`protocolPath`** — exact-path key at depth
+ * - **`protocolPath`** — path-subtree key at depth
  *   `[ProtocolPath, protocolUri, ...pathSegments]`.
- *   Can only decrypt records at that exact path — not siblings or descendants.
+ *   Can decrypt records at that path and descendant paths.
  *   Issued when the grant is narrowed to a specific `protocolPath`.
  *
  * Common conditions (both kinds):
@@ -106,8 +106,8 @@ export type DelegateDecryptionKey =
   | {
     /** The protocol URI this key is scoped to. */
     protocol: string;
-    /** Exact-path decryption scope — siblings and descendants are NOT accessible. */
-    scope: { kind: 'protocolPath'; protocolPath: string; match: 'exact' };
+    /** Protocol-path subtree decryption scope. */
+    scope: { kind: 'protocolPath'; protocolPath: string };
     /** The derived private key material for ProtocolPath decryption. */
     derivedPrivateKey: DerivedPrivateJwk;
   };
@@ -1138,7 +1138,7 @@ async function prepareProtocol(
  *   - Write / Delete / Count scopes produce no decryption keys.
  *   - If any unrestricted (no `protocolPath`) read scope exists, one
  *     protocol-wide key is emitted and narrower keys are dropped.
- *   - Otherwise one exact-path key is emitted per unique `protocolPath`.
+ *   - Otherwise one subtree key is emitted per unique `protocolPath`.
  *   - Scopes with `contextId` cause a fail-closed error.
  *
  * @param agent - The platform agent (must hold the owner's KMS keys)
@@ -1201,7 +1201,7 @@ async function deriveScopedDecryptionKeys(
   }
 
   // All read scopes are protocolPath-scoped.
-  // Emit one exact-path key per unique protocolPath.
+  // Emit one subtree key per unique protocolPath.
   const uniquePaths = new Set<string>();
   for (const scope of readScopes) {
     if (scope.protocolPath) { uniquePaths.add(scope.protocolPath); }
@@ -1218,7 +1218,7 @@ async function deriveScopedDecryptionKeys(
 
     keys.push({
       protocol          : protocolUri,
-      scope             : { kind: 'protocolPath', protocolPath, match: 'exact' },
+      scope             : { kind: 'protocolPath', protocolPath },
       derivedPrivateKey : {
         rootKeyId         : keyId,
         derivationScheme  : KeyDerivationScheme.ProtocolPath,
@@ -1293,7 +1293,7 @@ async function submitConnectResponse(
     delegatePortableDid.privateKeys!.push(delegateX25519PrivateKey);
 
     // Derive scope-aware decryption keys for encrypted protocols.
-    // ProtocolPath keys are either protocol-wide or exact-path.
+    // ProtocolPath keys are either protocol-wide or path-subtree.
     // Write-only delegates receive no decryption capability.
     const delegateDecryptionKeys: DelegateDecryptionKey[] = [];
 

@@ -494,7 +494,10 @@ export class Dwn {
     reply: { status: { detail?: string } },
   ): Promise<ProtocolDefinition | undefined> {
     const detail = reply.status.detail ?? '';
-    if (!detail.startsWith(`${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}:`)) {
+    if (
+      !detail.startsWith(`${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}:`) &&
+      !detail.startsWith(`${DwnErrorCode.EncryptionProtocolValidateAudienceWriterUnauthorized}:`)
+    ) {
       return undefined;
     }
 
@@ -518,6 +521,14 @@ export class Dwn {
     message: GenericMessage,
   ): ReplicationApplyProtocolDefinitionLookup | undefined {
     if (Dwn.isRecordsWriteMessage(message)) {
+      const taggedProtocol = Dwn.getEncryptionRecordTaggedProtocol(message);
+      if (taggedProtocol !== undefined) {
+        return {
+          protocol         : taggedProtocol,
+          messageTimestamp : message.descriptor.messageTimestamp,
+        };
+      }
+
       return {
         protocol         : message.descriptor.protocol,
         messageTimestamp : message.descriptor.messageTimestamp,
@@ -526,6 +537,15 @@ export class Dwn {
 
     const protocol = Dwn.getMessageProtocolForReplicationApply(message);
     return protocol === undefined ? undefined : { protocol };
+  }
+
+  private static getEncryptionRecordTaggedProtocol(message: RecordsWriteMessage): string | undefined {
+    if (message.descriptor.protocol !== EncryptionProtocol.uri) {
+      return undefined;
+    }
+
+    const protocol = message.descriptor.tags?.protocol;
+    return typeof protocol === 'string' ? protocol : undefined;
   }
 
   private static getMessageProtocolForReplicationApply(message: GenericMessage): string | undefined {

@@ -6,6 +6,7 @@ import { AesCtr, AesKw, computeJwkThumbprint, Hkdf, X25519 } from '@enbox/crypto
 
 import { Encoder } from './encoder.js';
 import { KeyDerivationScheme } from './hd-key.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export enum ContentEncryptionAlgorithm {
   A256CTR = 'A256CTR',
@@ -14,6 +15,8 @@ export enum ContentEncryptionAlgorithm {
 export enum KeyAgreementAlgorithm {
   X25519HkdfSha256A256Kw = 'X25519-HKDF-SHA256+A256KW',
 }
+
+export const ROLE_AUDIENCE_DERIVATION_SCHEME = 'roleAudience';
 
 const AES_256_KEY_LENGTH_BYTES = 32;
 const AES_CTR_COUNTER_LENGTH_BYTES = 16;
@@ -31,7 +34,7 @@ export type ProtocolPathKeyEncryption = {
 export type RoleAudienceKeyEncryption = {
   algorithm: KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
   keyId: string;
-  derivationScheme: KeyDerivationScheme.RoleAudience;
+  derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
   protocol: string;
   role: string;
   epoch: number;
@@ -56,7 +59,7 @@ export type ProtocolPathKeyEncryptionInput = {
 export type RoleAudienceKeyEncryptionInput = {
   keyId: string;
   publicKey: PublicKeyJwk;
-  derivationScheme: KeyDerivationScheme.RoleAudience;
+  derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
   protocol: string;
   role: string;
   epoch: number;
@@ -75,22 +78,6 @@ export type KeyUnwrapPayload = {
   encryptedKey: Uint8Array;
   ephemeralPublicKey: PublicKeyJwk;
   keyEncryption: KeyEncryption;
-};
-
-export type JweKeyUnwrapPayload = KeyUnwrapPayload;
-export type JweEncryption = DwnEncryption;
-export type JweProtectedHeader = {
-  alg: KeyAgreementAlgorithm;
-  enc: ContentEncryptionAlgorithm;
-};
-export type JweRecipientHeader = {
-  derivationScheme: KeyDerivationScheme;
-  epk?: PublicKeyJwk;
-  kid?: string;
-};
-export type JweRecipient = {
-  encrypted_key?: string;
-  header: JweRecipientHeader;
 };
 
 export class Encryption {
@@ -206,19 +193,18 @@ export class Encryption {
         ephemeralPublicKey,
         keyId        : keyInput.keyId,
       };
-
-      if (keyInput.derivationScheme === KeyDerivationScheme.RoleAudience) {
+      if (keyInput.derivationScheme === KeyDerivationScheme.ProtocolPath) {
         keyEncryption.push({
           ...common,
-          derivationScheme : KeyDerivationScheme.RoleAudience,
-          epoch            : keyInput.epoch,
-          protocol         : keyInput.protocol,
-          role             : keyInput.role,
+          derivationScheme: KeyDerivationScheme.ProtocolPath,
         });
       } else {
         keyEncryption.push({
           ...common,
-          derivationScheme: KeyDerivationScheme.ProtocolPath,
+          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          epoch            : keyInput.epoch,
+          protocol         : keyInput.protocol,
+          role             : keyInput.role,
         });
       }
     }
@@ -234,11 +220,23 @@ export class Encryption {
     return computeJwkThumbprint({ jwk: publicKeyJwk });
   }
 
-  public static parseProtectedHeader(_protectedBase64url: string): JweProtectedHeader {
-    return {
-      alg : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-      enc : ContentEncryptionAlgorithm.A256CTR,
-    };
+  public static validateEncryptionProperty(encryption: DwnEncryption): void {
+    const initializationVector = Encoder.base64UrlToBytes(encryption.initializationVector);
+    if (initializationVector.byteLength !== AES_CTR_COUNTER_LENGTH_BYTES) {
+      throw new DwnError(
+        DwnErrorCode.RecordsWriteValidateIntegrityEncryptionInitializationVectorInvalid,
+        `A256CTR initializationVector must decode to ${AES_CTR_COUNTER_LENGTH_BYTES} bytes.`
+      );
+    }
+
+    for (const entry of encryption.keyEncryption) {
+      if (entry.ephemeralPublicKey.kty !== 'OKP' || entry.ephemeralPublicKey.crv !== 'X25519') {
+        throw new DwnError(
+          DwnErrorCode.RecordsWriteValidateIntegrityEncryptionEphemeralPublicKeyInvalid,
+          'ephemeralPublicKey must be an OKP X25519 public key.'
+        );
+      }
+    }
   }
 
   private static async deriveKek(
@@ -257,7 +255,7 @@ export class Encryption {
   }
 
   private static getKekInfo(keyEncryption: KeyEncryptionInput | KeyEncryption): string {
-    if (keyEncryption.derivationScheme === KeyDerivationScheme.RoleAudience) {
+    if (keyEncryption.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME) {
       return `${KEK_INFO_PREFIX}|roleAudience|${keyEncryption.protocol}|${keyEncryption.role}|${keyEncryption.epoch}|${keyEncryption.keyId}`;
     }
 

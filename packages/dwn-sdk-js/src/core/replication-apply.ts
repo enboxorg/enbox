@@ -5,7 +5,9 @@ import type { ValidationStateReader } from '../types/validation-state-reader.js'
 
 import { DwnErrorCode } from './dwn-error.js';
 import { Encoder } from '../utils/encoder.js';
+import { EncryptionProtocol } from '../protocols/encryption.js';
 import { Message } from './message.js';
+import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 
@@ -38,6 +40,14 @@ export type ReplicationApplyResultContext = {
    * single fetch pass instead of one ancestry level per retry.
    */
   missingAncestorRecordIds?: string[];
+};
+
+type AudienceDependencyTags = {
+  protocol: string;
+  contextId: string;
+  role: string;
+  epoch: number;
+  keyId: string;
 };
 
 export type DependencyRef =
@@ -187,7 +197,14 @@ function dependencyRefsFromStatus(
   case DwnErrorCode.GrantAuthorizationGrantMissing:
     return toRefList(grantDependencyFromMessage(message));
   case DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound:
+  case DwnErrorCode.EncryptionProtocolValidateAudienceWriterUnauthorized:
     return toRefList(roleDependencyFromMessage(message, context));
+  case DwnErrorCode.EncryptionProtocolValidateAudienceEpochMissing:
+    return toRefList(encryptionProtocolDependencyFromMessage(message, EncryptionProtocol.audienceEpochPath));
+  case DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing:
+    return toRefList(encryptionProtocolDependencyFromRoleAudienceEntry(message, detail));
+  case DwnErrorCode.EncryptionProtocolValidateAudienceKeyRoleRecordMissing:
+    return toRefList(roleDependencyFromEncryptionAudienceRecipient(message));
   case DwnErrorCode.RecordsWriteMissingDataInPrevious:
   case DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious:
     return toRefList(recordDataDependencyFromMessage(message));
@@ -221,7 +238,7 @@ function protocolDependencyFromMessage(message: GenericMessage, detail: string):
     return { type: 'Protocol', protocol: composedProtocol };
   }
 
-  const protocol = (message.descriptor as Record<string, unknown>).protocol;
+  const protocol = dependencyProtocolFromMessage(message);
   return typeof protocol === 'string' ? { type: 'Protocol', protocol } : undefined;
 }
 
@@ -242,7 +259,7 @@ function parentDependenciesFromMessage(
     return [];
   }
 
-  const protocol = (message.descriptor as Record<string, unknown>).protocol;
+  const protocol = dependencyProtocolFromMessage(message);
   const protocolProperty = typeof protocol === 'string' ? { protocol } : {};
   const ancestorRefs = (context.missingAncestorRecordIds ?? [])
     .filter((recordId): boolean => recordId !== parentRef.recordId)
@@ -255,9 +272,8 @@ function parentDependencyFromMessage(
   message: GenericMessage,
   detail: string,
 ): Extract<DependencyRef, { type: 'Parent' }> | undefined {
-  const descriptor = message.descriptor as Record<string, unknown>;
   const parentId = parentRecordIdFromMessage(message, detail);
-  const protocol = /in protocol '([^']+)'/.exec(detail)?.[1] ?? descriptor.protocol;
+  const protocol = /in protocol '([^']+)'/.exec(detail)?.[1] ?? dependencyProtocolFromMessage(message);
 
   if (parentId === undefined || typeof protocol !== 'string') {
     return undefined;
@@ -285,7 +301,7 @@ function ancestorDependenciesFromMessage(
   detail: string,
   context: ReplicationApplyResultContext,
 ): DependencyRef[] {
-  const protocol = (message.descriptor as Record<string, unknown>).protocol;
+  const protocol = dependencyProtocolFromMessage(message);
   const protocolProperty = typeof protocol === 'string' ? { protocol } : {};
 
   const batchedRecordIds = context.missingAncestorRecordIds;
@@ -310,7 +326,7 @@ function initialWriteDependencyFromMessage(message: GenericMessage): DependencyR
     return undefined;
   }
 
-  const protocol = (message.descriptor as Record<string, unknown>).protocol;
+  const protocol = dependencyProtocolFromMessage(message);
   return {
     type     : 'InitialWrite',
     recordId : message.recordId,
@@ -319,6 +335,14 @@ function initialWriteDependencyFromMessage(message: GenericMessage): DependencyR
 }
 
 function grantDependencyFromMessage(message: GenericMessage): DependencyRef | undefined {
+  if (isEncryptionProtocolMessage(message)) {
+    const tags = (message.descriptor as Record<string, unknown>).tags;
+    const grantId = isRecordObject(tags) ? tags.grantId : undefined;
+    if (typeof grantId === 'string') {
+      return { type: 'Grant', permissionGrantId: grantId };
+    }
+  }
+
   const descriptorGrantId = (message.descriptor as Record<string, unknown>).permissionGrantId;
   if (typeof descriptorGrantId === 'string') {
     return { type: 'Grant', permissionGrantId: descriptorGrantId };
@@ -337,7 +361,7 @@ function recordDataDependencyFromMessage(message: GenericMessage): DependencyRef
 
   const descriptor = message.descriptor as Record<string, unknown>;
   const dataCid = descriptor.dataCid;
-  const protocol = descriptor.protocol;
+  const protocol = dependencyProtocolFromMessage(message);
   return typeof dataCid === 'string'
     ? {
       type     : 'RecordData',
@@ -349,6 +373,11 @@ function recordDataDependencyFromMessage(message: GenericMessage): DependencyRef
 }
 
 function roleDependencyFromMessage(message: GenericMessage, context: ReplicationApplyResultContext): DependencyRef | undefined {
+  const encryptionRoleDependency = roleDependencyFromEncryptionAudienceWriter(message, context);
+  if (encryptionRoleDependency !== undefined) {
+    return encryptionRoleDependency;
+  }
+
   const descriptor = message.descriptor as Record<string, unknown>;
   const filter = descriptor.filter as Record<string, unknown> | undefined;
   const protocol = descriptor.protocol ?? filter?.protocol;
@@ -388,6 +417,184 @@ function roleDependencyFromMessage(message: GenericMessage, context: Replication
     recipient,
     ...(contextPrefix === undefined ? {} : { contextPrefix }),
   };
+}
+
+function encryptionProtocolDependencyFromMessage(
+  message: GenericMessage,
+  protocolPath: Extract<DependencyRef, { type: 'EncryptionProtocol' }>['protocolPath'],
+): DependencyRef | undefined {
+  const tags = encryptionAudienceTagsFromMessage(message);
+  return tags === undefined
+    ? undefined
+    : { type: 'EncryptionProtocol', protocolPath, tags };
+}
+
+function encryptionProtocolDependencyFromRoleAudienceEntry(
+  message: GenericMessage,
+  detail: string,
+): DependencyRef | undefined {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  const messageContextId = (message as { contextId?: unknown }).contextId;
+  const contextId = typeof messageContextId === 'string' ? messageContextId : descriptor.contextId;
+  const keyEncryption = (message as {
+    encryption?: {
+      keyEncryption?: Record<string, unknown>[];
+    };
+  }).encryption?.keyEncryption;
+  if (typeof contextId !== 'string' || !Array.isArray(keyEncryption)) {
+    return undefined;
+  }
+
+  const missingRole = /role '([^']+)'/.exec(detail)?.[1];
+  const entry = keyEncryption.find((candidate): boolean =>
+    candidate.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
+    typeof candidate.protocol === 'string' &&
+    typeof candidate.role === 'string' &&
+    (missingRole === undefined || candidate.role === missingRole) &&
+    typeof candidate.epoch === 'number' &&
+    typeof candidate.keyId === 'string'
+  );
+  if (entry === undefined) {
+    return undefined;
+  }
+
+  const role = entry.role as string;
+  const audienceContextId = roleAudienceContextId(role, contextId);
+  if (audienceContextId === undefined) {
+    return undefined;
+  }
+
+  return {
+    type         : 'EncryptionProtocol',
+    protocolPath : EncryptionProtocol.audienceEpochPath,
+    tags         : {
+      protocol  : entry.protocol as string,
+      contextId : audienceContextId,
+      role,
+      epoch     : entry.epoch as number,
+      keyId     : entry.keyId as string,
+    },
+  };
+}
+
+function roleDependencyFromEncryptionAudienceRecipient(message: GenericMessage): DependencyRef | undefined {
+  const tags = encryptionAudienceTagsFromMessage(message);
+  const recipient = (message.descriptor as Record<string, unknown>).recipient;
+  if (tags === undefined || typeof recipient !== 'string') {
+    return undefined;
+  }
+
+  return {
+    type         : 'Role',
+    protocol     : tags.protocol,
+    protocolPath : tags.role,
+    recipient,
+    ...(tags.contextId === '' ? {} : { contextPrefix: tags.contextId }),
+  };
+}
+
+function roleDependencyFromEncryptionAudienceWriter(
+  message: GenericMessage,
+  context: ReplicationApplyResultContext,
+): DependencyRef | undefined {
+  const tags = encryptionAudienceTagsFromMessage(message);
+  const protocolRole = getSignaturePayload(message)?.protocolRole;
+  const recipient = Message.getAuthor(message);
+  if (tags === undefined || typeof protocolRole !== 'string' || recipient === undefined) {
+    return undefined;
+  }
+
+  let roleProtocol = tags.protocol;
+  let roleProtocolPath = protocolRole;
+  if (isCrossProtocolRef(protocolRole)) {
+    const parsed = parseCrossProtocolRef(protocolRole);
+    const referencedProtocol = parsed === undefined ? undefined : context.protocolDefinition?.uses?.[parsed.alias];
+    if (parsed === undefined || referencedProtocol === undefined) {
+      return undefined;
+    }
+
+    roleProtocol = referencedProtocol;
+    roleProtocolPath = parsed.protocolPath;
+  }
+
+  const contextPrefix = roleContextPrefix(roleProtocolPath, tags.contextId);
+  return {
+    type         : 'Role',
+    protocol     : roleProtocol,
+    protocolPath : roleProtocolPath,
+    recipient,
+    ...(contextPrefix === undefined ? {} : { contextPrefix }),
+  };
+}
+
+function encryptionAudienceTagsFromMessage(message: GenericMessage): AudienceDependencyTags | undefined {
+  if (!isEncryptionProtocolMessage(message)) {
+    return undefined;
+  }
+
+  const tags = (message.descriptor as Record<string, unknown>).tags;
+  if (!isRecordObject(tags)) {
+    return undefined;
+  }
+
+  const { protocol, contextId, role, epoch, keyId } = tags;
+  if (
+    typeof protocol !== 'string' ||
+    typeof contextId !== 'string' ||
+    typeof role !== 'string' ||
+    typeof epoch !== 'number' ||
+    typeof keyId !== 'string'
+  ) {
+    return undefined;
+  }
+
+  return { protocol, contextId, role, epoch, keyId };
+}
+
+function dependencyProtocolFromMessage(message: GenericMessage): string | undefined {
+  if (isEncryptionProtocolMessage(message)) {
+    const tags = (message.descriptor as Record<string, unknown>).tags;
+    const protocol = isRecordObject(tags) ? tags.protocol : undefined;
+    return typeof protocol === 'string' ? protocol : undefined;
+  }
+
+  const descriptor = message.descriptor as Record<string, unknown>;
+  const filter = descriptor.filter as Record<string, unknown> | undefined;
+  const protocol = descriptor.protocol ?? filter?.protocol;
+  return typeof protocol === 'string' ? protocol : undefined;
+}
+
+function isEncryptionProtocolMessage(message: GenericMessage): boolean {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  return descriptor.interface === DwnInterfaceName.Records &&
+    descriptor.protocol === EncryptionProtocol.uri;
+}
+
+function roleContextPrefix(rolePath: string, contextId: string): string | undefined {
+  const roleSegments = rolePath.split('/').length - 1;
+  if (roleSegments === 0 || contextId === '') {
+    return undefined;
+  }
+
+  return contextId.split('/').slice(0, roleSegments).join('/');
+}
+
+function roleAudienceContextId(rolePath: string, contextId: string): string | undefined {
+  const roleSegments = rolePath.split('/').length - 1;
+  if (roleSegments === 0) {
+    return '';
+  }
+
+  const contextSegments = contextId.split('/');
+  if (contextSegments.length < roleSegments) {
+    return undefined;
+  }
+
+  return contextSegments.slice(0, roleSegments).join('/');
+}
+
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function isRecordsWrite(message: GenericMessage): message is GenericMessage & { recordId: string } {

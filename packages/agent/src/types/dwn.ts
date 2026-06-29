@@ -58,7 +58,7 @@ import {
  * verification methods, not from the service entry.
  *
  * The `enc` and `sig` properties are optional legacy fields that may be present on existing
- * DID documents for backward compatibility. New implementations should resolve keys from the
+ * DID documents. New implementations should resolve keys from the
  * DID document's verification methods by purpose (`keyAgreement` for encryption,
  * `authentication`/`assertionMethod` for signing).
  *

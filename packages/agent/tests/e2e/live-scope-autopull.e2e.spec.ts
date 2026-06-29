@@ -265,7 +265,6 @@ describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => 
     // Register the agent DID for recovery-scope sync and start live mode on both
     // wallets, exactly as the wallet does — no manual pulls anywhere.
     for (const wallet of [walletA, walletB]) {
-      await wallet.agent.dwn.ensureKeyDeliveryProtocol(wallet.agent.agentDid.uri);
       await wallet.agent.sync.registerIdentity({
         did     : wallet.agent.agentDid.uri,
         options : { protocols: agentDidSyncProtocols },

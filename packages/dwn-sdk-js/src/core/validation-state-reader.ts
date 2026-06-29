@@ -7,11 +7,10 @@ import type { ValidationStateReader } from '../types/validation-state-reader.js'
 import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
 import type { ProtocolDefinition, ProtocolsConfigureMessage } from '../types/protocols-types.js';
 
-import { EncryptionProtocol } from '../protocols/encryption.js';
+import { ENCRYPTION_PROTOCOL_URI } from './constants.js';
 import { FilterUtility } from '../utils/filter.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
-import { Records } from '../utils/records.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
@@ -168,35 +167,32 @@ export class StoreValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
-  public async fetchAudienceEpoch(input: {
+  public async queryAudienceEpochs(input: {
     tenant: string;
     protocol: string;
     contextId: string;
     role: string;
     epoch: number;
-    keyId: string;
-  }): Promise<RecordsWriteMessage | undefined> {
+    keyId?: string;
+  }): Promise<RecordsWriteMessage[]> {
     const filter: Filter = {
       interface         : DwnInterfaceName.Records,
-      isLatestBaseState : true,
       method            : DwnMethodName.Write,
-      protocol          : EncryptionProtocol.uri,
-      protocolPath      : EncryptionProtocol.audienceEpochPath,
-      ...Records.convertTagsFilter({
-        keyId: input.keyId,
-      }),
+      isLatestBaseState : true,
+      protocol          : ENCRYPTION_PROTOCOL_URI,
+      protocolPath      : 'audienceEpoch',
+      'tag.protocol'    : input.protocol,
+      'tag.contextId'   : input.contextId,
+      'tag.role'        : input.role,
+      'tag.epoch'       : input.epoch,
     };
 
-    const { messages } = await this.messageStore.query(input.tenant, [filter]);
+    if (input.keyId !== undefined) {
+      filter['tag.keyId'] = input.keyId;
+    }
 
-    return (messages as RecordsWriteMessage[]).find((message) => {
-      const tags = message.descriptor.tags;
-      return tags?.contextId === input.contextId &&
-        tags?.epoch === input.epoch &&
-        tags?.keyId === input.keyId &&
-        tags?.protocol === input.protocol &&
-        tags?.role === input.role;
-    });
+    const { messages } = await this.messageStore.query(input.tenant, [filter]);
+    return messages as RecordsWriteMessage[];
   }
 
   /** @inheritdoc */

@@ -10,9 +10,9 @@ import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { Protocol } from '../src/protocol.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { TypedEnbox } from '../src/typed-enbox.js';
 import { TypedLiveQuery } from '../src/typed-live-query.js';
 import { TypedRecord } from '../src/typed-record.js';
+import { definitionsEqual, TypedEnbox } from '../src/typed-enbox.js';
 
 // ---------------------------------------------------------------------------
 // Test protocol definition
@@ -853,6 +853,15 @@ describe('TypedProtocol API', () => {
           const result = await modifiedTyped.configure();
           // Should return 202 because the definition changed (new type added).
           expect(result.status.code).toBe(202);
+        });
+
+        it('should ignore injected key agreement metadata', () => {
+          const installedDefinition = structuredClone(TodoProtocolDefinition);
+          installedDefinition.structure.list.$keyAgreement = {
+            publicKeyJwk: { crv: 'X25519', kty: 'OKP', x: 'mock-key' },
+          };
+
+          expect(definitionsEqual(installedDefinition, TodoProtocolDefinition)).toBe(true);
         });
       });
 

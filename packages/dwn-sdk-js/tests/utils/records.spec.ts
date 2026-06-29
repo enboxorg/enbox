@@ -1,4 +1,4 @@
-import type { DerivedPrivateJwk, RecordsWriteDescriptor } from '../../src/index.js';
+import type { DerivedPrivateJwk, RecordsWriteDescriptor, RecordsWriteMessage } from '../../src/index.js';
 
 import { describe, expect, it } from 'bun:test';
 
@@ -37,12 +37,25 @@ describe('Records', () => {
       const path = Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
       expect(path).toEqual([KeyDerivationScheme.ProtocolPath, 'http://test-protocol.xyz', 'testRecord']);
     });
-  });
 
-  describe('constructKeyDerivationPathUsingProtocolContextScheme()', () => {
-    it('should construct a valid key derivation path using protocol context scheme', async () => {
-      const path = Records.constructKeyDerivationPathUsingProtocolContextScheme('rootId/childId');
-      expect(path).toEqual([KeyDerivationScheme.ProtocolContext, 'rootId']);
+    it('should throw a scheme-specific error for unsupported derivation schemes', () => {
+      const message = {
+        descriptor: {
+          interface        : DwnInterfaceName.Records,
+          method           : DwnMethodName.Write,
+          dataCid          : 'anyCid',
+          dataFormat       : 'application/json',
+          dataSize         : 123,
+          dateCreated      : '2022-12-19T10:20:30.123456Z',
+          messageTimestamp : '2022-12-19T10:20:30.123456Z',
+          protocol         : 'http://test-protocol.xyz',
+          protocolPath     : 'testRecord',
+        },
+      };
+
+      expect(
+        () => Records.constructKeyDerivationPath('unsupported' as KeyDerivationScheme, message as RecordsWriteMessage)
+      ).toThrow(DwnErrorCode.RecordsDecryptUnsupportedKeyDerivationScheme);
     });
   });
 

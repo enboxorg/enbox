@@ -797,9 +797,9 @@ export class TypedEnbox<
     // Not installed locally — configure it now.
     //
     // For delegates: the wallet already installed the protocol with derived
-    // `$encryption` keys on the owner's remote DWN. We fetch that remote
+    // `$keyAgreement` keys on the owner's remote DWN. We fetch that remote
     // definition and install it locally so the delegate can encrypt records
-    // using the public keys from `$encryption`. This avoids the delegate
+    // using the public keys from `$keyAgreement`. This avoids the delegate
     // needing the owner's private X25519 key — only the already-public
     // derived keys are used for ProtocolPath encryption.
     //
@@ -849,7 +849,7 @@ export class TypedEnbox<
     }
 
     // The remote message includes the wallet's signature and, for encrypted
-    // protocols, `$encryption` keys injected by the wallet during configure.
+    // protocols, `$keyAgreement` keys injected by the wallet during configure.
     // Import that exact message locally so the delegate can validate/encrypt
     // owner-tenant records without receiving Protocols.Configure permission.
     const result = await this._dwn.importProtocolConfiguration(remoteProtocols[0].toJSON());
@@ -953,7 +953,7 @@ export class TypedEnbox<
         const typeEntry = this._definition.types[typeName];
 
         // Auto-enable encryption when the type requires it.
-        // Delegates CAN encrypt because the $encryption public keys in the
+        // Delegates CAN encrypt because the $keyAgreement public keys in the
         // synced protocol definition are sufficient for ProtocolPath
         // encryption — no private key access is needed for writes.
         const autoEncryption = typeEntry?.encryptionRequired === true
@@ -1236,15 +1236,12 @@ function mapParentContextId<T extends Record<string, unknown>>(
 
 /**
  * Compares two protocol definitions for **logical** equality using
- * deterministic JSON serialization with `$encryption` blocks stripped.
+ * deterministic JSON serialization with runtime encryption metadata stripped.
  *
  * When a protocol is installed with `encryption: true`, the agent injects
- * `$encryption` blocks into the `structure` containing derived public keys.
- * These blocks are operational metadata — not part of the developer-authored
- * definition — so they must be ignored during equality checks. Otherwise,
- * the installed definition (with `$encryption`) would always differ from
- * the source definition (without `$encryption`), causing false drift
- * detection and spurious reconfigure warnings.
+ * public key agreement blocks into the `structure`. These blocks are operational
+ * metadata — not part of the developer-authored definition — so they must be
+ * ignored during equality checks.
  *
  * Keys are sorted recursively so that semantically identical definitions
  * with different key ordering are treated as equal.
@@ -1254,7 +1251,7 @@ export function definitionsEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Recursively removes `$encryption` keys from an object tree.
+ * Recursively removes runtime-injected encryption keys from an object tree.
  * Returns a new object — the original is not mutated.
  */
 function stripEncryptionBlocks(value: unknown): unknown {
@@ -1268,7 +1265,7 @@ function stripEncryptionBlocks(value: unknown): unknown {
 
   const result: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-    if (key === '$encryption') { continue; }
+    if (key === '$encryption' || key === '$keyAgreement') { continue; }
     result[key] = stripEncryptionBlocks(val);
   }
   return result;

@@ -257,11 +257,9 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     options?.signal?.throwIfAborted();
 
     const { property: sortProperty, direction: sortDirection } = this.extractSortProperties(messageSort);
-    const filtersIncludeTags = MessageStoreSql.filtersIncludeTags(filters);
 
     let query = db
       .selectFrom('messageStoreMessages')
-      .$if(filtersIncludeTags, (qb) => qb.leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id'))
       .select('messageCid')
       .distinct()
       .select([
@@ -308,11 +306,9 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
   ): Promise<number> {
     const db = this.requireDb('count');
     options?.signal?.throwIfAborted();
-    const filtersIncludeTags = MessageStoreSql.filtersIncludeTags(filters);
 
     let query = db
       .selectFrom('messageStoreMessages')
-      .$if(filtersIncludeTags, (qb) => qb.leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id'))
       .select(sql<number>`count(distinct ${sql.ref('messageStoreMessages.messageCid')})`.as('count'))
       .where('tenant', '=', tenant);
 
@@ -596,7 +592,6 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
   ): Promise<Array<{ row: LogRow; position: bigint }>> {
     let query = executor
       .selectFrom('messageStoreMessages')
-      .leftJoin('messageStoreRecordsTags', 'messageStoreRecordsTags.messageInsertId', 'messageStoreMessages.id')
       .selectAll('messageStoreMessages')
       .select([
         this.#dialect.bigIntColumnAsText('messageStoreMessages.seq').as('seqText'),
@@ -1026,10 +1021,6 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
     }
 
     return [String(existing), String(tagValue)];
-  }
-
-  private static filtersIncludeTags(filters: Filter[]): boolean {
-    return filters.some((filter) => Object.keys(filter).some((key) => key.startsWith('tag.')));
   }
 
   private static requirePosition(row: MessageStoreRow & Partial<PositionTextColumns>): bigint {

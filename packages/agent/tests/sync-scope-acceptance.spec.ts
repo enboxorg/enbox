@@ -1,7 +1,7 @@
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
 
 import { describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, PermissionsProtocol, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import type { SyncScope } from '../src/types/sync.js';
 
@@ -109,6 +109,42 @@ describe('sync-scope-acceptance', () => {
         method       : DwnMethodName.Write,
         protocol     : PermissionsProtocol.uri,
         protocolPath : PermissionsProtocol.grantPath,
+        tags         : { protocol: socialProtocol },
+      },
+      authorization: { signature: { payload: '', signatures: [] } },
+    } as unknown as GenericMessage;
+
+    const classification = classifySyncMessageScope({ message, scope: profileScope });
+
+    expect(classification).toBe('out-of-scope');
+  });
+
+  it('accepts encryption records tagged for a covered protocol', () => {
+    const message = {
+      recordId   : 'audience-key-record',
+      descriptor : {
+        interface    : DwnInterfaceName.Records,
+        method       : DwnMethodName.Write,
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.audienceKeyPath,
+        tags         : { protocol: profileProtocol },
+      },
+      authorization: { signature: { payload: '', signatures: [] } },
+    } as unknown as GenericMessage;
+
+    const classification = classifySyncMessageScope({ message, scope: profileScope });
+
+    expect(classification).toBe('in-scope');
+  });
+
+  it('rejects encryption records tagged for a sibling protocol', () => {
+    const message = {
+      recordId   : 'audience-key-record',
+      descriptor : {
+        interface    : DwnInterfaceName.Records,
+        method       : DwnMethodName.Write,
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.audienceKeyPath,
         tags         : { protocol: socialProtocol },
       },
       authorization: { signature: { payload: '', signatures: [] } },

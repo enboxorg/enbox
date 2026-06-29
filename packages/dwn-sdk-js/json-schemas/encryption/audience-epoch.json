@@ -9,8 +9,7 @@
     "role",
     "epoch",
     "keyId",
-    "publicKeyJwk",
-    "createdAt"
+    "publicKeyJwk"
   ],
   "properties": {
     "protocol": {
@@ -53,9 +52,6 @@
           "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
         }
       }
-    },
-    "createdAt": {
-      "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/date-time"
     }
   }
 }

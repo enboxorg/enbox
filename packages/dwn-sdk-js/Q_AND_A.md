@@ -38,7 +38,7 @@
 
   Yes, it can be inferred. But it is required for the same reason why `recordId` is required: for both implementation and developer convenience.
 
-  For example: for decryption, one would need to know the `contextId` to derive the decryption key at the right context, without this information readily available, the client would need to compute this value by walking up the ancestral chain themselves.
+  For example: protocol authorization and subtree queries often need the `contextId` to evaluate a record in its surrounding context. Without this information readily available, the client would need to compute this value by walking up the ancestral chain themselves.
   
   An alternative viable approach is to still not require it in `RecordsWrite` message and compute it internally, and return a constructed `contextId` as additional metadata along side of the `RecordsWrite` message when handling a query. This could incur cognitive load on the developers because they will likely need to pass the `contextId` in addition to the `RecordsWrite` message around instead of just passing `RecordsWrite` message. This would also mean we need to store this constructed `contextId` in the store as metadata (not just as index) so that we can return it as part of the a query (e.g. looking up the `contextId` of the parent). While this is a bigger change, open to feedback if this is indeed the preferred approach.
   
@@ -53,18 +53,18 @@
 
 ## Encryption
 
-- Why is `publicKeyId` required in `KeyEncryptionInput`?
+- Why is `keyId` required in `ProtocolPathKeyEncryptionInput`?
 
-  (Last updated: 2023/05/19)
+  (Last updated: 2026/06/29)
 
-  It is required because the ID of the public key (more precisely the ID of the asymmetric key pair) used to encrypt the symmetric key will need to be embedded as metadata (named `rootKeyId`), so that when a derived private key (which also contains the key ID) is given to the SDK to decrypt an encrypted record, the SDK is able to select the correct encrypted key for decryption. This is useful because if there are multiple encrypted keys attached to the record, the correct encrypted key will be selected immediately without the code needing to trial-and-error on every key until a correct key is found.
+  It identifies the public key used to wrap the content-encryption key. The `keyId` is the base64url-encoded SHA-256 JWK Thumbprint of that public key, so a decryptor can select the matching `keyEncryption` entry without trying unrelated keys.
   
   Even if there is only one encrypted key attached to the encrypted record, there is no guarantee that the private key given is the correct corresponding private key, so it is still important to have the key ID so that the code can immediately reject the given private key if the ID does not match. There are a number of cases why a key ID mismatch can occur:
 
   1. The DWN owner might have published multiple encryption keys, and a wrong encryption key is chosen.
   1. The key used to encrypt the record might not be the DWN owner's key at all. For instance, a sender's encryption key is used instead.
 
-- Instead of introducing yet another property `publicKeyId` in `KeyEncryptionInput`, why do we not just use the `kid` property in the public JWK?
+- Instead of introducing yet another property `keyId` in `ProtocolPathKeyEncryptionInput`, why do we not just use the `kid` property in the public JWK?
 
   (Last updated: 2023/05/19)
 

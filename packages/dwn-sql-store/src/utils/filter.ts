@@ -1,9 +1,11 @@
 import type { DwnDatabaseType } from '../types.js';
-import type { Filter } from '@enbox/dwn-sdk-js';
-import type { ExpressionBuilder, OperandExpression, SelectQueryBuilder, SqlBool } from 'kysely';
+import type { EqualFilter, Filter, RangeFilter } from '@enbox/dwn-sdk-js';
+import type { ExpressionBuilder, OperandExpression, RawBuilder, SelectQueryBuilder, SqlBool } from 'kysely';
 
 import { DynamicModule, sql } from 'kysely';
 import { sanitizedValue, sanitizeFiltersAndSeparateTags } from './sanitize.js';
+
+const SQL_LIKE_ESCAPE = String.fromCodePoint(92);
 
 /**
  * Takes multiple Filters and returns a single query.
@@ -26,7 +28,7 @@ export function filterSelectQuery<DB = DwnDatabaseType, TB extends keyof DB = ke
       const andOperands: OperandExpression<SqlBool>[] = [];
 
       processFilter(eb, andOperands, filter);
-      processTags(eb, andOperands, tags);
+      processTags(andOperands, tags);
 
       return eb.and(andOperands);
     }))
@@ -56,9 +58,10 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
       // which uses `{ gte: prefix, lt: prefix + '\uffff' }`. The U+FFFF sentinel does not
       // sort correctly under ICU/libc collation rules (e.g. PostgreSQL's en_US.UTF-8),
       // so we convert these to a collation-safe SQL LIKE expression.
-      if (isPrefixRangeFilter(value)) {
-        const prefix = escapeLikePattern(value.gte as string);
-        andOperands.push(sql`${sql.ref(property)} LIKE ${prefix + '%'}`);
+      const prefixRangeFilterPrefix = getPrefixRangeFilterPrefix(value);
+      if (prefixRangeFilterPrefix !== undefined) {
+        const prefix = escapeLikePattern(prefixRangeFilterPrefix);
+        andOperands.push(sql`${sql.ref(property)} LIKE ${prefix + '%'} ESCAPE ${'\\'}`);
         continue;
       }
 
@@ -81,19 +84,21 @@ function processFilter<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
 }
 
 /**
- * Returns `true` if the given RangeFilter matches the pattern produced by
+ * Returns the prefix if the given RangeFilter matches the pattern produced by
  * `constructPrefixFilterAsRangeFilter`: `{ gte: <prefix>, lt: <prefix> + '\uffff' }`.
  */
-function isPrefixRangeFilter(value: Record<string, unknown>): boolean {
-  if (typeof value.gte !== 'string' || typeof value.lt !== 'string') {
-    return false;
+function getPrefixRangeFilterPrefix(value: object): string | undefined {
+  const range = value as Record<string, unknown>;
+
+  if (typeof range.gte !== 'string' || typeof range.lt !== 'string') {
+    return undefined;
   }
   // Only two keys: gte and lt (no gt, lte, or other properties)
-  const keys = Object.keys(value);
+  const keys = Object.keys(range);
   if (keys.length !== 2 || !keys.includes('gte') || !keys.includes('lt')) {
-    return false;
+    return undefined;
   }
-  return value.lt === value.gte + '\uffff';
+  return range.lt === range.gte + '\uffff' ? range.gte : undefined;
 }
 
 /**
@@ -101,72 +106,103 @@ function isPrefixRangeFilter(value: Record<string, unknown>): boolean {
  * they are matched literally.
  */
 function escapeLikePattern(input: string): string {
-  return input.replace(/%/g, '\\%').replace(/_/g, '\\_');
+  return input
+    .split(SQL_LIKE_ESCAPE).join(`${SQL_LIKE_ESCAPE}${SQL_LIKE_ESCAPE}`)
+    .split('%').join(`${SQL_LIKE_ESCAPE}%`)
+    .split('_').join(`${SQL_LIKE_ESCAPE}_`);
 }
 
 /**
  * Processes each property in the tags filter as an AND operand and adds it to the `andOperands` array.
  * If a property has an array of values it will treat it as a OneOf (IN) within the overall AND query.
  *
- * @param eb The ExpressionBuilder from the query.
  * @param andOperands The array of AND operands to append to.
  * @param tag The tags filter to be evaluated.
  */
-function processTags<DB = DwnDatabaseType, TB extends keyof DB = keyof DB>(
-  eb: ExpressionBuilder<DB, TB>,
+function processTags(
   andOperands: OperandExpression<SqlBool>[],
   tags: Filter
 ): void {
 
-  const tagColumn = new DynamicModule().ref('tag');
-  const valueNumber = new DynamicModule().ref('valueNumber');
-  const valueString = new DynamicModule().ref('valueString');
-
-  // process each tag and add it to the andOperands from the rest of the filters
   for (const property in tags) {
-    andOperands.push(eb(tagColumn, '=', property));
-    const value = tags[property];
-    if (Array.isArray(value)) { // OneOfFilter
-      if (value.some(val => typeof val === 'number')) {
-        andOperands.push(eb(valueNumber, 'in', value));
-      } else {
-        andOperands.push(eb(valueString, 'in', value.map(v => String(v))));
-      }
-    } else if (typeof value === 'object') { // RangeFilter
-      if (value.gt) {
-        if (typeof value.gt === 'number') {
-          andOperands.push(eb(valueNumber, '>', value.gt));
-        } else {
-          andOperands.push(eb(valueString, '>', String(value.gt)));
-        }
-      }
-      if (value.gte) {
-        if (typeof value.gte === 'number') {
-          andOperands.push(eb(valueNumber, '>=', value.gte));
-        } else {
-          andOperands.push(eb(valueString, '>=', String(value.gte)));
-        }
-      }
-      if (value.lt) {
-        if (typeof value.lt === 'number') {
-          andOperands.push(eb(valueNumber, '<', value.lt));
-        } else {
-          andOperands.push(eb(valueString, '<', String(value.lt)));
-        }
-      }
-      if (value.lte) {
-        if (typeof value.lte === 'number') {
-          andOperands.push(eb(valueNumber, '<=', value.lte));
-        } else {
-          andOperands.push(eb(valueString, '<=', String(value.lte)));
-        }
-      }
-    } else { // EqualFilter
-      if (typeof value === 'number') {
-        andOperands.push(eb(valueNumber, '=', value));
-      } else {
-        andOperands.push(eb(valueString, '=', String(value)));
-      }
-    }
+    andOperands.push(sql<SqlBool>`exists (
+      select 1
+      from ${sql.table('messageStoreRecordsTags')}
+      where ${sql.ref('messageStoreRecordsTags.messageInsertId')} = ${sql.ref('messageStoreMessages.id')}
+        and ${sql.ref('messageStoreRecordsTags.tag')} = ${property}
+        and ${tagValuePredicate(tags[property])}
+    )`);
   }
+}
+
+function tagValuePredicate(value: Filter[string]): RawBuilder<SqlBool> {
+  if (Array.isArray(value)) {
+    return tagOneOfPredicate(value);
+  }
+
+  if (typeof value === 'object') {
+    return tagObjectPredicate(value);
+  }
+
+  return tagEqualPredicate(value);
+}
+
+function tagOneOfPredicate(values: EqualFilter[]): RawBuilder<SqlBool> {
+  const sanitizedValues = values.map((item) => sanitizedValue(item));
+  const numberValues = sanitizedValues.filter((item): item is number => typeof item === 'number');
+  const stringValues = sanitizedValues.filter((item): item is string => typeof item === 'string');
+  const operands: RawBuilder<SqlBool>[] = [];
+
+  if (numberValues.length > 0) {
+    operands.push(sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueNumber')} in (${sql.join(numberValues)})`);
+  }
+  if (stringValues.length > 0) {
+    operands.push(sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} in (${sql.join(stringValues)})`);
+  }
+
+  return joinTagPredicates(operands, 'or', false);
+}
+
+function tagObjectPredicate(value: RangeFilter): RawBuilder<SqlBool> {
+  const prefixRangeFilterPrefix = getPrefixRangeFilterPrefix(value);
+  if (prefixRangeFilterPrefix !== undefined) {
+    const prefix = escapeLikePattern(prefixRangeFilterPrefix);
+    return sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} LIKE ${prefix + '%'} ESCAPE ${'\\'}`;
+  }
+
+  const operands: RawBuilder<SqlBool>[] = [];
+  addTagRangePredicate(operands, '>', value.gt);
+  addTagRangePredicate(operands, '>=', value.gte);
+  addTagRangePredicate(operands, '<', value.lt);
+  addTagRangePredicate(operands, '<=', value.lte);
+
+  return joinTagPredicates(operands, 'and', true);
+}
+
+function tagEqualPredicate(value: EqualFilter): RawBuilder<SqlBool> {
+  const sanitized = sanitizedValue(value);
+  return typeof sanitized === 'number'
+    ? sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueNumber')} = ${sanitized}`
+    : sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} = ${sanitized}`;
+}
+
+function addTagRangePredicate(operands: RawBuilder<SqlBool>[], operator: '>' | '>=' | '<' | '<=', value?: string | number): void {
+  if (value !== undefined) {
+    operands.push(tagRangePredicate(operator, value));
+  }
+}
+
+function tagRangePredicate(operator: '>' | '>=' | '<' | '<=', value: string | number): RawBuilder<SqlBool> {
+  return typeof value === 'number'
+    ? sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueNumber')} ${sql.raw(operator)} ${value}`
+    : sql<SqlBool>`${sql.ref('messageStoreRecordsTags.valueString')} ${sql.raw(operator)} ${String(value)}`;
+}
+
+function joinTagPredicates(operands: RawBuilder<SqlBool>[], operator: 'and' | 'or', emptyResult: boolean): RawBuilder<SqlBool> {
+  if (operands.length === 0) {
+    return emptyResult ? sql<SqlBool>`true` : sql<SqlBool>`false`;
+  }
+
+  const separator = operator === 'and' ? sql.raw(' and ') : sql.raw(' or ');
+  return sql<SqlBool>`(${sql.join(operands, separator)})`;
 }

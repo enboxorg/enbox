@@ -133,13 +133,6 @@ export async function recoverIdentitiesFromRemote(params: {
   const { userAgent, dwnEndpoints, identitySyncProtocols, registration, storage } = params;
   const agentDid = userAgent.agentDid.uri;
 
-  // Install the KeyDeliveryProtocol for the agent DID before pulling.
-  // Encrypted JwkProtocol records (private keys) require this protocol
-  // to be present locally for the sync engine's closure resolver to
-  // accept them. Without it, the encrypted records are skipped during
-  // pull and private keys are never recovered.
-  await userAgent.dwn.ensureKeyDeliveryProtocol(agentDid);
-
   // Phase 1: pull identity metadata + encrypted DID keys.
   await userAgent.sync.sync('pull');
 
