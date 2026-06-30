@@ -8,9 +8,7 @@
     "contextId",
     "role",
     "epoch",
-    "keyId",
-    "publicKeyJwk",
-    "privateKeyJwk"
+    "keyMaterial"
   ],
   "properties": {
     "protocol": {
@@ -26,11 +24,38 @@
       "type": "integer",
       "minimum": 1
     },
-    "keyId": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9_-]{43}$"
-    },
-    "publicKeyJwk": {
+    "keyMaterial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "derivationScheme",
+        "keyId",
+        "publicKeyJwk",
+        "privateKeyJwk"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "X25519-HKDF-SHA256+A256KW"
+        },
+        "derivationScheme": {
+          "const": "roleAudience"
+        },
+        "keyId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "publicKeyJwk": {
+          "$ref": "#/$defs/x25519PublicKey"
+        },
+        "privateKeyJwk": {
+          "$ref": "#/$defs/x25519PrivateKey"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "x25519PublicKey": {
       "allOf": [
         {
           "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
@@ -54,7 +79,7 @@
         }
       }
     },
-    "privateKeyJwk": {
+    "x25519PrivateKey": {
       "allOf": [
         {
           "$ref": "https://identity.foundation/dwn/json-schemas/general-jwk.json"

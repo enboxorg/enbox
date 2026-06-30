@@ -877,6 +877,7 @@ describe('E2E Multi-Agent Sync', () => {
 
     it('pulls role-audience key material and decrypts as a role member', async () => {
       const bobParticipant = await deviceHarness.createIdentity({ name: 'Role Sync Bob', testDwnUrls });
+      const nonParticipant = await deviceHarness.createIdentity({ name: 'Role Sync Non Participant', testDwnUrls });
       const chatProtocol: ProtocolDefinition = {
         published : true,
         protocol  : `https://protocol.xyz/encrypted-sync-chat/${crypto.randomUUID()}`,
@@ -1152,6 +1153,38 @@ describe('E2E Multi-Agent Sync', () => {
 
       const decryptedBytes = await DataStream.toBytes(readResult.reply.entry!.data!);
       expect(new TextDecoder().decode(decryptedBytes)).toBe(chatText);
+
+      const nonParticipantAudienceKeyQuery = await deviceHarness.agent.dwn.processRequest({
+        author        : nonParticipant.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            recipient    : nonParticipant.did.uri,
+            protocol     : EncryptionProtocol.uri,
+            protocolPath : EncryptionProtocol.audienceKeyPath,
+            tags         : {
+              contextId : threadContextId,
+              protocol  : chatProtocol.protocol,
+              role      : 'thread/participant',
+            },
+          },
+        },
+      });
+      expect(nonParticipantAudienceKeyQuery.reply.status.code).toBe(200);
+      expect(nonParticipantAudienceKeyQuery.reply.entries ?? []).toHaveLength(0);
+
+      const nonParticipantRead = await deviceHarness.agent.dwn.processRequest({
+        author        : nonParticipant.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter       : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
+          protocolRole : 'thread/participant',
+        },
+        encryption: true,
+      });
+      expect(nonParticipantRead.reply.status.code).toBe(401);
     }, 90_000);
   });
 

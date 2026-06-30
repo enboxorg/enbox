@@ -2,19 +2,23 @@ import { validateJsonSchema } from '../../../../src/schema-validator.js';
 import { describe, expect, it } from 'bun:test';
 
 const grantKey = {
-  derivationPath : ['protocolPath', 'https://example.com/protocol', 'message'],
-  grantId        : 'grant-id',
-  keyId          : 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG',
-  privateKeyJwk  : {
-    crv : 'X25519',
-    d   : 'private-key',
-    kty : 'OKP',
-    x   : 'public-key',
-  },
-  publicKeyJwk: {
-    crv : 'X25519',
-    kty : 'OKP',
-    x   : 'public-key',
+  grantId     : 'grant-id',
+  keyMaterial : {
+    algorithm        : 'X25519-HKDF-SHA256+A256KW',
+    derivationPath   : ['protocolPath', 'https://example.com/protocol', 'message'],
+    derivationScheme : 'protocolPath',
+    keyId            : 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG',
+    privateKeyJwk    : {
+      crv : 'X25519',
+      d   : 'private-key',
+      kty : 'OKP',
+      x   : 'public-key',
+    },
+    publicKeyJwk: {
+      crv : 'X25519',
+      kty : 'OKP',
+      x   : 'public-key',
+    },
   },
   scope: {
     protocol     : 'https://example.com/protocol',
@@ -32,7 +36,7 @@ describe('GrantKey Schema', () => {
 
   it('should reject derivation paths that do not start with protocolPath', () => {
     const invalidGrantKey = structuredClone(grantKey);
-    invalidGrantKey.derivationPath[0] = 'unsupported';
+    invalidGrantKey.keyMaterial.derivationPath[0] = 'unsupported';
 
     expect(
       () => validateJsonSchema('GrantKey', invalidGrantKey)
@@ -41,7 +45,7 @@ describe('GrantKey Schema', () => {
 
   it('should reject empty derivation path segments', () => {
     const invalidGrantKey = structuredClone(grantKey);
-    invalidGrantKey.derivationPath[2] = '';
+    invalidGrantKey.keyMaterial.derivationPath[2] = '';
 
     expect(
       () => validateJsonSchema('GrantKey', invalidGrantKey)
@@ -50,7 +54,7 @@ describe('GrantKey Schema', () => {
 
   it('should reject derivation paths with too many segments', () => {
     const invalidGrantKey = structuredClone(grantKey);
-    invalidGrantKey.derivationPath = [
+    invalidGrantKey.keyMaterial.derivationPath = [
       'protocolPath',
       'https://example.com/protocol',
       'a',
@@ -73,7 +77,16 @@ describe('GrantKey Schema', () => {
 
   it('should reject key IDs that are not base64url thumbprints', () => {
     const invalidGrantKey = structuredClone(grantKey);
-    invalidGrantKey.keyId = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEF!';
+    invalidGrantKey.keyMaterial.keyId = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEF!';
+
+    expect(
+      () => validateJsonSchema('GrantKey', invalidGrantKey)
+    ).toThrow();
+  });
+
+  it('should reject unsupported key material algorithms', () => {
+    const invalidGrantKey = structuredClone(grantKey);
+    invalidGrantKey.keyMaterial.algorithm = 'unsupported';
 
     expect(
       () => validateJsonSchema('GrantKey', invalidGrantKey)

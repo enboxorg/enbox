@@ -6,10 +6,7 @@
   "required": [
     "grantId",
     "scope",
-    "derivationPath",
-    "keyId",
-    "publicKeyJwk",
-    "privateKeyJwk"
+    "keyMaterial"
   ],
   "properties": {
     "grantId": {
@@ -34,29 +31,57 @@
         }
       }
     },
-    "derivationPath": {
-      "type": "array",
-      "minItems": 2,
-      "maxItems": 12,
-      "prefixItems": [
-        {
+    "keyMaterial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "derivationScheme",
+        "derivationPath",
+        "keyId",
+        "publicKeyJwk",
+        "privateKeyJwk"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "X25519-HKDF-SHA256+A256KW"
+        },
+        "derivationScheme": {
           "const": "protocolPath"
         },
-        {
+        "derivationPath": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 12,
+          "prefixItems": [
+            {
+              "const": "protocolPath"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ],
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "keyId": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "publicKeyJwk": {
+          "$ref": "#/$defs/x25519PublicKey"
+        },
+        "privateKeyJwk": {
+          "$ref": "#/$defs/x25519PrivateKey"
         }
-      ],
-      "items": {
-        "type": "string",
-        "minLength": 1
       }
-    },
-    "keyId": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9_-]{43}$"
-    },
-    "publicKeyJwk": {
+    }
+  },
+  "$defs": {
+    "x25519PublicKey": {
       "allOf": [
         {
           "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
@@ -80,7 +105,7 @@
         }
       }
     },
-    "privateKeyJwk": {
+    "x25519PrivateKey": {
       "allOf": [
         {
           "$ref": "https://identity.foundation/dwn/json-schemas/general-jwk.json"

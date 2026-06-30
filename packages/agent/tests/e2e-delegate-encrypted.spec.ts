@@ -1024,7 +1024,7 @@ describe('e2e: delegate + encrypted protocol', () => {
         }
       }
 
-      // Delegate reads note — should decrypt successfully via KMS fallback
+      // Owner-key baseline for path-scoped encrypted data copied into the delegate DWN.
       const { reply: decrypted } = await delegateHarness.agent.processDwnRequest({
         author        : walletIdentity.did.uri,
         target        : walletIdentity.did.uri,

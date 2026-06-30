@@ -31,6 +31,7 @@ import {
   Encryption,
   EncryptionProtocol,
   HdKey,
+  KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
   Records,
@@ -64,13 +65,36 @@ type GrantKeyScope = {
   protocolPath?: string;
 };
 
-type GrantKeyPayload = {
-  grantId: string;
-  scope: GrantKeyScope;
-  derivationPath: string[];
+type X25519KeyMaterialBase = {
+  algorithm: typeof KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
+  derivationScheme: string;
   keyId: string;
   publicKeyJwk: PublicKeyJwk;
   privateKeyJwk: PrivateKeyJwk;
+};
+
+type X25519ProtocolPathKeyMaterial = X25519KeyMaterialBase & {
+  derivationScheme: typeof KeyDerivationScheme.ProtocolPath;
+  derivationPath: string[];
+};
+
+type X25519RoleAudienceKeyMaterial = X25519KeyMaterialBase & {
+  derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
+};
+
+type GrantKeyPayload = {
+  grantId: string;
+  scope: GrantKeyScope;
+  keyMaterial: X25519ProtocolPathKeyMaterial;
+};
+
+export type AudienceEpochPayload = {
+  protocol: string;
+  contextId: string;
+  role: string;
+  epoch: number;
+  keyId: string;
+  publicKeyJwk: PublicKeyJwk;
 };
 
 export type AudienceKeyPayload = {
@@ -78,9 +102,7 @@ export type AudienceKeyPayload = {
   contextId: string;
   role: string;
   epoch: number;
-  keyId: string;
-  publicKeyJwk: PublicKeyJwk;
-  privateKeyJwk: PrivateKeyJwk;
+  keyMaterial: X25519RoleAudienceKeyMaterial;
 };
 
 export type AudienceDecryptionKeyEntry = AudienceKeyPayload & {
@@ -416,7 +438,7 @@ export async function createGrantKeyRecordsForGrants(params: {
           grantId  : grant.id,
           protocol : grant.scope.protocol,
           ...(grant.scope.protocolPath ? { protocolPath: grant.scope.protocolPath } : {}),
-          keyId    : payload.keyId,
+          keyId    : payload.keyMaterial.keyId,
         },
       },
       dataStream: DataStream.fromBytes(encryptedBytes),
@@ -442,14 +464,15 @@ export async function createAudienceEpochRecord(params: {
   audienceKey: AudienceKeyPayload;
   protocolRole?: string;
 }): Promise<DataEncodedRecordsWriteMessage> {
-  const payloadBytes = Encoder.objectToBytes({
+  const payload: AudienceEpochPayload = {
     protocol     : params.audienceKey.protocol,
     contextId    : params.audienceKey.contextId,
     role         : params.audienceKey.role,
     epoch        : params.audienceKey.epoch,
-    keyId        : params.audienceKey.keyId,
-    publicKeyJwk : params.audienceKey.publicKeyJwk,
-  });
+    keyId        : params.audienceKey.keyMaterial.keyId,
+    publicKeyJwk : params.audienceKey.keyMaterial.publicKeyJwk,
+  };
+  const payloadBytes = Encoder.objectToBytes(payload);
 
   const { reply, message } = await params.agent.processDwnRequest({
     author        : params.authorDid,
@@ -468,7 +491,7 @@ export async function createAudienceEpochRecord(params: {
         contextId : params.audienceKey.contextId,
         role      : params.audienceKey.role,
         epoch     : params.audienceKey.epoch,
-        keyId     : params.audienceKey.keyId,
+        keyId     : params.audienceKey.keyMaterial.keyId,
       },
     },
     dataStream: DataStream.fromBytes(payloadBytes),
@@ -531,7 +554,7 @@ export async function createAudienceKeyRecord(params: {
         contextId : params.audienceKey.contextId,
         role      : params.audienceKey.role,
         epoch     : params.audienceKey.epoch,
-        keyId     : params.audienceKey.keyId,
+        keyId     : params.audienceKey.keyMaterial.keyId,
       },
     },
     dataStream: DataStream.fromBytes(encryptedBytes),
@@ -816,9 +839,9 @@ async function resolveRoleAudienceDecrypter(params: {
 function buildAudienceContentDecrypter(entry: AudienceDecryptionKeyEntry): KeyDecrypter {
   return buildFixedPrivateKeyDecrypter({
     derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-    keyId            : entry.keyId,
-    privateKeyJwk    : entry.privateKeyJwk,
-    publicKeyJwk     : entry.publicKeyJwk,
+    keyId            : entry.keyMaterial.keyId,
+    privateKeyJwk    : entry.keyMaterial.privateKeyJwk,
+    publicKeyJwk     : entry.keyMaterial.publicKeyJwk,
   });
 }
 
@@ -1025,25 +1048,26 @@ async function verifyAudienceKeyPayload(params: {
   const tags = audienceKeyMessage.descriptor.tags ?? {};
 
   assertAudienceKeyPayload(payload);
+  const keyMaterial = payload.keyMaterial;
 
   if (audienceKeyMessage.descriptor.recipient !== params.recipientDid ||
       payload.protocol !== tags.protocol ||
       payload.contextId !== tags.contextId ||
       payload.role !== tags.role ||
       payload.epoch !== tags.epoch ||
-      payload.keyId !== tags.keyId ||
+      keyMaterial.keyId !== tags.keyId ||
       payload.protocol !== params.protocol ||
       payload.contextId !== params.contextId ||
       payload.role !== params.role ||
       payload.epoch !== params.epoch ||
-      payload.keyId !== params.keyId) {
+      keyMaterial.keyId !== params.keyId) {
     throw new Error('audienceKey payload does not match record tags.');
   }
 
-  const publicKeyId = await Encryption.getKeyId(payload.publicKeyJwk);
-  const publicKeyFromPrivate = await X25519.getPublicKey({ key: payload.privateKeyJwk }) as PublicKeyJwk;
+  const publicKeyId = await Encryption.getKeyId(keyMaterial.publicKeyJwk);
+  const publicKeyFromPrivate = await X25519.getPublicKey({ key: keyMaterial.privateKeyJwk }) as PublicKeyJwk;
   const privateKeyId = await Encryption.getKeyId(publicKeyFromPrivate);
-  if (payload.keyId !== publicKeyId || payload.keyId !== privateKeyId) {
+  if (keyMaterial.keyId !== publicKeyId || keyMaterial.keyId !== privateKeyId) {
     throw new Error('audienceKey keyId does not match delivered key material.');
   }
 
@@ -1057,11 +1081,44 @@ function assertAudienceKeyPayload(payload: unknown): asserts payload is Audience
       typeof payload.contextId !== 'string' ||
       typeof payload.role !== 'string' ||
       !Number.isInteger(payload.epoch) ||
-      typeof payload.keyId !== 'string' ||
-      !isObject(payload.publicKeyJwk) ||
-      !isObject(payload.privateKeyJwk)) {
+      !isRoleAudienceKeyMaterial(payload.keyMaterial)) {
     throw new Error('audienceKey payload is malformed.');
   }
+}
+
+function assertGrantKeyPayload(payload: unknown): asserts payload is GrantKeyPayload {
+  if (!isObject(payload) ||
+      typeof payload.grantId !== 'string' ||
+      !isObject(payload.scope) ||
+      payload.scope.scheme !== KeyDerivationScheme.ProtocolPath ||
+      typeof payload.scope.protocol !== 'string' ||
+      (payload.scope.protocolPath !== undefined && typeof payload.scope.protocolPath !== 'string') ||
+      !isProtocolPathKeyMaterial(payload.keyMaterial)) {
+    throw new Error('grantKey payload is malformed.');
+  }
+}
+
+function isProtocolPathKeyMaterial(value: unknown): value is X25519ProtocolPathKeyMaterial {
+  if (!isX25519KeyMaterial(value) || value.derivationScheme !== KeyDerivationScheme.ProtocolPath) {
+    return false;
+  }
+
+  return Array.isArray(value.derivationPath) &&
+    value.derivationPath.every((segment): boolean => typeof segment === 'string');
+}
+
+function isRoleAudienceKeyMaterial(value: unknown): value is X25519RoleAudienceKeyMaterial {
+  return isX25519KeyMaterial(value) &&
+    value.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME;
+}
+
+function isX25519KeyMaterial(value: unknown): value is Record<string, unknown> & X25519KeyMaterialBase {
+  return isObject(value) &&
+    value.algorithm === KeyAgreementAlgorithm.X25519HkdfSha256A256Kw &&
+    typeof value.derivationScheme === 'string' &&
+    typeof value.keyId === 'string' &&
+    isObject(value.publicKeyJwk) &&
+    isObject(value.privateKeyJwk);
 }
 
 async function verifyAudienceKeyEpoch(params: {
@@ -1106,13 +1163,13 @@ async function verifyAudienceKeyEpoch(params: {
       continue;
     }
 
-    const epochPayload = Encoder.bytesToObject(dataBytes) as Partial<AudienceKeyPayload>;
+    const epochPayload = Encoder.bytesToObject(dataBytes) as Partial<AudienceEpochPayload>;
     if (epochPayload.protocol === params.payload.protocol &&
         epochPayload.contextId === params.payload.contextId &&
         epochPayload.role === params.payload.role &&
         epochPayload.epoch === params.payload.epoch &&
-        epochPayload.keyId === params.payload.keyId &&
-        isPublicKeyJwkEqual(epochPayload.publicKeyJwk, params.payload.publicKeyJwk)) {
+        epochPayload.keyId === params.payload.keyMaterial.keyId &&
+        isPublicKeyJwkEqual(epochPayload.publicKeyJwk, params.payload.keyMaterial.publicKeyJwk)) {
       return;
     }
   }
@@ -1251,7 +1308,10 @@ async function putCachedAudienceKey(params: {
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
   entry: AudienceDecryptionKeyEntry;
 }): Promise<void> {
-  const cacheKey = getAudienceDecryptionKeyCacheKey(params.entry);
+  const cacheKey = getAudienceDecryptionKeyCacheKey({
+    ...params.entry,
+    keyId: params.entry.keyMaterial.keyId,
+  });
   params.audienceDecryptionKeyCache?.set?.(cacheKey, params.entry);
   await params.agent.secrets.put(cacheKey, Encoder.objectToBytes(params.entry));
 }
@@ -1340,10 +1400,14 @@ async function buildGrantKeyPayload(
       protocol : grant.scope.protocol,
       ...(grant.scope.protocolPath ? { protocolPath: grant.scope.protocolPath } : {}),
     },
-    derivationPath,
-    keyId,
-    publicKeyJwk,
-    privateKeyJwk,
+    keyMaterial: {
+      algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+      derivationPath,
+      derivationScheme : KeyDerivationScheme.ProtocolPath,
+      keyId,
+      privateKeyJwk,
+      publicKeyJwk,
+    },
   };
 }
 
@@ -1485,11 +1549,11 @@ async function resolveGrantKeyRecords(params: {
           ? { kind: 'protocol' }
           : { kind: 'protocolPath', protocolPath: payload.scope.protocolPath },
         derivedPrivateKey: {
-          rootKeyId         : payload.keyId,
-          keyId             : payload.keyId,
+          rootKeyId         : payload.keyMaterial.keyId,
+          keyId             : payload.keyMaterial.keyId,
           derivationScheme  : KeyDerivationScheme.ProtocolPath,
-          derivationPath    : payload.derivationPath,
-          derivedPrivateKey : payload.privateKeyJwk,
+          derivationPath    : payload.keyMaterial.derivationPath,
+          derivedPrivateKey : payload.keyMaterial.privateKeyJwk,
         },
       });
     } catch (error) {
@@ -1585,9 +1649,11 @@ async function verifyGrantKeyPayload(params: {
   const { payload, grant, grantKeyMessage } = params;
   const tags = grantKeyMessage.descriptor.tags ?? {};
 
+  assertGrantKeyPayload(payload);
+
   if (payload.grantId !== tags.grantId ||
       payload.scope.protocol !== tags.protocol ||
-      payload.keyId !== tags.keyId ||
+      payload.keyMaterial.keyId !== tags.keyId ||
       payload.scope.protocolPath !== tags.protocolPath) {
     throw new Error('grantKey payload does not match record tags.');
   }
@@ -1606,14 +1672,14 @@ async function verifyGrantKeyPayload(params: {
   }
 
   const expectedDerivationPath = getScopeDerivationPath(payload.scope.protocol, payload.scope.protocolPath);
-  if (!arrayEquals(payload.derivationPath, expectedDerivationPath)) {
+  if (!arrayEquals(payload.keyMaterial.derivationPath, expectedDerivationPath)) {
     throw new Error('grantKey derivationPath does not match scope.');
   }
 
-  const publicKeyId = await Encryption.getKeyId(payload.publicKeyJwk);
-  const publicKeyFromPrivate = await X25519.getPublicKey({ key: payload.privateKeyJwk }) as PublicKeyJwk;
+  const publicKeyId = await Encryption.getKeyId(payload.keyMaterial.publicKeyJwk);
+  const publicKeyFromPrivate = await X25519.getPublicKey({ key: payload.keyMaterial.privateKeyJwk }) as PublicKeyJwk;
   const privateKeyId = await Encryption.getKeyId(publicKeyFromPrivate);
-  if (payload.keyId !== publicKeyId || payload.keyId !== privateKeyId) {
+  if (payload.keyMaterial.keyId !== publicKeyId || payload.keyMaterial.keyId !== privateKeyId) {
     throw new Error('grantKey keyId does not match delivered key material.');
   }
 }
