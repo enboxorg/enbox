@@ -20,6 +20,7 @@ import {
   Encoder,
   HdKey,
   Jws,
+  KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
   MessageStoreLevel,
@@ -346,6 +347,7 @@ describe('RecordsWrite', () => {
         initializationVector : dataEncryptionInitializationVector,
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [{
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
           derivationScheme : KeyDerivationScheme.ProtocolPath,
           keyId            : await Encryption.getKeyId(publicKey),
           publicKey,
@@ -383,6 +385,7 @@ describe('RecordsWrite', () => {
           initializationVector : TestDataGenerator.randomBytes(16),
           key                  : TestDataGenerator.randomBytes(32),
           keyEncryptionInputs  : [{
+            algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
             derivationScheme : KeyDerivationScheme.ProtocolPath,
             keyId            : await Encryption.getKeyId(publicKey),
             publicKey,
@@ -411,6 +414,7 @@ describe('RecordsWrite', () => {
           initializationVector : TestDataGenerator.randomBytes(16),
           key                  : TestDataGenerator.randomBytes(32),
           keyEncryptionInputs  : [{
+            algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
             derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
             epoch            : 1,
             keyId            : await Encryption.getKeyId(publicKey),
@@ -497,7 +501,8 @@ describe('RecordsWrite', () => {
         initializationVector : dataEncryptionInitializationVector,
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [{
-          derivationScheme: KeyDerivationScheme.ProtocolPath,
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
           keyId,
           publicKey,
         }],
@@ -536,6 +541,7 @@ describe('RecordsWrite', () => {
         initializationVector : dataEncryptionInitializationVector,
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [{
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
           derivationScheme : KeyDerivationScheme.ProtocolPath,
           keyId            : await Encryption.getKeyId(publicKey),
           publicKey,
@@ -754,6 +760,7 @@ describe('RecordsWrite', () => {
         initializationVector : dataEncryptionIV,
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [{
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
           keyId            : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
           publicKey        : alice.encryptionKeyPair.publicJwk,
           derivationScheme : KeyDerivationScheme.ProtocolPath,
@@ -770,6 +777,7 @@ describe('RecordsWrite', () => {
         initializationVector : dataEncryptionIV,
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [{
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
           keyId            : await Encryption.getKeyId(bob.encryptionKeyPair.publicJwk),
           publicKey        : bob.encryptionKeyPair.publicJwk,
           derivationScheme : KeyDerivationScheme.ProtocolPath,

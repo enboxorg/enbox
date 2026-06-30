@@ -23,51 +23,48 @@ const AES_CTR_COUNTER_LENGTH_BYTES = 16;
 const AES_CTR_COUNTER_LENGTH_BITS = 128;
 const KEK_INFO_PREFIX = KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
 
-export type ProtocolPathKeyEncryption = {
+export type X25519KeyEncryptionBase = {
   algorithm: KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
   keyId: string;
-  derivationScheme: KeyDerivationScheme.ProtocolPath;
   ephemeralPublicKey: PublicKeyJwk;
   encryptedKey: string;
 };
 
-export type RoleAudienceKeyEncryption = {
-  algorithm: KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
-  keyId: string;
+export type ProtocolPathKeyEncryption = X25519KeyEncryptionBase & {
+  derivationScheme: KeyDerivationScheme.ProtocolPath;
+};
+
+export type RoleAudienceKeyEncryption = X25519KeyEncryptionBase & {
   derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
   protocol: string;
   role: string;
   epoch: number;
-  ephemeralPublicKey: PublicKeyJwk;
-  encryptedKey: string;
 };
-
-export type KeyEncryption = ProtocolPathKeyEncryption | RoleAudienceKeyEncryption;
 
 export type X25519KeyEncryption = ProtocolPathKeyEncryption | RoleAudienceKeyEncryption;
 
 export type DwnEncryption = {
   algorithm: ContentEncryptionAlgorithm.A256CTR;
   initializationVector: string;
-  keyEncryption: KeyEncryption[];
+  keyEncryption: X25519KeyEncryption[];
 };
 
-export type ProtocolPathKeyEncryptionInput = {
+export type X25519KeyEncryptionInputBase = {
+  algorithm: KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
   keyId: string;
   publicKey: PublicKeyJwk;
+};
+
+export type ProtocolPathKeyEncryptionInput = X25519KeyEncryptionInputBase & {
   derivationScheme: KeyDerivationScheme.ProtocolPath;
 };
 
-export type RoleAudienceKeyEncryptionInput = {
-  keyId: string;
-  publicKey: PublicKeyJwk;
+export type RoleAudienceKeyEncryptionInput = X25519KeyEncryptionInputBase & {
   derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
   protocol: string;
   role: string;
   epoch: number;
 };
-
-export type KeyEncryptionInput = ProtocolPathKeyEncryptionInput | RoleAudienceKeyEncryptionInput;
 
 export type X25519KeyEncryptionInput = ProtocolPathKeyEncryptionInput | RoleAudienceKeyEncryptionInput;
 
@@ -75,13 +72,19 @@ export type EncryptionInput = {
   algorithm?: ContentEncryptionAlgorithm;
   key: Uint8Array;
   initializationVector: Uint8Array;
-  keyEncryptionInputs: KeyEncryptionInput[];
+  keyEncryptionInputs: X25519KeyEncryptionInput[];
 };
 
 export type KeyUnwrapPayload = {
   encryptedKey: Uint8Array;
   ephemeralPublicKey: PublicKeyJwk;
-  keyEncryption: KeyEncryption;
+  keyEncryption: X25519KeyEncryption;
+};
+
+export type X25519KeyWrapInput = {
+  cek: Uint8Array;
+  keyInput: X25519KeyEncryptionInput;
+  ephemeralPrivateKey?: Jwk;
 };
 
 export class Encryption {
@@ -137,31 +140,25 @@ export class Encryption {
     return Encryption.toStream(plaintext);
   }
 
-  public static async wrapKey(
-    recipientPublicKey: PublicKeyJwk,
-    cek: Uint8Array,
-    keyInput: KeyEncryptionInput,
-    ephemeralPrivateKey?: Jwk,
-  ): Promise<{ encryptedKey: Uint8Array; ephemeralPublicKey: PublicKeyJwk }> {
-    return Encryption.wrapX25519Key(recipientPublicKey, cek, keyInput, ephemeralPrivateKey);
+  public static async wrapKey(input: X25519KeyWrapInput): Promise<{ encryptedKey: Uint8Array; ephemeralPublicKey: PublicKeyJwk }> {
+    if (Encryption.isX25519KeyAgreementAlgorithm(input.keyInput.algorithm)) {
+      return Encryption.wrapX25519Key(input);
+    }
+
+    throw new Error(Encryption.unsupportedKeyAgreementAlgorithmMessage(input.keyInput.algorithm));
   }
 
-  private static async wrapX25519Key(
-    recipientPublicKey: PublicKeyJwk,
-    cek: Uint8Array,
-    keyInput: X25519KeyEncryptionInput,
-    ephemeralPrivateKey?: Jwk,
-  ): Promise<{ encryptedKey: Uint8Array; ephemeralPublicKey: PublicKeyJwk }> {
-    Encryption.validateContentEncryptionKey(cek);
+  private static async wrapX25519Key(input: X25519KeyWrapInput): Promise<{ encryptedKey: Uint8Array; ephemeralPublicKey: PublicKeyJwk }> {
+    Encryption.validateContentEncryptionKey(input.cek);
 
-    const privateKey = ephemeralPrivateKey ?? await X25519.generateKey();
+    const privateKey = input.ephemeralPrivateKey ?? await X25519.generateKey();
     const publicKey = await X25519.getPublicKey({ key: privateKey }) as PublicKeyJwk;
     const sharedSecret = await X25519.sharedSecret({
       privateKeyA : privateKey,
-      publicKeyB  : recipientPublicKey as Jwk,
+      publicKeyB  : input.keyInput.publicKey as Jwk,
     });
-    const kek = await Encryption.deriveKek(sharedSecret, keyInput);
-    const cekJwk = Encryption.toA256CtrJwk(cek);
+    const kek = await Encryption.deriveKek(sharedSecret, input.keyInput);
+    const cekJwk = Encryption.toA256CtrJwk(input.cek);
     const kekJwk: Jwk = { alg: 'A256KW', k: Encoder.bytesToBase64Url(kek), kty: 'oct' };
     const encryptedKey = await AesKw.wrapKey({ encryptionKey: kekJwk, unwrappedKey: cekJwk });
 
@@ -170,13 +167,13 @@ export class Encryption {
 
   public static async unwrapKey(
     recipientPrivateKey: Jwk,
-    keyEncryption: KeyEncryption,
+    keyEncryption: X25519KeyEncryption,
   ): Promise<Uint8Array> {
-    if (keyEncryption.algorithm === KeyAgreementAlgorithm.X25519HkdfSha256A256Kw) {
+    if (Encryption.isX25519KeyAgreementAlgorithm(keyEncryption.algorithm)) {
       return Encryption.unwrapX25519Key(recipientPrivateKey, keyEncryption);
     }
 
-    throw new Error(`Unsupported key agreement algorithm: ${(keyEncryption as KeyEncryption).algorithm}`);
+    throw new Error(Encryption.unsupportedKeyAgreementAlgorithmMessage(keyEncryption.algorithm));
   }
 
   private static async unwrapX25519Key(
@@ -204,7 +201,7 @@ export class Encryption {
     const algorithm = encryptionInput.algorithm ?? ContentEncryptionAlgorithm.A256CTR;
     Encryption.validateContentEncryptionParameters(algorithm, encryptionInput.key, encryptionInput.initializationVector);
 
-    const keyEncryption: KeyEncryption[] = [];
+    const keyEncryption: X25519KeyEncryption[] = [];
     for (const keyInput of encryptionInput.keyEncryptionInputs) {
       keyEncryption.push(await Encryption.buildKeyEncryptionEntry(encryptionInput.key, keyInput));
     }
@@ -236,15 +233,14 @@ export class Encryption {
 
   private static async buildKeyEncryptionEntry(
     cek: Uint8Array,
-    keyInput: KeyEncryptionInput,
-  ): Promise<KeyEncryption> {
-    const { encryptedKey, ephemeralPublicKey } = await Encryption.wrapKey(
-      keyInput.publicKey,
+    keyInput: X25519KeyEncryptionInput,
+  ): Promise<X25519KeyEncryption> {
+    const { encryptedKey, ephemeralPublicKey } = await Encryption.wrapKey({
       cek,
       keyInput,
-    );
+    });
     const common = {
-      algorithm    : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+      algorithm    : keyInput.algorithm,
       encryptedKey : Encoder.bytesToBase64Url(encryptedKey),
       ephemeralPublicKey,
       keyId        : keyInput.keyId,
@@ -266,15 +262,15 @@ export class Encryption {
     };
   }
 
-  private static validateKeyEncryptionEntry(entry: KeyEncryption): void {
-    if (entry.algorithm === KeyAgreementAlgorithm.X25519HkdfSha256A256Kw) {
+  private static validateKeyEncryptionEntry(entry: X25519KeyEncryption): void {
+    if (Encryption.isX25519KeyAgreementAlgorithm(entry.algorithm)) {
       Encryption.validateX25519KeyEncryptionEntry(entry);
       return;
     }
 
     throw new DwnError(
       DwnErrorCode.RecordsWriteValidateIntegrityEncryptionEphemeralPublicKeyInvalid,
-      `Unsupported key agreement algorithm: ${(entry as KeyEncryption).algorithm}`
+      Encryption.unsupportedKeyAgreementAlgorithmMessage(entry.algorithm)
     );
   }
 
@@ -304,10 +300,17 @@ export class Encryption {
 
   private static getKekInfo(keyEncryption: X25519KeyEncryptionInput | X25519KeyEncryption): string {
     if (keyEncryption.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME) {
-      return `${KEK_INFO_PREFIX}|roleAudience|${keyEncryption.protocol}|${keyEncryption.role}|${keyEncryption.epoch}|${keyEncryption.keyId}`;
+      return JSON.stringify([
+        KEK_INFO_PREFIX,
+        ROLE_AUDIENCE_DERIVATION_SCHEME,
+        keyEncryption.protocol,
+        keyEncryption.role,
+        keyEncryption.epoch,
+        keyEncryption.keyId,
+      ]);
     }
 
-    return `${KEK_INFO_PREFIX}|protocolPath|${keyEncryption.keyId}`;
+    return JSON.stringify([KEK_INFO_PREFIX, KeyDerivationScheme.ProtocolPath, keyEncryption.keyId]);
   }
 
   private static validateContentEncryptionParameters(
@@ -336,6 +339,14 @@ export class Encryption {
     if (sharedSecret.every((byte): boolean => byte === 0)) {
       throw new Error('X25519 shared secret MUST NOT be all zeros.');
     }
+  }
+
+  private static isX25519KeyAgreementAlgorithm(algorithm: unknown): algorithm is KeyAgreementAlgorithm.X25519HkdfSha256A256Kw {
+    return algorithm === KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
+  }
+
+  private static unsupportedKeyAgreementAlgorithmMessage(algorithm: unknown): string {
+    return `Unsupported key agreement algorithm: ${String(algorithm)}`;
   }
 
   private static toA256CtrJwk(keyBytes: Uint8Array): Jwk {

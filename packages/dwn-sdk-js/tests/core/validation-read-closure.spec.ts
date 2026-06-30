@@ -24,7 +24,7 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { Time } from '../../src/utils/time.js';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { ContentEncryptionAlgorithm, Encryption, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
+import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 import { EncryptionProtocol, KeyDerivationScheme, Protocols } from '../../src/index.js';
@@ -261,11 +261,13 @@ describe('validation read closure', () => {
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [
           {
+            algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
             keyId            : await Encryption.getKeyId(protocolPathPublicKey),
             publicKey        : protocolPathPublicKey,
             derivationScheme : KeyDerivationScheme.ProtocolPath,
           },
           {
+            algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
             keyId            : roleKeyId,
             publicKey        : rolePublicKey,
             derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,

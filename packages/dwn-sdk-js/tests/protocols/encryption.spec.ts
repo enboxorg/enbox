@@ -17,6 +17,7 @@ import {
   Encryption,
   EncryptionProtocol,
   Jws,
+  KeyAgreementAlgorithm,
   KeyDerivationScheme,
   RecordsWrite,
   Time,
@@ -1099,6 +1100,7 @@ async function createAudienceKeyMessage(input: {
       initializationVector : TestDataGenerator.randomBytes(16),
       key                  : TestDataGenerator.randomBytes(32),
       keyEncryptionInputs  : [{
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
         derivationScheme : KeyDerivationScheme.ProtocolPath,
         keyId,
         publicKey        : input.publicKeyJwk,
@@ -1145,6 +1147,7 @@ async function createGrantKeyMessage(input: {
       initializationVector : TestDataGenerator.randomBytes(16),
       key                  : TestDataGenerator.randomBytes(32),
       keyEncryptionInputs  : [{
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
         derivationScheme : KeyDerivationScheme.ProtocolPath,
         keyId            : await Encryption.getKeyId(publicKey),
         publicKey,

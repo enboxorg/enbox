@@ -41,7 +41,7 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
-import { ContentEncryptionAlgorithm, Encryption, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
+import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
 import { CoreProtocolRegistry, DataStoreLevel, DwnConstant, DwnInterfaceName, DwnMethodName, EncryptionProtocol, KeyDerivationScheme, MessageStoreLevel, PermissionsProtocol, Protocols, RecordsDelete, RecordsQuery } from '../../src/index.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -2790,6 +2790,7 @@ export function testRecordsWriteHandler(): void {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [{
+              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               keyId            : await Encryption.getKeyId(encryptionPublicKey),
               publicKey        : encryptionPublicKey,
               derivationScheme : KeyDerivationScheme.ProtocolPath
@@ -2865,6 +2866,7 @@ export function testRecordsWriteHandler(): void {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [{
+              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               keyId            : await Encryption.getKeyId(protocolPathPublicKey),
               publicKey        : protocolPathPublicKey,
               derivationScheme : KeyDerivationScheme.ProtocolPath,
@@ -2977,11 +2979,13 @@ export function testRecordsWriteHandler(): void {
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [
               {
+                algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
                 keyId            : await Encryption.getKeyId(protocolPathPublicKey),
                 publicKey        : protocolPathPublicKey,
                 derivationScheme : KeyDerivationScheme.ProtocolPath,
               },
               {
+                algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
                 keyId            : roleKeyId,
                 publicKey        : rolePublicKey,
                 derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
@@ -3335,6 +3339,7 @@ export function testRecordsWriteHandler(): void {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [{
+              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               keyId            : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
               publicKey        : alice.encryptionKeyPair.publicJwk,
               derivationScheme : KeyDerivationScheme.ProtocolPath
@@ -3387,6 +3392,7 @@ export function testRecordsWriteHandler(): void {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [{
+              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               derivationScheme : KeyDerivationScheme.ProtocolPath,
               keyId            : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
               publicKey        : alice.encryptionKeyPair.publicJwk,
@@ -3444,6 +3450,7 @@ export function testRecordsWriteHandler(): void {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [{
+              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               derivationScheme : KeyDerivationScheme.ProtocolPath,
               keyId            : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
               publicKey        : alice.encryptionKeyPair.publicJwk,

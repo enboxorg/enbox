@@ -131,6 +131,7 @@ export function buildEncryptionInput(
     initializationVector : iv,
     key                  : dek,
     keyEncryptionInputs  : [{
+      algorithm: KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
       keyId,
       publicKey,
       derivationScheme,
@@ -270,7 +271,7 @@ export function buildKmsDecryptCallback(
       });
     },
     decrypt: async (fullDerivationPath, keyUnwrapPayload): Promise<Uint8Array> => {
-      return keyManager.jweKeyUnwrap({
+      return keyManager.unwrapContentKey({
         keyUri,
         derivationPath     : fullDerivationPath,
         encryptedKey       : keyUnwrapPayload.encryptedKey,

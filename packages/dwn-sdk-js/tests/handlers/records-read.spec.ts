@@ -23,7 +23,7 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
+import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm } from '../../src/utils/encryption.js';
 import { DataStoreLevel, DwnConstant, MessageStoreLevel, PermissionsProtocol, Time } from '../../src/index.js';
 import { DataStream, DateSort, Dwn, Jws, Protocols, ProtocolsConfigure, ProtocolsQuery, Records, RecordsDelete, RecordsRead , RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -1901,6 +1901,7 @@ export function testRecordsReadHandler(): void {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [{
+              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               keyId            : await Encryption.getKeyId(publicJwk!),
               publicKey        : publicJwk!,
               derivationScheme : KeyDerivationScheme.ProtocolPath

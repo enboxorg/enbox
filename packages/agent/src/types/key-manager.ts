@@ -43,7 +43,7 @@ export interface AgentKeyManager extends KeyManager,
   }): Promise<PublicKeyJwk>;
 
   /**
-   * Unwraps a JWE-encrypted Content Encryption Key (CEK) using a derived X25519 private key.
+   * Unwraps a DWN content-encryption key using a derived X25519 private key.
    *
    * This method:
    * 1. Derives the leaf private key via HKDF through the derivation path
@@ -54,11 +54,11 @@ export interface AgentKeyManager extends KeyManager,
    *
    * @param params.keyUri - URI of the stored ancestor private key (X25519)
    * @param params.derivationPath - Array of HKDF path segments to derive the leaf key
-   * @param params.encryptedKey - The wrapped CEK bytes from the JWE recipient
-   * @param params.ephemeralPublicKey - Ephemeral X25519 public key from the JWE recipient header
+   * @param params.encryptedKey - The wrapped CEK bytes from the key-encryption entry
+   * @param params.ephemeralPublicKey - Ephemeral X25519 public key from the key-encryption entry
    * @returns The unwrapped CEK bytes (typically 32 bytes for AES-256)
    */
-  jweKeyUnwrap(params: {
+  unwrapContentKey(params: {
     keyUri: KeyIdentifier;
     derivationPath: string[];
     encryptedKey: Uint8Array;

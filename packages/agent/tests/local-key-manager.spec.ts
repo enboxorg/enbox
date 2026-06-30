@@ -5,7 +5,7 @@ import type { PrivateKeyJwk, PublicKeyJwk } from '@enbox/dwn-sdk-js';
 import { Convert } from '@enbox/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { CryptoErrorCode, CryptoUtils, Ed25519, X25519 } from '@enbox/crypto';
-import { Encryption, HdKey, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import { Encryption, HdKey, KeyAgreementAlgorithm, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
 
@@ -519,8 +519,8 @@ describe('LocalKeyManager', () => {
         });
       });
 
-      describe('jweKeyUnwrap()', () => {
-        it('should unwrap a JWE-encrypted key using a derived X25519 key', async () => {
+      describe('unwrapContentKey()', () => {
+        it('should unwrap a DWN key using a derived X25519 key', async () => {
           // Generate an X25519 key pair
           const keyUri = await testHarness.agent.keyManager.generateKey({ algorithm: 'X25519' });
 
@@ -535,14 +535,18 @@ describe('LocalKeyManager', () => {
           const leafPublicKeyJwk = await X25519.getPublicKey({ key: leafPrivateKeyJwk }) as PublicKeyJwk;
 
           const plaintext = CryptoUtils.randomBytes(32); // Simulated CEK
-          const wrapped = await Encryption.wrapKey(leafPublicKeyJwk, plaintext, {
-            derivationScheme : KeyDerivationScheme.ProtocolPath,
-            keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
-            publicKey        : leafPublicKeyJwk,
+          const wrapped = await Encryption.wrapKey({
+            cek      : plaintext,
+            keyInput : {
+              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
+              publicKey        : leafPublicKeyJwk,
+            },
           });
 
           // Unwrap using the key manager method
-          const unwrapped = await testHarness.agent.keyManager.jweKeyUnwrap({
+          const unwrapped = await testHarness.agent.keyManager.unwrapContentKey({
             keyUri,
             derivationPath,
             encryptedKey       : wrapped.encryptedKey,
@@ -572,17 +576,21 @@ describe('LocalKeyManager', () => {
           const leafPublicKeyJwk = await X25519.getPublicKey({ key: leafPrivateKeyJwk }) as PublicKeyJwk;
 
           const plaintext = CryptoUtils.randomBytes(32);
-          const wrapped = await Encryption.wrapKey(leafPublicKeyJwk, plaintext, {
-            derivationScheme : KeyDerivationScheme.ProtocolPath,
-            keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
-            publicKey        : leafPublicKeyJwk,
+          const wrapped = await Encryption.wrapKey({
+            cek      : plaintext,
+            keyInput : {
+              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
+              publicKey        : leafPublicKeyJwk,
+            },
           });
 
           // Attempt to unwrap with wrong derivation path
           const wrongPath = ['wrong', 'path'];
 
           try {
-            await testHarness.agent.keyManager.jweKeyUnwrap({
+            await testHarness.agent.keyManager.unwrapContentKey({
               keyUri,
               derivationPath     : wrongPath,
               encryptedKey       : wrapped.encryptedKey,
