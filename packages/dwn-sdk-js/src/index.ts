@@ -41,13 +41,14 @@ export type { MessagesSubscribeOptions } from './interfaces/messages-subscribe.j
 export { Encryption, ContentEncryptionAlgorithm, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from './utils/encryption.js';
 export type {
   DwnEncryption,
-  KeyEncryption,
-  KeyEncryptionInput,
   KeyUnwrapPayload,
   ProtocolPathKeyEncryption,
   ProtocolPathKeyEncryptionInput,
   RoleAudienceKeyEncryption,
   RoleAudienceKeyEncryptionInput,
+  X25519KeyEncryption,
+  X25519KeyEncryptionInput,
+  X25519KeyWrapInput,
 } from './utils/encryption.js';
 export { RecordsWrite } from './interfaces/records-write.js';
 export type { EncryptionInput, RecordsWriteOptions, CreateFromOptions } from './interfaces/records-write.js';

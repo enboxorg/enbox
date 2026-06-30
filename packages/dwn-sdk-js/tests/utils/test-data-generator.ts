@@ -47,7 +47,7 @@ import { Secp256k1 } from '../../src/utils/secp256k1.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { Time } from '../../src/utils/time.js';
 import { X25519 } from '@enbox/crypto';
-import { ContentEncryptionAlgorithm, Encryption } from '../../src/utils/encryption.js';
+import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm } from '../../src/utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 
 /**
@@ -611,6 +611,7 @@ export class TestDataGenerator {
 
       const protocolPathDerivedPublicKeyJwk = protocolRuleSetSegment.$keyAgreement?.publicKeyJwk;
       const protocolPathDerivedKeyEncryptionInput: ProtocolPathKeyEncryptionInput = {
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
         keyId            : await Encryption.getKeyId(protocolPathDerivedPublicKeyJwk!),
         publicKey        : protocolPathDerivedPublicKeyJwk!,
         derivationScheme : KeyDerivationScheme.ProtocolPath

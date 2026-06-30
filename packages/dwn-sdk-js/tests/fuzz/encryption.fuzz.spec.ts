@@ -46,11 +46,15 @@ describe('Encryption — fuzz', () => {
       fc.asyncProperty(
         aes256Key(),
         async (cek): Promise<void> => {
-          const wrapped = await Encryption.wrapKey(
-            recipientPublicKey,
+          const wrapped = await Encryption.wrapKey({
             cek,
-            { derivationScheme: KeyDerivationScheme.ProtocolPath, keyId, publicKey: recipientPublicKey },
-          );
+            keyInput: {
+              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              keyId,
+              publicKey        : recipientPublicKey,
+            },
+          });
           const unwrapped = await Encryption.unwrapKey(recipientPrivateKey, {
             algorithm          : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
             derivationScheme   : KeyDerivationScheme.ProtocolPath,

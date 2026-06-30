@@ -9,6 +9,7 @@ import {
   DwnInterfaceName,
   DwnMethodName,
   EncryptionProtocol,
+  KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
   TestDataGenerator,
@@ -2649,10 +2650,14 @@ describe('Encryption Callback Factories', () => {
       // Wrap a random 32-byte CEK using the DWN key-agreement envelope.
       const { CryptoUtils } = await import('@enbox/crypto');
       const cek = CryptoUtils.randomBytes(32);
-      const wrapped = await Encryption.wrapKey(leafPublicKeyJwk, cek, {
-        derivationScheme : KeyDerivationScheme.ProtocolPath,
-        keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
-        publicKey        : leafPublicKeyJwk,
+      const wrapped = await Encryption.wrapKey({
+        cek,
+        keyInput: {
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
+          keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
+          publicKey        : leafPublicKeyJwk,
+        },
       });
 
       // Get key decrypter and decrypt

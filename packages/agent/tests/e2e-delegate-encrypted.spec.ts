@@ -644,7 +644,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       );
       expect(grantApplyReply.status.code).toBe(202);
 
-      const kmsUnwrapSpy = sinon.spy(delegateHarness.agent.keyManager, 'jweKeyUnwrap');
+      const kmsUnwrapSpy = sinon.spy(delegateHarness.agent.keyManager, 'unwrapContentKey');
 
       // Step 5: Copy the encrypted protocol + record to the delegate's DWN
       // (simulates sync bringing over the data)

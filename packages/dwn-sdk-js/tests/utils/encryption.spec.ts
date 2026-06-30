@@ -12,7 +12,7 @@ import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { Records } from '../../src/utils/records.js';
 import { TestDataGenerator } from './test-data-generator.js';
 import { X25519 } from '@enbox/crypto';
-import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm } from '../../src/utils/encryption.js';
+import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
 import { describe, expect, it } from 'bun:test';
 
 const boundarySizes = [0, 1, 15, 16, 17, 32, 256];
@@ -37,6 +37,7 @@ async function createEncryptedRecordFixture(plaintext = TestDataGenerator.random
     initializationVector : iv,
     key                  : cek,
     keyEncryptionInputs  : [{
+      algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
       derivationScheme : KeyDerivationScheme.ProtocolPath,
       keyId,
       publicKey        : recipientPublicKey,
@@ -119,11 +120,15 @@ describe('Encryption', () => {
       const cek = TestDataGenerator.randomBytes(32);
       const keyId = await Encryption.getKeyId(recipientPublicKey);
 
-      const { encryptedKey, ephemeralPublicKey } = await Encryption.wrapKey(
-        recipientPublicKey,
+      const { encryptedKey, ephemeralPublicKey } = await Encryption.wrapKey({
         cek,
-        { derivationScheme: KeyDerivationScheme.ProtocolPath, keyId, publicKey: recipientPublicKey },
-      );
+        keyInput: {
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
+          keyId,
+          publicKey        : recipientPublicKey,
+        },
+      });
 
       const unwrappedCek = await Encryption.unwrapKey(recipientPrivateKey, {
         algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
@@ -141,10 +146,15 @@ describe('Encryption', () => {
       const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
       const cek = TestDataGenerator.randomBytes(32);
       const keyId = await Encryption.getKeyId(recipientPublicKey);
-      const keyInput = { derivationScheme: KeyDerivationScheme.ProtocolPath, keyId, publicKey: recipientPublicKey } as const;
+      const keyInput = {
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+        derivationScheme : KeyDerivationScheme.ProtocolPath,
+        keyId,
+        publicKey        : recipientPublicKey,
+      } as const;
 
-      const wrappedKey1 = await Encryption.wrapKey(recipientPublicKey, cek, keyInput);
-      const wrappedKey2 = await Encryption.wrapKey(recipientPublicKey, cek, keyInput);
+      const wrappedKey1 = await Encryption.wrapKey({ cek, keyInput });
+      const wrappedKey2 = await Encryption.wrapKey({ cek, keyInput });
 
       expect(ArrayUtility.byteArraysEqual(wrappedKey1.encryptedKey, wrappedKey2.encryptedKey)).toBe(false);
 
@@ -166,6 +176,101 @@ describe('Encryption', () => {
       expect(ArrayUtility.byteArraysEqual(unwrapped1, cek)).toBe(true);
       expect(ArrayUtility.byteArraysEqual(unwrapped2, cek)).toBe(true);
     });
+
+    it('should domain-separate role-audience KEKs without delimiter ambiguity', async () => {
+      const recipientPrivateKey = await X25519.generateKey();
+      const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
+      const ephemeralPrivateKey = await X25519.generateKey();
+      const cek = TestDataGenerator.randomBytes(32);
+      const keyId = await Encryption.getKeyId(recipientPublicKey);
+      const baseKeyInput = {
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+        derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+        epoch            : 1,
+        keyId,
+        publicKey        : recipientPublicKey,
+      } as const;
+
+      const wrappedKey1 = await Encryption.wrapKey({
+        cek,
+        ephemeralPrivateKey,
+        keyInput: {
+          ...baseKeyInput,
+          protocol : 'https://example.com/a|b',
+          role     : 'c',
+        },
+      });
+      const wrappedKey2 = await Encryption.wrapKey({
+        cek,
+        ephemeralPrivateKey,
+        keyInput: {
+          ...baseKeyInput,
+          protocol : 'https://example.com/a',
+          role     : 'b|c',
+        },
+      });
+
+      expect(ArrayUtility.byteArraysEqual(wrappedKey1.encryptedKey, wrappedKey2.encryptedKey)).toBe(false);
+
+      const unwrapped1 = await Encryption.unwrapKey(recipientPrivateKey, {
+        ...baseKeyInput,
+        encryptedKey       : Encoder.bytesToBase64Url(wrappedKey1.encryptedKey),
+        ephemeralPublicKey : wrappedKey1.ephemeralPublicKey,
+        protocol           : 'https://example.com/a|b',
+        role               : 'c',
+      });
+      const unwrapped2 = await Encryption.unwrapKey(recipientPrivateKey, {
+        ...baseKeyInput,
+        encryptedKey       : Encoder.bytesToBase64Url(wrappedKey2.encryptedKey),
+        ephemeralPublicKey : wrappedKey2.ephemeralPublicKey,
+        protocol           : 'https://example.com/a',
+        role               : 'b|c',
+      });
+
+      expect(ArrayUtility.byteArraysEqual(unwrapped1, cek)).toBe(true);
+      expect(ArrayUtility.byteArraysEqual(unwrapped2, cek)).toBe(true);
+    });
+
+    it('should reject unsupported key agreement algorithms', async () => {
+      const recipientPrivateKey = await X25519.generateKey();
+      const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
+      const cek = TestDataGenerator.randomBytes(32);
+      const keyId = await Encryption.getKeyId(recipientPublicKey);
+      const unsupportedAlgorithm = 'unsupported-key-agreement';
+      const unsupportedMessage = `Unsupported key agreement algorithm: ${unsupportedAlgorithm}`;
+      const unsupportedKeyInput = {
+        algorithm        : unsupportedAlgorithm,
+        derivationScheme : KeyDerivationScheme.ProtocolPath,
+        keyId,
+        publicKey        : recipientPublicKey,
+      } as unknown as Parameters<typeof Encryption.wrapKey>[0]['keyInput'];
+
+      await expect(Encryption.wrapKey({ cek, keyInput: unsupportedKeyInput })).rejects.toThrow(unsupportedMessage);
+
+      const wrappedKey = await Encryption.wrapKey({
+        cek,
+        keyInput: {
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationScheme : KeyDerivationScheme.ProtocolPath,
+          keyId,
+          publicKey        : recipientPublicKey,
+        },
+      });
+      const unsupportedKeyEncryption = {
+        algorithm          : unsupportedAlgorithm,
+        derivationScheme   : KeyDerivationScheme.ProtocolPath,
+        encryptedKey       : Encoder.bytesToBase64Url(wrappedKey.encryptedKey),
+        ephemeralPublicKey : wrappedKey.ephemeralPublicKey,
+        keyId,
+      } as unknown as Parameters<typeof Encryption.unwrapKey>[1];
+
+      await expect(Encryption.unwrapKey(recipientPrivateKey, unsupportedKeyEncryption)).rejects.toThrow(unsupportedMessage);
+      expect(() => Encryption.validateEncryptionProperty({
+        algorithm            : ContentEncryptionAlgorithm.A256CTR,
+        initializationVector : Encoder.bytesToBase64Url(TestDataGenerator.randomBytes(16)),
+        keyEncryption        : [unsupportedKeyEncryption],
+      })).toThrow(unsupportedMessage);
+    });
   });
 
   describe('buildEncryptionProperty', () => {
@@ -180,6 +285,7 @@ describe('Encryption', () => {
         initializationVector : iv,
         key                  : cek,
         keyEncryptionInputs  : [{
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
           derivationScheme : KeyDerivationScheme.ProtocolPath,
           keyId,
           publicKey        : recipientPublicKey,

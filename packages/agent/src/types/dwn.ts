@@ -266,6 +266,7 @@ export {
   DateSort as DwnDateSort,
   DwnConstant,
   ContentEncryptionAlgorithm as DwnContentEncryptionAlgorithm,
+  KeyAgreementAlgorithm as DwnKeyAgreementAlgorithm,
   KeyDerivationScheme as DwnKeyDerivationScheme,
   PermissionGrant as DwnPermissionGrant,
   PermissionRequest as DwnPermissionRequest,

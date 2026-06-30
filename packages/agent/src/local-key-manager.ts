@@ -423,11 +423,11 @@ export class LocalKeyManager implements AgentKeyManager {
   }
 
   /**
-   * Unwraps a JWE-encrypted Content Encryption Key (CEK) using a derived X25519 private key.
+   * Unwraps a DWN content-encryption key using a derived X25519 private key.
    * Performs X25519 key agreement with the ephemeral public key, derives the KEK via
    * HKDF-SHA256, and unwraps the CEK with AES-256 Key Unwrap.
    */
-  public async jweKeyUnwrap({
+  public async unwrapContentKey({
     keyUri,
     derivationPath,
     encryptedKey,

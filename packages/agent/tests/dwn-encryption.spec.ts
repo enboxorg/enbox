@@ -88,7 +88,7 @@ describe('dwn-encryption', () => {
     it('should return a KeyDecrypter with correct rootKeyId and derivationScheme', () => {
       const mockAgent = {
         keyManager: {
-          jweKeyUnwrap: sinon.stub().resolves(new Uint8Array(32)),
+          unwrapContentKey: sinon.stub().resolves(new Uint8Array(32)),
         },
       } as any;
 
@@ -101,10 +101,10 @@ describe('dwn-encryption', () => {
       expect(typeof result.decrypt).toBe('function');
     });
 
-    it('should call keyManager.jweKeyUnwrap when decrypt is called', async () => {
-      const jweKeyUnwrapStub = sinon.stub().resolves(new Uint8Array(32));
+    it('should call keyManager.unwrapContentKey when decrypt is called', async () => {
+      const unwrapContentKeyStub = sinon.stub().resolves(new Uint8Array(32));
       const mockAgent = {
-        keyManager: { jweKeyUnwrap: jweKeyUnwrapStub },
+        keyManager: { unwrapContentKey: unwrapContentKeyStub },
       } as any;
 
       const decrypter = buildKmsDecryptCallback(mockAgent, 'root-key-id', 'key-uri', KeyDerivationScheme.ProtocolPath);
@@ -116,8 +116,8 @@ describe('dwn-encryption', () => {
 
       await decrypter.decrypt(['path', 'to', 'key'], mockPayload);
 
-      expect(jweKeyUnwrapStub.calledOnce).toBe(true);
-      expect(jweKeyUnwrapStub.firstCall.args[0]).toEqual({
+      expect(unwrapContentKeyStub.calledOnce).toBe(true);
+      expect(unwrapContentKeyStub.firstCall.args[0]).toEqual({
         keyUri             : 'key-uri',
         derivationPath     : ['path', 'to', 'key'],
         encryptedKey       : mockPayload.encryptedKey,
@@ -179,8 +179,8 @@ describe('dwn-encryption', () => {
           }),
         },
         keyManager: {
-          getKeyUri    : sinon.stub().resolves('key-uri-1'),
-          jweKeyUnwrap : sinon.stub(),
+          getKeyUri        : sinon.stub().resolves('key-uri-1'),
+          unwrapContentKey : sinon.stub(),
         },
       } as any;
 
@@ -238,8 +238,8 @@ describe('dwn-encryption', () => {
           }),
         },
         keyManager: {
-          getKeyUri    : sinon.stub().resolves('key-uri-1'),
-          jweKeyUnwrap : sinon.stub(),
+          getKeyUri        : sinon.stub().resolves('key-uri-1'),
+          unwrapContentKey : sinon.stub(),
         },
       } as any;
 
@@ -324,8 +324,8 @@ describe('dwn-encryption', () => {
       } as any;
       const mockAgent = {
         keyManager: {
-          getKeyUri    : sinon.stub().rejects(new Error('owner KMS fallback should not be used')),
-          jweKeyUnwrap : sinon.stub().rejects(new Error('owner KMS fallback should not be used')),
+          getKeyUri        : sinon.stub().rejects(new Error('owner KMS fallback should not be used')),
+          unwrapContentKey : sinon.stub().rejects(new Error('owner KMS fallback should not be used')),
         },
       } as any;
       const delegateCache = {
@@ -344,7 +344,7 @@ describe('dwn-encryption', () => {
       );
 
       expect(mockAgent.keyManager.getKeyUri.called).toBe(false);
-      expect(mockAgent.keyManager.jweKeyUnwrap.called).toBe(false);
+      expect(mockAgent.keyManager.unwrapContentKey.called).toBe(false);
       expect(Encoder.bytesToString(await DataStream.toBytes(reply.entry.data))).toBe('delivered key plaintext');
     });
   });
@@ -535,8 +535,8 @@ describe('dwn-encryption', () => {
           }),
         },
         keyManager: {
-          getKeyUri    : sinon.stub().resolves('key-uri-1'),
-          jweKeyUnwrap : sinon.stub().resolves(new Uint8Array(32)),
+          getKeyUri        : sinon.stub().resolves('key-uri-1'),
+          unwrapContentKey : sinon.stub().resolves(new Uint8Array(32)),
         },
       } as any;
 
@@ -606,8 +606,8 @@ describe('dwn-encryption', () => {
         }),
       },
       keyManager: {
-        getKeyUri    : sinon.stub().resolves('key-uri-1'),
-        jweKeyUnwrap : sinon.stub(),
+        getKeyUri        : sinon.stub().resolves('key-uri-1'),
+        unwrapContentKey : sinon.stub(),
       },
     });
 
@@ -747,8 +747,8 @@ describe('dwn-encryption', () => {
           }),
         },
         keyManager: {
-          getKeyUri    : sinon.stub().resolves('grantee-key-uri'),
-          jweKeyUnwrap : sinon.stub(),
+          getKeyUri        : sinon.stub().resolves('grantee-key-uri'),
+          unwrapContentKey : sinon.stub(),
         },
         permissions: {
           isGrantRevoked: sinon.stub().resolves(grantRevoked),
@@ -911,7 +911,7 @@ describe('dwn-encryption', () => {
           derivePrivateKeyBytes : sinon.stub().resolves(rolePathPrivateKeyBytes),
           derivePublicKey       : sinon.stub(),
           getKeyUri             : sinon.stub().resolves('recipient-key-uri'),
-          jweKeyUnwrap          : sinon.stub(),
+          unwrapContentKey      : sinon.stub(),
         },
         processDwnRequest,
         secrets: {

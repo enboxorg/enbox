@@ -851,6 +851,7 @@ export class AgentDwnApi {
       }
 
       inputs.push({
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
         derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
         epoch            : audienceEpoch.epoch,
         keyId            : audienceEpoch.keyId,

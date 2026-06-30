@@ -20,6 +20,7 @@ import {
   Encryption,
   EncryptionProtocol,
   Jws,
+  KeyAgreementAlgorithm,
   Protocols,
   Records,
   RecordsRead,
@@ -180,11 +181,13 @@ export function testEndToEndScenarios(): void {
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [
           {
+            algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
             keyId            : await Encryption.getKeyId(protocolPathPublicKey),
             publicKey        : protocolPathPublicKey,
             derivationScheme : KeyDerivationScheme.ProtocolPath,
           },
           {
+            algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
             keyId            : roleKeyId,
             publicKey        : rolePublicKey,
             derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,

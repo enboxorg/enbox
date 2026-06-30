@@ -8,7 +8,7 @@ import { utils as didUtils } from '@enbox/dids';
 import { processConnectedGrants } from '@enbox/auth';
 import { Stream } from '@enbox/common';
 import {
-  DwnConstant, DwnContentEncryptionAlgorithm, DwnDateSort, DwnInterface, DwnKeyDerivationScheme,
+  DwnConstant, DwnContentEncryptionAlgorithm, DwnDateSort, DwnInterface, DwnKeyAgreementAlgorithm, DwnKeyDerivationScheme,
   dwnMessageConstructors, EnboxConnectProtocol, EnboxUserAgent, getRecordAuthor,
   getRecordProtocolRole, PlatformAgentTestHarness,
 } from '@enbox/agent';
@@ -704,6 +704,7 @@ describe('Record', () => {
       initializationVector : TestDataGenerator.randomBytes(16),
       key                  : TestDataGenerator.randomBytes(32),
       keyEncryptionInputs  : [{
+        algorithm        : DwnKeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
         derivationScheme : DwnKeyDerivationScheme.ProtocolPath,
         keyId            : encryptionKeyId,
         publicKey        : encryptionPublicKeyJwk as DwnPublicKeyJwk,
@@ -2390,6 +2391,7 @@ describe('Record', () => {
         initializationVector : TestDataGenerator.randomBytes(16),
         key                  : TestDataGenerator.randomBytes(32),
         keyEncryptionInputs  : [{
+          algorithm        : DwnKeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
           derivationScheme : DwnKeyDerivationScheme.ProtocolPath,
           keyId            : encryptionKeyId,
           publicKey        : encryptionPublicKeyJwk as DwnPublicKeyJwk,
