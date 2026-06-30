@@ -65,21 +65,21 @@ type GrantKeyScope = {
   protocolPath?: string;
 };
 
-type X25519ProtocolPathKeyMaterial = {
+type X25519KeyMaterialBase = {
   algorithm: typeof KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
-  derivationScheme: typeof KeyDerivationScheme.ProtocolPath;
-  derivationPath: string[];
+  derivationScheme: string;
   keyId: string;
   publicKeyJwk: PublicKeyJwk;
   privateKeyJwk: PrivateKeyJwk;
 };
 
-type X25519RoleAudienceKeyMaterial = {
-  algorithm: typeof KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
+type X25519ProtocolPathKeyMaterial = X25519KeyMaterialBase & {
+  derivationScheme: typeof KeyDerivationScheme.ProtocolPath;
+  derivationPath: string[];
+};
+
+type X25519RoleAudienceKeyMaterial = X25519KeyMaterialBase & {
   derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
-  keyId: string;
-  publicKeyJwk: PublicKeyJwk;
-  privateKeyJwk: PrivateKeyJwk;
 };
 
 type GrantKeyPayload = {
@@ -1112,13 +1112,7 @@ function isRoleAudienceKeyMaterial(value: unknown): value is X25519RoleAudienceK
     value.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME;
 }
 
-function isX25519KeyMaterial(value: unknown): value is Record<string, unknown> & {
-  algorithm: typeof KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
-  derivationScheme: string;
-  keyId: string;
-  publicKeyJwk: PublicKeyJwk;
-  privateKeyJwk: PrivateKeyJwk;
-} {
+function isX25519KeyMaterial(value: unknown): value is Record<string, unknown> & X25519KeyMaterialBase {
   return isObject(value) &&
     value.algorithm === KeyAgreementAlgorithm.X25519HkdfSha256A256Kw &&
     typeof value.derivationScheme === 'string' &&
