@@ -1167,7 +1167,7 @@ async function verifyAudienceKeyRoleAssignment(params: {
     messageType   : DwnInterface.RecordsQuery,
     messageParams : {
       filter: {
-        ...(contextIdPrefix !== undefined ? { contextId: contextIdPrefix } : {}),
+        ...(contextIdPrefix === undefined ? {} : { contextId: contextIdPrefix }),
         recipient    : params.recipientDid,
         protocol     : params.protocol,
         protocolPath : params.role,
