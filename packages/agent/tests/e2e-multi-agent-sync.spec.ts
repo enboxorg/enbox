@@ -1,14 +1,18 @@
-import type { GenericMessage, PermissionScope, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { PrivateKeyJwk } from '@enbox/crypto';
+import type { GenericMessage, MessagesQueryReplyEntry, PermissionScope, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
+import { Ed25519 } from '@enbox/crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DwnInterfaceName, DwnMethodName, Time } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnInterfaceName, DwnMethodName, EncryptionProtocol, Time } from '@enbox/dwn-sdk-js';
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
 
+import { createGrantKeyRecordsForGrants } from '../src/dwn-encryption.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { requireDwnServer } from './utils/require-dwn-server.js';
+import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
@@ -179,6 +183,7 @@ describe('E2E Multi-Agent Sync', () => {
 
   /** The device's connected identity (delegates of Alice). */
   let aliceDevice: BearerIdentity;
+  let aliceDeviceX25519PrivateKey: PrivateKeyJwk;
 
   /** Grants from Alice → aliceDevice. */
   let messagesReadGrant: { grant: any; message: any };
@@ -200,6 +205,8 @@ describe('E2E Multi-Agent Sync', () => {
     });
     await primaryHarness.clearStorage();
     await primaryHarness.createAgentDid();
+    // Role-audience provisioning persists generated audience private keys through the agent secret store.
+    await primaryHarness.agent.vault.initialize({ password: 'e2e-multi-agent-sync-primary' });
 
     deviceHarness = await PlatformAgentTestHarness.setup({
       agentClass       : TestAgent,
@@ -222,6 +229,11 @@ describe('E2E Multi-Agent Sync', () => {
       didMethod : 'jwk',
       metadata  : { name: 'Alice Device', connectedDid: alice.did.uri },
     });
+    const aliceDevicePortableDid = await aliceDevice.did.export();
+    aliceDeviceX25519PrivateKey = await Ed25519.convertPrivateKeyToX25519({
+      privateKey: aliceDevicePortableDid.privateKeys![0],
+    }) as PrivateKeyJwk;
+    await deviceHarness.agent.keyManager.importKey({ key: aliceDeviceX25519PrivateKey });
 
     // -----------------------------------------------------------------------
     // Install protocols on Alice's remote DWN.
@@ -521,6 +533,391 @@ describe('E2E Multi-Agent Sync', () => {
       expect(remoteQuery.reply.status.code).toBe(200);
       expect(remoteQuery.reply.entries?.map(e => e.recordId)).toContain(writeResult.message!.recordId);
     });
+
+    it('pulls durable grantKey records and decrypts encrypted records without owner keys', async () => {
+      const encryptedProtocol: ProtocolDefinition = {
+        published : true,
+        protocol  : `https://protocol.xyz/encrypted-sync-notes/${crypto.randomUUID()}`,
+        types     : {
+          note: {
+            schema             : 'https://schemas.xyz/encrypted-sync-note',
+            dataFormats        : ['text/plain'],
+            encryptionRequired : true,
+          },
+        },
+        structure: { note: {} },
+      };
+
+      const localProtocolConfigure = await primaryHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: encryptedProtocol },
+        encryption    : true,
+      });
+      expect(localProtocolConfigure.reply.status.code).toBe(202);
+
+      const remoteProtocolConfigure = await primaryHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: encryptedProtocol },
+        encryption    : true,
+      });
+      expect([202, 409]).toContain(remoteProtocolConfigure.reply.status.code);
+
+      const deviceProtocolConfigure = await deviceHarness.agent.dwn.processRawMessage(
+        alice.did.uri,
+        localProtocolConfigure.message as GenericMessage,
+      );
+      expect([202, 409]).toContain(deviceProtocolConfigure.status.code);
+
+      await createAndDistributeGrant(primaryHarness, deviceHarness, {
+        grantor : alice,
+        grantee : aliceDevice,
+        scope   : { protocol: encryptedProtocol.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
+      });
+      const recordsReadGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
+        grantor   : alice,
+        grantee   : aliceDevice,
+        scope     : { protocol: encryptedProtocol.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Read },
+        delegated : true,
+      });
+      const recordsReadGrantId = recordsReadGrant.grant.grant.id;
+      expect(recordsReadGrantId).toBe(recordsReadGrant.message.recordId);
+
+      const grantKeyRecords = await createGrantKeyRecordsForGrants({
+        agent                 : primaryHarness.agent,
+        ownerDid              : alice.did.uri,
+        granteeDid            : aliceDevice.did.uri,
+        granteeRootPrivateKey : aliceDeviceX25519PrivateKey,
+        grantMessages         : [recordsReadGrant.grant.message],
+      });
+      expect(grantKeyRecords).toHaveLength(1);
+
+      const noteText = 'encrypted sync note decrypted from durable grantKey';
+      const writeResult = await primaryHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'text/plain',
+          protocol     : encryptedProtocol.protocol,
+          protocolPath : 'note',
+          schema       : encryptedProtocol.types.note.schema,
+        },
+        dataStream : new Blob([noteText]),
+        encryption : true,
+      });
+      expect(writeResult.reply.status.code).toBe(202);
+      const recordId = writeResult.message!.recordId;
+
+      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.sync('push');
+
+      await deviceHarness.agent.sync.registerIdentity({
+        did     : alice.did.uri,
+        options : {
+          protocols   : [encryptedProtocol.protocol],
+          delegateDid : aliceDevice.did.uri,
+        },
+      });
+      await deviceHarness.agent.sync.sync('pull');
+
+      const grantKeyQuery = await deviceHarness.agent.dwn.processRequest({
+        author        : aliceDevice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            recipient    : aliceDevice.did.uri,
+            protocol     : EncryptionProtocol.uri,
+            protocolPath : EncryptionProtocol.grantKeyPath,
+            tags         : { protocol: encryptedProtocol.protocol },
+          },
+        },
+      });
+      expect(grantKeyQuery.reply.status.code).toBe(200);
+      expect(grantKeyQuery.reply.entries?.map(entry => entry.recordId)).toContain(grantKeyRecords[0].recordId);
+
+      deviceHarness.agent.dwn.clearDelegateDecryptionKeys(aliceDevice.did.uri);
+      expect(await deviceHarness.agent.did.get({ didUri: alice.did.uri })).toBeUndefined();
+
+      const readResult = await deviceHarness.agent.dwn.processRequest({
+        author        : aliceDevice.did.uri,
+        target        : alice.did.uri,
+        granteeDid    : aliceDevice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter            : { recordId },
+          permissionGrantId : recordsReadGrantId,
+        },
+        encryption: true,
+      });
+      expect(readResult.reply.status.code).toBe(200);
+      expect(readResult.reply.entry?.data).toBeDefined();
+
+      const decryptedBytes = await DataStream.toBytes(readResult.reply.entry!.data!);
+      expect(new TextDecoder().decode(decryptedBytes)).toBe(noteText);
+    }, 60_000);
+
+    it('pulls role-audience key material and decrypts as a role member', async () => {
+      const bobParticipant = await deviceHarness.createIdentity({ name: 'Role Sync Bob', testDwnUrls });
+      const chatProtocol: ProtocolDefinition = {
+        published : true,
+        protocol  : `https://protocol.xyz/encrypted-sync-chat/${crypto.randomUUID()}`,
+        types     : {
+          thread      : { schema: 'https://schemas.xyz/sync-thread', dataFormats: ['application/json'] },
+          participant : { schema: 'https://schemas.xyz/sync-participant', dataFormats: ['application/json'] },
+          chat        : { schema: 'https://schemas.xyz/sync-chat', dataFormats: ['text/plain'], encryptionRequired: true },
+        },
+        structure: {
+          thread: {
+            participant : { $role: true },
+            chat        : {
+              $actions: [
+                { role: 'thread/participant', can: ['read'] },
+              ],
+            },
+          },
+        },
+      };
+
+      const aliceProtocolConfigure = await primaryHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+      expect(aliceProtocolConfigure.reply.status.code).toBe(202);
+
+      const aliceRemoteProtocolConfigure = await primaryHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+      expect([202, 409]).toContain(aliceRemoteProtocolConfigure.reply.status.code);
+
+      const bobProtocolConfigure = await deviceHarness.agent.dwn.processRequest({
+        author        : bobParticipant.did.uri,
+        target        : bobParticipant.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+      expect(bobProtocolConfigure.reply.status.code).toBe(202);
+
+      const bobRemoteProtocolConfigure = await deviceHarness.agent.dwn.sendRequest({
+        author        : bobParticipant.did.uri,
+        target        : bobParticipant.did.uri,
+        messageType   : DwnInterface.ProtocolsConfigure,
+        messageParams : { definition: chatProtocol },
+        encryption    : true,
+      });
+      expect([202, 409]).toContain(bobRemoteProtocolConfigure.reply.status.code);
+
+      const localAliceProtocolConfigure = await deviceHarness.agent.dwn.processRawMessage(
+        alice.did.uri,
+        aliceProtocolConfigure.message as GenericMessage,
+      );
+      expect([202, 409]).toContain(localAliceProtocolConfigure.status.code);
+
+      const localBobProtocolForAlice = await primaryHarness.agent.dwn.processRawMessage(
+        bobParticipant.did.uri,
+        bobProtocolConfigure.message as GenericMessage,
+      );
+      expect([202, 409]).toContain(localBobProtocolForAlice.status.code);
+      const bobProtocolQueryFromAlice = await retryFreshDidResolution(() => primaryHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : bobParticipant.did.uri,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { protocol: chatProtocol.protocol } },
+      }));
+      expect(bobProtocolQueryFromAlice.reply.status.code).toBe(200);
+      expect(bobProtocolQueryFromAlice.reply.entries?.length).toBe(1);
+
+      const bobMessagesReadGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
+        grantor : alice,
+        grantee : bobParticipant,
+        scope   : { protocol: chatProtocol.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
+      });
+      const bobMessagesReadGrantId = bobMessagesReadGrant.grant.grant.id;
+
+      const threadWrite = await primaryHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'application/json',
+          protocol     : chatProtocol.protocol,
+          protocolPath : 'thread',
+          schema       : chatProtocol.types.thread.schema,
+        },
+        dataStream: new Blob([JSON.stringify({ title: 'Synced encrypted chat' })]),
+      });
+      expect(threadWrite.reply.status.code).toBe(202);
+      const threadContextId = (threadWrite.message as RecordsWriteMessage).contextId!;
+      const isThreadAudienceKeyFeedEntry = (entry: MessagesQueryReplyEntry): boolean => {
+        const descriptor = entry.message?.descriptor as RecordsWriteMessage['descriptor'] | undefined;
+        const tags = descriptor?.tags;
+        return descriptor?.protocol === EncryptionProtocol.uri &&
+          descriptor.protocolPath === EncryptionProtocol.audienceKeyPath &&
+          tags?.contextId === threadContextId &&
+          tags.protocol === chatProtocol.protocol &&
+          tags.role === 'thread/participant';
+      };
+
+      const roleWrite = await primaryHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat      : 'application/json',
+          parentContextId : threadContextId,
+          protocol        : chatProtocol.protocol,
+          protocolPath    : 'thread/participant',
+          recipient       : bobParticipant.did.uri,
+          schema          : chatProtocol.types.participant.schema,
+        },
+        dataStream: new Blob([JSON.stringify({ role: 'participant' })]),
+      });
+      expect(roleWrite.reply.status.code).toBe(202);
+
+      const sourceAudienceEpochQuery = await primaryHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : EncryptionProtocol.uri,
+            protocolPath : EncryptionProtocol.audienceEpochPath,
+            tags         : {
+              contextId : threadContextId,
+              protocol  : chatProtocol.protocol,
+              role      : 'thread/participant',
+            },
+          },
+        },
+      });
+      expect(sourceAudienceEpochQuery.reply.status.code).toBe(200);
+      expect(sourceAudienceEpochQuery.reply.entries?.length).toBe(1);
+
+      const chatText = 'role-audience encrypted message from sync';
+      const chatWrite = await primaryHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat      : 'text/plain',
+          parentContextId : threadContextId,
+          protocol        : chatProtocol.protocol,
+          protocolPath    : 'thread/chat',
+          schema          : chatProtocol.types.chat.schema,
+        },
+        dataStream : new Blob([chatText]),
+        encryption : true,
+      });
+      expect(chatWrite.reply.status.code).toBe(202);
+
+      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.sync('push');
+
+      const remoteAudienceKeyQuery = await deviceHarness.agent.dwn.sendRequest({
+        author        : bobParticipant.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            recipient    : bobParticipant.did.uri,
+            protocol     : EncryptionProtocol.uri,
+            protocolPath : EncryptionProtocol.audienceKeyPath,
+            tags         : {
+              contextId : threadContextId,
+              protocol  : chatProtocol.protocol,
+              role      : 'thread/participant',
+            },
+          },
+        },
+      });
+      expect(remoteAudienceKeyQuery.reply.status.code).toBe(200);
+      expect(remoteAudienceKeyQuery.reply.entries?.length).toBe(1);
+
+      const remoteFeedQuery = await deviceHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        granteeDid    : bobParticipant.did.uri,
+        messageType   : DwnInterface.MessagesQuery,
+        messageParams : {
+          filters            : [{ protocol: chatProtocol.protocol }],
+          permissionGrantIds : [bobMessagesReadGrantId],
+        },
+      });
+      expect(remoteFeedQuery.reply.status.code).toBe(200);
+      expect(remoteFeedQuery.reply.entries?.some(isThreadAudienceKeyFeedEntry)).toBe(true);
+
+      await deviceHarness.agent.sync.registerIdentity({
+        did     : alice.did.uri,
+        options : {
+          protocols   : [chatProtocol.protocol],
+          delegateDid : bobParticipant.did.uri,
+        },
+      });
+      await deviceHarness.agent.sync.sync('pull');
+      expect(await deviceHarness.agent.sync.getFailedMessages(alice.did.uri)).toEqual([]);
+
+      const localFeedQuery = await deviceHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        granteeDid    : bobParticipant.did.uri,
+        messageType   : DwnInterface.MessagesQuery,
+        messageParams : {
+          filters            : [{ protocol: chatProtocol.protocol }],
+          permissionGrantIds : [bobMessagesReadGrantId],
+        },
+      });
+      expect(localFeedQuery.reply.status.code).toBe(200);
+      expect(localFeedQuery.reply.entries?.some(isThreadAudienceKeyFeedEntry)).toBe(true);
+
+      const audienceKeyQuery = await deviceHarness.agent.dwn.processRequest({
+        author        : bobParticipant.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            recipient    : bobParticipant.did.uri,
+            protocol     : EncryptionProtocol.uri,
+            protocolPath : EncryptionProtocol.audienceKeyPath,
+            tags         : {
+              contextId : threadContextId,
+              protocol  : chatProtocol.protocol,
+              role      : 'thread/participant',
+            },
+          },
+        },
+      });
+      expect(audienceKeyQuery.reply.status.code).toBe(200);
+      expect(audienceKeyQuery.reply.entries?.length).toBe(1);
+      expect(await deviceHarness.agent.did.get({ didUri: alice.did.uri })).toBeUndefined();
+
+      const readResult = await deviceHarness.agent.dwn.processRequest({
+        author        : bobParticipant.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter       : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
+          protocolRole : 'thread/participant',
+        },
+        encryption: true,
+      });
+      expect(readResult.reply.status.code).toBe(200);
+      expect(readResult.reply.entry?.data).toBeDefined();
+
+      const decryptedBytes = await DataStream.toBytes(readResult.reply.entry!.data!);
+      expect(new TextDecoder().decode(decryptedBytes)).toBe(chatText);
+    }, 90_000);
   });
 
   // =========================================================================
