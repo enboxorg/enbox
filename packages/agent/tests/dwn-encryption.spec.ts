@@ -777,6 +777,7 @@ describe('dwn-encryption', () => {
       mutateAudienceEpochPayload?: (payload: Omit<AudienceKeyPayload, 'privateKeyJwk'>) => void;
     } = {}): Promise<{
       audienceCache: { get: sinon.SinonStub; set: sinon.SinonStub };
+      audienceKeyId: string;
       mockAgent: any;
       recordsWrite: RecordsWriteMessage;
     }> => {
@@ -911,8 +912,9 @@ describe('dwn-encryption', () => {
       };
 
       return {
+        audienceKeyId : keyId,
         mockAgent,
-        audienceCache: {
+        audienceCache : {
           get : sinon.stub().returns(undefined),
           set : sinon.stub(),
         },
@@ -1304,7 +1306,7 @@ describe('dwn-encryption', () => {
     });
 
     it('should hydrate a role-audience key only after verifying the audienceEpoch and role assignment', async () => {
-      const { mockAgent, audienceCache, recordsWrite } = await makeRoleAudienceResolverFixture();
+      const { mockAgent, audienceCache, audienceKeyId, recordsWrite } = await makeRoleAudienceResolverFixture();
 
       const result = await resolveKeyDecrypter(
         mockAgent, 'did:example:bob', recordsWrite, 'did:example:alice',
@@ -1319,6 +1321,13 @@ describe('dwn-encryption', () => {
       expect(mockAgent.processDwnRequest.secondCall.args[0].messageParams.filter).toEqual({
         protocol     : EncryptionProtocol.uri,
         protocolPath : EncryptionProtocol.audienceEpochPath,
+        tags         : {
+          protocol  : 'https://proto.example.com/chat',
+          contextId : 'thread-1',
+          role      : 'thread/participant',
+          epoch     : 1,
+          keyId     : audienceKeyId,
+        },
       });
       expect(mockAgent.processDwnRequest.thirdCall.args[0].messageParams.filter).toEqual({
         contextId    : 'thread-1',

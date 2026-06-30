@@ -1083,6 +1083,13 @@ async function verifyAudienceKeyEpoch(params: {
       filter: {
         protocol     : EncryptionProtocol.uri,
         protocolPath : EncryptionProtocol.audienceEpochPath,
+        tags         : {
+          protocol  : params.protocol,
+          contextId : params.contextId,
+          role      : params.role,
+          epoch     : params.epoch,
+          keyId     : params.keyId,
+        },
       },
     },
   });
