@@ -1,5 +1,27 @@
 # @enbox/agent
 
+## 0.8.7
+
+### Patch Changes
+
+- [#1090](https://github.com/enboxorg/enbox/pull/1090) [`2333413`](https://github.com/enboxorg/enbox/commit/23334132ac1b6441e249e4482535df6a049f87d4) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: verify delivered audience keys against accepted epochs and role assignments
+
+- [#1083](https://github.com/enboxorg/enbox/pull/1083) [`b96eb50`](https://github.com/enboxorg/enbox/commit/b96eb508d7a9ebd6ec7a7a15fec62e7e26d12a18) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add durable grantKey production and cache-miss decryption resolution for delegated encrypted reads.
+
+- [#1080](https://github.com/enboxorg/enbox/pull/1080) [`03740b9`](https://github.com/enboxorg/enbox/commit/03740b975d39f74337d1f292ba9115dd799ad6e7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: complete DWN encryption storage lookup and remove legacy encryption surface
+
+- [#1077](https://github.com/enboxorg/enbox/pull/1077) [`4863c1a`](https://github.com/enboxorg/enbox/commit/4863c1a17f132d7ffd8a8c2ac46472f8585d7d37) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: implement DWN encryption v1 records, protocol keys, and delegate key delivery
+
+- [#1084](https://github.com/enboxorg/enbox/pull/1084) [`bae4e73`](https://github.com/enboxorg/enbox/commit/bae4e730197e389f1458aac70f3a8e664432b7c9) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: verify durable grant keys reference active permission grants
+
+- [#1087](https://github.com/enboxorg/enbox/pull/1087) [`e27f4f6`](https://github.com/enboxorg/enbox/commit/e27f4f647189535ffe32a9f6a16c5859afadb3fc) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add initial role-audience encryption key delivery and decryption support. Epoch rotation for membership changes remains tracked separately.
+
+- Updated dependencies [[`03740b9`](https://github.com/enboxorg/enbox/commit/03740b975d39f74337d1f292ba9115dd799ad6e7), [`4863c1a`](https://github.com/enboxorg/enbox/commit/4863c1a17f132d7ffd8a8c2ac46472f8585d7d37), [`e27f4f6`](https://github.com/enboxorg/enbox/commit/e27f4f647189535ffe32a9f6a16c5859afadb3fc)]:
+  - @enbox/dwn-sdk-js@0.4.5
+  - @enbox/crypto@0.1.2
+  - @enbox/dwn-clients@0.4.10
+  - @enbox/dids@0.1.2
+
 ## 0.8.6
 
 ### Patch Changes
