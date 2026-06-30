@@ -2,6 +2,8 @@ import type { KeyDerivationScheme } from '../utils/hd-key.js';
 import type { KeyUnwrapPayload } from '../utils/encryption.js';
 import type { PublicKeyJwk } from './jose-types.js';
 
+export type KeyDecrypterDerivationScheme = KeyDerivationScheme | 'roleAudience';
+
 export interface EncryptionKeyDeriver {
   rootKeyId: string;
   derivationScheme: KeyDerivationScheme;
@@ -11,7 +13,7 @@ export interface EncryptionKeyDeriver {
 
 export interface KeyDecrypter {
   rootKeyId: string;
-  derivationScheme: KeyDerivationScheme;
+  derivationScheme: KeyDecrypterDerivationScheme;
 
   derivePublicKey(fullDerivationPath: string[]): Promise<PublicKeyJwk>;
 
