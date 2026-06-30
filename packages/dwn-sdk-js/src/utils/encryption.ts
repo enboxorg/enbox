@@ -172,12 +172,11 @@ export class Encryption {
     recipientPrivateKey: Jwk,
     keyEncryption: KeyEncryption,
   ): Promise<Uint8Array> {
-    switch (keyEncryption.algorithm) {
-    case KeyAgreementAlgorithm.X25519HkdfSha256A256Kw:
+    if (keyEncryption.algorithm === KeyAgreementAlgorithm.X25519HkdfSha256A256Kw) {
       return Encryption.unwrapX25519Key(recipientPrivateKey, keyEncryption);
-    default:
-      throw new Error(`Unsupported key agreement algorithm: ${(keyEncryption as KeyEncryption).algorithm}`);
     }
+
+    throw new Error(`Unsupported key agreement algorithm: ${(keyEncryption as KeyEncryption).algorithm}`);
   }
 
   private static async unwrapX25519Key(
@@ -268,16 +267,15 @@ export class Encryption {
   }
 
   private static validateKeyEncryptionEntry(entry: KeyEncryption): void {
-    switch (entry.algorithm) {
-    case KeyAgreementAlgorithm.X25519HkdfSha256A256Kw:
+    if (entry.algorithm === KeyAgreementAlgorithm.X25519HkdfSha256A256Kw) {
       Encryption.validateX25519KeyEncryptionEntry(entry);
       return;
-    default:
-      throw new DwnError(
-        DwnErrorCode.RecordsWriteValidateIntegrityEncryptionEphemeralPublicKeyInvalid,
-        `Unsupported key agreement algorithm: ${(entry as KeyEncryption).algorithm}`
-      );
     }
+
+    throw new DwnError(
+      DwnErrorCode.RecordsWriteValidateIntegrityEncryptionEphemeralPublicKeyInvalid,
+      `Unsupported key agreement algorithm: ${(entry as KeyEncryption).algorithm}`
+    );
   }
 
   private static validateX25519KeyEncryptionEntry(entry: X25519KeyEncryption): void {
