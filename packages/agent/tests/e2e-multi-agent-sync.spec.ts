@@ -1095,6 +1095,27 @@ describe('E2E Multi-Agent Sync', () => {
       expect(localFeedQuery.reply.status.code).toBe(200);
       expect(localFeedQuery.reply.entries?.some(isThreadAudienceKeyFeedEntry)).toBe(true);
 
+      const localAudienceEpochQuery = await deviceHarness.agent.dwn.processRequest({
+        author        : bobParticipant.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            protocol     : EncryptionProtocol.uri,
+            protocolPath : EncryptionProtocol.audienceEpochPath,
+            tags         : {
+              contextId : threadContextId,
+              protocol  : chatProtocol.protocol,
+              role      : 'thread/participant',
+            },
+          },
+        },
+      });
+      expect(localAudienceEpochQuery.reply.status.code).toBe(200);
+      expect(localAudienceEpochQuery.reply.entries?.map(entry => entry.recordId)).toContain(
+        sourceAudienceEpochQuery.reply.entries![0].recordId,
+      );
+
       const audienceKeyQuery = await deviceHarness.agent.dwn.processRequest({
         author        : bobParticipant.did.uri,
         target        : alice.did.uri,
