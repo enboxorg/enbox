@@ -1,4 +1,4 @@
-import type { AudienceKeyPayload } from '../src/dwn-encryption.js';
+import type { AudienceEpochPayload } from '../src/dwn-encryption.js';
 import type { DerivedPrivateJwk, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
@@ -14,6 +14,7 @@ import {
   Encryption,
   EncryptionProtocol,
   HdKey,
+  KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Records,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
@@ -661,21 +662,25 @@ describe('dwn-encryption', () => {
           protocol,
           ...(payloadScopeProtocolPath !== undefined ? { protocolPath: payloadScopeProtocolPath } : {}),
         },
-        derivationPath: [
-          KeyDerivationScheme.ProtocolPath,
-          protocol,
-          ...(payloadScopeProtocolPath !== undefined ? payloadScopeProtocolPath.split('/') : []),
-        ],
-        keyId,
-        publicKeyJwk,
-        privateKeyJwk,
+        keyMaterial: {
+          algorithm      : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationPath : [
+            KeyDerivationScheme.ProtocolPath,
+            protocol,
+            ...(payloadScopeProtocolPath !== undefined ? payloadScopeProtocolPath.split('/') : []),
+          ],
+          derivationScheme: KeyDerivationScheme.ProtocolPath,
+          keyId,
+          privateKeyJwk,
+          publicKeyJwk,
+        },
       };
       mutatePayload?.(payload);
       const tags = {
         grantId  : payload.grantId,
         protocol : payload.scope.protocol,
         ...(payload.scope.protocolPath !== undefined ? { protocolPath: payload.scope.protocolPath } : {}),
-        keyId    : payload.keyId,
+        keyId    : payload.keyMaterial.keyId,
       };
       mutateRecordTags?.(tags);
 
@@ -774,7 +779,7 @@ describe('dwn-encryption', () => {
     }: {
       includeAudienceEpoch?: boolean;
       includeRoleRecord?: boolean;
-      mutateAudienceEpochPayload?: (payload: Omit<AudienceKeyPayload, 'privateKeyJwk'>) => void;
+      mutateAudienceEpochPayload?: (payload: AudienceEpochPayload) => void;
     } = {}): Promise<{
       audienceCache: { get: sinon.SinonStub; set: sinon.SinonStub };
       audienceKeyId: string;
@@ -796,13 +801,17 @@ describe('dwn-encryption', () => {
       const audiencePublicKey = await X25519.getPublicKey({ key: audiencePrivateKey });
       const keyId = await Encryption.getKeyId(audiencePublicKey);
       const audienceKeyPayload = {
-        protocol,
-        contextId,
-        role,
-        epoch,
-        keyId,
-        publicKeyJwk  : audiencePublicKey,
-        privateKeyJwk : audiencePrivateKey,
+        protocol    : protocol,
+        contextId   : contextId,
+        role        : role,
+        epoch       : epoch,
+        keyMaterial : {
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          keyId,
+          privateKeyJwk    : audiencePrivateKey,
+          publicKeyJwk     : audiencePublicKey,
+        },
       };
       const audienceTags = {
         protocol,
@@ -1276,7 +1285,7 @@ describe('dwn-encryption', () => {
     it('should reject a durable grantKey whose keyId does not match the delivered key material', async () => {
       const { mockAgent, delegateCache, recordsWrite } = await makeGrantKeyResolverFixture({
         mutatePayload: (payload): void => {
-          payload.keyId = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+          payload.keyMaterial.keyId = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
         },
       });
 
@@ -1292,7 +1301,7 @@ describe('dwn-encryption', () => {
     it('should reject a durable grantKey whose derivationPath does not match its scope', async () => {
       const { mockAgent, delegateCache, recordsWrite } = await makeGrantKeyResolverFixture({
         mutatePayload: (payload): void => {
-          payload.derivationPath = [KeyDerivationScheme.ProtocolPath, 'https://proto.example.com', 'other'];
+          payload.keyMaterial.derivationPath = [KeyDerivationScheme.ProtocolPath, 'https://proto.example.com', 'other'];
         },
       });
 

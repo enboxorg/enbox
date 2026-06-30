@@ -28,6 +28,7 @@ import {
   EncryptionProtocol,
   EventEmitterWakePublisher,
   getRuleSetAtPath,
+  KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
   MessageStoreLevel,
@@ -42,7 +43,7 @@ import { DidDht, DidJwk, DidResolverCacheLevel, UniversalResolver } from '@enbox
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { LocalDwnStrategy } from './local-dwn.js';
-import type { AudienceDecryptionKeyEntry, AudienceKeyPayload, DelegateDecryptionKeyEntry } from './dwn-encryption.js';
+import type { AudienceDecryptionKeyEntry, AudienceEpochPayload, AudienceKeyPayload, DelegateDecryptionKeyEntry } from './dwn-encryption.js';
 import type {
   DwnMessage,
   DwnMessageInstance,
@@ -897,13 +898,17 @@ export class AgentDwnApi {
     const privateKeyJwk = await X25519.generateKey() as PrivateKeyJwk;
     const publicKeyJwk = await X25519.getPublicKey({ key: privateKeyJwk }) as PublicKeyJwk;
     const audienceKey: AudienceKeyPayload = {
-      protocol  : params.protocol,
-      contextId : params.contextId,
-      role      : params.role,
-      epoch     : 1,
-      keyId     : await Encryption.getKeyId(publicKeyJwk),
-      publicKeyJwk,
-      privateKeyJwk,
+      protocol    : params.protocol,
+      contextId   : params.contextId,
+      role        : params.role,
+      epoch       : 1,
+      keyMaterial : {
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+        derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+        keyId            : await Encryption.getKeyId(publicKeyJwk),
+        privateKeyJwk,
+        publicKeyJwk,
+      },
     };
 
     await createAudienceEpochRecordFn({
@@ -932,7 +937,7 @@ export class AgentDwnApi {
     protocol: string;
     contextId: string;
     role: string;
-  }): Promise<Omit<AudienceKeyPayload, 'privateKeyJwk'> | undefined> {
+  }): Promise<AudienceEpochPayload | undefined> {
     const { reply } = await this.processRequest({
       author        : params.authorDid,
       target        : params.sourceDid,
@@ -955,13 +960,13 @@ export class AgentDwnApi {
     }
 
     const epochs = reply.entries
-      .map((entry): Omit<AudienceKeyPayload, 'privateKeyJwk'> | undefined => {
+      .map((entry): AudienceEpochPayload | undefined => {
         if (entry.encodedData === undefined) {
           return undefined;
         }
-        return Encoder.base64UrlToObject(entry.encodedData) as Omit<AudienceKeyPayload, 'privateKeyJwk'>;
+        return Encoder.base64UrlToObject(entry.encodedData) as AudienceEpochPayload;
       })
-      .filter((entry): entry is Omit<AudienceKeyPayload, 'privateKeyJwk'> => entry !== undefined)
+      .filter((entry): entry is AudienceEpochPayload => entry !== undefined)
       .sort((a, b): number => b.epoch - a.epoch);
 
     return epochs[0];

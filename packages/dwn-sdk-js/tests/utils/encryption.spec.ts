@@ -17,6 +17,57 @@ import { describe, expect, it } from 'bun:test';
 
 const boundarySizes = [0, 1, 15, 16, 17, 32, 256];
 
+type EncryptedRecordFixture = {
+  cek: Uint8Array;
+  ciphertext: Uint8Array;
+  message: RecordsWriteMessage;
+  plaintext: Uint8Array;
+  recipientPrivateKey: PrivateKeyJwk;
+  recipientPublicKey: PublicKeyJwk;
+};
+
+async function createEncryptedRecordFixture(plaintext = TestDataGenerator.randomBytes(64)): Promise<EncryptedRecordFixture> {
+  const recipientPrivateKey = await X25519.generateKey() as PrivateKeyJwk;
+  const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
+  const cek = TestDataGenerator.randomBytes(32);
+  const iv = TestDataGenerator.randomBytes(16);
+  const ciphertext = await Encryption.encrypt(ContentEncryptionAlgorithm.A256CTR, cek, iv, plaintext);
+  const keyId = await Encryption.getKeyId(recipientPublicKey);
+  const encryption = await Encryption.buildEncryptionProperty({
+    initializationVector : iv,
+    key                  : cek,
+    keyEncryptionInputs  : [{
+      derivationScheme : KeyDerivationScheme.ProtocolPath,
+      keyId,
+      publicKey        : recipientPublicKey,
+    }],
+  });
+  const message = {
+    descriptor: {
+      dataCid          : await Cid.computeDagPbCidFromBytes(ciphertext),
+      dataFormat       : 'application/octet-stream',
+      dataSize         : ciphertext.byteLength,
+      dateCreated      : '2024-01-01T00:00:00.000000Z',
+      interface        : 'Records',
+      messageTimestamp : '2024-01-01T00:00:00.000000Z',
+      method           : 'Write',
+      protocol         : 'https://example.com/protocol',
+      protocolPath     : 'note',
+    },
+    encryption,
+    recordId: 'test-record-id',
+  } as unknown as RecordsWriteMessage;
+
+  return {
+    cek,
+    ciphertext,
+    message,
+    plaintext,
+    recipientPrivateKey,
+    recipientPublicKey,
+  };
+}
+
 describe('Encryption', () => {
   describe('A256CTR', () => {
     it('should encrypt and decrypt bytes correctly', async () => {
@@ -173,38 +224,12 @@ describe('Encryption', () => {
     });
 
     it('should validate encrypted data CID before returning plaintext', async () => {
-      const recipientPrivateKey = await X25519.generateKey() as PrivateKeyJwk;
-      const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
-      const cek = TestDataGenerator.randomBytes(32);
-      const iv = TestDataGenerator.randomBytes(16);
-      const plaintext = Encoder.stringToBytes('secret');
-      const ciphertext = await Encryption.encrypt(ContentEncryptionAlgorithm.A256CTR, cek, iv, plaintext);
-      const keyId = await Encryption.getKeyId(recipientPublicKey);
-      const encryption = await Encryption.buildEncryptionProperty({
-        initializationVector : iv,
-        key                  : cek,
-        keyEncryptionInputs  : [{
-          derivationScheme : KeyDerivationScheme.ProtocolPath,
-          keyId,
-          publicKey        : recipientPublicKey,
-        }],
-      });
+      const {
+        ciphertext,
+        message,
+        recipientPrivateKey,
+      } = await createEncryptedRecordFixture(Encoder.stringToBytes('secret'));
       const wrongCiphertext = TestDataGenerator.randomBytes(ciphertext.length);
-      const message = {
-        descriptor: {
-          dataCid          : await Cid.computeDagPbCidFromBytes(ciphertext),
-          dataFormat       : 'text/plain',
-          dataSize         : ciphertext.byteLength,
-          dateCreated      : '2024-01-01T00:00:00.000000Z',
-          interface        : 'Records',
-          messageTimestamp : '2024-01-01T00:00:00.000000Z',
-          method           : 'Write',
-          protocol         : 'https://example.com/protocol',
-          protocolPath     : 'note',
-        },
-        encryption,
-        recordId: 'test-record-id',
-      } as unknown as RecordsWriteMessage;
 
       await expect(
         Records.decrypt(message, {
@@ -216,37 +241,11 @@ describe('Encryption', () => {
     });
 
     it('should propagate errors thrown by KeyDecrypter.decrypt()', async () => {
-      const recipientPrivateKey = await X25519.generateKey();
-      const recipientPublicKey = await X25519.getPublicKey({ key: recipientPrivateKey }) as PublicKeyJwk;
-      const cek = TestDataGenerator.randomBytes(32);
-      const iv = TestDataGenerator.randomBytes(16);
-      const plaintext = TestDataGenerator.randomBytes(64);
-      const ciphertext = await Encryption.encrypt(ContentEncryptionAlgorithm.A256CTR, cek, iv, plaintext);
-      const keyId = await Encryption.getKeyId(recipientPublicKey);
-      const encryption = await Encryption.buildEncryptionProperty({
-        initializationVector : iv,
-        key                  : cek,
-        keyEncryptionInputs  : [{
-          derivationScheme : KeyDerivationScheme.ProtocolPath,
-          keyId,
-          publicKey        : recipientPublicKey,
-        }],
-      });
-      const message = {
-        descriptor: {
-          dataCid          : await Cid.computeDagPbCidFromBytes(ciphertext),
-          dataFormat       : 'application/octet-stream',
-          dataSize         : ciphertext.byteLength,
-          dateCreated      : '2024-01-01T00:00:00.000000Z',
-          interface        : 'Records',
-          messageTimestamp : '2024-01-01T00:00:00.000000Z',
-          method           : 'Write',
-          protocol         : 'https://example.com/protocol',
-          protocolPath     : 'note',
-        },
-        encryption,
-        recordId: 'test-record-id',
-      } as unknown as RecordsWriteMessage;
+      const {
+        ciphertext,
+        message,
+        recipientPublicKey,
+      } = await createEncryptedRecordFixture();
       const failingDecrypter: KeyDecrypter = {
         decrypt: async (): Promise<Uint8Array> => {
           throw new Error('KeyDecrypter: key derivation failed');
@@ -259,6 +258,48 @@ describe('Encryption', () => {
       await expect(
         Records.decrypt(message, failingDecrypter, DataStream.fromBytes(ciphertext))
       ).rejects.toThrow('KeyDecrypter: key derivation failed');
+    });
+
+    it('should allow KeyDecrypter to select a matching key-encryption entry directly', async () => {
+      const {
+        cek,
+        ciphertext,
+        message,
+        plaintext,
+      } = await createEncryptedRecordFixture();
+      let selectedPath: string[] | undefined;
+      const directMatchingDecrypter: KeyDecrypter = {
+        decrypt           : async (): Promise<Uint8Array> => cek,
+        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        findKeyEncryption : async ({ fullDerivationPath, keyEncryptions }): Promise<typeof keyEncryptions[number] | undefined> => {
+          selectedPath = fullDerivationPath;
+          return keyEncryptions[0];
+        },
+        rootKeyId: 'direct-matcher',
+      };
+
+      const decryptedStream = await Records.decrypt(message, directMatchingDecrypter, DataStream.fromBytes(ciphertext));
+      const decryptedBytes = await DataStream.toBytes(decryptedStream);
+
+      expect(ArrayUtility.byteArraysEqual(decryptedBytes, plaintext)).toBe(true);
+      expect(selectedPath).toEqual([KeyDerivationScheme.ProtocolPath, 'https://example.com/protocol', 'note']);
+    });
+
+    it('should reject a KeyDecrypter that cannot select a key-encryption entry', async () => {
+      const {
+        cek,
+        ciphertext,
+        message,
+      } = await createEncryptedRecordFixture();
+      const invalidDecrypter: KeyDecrypter = {
+        decrypt          : async (): Promise<Uint8Array> => cek,
+        derivationScheme : KeyDerivationScheme.ProtocolPath,
+        rootKeyId        : 'invalid-decrypter',
+      };
+
+      await expect(
+        Records.decrypt(message, invalidDecrypter, DataStream.fromBytes(ciphertext))
+      ).rejects.toThrow('must provide findKeyEncryption or derivePublicKey');
     });
   });
 });

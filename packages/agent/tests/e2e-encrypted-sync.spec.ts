@@ -8,6 +8,7 @@ import {
   DataStream,
   Encoder,
   EncryptionProtocol,
+  KeyAgreementAlgorithm,
   KeyDerivationScheme,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
@@ -745,7 +746,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       epoch        : roleAudienceEntry!.epoch,
       keyId        : roleAudienceEntry!.keyId,
     });
-    expect(cachedAfterRead?.privateKeyJwk.d).toBeDefined();
+    expect(cachedAfterRead?.keyMaterial.privateKeyJwk.d).toBeDefined();
 
     const { reply: carolReadReply } = await testHarness.agent.dwn.processRequest({
       author        : carol.did.uri,
@@ -833,13 +834,17 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       recipientDid           : separateBob.did.uri,
       recipientRolePublicKey : bobRolePublicKey,
       audienceKey            : {
-        protocol      : epochPayload.protocol,
-        contextId     : epochPayload.contextId,
-        role          : epochPayload.role,
-        epoch         : epochPayload.epoch,
-        keyId         : epochPayload.keyId,
-        publicKeyJwk  : epochPayload.publicKeyJwk,
-        privateKeyJwk : audienceKey!.privateKeyJwk,
+        protocol    : epochPayload.protocol,
+        contextId   : epochPayload.contextId,
+        role        : epochPayload.role,
+        epoch       : epochPayload.epoch,
+        keyMaterial : {
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          keyId            : epochPayload.keyId,
+          privateKeyJwk    : audienceKey!.keyMaterial.privateKeyJwk,
+          publicKeyJwk     : epochPayload.publicKeyJwk,
+        },
       },
     });
 
@@ -913,7 +918,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       epoch        : roleAudienceEntry!.epoch,
       keyId        : roleAudienceEntry!.keyId,
     });
-    expect(cachedAfterRead?.privateKeyJwk.d).toBeDefined();
+    expect(cachedAfterRead?.keyMaterial.privateKeyJwk.d).toBeDefined();
   }, 30_000);
 
 });
