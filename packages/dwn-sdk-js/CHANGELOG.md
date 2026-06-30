@@ -1,5 +1,19 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.5
+
+### Patch Changes
+
+- [#1080](https://github.com/enboxorg/enbox/pull/1080) [`03740b9`](https://github.com/enboxorg/enbox/commit/03740b975d39f74337d1f292ba9115dd799ad6e7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: complete DWN encryption storage lookup and remove legacy encryption surface
+
+- [#1077](https://github.com/enboxorg/enbox/pull/1077) [`4863c1a`](https://github.com/enboxorg/enbox/commit/4863c1a17f132d7ffd8a8c2ac46472f8585d7d37) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: implement DWN encryption v1 records, protocol keys, and delegate key delivery
+
+- [#1087](https://github.com/enboxorg/enbox/pull/1087) [`e27f4f6`](https://github.com/enboxorg/enbox/commit/e27f4f647189535ffe32a9f6a16c5859afadb3fc) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add initial role-audience encryption key delivery and decryption support. Epoch rotation for membership changes remains tracked separately.
+
+- Updated dependencies [[`4863c1a`](https://github.com/enboxorg/enbox/commit/4863c1a17f132d7ffd8a8c2ac46472f8585d7d37)]:
+  - @enbox/crypto@0.1.2
+  - @enbox/dids@0.1.2
+
 ## 0.4.4
 
 ### Patch Changes

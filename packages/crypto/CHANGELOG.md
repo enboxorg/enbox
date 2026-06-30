@@ -1,5 +1,11 @@
 # @enbox/crypto
 
+## 0.1.2
+
+### Patch Changes
+
+- [#1077](https://github.com/enboxorg/enbox/pull/1077) [`4863c1a`](https://github.com/enboxorg/enbox/commit/4863c1a17f132d7ffd8a8c2ac46472f8585d7d37) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: implement DWN encryption v1 records, protocol keys, and delegate key delivery
+
 ## 0.1.1
 
 ### Patch Changes

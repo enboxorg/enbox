@@ -1,5 +1,12 @@
 # @enbox/dids
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [[`4863c1a`](https://github.com/enboxorg/enbox/commit/4863c1a17f132d7ffd8a8c2ac46472f8585d7d37)]:
+  - @enbox/crypto@0.1.2
+
 ## 0.1.1
 
 ### Patch Changes
