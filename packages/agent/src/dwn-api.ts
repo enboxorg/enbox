@@ -704,6 +704,64 @@ export class AgentDwnApi {
     throw new Error(`Failed to send DWN RPC request: ${JSON.stringify(errorMessages)}`);
   }
 
+  /**
+   * Eagerly provision a role-audience epoch for `(protocol, contextId, role)`
+   * without adding a member, so records written for the role can carry a
+   * `roleAudience` key-encryption entry before any member of that role exists.
+   *
+   * Mints the audience keypair, persists the private key to the agent's secret
+   * store, and writes the public `audienceEpoch` record. Idempotent: when an
+   * epoch already exists for the tuple it is reused and no new record is
+   * written. Per-member `audienceKey` delivery records are still created when
+   * members are added.
+   *
+   * @throws when the protocol is not installed for `ownerDid`, or `role` is not
+   *   an encrypted audience (a `$role` type carrying `$keyAgreement`).
+   */
+  public async provisionRoleAudienceEpoch(params: {
+    ownerDid : string;
+    protocol : string;
+    role : string;
+    contextId : string;
+  }): Promise<{ epoch: number; keyId: string; created: boolean }> {
+    const { ownerDid, protocol, role, contextId } = params;
+
+    const protocolDefinition = await this.getProtocolDefinition(ownerDid, protocol);
+    if (protocolDefinition === undefined) {
+      throw new Error(`AgentDwnApi: protocol '${protocol}' is not installed for '${ownerDid}'.`);
+    }
+
+    const ruleSet = getRuleSetAtPath(role, protocolDefinition.structure);
+    if (ruleSet?.$role !== true || ruleSet.$keyAgreement?.publicKeyJwk === undefined) {
+      throw new Error(
+        `AgentDwnApi: role '${role}' is not an encrypted audience ` +
+        `(requires $role with $keyAgreement) in protocol '${protocol}'.`,
+      );
+    }
+
+    const existing = await this.queryLatestAudienceEpoch({
+      authorDid : ownerDid,
+      contextId,
+      protocol,
+      role,
+      sourceDid : ownerDid,
+    });
+
+    const audienceKey = await this.getOrCreateAudienceKey({
+      authorDid : ownerDid,
+      contextId,
+      protocol,
+      role,
+      sourceDid : ownerDid,
+    });
+
+    return {
+      created : existing === undefined,
+      epoch   : audienceKey.epoch,
+      keyId   : audienceKey.keyMaterial.keyId,
+    };
+  }
+
   private async provisionAudienceKeyForAcceptedRoleRecord(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
     recordsWrite: RecordsWriteMessage,
