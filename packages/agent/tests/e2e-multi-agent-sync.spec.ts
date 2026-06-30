@@ -1,20 +1,24 @@
+import type { BearerIdentity } from '../src/bearer-identity.js';
+import type { DwnDataEncodedRecordsWriteMessage } from '../src/types/dwn.js';
+import type { EnboxConnectResponse } from '../src/enbox-connect-protocol.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { GenericMessage, MessagesQueryReplyEntry, PermissionScope, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
-import { Ed25519 } from '@enbox/crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, DwnInterfaceName, DwnMethodName, EncryptionProtocol, Time } from '@enbox/dwn-sdk-js';
-
-import type { BearerIdentity } from '../src/bearer-identity.js';
-
 import { createGrantKeyRecordsForGrants } from '../src/dwn-encryption.js';
+import { DidJwk } from '@enbox/dids';
 import { DwnInterface } from '../src/types/dwn.js';
+import { DwnPermissionGrant } from '../src/types/dwn.js';
+import { Ed25519 } from '@enbox/crypto';
+import { EnboxConnectProtocol } from '../src/enbox-connect-protocol.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { requireDwnServer } from './utils/require-dwn-server.js';
 import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { DataStream, DwnInterfaceName, DwnMethodName, EncryptionProtocol, Time } from '@enbox/dwn-sdk-js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -153,6 +157,34 @@ async function createAndDistributeGrant(
   expect(remoteResult.reply.status.code).toBe(202);
 
   return { grant, message: grantMessage };
+}
+
+async function importConnectGrants(
+  harness: PlatformAgentTestHarness,
+  connectedDid: string,
+  delegateDid: string,
+  grants: DwnDataEncodedRecordsWriteMessage[],
+): Promise<void> {
+  for (const grant of grants) {
+    const { encodedData, ...rawMessage } = grant;
+    const grantBytes = Convert.base64Url(encodedData).toUint8Array();
+    const delegateResult = await harness.agent.processDwnRequest({
+      author      : delegateDid,
+      target      : delegateDid,
+      messageType : DwnInterface.RecordsWrite,
+      rawMessage,
+      dataStream  : new Blob([grantBytes as BlobPart]),
+      signAsOwner : true,
+    });
+    expect([202, 409]).toContain(delegateResult.reply.status.code);
+
+    const connectedResult = await harness.agent.dwn.processRawMessage(
+      connectedDid,
+      rawMessage as GenericMessage,
+      { dataStream: DataStream.fromBytes(grantBytes) },
+    );
+    expect([202, 409]).toContain(connectedResult.status.code);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +692,188 @@ describe('E2E Multi-Agent Sync', () => {
       const decryptedBytes = await DataStream.toBytes(readResult.reply.entry!.data!);
       expect(new TextDecoder().decode(decryptedBytes)).toBe(noteText);
     }, 60_000);
+
+    it('uses connect-created grantKey records after sync without importing in-band decryption keys', async () => {
+      const encryptedProtocol: ProtocolDefinition = {
+        published : true,
+        protocol  : `https://protocol.xyz/connect-encrypted-sync-notes/${crypto.randomUUID()}`,
+        types     : {
+          note: {
+            schema             : 'https://schemas.xyz/connect-encrypted-sync-note',
+            dataFormats        : ['text/plain'],
+            encryptionRequired : true,
+          },
+        },
+        structure: { note: {} },
+      };
+      const readScopes: PermissionScope[] = [
+        { protocol: encryptedProtocol.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
+        { protocol: encryptedProtocol.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Read },
+      ];
+      const clientDid = await DidJwk.create();
+      const callbackUrl = 'http://localhost:3000/connect-callback';
+      const connectRequest = await EnboxConnectProtocol.createConnectRequest({
+        appName            : 'Encrypted Sync E2E',
+        clientDid          : clientDid.uri,
+        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
+        callbackUrl,
+      });
+      const remoteReadiness = await retryFreshDidResolution(() => primaryHarness.agent.dwn.sendRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { protocol: encryptedProtocol.protocol } },
+      }));
+      expect(remoteReadiness.reply.status.code).toBe(200);
+      const ownerDwnEndpoints = await primaryHarness.agent.dwn.getDwnEndpointUrlsForTarget(alice.did.uri);
+      expect(ownerDwnEndpoints).toContain(testDwnUrl);
+
+      let idToken: string | undefined;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        if (String(input) !== callbackUrl) {
+          return originalFetch(input, init);
+        }
+        const body = new URLSearchParams(init?.body as string);
+        idToken = body.get('id_token') ?? undefined;
+        expect(body.get('state')).toBe(connectRequest.state);
+        return new Response();
+      }) as typeof fetch;
+      try {
+        await EnboxConnectProtocol.submitConnectResponse(
+          alice.did.uri,
+          connectRequest,
+          '2468',
+          primaryHarness.agent,
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+      expect(idToken).toBeDefined();
+
+      const responseJwt = await EnboxConnectProtocol.decryptResponse(clientDid, idToken!, '2468');
+      const connectResponse = await EnboxConnectProtocol.verifyJwt({
+        jwt: responseJwt,
+      }) as EnboxConnectResponse;
+      expect(connectResponse.providerDid).toBe(alice.did.uri);
+      expect(connectResponse.delegatePortableDid.uri).toBe(connectResponse.delegateDid);
+      expect(connectResponse.delegateDecryptionKeys?.length).toBeGreaterThan(0);
+
+      const recordsReadGrant = connectResponse.delegateGrants.find((grant) => {
+        const parsedGrant = DwnPermissionGrant.parse(grant);
+        return parsedGrant.scope.interface === DwnInterfaceName.Records &&
+          parsedGrant.scope.method === DwnMethodName.Read &&
+          parsedGrant.scope.protocol === encryptedProtocol.protocol;
+      });
+      expect(recordsReadGrant).toBeDefined();
+
+      await deviceHarness.agent.did.import({
+        portableDid : connectResponse.delegatePortableDid,
+        tenant      : deviceHarness.agent.agentDid.uri,
+      });
+      await importConnectGrants(
+        deviceHarness,
+        alice.did.uri,
+        connectResponse.delegateDid,
+        connectResponse.delegateGrants,
+      );
+
+      const installedProtocol = await primaryHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { protocol: encryptedProtocol.protocol } },
+      });
+      expect(installedProtocol.reply.status.code).toBe(200);
+      expect(installedProtocol.reply.entries).toHaveLength(1);
+      const localProtocolConfigure = await deviceHarness.agent.dwn.processRawMessage(
+        alice.did.uri,
+        installedProtocol.reply.entries![0] as GenericMessage,
+      );
+      expect([202, 409]).toContain(localProtocolConfigure.status.code);
+
+      const remoteGrantKeyQuery = await deviceHarness.agent.dwn.sendRequest({
+        author        : connectResponse.delegateDid,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            recipient    : connectResponse.delegateDid,
+            protocol     : EncryptionProtocol.uri,
+            protocolPath : EncryptionProtocol.grantKeyPath,
+            tags         : { protocol: encryptedProtocol.protocol },
+          },
+        },
+      });
+      expect(remoteGrantKeyQuery.reply.status.code).toBe(200);
+      expect(remoteGrantKeyQuery.reply.entries?.length).toBe(1);
+
+      const noteText = 'encrypted sync note decrypted from connect-created grantKey';
+      const writeResult = await primaryHarness.agent.dwn.processRequest({
+        author        : alice.did.uri,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          dataFormat   : 'text/plain',
+          protocol     : encryptedProtocol.protocol,
+          protocolPath : 'note',
+          schema       : encryptedProtocol.types.note.schema,
+        },
+        dataStream : new Blob([noteText]),
+        encryption : true,
+      });
+      expect(writeResult.reply.status.code).toBe(202);
+      const recordId = writeResult.message!.recordId;
+
+      await primaryHarness.agent.sync.registerIdentity({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.sync('push');
+
+      await deviceHarness.agent.sync.registerIdentity({
+        did     : alice.did.uri,
+        options : {
+          protocols   : [encryptedProtocol.protocol],
+          delegateDid : connectResponse.delegateDid,
+        },
+      });
+      await deviceHarness.agent.sync.sync('pull');
+      expect(await deviceHarness.agent.sync.getFailedMessages(alice.did.uri)).toEqual([]);
+
+      const localGrantKeyQuery = await deviceHarness.agent.dwn.processRequest({
+        author        : connectResponse.delegateDid,
+        target        : alice.did.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : {
+          filter: {
+            recipient    : connectResponse.delegateDid,
+            protocol     : EncryptionProtocol.uri,
+            protocolPath : EncryptionProtocol.grantKeyPath,
+            tags         : { protocol: encryptedProtocol.protocol },
+          },
+        },
+      });
+      expect(localGrantKeyQuery.reply.status.code).toBe(200);
+      expect(localGrantKeyQuery.reply.entries?.length).toBe(1);
+
+      deviceHarness.agent.dwn.clearDelegateDecryptionKeys(connectResponse.delegateDid);
+      expect(await deviceHarness.agent.did.get({ didUri: alice.did.uri })).toBeUndefined();
+
+      const readResult = await deviceHarness.agent.dwn.processRequest({
+        author        : connectResponse.delegateDid,
+        target        : alice.did.uri,
+        granteeDid    : connectResponse.delegateDid,
+        messageType   : DwnInterface.RecordsRead,
+        messageParams : {
+          filter            : { recordId },
+          permissionGrantId : recordsReadGrant!.recordId,
+        },
+        encryption: true,
+      });
+      expect(readResult.reply.status.code).toBe(200);
+      expect(readResult.reply.entry?.data).toBeDefined();
+
+      const decryptedBytes = await DataStream.toBytes(readResult.reply.entry!.data!);
+      expect(new TextDecoder().decode(decryptedBytes)).toBe(noteText);
+    }, 90_000);
 
     it('pulls role-audience key material and decrypts as a role member', async () => {
       const bobParticipant = await deviceHarness.createIdentity({ name: 'Role Sync Bob', testDwnUrls });
