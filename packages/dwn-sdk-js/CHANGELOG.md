@@ -1,5 +1,11 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.6
+
+### Patch Changes
+
+- [#1095](https://github.com/enboxorg/enbox/pull/1095) [`f06e984`](https://github.com/enboxorg/enbox/commit/f06e984f0a512fa1e53729e31e186328595af1a1) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor encryption key material and key wrapping abstractions
+
 ## 0.4.5
 
 ### Patch Changes

@@ -1,5 +1,17 @@
 # @enbox/agent
 
+## 0.8.8
+
+### Patch Changes
+
+- [#1095](https://github.com/enboxorg/enbox/pull/1095) [`f06e984`](https://github.com/enboxorg/enbox/commit/f06e984f0a512fa1e53729e31e186328595af1a1) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor encryption key material and key wrapping abstractions
+
+- [#1097](https://github.com/enboxorg/enbox/pull/1097) [`d8726ea`](https://github.com/enboxorg/enbox/commit/d8726eae2002fc45e479d850b1fefd1af70bbb80) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat(agent): add `AgentDwnApi.provisionRoleAudienceEpoch` to eagerly provision a role-audience epoch for a `(protocol, contextId, role)` without adding a member. Mints + persists the audience keypair and writes the public `audienceEpoch` record (idempotent; reused by later member-adds), so records for a role can carry a `roleAudience` entry before any member of that role exists.
+
+- Updated dependencies [[`f06e984`](https://github.com/enboxorg/enbox/commit/f06e984f0a512fa1e53729e31e186328595af1a1)]:
+  - @enbox/dwn-sdk-js@0.4.6
+  - @enbox/dwn-clients@0.4.11
+
 ## 0.8.7
 
 ### Patch Changes
