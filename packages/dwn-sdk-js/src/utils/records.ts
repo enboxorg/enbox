@@ -137,24 +137,6 @@ export class Records {
     const fullDerivationPath = Records.constructKeyDerivationPath(keyOrDecrypter.derivationScheme, recordsWrite);
 
     if ('decrypt' in keyOrDecrypter) {
-      if (keyOrDecrypter.findKeyEncryption !== undefined) {
-        return {
-          fullDerivationPath,
-          matchingKeyEncryption: await keyOrDecrypter.findKeyEncryption({
-            fullDerivationPath,
-            keyEncryptions: encryption!.keyEncryption,
-            recordsWrite,
-          }),
-        };
-      }
-
-      if (keyOrDecrypter.derivePublicKey === undefined) {
-        throw new DwnError(
-          DwnErrorCode.RecordsDecryptNoMatchingKeyEncryptedFound,
-          `Key decrypter for '${keyOrDecrypter.rootKeyId}' must provide findKeyEncryption or derivePublicKey.`
-        );
-      }
-
       const publicKey = await keyOrDecrypter.derivePublicKey(fullDerivationPath);
       const keyId = await Encryption.getKeyId(publicKey);
       return {

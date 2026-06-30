@@ -260,46 +260,5 @@ describe('Encryption', () => {
       ).rejects.toThrow('KeyDecrypter: key derivation failed');
     });
 
-    it('should allow KeyDecrypter to select a matching key-encryption entry directly', async () => {
-      const {
-        cek,
-        ciphertext,
-        message,
-        plaintext,
-      } = await createEncryptedRecordFixture();
-      let selectedPath: string[] | undefined;
-      const directMatchingDecrypter: KeyDecrypter = {
-        decrypt           : async (): Promise<Uint8Array> => cek,
-        derivationScheme  : KeyDerivationScheme.ProtocolPath,
-        findKeyEncryption : async ({ fullDerivationPath, keyEncryptions }): Promise<typeof keyEncryptions[number] | undefined> => {
-          selectedPath = fullDerivationPath;
-          return keyEncryptions[0];
-        },
-        rootKeyId: 'direct-matcher',
-      };
-
-      const decryptedStream = await Records.decrypt(message, directMatchingDecrypter, DataStream.fromBytes(ciphertext));
-      const decryptedBytes = await DataStream.toBytes(decryptedStream);
-
-      expect(ArrayUtility.byteArraysEqual(decryptedBytes, plaintext)).toBe(true);
-      expect(selectedPath).toEqual([KeyDerivationScheme.ProtocolPath, 'https://example.com/protocol', 'note']);
-    });
-
-    it('should reject a KeyDecrypter that cannot select a key-encryption entry', async () => {
-      const {
-        cek,
-        ciphertext,
-        message,
-      } = await createEncryptedRecordFixture();
-      const invalidDecrypter: KeyDecrypter = {
-        decrypt          : async (): Promise<Uint8Array> => cek,
-        derivationScheme : KeyDerivationScheme.ProtocolPath,
-        rootKeyId        : 'invalid-decrypter',
-      };
-
-      await expect(
-        Records.decrypt(message, invalidDecrypter, DataStream.fromBytes(ciphertext))
-      ).rejects.toThrow('must provide findKeyEncryption or derivePublicKey');
-    });
   });
 });

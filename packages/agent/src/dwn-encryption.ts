@@ -1099,13 +1099,12 @@ function assertGrantKeyPayload(payload: unknown): asserts payload is GrantKeyPay
 }
 
 function isProtocolPathKeyMaterial(value: unknown): value is X25519ProtocolPathKeyMaterial {
-  if (!isX25519KeyMaterial(value) || !isObject(value) || value.derivationScheme !== KeyDerivationScheme.ProtocolPath) {
+  if (!isX25519KeyMaterial(value) || value.derivationScheme !== KeyDerivationScheme.ProtocolPath) {
     return false;
   }
 
-  const material = value as Record<string, unknown>;
-  return Array.isArray(material.derivationPath) &&
-    material.derivationPath.every((segment): boolean => typeof segment === 'string');
+  return Array.isArray(value.derivationPath) &&
+    value.derivationPath.every((segment): boolean => typeof segment === 'string');
 }
 
 function isRoleAudienceKeyMaterial(value: unknown): value is X25519RoleAudienceKeyMaterial {
@@ -1113,7 +1112,7 @@ function isRoleAudienceKeyMaterial(value: unknown): value is X25519RoleAudienceK
     value.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME;
 }
 
-function isX25519KeyMaterial(value: unknown): value is {
+function isX25519KeyMaterial(value: unknown): value is Record<string, unknown> & {
   algorithm: typeof KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
   derivationScheme: string;
   keyId: string;
