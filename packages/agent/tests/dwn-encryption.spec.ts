@@ -1,3 +1,4 @@
+import type { AudienceKeyPayload } from '../src/dwn-encryption.js';
 import type { DerivedPrivateJwk, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
@@ -15,6 +16,7 @@ import {
   HdKey,
   KeyDerivationScheme,
   Records,
+  ROLE_AUDIENCE_DERIVATION_SCHEME,
   TestDataGenerator,
   Time,
 } from '@enbox/dwn-sdk-js';
@@ -765,6 +767,174 @@ describe('dwn-encryption', () => {
       };
     };
 
+    const makeRoleAudienceResolverFixture = async ({
+      includeAudienceEpoch = true,
+      includeRoleRecord = true,
+      mutateAudienceEpochPayload,
+    }: {
+      includeAudienceEpoch?: boolean;
+      includeRoleRecord?: boolean;
+      mutateAudienceEpochPayload?: (payload: Omit<AudienceKeyPayload, 'privateKeyJwk'>) => void;
+    } = {}): Promise<{
+      audienceCache: { get: sinon.SinonStub; set: sinon.SinonStub };
+      audienceKeyId: string;
+      mockAgent: any;
+      recordsWrite: RecordsWriteMessage;
+    }> => {
+      const protocol = 'https://proto.example.com/chat';
+      const contextId = 'thread-1';
+      const role = 'thread/participant';
+      const epoch = 1;
+      const sourceDid = 'did:example:alice';
+      const recipientDid = 'did:example:bob';
+
+      const sourcePersona = await TestDataGenerator.generatePersona({ did: sourceDid });
+      const recipientPersona = await TestDataGenerator.generatePersona({ did: recipientDid });
+      const rolePathPrivateKey = await X25519.generateKey();
+      const rolePathPrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: rolePathPrivateKey });
+      const audiencePrivateKey = await X25519.generateKey();
+      const audiencePublicKey = await X25519.getPublicKey({ key: audiencePrivateKey });
+      const keyId = await Encryption.getKeyId(audiencePublicKey);
+      const audienceKeyPayload = {
+        protocol,
+        contextId,
+        role,
+        epoch,
+        keyId,
+        publicKeyJwk  : audiencePublicKey,
+        privateKeyJwk : audiencePrivateKey,
+      };
+      const audienceTags = {
+        protocol,
+        contextId,
+        role,
+        epoch,
+        keyId,
+      };
+
+      const audienceKeyWrite = await TestDataGenerator.generateRecordsWrite({
+        author       : sourcePersona,
+        recipient    : recipientDid,
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.audienceKeyPath,
+        schema       : EncryptionProtocol.definition.types.audienceKey.schema,
+        dataFormat   : 'application/json',
+        data         : new Uint8Array([1, 2, 3]),
+        tags         : audienceTags,
+      });
+      const audienceKeyMessage = {
+        ...audienceKeyWrite.message,
+        encodedData: Encoder.bytesToBase64Url(audienceKeyWrite.dataBytes!),
+      } as RecordsWriteMessage & { encodedData: string };
+
+      const audienceEpochPayload = {
+        protocol,
+        contextId,
+        role,
+        epoch,
+        keyId,
+        publicKeyJwk: audiencePublicKey,
+      };
+      mutateAudienceEpochPayload?.(audienceEpochPayload);
+      const audienceEpochWrite = await TestDataGenerator.generateRecordsWrite({
+        author       : sourcePersona,
+        published    : true,
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.audienceEpochPath,
+        schema       : EncryptionProtocol.definition.types.audienceEpoch.schema,
+        dataFormat   : 'application/json',
+        data         : Encoder.objectToBytes(audienceEpochPayload),
+        tags         : audienceTags,
+      });
+      const audienceEpochMessage = {
+        ...audienceEpochWrite.message,
+        encodedData: Encoder.bytesToBase64Url(audienceEpochWrite.dataBytes!),
+      } as RecordsWriteMessage & { encodedData: string };
+
+      const roleRecord = {
+        contextId  : `${contextId}/participant-1`,
+        descriptor : {
+          recipient    : recipientDid,
+          protocol,
+          protocolPath : role,
+        },
+      } as RecordsWriteMessage;
+
+      sinon.stub(Records, 'decrypt').resolves(DataStream.fromBytes(Encoder.objectToBytes(audienceKeyPayload)));
+
+      const processDwnRequest = sinon.stub();
+      processDwnRequest.onFirstCall().resolves({
+        reply: {
+          status  : { code: 200, detail: 'OK' },
+          entries : [audienceKeyMessage],
+        },
+      });
+      processDwnRequest.onSecondCall().resolves({
+        reply: {
+          status  : { code: 200, detail: 'OK' },
+          entries : includeAudienceEpoch ? [audienceEpochMessage] : [],
+        },
+      });
+      processDwnRequest.onThirdCall().resolves({
+        reply: {
+          status  : { code: 200, detail: 'OK' },
+          entries : includeRoleRecord ? [roleRecord] : [],
+        },
+      });
+
+      const mockAgent = {
+        did: {
+          resolve: sinon.stub().resolves({
+            didDocument: {
+              id                 : recipientDid,
+              keyAgreement       : ['#enc'],
+              verificationMethod : [{
+                id           : `${recipientDid}#enc`,
+                type         : 'JsonWebKey2020',
+                controller   : recipientDid,
+                publicKeyJwk : recipientPersona.encryptionKeyPair.publicJwk,
+              }],
+            },
+            didResolutionMetadata: {},
+          }),
+        },
+        keyManager: {
+          derivePrivateKeyBytes : sinon.stub().resolves(rolePathPrivateKeyBytes),
+          derivePublicKey       : sinon.stub(),
+          getKeyUri             : sinon.stub().resolves('recipient-key-uri'),
+          jweKeyUnwrap          : sinon.stub(),
+        },
+        processDwnRequest,
+        secrets: {
+          get : sinon.stub().resolves(undefined),
+          put : sinon.stub().resolves(),
+        },
+      };
+
+      return {
+        audienceKeyId : keyId,
+        mockAgent,
+        audienceCache : {
+          get : sinon.stub().returns(undefined),
+          set : sinon.stub(),
+        },
+        recordsWrite: {
+          recordId   : 'rec-role-audience',
+          contextId  : `${contextId}/chat-1`,
+          descriptor : { protocol, protocolPath: 'thread/chat' },
+          encryption : {
+            keyEncryption: [{
+              derivationScheme: ROLE_AUDIENCE_DERIVATION_SCHEME,
+              protocol,
+              role,
+              epoch,
+              keyId,
+            }],
+          },
+        } as unknown as RecordsWriteMessage,
+      };
+    };
+
     it('should return a ProtocolPath key decrypter when record has no context encryption', async () => {
       const mockAgent = makeAliceAgent();
 
@@ -1133,6 +1303,91 @@ describe('dwn-encryption', () => {
       )).rejects.toThrow('no delivered decryption key covers encrypted record');
 
       expect(delegateCache.set.called).toBe(false);
+    });
+
+    it('should hydrate a role-audience key only after verifying the audienceEpoch and role assignment', async () => {
+      const { mockAgent, audienceCache, audienceKeyId, recordsWrite } = await makeRoleAudienceResolverFixture();
+
+      const result = await resolveKeyDecrypter(
+        mockAgent, 'did:example:bob', recordsWrite, 'did:example:alice',
+        undefined,
+        undefined,
+        audienceCache,
+      );
+
+      expect(result.derivationScheme).toBe(ROLE_AUDIENCE_DERIVATION_SCHEME);
+      expect(audienceCache.set.calledOnce).toBe(true);
+      expect(mockAgent.processDwnRequest.callCount).toBe(3);
+      expect(mockAgent.processDwnRequest.secondCall.args[0].messageParams.filter).toEqual({
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.audienceEpochPath,
+        tags         : {
+          protocol  : 'https://proto.example.com/chat',
+          contextId : 'thread-1',
+          role      : 'thread/participant',
+          epoch     : 1,
+          keyId     : audienceKeyId,
+        },
+      });
+      expect(mockAgent.processDwnRequest.thirdCall.args[0].messageParams.filter).toEqual({
+        contextId    : 'thread-1',
+        recipient    : 'did:example:bob',
+        protocol     : 'https://proto.example.com/chat',
+        protocolPath : 'thread/participant',
+      });
+    });
+
+    it('should skip an audienceKey that does not match an accepted audienceEpoch', async () => {
+      const { mockAgent, audienceCache, recordsWrite } = await makeRoleAudienceResolverFixture({
+        includeAudienceEpoch: false,
+      });
+
+      const result = await resolveKeyDecrypter(
+        mockAgent, 'did:example:bob', recordsWrite, 'did:example:alice',
+        undefined,
+        undefined,
+        audienceCache,
+      );
+
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(audienceCache.set.called).toBe(false);
+      expect(mockAgent.processDwnRequest.callCount).toBe(2);
+    });
+
+    it('should skip an audienceKey whose key material differs from the accepted audienceEpoch', async () => {
+      const { mockAgent, audienceCache, recordsWrite } = await makeRoleAudienceResolverFixture({
+        mutateAudienceEpochPayload: (payload): void => {
+          payload.publicKeyJwk = { kty: 'OKP', crv: 'X25519', x: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' };
+        },
+      });
+
+      const result = await resolveKeyDecrypter(
+        mockAgent, 'did:example:bob', recordsWrite, 'did:example:alice',
+        undefined,
+        undefined,
+        audienceCache,
+      );
+
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(audienceCache.set.called).toBe(false);
+      expect(mockAgent.processDwnRequest.callCount).toBe(2);
+    });
+
+    it('should skip an audienceKey when the recipient has no active role assignment', async () => {
+      const { mockAgent, audienceCache, recordsWrite } = await makeRoleAudienceResolverFixture({
+        includeRoleRecord: false,
+      });
+
+      const result = await resolveKeyDecrypter(
+        mockAgent, 'did:example:bob', recordsWrite, 'did:example:alice',
+        undefined,
+        undefined,
+        audienceCache,
+      );
+
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(audienceCache.set.called).toBe(false);
+      expect(mockAgent.processDwnRequest.callCount).toBe(3);
     });
   });
 });
