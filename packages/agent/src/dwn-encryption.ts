@@ -456,6 +456,7 @@ export async function createAudienceEpochRecord(params: {
     target        : params.sourceDid,
     messageType   : DwnInterface.RecordsWrite,
     messageParams : {
+      published    : true,
       protocol     : EncryptionProtocol.uri,
       protocolPath : EncryptionProtocol.audienceEpochPath,
       protocolRole : params.protocolRole,
@@ -886,6 +887,7 @@ async function hydrateAudienceKey(params: {
       );
       const payload = Encoder.bytesToObject(await DataStream.toBytes(decryptedStream)) as AudienceKeyPayload;
       await verifyAudienceKeyPayload({
+        agent        : params.agent,
         payload,
         audienceKeyMessage,
         sourceDid    : params.sourceDid,
@@ -1008,6 +1010,7 @@ async function getAudienceKeyEncryptedData(
 }
 
 async function verifyAudienceKeyPayload(params: {
+  agent: EnboxPlatformAgent;
   payload: AudienceKeyPayload;
   audienceKeyMessage: RecordsWriteMessage;
   sourceDid: string;
@@ -1043,6 +1046,9 @@ async function verifyAudienceKeyPayload(params: {
   if (payload.keyId !== publicKeyId || payload.keyId !== privateKeyId) {
     throw new Error('audienceKey keyId does not match delivered key material.');
   }
+
+  await verifyAudienceKeyEpoch(params);
+  await verifyAudienceKeyRoleAssignment(params);
 }
 
 function assertAudienceKeyPayload(payload: unknown): asserts payload is AudienceKeyPayload {
@@ -1056,6 +1062,150 @@ function assertAudienceKeyPayload(payload: unknown): asserts payload is Audience
       !isObject(payload.privateKeyJwk)) {
     throw new Error('audienceKey payload is malformed.');
   }
+}
+
+async function verifyAudienceKeyEpoch(params: {
+  agent: EnboxPlatformAgent;
+  payload: AudienceKeyPayload;
+  sourceDid: string;
+  recipientDid: string;
+  protocol: string;
+  contextId: string;
+  role: string;
+  epoch: number;
+  keyId: string;
+}): Promise<void> {
+  const { reply } = await params.agent.processDwnRequest({
+    author        : params.recipientDid,
+    target        : params.sourceDid,
+    messageType   : DwnInterface.RecordsQuery,
+    messageParams : {
+      filter: {
+        protocol     : EncryptionProtocol.uri,
+        protocolPath : EncryptionProtocol.audienceEpochPath,
+      },
+    },
+  });
+
+  const entries = reply.status.code === 200 ? reply.entries ?? [] : [];
+  for (const entry of entries.filter((entry): boolean => audienceTagsMatch(entry as RecordsWriteMessage, params))) {
+    const dataBytes = await getAudienceEpochData(
+      params.agent,
+      params.recipientDid,
+      params.sourceDid,
+      entry as RecordsWriteMessage & { encodedData?: string },
+    );
+    if (dataBytes === undefined) {
+      continue;
+    }
+
+    const epochPayload = Encoder.bytesToObject(dataBytes) as Partial<AudienceKeyPayload>;
+    if (epochPayload.protocol === params.payload.protocol &&
+        epochPayload.contextId === params.payload.contextId &&
+        epochPayload.role === params.payload.role &&
+        epochPayload.epoch === params.payload.epoch &&
+        epochPayload.keyId === params.payload.keyId &&
+        isPublicKeyJwkEqual(epochPayload.publicKeyJwk, params.payload.publicKeyJwk)) {
+      return;
+    }
+  }
+
+  throw new Error('audienceKey does not match an accepted audienceEpoch.');
+}
+
+function audienceTagsMatch(entry: RecordsWriteMessage, expected: {
+  protocol: string;
+  contextId: string;
+  role: string;
+  epoch: number;
+  keyId: string;
+}): boolean {
+  const tags = entry.descriptor.tags ?? {};
+  return String(tags.protocol) === expected.protocol &&
+    String(tags.contextId) === expected.contextId &&
+    String(tags.role) === expected.role &&
+    String(tags.epoch) === String(expected.epoch) &&
+    String(tags.keyId) === expected.keyId;
+}
+
+async function getAudienceEpochData(
+  agent: EnboxPlatformAgent,
+  authorDid: string,
+  sourceDid: string,
+  audienceEpochMessage: RecordsWriteMessage & { encodedData?: string },
+): Promise<Uint8Array | undefined> {
+  if (audienceEpochMessage.encodedData !== undefined) {
+    return Encoder.base64UrlToBytes(audienceEpochMessage.encodedData);
+  }
+
+  const { reply } = await agent.processDwnRequest({
+    author        : authorDid,
+    target        : sourceDid,
+    messageType   : DwnInterface.RecordsRead,
+    messageParams : { filter: { recordId: audienceEpochMessage.recordId } },
+  });
+
+  if (reply.status.code !== 200 || reply.entry?.data === undefined) {
+    return undefined;
+  }
+
+  return DataStream.toBytes(reply.entry.data);
+}
+
+async function verifyAudienceKeyRoleAssignment(params: {
+  agent: EnboxPlatformAgent;
+  sourceDid: string;
+  recipientDid: string;
+  protocol: string;
+  contextId: string;
+  role: string;
+}): Promise<void> {
+  const contextIdPrefix = params.contextId === '' ? undefined : params.contextId;
+  const { reply } = await params.agent.processDwnRequest({
+    author        : params.recipientDid,
+    target        : params.sourceDid,
+    messageType   : DwnInterface.RecordsQuery,
+    messageParams : {
+      filter: {
+        ...(contextIdPrefix !== undefined ? { contextId: contextIdPrefix } : {}),
+        recipient    : params.recipientDid,
+        protocol     : params.protocol,
+        protocolPath : params.role,
+      },
+    },
+  });
+
+  const entries = reply.status.code === 200 ? reply.entries ?? [] : [];
+  const hasRoleRecord = entries.some((entry): boolean => {
+    const roleRecord = entry as RecordsWriteMessage;
+    return roleRecord.descriptor.recipient === params.recipientDid &&
+      roleRecord.descriptor.protocol === params.protocol &&
+      roleRecord.descriptor.protocolPath === params.role &&
+      matchesContextIdPrefix(roleRecord.contextId, contextIdPrefix);
+  });
+
+  if (!hasRoleRecord) {
+    throw new Error('audienceKey recipient is not an active holder of the referenced role.');
+  }
+}
+
+function matchesContextIdPrefix(contextId: string | undefined, contextIdPrefix: string | undefined): boolean {
+  if (contextIdPrefix === undefined) {
+    return true;
+  }
+
+  return contextId === contextIdPrefix || contextId?.startsWith(`${contextIdPrefix}/`) === true;
+}
+
+function isPublicKeyJwkEqual(left: unknown, right: PublicKeyJwk): boolean {
+  if (!isObject(left)) {
+    return false;
+  }
+
+  const rightRecord = right as Record<string, unknown>;
+  return left.kty === right.kty &&
+    left.crv === rightRecord.crv &&
+    left.x === rightRecord.x;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
