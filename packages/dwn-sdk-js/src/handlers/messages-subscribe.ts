@@ -4,13 +4,11 @@ import type { HandlerDependencies, MethodHandler } from '../types/method-handler
 import type { MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
-import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesSubscribe } from '../interfaces/messages-subscribe.js';
-import { Records } from '../utils/records.js';
 import { Time } from '../utils/time.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -29,8 +27,7 @@ type GuardedSubscriptionHandler = {
 };
 
 type DeliveryStepDwnErrorOutcome =
-  | { kind: 'hidden' }
-  | { kind: 'terminal'; code: DwnErrorCode; detail: string };
+  { kind: 'terminal'; code: DwnErrorCode; detail: string };
 
 type DeliveryStepResult<T> =
   | { kind: 'ok'; value: T }
@@ -76,7 +73,6 @@ export class MessagesSubscribeHandler implements MethodHandler {
       deps: this.deps,
       messagesSubscribe,
       subscriptionHandler,
-      tenant,
     });
 
     const { filters, cursor: eventLogCursor } = message.descriptor;
@@ -134,9 +130,8 @@ export class MessagesSubscribeHandler implements MethodHandler {
     deps: HandlerDependencies;
     messagesSubscribe: MessagesSubscribe;
     subscriptionHandler: SubscriptionListener;
-    tenant: string;
   }): GuardedSubscriptionHandler {
-    const { authorization, deps, messagesSubscribe, subscriptionHandler, tenant } = input;
+    const { authorization, deps, messagesSubscribe, subscriptionHandler } = input;
     if (authorization.kind === 'owner') {
       return {
         listener        : subscriptionHandler,
@@ -180,10 +175,6 @@ export class MessagesSubscribeHandler implements MethodHandler {
         return true;
       }
 
-      if (result.kind === 'hidden') {
-        return false;
-      }
-
       emitTerminalDeliveryError(cursor, result.code, result.detail);
       closeSubscription();
       return false;
@@ -214,24 +205,6 @@ export class MessagesSubscribeHandler implements MethodHandler {
         },
       });
       if (!applyDeliveryStepResult(authorizationResult, subMessage.cursor)) {
-        return;
-      }
-
-      const visibilityResult = await MessagesSubscribeHandler.evaluateDeliveryStep({
-        step: async (): Promise<boolean> => MessagesSubscribeHandler.canDeliverEvent({
-          tenant,
-          authorization,
-          deps,
-          messagesSubscribe,
-          subMessage,
-        }),
-        dwnErrorOutcome: { kind: 'hidden' },
-      });
-      if (!applyDeliveryStepResult(visibilityResult, subMessage.cursor)) {
-        return;
-      }
-
-      if (!visibilityResult.value) {
         return;
       }
 
@@ -291,29 +264,5 @@ export class MessagesSubscribeHandler implements MethodHandler {
         detail : 'subscription delivery failed',
       };
     }
-  }
-
-  private static async canDeliverEvent(input: {
-    tenant: string;
-    authorization: Extract<MessagesSubscribeAuthorization, { kind: 'delegate' }>;
-    deps: HandlerDependencies;
-    messagesSubscribe: MessagesSubscribe;
-    subMessage: SubscriptionEvent;
-  }): Promise<boolean> {
-    const { authorization, deps, messagesSubscribe, subMessage, tenant } = input;
-    const { message } = subMessage.event;
-    if (!Records.isRecordsWrite(message) || !EncryptionControl.isControlMessage(message)) {
-      return true;
-    }
-
-    const visibleRecordsWrites = await EncryptionControl.filterVisibleControlRecords({
-      tenant,
-      incomingMessage       : messagesSubscribe.message,
-      permissionGrants      : authorization.permissionGrants,
-      requester             : authorization.expectedGrantee,
-      recordsWriteMessages  : [message],
-      validationStateReader : deps.validationStateReader,
-    });
-    return visibleRecordsWrites.length === 1;
   }
 }

@@ -346,7 +346,7 @@ export function testMessagesReadHandler(): void {
     });
 
     describe('with a grant', () => {
-      it('enforces delivery control visibility for MessagesRead grants', async () => {
+      it('transports delivery control records for MessagesRead grants', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
@@ -443,8 +443,8 @@ export function testMessagesReadHandler(): void {
           permissionGrantIds : [carolGrant.message.recordId],
         });
         const carolReply = await dwn.processMessage(alice.did, carolRead.message);
-        expect(carolReply.status.code).toBe(401);
-        expect(carolReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+        expect(carolReply.status.code).toBe(200);
+        expect(carolReply.entry?.messageCid).toBe(deliveryCid);
       });
 
       it('returns a 401 if grant has different DWN interface scope', async () => {

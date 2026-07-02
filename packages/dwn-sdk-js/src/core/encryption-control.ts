@@ -1,8 +1,8 @@
+import type { GenericMessage } from '../types/message-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { EncryptionControlAudiencePayload, EncryptionControlDeliveryTags, RoleAudienceKeyId } from '../types/encryption-types.js';
 import type { MessagesPermissionScope, RecordsPermissionScope } from '../types/permission-types.js';
-import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 import type { RecordsCountMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage, RecordsWriteTags } from '../types/records-types.js';
 
@@ -39,17 +39,12 @@ type ExactAudienceFilterTuple = Omit<RoleAudienceKeyId, 'keyId'> & {
 };
 
 type ControlReadMessage =
-  | MessagesQueryMessage
-  | MessagesReadMessage
-  | MessagesSubscribeMessage
   | RecordsCountMessage
   | RecordsReadMessage
   | RecordsQueryMessage
   | RecordsSubscribeMessage;
 
 type ControlFilterMessage =
-  | MessagesQueryMessage
-  | MessagesSubscribeMessage
   | RecordsCountMessage
   | RecordsQueryMessage
   | RecordsSubscribeMessage;
@@ -74,7 +69,7 @@ export class EncryptionControl {
   }
 
   public static getRequester(
-    message: ControlReadMessage,
+    message: GenericMessage,
   ): string | undefined {
     return Message.isSignedByAuthorDelegate(message) ? Message.getSigner(message) : Message.getAuthor(message);
   }
