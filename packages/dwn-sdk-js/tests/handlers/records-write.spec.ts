@@ -46,6 +46,7 @@ import { CoreProtocolRegistry, DataStoreLevel, DwnConstant, DwnInterfaceName, Dw
 import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
 
@@ -124,6 +125,41 @@ export function testRecordsWriteHandler(): void {
 
         // Cleanup: unregister the mock so it doesn't affect other tests
         (coreProtocols as any)._protocols.delete(protocolUri);
+      });
+
+      it('should fail closed for exact reserved encryption control paths before ordinary protocol authorization', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        for (const protocolPath of [ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH]) {
+          const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
+            author   : alice,
+            protocol : defaultTestProtocolDefinition.protocol,
+            protocolPath,
+          });
+
+          const reply = await dwn.processMessage(alice.did, message, { dataStream });
+
+          expect(reply.status.code).toBe(400);
+          expect(reply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateUnexpectedRecord);
+        }
+      });
+
+      it('should not treat lookalike encryption control paths as reserved paths', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+
+        const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          protocol     : defaultTestProtocolDefinition.protocol,
+          protocolPath : '$encryptionx/audience',
+        });
+
+        const reply = await dwn.processMessage(alice.did, message, { dataStream });
+
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain('SchemaValidatorFailure');
+        expect(reply.status.detail).toContain('protocolPath: must match pattern');
       });
 
       it('should only be able to overwrite existing record if new record has a later `messageTimestamp` value', async () => {
