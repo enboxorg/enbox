@@ -34,9 +34,10 @@ export class RecordsQueryHandler implements MethodHandler {
 
     let recordsWrites: RecordsQueryReplyEntry[];
     let cursor: PaginationCursor | undefined;
+    const requester = EncryptionControl.getRequester(recordsQuery.message);
     // if this is an anonymous query and the filter supports published records, query only published records
     if (Records.filterIncludesPublishedRecords(recordsQuery.message.descriptor.filter) && recordsQuery.author === undefined) {
-      const results = await this.fetchPublishedRecords(tenant, recordsQuery);
+      const results = await this.fetchPublishedRecords(tenant, recordsQuery, requester);
       recordsWrites = results.messages as RecordsQueryReplyEntry[];
       cursor = results.cursor;
     } else {
@@ -50,16 +51,14 @@ export class RecordsQueryHandler implements MethodHandler {
       }
 
       if (recordsQuery.author === tenant) {
-        const results = await this.fetchRecordsAsOwner(tenant, recordsQuery);
+        const results = requester === tenant
+          ? await this.fetchRecordsAsOwner(tenant, recordsQuery)
+          : await this.fetchRecordsAsOwnerDelegate(tenant, recordsQuery, requester);
         recordsWrites = results.messages as RecordsQueryReplyEntry[];
         cursor = results.cursor;
       } else {
-        const results = await this.fetchRecordsAsNonOwner(tenant, recordsQuery);
-        recordsWrites = await this.filterControlRecordsForNonOwner(
-          tenant,
-          recordsQuery,
-          results.messages as RecordsQueryReplyEntry[],
-        );
+        const results = await this.fetchRecordsAsNonOwner(tenant, recordsQuery, requester);
+        recordsWrites = results.messages as RecordsQueryReplyEntry[];
         cursor = results.cursor;
       }
     }
@@ -138,6 +137,30 @@ export class RecordsQueryHandler implements MethodHandler {
     });
   }
 
+  private async fetchRecordsAsOwnerDelegate(
+    tenant: string,
+    recordsQuery: RecordsQuery,
+    requester: string | undefined,
+  ): Promise<{ messages: GenericMessage[], cursor?: PaginationCursor }> {
+    const { dateSort, filter, pagination } = recordsQuery.message.descriptor;
+    const queryFilter = {
+      ...Records.convertFilter(filter, dateSort),
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true
+    };
+
+    const messageSort = this.convertDateSort(dateSort);
+    return this.queryRecordsWithVisibleControlFiltering({
+      tenant,
+      recordsQuery,
+      requester,
+      filters: [queryFilter],
+      messageSort,
+      pagination,
+    });
+  }
+
   /**
    * Fetches the records as a non-owner.
    *
@@ -158,7 +181,9 @@ export class RecordsQueryHandler implements MethodHandler {
    *
    */
   private async fetchRecordsAsNonOwner(
-    tenant: string, recordsQuery: RecordsQuery
+    tenant: string,
+    recordsQuery: RecordsQuery,
+    requester: string | undefined,
   ): Promise<{ messages: GenericMessage[], cursor?: PaginationCursor }> {
     const { dateSort, pagination, filter } = recordsQuery.message.descriptor;
     const filters = [];
@@ -168,7 +193,7 @@ export class RecordsQueryHandler implements MethodHandler {
 
     if (Records.filterIncludesUnpublishedRecords(filter)) {
       if (EncryptionControl.isExactAudienceFilter(filter)) {
-        filters.push(RecordsQueryHandler.buildUnpublishedControlRecordsFilter(recordsQuery));
+        filters.push(Records.buildUnpublishedControlRecordsFilter(filter, dateSort));
       }
 
       if (Records.shouldBuildUnpublishedAuthorFilter(filter, recordsQuery.author!)) {
@@ -189,14 +214,13 @@ export class RecordsQueryHandler implements MethodHandler {
     }
 
     const messageSort = this.convertDateSort(dateSort);
-    return queryRecordsWithRecordLimitOccupancy({
-      messageStore          : this.deps.messageStore,
-      validationStateReader : this.deps.validationStateReader,
+    return this.queryRecordsWithVisibleControlFiltering({
       tenant,
+      recordsQuery,
+      requester,
       filters,
       messageSort,
       pagination,
-      messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
     });
   }
 
@@ -204,20 +228,90 @@ export class RecordsQueryHandler implements MethodHandler {
    * Fetches only published records.
    */
   private async fetchPublishedRecords(
-    tenant: string, recordsQuery: RecordsQuery
+    tenant: string,
+    recordsQuery: RecordsQuery,
+    requester: string | undefined,
   ): Promise<{ messages: GenericMessage[], cursor?: PaginationCursor }> {
     const { dateSort, pagination } = recordsQuery.message.descriptor;
     const filter = RecordsQueryHandler.buildPublishedRecordsFilter(recordsQuery);
     const messageSort = this.convertDateSort(dateSort);
-    return queryRecordsWithRecordLimitOccupancy({
-      messageStore          : this.deps.messageStore,
-      validationStateReader : this.deps.validationStateReader,
+    return this.queryRecordsWithVisibleControlFiltering({
       tenant,
-      filters               : [filter],
+      recordsQuery,
+      requester,
+      filters: [filter],
       messageSort,
       pagination,
-      messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
     });
+  }
+
+  private async queryRecordsWithVisibleControlFiltering(input: {
+    tenant: string;
+    recordsQuery: RecordsQuery;
+    requester: string | undefined;
+    filters: Filter[];
+    messageSort: MessageSort;
+    pagination?: { cursor?: PaginationCursor; limit?: number };
+  }): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
+    const {
+      tenant, recordsQuery, requester, filters, messageSort, pagination
+    } = input;
+    const controlFilters = Records.buildControlRecordsFilters(filters);
+    if (controlFilters.length === 0) {
+      const result = await queryRecordsWithRecordLimitOccupancy({
+        messageStore          : this.deps.messageStore,
+        validationStateReader : this.deps.validationStateReader,
+        tenant,
+        filters,
+        messageSort,
+        pagination,
+        messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
+      });
+      return { messages: result.messages as RecordsQueryReplyEntry[], cursor: result.cursor };
+    }
+
+    if (pagination?.limit === undefined || pagination.limit <= 0) {
+      const result = await queryRecordsWithRecordLimitOccupancy({
+        messageStore          : this.deps.messageStore,
+        validationStateReader : this.deps.validationStateReader,
+        tenant,
+        filters,
+        messageSort,
+        pagination,
+        messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
+      });
+      return {
+        messages : await this.filterControlRecordsForRequester(tenant, recordsQuery, requester, result.messages as RecordsQueryReplyEntry[]),
+        cursor   : result.cursor,
+      };
+    }
+
+    const visibleMessages: RecordsQueryReplyEntry[] = [];
+    let cursor = pagination.cursor;
+    let nextCursor: PaginationCursor | undefined;
+    do {
+      const remainingLimit = pagination.limit - visibleMessages.length;
+      const result = await queryRecordsWithRecordLimitOccupancy({
+        messageStore          : this.deps.messageStore,
+        validationStateReader : this.deps.validationStateReader,
+        tenant,
+        filters,
+        messageSort,
+        pagination            : { ...pagination, cursor, limit: remainingLimit },
+        messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
+      });
+      const filteredMessages = await this.filterControlRecordsForRequester(
+        tenant,
+        recordsQuery,
+        requester,
+        result.messages as RecordsQueryReplyEntry[],
+      );
+      visibleMessages.push(...filteredMessages);
+      nextCursor = result.cursor;
+      cursor = result.cursor;
+    } while (visibleMessages.length < pagination.limit && cursor !== undefined);
+
+    return { messages: visibleMessages, cursor: nextCursor };
   }
 
   private static buildPublishedRecordsFilter(recordsQuery: RecordsQuery): Filter {
@@ -277,17 +371,6 @@ export class RecordsQueryHandler implements MethodHandler {
     };
   }
 
-  private static buildUnpublishedControlRecordsFilter(recordsQuery: RecordsQuery): Filter {
-    const { dateSort, filter } = recordsQuery.message.descriptor;
-    return {
-      ...Records.convertFilter(filter, dateSort),
-      interface         : DwnInterfaceName.Records,
-      method            : DwnMethodName.Write,
-      isLatestBaseState : true,
-      published         : false,
-    };
-  }
-
   /**
    * Creates a filter for only unpublished records where the author is the same as the query author.
    */
@@ -338,29 +421,18 @@ export class RecordsQueryHandler implements MethodHandler {
     }
   }
 
-  private async filterControlRecordsForNonOwner(
+  private async filterControlRecordsForRequester(
     tenant: string,
     recordsQuery: RecordsQuery,
+    requester: string | undefined,
     recordsWrites: RecordsQueryReplyEntry[],
   ): Promise<RecordsQueryReplyEntry[]> {
-    const visibleRecordsWrites: RecordsQueryReplyEntry[] = [];
-    for (const recordsWrite of recordsWrites) {
-      if (!EncryptionControl.isControlMessage(recordsWrite)) {
-        visibleRecordsWrites.push(recordsWrite);
-        continue;
-      }
-
-      if (await EncryptionControl.canRead({
-        tenant,
-        incomingMessage       : recordsQuery.message,
-        requester             : recordsQuery.author,
-        recordsWriteMessage   : recordsWrite,
-        validationStateReader : this.deps.validationStateReader,
-      })) {
-        visibleRecordsWrites.push(recordsWrite);
-      }
-    }
-
-    return visibleRecordsWrites;
+    return EncryptionControl.filterVisibleControlRecords({
+      tenant,
+      incomingMessage       : recordsQuery.message,
+      requester,
+      recordsWriteMessages  : recordsWrites,
+      validationStateReader : this.deps.validationStateReader,
+    });
   }
 }

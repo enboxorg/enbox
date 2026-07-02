@@ -185,8 +185,16 @@ export class RecordsReadHandler implements MethodHandler {
 
     const { descriptor } = matchedRecordsWrite.message;
 
-    // if author is the same as the target tenant, we can directly grant access
-    if (recordsRead.author === tenant) {
+    if (EncryptionControl.isControlMessage(matchedRecordsWrite.message)) {
+      await EncryptionControl.authorizeRead({
+        tenant,
+        incomingMessage       : recordsRead.message,
+        requester             : EncryptionControl.getRequester(recordsRead.message),
+        recordsWriteMessage   : matchedRecordsWrite.message,
+        validationStateReader : deps.validationStateReader,
+      });
+    } else if (recordsRead.author === tenant) {
+      // if author is the same as the target tenant, we can directly grant access
       return;
     } else if (descriptor.published === true) {
       // authentication is not required for published data
@@ -196,14 +204,6 @@ export class RecordsReadHandler implements MethodHandler {
     ) {
       // The recipient or author of a message may always read it
       return;
-    } else if (EncryptionControl.isControlMessage(matchedRecordsWrite.message)) {
-      await EncryptionControl.authorizeRead({
-        tenant,
-        incomingMessage       : recordsRead.message,
-        requester             : recordsRead.author,
-        recordsWriteMessage   : matchedRecordsWrite.message,
-        validationStateReader : deps.validationStateReader,
-      });
     } else if (recordsRead.author !== undefined && Message.getPermissionGrantId(recordsRead.signaturePayload!) !== undefined) {
       const permissionGrantId = Message.getPermissionGrantId(recordsRead.signaturePayload!)!;
       const permissionGrant = await deps.validationStateReader.fetchGrant(tenant, permissionGrantId);

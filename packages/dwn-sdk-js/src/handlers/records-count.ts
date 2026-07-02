@@ -1,10 +1,9 @@
 import type { Filter } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
-import type { RecordsCountMessage, RecordsCountReply, RecordsWriteMessage } from '../types/records-types.js';
+import type { RecordsCountMessage, RecordsCountReply } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { EncryptionControl } from '../core/encryption-control.js';
-import { isEncryptionControlPath } from '../core/constants.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -30,10 +29,11 @@ export class RecordsCountHandler implements MethodHandler {
     }
 
     let count: number;
+    const requester = EncryptionControl.getRequester(recordsCount.message);
 
     // if this is an anonymous count and the filter supports published records, count only published records
     if (Records.filterIncludesPublishedRecords(recordsCount.message.descriptor.filter) && recordsCount.author === undefined) {
-      count = await this.countPublishedRecords(tenant, recordsCount);
+      count = await this.countPublishedRecords(tenant, recordsCount, requester);
     } else {
       // authentication and authorization
       try {
@@ -44,10 +44,12 @@ export class RecordsCountHandler implements MethodHandler {
         return messageReplyFromError(e, 401);
       }
 
-      if (recordsCount.author === tenant) {
+      if (recordsCount.author === tenant && requester === tenant) {
         count = await this.countRecordsAsOwner(tenant, recordsCount);
+      } else if (recordsCount.author === tenant) {
+        count = await this.countRecordsAsOwnerDelegate(tenant, recordsCount, requester);
       } else {
-        count = await this.countRecordsAsNonOwner(tenant, recordsCount);
+        count = await this.countRecordsAsNonOwner(tenant, recordsCount, requester);
       }
     }
 
@@ -72,10 +74,30 @@ export class RecordsCountHandler implements MethodHandler {
     return this.countProjectedRecords(tenant, recordsCount, [countFilter]);
   }
 
+  private async countRecordsAsOwnerDelegate(
+    tenant: string,
+    recordsCount: RecordsCount,
+    requester: string | undefined,
+  ): Promise<number> {
+    const { filter } = recordsCount.message.descriptor;
+    const countFilter = {
+      ...Records.convertFilter(filter),
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true
+    };
+
+    return this.countProjectedRecordsForRequester(tenant, recordsCount, requester, [countFilter]);
+  }
+
   /**
    * Counts records as a non-owner, applying the same filter logic as RecordsQuery.
    */
-  private async countRecordsAsNonOwner(tenant: string, recordsCount: RecordsCount): Promise<number> {
+  private async countRecordsAsNonOwner(
+    tenant: string,
+    recordsCount: RecordsCount,
+    requester: string | undefined,
+  ): Promise<number> {
     const { filter } = recordsCount.message.descriptor;
     const filters: Filter[] = [];
 
@@ -85,7 +107,7 @@ export class RecordsCountHandler implements MethodHandler {
 
     if (Records.filterIncludesUnpublishedRecords(filter)) {
       if (EncryptionControl.isExactAudienceFilter(filter)) {
-        filters.push(RecordsCountHandler.buildUnpublishedControlRecordsFilter(recordsCount));
+        filters.push(Records.buildUnpublishedControlRecordsFilter(filter));
       }
 
       if (Records.shouldBuildUnpublishedAuthorFilter(filter, recordsCount.author!)) {
@@ -105,15 +127,19 @@ export class RecordsCountHandler implements MethodHandler {
       }
     }
 
-    return this.countProjectedRecordsAsNonOwner(tenant, recordsCount, filters);
+    return this.countProjectedRecordsForRequester(tenant, recordsCount, requester, filters);
   }
 
   /**
    * Counts only published records.
    */
-  private async countPublishedRecords(tenant: string, recordsCount: RecordsCount): Promise<number> {
+  private async countPublishedRecords(
+    tenant: string,
+    recordsCount: RecordsCount,
+    requester: string | undefined,
+  ): Promise<number> {
     const filter = RecordsCountHandler.buildPublishedRecordsFilter(recordsCount);
-    return this.countProjectedRecords(tenant, recordsCount, [filter]);
+    return this.countProjectedRecordsForRequester(tenant, recordsCount, requester, [filter]);
   }
 
   private async countProjectedRecords(tenant: string, recordsCount: RecordsCount, filters: Filter[]): Promise<number> {
@@ -126,20 +152,38 @@ export class RecordsCountHandler implements MethodHandler {
     });
   }
 
-  private async countProjectedRecordsAsNonOwner(tenant: string, recordsCount: RecordsCount, filters: Filter[]): Promise<number> {
-    if (!RecordsCountHandler.filtersMayIncludeControlRecords(filters)) {
+  private async countProjectedRecordsForRequester(
+    tenant: string,
+    recordsCount: RecordsCount,
+    requester: string | undefined,
+    filters: Filter[],
+  ): Promise<number> {
+    const controlFilters = Records.buildControlRecordsFilters(filters);
+    if (controlFilters.length === 0) {
       return this.countProjectedRecords(tenant, recordsCount, filters);
+    }
+
+    const totalCount = await this.countProjectedRecords(tenant, recordsCount, filters);
+    const controlCount = await this.countProjectedRecords(tenant, recordsCount, controlFilters);
+    if (controlCount === 0) {
+      return totalCount;
     }
 
     const { messages } = await queryRecordsWithRecordLimitOccupancy({
       messageStore          : this.deps.messageStore,
       validationStateReader : this.deps.validationStateReader,
       tenant,
-      filters,
+      filters               : controlFilters,
       messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
     });
-    const visibleMessages = await this.filterControlRecordsForNonOwner(tenant, recordsCount, messages);
-    return visibleMessages.length;
+    const visibleMessages = await EncryptionControl.filterVisibleControlRecords({
+      tenant,
+      incomingMessage       : recordsCount.message,
+      requester,
+      recordsWriteMessages  : messages,
+      validationStateReader : this.deps.validationStateReader,
+    });
+    return totalCount - controlCount + visibleMessages.length;
   }
 
   private static buildPublishedRecordsFilter(recordsCount: RecordsCount): Filter {
@@ -196,17 +240,6 @@ export class RecordsCountHandler implements MethodHandler {
     };
   }
 
-  private static buildUnpublishedControlRecordsFilter(recordsCount: RecordsCount): Filter {
-    const { filter } = recordsCount.message.descriptor;
-    return {
-      ...Records.convertFilter(filter),
-      interface         : DwnInterfaceName.Records,
-      method            : DwnMethodName.Write,
-      isLatestBaseState : true,
-      published         : false,
-    };
-  }
-
   /**
    * Creates a filter for only unpublished records where the author is the same as the count author.
    */
@@ -220,13 +253,6 @@ export class RecordsCountHandler implements MethodHandler {
       isLatestBaseState : true,
       published         : false
     };
-  }
-
-  private static filtersMayIncludeControlRecords(filters: Filter[]): boolean {
-    return filters.some((filter): boolean => {
-      const protocolPath = filter.protocolPath;
-      return typeof protocolPath !== 'string' || isEncryptionControlPath(protocolPath);
-    });
   }
 
   /**
@@ -263,29 +289,4 @@ export class RecordsCountHandler implements MethodHandler {
     }
   }
 
-  private async filterControlRecordsForNonOwner(
-    tenant: string,
-    recordsCount: RecordsCount,
-    recordsWrites: RecordsWriteMessage[],
-  ): Promise<RecordsWriteMessage[]> {
-    const visibleRecordsWrites: RecordsWriteMessage[] = [];
-    for (const recordsWrite of recordsWrites) {
-      if (!EncryptionControl.isControlMessage(recordsWrite)) {
-        visibleRecordsWrites.push(recordsWrite);
-        continue;
-      }
-
-      if (await EncryptionControl.canRead({
-        tenant,
-        incomingMessage       : recordsCount.message,
-        requester             : recordsCount.author,
-        recordsWriteMessage   : recordsWrite,
-        validationStateReader : this.deps.validationStateReader,
-      })) {
-        visibleRecordsWrites.push(recordsWrite);
-      }
-    }
-
-    return visibleRecordsWrites;
-  }
 }

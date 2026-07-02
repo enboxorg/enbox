@@ -42,8 +42,48 @@ export class EncryptionControl {
     return isEncryptionControlPath(message.descriptor.protocolPath);
   }
 
+  public static getRequester(
+    message: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage,
+  ): string | undefined {
+    return Message.isSignedByAuthorDelegate(message) ? Message.getSigner(message) : Message.getAuthor(message);
+  }
+
   public static isExactAudienceFilter(filter: RecordsFilter): boolean {
     return EncryptionControl.getExactAudienceFilterTuple(filter) !== undefined;
+  }
+
+  public static async filterVisibleControlRecords<T extends RecordsWriteMessage>(input: {
+    tenant: string;
+    incomingMessage: RecordsCountMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+    requester: string | undefined;
+    recordsWriteMessages: T[];
+    validationStateReader: ValidationStateReader;
+  }): Promise<T[]> {
+    const visibleRecordsWrites: T[] = [];
+    for (const recordsWrite of input.recordsWriteMessages) {
+      if (!EncryptionControl.isControlMessage(recordsWrite)) {
+        visibleRecordsWrites.push(recordsWrite);
+        continue;
+      }
+
+      try {
+        if (await EncryptionControl.canRead({
+          tenant                : input.tenant,
+          incomingMessage       : input.incomingMessage,
+          requester             : input.requester,
+          recordsWriteMessage   : recordsWrite,
+          validationStateReader : input.validationStateReader,
+        })) {
+          visibleRecordsWrites.push(recordsWrite);
+        }
+      } catch (error) {
+        if (!(error instanceof DwnError)) {
+          throw error;
+        }
+      }
+    }
+
+    return visibleRecordsWrites;
   }
 
   public static async authorizeRead(input: {
@@ -324,6 +364,13 @@ export class EncryptionControl {
   }
 
   private static verifyInlineControlRecord(message: RecordsWriteMessage): void {
+    if (message.descriptor.published === true) {
+      throw new DwnError(
+        DwnErrorCode.EncryptionControlValidateUnexpectedRecord,
+        'encryption control records must not be published.'
+      );
+    }
+
     if (message.descriptor.dataSize > DwnConstant.maxDataSizeAllowedToBeEncoded) {
       throw new DwnError(
         DwnErrorCode.EncryptionControlValidateUnexpectedRecord,
@@ -351,8 +398,6 @@ export class EncryptionControl {
     validationStateReader: ValidationStateReader,
     recordType: 'audience' | 'delivery',
   ): Promise<RoleAudienceDefinition> {
-    EncryptionControl.verifyRoleAudienceContext(tags.rolePath, tags.contextId);
-
     if (tags.protocol !== message.descriptor.protocol) {
       const errorCode = recordType === 'audience'
         ? DwnErrorCode.EncryptionControlValidateAudienceTagsMismatch
@@ -363,21 +408,12 @@ export class EncryptionControl {
       );
     }
 
-    const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
+    return EncryptionControl.resolveRoleAudienceDefinition({
       tenant,
-      tags.protocol,
-      message.descriptor.messageTimestamp,
-    );
-    const ruleSet = getRuleSetAtPath(tags.rolePath, protocolDefinition.structure);
-
-    if (ruleSet?.$role !== true || ruleSet.$keyAgreement === undefined) {
-      throw new DwnError(
-        DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid,
-        `role audience path '${tags.rolePath}' must be a role path with $keyAgreement.`
-      );
-    }
-
-    return { protocolDefinition, ruleSet };
+      tags,
+      messageTimestamp: message.descriptor.messageTimestamp,
+      validationStateReader,
+    });
   }
 
   private static verifyRoleAudienceContext(rolePath: string, contextId: string): void {
@@ -704,6 +740,10 @@ export class EncryptionControl {
     incomingMessage: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
     validationStateReader: ValidationStateReader;
   }): Promise<PermissionGrant | undefined> {
+    if (Message.isSignedByAuthorDelegate(input.incomingMessage)) {
+      return PermissionGrant.parse(input.incomingMessage.authorization!.authorDelegatedGrant!);
+    }
+
     const grantId = input.incomingMessage.descriptor.permissionGrantId;
     if (grantId === undefined) {
       return undefined;
@@ -732,7 +772,7 @@ export class EncryptionControl {
     });
   }
 
-  private static async getRoleAudienceDefinition(input: {
+  private static async resolveRoleAudienceDefinition(input: {
     tenant: string;
     tags: RoleAudienceKeyId;
     messageTimestamp: string;
@@ -756,6 +796,15 @@ export class EncryptionControl {
     }
 
     return { protocolDefinition, ruleSet };
+  }
+
+  private static async getRoleAudienceDefinition(input: {
+    tenant: string;
+    tags: RoleAudienceKeyId;
+    messageTimestamp: string;
+    validationStateReader: ValidationStateReader;
+  }): Promise<RoleAudienceDefinition> {
+    return EncryptionControl.resolveRoleAudienceDefinition(input);
   }
 
   private static verifyGrantConditions(message: RecordsWriteMessage, grant: PermissionGrant): void {

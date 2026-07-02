@@ -247,6 +247,58 @@ export function testRecordsCountHandler(): void {
         expect(broadReply.count).toBe(0);
       });
 
+      it('should hide stale audience control records from delegated broad counts', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-count-stale-audience.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const audience = await createAudienceControlWrite({
+          author      : alice,
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet : encryptedDefinition.structure.member as ProtocolRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        await installEncryptedProtocol(dwn, alice, {
+          ...protocolDefinition,
+          structure: {
+            member: {},
+          },
+        });
+
+        const grant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : bob,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+        const count = await RecordsCount.create({
+          delegatedGrant : grant.dataEncodedMessage,
+          filter         : { protocol: protocolDefinition.protocol },
+          signer         : Jws.createSigner(bob),
+        });
+        const reply = await dwn.processMessage(alice.did, count.message);
+        expect(reply.status.code).toBe(200);
+        expect(reply.count).toBe(0);
+      });
+
       it('should count delivery control records only for the recipient', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
@@ -309,6 +361,27 @@ export function testRecordsCountHandler(): void {
         const carolReply = await dwn.processMessage(alice.did, carolCount.message);
         expect(carolReply.status.code).toBe(200);
         expect(carolReply.count).toBe(0);
+
+        const carolGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : carol,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, carolGrant.message, { dataStream: carolGrant.dataStream })).status.code).toBe(202);
+
+        const delegatedCarolCount = await RecordsCount.create({
+          delegatedGrant : carolGrant.dataEncodedMessage,
+          filter         : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          signer         : Jws.createSigner(carol),
+        });
+        const delegatedCarolReply = await dwn.processMessage(alice.did, delegatedCarolCount.message);
+        expect(delegatedCarolReply.status.code).toBe(200);
+        expect(delegatedCarolReply.count).toBe(0);
       });
 
       it('should count unpublished records authorized by permissionGrantId', async () => {

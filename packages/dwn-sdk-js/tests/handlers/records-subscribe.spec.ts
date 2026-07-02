@@ -359,6 +359,19 @@ export function testRecordsSubscribeHandler(): void {
 
         const bobEvents: RecordEvent[] = [];
         const carolEvents: RecordEvent[] = [];
+        const delegatedCarolEvents: RecordEvent[] = [];
+        const carolGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : carol,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, carolGrant.message, { dataStream: carolGrant.dataStream })).status.code).toBe(202);
+
         const bobSubscribe = await RecordsSubscribe.create({
           filter : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
           signer : Jws.createSigner(bob),
@@ -366,6 +379,11 @@ export function testRecordsSubscribeHandler(): void {
         const carolSubscribe = await RecordsSubscribe.create({
           filter : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
           signer : Jws.createSigner(carol),
+        });
+        const delegatedCarolSubscribe = await RecordsSubscribe.create({
+          delegatedGrant : carolGrant.dataEncodedMessage,
+          filter         : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          signer         : Jws.createSigner(carol),
         });
         const bobReply = await dwn.processMessage(alice.did, bobSubscribe.message, {
           subscriptionHandler: (msg): void => {
@@ -381,8 +399,16 @@ export function testRecordsSubscribeHandler(): void {
             }
           },
         });
+        const delegatedCarolReply = await dwn.processMessage(alice.did, delegatedCarolSubscribe.message, {
+          subscriptionHandler: (msg): void => {
+            if (msg.type === 'event') {
+              delegatedCarolEvents.push(msg.event as RecordEvent);
+            }
+          },
+        });
         expect(bobReply.status.code).toBe(200);
         expect(carolReply.status.code).toBe(200);
+        expect(delegatedCarolReply.status.code).toBe(200);
 
         const delivery = await createDeliveryControlWrite({
           author             : alice,
@@ -400,6 +426,8 @@ export function testRecordsSubscribeHandler(): void {
         });
         await sleep(200);
         expect(carolEvents.map(event => (event.message as RecordsWriteMessage).recordId)).not.toContain(delivery.recordsWrite.message.recordId);
+        const delegatedCarolRecordIds = delegatedCarolEvents.map(event => (event.message as RecordsWriteMessage).recordId);
+        expect(delegatedCarolRecordIds).not.toContain(delivery.recordsWrite.message.recordId);
       });
 
       describe('cursor-based subscriptions', () => {

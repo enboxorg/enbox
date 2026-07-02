@@ -223,6 +223,26 @@ export function testRecordsReadHandler(): void {
         });
         const carolReply = await dwn.processMessage(alice.did, carolRead.message);
         expect(carolReply.status.code).toBe(401);
+
+        const carolGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : carol,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, carolGrant.message, { dataStream: carolGrant.dataStream })).status.code).toBe(202);
+
+        const delegatedCarolRead = await RecordsRead.create({
+          delegatedGrant : carolGrant.dataEncodedMessage,
+          filter         : { recordId: delivery.recordsWrite.message.recordId },
+          signer         : Jws.createSigner(carol),
+        });
+        const delegatedCarolReply = await dwn.processMessage(alice.did, delegatedCarolRead.message);
+        expect(delegatedCarolReply.status.code).toBe(401);
       });
 
       it('should allow reading of data that is published without `authorization`', async () => {
