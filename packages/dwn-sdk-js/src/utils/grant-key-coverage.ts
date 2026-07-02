@@ -22,11 +22,41 @@ export type GrantKeyProtocolPathScope = {
   protocolPath?: string;
 };
 
+type GrantKeyDeliveryScopeBuilder = (
+  grantScope: GrantKeyEligibleRecordsScope,
+  protocolDefinition?: ProtocolDefinition,
+) => GrantKeyProtocolPathScope[];
+
+type GrantKeyCoveragePredicate = (
+  input: {
+    grantScope: GrantKeyEligibleRecordsScope;
+    deliveredScope: Pick<GrantKeyProtocolPathScope, 'protocol' | 'protocolPath'>;
+    protocolDefinition?: ProtocolDefinition;
+  },
+) => boolean;
+
+const grantKeyRecordsMethods = new Set<string>([
+  DwnMethodName.Read,
+  DwnMethodName.Write,
+]);
+
+const grantKeyDeliveryScopeBuilders: Record<GrantKeyRecordsScope['method'], GrantKeyDeliveryScopeBuilder> = {
+  [DwnMethodName.Read]  : getReadGrantKeyDeliveryScopes,
+  [DwnMethodName.Write] : getWriteGrantKeyDeliveryScopes,
+};
+
+const grantKeyCoveragePredicates: Record<GrantKeyRecordsScope['method'], GrantKeyCoveragePredicate> = {
+  [DwnMethodName.Read]  : readGrantKeyScopeCoversDeliveredScope,
+  [DwnMethodName.Write] : writeGrantKeyScopeCoversDeliveredScope,
+};
+
 export function isGrantKeyRecordsScope(scope: PermissionScope): scope is GrantKeyRecordsScope {
-  return scope.interface === DwnInterfaceName.Records &&
-    (scope.method === DwnMethodName.Read || scope.method === DwnMethodName.Write) &&
-    'protocol' in scope &&
-    typeof scope.protocol === 'string';
+  const maybeProtocol = (scope as { protocol?: unknown }).protocol;
+  return [
+    scope.interface === DwnInterfaceName.Records,
+    grantKeyRecordsMethods.has(scope.method),
+    typeof maybeProtocol === 'string',
+  ].every(Boolean);
 }
 
 export function isGrantKeyEligibleRecordsScope(scope: PermissionScope): scope is GrantKeyEligibleRecordsScope {
@@ -38,48 +68,7 @@ export function getGrantKeyDeliveryScopes(
   grantScope: GrantKeyEligibleRecordsScope,
   protocolDefinition?: ProtocolDefinition,
 ): GrantKeyProtocolPathScope[] {
-  const deliveredScopes = new Map<string, GrantKeyProtocolPathScope>();
-  const addScope = (scope: GrantKeyProtocolPathScope): void => {
-    deliveredScopes.set(getGrantKeyScopeCacheKey(scope), scope);
-  };
-
-  if (grantScope.method === DwnMethodName.Read) {
-    if (grantScope.protocolPath === undefined) {
-      addScope({
-        scheme   : KeyDerivationScheme.ProtocolPath,
-        protocol : grantScope.protocol,
-      });
-      return [...deliveredScopes.values()];
-    }
-
-    addScope({
-      scheme       : KeyDerivationScheme.ProtocolPath,
-      protocol     : grantScope.protocol,
-      protocolPath : grantScope.protocolPath,
-    });
-
-    if (protocolDefinition !== undefined) {
-      for (const rolePath of getGrantKeyReadRolePathsForScope(protocolDefinition, grantScope.protocolPath)) {
-        addScope({
-          scheme       : KeyDerivationScheme.ProtocolPath,
-          protocol     : grantScope.protocol,
-          protocolPath : rolePath,
-        });
-      }
-    }
-  }
-
-  if (grantScope.method === DwnMethodName.Write && protocolDefinition !== undefined) {
-    for (const rolePath of getGrantKeyRolePathsCoveredByScope(protocolDefinition, grantScope.protocolPath)) {
-      addScope({
-        scheme       : KeyDerivationScheme.ProtocolPath,
-        protocol     : grantScope.protocol,
-        protocolPath : rolePath,
-      });
-    }
-  }
-
-  return [...deliveredScopes.values()];
+  return uniqueGrantKeyScopes(grantKeyDeliveryScopeBuilders[grantScope.method](grantScope, protocolDefinition));
 }
 
 export function grantKeyScopeCoversDeliveredScope(input: {
@@ -92,31 +81,111 @@ export function grantKeyScopeCoversDeliveredScope(input: {
     return false;
   }
 
-  if (grantScope.method === DwnMethodName.Read) {
-    if (grantScope.protocolPath === undefined) {
-      return true;
-    }
+  return grantKeyCoveragePredicates[grantScope.method]({ grantScope, deliveredScope, protocolDefinition });
+}
 
-    if (deliveredScope.protocolPath !== undefined && isBoundaryAwareSubtree(grantScope.protocolPath, deliveredScope.protocolPath)) {
-      return true;
-    }
-
-    if (deliveredScope.protocolPath === undefined || protocolDefinition === undefined) {
-      return false;
-    }
-
-    return grantKeyReadScopeReferencesRolePath(protocolDefinition, grantScope.protocolPath, deliveredScope.protocolPath);
+function getReadGrantKeyDeliveryScopes(
+  grantScope: GrantKeyEligibleRecordsScope,
+  protocolDefinition?: ProtocolDefinition,
+): GrantKeyProtocolPathScope[] {
+  if (grantScope.protocolPath === undefined) {
+    return [createProtocolGrantKeyScope(grantScope.protocol)];
   }
 
-  if (deliveredScope.protocolPath === undefined) {
+  const scopes = [
+    createProtocolPathGrantKeyScope(grantScope.protocol, grantScope.protocolPath),
+  ];
+
+  if (protocolDefinition === undefined) {
+    return scopes;
+  }
+
+  for (const rolePath of getGrantKeyReadRolePathsForScope(protocolDefinition, grantScope.protocolPath)) {
+    scopes.push(createProtocolPathGrantKeyScope(grantScope.protocol, rolePath));
+  }
+
+  return scopes;
+}
+
+function getWriteGrantKeyDeliveryScopes(
+  grantScope: GrantKeyEligibleRecordsScope,
+  protocolDefinition?: ProtocolDefinition,
+): GrantKeyProtocolPathScope[] {
+  if (protocolDefinition === undefined) {
+    return [];
+  }
+
+  return getGrantKeyRolePathsCoveredByScope(protocolDefinition, grantScope.protocolPath)
+    .map((rolePath) => createProtocolPathGrantKeyScope(grantScope.protocol, rolePath));
+}
+
+function createProtocolGrantKeyScope(protocol: string): GrantKeyProtocolPathScope {
+  return {
+    scheme: KeyDerivationScheme.ProtocolPath,
+    protocol,
+  };
+}
+
+function createProtocolPathGrantKeyScope(protocol: string, protocolPath: string): GrantKeyProtocolPathScope {
+  return {
+    scheme: KeyDerivationScheme.ProtocolPath,
+    protocol,
+    protocolPath,
+  };
+}
+
+function readGrantKeyScopeCoversDeliveredScope(input: {
+  grantScope: GrantKeyEligibleRecordsScope;
+  deliveredScope: Pick<GrantKeyProtocolPathScope, 'protocol' | 'protocolPath'>;
+  protocolDefinition?: ProtocolDefinition;
+}): boolean {
+  const { grantScope, deliveredScope, protocolDefinition } = input;
+  const grantProtocolPath = grantScope.protocolPath;
+  if (grantProtocolPath === undefined) {
+    return true;
+  }
+
+  const deliveredProtocolPath = deliveredScope.protocolPath;
+  if (deliveredProtocolPath === undefined) {
     return false;
   }
 
-  if (grantScope.protocolPath !== undefined && !isBoundaryAwareSubtree(grantScope.protocolPath, deliveredScope.protocolPath)) {
+  if (isBoundaryAwareSubtree(grantProtocolPath, deliveredProtocolPath)) {
+    return true;
+  }
+
+  if (protocolDefinition === undefined) {
     return false;
   }
 
-  return protocolDefinition !== undefined && isGrantKeyLocalRolePath(protocolDefinition, deliveredScope.protocolPath);
+  return grantKeyReadScopeReferencesRolePath(protocolDefinition, grantProtocolPath, deliveredProtocolPath);
+}
+
+function writeGrantKeyScopeCoversDeliveredScope(input: {
+  grantScope: GrantKeyEligibleRecordsScope;
+  deliveredScope: Pick<GrantKeyProtocolPathScope, 'protocol' | 'protocolPath'>;
+  protocolDefinition?: ProtocolDefinition;
+}): boolean {
+  const { grantScope, deliveredScope, protocolDefinition } = input;
+  const deliveredProtocolPath = deliveredScope.protocolPath;
+  if (deliveredProtocolPath === undefined) {
+    return false;
+  }
+
+  if (protocolDefinition === undefined) {
+    return false;
+  }
+
+  if (!isGrantKeyLocalRolePath(protocolDefinition, deliveredProtocolPath)) {
+    return false;
+  }
+
+  const grantProtocolPath = grantScope.protocolPath;
+  if (grantProtocolPath === undefined) {
+    return true;
+  }
+
+  return isBoundaryAwareSubtree(grantProtocolPath, deliveredProtocolPath);
 }
 
 function getGrantKeyReadRolePathsForScope(protocolDefinition: ProtocolDefinition, scopeProtocolPath: string): string[] {
@@ -170,7 +239,7 @@ function getGrantKeyRolePathsCoveredByScope(protocolDefinition: ProtocolDefiniti
     .filter((rolePath) => scopeProtocolPath === undefined || isBoundaryAwareSubtree(scopeProtocolPath, rolePath));
 }
 
-function collectRolePaths(protocolDefinition: ProtocolDefinition, ruleSet: ProtocolRuleSet, parentPath?: string): string[] {
+function collectRolePaths(protocolDefinition: ProtocolDefinition, ruleSet: ProtocolRuleSet, parentPath: string[] = []): string[] {
   const rolePaths: string[] = [];
 
   for (const [key, value] of Object.entries(ruleSet)) {
@@ -178,12 +247,13 @@ function collectRolePaths(protocolDefinition: ProtocolDefinition, ruleSet: Proto
       continue;
     }
 
-    const protocolPath = parentPath === undefined ? key : `${parentPath}/${key}`;
+    const path = [...parentPath, key];
+    const protocolPath = path.join('/');
     const childRuleSet = value as ProtocolRuleSet;
     if (isGrantKeyLocalRolePath(protocolDefinition, protocolPath)) {
       rolePaths.push(protocolPath);
     }
-    rolePaths.push(...collectRolePaths(protocolDefinition, childRuleSet, protocolPath));
+    rolePaths.push(...collectRolePaths(protocolDefinition, childRuleSet, path));
   }
 
   return rolePaths;
@@ -195,11 +265,18 @@ function isGrantKeyLocalRolePath(protocolDefinition: ProtocolDefinition, protoco
 }
 
 function isBoundaryAwareSubtree(scopePath: string, candidatePath: string): boolean {
-  return candidatePath === scopePath || candidatePath.startsWith(scopePath + '/');
+  return `${candidatePath}/`.startsWith(`${scopePath}/`);
 }
 
 function getGrantKeyScopeCacheKey(scope: GrantKeyProtocolPathScope): string {
-  return scope.protocolPath === undefined
-    ? `${scope.protocol}~protocol`
-    : `${scope.protocol}~protocolPath~${scope.protocolPath}`;
+  return JSON.stringify([scope.protocol, scope.protocolPath]);
+}
+
+function uniqueGrantKeyScopes(scopes: GrantKeyProtocolPathScope[]): GrantKeyProtocolPathScope[] {
+  const deliveredScopes = new Map<string, GrantKeyProtocolPathScope>();
+  for (const scope of scopes) {
+    deliveredScopes.set(getGrantKeyScopeCacheKey(scope), scope);
+  }
+
+  return [...deliveredScopes.values()];
 }
