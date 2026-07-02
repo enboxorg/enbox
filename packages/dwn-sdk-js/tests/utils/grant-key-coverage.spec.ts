@@ -47,6 +47,11 @@ describe('GrantKeyCoverage', () => {
         interface : DwnInterfaceName.Protocols,
         method    : DwnMethodName.Query,
       })).toBe(false);
+
+      expect(isGrantKeyRecordsScope({
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Read,
+      } as PermissionScope)).toBe(false);
     });
   });
 
@@ -61,6 +66,11 @@ describe('GrantKeyCoverage', () => {
 
       expect(isGrantKeyEligibleRecordsScope(contextScopedGrant)).toBe(false);
       expect(isGrantKeyEligibleRecordsScope(recordsReadScope())).toBe(true);
+      expect(isGrantKeyEligibleRecordsScope({
+        interface : DwnInterfaceName.Messages,
+        method    : DwnMethodName.Read,
+        protocol,
+      })).toBe(false);
     });
   });
 
@@ -85,6 +95,25 @@ describe('GrantKeyCoverage', () => {
       ]);
     });
 
+    it('should deliver only the read-subtree key when no protocol definition is supplied', () => {
+      const scopes = getGrantKeyDeliveryScopes(recordsReadScope({ protocolPath: 'chat/message' }));
+
+      expect(scopeKeys(scopes)).toEqual([
+        'chat/message',
+      ]);
+    });
+
+    it('should deliver only the read-subtree key when the scoped path is not configured', () => {
+      const scopes = getGrantKeyDeliveryScopes(
+        recordsReadScope({ protocolPath: 'chat/missing' }),
+        grantKeyProtocolDefinition(),
+      );
+
+      expect(scopeKeys(scopes)).toEqual([
+        'chat/missing',
+      ]);
+    });
+
     it('should deliver covered local role keys for write grants', () => {
       const scopes = getGrantKeyDeliveryScopes(
         recordsWriteScope({ protocolPath: 'chat/message' }),
@@ -93,6 +122,20 @@ describe('GrantKeyCoverage', () => {
 
       expect(scopeKeys(scopes)).toEqual([
         'chat/message/moderator',
+      ]);
+    });
+
+    it('should deliver all local role keys for protocol-scoped write grants', () => {
+      const scopes = getGrantKeyDeliveryScopes(
+        recordsWriteScope(),
+        grantKeyProtocolDefinition(),
+      );
+
+      expect(scopeKeys(scopes)).toEqual([
+        'chat/admin',
+        'chat/member',
+        'chat/message/moderator',
+        'chat/unreferenced',
       ]);
     });
 
@@ -168,6 +211,14 @@ describe('GrantKeyCoverage', () => {
       expect(grantKeyScopeCoversDeliveredScope({
         grantScope         : recordsWriteScope({ protocolPath: 'chat/message' }),
         deliveredScope     : { protocol, protocolPath: 'chat/message/moderator' },
+        protocolDefinition : grantKeyProtocolDefinition(),
+      })).toBe(true);
+    });
+
+    it('should allow protocol-scoped write grants to cover local role paths', () => {
+      expect(grantKeyScopeCoversDeliveredScope({
+        grantScope         : recordsWriteScope(),
+        deliveredScope     : { protocol, protocolPath: 'chat/member' },
         protocolDefinition : grantKeyProtocolDefinition(),
       })).toBe(true);
     });
