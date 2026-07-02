@@ -8,6 +8,7 @@ import { Cid } from '../utils/cid.js';
 import { DataStream } from '../utils/data-stream.js';
 import { DwnConstant } from '../core/dwn-constant.js';
 import { Encoder } from '../utils/encoder.js';
+import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -135,6 +136,15 @@ export class RecordsWriteHandler implements MethodHandler {
       if (coreProtocol?.preProcessWrite !== undefined) {
         await coreProtocol.preProcessWrite(tenant, message, this.deps.validationStateReader);
       }
+      if (EncryptionControl.isControlMessage(message)) {
+        await EncryptionControl.preProcessWrite(tenant, message, this.deps.validationStateReader);
+        if (dataStream === undefined) {
+          throw new DwnError(
+            DwnErrorCode.EncryptionControlValidateUnexpectedRecord,
+            'encryption control records require data.'
+          );
+        }
+      }
 
       // NOTE: We allow isLatestBaseState to be true ONLY if the incoming message comes with data, or if the incoming message is NOT an initial write
       // This would allow an initial write to be written to the DB without data, but having it not queryable,
@@ -170,6 +180,7 @@ export class RecordsWriteHandler implements MethodHandler {
           error.code === DwnErrorCode.RecordsWriteDataCidMismatch ||
           error.code === DwnErrorCode.RecordsWriteDataSizeMismatch ||
           error.code.startsWith('SchemaValidator') ||
+          EncryptionControl.mapErrorToStatusCode(error.code) !== undefined ||
           this.deps.coreProtocols?.mapErrorToStatusCode(error.code) !== undefined) {
           return messageReplyFromError(error, 400);
         }
@@ -245,6 +256,9 @@ export class RecordsWriteHandler implements MethodHandler {
         : this.deps.coreProtocols?.get(message.descriptor.protocol);
       if (coreProtocol?.validateRecord !== undefined) {
         await coreProtocol.validateRecord(message, dataBytes);
+      }
+      if (EncryptionControl.isControlMessage(message)) {
+        await EncryptionControl.validateRecord({ tenant, message, dataBytes, validationStateReader: this.deps.validationStateReader });
       }
 
       messageWithOptionalEncodedData = await this.cloneAndAddEncodedData(message, dataBytes);
@@ -412,6 +426,11 @@ export class RecordsWriteHandler implements MethodHandler {
         DwnErrorCode.RecordsWriteOwnerAndTenantMismatch,
         `Owner ${recordsWrite.owner} must be the same as tenant ${tenant} when specified.`
       );
+    }
+
+    if (EncryptionControl.isControlMessage(recordsWrite.message)) {
+      await EncryptionControl.authorizeWrite(tenant, recordsWrite, this.deps.validationStateReader);
+      return;
     }
 
     if (recordsWrite.isSignedByAuthorDelegate) {
