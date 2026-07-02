@@ -277,8 +277,13 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
     if (ruleSet.$tags !== undefined) {
       const { $allowUndefinedTags, $requiredTags, ...tagProperties } = ruleSet.$tags;
 
+      for (const tag of $requiredTags ?? []) {
+        ProtocolsConfigure.validateProtocolTagName(tag, `${ruleSetProtocolPath}/$tags/$requiredTags`);
+      }
+
       // validate each tag's schema against the DWN-supported tag schema subset
       for (const tag in tagProperties) {
+        ProtocolsConfigure.validateProtocolTagName(tag, `${ruleSetProtocolPath}/$tags/${tag}`);
         const tagSchemaDefinition = tagProperties[tag];
         const schemaError = validateProtocolTagSchemaDefinition(
           tagSchemaDefinition,
@@ -518,6 +523,15 @@ export class ProtocolsConfigure extends AbstractMessage<ProtocolsConfigureMessag
         types,
         rootStructure,
       });
+    }
+  }
+
+  private static validateProtocolTagName(tag: string, dataPath: string): void {
+    if (tag.startsWith('__dwn.')) {
+      throw new DwnError(
+        DwnErrorCode.ProtocolsConfigureInvalidTagSchema,
+        `tags schema validation error: ${dataPath} must not use reserved tag prefix '__dwn.'.`
+      );
     }
   }
 

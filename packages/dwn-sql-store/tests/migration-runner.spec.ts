@@ -10,6 +10,8 @@ import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test
 
 describe('runDwnStoreMigrations (Kysely Migrator)', () => {
   const databaseDialects = [testMysqlDialect, testPostgresDialect, testSqliteDialect];
+  const allMigrationNames = allDwnMigrations.map(([name]) => name);
+  const postInitialMigrationNames = allMigrationNames.slice(1);
 
   for (const dialect of databaseDialects) {
     describe(`${dialect.name}`, () => {
@@ -86,12 +88,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
       it('should apply all migrations on a fresh database', async () => {
         const applied = await runDwnStoreMigrations(db, dialect);
 
-        expect(applied).toEqual([
-          '001-initial-schema',
-          '002-content-addressed-datastore',
-          '003-add-squash-column',
-          '004-replication-log',
-        ]);
+        expect(applied).toEqual(allMigrationNames);
 
         // Verify tables created by migration 001
         expect(await dialect.hasTable(db, 'messageStoreMessages')).toBe(true);
@@ -116,11 +113,8 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .orderBy('name', 'asc')
           .execute();
 
-        expect(rows.length).toBe(4);
-        expect((rows[0] as any).name).toBe('001-initial-schema');
-        expect((rows[1] as any).name).toBe('002-content-addressed-datastore');
-        expect((rows[2] as any).name).toBe('003-add-squash-column');
-        expect((rows[3] as any).name).toBe('004-replication-log');
+        expect(rows.length).toBe(allMigrationNames.length);
+        expect(rows.map((row: any) => row.name)).toEqual(allMigrationNames);
         // Kysely uses `timestamp` column for when migration was applied
         expect((rows[0] as any).timestamp).toBeDefined();
       });
@@ -129,7 +123,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
 
       it('should be idempotent — second run returns no new migrations', async () => {
         const firstRun = await runDwnStoreMigrations(db, dialect);
-        expect(firstRun.length).toBe(4);
+        expect(firstRun.length).toBe(allMigrationNames.length);
 
         const secondRun = await runDwnStoreMigrations(db, dialect);
         expect(secondRun.length).toBe(0);
@@ -140,9 +134,9 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
         const firstRun = await runDwnStoreMigrations(db, dialect, [allDwnMigrations[0]]);
         expect(firstRun).toEqual(['001-initial-schema']);
 
-        // Now run with all migrations — only 002 and 003 should be applied
+        // Now run with all migrations — only the post-initial migrations should be applied.
         const secondRun = await runDwnStoreMigrations(db, dialect);
-        expect(secondRun).toEqual(['002-content-addressed-datastore', '003-add-squash-column', '004-replication-log']);
+        expect(secondRun).toEqual(postInitialMigrationNames);
       });
 
       // ─── Data migration tests ───────────────────────────────────────
@@ -177,7 +171,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
 
         // Step 3: Apply remaining migrations which should migrate data
         const applied = await runDwnStoreMigrations(db, dialect);
-        expect(applied).toEqual(['002-content-addressed-datastore', '003-add-squash-column', '004-replication-log']);
+        expect(applied).toEqual(postInitialMigrationNames);
 
         // Step 4: Verify data was migrated to dataRefs
         const refs = await db
@@ -271,7 +265,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
 
         // Apply remaining migrations — should not fail on empty table
         const applied = await runDwnStoreMigrations(db, dialect);
-        expect(applied).toEqual(['002-content-addressed-datastore', '003-add-squash-column', '004-replication-log']);
+        expect(applied).toEqual(postInitialMigrationNames);
 
         // New tables exist, old one gone
         expect(await dialect.hasTable(db, 'dataRefs')).toBe(true);
@@ -305,7 +299,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .selectAll()
           .execute();
 
-        expect(rows.length).toBe(4); // only the 4 real migrations
+        expect(rows.length).toBe(allMigrationNames.length);
         const names = rows.map((r: any) => r.name);
         expect(names).not.toContain('999-failing-migration');
       });
@@ -327,13 +321,8 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
         const applied = await runDwnStoreMigrations(db, dialect);
 
         // Migration 001 should run but be a no-op (tables already exist due to hasTable checks)
-        // Migrations 002 and 003 should run and perform actual schema changes
-        expect(applied).toEqual([
-          '001-initial-schema',
-          '002-content-addressed-datastore',
-          '003-add-squash-column',
-          '004-replication-log',
-        ]);
+        // Remaining migrations should run and perform actual schema changes.
+        expect(applied).toEqual(allMigrationNames);
 
         // All should now be recorded
         const rows = await db
@@ -341,7 +330,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .selectAll()
           .execute();
 
-        expect(rows.length).toBe(4);
+        expect(rows.length).toBe(allMigrationNames.length);
       });
 
       // ─── Empty migrations list test ─────────────────────────────────

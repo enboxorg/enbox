@@ -8,7 +8,14 @@ import { MessageStoreSql } from '../src/message-store-sql.js';
 import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { SqliteDialect } from '../src/dialect/sqlite-dialect.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DwnErrorCode, Message, Replication, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import {
+  DwnErrorCode,
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
+  Message,
+  Replication,
+  TestDataGenerator,
+} from '@enbox/dwn-sdk-js';
 import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test-dialects.js';
 
 const ZERO_FINGERPRINT = '0'.repeat(64);
@@ -41,10 +48,13 @@ function delay(ms: number): Promise<void> {
 
 async function generateStoredMessage(overrides: {
   protocol?: string;
+  protocolPath?: string;
+  recipient?: string;
   tags?: Record<string, string>;
 } = {}): Promise<{ message: any, messageCid: string, indexes: KeyValues }> {
   const { message } = await TestDataGenerator.generateRecordsWrite({
-    ...(overrides.protocol !== undefined && { protocol: overrides.protocol, protocolPath: 'post' }),
+    ...(overrides.protocol !== undefined && { protocol: overrides.protocol, protocolPath: overrides.protocolPath ?? 'post' }),
+    ...(overrides.recipient !== undefined && { recipient: overrides.recipient }),
     ...(overrides.tags !== undefined && { tags: overrides.tags }),
   });
 
@@ -60,6 +70,9 @@ async function generateStoredMessage(overrides: {
   if (message.descriptor.protocol !== undefined) {
     indexes.protocol = message.descriptor.protocol;
     indexes.protocolPath = message.descriptor.protocolPath;
+  }
+  if (message.descriptor.recipient !== undefined) {
+    indexes.recipient = message.descriptor.recipient;
   }
 
   if (message.descriptor.tags !== undefined) {
@@ -420,6 +433,65 @@ function runReplicationLogTests(dialect: Dialect): void {
       await messageStore.clear();
       expect(await messageStore.epoch()).not.toBe(initialEpoch);
       expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(ZERO_FINGERPRINT);
+    });
+
+    it('should fold encryption control records into capability domains and SQL indexes', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const protocol = 'https://example.com/encrypted-chat-sql';
+      const rolePath = 'chat/member';
+      const contextId = 'chatRootRecordId';
+      const keyId = 'a'.repeat(43);
+      const roleAudienceHash = await Replication.roleAudienceHash({ contextId, protocol, rolePath });
+      const recipientHash = await Replication.recipientHash(bob.did);
+
+      const audience = await generateStoredMessage({
+        protocol,
+        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags         : { protocol, rolePath, contextId, keyId },
+      });
+      await messageStore.put(alice.did, audience.message, audience.indexes);
+      const audienceFingerprint = await cidFingerprint(audience.messageCid);
+
+      const delivery = await generateStoredMessage({
+        protocol,
+        protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+        recipient    : bob.did,
+        tags         : {
+          protocol,
+          rolePath,
+          contextId,
+          keyId,
+          recipientAuthority: 'roleHolder',
+        },
+      });
+      await messageStore.put(alice.did, delivery.message, delivery.indexes);
+      const deliveryFingerprint = await cidFingerprint(delivery.messageCid);
+
+      expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(xorHex(audienceFingerprint, deliveryFingerprint));
+      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(protocol)])).toBe(ZERO_FINGERPRINT);
+      expect(await messageStore.fingerprint(alice.did, [Replication.audienceControlDomain(protocol)])).toBe(audienceFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.audienceControlRoleDomain(protocol, roleAudienceHash)]))
+        .toBe(audienceFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.deliveryControlDomain(protocol)]))
+        .toBe(deliveryFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.deliveryControlRoleDomain(protocol, roleAudienceHash)]))
+        .toBe(deliveryFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.deliveryControlRecipientDomain(protocol, recipientHash)]))
+        .toBe(deliveryFingerprint);
+
+      const audienceQuery = await messageStore.query(alice.did, [{ protocol, [Replication.controlClassIndex]: 'audience' }]);
+      expect(audienceQuery.messages.map((message) => (message.descriptor as { protocolPath?: string }).protocolPath))
+        .toEqual([ENCRYPTION_CONTROL_AUDIENCE_PATH]);
+
+      const deliveryQuery = await messageStore.query(alice.did, [{
+        protocol,
+        [Replication.controlClassIndex]     : 'delivery',
+        [Replication.recipientHashIndex]    : recipientHash,
+        [Replication.roleAudienceHashIndex] : roleAudienceHash,
+      }]);
+      expect(deliveryQuery.messages.map((message) => (message.descriptor as { protocolPath?: string }).protocolPath))
+        .toEqual([ENCRYPTION_CONTROL_DELIVERY_PATH]);
     });
   });
 }

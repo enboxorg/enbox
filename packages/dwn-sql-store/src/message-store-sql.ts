@@ -86,6 +86,9 @@ const MESSAGE_STORE_INDEX_COLUMN_COVERAGE = {
   permissionGrantId : true,
   prune             : true,
   squash            : true,
+  controlClass      : true,
+  roleAudienceHash  : true,
+  recipientHash     : true,
 } as const satisfies Record<MessageStoreIndexColumn, true>;
 
 const MESSAGE_STORE_INDEX_COLUMNS = Object.keys(MESSAGE_STORE_INDEX_COLUMN_COVERAGE) as MessageStoreIndexColumn[];

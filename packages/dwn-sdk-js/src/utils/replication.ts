@@ -13,7 +13,6 @@ import {
 } from '../core/constants.js';
 
 const POSITION_PAD_WIDTH = 20;
-const INTERNAL_TAG_PREFIX = 'tag.__dwn.';
 
 type ReplicationMessageDescriptor = GenericMessage['descriptor'] & {
   protocol?: string;
@@ -32,10 +31,9 @@ export type ReplicationIndexProjection = {
  */
 export class Replication {
   public static readonly globalDomain = '';
-  public static readonly controlClassIndex = `${INTERNAL_TAG_PREFIX}controlClass`;
-  public static readonly recipientHashIndex = `${INTERNAL_TAG_PREFIX}recipientHash`;
-  public static readonly replicationDomainIndex = `${INTERNAL_TAG_PREFIX}replicationDomain`;
-  public static readonly roleAudienceHashIndex = `${INTERNAL_TAG_PREFIX}roleAudienceHash`;
+  public static readonly controlClassIndex = 'controlClass';
+  public static readonly recipientHashIndex = 'recipientHash';
+  public static readonly roleAudienceHashIndex = 'roleAudienceHash';
 
   public static protocolDomain(protocolUri: string): string {
     return `protocol:${protocolUri}`;
@@ -72,12 +70,16 @@ export class Replication {
     return `${Replication.audienceControlDomain(protocolUri)}:${roleAudienceHash}`;
   }
 
-  public static deliveryControlDomain(protocolUri: string, roleAudienceHash: string): string {
-    return `ctl:${protocolUri}:delivery:${roleAudienceHash}`;
+  public static deliveryControlDomain(protocolUri: string): string {
+    return `ctl:${protocolUri}:delivery`;
   }
 
-  public static deliveryControlRecipientDomain(protocolUri: string, roleAudienceHash: string, recipientHash: string): string {
-    return `${Replication.deliveryControlDomain(protocolUri, roleAudienceHash)}:${recipientHash}`;
+  public static deliveryControlRoleDomain(protocolUri: string, roleAudienceHash: string): string {
+    return `${Replication.deliveryControlDomain(protocolUri)}:${roleAudienceHash}`;
+  }
+
+  public static deliveryControlRecipientDomain(protocolUri: string, recipientHash: string): string {
+    return `${Replication.deliveryControlDomain(protocolUri)}:rcpt:${recipientHash}`;
   }
 
   public static async deriveStreamId(tenant: string): Promise<string> {
@@ -89,31 +91,23 @@ export class Replication {
 
   public static async projectIndexes(message: GenericMessage, indexes: KeyValues): Promise<ReplicationIndexProjection> {
     const controlRecord = await Replication.classifyControlRecord(message, indexes);
+    const baseIndexes = Replication.stripControlIndexes(indexes);
     if (controlRecord !== undefined) {
       return {
         fingerprintScopes : controlRecord.fingerprintScopes,
         indexes           : {
-          ...indexes,
-          [Replication.controlClassIndex]      : controlRecord.controlClass,
-          [Replication.replicationDomainIndex] : controlRecord.fingerprintScopes,
-          [Replication.roleAudienceHashIndex]  : controlRecord.roleAudienceHash,
+          ...baseIndexes,
+          [Replication.controlClassIndex]     : controlRecord.controlClass,
+          [Replication.roleAudienceHashIndex] : controlRecord.roleAudienceHash,
           ...(controlRecord.recipientHash !== undefined && { [Replication.recipientHashIndex]: controlRecord.recipientHash }),
         },
       };
     }
 
-    const fingerprintScopes = Replication.computeStandardFingerprintScopes(message, indexes);
     return {
-      fingerprintScopes,
-      indexes: {
-        ...indexes,
-        [Replication.replicationDomainIndex]: fingerprintScopes,
-      },
+      fingerprintScopes : Replication.computeStandardFingerprintScopes(message, baseIndexes),
+      indexes           : baseIndexes,
     };
-  }
-
-  public static async computeFingerprintScopes(message: GenericMessage, indexes: KeyValues): Promise<string[]> {
-    return (await Replication.projectIndexes(message, indexes)).fingerprintScopes;
   }
 
   public static assertFingerprintScopesMatch(
@@ -182,9 +176,13 @@ export class Replication {
       return undefined;
     }
 
-    const protocol = Replication.getRequiredStringIndex(indexes, 'protocol', descriptor);
-    const rolePath = Replication.getRequiredStringTag(message, indexes, 'rolePath');
-    const contextId = Replication.getRequiredStringTag(message, indexes, 'contextId');
+    const protocol = Replication.getStringIndex(indexes, 'protocol', descriptor);
+    const rolePath = Replication.getStringTag(message, indexes, 'rolePath');
+    const contextId = Replication.getStringTag(message, indexes, 'contextId');
+    if (protocol === undefined || rolePath === undefined || contextId === undefined) {
+      return undefined;
+    }
+
     const roleAudienceHash = await Replication.roleAudienceHash({ contextId, protocol, rolePath });
     const controlClass = getEncryptionControlRecordType(descriptor.protocolPath);
 
@@ -193,21 +191,28 @@ export class Replication {
         controlClass,
         roleAudienceHash,
         fingerprintScopes: [
+          Replication.globalDomain,
           Replication.audienceControlDomain(protocol),
           Replication.audienceControlRoleDomain(protocol, roleAudienceHash),
         ],
       };
     }
 
-    const recipient = Replication.getRequiredStringIndex(indexes, 'recipient', descriptor);
+    const recipient = Replication.getStringIndex(indexes, 'recipient', descriptor);
+    if (recipient === undefined) {
+      return undefined;
+    }
+
     const recipientHash = await Replication.recipientHash(recipient);
     return {
       controlClass,
       recipientHash,
       roleAudienceHash,
       fingerprintScopes: [
-        Replication.deliveryControlDomain(protocol, roleAudienceHash),
-        Replication.deliveryControlRecipientDomain(protocol, roleAudienceHash, recipientHash),
+        Replication.globalDomain,
+        Replication.deliveryControlDomain(protocol),
+        Replication.deliveryControlRoleDomain(protocol, roleAudienceHash),
+        Replication.deliveryControlRecipientDomain(protocol, recipientHash),
       ],
     };
   }
@@ -231,32 +236,28 @@ export class Replication {
     return protocolUri === PermissionsProtocol.uri || protocolUri === EncryptionProtocol.uri;
   }
 
-  private static getRequiredStringIndex(indexes: KeyValues, key: 'protocol' | 'recipient', descriptor: ReplicationMessageDescriptor): string {
-    const descriptorValue = key === 'protocol' ? descriptor.protocol : descriptor.recipient;
-    const value = indexes[key] ?? descriptorValue;
-    if (typeof value !== 'string') {
-      throw new DwnError(
-        DwnErrorCode.MessageStoreInvalidControlIndex,
-        `encryption control record is missing required string index '${key}'`
-      );
-    }
-
-    return value;
+  private static stripControlIndexes(indexes: KeyValues): KeyValues {
+    const {
+      [Replication.controlClassIndex]     : _controlClass,
+      [Replication.recipientHashIndex]    : _recipientHash,
+      [Replication.roleAudienceHashIndex] : _roleAudienceHash,
+      ...cleanIndexes
+    } = indexes;
+    return cleanIndexes;
   }
 
-  private static getRequiredStringTag(message: GenericMessage, indexes: KeyValues, key: string): string {
+  private static getStringIndex(indexes: KeyValues, key: 'protocol' | 'recipient', descriptor: ReplicationMessageDescriptor): string | undefined {
+    const descriptorValue = key === 'protocol' ? descriptor.protocol : descriptor.recipient;
+    const value = indexes[key] ?? descriptorValue;
+    return typeof value === 'string' ? value : undefined;
+  }
+
+  private static getStringTag(message: GenericMessage, indexes: KeyValues, key: string): string | undefined {
     const indexedValue = indexes[`tag.${key}`];
     const descriptor: ReplicationMessageDescriptor = message.descriptor;
     const descriptorValue = descriptor.tags?.[key];
     const value = indexedValue ?? descriptorValue;
-    if (typeof value !== 'string') {
-      throw new DwnError(
-        DwnErrorCode.MessageStoreInvalidControlIndex,
-        `encryption control record is missing required string tag '${key}'`
-      );
-    }
-
-    return value;
+    return typeof value === 'string' ? value : undefined;
   }
 
   public static async hashMessageCid(messageCid: string): Promise<Uint8Array> {

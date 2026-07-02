@@ -11,7 +11,17 @@ import { Message } from '../../src/core/message.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
 import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
-import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, PermissionsProtocol, Replication } from '../../src/index.js';
+import {
+  Dwn,
+  DwnErrorCode,
+  DwnInterfaceName,
+  DwnMethodName,
+  Encoder,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
+  EncryptionProtocol,
+  PermissionsProtocol,
+  Replication,
+} from '../../src/index.js';
 
 function getFeedReader(messageStore: MessageStore): ReplicationFeedReader | undefined {
   const candidate = messageStore as Partial<ReplicationFeedReader>;
@@ -188,6 +198,21 @@ export function testMessagesQueryHandler(): void {
       });
       await messageStore.put(alice.did, encryptionRecord.message, await encryptionRecord.recordsWrite.constructIndexes(true));
 
+      const deliveryRecord = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol,
+        protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+        recipient    : (await TestDataGenerator.generateDidKeyPersona()).did,
+        tags         : {
+          contextId          : '',
+          keyId              : 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          protocol,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'friend',
+        },
+      });
+      await messageStore.put(alice.did, deliveryRecord.message, await deliveryRecord.recordsWrite.constructIndexes(true));
+
       const globalQuery = await TestDataGenerator.generateMessagesQuery({ author: alice });
       const globalReply = await dwn.processMessage(alice.did, globalQuery.message);
       expect(globalReply.status.code).toBe(200);
@@ -203,6 +228,8 @@ export function testMessagesQueryHandler(): void {
         Replication.protocolDomain(protocol),
         Replication.permissionDomain(protocol),
         Replication.encryptionDomain(protocol),
+        Replication.audienceControlDomain(protocol),
+        Replication.deliveryControlDomain(protocol),
       ]));
 
       const protocolAndPermissionsQuery = await TestDataGenerator.generateMessagesQuery({
@@ -215,6 +242,8 @@ export function testMessagesQueryHandler(): void {
         Replication.protocolDomain(protocol),
         Replication.protocolDomain(PermissionsProtocol.uri),
         Replication.encryptionDomain(protocol),
+        Replication.audienceControlDomain(protocol),
+        Replication.deliveryControlDomain(protocol),
       ]));
 
       const protocolAndEncryptionQuery = await TestDataGenerator.generateMessagesQuery({
@@ -227,6 +256,8 @@ export function testMessagesQueryHandler(): void {
         Replication.protocolDomain(protocol),
         Replication.permissionDomain(protocol),
         Replication.protocolDomain(EncryptionProtocol.uri),
+        Replication.audienceControlDomain(protocol),
+        Replication.deliveryControlDomain(protocol),
       ]));
 
       const allProtocolScopesQuery = await TestDataGenerator.generateMessagesQuery({
@@ -239,6 +270,8 @@ export function testMessagesQueryHandler(): void {
         Replication.protocolDomain(protocol),
         Replication.protocolDomain(PermissionsProtocol.uri),
         Replication.protocolDomain(EncryptionProtocol.uri),
+        Replication.audienceControlDomain(protocol),
+        Replication.deliveryControlDomain(protocol),
       ]));
 
       const nonCanonicalQuery = await TestDataGenerator.generateMessagesQuery({
@@ -441,6 +474,8 @@ export function testMessagesQueryHandler(): void {
         Replication.protocolDomain(protocolDefinition.protocol),
         Replication.permissionDomain(protocolDefinition.protocol),
         Replication.encryptionDomain(protocolDefinition.protocol),
+        Replication.audienceControlDomain(protocolDefinition.protocol),
+        Replication.deliveryControlDomain(protocolDefinition.protocol),
       ]);
 
       expect(fullReply.status.code).toBe(200);

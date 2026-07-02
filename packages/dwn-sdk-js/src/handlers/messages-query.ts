@@ -312,6 +312,8 @@ export class MessagesQueryHandler implements MethodHandler {
       scopes.push(
         Replication.protocolDomain(protocol),
         ...Replication.taggedCoreProtocolDomains(protocol, protocols),
+        Replication.audienceControlDomain(protocol),
+        Replication.deliveryControlDomain(protocol),
       );
     }
 

@@ -200,6 +200,11 @@
           "type": "object",
           "minProperties": 1,
           "maxProperties": 10,
+          "propertyNames": {
+            "not": {
+              "pattern": "^__dwn\\."
+            }
+          },
           "additionalProperties": {
             "oneOf": [
               {

@@ -182,7 +182,7 @@
         }
       },
       "patternProperties": {
-        "^(?!\\$requiredTags$|\\$allowUndefinedTags$).*$": {
+        "^(?!\\$requiredTags$|\\$allowUndefinedTags$|__dwn\\.).*$": {
           "type": "object",
           "additionalProperties": false,
           "properties": {

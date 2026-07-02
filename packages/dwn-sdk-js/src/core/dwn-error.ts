@@ -90,7 +90,6 @@ export enum DwnErrorCode {
   JwsDecodePlainObjectPayloadInvalid = 'JwsDecodePlainObjectPayloadInvalid',
   MessageStoreDeleteLogEntryMissing = 'MessageStoreDeleteLogEntryMissing',
   MessageStoreFingerprintScopeMutation = 'MessageStoreFingerprintScopeMutation',
-  MessageStoreInvalidControlIndex = 'MessageStoreInvalidControlIndex',
   MessageStorePreSubstrateLayout = 'MessageStorePreSubstrateLayout',
   MessageStoreReplicationPositionOverflow = 'MessageStoreReplicationPositionOverflow',
   MessageStoreUpdateMessageAndIndexesCidMismatch = 'MessageStoreUpdateMessageAndIndexesCidMismatch',
