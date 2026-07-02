@@ -58,7 +58,16 @@ export enum DwnErrorCode {
   MessagesGrantAuthorizationSubscribeProtocolMismatch = 'MessagesGrantAuthorizationSubscribeProtocolMismatch',
   MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope = 'MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope',
   MessagesSubscribeAuthorizationFailed = 'MessagesSubscribeAuthorizationFailed',
+  /**
+   * Terminal subscription delivery error indicating the invoked grant no longer authorizes delivery.
+   * Subscribers should not resubscribe with the same grant.
+   */
   MessagesSubscribeDeliveryAuthorizationFailed = 'MessagesSubscribeDeliveryAuthorizationFailed',
+  /**
+   * Terminal subscription delivery error for non-authorization delivery failures.
+   * Subscribers may resubscribe from their last cursor.
+   */
+  MessagesSubscribeDeliveryFailed = 'MessagesSubscribeDeliveryFailed',
   MessagesSubscribeEventLogUnimplemented = 'MessagesSubscribeEventLogUnimplemented',
   GeneralJwsVerifierGetPublicKeyNotFound = 'GeneralJwsVerifierGetPublicKeyNotFound',
   GeneralJwsVerifierInvalidSignature = 'GeneralJwsVerifierInvalidSignature',

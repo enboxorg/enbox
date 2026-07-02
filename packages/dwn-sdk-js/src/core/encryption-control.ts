@@ -1,8 +1,7 @@
-import type { MessagesPermissionScope } from '../types/permission-types.js';
-import type { RecordsPermissionScope } from '../types/permission-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { EncryptionControlAudiencePayload, EncryptionControlDeliveryTags, RoleAudienceKeyId } from '../types/encryption-types.js';
+import type { MessagesPermissionScope, RecordsPermissionScope } from '../types/permission-types.js';
 import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 import type { RecordsCountMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage, RecordsWriteTags } from '../types/records-types.js';
@@ -55,6 +54,20 @@ type ControlFilterMessage =
   | RecordsQueryMessage
   | RecordsSubscribeMessage;
 
+type ControlFilterInput<T extends RecordsWriteMessage> = {
+  tenant: string;
+  incomingMessage: ControlFilterMessage;
+  permissionGrants?: PermissionGrant[];
+  requester: string | undefined;
+  recordsWriteMessages: T[];
+  visibilityCache?: Map<string, boolean>;
+  validationStateReader: ValidationStateReader;
+};
+
+type ControlRecordVisibilityInput<T extends RecordsWriteMessage> = Omit<ControlFilterInput<T>, 'recordsWriteMessages'> & {
+  recordsWriteMessage: T;
+};
+
 export class EncryptionControl {
   public static isControlMessage(message: RecordsWriteMessage): boolean {
     return isEncryptionControlPath(message.descriptor.protocolPath);
@@ -70,46 +83,21 @@ export class EncryptionControl {
     return EncryptionControl.getExactAudienceFilterTuple(filter) !== undefined;
   }
 
-  public static async filterVisibleControlRecords<T extends RecordsWriteMessage>(input: {
-    tenant: string;
-    incomingMessage: ControlFilterMessage;
-    permissionGrants?: PermissionGrant[];
-    requester: string | undefined;
-    recordsWriteMessages: T[];
-    visibilityCache?: Map<string, boolean>;
-    validationStateReader: ValidationStateReader;
-  }): Promise<T[]> {
+  public static async filterVisibleControlRecords<T extends RecordsWriteMessage>(input: ControlFilterInput<T>): Promise<T[]> {
     const visibleRecordsWrites: T[] = [];
     for (const recordsWrite of input.recordsWriteMessages) {
-      if (!EncryptionControl.isControlMessage(recordsWrite)) {
+      const visible = await EncryptionControl.isVisibleControlRecord({
+        incomingMessage       : input.incomingMessage,
+        permissionGrants      : input.permissionGrants,
+        recordsWriteMessage   : recordsWrite,
+        requester             : input.requester,
+        tenant                : input.tenant,
+        validationStateReader : input.validationStateReader,
+        visibilityCache       : input.visibilityCache,
+      });
+
+      if (visible) {
         visibleRecordsWrites.push(recordsWrite);
-        continue;
-      }
-
-      try {
-        const cacheKey = EncryptionControl.visibilityCacheKey(input.requester, input.incomingMessage, recordsWrite);
-        let visible = cacheKey === undefined ? undefined : input.visibilityCache?.get(cacheKey);
-        if (visible === undefined) {
-          visible = await EncryptionControl.canRead({
-            tenant                : input.tenant,
-            incomingMessage       : input.incomingMessage,
-            permissionGrants      : input.permissionGrants,
-            requester             : input.requester,
-            recordsWriteMessage   : recordsWrite,
-            validationStateReader : input.validationStateReader,
-          });
-          if (cacheKey !== undefined) {
-            input.visibilityCache?.set(cacheKey, visible);
-          }
-        }
-
-        if (visible) {
-          visibleRecordsWrites.push(recordsWrite);
-        }
-      } catch (error) {
-        if (!(error instanceof DwnError)) {
-          throw error;
-        }
       }
     }
 
@@ -800,21 +788,15 @@ export class EncryptionControl {
 
   private static grantCoversAudienceEnumeration(grant: PermissionGrant, tags: RoleAudienceKeyId): boolean {
     const scope = grant.scope as MessagesPermissionScope | RecordsPermissionScope;
-    if (scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read) {
-      return PermissionScopeMatcher.matches(scope, {
-        protocol     : tags.protocol,
-        protocolPath : tags.rolePath,
-      });
+    const interfaceIsEligible = scope.interface === DwnInterfaceName.Records || scope.interface === DwnInterfaceName.Messages;
+    if (!interfaceIsEligible || scope.method !== DwnMethodName.Read) {
+      return false;
     }
 
-    if (scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Read) {
-      return PermissionScopeMatcher.matches(scope, {
-        protocol     : tags.protocol,
-        protocolPath : tags.rolePath,
-      });
-    }
-
-    return false;
+    return PermissionScopeMatcher.matches(scope, {
+      protocol     : tags.protocol,
+      protocolPath : tags.rolePath,
+    });
   }
 
   private static async resolveRoleAudienceDefinition(input: {
@@ -966,6 +948,46 @@ export class EncryptionControl {
 
   private static getRecordType(message: RecordsWriteMessage): 'audience' | 'delivery' {
     return message.descriptor.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH ? 'delivery' : 'audience';
+  }
+
+  private static async isVisibleControlRecord<T extends RecordsWriteMessage>(input: ControlRecordVisibilityInput<T>): Promise<boolean> {
+    if (!EncryptionControl.isControlMessage(input.recordsWriteMessage)) {
+      return true;
+    }
+
+    try {
+      return await EncryptionControl.resolveVisibleControlRecord(input);
+    } catch (error) {
+      if (error instanceof DwnError) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  private static async resolveVisibleControlRecord<T extends RecordsWriteMessage>(input: ControlRecordVisibilityInput<T>): Promise<boolean> {
+    const cacheKey = EncryptionControl.visibilityCacheKey(input.requester, input.incomingMessage, input.recordsWriteMessage);
+    if (cacheKey !== undefined) {
+      const visible = input.visibilityCache?.get(cacheKey);
+      if (visible !== undefined) {
+        return visible;
+      }
+    }
+
+    const visible = await EncryptionControl.canRead({
+      tenant                : input.tenant,
+      incomingMessage       : input.incomingMessage,
+      permissionGrants      : input.permissionGrants,
+      requester             : input.requester,
+      recordsWriteMessage   : input.recordsWriteMessage,
+      validationStateReader : input.validationStateReader,
+    });
+
+    if (cacheKey !== undefined) {
+      input.visibilityCache?.set(cacheKey, visible);
+    }
+
+    return visible;
   }
 
   private static visibilityCacheKey(

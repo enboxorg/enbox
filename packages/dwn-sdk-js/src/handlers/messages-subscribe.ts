@@ -28,6 +28,14 @@ type GuardedSubscriptionHandler = {
   setSubscription(subscription: EventSubscription): Promise<void>;
 };
 
+type DeliveryStepDwnErrorOutcome =
+  | { kind: 'hidden' }
+  | { kind: 'terminal'; code: DwnErrorCode; detail: string };
+
+type DeliveryStepResult<T> =
+  | { kind: 'ok'; value: T }
+  | DeliveryStepDwnErrorOutcome;
+
 export class MessagesSubscribeHandler implements MethodHandler {
 
   constructor(private readonly deps: HandlerDependencies) {}
@@ -149,7 +157,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
       Promise.resolve(subscription?.close()).catch(() => {});
     };
 
-    const emitTerminalAuthorizationError = (cursor: SubscriptionEvent['cursor']): void => {
+    const emitTerminalDeliveryError = (cursor: SubscriptionEvent['cursor'], code: DwnErrorCode, detail: string): void => {
       if (terminalErrorEmitted) {
         return;
       }
@@ -158,10 +166,27 @@ export class MessagesSubscribeHandler implements MethodHandler {
         type  : 'error',
         cursor,
         error : {
-          code   : DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
-          detail : 'subscription authorization failed during delivery',
+          code,
+          detail,
         },
       });
+    };
+
+    const applyDeliveryStepResult = <T>(
+      result: DeliveryStepResult<T>,
+      cursor: SubscriptionEvent['cursor']
+    ): result is { kind: 'ok'; value: T } => {
+      if (result.kind === 'ok') {
+        return true;
+      }
+
+      if (result.kind === 'hidden') {
+        return false;
+      }
+
+      emitTerminalDeliveryError(cursor, result.code, result.detail);
+      closeSubscription();
+      return false;
     };
 
     // Deliberately do not cache delivery authorization here. Subscribe-open
@@ -171,37 +196,42 @@ export class MessagesSubscribeHandler implements MethodHandler {
     // split static and dynamic checks explicitly and document any bounded staleness
     // introduced by caching revocation lookups.
     const authorizeAndDeliverEvent = async (subMessage: SubscriptionEvent): Promise<void> => {
-      try {
-        await MessagesGrantAuthorization.authorizeSubscribeDelivery({
-          messagesSubscribeMessage : messagesSubscribe.message,
-          expectedGrantor          : authorization.expectedGrantor,
-          expectedGrantee          : authorization.expectedGrantee,
-          permissionGrants         : authorization.permissionGrants,
-          validationStateReader    : deps.validationStateReader,
-          deliveryTimestamp        : Time.getCurrentTimestamp(),
-        });
-      } catch {
-        emitTerminalAuthorizationError(subMessage.cursor);
-        closeSubscription();
+      const authorizationResult = await MessagesSubscribeHandler.evaluateDeliveryStep({
+        step: async (): Promise<void> => {
+          await MessagesGrantAuthorization.authorizeSubscribeDelivery({
+            messagesSubscribeMessage : messagesSubscribe.message,
+            expectedGrantor          : authorization.expectedGrantor,
+            expectedGrantee          : authorization.expectedGrantee,
+            permissionGrants         : authorization.permissionGrants,
+            validationStateReader    : deps.validationStateReader,
+            deliveryTimestamp        : Time.getCurrentTimestamp(),
+          });
+        },
+        dwnErrorOutcome: {
+          kind   : 'terminal',
+          code   : DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
+          detail : 'subscription authorization failed during delivery',
+        },
+      });
+      if (!applyDeliveryStepResult(authorizationResult, subMessage.cursor)) {
         return;
       }
 
-      let visible: boolean;
-      try {
-        visible = await MessagesSubscribeHandler.canDeliverEvent({
+      const visibilityResult = await MessagesSubscribeHandler.evaluateDeliveryStep({
+        step: async (): Promise<boolean> => MessagesSubscribeHandler.canDeliverEvent({
           tenant,
           authorization,
           deps,
           messagesSubscribe,
           subMessage,
-        });
-      } catch {
-        emitTerminalAuthorizationError(subMessage.cursor);
-        closeSubscription();
+        }),
+        dwnErrorOutcome: { kind: 'hidden' },
+      });
+      if (!applyDeliveryStepResult(visibilityResult, subMessage.cursor)) {
         return;
       }
 
-      if (!visible) {
+      if (!visibilityResult.value) {
         return;
       }
 
@@ -242,6 +272,25 @@ export class MessagesSubscribeHandler implements MethodHandler {
         }
       },
     };
+  }
+
+  private static async evaluateDeliveryStep<T>(input: {
+    dwnErrorOutcome: DeliveryStepDwnErrorOutcome;
+    step: () => Promise<T>;
+  }): Promise<DeliveryStepResult<T>> {
+    try {
+      return { kind: 'ok', value: await input.step() };
+    } catch (error) {
+      if (error instanceof DwnError) {
+        return input.dwnErrorOutcome;
+      }
+
+      return {
+        kind   : 'terminal',
+        code   : DwnErrorCode.MessagesSubscribeDeliveryFailed,
+        detail : 'subscription delivery failed',
+      };
+    }
   }
 
   private static async canDeliverEvent(input: {
