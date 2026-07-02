@@ -1,8 +1,42 @@
 import { CID } from 'multiformats';
-import type { AbortOptions, AwaitIterable } from 'interface-store';
-import type { Blockstore, Pair } from 'interface-blockstore';
+import type { Blockstore, InputPair, Pair } from 'interface-blockstore';
 
+import { NotFoundError } from 'interface-store';
 import { createLevelDatabase, LevelWrapper } from './level-wrapper.js';
+
+type AbortOptions = { signal?: AbortSignal };
+type BlockstoreInput = Uint8Array | Iterable<Uint8Array> | AsyncIterable<Uint8Array>;
+type BlockstoreSource<T> = Iterable<T> | AsyncIterable<T>;
+
+async function collectBytes(input: BlockstoreInput): Promise<Uint8Array> {
+  if (input instanceof Uint8Array) {
+    return input;
+  }
+
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  for await (const chunk of input) {
+    chunks.push(chunk);
+    byteLength += chunk.byteLength;
+  }
+
+  if (chunks.length === 1) {
+    return chunks[0];
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return bytes;
+}
+
+async function* yieldBytes(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
+  yield bytes;
+}
 
 // `level` works in Node.js 12+ and Electron 5+ on Linux, Mac OS, Windows and
 // FreeBSD, including any future Node.js and Electron release thanks to Node-API, including ARM
@@ -40,14 +74,19 @@ export class BlockstoreLevel implements Blockstore {
     return new BlockstoreLevel({ ...this.config, location: '' }, db);
   }
 
-  async put(key: CID | string, val: Uint8Array, options?: AbortOptions): Promise<CID> {
-    await this.db.put(String(key), val, options);
+  async put(key: CID | string, val: BlockstoreInput, options?: AbortOptions): Promise<CID> {
+    const bytes = await collectBytes(val);
+    await this.db.put(String(key), bytes, options);
     return CID.parse(key.toString());
   }
 
-  async get(key: CID | string, options?: AbortOptions): Promise<Uint8Array> {
+  async * get(key: CID | string, options?: AbortOptions): AsyncGenerator<Uint8Array> {
     const result = await this.db.get(String(key), options);
-    return result!;
+    if (result === undefined) {
+      throw new NotFoundError();
+    }
+
+    yield result;
   }
 
   async has(key: CID | string, options?: AbortOptions): Promise<boolean> {
@@ -62,36 +101,32 @@ export class BlockstoreLevel implements Blockstore {
     return this.db.isEmpty(options);
   }
 
-  async * putMany(source: AwaitIterable<Pair>, options?: AbortOptions): AsyncIterable<CID> {
+  async * putMany(source: BlockstoreSource<InputPair>, options?: AbortOptions): AsyncGenerator<CID> {
     for await (const entry of source) {
-      await this.put(entry.cid, entry.block, options);
+      await this.put(entry.cid, entry.bytes, options);
 
       yield entry.cid;
     }
   }
 
-  async * getMany(source: AwaitIterable<CID>, options?: AbortOptions): AsyncIterable<Pair> {
+  async * getMany(source: BlockstoreSource<CID>, options?: AbortOptions): AsyncGenerator<Pair> {
     for await (const key of source) {
       yield {
         cid   : key,
-        block : await this.get(key, options)
+        bytes : this.get(key, options)
       };
     }
   }
 
-  async * getAll(options?: AbortOptions): AsyncIterable<Pair> {
-    // @ts-expect-error keyEncoding is 'buffer' but types for db.iterator always return the key type as 'string'
-    const li: AsyncGenerator<[Uint8Array, Uint8Array]> = this.db.iterator({
-      keys        : true,
-      keyEncoding : 'buffer'
-    }, options);
+  async * getAll(options?: AbortOptions): AsyncGenerator<Pair> {
+    const li: AsyncGenerator<[string, Uint8Array]> = this.db.iterator({ keys: true }, options);
 
     for await (const [key, value] of li) {
-      yield { cid: CID.decode(key), block: value };
+      yield { cid: CID.parse(key), bytes: yieldBytes(value) };
     }
   }
 
-  async * deleteMany(source: AwaitIterable<CID>, options?: AbortOptions): AsyncIterable<CID> {
+  async * deleteMany(source: BlockstoreSource<CID>, options?: AbortOptions): AsyncGenerator<CID> {
     for await (const key of source) {
       await this.delete(key, options);
 

@@ -1,9 +1,9 @@
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 /**
  * The `Sha256` class provides an interface for generating SHA-256 hash digests.
  *
- * This class utilizes the '@noble/hashes/sha256' function to generate hash digests
+ * This class utilizes the '@noble/hashes/sha2.js' function to generate hash digests
  * of the provided data. The SHA-256 algorithm is widely used in cryptographic
  * applications to produce a fixed-size 256-bit (32-byte) hash.
  *

@@ -74,15 +74,14 @@ export default defineConfig({
       // Pre-bundling these avoids edge cases where Vite picks the CJS entry.
       'mitt',
       '@js-temporal/polyfill',
-      '@noble/ciphers/aes',
-      '@noble/ciphers/chacha',
-      '@noble/ciphers/crypto',
-      '@noble/ciphers/utils',
-      '@noble/ciphers/webcrypto',
-      '@noble/curves/abstract/utils',
-      '@noble/curves/ed25519',
-      '@noble/curves/p256',
-      '@noble/curves/secp256k1',
+      '@noble/ciphers/aes.js',
+      '@noble/ciphers/chacha.js',
+      '@noble/ciphers/crypto.js',
+      '@noble/ciphers/utils.js',
+      '@noble/curves/ed25519.js',
+      '@noble/curves/nist.js',
+      '@noble/curves/secp256k1.js',
+      '@noble/curves/utils.js',
       'lru-cache',
 
       // --- Vitest coverage provider (loaded in-browser by the test runner) ---

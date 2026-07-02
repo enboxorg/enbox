@@ -1,10 +1,43 @@
 import type { DwnDatabaseType } from './types.js';
 import type { Kysely } from 'kysely';
-import type { AbortOptions, AwaitIterable } from 'interface-store';
-import type { Blockstore, Pair } from 'interface-blockstore';
+import type { Blockstore, InputPair, Pair } from 'interface-blockstore';
 
 import { CID } from 'multiformats';
 import { isDuplicateKeyError } from './utils/duplicate-key-error.js';
+
+type AbortOptions = { signal?: AbortSignal };
+type BlockstoreInput = Uint8Array | Iterable<Uint8Array> | AsyncIterable<Uint8Array>;
+type BlockstoreSource<T> = Iterable<T> | AsyncIterable<T>;
+
+async function collectBytes(input: BlockstoreInput): Promise<Uint8Array> {
+  if (input instanceof Uint8Array) {
+    return input;
+  }
+
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  for await (const chunk of input) {
+    chunks.push(chunk);
+    byteLength += chunk.byteLength;
+  }
+
+  if (chunks.length === 1) {
+    return chunks[0];
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return bytes;
+}
+
+async function* yieldBytes(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
+  yield bytes;
+}
 
 /**
  * SQL-backed implementation of the `Blockstore` v5 interface, scoped to a
@@ -34,8 +67,9 @@ export class BlockstoreSql implements Blockstore {
     // No-op: connection managed by DataStoreSql.
   }
 
-  public async put(key: CID, val: Uint8Array, _options?: AbortOptions): Promise<CID> {
+  public async put(key: CID, val: BlockstoreInput, _options?: AbortOptions): Promise<CID> {
     const blockCid = key.toString();
+    const bytes = await collectBytes(val);
 
     try {
       await this.#db
@@ -43,7 +77,7 @@ export class BlockstoreSql implements Blockstore {
         .values({
           rootDataCid : this.#rootDataCid,
           blockCid,
-          data        : Buffer.from(val),
+          data        : Buffer.from(bytes),
         })
         .execute();
     } catch (error: unknown) {
@@ -57,7 +91,7 @@ export class BlockstoreSql implements Blockstore {
     return key;
   }
 
-  public async get(key: CID, _options?: AbortOptions): Promise<Uint8Array> {
+  public async * get(key: CID, _options?: AbortOptions): AsyncGenerator<Uint8Array> {
     const result = await this.#db
       .selectFrom('dataBlocks')
       .select('data')
@@ -69,7 +103,7 @@ export class BlockstoreSql implements Blockstore {
       throw new Error(`BlockstoreSql: block not found for rootDataCid=${this.#rootDataCid}, blockCid=${key}`);
     }
 
-    return new Uint8Array(result.data);
+    yield new Uint8Array(result.data);
   }
 
   public async has(key: CID, _options?: AbortOptions): Promise<boolean> {
@@ -101,23 +135,23 @@ export class BlockstoreSql implements Blockstore {
     return result === undefined;
   }
 
-  public async * putMany(source: AwaitIterable<Pair>, options?: AbortOptions): AsyncIterable<CID> {
+  public async * putMany(source: BlockstoreSource<InputPair>, options?: AbortOptions): AsyncGenerator<CID> {
     for await (const entry of source) {
-      await this.put(entry.cid, entry.block, options);
+      await this.put(entry.cid, entry.bytes, options);
       yield entry.cid;
     }
   }
 
-  public async * getMany(source: AwaitIterable<CID>, options?: AbortOptions): AsyncIterable<Pair> {
+  public async * getMany(source: BlockstoreSource<CID>, options?: AbortOptions): AsyncGenerator<Pair> {
     for await (const key of source) {
       yield {
         cid   : key,
-        block : await this.get(key, options),
+        bytes : this.get(key, options),
       };
     }
   }
 
-  public async * getAll(_options?: AbortOptions): AsyncIterable<Pair> {
+  public async * getAll(_options?: AbortOptions): AsyncGenerator<Pair> {
     const rows = await this.#db
       .selectFrom('dataBlocks')
       .select(['blockCid', 'data'])
@@ -127,12 +161,12 @@ export class BlockstoreSql implements Blockstore {
     for (const row of rows) {
       yield {
         cid   : CID.parse(row.blockCid),
-        block : new Uint8Array(row.data),
+        bytes : yieldBytes(new Uint8Array(row.data)),
       };
     }
   }
 
-  public async * deleteMany(source: AwaitIterable<CID>, options?: AbortOptions): AsyncIterable<CID> {
+  public async * deleteMany(source: BlockstoreSource<CID>, options?: AbortOptions): AsyncGenerator<CID> {
     for await (const key of source) {
       await this.delete(key, options);
       yield key;

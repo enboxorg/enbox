@@ -18,6 +18,18 @@ describe('CID', () => {
     expect(cid1).toBe(cid2);
   });
 
+  it('should keep known DAG-PB UnixFS CIDs stable', async () => {
+    const smallFixtureBytes = new TextEncoder().encode('Enbox CID stability fixture\n');
+    const largeFixtureBytes = Uint8Array.from({ length: 300_000 }, (_value, index): number => index % 251);
+
+    await expect(Cid.computeDagPbCidFromBytes(smallFixtureBytes)).resolves.toBe(
+      'bafkreib733ql5jolkcezal2z66wtyosmhe22ic6ii2f5vgiyobwuiovpmi'
+    );
+    await expect(Cid.computeDagPbCidFromBytes(largeFixtureBytes)).resolves.toBe(
+      'bafybeih7gz5kvvg2zafb7vue6izhy6c4tglvwpi3rgunwdag2fidn2y6eq'
+    );
+  });
+
   describe('computeCid', () => {
     it('throws an error if codec is not supported', async () => {
       const unsupportedCodec = 99999;
@@ -47,6 +59,19 @@ describe('CID', () => {
       const encodedBlock = await block.encode({ value: anyTestData, codec: cbor, hasher: sha256 });
 
       expect(generatedCid).toBe(encodedBlock.cid.toString());
+    });
+
+    it('should keep known DAG-CBOR SHA-256 CIDs stable', async () => {
+      const fixtureData = {
+        z    : 'last',
+        a    : { b: 2 },
+        list : [true, 'enbox', 17],
+        nil  : null
+      };
+
+      await expect(Cid.computeCid(fixtureData)).resolves.toBe(
+        'bafyreiejbjoyi4jirr7ikcms3l7no5wav52a2h6om3a6xacd4fceeh5asy'
+      );
     });
 
     it('should canonicalize JSON input before hashing', async () => {

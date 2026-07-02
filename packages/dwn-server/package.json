@@ -50,10 +50,10 @@
     "@enbox/dwn-server-admin-ui": "workspace:*"
   },
   "peerDependencies": {
-    "@nats-io/transport-node": "^3.3.1",
-    "mysql2": "^3.9.8",
-    "pg": "^8.11.2",
-    "pg-cursor": "^2.10.2"
+    "@nats-io/transport-node": "3.3.1",
+    "mysql2": "3.22.5",
+    "pg": "8.11.2",
+    "pg-cursor": "2.10.2"
   },
   "peerDependenciesMeta": {
     "@nats-io/transport-node": {
@@ -80,8 +80,8 @@
     "bun-types": "1.3.14",
     "eslint": "9.7.0",
     "eslint-plugin-todo-plz": "1.3.0",
-    "multiformats": "11.0.2",
-    "mysql2": "3.9.8",
+    "multiformats": "14.0.3",
+    "mysql2": "3.22.5",
     "pg": "8.11.2",
     "pg-cursor": "2.10.2",
     "sinon": "18.0.0",

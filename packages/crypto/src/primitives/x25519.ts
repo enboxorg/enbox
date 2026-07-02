@@ -1,5 +1,5 @@
 import { Convert } from '@enbox/common';
-import { x25519 } from '@noble/curves/ed25519';
+import { x25519 } from '@noble/curves/ed25519.js';
 
 import type { Jwk } from '../jose/jwk.js';
 import type { ComputePublicKeyParams, GetPublicKeyParams } from '../types/params-direct.js';
@@ -213,7 +213,7 @@ export class X25519 {
    */
   public static async generateKey(): Promise<Jwk> {
     // Generate a random private key.
-    const privateKeyBytes = x25519.utils.randomPrivateKey();
+    const privateKeyBytes = x25519.utils.randomSecretKey();
 
     // Convert private key from bytes to JWK format.
     const privateKey = await X25519.bytesToPrivateKey({ privateKeyBytes });

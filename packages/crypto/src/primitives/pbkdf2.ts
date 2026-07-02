@@ -1,8 +1,6 @@
 import type { DeriveKeyBytesParams } from '../types/params-direct.js';
 
-import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
-
-import { crypto } from '@noble/hashes/crypto';
+import { getWebcryptoSubtle } from './webcrypto.js';
 
 /**
  * The object that should be passed into `Pbkdf2.deriveKeyBytes()`, when using the PBKDF2 algorithm.
@@ -133,7 +131,8 @@ export class Pbkdf2 {
     Pbkdf2DeriveKeyParams
   ): Promise<Uint8Array> {
     // Import the password as a raw key for use with the Web Crypto API.
-    const webCryptoKey = await crypto.subtle.importKey(
+    const webCrypto = getWebcryptoSubtle();
+    const webCryptoKey = await webCrypto.importKey(
       'raw',
       password,
       { name: 'PBKDF2' },
@@ -141,7 +140,7 @@ export class Pbkdf2 {
       ['deriveBits']
     );
 
-    const derivedKeyBuffer = await crypto.subtle.deriveBits(
+    const derivedKeyBuffer = await webCrypto.deriveBits(
       { name: 'PBKDF2', hash, salt, iterations },
       webCryptoKey,
       length
@@ -187,7 +186,7 @@ export class Pbkdf2 {
     DeriveKeyBytesParams & Pbkdf2Params
   ): Promise<Uint8Array> {
     // Get the Web Crypto API interface.
-    const webCrypto = getWebcryptoSubtle() as SubtleCrypto;
+    const webCrypto = getWebcryptoSubtle() as unknown as SubtleCrypto;
 
     // Import the password as a raw key for use with the Web Crypto API.
     const webCryptoKey = await webCrypto.importKey(

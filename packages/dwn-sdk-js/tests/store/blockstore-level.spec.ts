@@ -10,6 +10,24 @@ function uniqueLocation(): string {
   return `TEST-BLOCKSTORE-LEVEL-${Date.now()}-${testCounter++}`;
 }
 
+async function collectBytes(source: AsyncIterable<Uint8Array> | Iterable<Uint8Array>): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  for await (const chunk of source) {
+    chunks.push(chunk);
+    byteLength += chunk.byteLength;
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return bytes;
+}
+
 describe('BlockstoreLevel', () => {
   let blockstore: BlockstoreLevel;
 
@@ -36,7 +54,7 @@ describe('BlockstoreLevel', () => {
     const block1 = await Block.encode({ value: new TextEncoder().encode('hello'), codec: Raw, hasher: sha256 });
     await blockstore.put(block1.cid, block1.bytes);
 
-    const result = await blockstore.get(block1.cid);
+    const result = await collectBytes(blockstore.get(block1.cid));
     expect(result).toEqual(block1.bytes);
   });
 
@@ -44,8 +62,8 @@ describe('BlockstoreLevel', () => {
     const block1 = await Block.encode({ value: new TextEncoder().encode('put1'), codec: Raw, hasher: sha256 });
     const block2 = await Block.encode({ value: new TextEncoder().encode('put2'), codec: Raw, hasher: sha256 });
     const source = [
-      { cid: block1.cid, block: block1.bytes },
-      { cid: block2.cid, block: block2.bytes },
+      { cid: block1.cid, bytes: block1.bytes },
+      { cid: block2.cid, bytes: block2.bytes },
     ];
 
     const results = [];
@@ -71,9 +89,9 @@ describe('BlockstoreLevel', () => {
 
     expect(results).toHaveLength(2);
     expect(results[0].cid.toString()).toBe(block1.cid.toString());
-    expect(results[0].block).toEqual(block1.bytes);
+    expect(await collectBytes(results[0].bytes)).toEqual(block1.bytes);
     expect(results[1].cid.toString()).toBe(block2.cid.toString());
-    expect(results[1].block).toEqual(block2.bytes);
+    expect(await collectBytes(results[1].bytes)).toEqual(block2.bytes);
   });
 
   // NOTE: getAll() is not tested because it assumes keys are binary-encoded CIDs

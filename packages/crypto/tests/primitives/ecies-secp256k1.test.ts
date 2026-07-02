@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { secp256k1 } from '@noble/curves/secp256k1';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 
 import { EciesSecp256k1 } from '../../src/primitives/ecies-secp256k1.js';
 
@@ -10,7 +10,7 @@ describe('EciesSecp256k1', () => {
    * and the compressed public key bytes.
    */
   function generateKeyPair(): { privateKey: Uint8Array; publicKey: Uint8Array } {
-    const privateKey = secp256k1.utils.randomPrivateKey();
+    const privateKey = secp256k1.utils.randomSecretKey();
     const publicKey = secp256k1.getPublicKey(privateKey, true);
     return { privateKey, publicKey };
   }
@@ -68,7 +68,7 @@ describe('EciesSecp256k1', () => {
     });
 
     it('should work with an uncompressed public key (65 bytes)', () => {
-      const privateKey = secp256k1.utils.randomPrivateKey();
+      const privateKey = secp256k1.utils.randomSecretKey();
       const publicKeyUncompressed = secp256k1.getPublicKey(privateKey, false);
 
       expect(publicKeyUncompressed).toHaveLength(65);

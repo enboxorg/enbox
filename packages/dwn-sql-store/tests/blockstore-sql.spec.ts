@@ -1,5 +1,5 @@
 import type { DwnDatabaseType } from '../src/types.js';
-import type { Pair } from 'interface-blockstore';
+import type { InputPair, Pair } from 'interface-blockstore';
 
 import { BlockstoreSql } from '../src/blockstore-sql.js';
 import { CID } from 'multiformats';
@@ -21,6 +21,24 @@ function fakeCid(index: number): CID {
     0x55, // raw codec
     ...multihash,
   ]));
+}
+
+async function collectBytes(source: AsyncIterable<Uint8Array> | Iterable<Uint8Array>): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  for await (const chunk of source) {
+    chunks.push(chunk);
+    byteLength += chunk.byteLength;
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return bytes;
 }
 
 describe('BlockstoreSql', () => {
@@ -101,7 +119,7 @@ describe('BlockstoreSql', () => {
       const data = new Uint8Array([40, 50, 60]);
 
       await blockstore.put(cid, data);
-      const retrieved = await blockstore.get(cid);
+      const retrieved = await collectBytes(blockstore.get(cid));
 
       expect(retrieved).toEqual(data);
     });
@@ -109,7 +127,7 @@ describe('BlockstoreSql', () => {
     it('should throw when block is not found', async () => {
       const cid = fakeCid(99);
 
-      await expect(blockstore.get(cid)).rejects.toThrow('block not found');
+      await expect(collectBytes(blockstore.get(cid))).rejects.toThrow('block not found');
     });
   });
 
@@ -161,13 +179,13 @@ describe('BlockstoreSql', () => {
 
   describe('putMany()', () => {
     it('should store multiple blocks from an async generator', async () => {
-      const pairs: Pair[] = [
-        { cid: fakeCid(10), block: new Uint8Array([10]) },
-        { cid: fakeCid(11), block: new Uint8Array([11]) },
-        { cid: fakeCid(12), block: new Uint8Array([12]) },
+      const pairs: InputPair[] = [
+        { cid: fakeCid(10), bytes: new Uint8Array([10]) },
+        { cid: fakeCid(11), bytes: new Uint8Array([11]) },
+        { cid: fakeCid(12), bytes: new Uint8Array([12]) },
       ];
 
-      async function* source(): AsyncIterable<Pair> {
+      async function* source(): AsyncIterable<InputPair> {
         for (const p of pairs) {
           yield p;
         }
@@ -185,8 +203,8 @@ describe('BlockstoreSql', () => {
 
       // Verify all are retrievable.
       for (const pair of pairs) {
-        const data = await blockstore.get(pair.cid);
-        expect(data).toEqual(pair.block);
+        const data = await collectBytes(blockstore.get(pair.cid));
+        expect(data).toEqual(pair.bytes);
       }
     });
   });
@@ -212,9 +230,9 @@ describe('BlockstoreSql', () => {
 
       expect(results.length).toBe(2);
       expect(results[0].cid.toString()).toBe(cid1.toString());
-      expect(results[0].block).toEqual(new Uint8Array([20]));
+      expect(await collectBytes(results[0].bytes)).toEqual(new Uint8Array([20]));
       expect(results[1].cid.toString()).toBe(cid2.toString());
-      expect(results[1].block).toEqual(new Uint8Array([21]));
+      expect(await collectBytes(results[1].bytes)).toEqual(new Uint8Array([21]));
     });
   });
 

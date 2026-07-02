@@ -1,9 +1,9 @@
-import type { AffinePoint } from '@noble/curves/abstract/weierstrass';
+import type { AffinePoint } from '@noble/curves/abstract/weierstrass.js';
 
 import { Convert } from '@enbox/common';
-import { numberToBytesBE } from '@noble/curves/abstract/utils';
-import { secp256k1 } from '@noble/curves/secp256k1';
-import { sha256 } from '@noble/hashes/sha256';
+import { numberToBytesBE } from '@noble/curves/utils.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 import type { Jwk } from '../jose/jwk.js';
 import type { ComputePublicKeyParams, GetPublicKeyParams, SignParams, VerifyParams } from '../types/params-direct.js';
@@ -123,14 +123,17 @@ export class Secp256k1 {
     signature: Uint8Array;
   }): Promise<Uint8Array> {
     // Convert the signature to a `secp256k1.Signature` object.
-    const signatureObject = secp256k1.Signature.fromCompact(signature);
+    const signatureObject = secp256k1.Signature.fromBytes(signature, 'compact');
 
     if (signatureObject.hasHighS()) {
       // Adjust the signature to low-S format if it's high-S.
-      const adjustedSignatureObject = signatureObject.normalizeS();
+      const adjustedSignatureObject = new secp256k1.Signature(
+        signatureObject.r,
+        secp256k1.Point.CURVE().n - signatureObject.s
+      );
 
       // Convert the adjusted signature object back to a byte array.
-      const adjustedSignature = adjustedSignatureObject.toCompactRawBytes();
+      const adjustedSignature = adjustedSignatureObject.toBytes('compact');
 
       return adjustedSignature;
 
@@ -268,10 +271,10 @@ export class Secp256k1 {
     publicKeyBytes: Uint8Array;
   }): Promise<Uint8Array> {
     // Decode Weierstrass points from the public key byte array.
-    const point = secp256k1.ProjectivePoint.fromHex(publicKeyBytes);
+    const point = secp256k1.Point.fromBytes(publicKeyBytes);
 
     // Return the compressed form of the public key.
-    return point.toRawBytes(true);
+    return point.toBytes(true);
   }
 
   /**
@@ -351,11 +354,11 @@ export class Secp256k1 {
   }): Promise<Uint8Array> {
     // Convert the DER-encoded signature into a `secp256k1.Signature` object.
     // This involves parsing the ASN.1 DER structure to extract the R and S components.
-    const signatureObject = secp256k1.Signature.fromDER(derSignature);
+    const signatureObject = secp256k1.Signature.fromBytes(derSignature, 'der');
 
     // Convert the signature object into compact R+S format, which concatenates the R and S values
     // into a single byte array.
-    const compactSignature = signatureObject.toCompactRawBytes();
+    const compactSignature = signatureObject.toBytes('compact');
 
     return compactSignature;
   }
@@ -386,10 +389,10 @@ export class Secp256k1 {
     publicKeyBytes: Uint8Array;
   }): Promise<Uint8Array> {
     // Decode Weierstrass points from the public key byte array.
-    const point = secp256k1.ProjectivePoint.fromHex(publicKeyBytes);
+    const point = secp256k1.Point.fromBytes(publicKeyBytes);
 
     // Return the uncompressed form of the public key.
-    return point.toRawBytes(false);
+    return point.toBytes(false);
   }
 
   /**
@@ -421,7 +424,7 @@ export class Secp256k1 {
    */
   public static async generateKey(): Promise<Jwk> {
     // Generate a random private key.
-    const privateKeyBytes = secp256k1.utils.randomPrivateKey();
+    const privateKeyBytes = secp256k1.utils.randomSecretKey();
 
     // Convert private key from bytes to JWK format.
     const privateKey = await Secp256k1.bytesToPrivateKey({ privateKeyBytes });
@@ -658,10 +661,7 @@ export class Secp256k1 {
 
     // Sign the provided data using the ECDSA algorithm.
     // The `secp256k1.sign` operation returns a signature object with { r, s, recovery } properties.
-    const signatureObject = secp256k1.sign(digest, privateKeyBytes);
-
-    // Convert the signature object to Uint8Array.
-    const signature = signatureObject.toCompactRawBytes();
+    const signature = secp256k1.sign(digest, privateKeyBytes, { prehash: false });
 
     return signature;
   }
@@ -693,7 +693,7 @@ export class Secp256k1 {
   public static async validatePrivateKey({ privateKeyBytes }: {
     privateKeyBytes: Uint8Array;
   }): Promise<boolean> {
-    return secp256k1.utils.isValidPrivateKey(privateKeyBytes);
+    return secp256k1.utils.isValidSecretKey(privateKeyBytes);
   }
 
   /**
@@ -727,7 +727,7 @@ export class Secp256k1 {
   }): Promise<boolean> {
     try {
       // Decode Weierstrass points from key bytes.
-      const point = secp256k1.ProjectivePoint.fromHex(publicKeyBytes);
+      const point = secp256k1.Point.fromBytes(publicKeyBytes);
 
       // Check if points are on the Short Weierstrass curve.
       point.assertValidity();
@@ -790,7 +790,7 @@ export class Secp256k1 {
      * for low-s signatures across languages is unlikely especially in the context
      * of SSI. Notable Cloud KMS providers do not natively support it either. It is
      * also worth noting that low-s signatures are a requirement for Bitcoin. */
-    const isValid = secp256k1.verify(signature, digest, publicKeyBytes, { lowS: false });
+    const isValid = secp256k1.verify(signature, digest, publicKeyBytes, { lowS: false, prehash: false });
 
     return isValid;
   }
@@ -837,7 +837,7 @@ export class Secp256k1 {
     }
 
     // Decode Weierstrass affine point from key bytes.
-    const point = secp256k1.ProjectivePoint.fromHex(keyBytes);
+    const point = secp256k1.Point.fromBytes(keyBytes);
 
     // Get x- and y-coordinate values and convert to Uint8Array.
     const x = numberToBytesBE(point.x, 32);

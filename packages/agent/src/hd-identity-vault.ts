@@ -3,8 +3,7 @@ import type { KeyValueStore } from '@enbox/common';
 
 import type { DidDhtCreateOptions, PortableDid } from '@enbox/dids';
 
-import { HDKey } from 'ed25519-keygen/hdkey';
-import { wordlist } from '@scure/bip39/wordlists/english';
+import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { BearerDid, DidDht, isPortableDid } from '@enbox/dids';
 import { Convert, MemoryStore } from '@enbox/common';
 import { generateMnemonic, mnemonicToSeed, validateMnemonic } from '@scure/bip39';
@@ -15,6 +14,7 @@ import type { IdentityVault, IdentityVaultBackup, IdentityVaultBackupData, Ident
 import { AgentCryptoApi } from './crypto-api.js';
 import { CompactJwe } from './prototyping/crypto/jose/jwe-compact.js';
 import { DeterministicKeyGenerator } from './utils-internal.js';
+import { Ed25519HdKey } from './utils/ed25519-hd-key.js';
 import { LocalKeyManager } from './local-key-manager.js';
 
 /**
@@ -730,7 +730,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     const resolvedRecoveryPhrase = this.resolveRecoveryPhrase(recoveryPhrase);
 
     const rootSeed = await mnemonicToSeed(resolvedRecoveryPhrase);
-    const rootHdKey = HDKey.fromMasterSeed(rootSeed);
+    const rootHdKey = Ed25519HdKey.fromMasterSeed(rootSeed);
 
     // The vault key is deterministic so the same phrase can re-derive both the CEK and unlock salt.
     const vaultHdKey = rootHdKey.derive(`m/44'/0'/0'/0'/0'`);
@@ -819,7 +819,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     rootHdKey,
     dwnEndpoints,
   }: {
-    rootHdKey: HDKey;
+    rootHdKey: Ed25519HdKey;
     dwnEndpoints?: string[];
   }): Promise<PortableDid> {
     const identityHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/0'`);
