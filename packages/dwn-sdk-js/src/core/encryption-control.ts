@@ -1,7 +1,8 @@
-import type { RecordsPermissionScope } from '../types/permission-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { EncryptionControlAudiencePayload, EncryptionControlDeliveryTags, RoleAudienceKeyId } from '../types/encryption-types.js';
+import type { MessagesPermissionScope, RecordsPermissionScope } from '../types/permission-types.js';
+import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 import type { RecordsCountMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage, RecordsWriteTags } from '../types/records-types.js';
 
@@ -37,7 +38,35 @@ type ExactAudienceFilterTuple = Omit<RoleAudienceKeyId, 'keyId'> & {
   keyId?: string;
 };
 
-type ControlReadMessage = RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+type ControlReadMessage =
+  | MessagesQueryMessage
+  | MessagesReadMessage
+  | MessagesSubscribeMessage
+  | RecordsCountMessage
+  | RecordsReadMessage
+  | RecordsQueryMessage
+  | RecordsSubscribeMessage;
+
+type ControlFilterMessage =
+  | MessagesQueryMessage
+  | MessagesSubscribeMessage
+  | RecordsCountMessage
+  | RecordsQueryMessage
+  | RecordsSubscribeMessage;
+
+type ControlFilterInput<T extends RecordsWriteMessage> = {
+  tenant: string;
+  incomingMessage: ControlFilterMessage;
+  permissionGrants?: PermissionGrant[];
+  requester: string | undefined;
+  recordsWriteMessages: T[];
+  visibilityCache?: Map<string, boolean>;
+  validationStateReader: ValidationStateReader;
+};
+
+type ControlRecordVisibilityInput<T extends RecordsWriteMessage> = Omit<ControlFilterInput<T>, 'recordsWriteMessages'> & {
+  recordsWriteMessage: T;
+};
 
 export class EncryptionControl {
   public static isControlMessage(message: RecordsWriteMessage): boolean {
@@ -54,34 +83,21 @@ export class EncryptionControl {
     return EncryptionControl.getExactAudienceFilterTuple(filter) !== undefined;
   }
 
-  public static async filterVisibleControlRecords<T extends RecordsWriteMessage>(input: {
-    tenant: string;
-    incomingMessage: RecordsCountMessage | RecordsQueryMessage | RecordsSubscribeMessage;
-    requester: string | undefined;
-    recordsWriteMessages: T[];
-    validationStateReader: ValidationStateReader;
-  }): Promise<T[]> {
+  public static async filterVisibleControlRecords<T extends RecordsWriteMessage>(input: ControlFilterInput<T>): Promise<T[]> {
     const visibleRecordsWrites: T[] = [];
     for (const recordsWrite of input.recordsWriteMessages) {
-      if (!EncryptionControl.isControlMessage(recordsWrite)) {
-        visibleRecordsWrites.push(recordsWrite);
-        continue;
-      }
+      const visible = await EncryptionControl.isVisibleControlRecord({
+        incomingMessage       : input.incomingMessage,
+        permissionGrants      : input.permissionGrants,
+        recordsWriteMessage   : recordsWrite,
+        requester             : input.requester,
+        tenant                : input.tenant,
+        validationStateReader : input.validationStateReader,
+        visibilityCache       : input.visibilityCache,
+      });
 
-      try {
-        if (await EncryptionControl.canRead({
-          tenant                : input.tenant,
-          incomingMessage       : input.incomingMessage,
-          requester             : input.requester,
-          recordsWriteMessage   : recordsWrite,
-          validationStateReader : input.validationStateReader,
-        })) {
-          visibleRecordsWrites.push(recordsWrite);
-        }
-      } catch (error) {
-        if (!(error instanceof DwnError)) {
-          throw error;
-        }
+      if (visible) {
+        visibleRecordsWrites.push(recordsWrite);
       }
     }
 
@@ -108,6 +124,7 @@ export class EncryptionControl {
   public static async canRead(input: {
     tenant: string;
     incomingMessage: ControlReadMessage;
+    permissionGrants?: PermissionGrant[];
     requester: string | undefined;
     recordsWriteMessage: RecordsWriteMessage;
     validationStateReader: ValidationStateReader;
@@ -132,7 +149,7 @@ export class EncryptionControl {
     }
 
     const tags = EncryptionControl.getRoleAudienceKeyId(recordsWriteMessage, 'audience');
-    if (EncryptionControl.exactAudienceFilterMatchesRecord(input.incomingMessage.descriptor.filter, tags, recordsWriteMessage.recordId)) {
+    if (EncryptionControl.exactAudienceRequestMatchesRecord(input.incomingMessage, tags, recordsWriteMessage.recordId)) {
       return true;
     }
 
@@ -140,6 +157,7 @@ export class EncryptionControl {
       tenant,
       actorDid              : requester,
       incomingMessage       : input.incomingMessage,
+      permissionGrants      : input.permissionGrants,
       tags,
       validationStateReader : input.validationStateReader,
     });
@@ -699,19 +717,20 @@ export class EncryptionControl {
     tenant: string;
     actorDid: string;
     incomingMessage: ControlReadMessage;
+    permissionGrants?: PermissionGrant[];
     tags: RoleAudienceKeyId;
     validationStateReader: ValidationStateReader;
   }): Promise<boolean> {
     const {
-      tenant, actorDid, incomingMessage, tags, validationStateReader
+      tenant, actorDid, incomingMessage, permissionGrants, tags, validationStateReader
     } = input;
-    const grant = await EncryptionControl.getInvokedReadGrant({
+    const grants = permissionGrants ?? await EncryptionControl.getInvokedReadGrants({
       tenant,
       actorDid,
       incomingMessage,
       validationStateReader,
     });
-    if (grant !== undefined && EncryptionControl.grantCoversAudienceEnumeration(grant, tags)) {
+    if (grants.some(grant => EncryptionControl.grantCoversAudienceEnumeration(grant, tags))) {
       return true;
     }
 
@@ -736,19 +755,24 @@ export class EncryptionControl {
     });
   }
 
-  private static async getInvokedReadGrant(input: {
+  private static async getInvokedReadGrants(input: {
     tenant: string;
     actorDid: string;
     incomingMessage: ControlReadMessage;
     validationStateReader: ValidationStateReader;
-  }): Promise<PermissionGrant | undefined> {
+  }): Promise<PermissionGrant[]> {
     if (Message.isSignedByAuthorDelegate(input.incomingMessage)) {
-      return PermissionGrant.parse(input.incomingMessage.authorization!.authorDelegatedGrant!);
+      return [PermissionGrant.parse(input.incomingMessage.authorization!.authorDelegatedGrant!)];
     }
 
-    const grantId = input.incomingMessage.descriptor.permissionGrantId;
+    const { descriptor } = input.incomingMessage;
+    if (!('permissionGrantId' in descriptor)) {
+      return [];
+    }
+
+    const grantId = descriptor.permissionGrantId;
     if (grantId === undefined) {
-      return undefined;
+      return [];
     }
 
     const grant = await input.validationStateReader.fetchGrant(input.tenant, grantId);
@@ -759,12 +783,13 @@ export class EncryptionControl {
       permissionGrant       : grant,
       validationStateReader : input.validationStateReader,
     });
-    return grant;
+    return [grant];
   }
 
   private static grantCoversAudienceEnumeration(grant: PermissionGrant, tags: RoleAudienceKeyId): boolean {
-    const scope = grant.scope as RecordsPermissionScope;
-    if (scope.interface !== DwnInterfaceName.Records || scope.method !== DwnMethodName.Read) {
+    const scope = grant.scope as MessagesPermissionScope | RecordsPermissionScope;
+    const interfaceIsEligible = scope.interface === DwnInterfaceName.Records || scope.interface === DwnInterfaceName.Messages;
+    if (!interfaceIsEligible || scope.method !== DwnMethodName.Read) {
       return false;
     }
 
@@ -925,6 +950,66 @@ export class EncryptionControl {
     return message.descriptor.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH ? 'delivery' : 'audience';
   }
 
+  private static async isVisibleControlRecord<T extends RecordsWriteMessage>(input: ControlRecordVisibilityInput<T>): Promise<boolean> {
+    if (!EncryptionControl.isControlMessage(input.recordsWriteMessage)) {
+      return true;
+    }
+
+    try {
+      return await EncryptionControl.resolveVisibleControlRecord(input);
+    } catch (error) {
+      if (error instanceof DwnError) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  private static async resolveVisibleControlRecord<T extends RecordsWriteMessage>(input: ControlRecordVisibilityInput<T>): Promise<boolean> {
+    const cacheKey = EncryptionControl.visibilityCacheKey(input.requester, input.incomingMessage, input.recordsWriteMessage);
+    if (cacheKey !== undefined) {
+      const visible = input.visibilityCache?.get(cacheKey);
+      if (visible !== undefined) {
+        return visible;
+      }
+    }
+
+    const visible = await EncryptionControl.canRead({
+      tenant                : input.tenant,
+      incomingMessage       : input.incomingMessage,
+      permissionGrants      : input.permissionGrants,
+      requester             : input.requester,
+      recordsWriteMessage   : input.recordsWriteMessage,
+      validationStateReader : input.validationStateReader,
+    });
+
+    if (cacheKey !== undefined) {
+      input.visibilityCache?.set(cacheKey, visible);
+    }
+
+    return visible;
+  }
+
+  private static visibilityCacheKey(
+    requester: string | undefined,
+    incomingMessage: ControlFilterMessage,
+    recordsWriteMessage: RecordsWriteMessage,
+  ): string | undefined {
+    if (EncryptionControl.getRecordType(recordsWriteMessage) !== 'audience') {
+      return undefined;
+    }
+
+    const tags = EncryptionControl.getRoleAudienceKeyId(recordsWriteMessage, 'audience');
+    return [
+      requester ?? '',
+      incomingMessage.descriptor.messageTimestamp,
+      tags.protocol,
+      tags.rolePath,
+      tags.contextId,
+      tags.keyId,
+    ].join('\u001f');
+  }
+
   private static exactAudienceFilterMatchesRecord(filter: RecordsFilter, tags: RoleAudienceKeyId, recordId: string): boolean {
     if (filter.recordId === recordId) {
       return true;
@@ -959,6 +1044,19 @@ export class EncryptionControl {
     }
 
     return { protocol, rolePath, contextId, keyId };
+  }
+
+  private static exactAudienceRequestMatchesRecord(
+    incomingMessage: ControlReadMessage,
+    tags: RoleAudienceKeyId,
+    recordId: string,
+  ): boolean {
+    const { descriptor } = incomingMessage;
+    if ('filter' in descriptor) {
+      return EncryptionControl.exactAudienceFilterMatchesRecord(descriptor.filter, tags, recordId);
+    }
+
+    return false;
   }
 
   private static getExactFilterTag(filter: RecordsFilter, tag: string): string | undefined {

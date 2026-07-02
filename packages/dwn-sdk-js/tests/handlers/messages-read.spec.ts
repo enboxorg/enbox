@@ -4,9 +4,13 @@ import type {
   DataStore,
   MessagesReadReply,
   MessageStore,
+  ProtocolDefinition,
+  ProtocolRuleSet,
   ResumableTaskStore,
 } from '../../src/index.js';
 
+import { Encoder } from '../../src/utils/encoder.js';
+import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { GeneralJwsVerifier } from '../../src/jose/jws/general/verifier.js';
 import { Message } from '../../src/core/message.js';
@@ -16,6 +20,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DataStream, Dwn, DwnConstant, DwnErrorCode, DwnInterfaceName, DwnMethodName, Jws, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
@@ -341,6 +346,107 @@ export function testMessagesReadHandler(): void {
     });
 
     describe('with a grant', () => {
+      it('enforces delivery control visibility for MessagesRead grants', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://messages-read-control-delivery.xyz',
+          published : false,
+          types     : {
+            member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+            post   : { schema: 'http://post-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member : { $role: true },
+            post   : {},
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const audience = await createAudienceControlWrite({
+          author   : alice,
+          protocol : protocolDefinition.protocol,
+          rolePath : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const roleRecord = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          data         : Encoder.stringToBytes('bob is a member'),
+          dataFormat   : 'application/json',
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          recipient    : bob.did,
+          schema       : 'http://member-schema',
+        });
+        expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
+
+        const delivery = await createDeliveryControlWrite({
+          author             : alice,
+          keyId              : audience.keyId,
+          protocol           : protocolDefinition.protocol,
+          recipient          : bob.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, delivery);
+        const deliveryCid = await Message.getCid(delivery.recordsWrite.message);
+
+        const bobGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : bob,
+          scope     : {
+            interface : DwnInterfaceName.Messages,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, bobGrant.message, { dataStream: bobGrant.dataStream })).status.code).toBe(202);
+
+        const carolGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : carol,
+          scope     : {
+            interface : DwnInterfaceName.Messages,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, carolGrant.message, { dataStream: carolGrant.dataStream })).status.code).toBe(202);
+
+        const audienceCid = await Message.getCid(audience.recordsWrite.message);
+        const carolAudienceRead = await TestDataGenerator.generateMessagesRead({
+          author             : carol,
+          messageCid         : audienceCid,
+          permissionGrantIds : [carolGrant.message.recordId],
+        });
+        const carolAudienceReply = await dwn.processMessage(alice.did, carolAudienceRead.message);
+        expect(carolAudienceReply.status.code).toBe(200);
+        expect(carolAudienceReply.entry?.messageCid).toBe(audienceCid);
+
+        const bobRead = await TestDataGenerator.generateMessagesRead({
+          author             : bob,
+          messageCid         : deliveryCid,
+          permissionGrantIds : [bobGrant.message.recordId],
+        });
+        const bobReply = await dwn.processMessage(alice.did, bobRead.message);
+        expect(bobReply.status.code).toBe(200);
+        expect(bobReply.entry?.messageCid).toBe(deliveryCid);
+
+        const carolRead = await TestDataGenerator.generateMessagesRead({
+          author             : carol,
+          messageCid         : deliveryCid,
+          permissionGrantIds : [carolGrant.message.recordId],
+        });
+        const carolReply = await dwn.processMessage(alice.did, carolRead.message);
+        expect(carolReply.status.code).toBe(401);
+        expect(carolReply.status.detail).toContain(DwnErrorCode.MessagesReadVerifyScopeFailed);
+      });
+
       it('returns a 401 if grant has different DWN interface scope', async () => {
         // scenario: Alice grants Bob access to RecordsWrite, then Bob tries to invoke the grant with MessagesRead
 

@@ -1,14 +1,16 @@
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, MessageStore, ProtocolDefinition, ReplicationFeedReader, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ReplicationFeedReader, ResumableTaskStore } from '../../src/index.js';
 
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
+import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { Message } from '../../src/core/message.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, PermissionsProtocol, Replication } from '../../src/index.js';
 
 function getFeedReader(messageStore: MessageStore): ReplicationFeedReader | undefined {
@@ -21,6 +23,15 @@ function getFeedReader(messageStore: MessageStore): ReplicationFeedReader | unde
   ) {
     return candidate as ReplicationFeedReader;
   }
+}
+
+async function fingerprintFromCids(messageCids: string[]): Promise<string> {
+  let fingerprint = Replication.emptyFingerprint();
+  for (const messageCid of messageCids) {
+    fingerprint = Replication.xorFingerprint(fingerprint, await Replication.hashMessageCid(messageCid));
+  }
+
+  return Replication.fingerprintToHex(fingerprint);
 }
 
 export function testMessagesQueryHandler(): void {
@@ -328,6 +339,116 @@ export function testMessagesQueryHandler(): void {
         await Message.getCid(grant.message),
         await Message.getCid(record.message),
       ].sort());
+    });
+
+    it('filters hidden delivery control events without shrinking limited MessagesQuery pages', async () => {
+      const feedReader = getFeedReader(messageStore);
+      if (feedReader === undefined) {
+        return;
+      }
+
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const carol = await TestDataGenerator.generateDidKeyPersona();
+
+      const protocolDefinition: ProtocolDefinition = {
+        protocol  : 'http://messages-query-control-pagination.xyz',
+        published : false,
+        types     : {
+          member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          post   : { schema: 'http://post-schema', dataFormats: ['application/json'] },
+        },
+        structure: {
+          member : { $role: true },
+          post   : {},
+        },
+      };
+      const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+      const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+      const audience = await createAudienceControlWrite({
+        author   : alice,
+        protocol : protocolDefinition.protocol,
+        rolePath : 'member',
+        roleRuleSet,
+      });
+      await processControlWrite(dwn, alice.did, audience);
+
+      const roleRecord = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        data         : Encoder.stringToBytes('bob is a member'),
+        dataFormat   : 'application/json',
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'member',
+        recipient    : bob.did,
+        schema       : 'http://member-schema',
+      });
+      expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
+
+      const grant = await TestDataGenerator.generateGrantCreate({
+        author    : alice,
+        grantedTo : carol,
+        scope     : {
+          interface : DwnInterfaceName.Messages,
+          method    : DwnMethodName.Read,
+          protocol  : protocolDefinition.protocol,
+        },
+      });
+      expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+      const setupCursor = (await feedReader.logRead(alice.did)).cursor;
+      const delivery = await createDeliveryControlWrite({
+        author             : alice,
+        keyId              : audience.keyId,
+        protocol           : protocolDefinition.protocol,
+        recipient          : bob.did,
+        recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+        rolePath           : 'member',
+        roleRuleSet,
+      });
+      await processControlWrite(dwn, alice.did, delivery);
+
+      const record = await TestDataGenerator.generateRecordsWrite({
+        author       : alice,
+        protocol     : protocolDefinition.protocol,
+        protocolPath : 'post',
+        schema       : 'http://post-schema',
+      });
+      expect((await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream })).status.code).toBe(202);
+
+      const { message: query } = await TestDataGenerator.generateMessagesQuery({
+        author             : carol,
+        filters            : [{ protocol: protocolDefinition.protocol }],
+        permissionGrantIds : [grant.message.recordId],
+        cursor             : setupCursor,
+        limit              : 1,
+        cidsOnly           : true,
+      });
+      const reply = await dwn.processMessage(alice.did, query);
+
+      expect(reply.status.code).toBe(200);
+      expect(reply.entries?.map(entry => entry.messageCid)).toEqual([await Message.getCid(record.message)]);
+      expect(reply.entries?.map(entry => entry.messageCid)).not.toContain(await Message.getCid(delivery.recordsWrite.message));
+
+      const { message: fullQuery } = await TestDataGenerator.generateMessagesQuery({
+        author             : carol,
+        filters            : [{ protocol: protocolDefinition.protocol }],
+        permissionGrantIds : [grant.message.recordId],
+        cidsOnly           : true,
+      });
+      const fullReply = await dwn.processMessage(alice.did, fullQuery);
+      const fullReplyCids = fullReply.entries!.map(entry => entry.messageCid);
+      const rawFingerprint = await feedReader.fingerprint(alice.did, [
+        Replication.protocolDomain(protocolDefinition.protocol),
+        Replication.permissionDomain(protocolDefinition.protocol),
+        Replication.encryptionDomain(protocolDefinition.protocol),
+      ]);
+
+      expect(fullReply.status.code).toBe(200);
+      expect(fullReply.drained).toBe(true);
+      expect(fullReplyCids).toContain(await Message.getCid(audience.recordsWrite.message));
+      expect(fullReplyCids).not.toContain(await Message.getCid(delivery.recordsWrite.message));
+      expect(fullReply.fingerprint).toBe(await fingerprintFromCids(fullReplyCids));
+      expect(fullReply.fingerprint).not.toBe(rawFingerprint);
     });
 
     it('rejects unfiltered delegated queries with a protocol-scoped grant', async () => {

@@ -4,11 +4,13 @@ import type { HandlerDependencies, MethodHandler } from '../types/method-handler
 import type { MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
+import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesSubscribe } from '../interfaces/messages-subscribe.js';
+import { Records } from '../utils/records.js';
 import { Time } from '../utils/time.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -25,6 +27,14 @@ type GuardedSubscriptionHandler = {
   listener: SubscriptionListener;
   setSubscription(subscription: EventSubscription): Promise<void>;
 };
+
+type DeliveryStepDwnErrorOutcome =
+  | { kind: 'hidden' }
+  | { kind: 'terminal'; code: DwnErrorCode; detail: string };
+
+type DeliveryStepResult<T> =
+  | { kind: 'ok'; value: T }
+  | DeliveryStepDwnErrorOutcome;
 
 export class MessagesSubscribeHandler implements MethodHandler {
 
@@ -63,9 +73,10 @@ export class MessagesSubscribeHandler implements MethodHandler {
 
     const guardedHandler = MessagesSubscribeHandler.createAuthorizationGuard({
       authorization,
+      deps: this.deps,
       messagesSubscribe,
-      validationStateReader: this.deps.validationStateReader,
       subscriptionHandler,
+      tenant,
     });
 
     const { filters, cursor: eventLogCursor } = message.descriptor;
@@ -100,39 +111,32 @@ export class MessagesSubscribeHandler implements MethodHandler {
     messagesSubscribe: MessagesSubscribe,
     deps: HandlerDependencies
   ): Promise<MessagesSubscribeAuthorization> {
-    // if `MessagesSubscribe` author is the same as the target tenant, we can directly grant access
-    if (messagesSubscribe.author === tenant) {
+    const grantSet = await MessagesGrantAuthorization.authorizeQueryOrSubscribeInvocation({
+      tenant                : tenant,
+      incomingMessage       : messagesSubscribe.message,
+      validationStateReader : deps.validationStateReader,
+      failureCode           : DwnErrorCode.MessagesSubscribeAuthorizationFailed,
+    });
+    if (grantSet === undefined) {
       return { kind: 'owner' };
     }
 
-    const permissionGrantIds = Message.getPermissionGrantIds(messagesSubscribe.signaturePayload!);
-    if (messagesSubscribe.author !== undefined && permissionGrantIds.length > 0) {
-      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, deps.validationStateReader, permissionGrantIds);
-      await MessagesGrantAuthorization.authorizeQueryOrSubscribe({
-        incomingMessage       : messagesSubscribe.message,
-        expectedGrantor       : tenant,
-        expectedGrantee       : messagesSubscribe.author,
-        permissionGrants,
-        validationStateReader : deps.validationStateReader
-      });
-      return {
-        kind            : 'delegate',
-        expectedGrantor : tenant,
-        expectedGrantee : messagesSubscribe.author,
-        permissionGrants,
-      };
-    } else {
-      throw new DwnError(DwnErrorCode.MessagesSubscribeAuthorizationFailed, 'message failed authorization');
-    }
+    return {
+      kind             : 'delegate',
+      expectedGrantor  : tenant,
+      expectedGrantee  : grantSet.requester,
+      permissionGrants : grantSet.permissionGrants,
+    };
   }
 
   private static createAuthorizationGuard(input: {
     authorization: MessagesSubscribeAuthorization;
+    deps: HandlerDependencies;
     messagesSubscribe: MessagesSubscribe;
-    validationStateReader: HandlerDependencies['validationStateReader'];
     subscriptionHandler: SubscriptionListener;
+    tenant: string;
   }): GuardedSubscriptionHandler {
-    const { authorization, messagesSubscribe, validationStateReader, subscriptionHandler } = input;
+    const { authorization, deps, messagesSubscribe, subscriptionHandler, tenant } = input;
     if (authorization.kind === 'owner') {
       return {
         listener        : subscriptionHandler,
@@ -153,7 +157,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
       Promise.resolve(subscription?.close()).catch(() => {});
     };
 
-    const emitTerminalAuthorizationError = (cursor: SubscriptionEvent['cursor']): void => {
+    const emitTerminalDeliveryError = (cursor: SubscriptionEvent['cursor'], code: DwnErrorCode, detail: string): void => {
       if (terminalErrorEmitted) {
         return;
       }
@@ -162,10 +166,27 @@ export class MessagesSubscribeHandler implements MethodHandler {
         type  : 'error',
         cursor,
         error : {
-          code   : DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
-          detail : 'subscription authorization failed during delivery',
+          code,
+          detail,
         },
       });
+    };
+
+    const applyDeliveryStepResult = <T>(
+      result: DeliveryStepResult<T>,
+      cursor: SubscriptionEvent['cursor']
+    ): result is { kind: 'ok'; value: T } => {
+      if (result.kind === 'ok') {
+        return true;
+      }
+
+      if (result.kind === 'hidden') {
+        return false;
+      }
+
+      emitTerminalDeliveryError(cursor, result.code, result.detail);
+      closeSubscription();
+      return false;
     };
 
     // Deliberately do not cache delivery authorization here. Subscribe-open
@@ -175,18 +196,42 @@ export class MessagesSubscribeHandler implements MethodHandler {
     // split static and dynamic checks explicitly and document any bounded staleness
     // introduced by caching revocation lookups.
     const authorizeAndDeliverEvent = async (subMessage: SubscriptionEvent): Promise<void> => {
-      try {
-        await MessagesGrantAuthorization.authorizeSubscribeDelivery({
-          messagesSubscribeMessage : messagesSubscribe.message,
-          expectedGrantor          : authorization.expectedGrantor,
-          expectedGrantee          : authorization.expectedGrantee,
-          permissionGrants         : authorization.permissionGrants,
-          validationStateReader,
-          deliveryTimestamp        : Time.getCurrentTimestamp(),
-        });
-      } catch {
-        emitTerminalAuthorizationError(subMessage.cursor);
-        closeSubscription();
+      const authorizationResult = await MessagesSubscribeHandler.evaluateDeliveryStep({
+        step: async (): Promise<void> => {
+          await MessagesGrantAuthorization.authorizeSubscribeDelivery({
+            messagesSubscribeMessage : messagesSubscribe.message,
+            expectedGrantor          : authorization.expectedGrantor,
+            expectedGrantee          : authorization.expectedGrantee,
+            permissionGrants         : authorization.permissionGrants,
+            validationStateReader    : deps.validationStateReader,
+            deliveryTimestamp        : Time.getCurrentTimestamp(),
+          });
+        },
+        dwnErrorOutcome: {
+          kind   : 'terminal',
+          code   : DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
+          detail : 'subscription authorization failed during delivery',
+        },
+      });
+      if (!applyDeliveryStepResult(authorizationResult, subMessage.cursor)) {
+        return;
+      }
+
+      const visibilityResult = await MessagesSubscribeHandler.evaluateDeliveryStep({
+        step: async (): Promise<boolean> => MessagesSubscribeHandler.canDeliverEvent({
+          tenant,
+          authorization,
+          deps,
+          messagesSubscribe,
+          subMessage,
+        }),
+        dwnErrorOutcome: { kind: 'hidden' },
+      });
+      if (!applyDeliveryStepResult(visibilityResult, subMessage.cursor)) {
+        return;
+      }
+
+      if (!visibilityResult.value) {
         return;
       }
 
@@ -227,5 +272,48 @@ export class MessagesSubscribeHandler implements MethodHandler {
         }
       },
     };
+  }
+
+  private static async evaluateDeliveryStep<T>(input: {
+    dwnErrorOutcome: DeliveryStepDwnErrorOutcome;
+    step: () => Promise<T>;
+  }): Promise<DeliveryStepResult<T>> {
+    try {
+      return { kind: 'ok', value: await input.step() };
+    } catch (error) {
+      if (error instanceof DwnError) {
+        return input.dwnErrorOutcome;
+      }
+
+      return {
+        kind   : 'terminal',
+        code   : DwnErrorCode.MessagesSubscribeDeliveryFailed,
+        detail : 'subscription delivery failed',
+      };
+    }
+  }
+
+  private static async canDeliverEvent(input: {
+    tenant: string;
+    authorization: Extract<MessagesSubscribeAuthorization, { kind: 'delegate' }>;
+    deps: HandlerDependencies;
+    messagesSubscribe: MessagesSubscribe;
+    subMessage: SubscriptionEvent;
+  }): Promise<boolean> {
+    const { authorization, deps, messagesSubscribe, subMessage, tenant } = input;
+    const { message } = subMessage.event;
+    if (!Records.isRecordsWrite(message) || !EncryptionControl.isControlMessage(message)) {
+      return true;
+    }
+
+    const visibleRecordsWrites = await EncryptionControl.filterVisibleControlRecords({
+      tenant,
+      incomingMessage       : messagesSubscribe.message,
+      permissionGrants      : authorization.permissionGrants,
+      requester             : authorization.expectedGrantee,
+      recordsWriteMessages  : [message],
+      validationStateReader : deps.validationStateReader,
+    });
+    return visibleRecordsWrites.length === 1;
   }
 }

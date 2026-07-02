@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ResumableTaskStore } from '../../src/index.js';
 import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
 import type { GenerateGrantCreateOutput, GenerateRecordsWriteOutput, Persona } from '../utils/test-data-generator.js';
 
@@ -10,6 +10,9 @@ import sinon from 'sinon';
 
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
+import { Encoder } from '../../src/utils/encoder.js';
+import { EncryptionControl } from '../../src/core/encryption-control.js';
+import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
 import { MessagesGrantAuthorization } from '../../src/core/messages-grant-authorization.js';
@@ -19,6 +22,7 @@ import { Poller } from '../utils/poller.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
@@ -427,6 +431,117 @@ export function testMessagesSubscribeHandler(): void {
           // ensure that at least one event was received
           await Poller.pollUntilSuccessOrTimeout(async () => {
             expect(messageCids.length).toBeGreaterThanOrEqual(1);
+          });
+        });
+
+        it('filters delivery control events that are not addressed to the subscriber', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          const carol = await TestDataGenerator.generateDidKeyPersona();
+
+          const protocolDefinition: ProtocolDefinition = {
+            protocol  : 'http://messages-subscribe-control-delivery.xyz',
+            published : false,
+            types     : {
+              member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+              post   : { schema: 'http://post-schema', dataFormats: ['application/json'] },
+            },
+            structure: {
+              member : { $role: true },
+              post   : {},
+            },
+          };
+          const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+          const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+          const audience = await createAudienceControlWrite({
+            author   : alice,
+            protocol : protocolDefinition.protocol,
+            rolePath : 'member',
+            roleRuleSet,
+          });
+          await processControlWrite(dwn, alice.did, audience);
+
+          const roleRecord = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            data         : Encoder.stringToBytes('bob is a member'),
+            dataFormat   : 'application/json',
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'member',
+            recipient    : bob.did,
+            schema       : 'http://member-schema',
+          });
+          expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
+
+          const grant = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : carol,
+            scope     : {
+              interface : DwnInterfaceName.Messages,
+              method    : DwnMethodName.Read,
+              protocol  : protocolDefinition.protocol,
+            },
+          });
+          expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+          const messageCids: string[] = [];
+          const received: SubscriptionMessage[] = [];
+          const handler = async (msg: SubscriptionMessage): Promise<void> => {
+            received.push(msg);
+            if (msg.type !== 'event') {
+              return;
+            }
+
+            messageCids.push(await Message.getCid(msg.event.message));
+          };
+          const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
+            author             : carol,
+            filters            : [{ protocol: protocolDefinition.protocol }],
+            permissionGrantIds : [grant.message.recordId],
+          });
+          const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
+          expect(subscribeReply.status.code).toBe(200);
+
+          const delivery = await createDeliveryControlWrite({
+            author             : alice,
+            keyId              : audience.keyId,
+            protocol           : protocolDefinition.protocol,
+            recipient          : bob.did,
+            recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+            rolePath           : 'member',
+            roleRuleSet,
+          });
+          await processControlWrite(dwn, alice.did, delivery);
+
+          const record = await TestDataGenerator.generateRecordsWrite({
+            author       : alice,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'post',
+            schema       : 'http://post-schema',
+          });
+          expect((await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream })).status.code).toBe(202);
+          const recordCid = await Message.getCid(record.message);
+          const deliveryCid = await Message.getCid(delivery.recordsWrite.message);
+
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            expect(messageCids).toContain(recordCid);
+          });
+          expect(messageCids).not.toContain(deliveryCid);
+
+          sinon.stub(EncryptionControl, 'filterVisibleControlRecords').rejects(new Error('visibility check failed'));
+          const failedDelivery = await createDeliveryControlWrite({
+            author             : alice,
+            keyId              : audience.keyId,
+            protocol           : protocolDefinition.protocol,
+            recipient          : bob.did,
+            recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+            rolePath           : 'member',
+            roleRuleSet,
+          });
+          await processControlWrite(dwn, alice.did, failedDelivery);
+
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            const errorMessage = received.find(msg => msg.type === 'error');
+            expect(errorMessage?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryFailed);
           });
         });
 
