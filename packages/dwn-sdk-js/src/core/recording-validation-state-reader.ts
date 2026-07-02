@@ -101,6 +101,18 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
+  public async queryAudienceRecords(input: {
+    tenant: string;
+    protocol: string;
+    rolePath: string;
+    contextId: string;
+    keyId?: string;
+  }): Promise<RecordsWriteMessage[]> {
+    this.recordedReads.push({ method: 'queryAudienceRecords' });
+    return this.inner.queryAudienceRecords(input);
+  }
+
+  /** @inheritdoc */
   public async fetchGrant(tenant: string, permissionGrantId: string): Promise<PermissionGrant> {
     this.recordedReads.push({ method: 'fetchGrant' });
     return this.inner.fetchGrant(tenant, permissionGrantId);

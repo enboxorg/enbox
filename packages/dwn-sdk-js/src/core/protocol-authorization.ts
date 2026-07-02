@@ -8,6 +8,7 @@ import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 
+import { EncryptionControl } from './encryption-control.js';
 import { getRuleSetAtPath } from '../utils/protocols.js';
 import { isEncryptionControlPath } from './constants.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
@@ -37,10 +38,8 @@ export class ProtocolAuthorization {
     validationStateReader: ValidationStateReader,
   ): Promise<ProtocolRuleSet> {
     if (isEncryptionControlPath(incomingMessage.message.descriptor.protocolPath)) {
-      throw new DwnError(
-        DwnErrorCode.EncryptionControlValidateUnexpectedRecord,
-        `reserved encryption control path '${incomingMessage.message.descriptor.protocolPath}' requires encryption control validation.`
-      );
+      await EncryptionControl.validateReferentialIntegrity(tenant, incomingMessage, validationStateReader);
+      return {};
     }
 
     const protocolDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;

@@ -92,6 +92,17 @@ export interface ValidationStateReader {
   }): Promise<RecordsWriteMessage[]>;
 
   /**
+   * Queries accepted source-protocol-native audience control records by role-audience coordinates.
+   */
+  queryAudienceRecords(input: {
+    tenant: string;
+    protocol: string;
+    rolePath: string;
+    contextId: string;
+    keyId?: string;
+  }): Promise<RecordsWriteMessage[]>;
+
+  /**
    * Fetches the permission grant with the given record ID, with its scope parsed from grant data.
    * @throws {DwnError} with `GrantAuthorizationGrantMissing` when the grant does not exist.
    */
