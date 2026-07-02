@@ -37,13 +37,15 @@ type ExactAudienceFilterTuple = Omit<RoleAudienceKeyId, 'keyId'> & {
   keyId?: string;
 };
 
+type ControlReadMessage = RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+
 export class EncryptionControl {
   public static isControlMessage(message: RecordsWriteMessage): boolean {
     return isEncryptionControlPath(message.descriptor.protocolPath);
   }
 
   public static getRequester(
-    message: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage,
+    message: ControlReadMessage,
   ): string | undefined {
     return Message.isSignedByAuthorDelegate(message) ? Message.getSigner(message) : Message.getAuthor(message);
   }
@@ -88,7 +90,7 @@ export class EncryptionControl {
 
   public static async authorizeRead(input: {
     tenant: string;
-    incomingMessage: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+    incomingMessage: ControlReadMessage;
     requester: string | undefined;
     recordsWriteMessage: RecordsWriteMessage;
     validationStateReader: ValidationStateReader;
@@ -105,7 +107,7 @@ export class EncryptionControl {
 
   public static async canRead(input: {
     tenant: string;
-    incomingMessage: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+    incomingMessage: ControlReadMessage;
     requester: string | undefined;
     recordsWriteMessage: RecordsWriteMessage;
     validationStateReader: ValidationStateReader;
@@ -696,7 +698,7 @@ export class EncryptionControl {
   private static async canEnumerateAudience(input: {
     tenant: string;
     actorDid: string;
-    incomingMessage: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+    incomingMessage: ControlReadMessage;
     tags: RoleAudienceKeyId;
     validationStateReader: ValidationStateReader;
   }): Promise<boolean> {
@@ -737,7 +739,7 @@ export class EncryptionControl {
   private static async getInvokedReadGrant(input: {
     tenant: string;
     actorDid: string;
-    incomingMessage: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+    incomingMessage: ControlReadMessage;
     validationStateReader: ValidationStateReader;
   }): Promise<PermissionGrant | undefined> {
     if (Message.isSignedByAuthorDelegate(input.incomingMessage)) {
