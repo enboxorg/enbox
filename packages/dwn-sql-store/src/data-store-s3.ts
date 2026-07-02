@@ -1,23 +1,55 @@
+import type * as AwsClientS3 from '@aws-sdk/client-s3';
+import type * as AwsLibStorage from '@aws-sdk/lib-storage';
 import type { Dialect } from './dialect/dialect.js';
 import type { DwnDatabaseType } from './types.js';
 import type { DataStore, DataStoreGetResult, DataStorePutResult } from '@enbox/dwn-sdk-js';
 
 import * as DataRefs from './utils/data-refs.js';
+import { createRequire } from 'node:module';
 import { drainReadableStream } from './utils/stream.js';
 import { Readable } from 'stream';
-import { Upload } from '@aws-sdk/lib-storage';
-import {
-  DeleteObjectCommand,
-  DeleteObjectsCommand,
-  GetObjectCommand,
-  ListObjectsV2Command,
-  S3Client,
-} from '@aws-sdk/client-s3';
 import { Kysely, sql } from 'kysely';
 
 const MIN_PART_SIZE = 5 * 1024 * 1024;
 const DEFAULT_PART_SIZE = MIN_PART_SIZE;
 const DEFAULT_QUEUE_SIZE = 4;
+const require = createRequire(import.meta.url);
+
+type AwsS3Modules = {
+  DeleteObjectCommand : typeof AwsClientS3.DeleteObjectCommand;
+  DeleteObjectsCommand : typeof AwsClientS3.DeleteObjectsCommand;
+  GetObjectCommand : typeof AwsClientS3.GetObjectCommand;
+  ListObjectsV2Command : typeof AwsClientS3.ListObjectsV2Command;
+  S3Client : typeof AwsClientS3.S3Client;
+  Upload : typeof AwsLibStorage.Upload;
+};
+
+let awsS3Modules: AwsS3Modules | undefined;
+
+function loadAwsS3Modules(): AwsS3Modules {
+  if (awsS3Modules !== undefined) {
+    return awsS3Modules;
+  }
+
+  try {
+    const clientS3 = require('@aws-sdk/client-s3') as typeof AwsClientS3;
+    const libStorage = require('@aws-sdk/lib-storage') as typeof AwsLibStorage;
+
+    awsS3Modules = {
+      DeleteObjectCommand  : clientS3.DeleteObjectCommand,
+      DeleteObjectsCommand : clientS3.DeleteObjectsCommand,
+      GetObjectCommand     : clientS3.GetObjectCommand,
+      ListObjectsV2Command : clientS3.ListObjectsV2Command,
+      S3Client             : clientS3.S3Client,
+      Upload               : libStorage.Upload,
+    };
+    return awsS3Modules;
+  } catch {
+    throw new Error(
+      'DataStoreS3 requires @aws-sdk/client-s3 and @aws-sdk/lib-storage. Install them alongside @enbox/dwn-sql-store.'
+    );
+  }
+}
 
 /**
  * S3-backed implementation of {@link DataStore} with SQL-based reference
@@ -34,13 +66,15 @@ const DEFAULT_QUEUE_SIZE = 4;
  */
 export class DataStoreS3 implements DataStore {
   readonly #dialect: Dialect;
+  readonly #aws: AwsS3Modules;
   #db: Kysely<DwnDatabaseType> | null = null;
-  readonly #s3: S3Client;
+  readonly #s3: AwsClientS3.S3Client;
   readonly #bucket: string;
   readonly #partSize: number;
   readonly #queueSize: number;
 
   constructor(config: DataStoreS3Config) {
+    this.#aws = loadAwsS3Modules();
     this.#dialect = config.dialect;
     this.#bucket = config.bucket;
     this.#partSize = config.partSize ?? DEFAULT_PART_SIZE;
@@ -54,7 +88,7 @@ export class DataStoreS3 implements DataStore {
       throw new Error('DataStoreS3: queueSize must be a positive integer.');
     }
 
-    this.#s3 = config.s3Client ?? new S3Client({
+    this.#s3 = config.s3Client ?? new this.#aws.S3Client({
       region         : config.region ?? 'us-east-1',
       endpoint       : config.endpoint,
       forcePathStyle : config.forcePathStyle ?? false,
@@ -90,7 +124,7 @@ export class DataStoreS3 implements DataStore {
       return undefined;
     }
 
-    const response = await this.#s3.send(new GetObjectCommand({
+    const response = await this.#s3.send(new this.#aws.GetObjectCommand({
       Bucket : this.#bucket,
       Key    : dataCid,
     }));
@@ -150,7 +184,7 @@ export class DataStoreS3 implements DataStore {
 
     // Garbage-collect the S3 object if no more refs point to this dataCid.
     if (!await DataRefs.hasAnyDataRef(db, dataCid)) {
-      await this.#s3.send(new DeleteObjectCommand({
+      await this.#s3.send(new this.#aws.DeleteObjectCommand({
         Bucket : this.#bucket,
         Key    : dataCid,
       }));
@@ -166,7 +200,7 @@ export class DataStoreS3 implements DataStore {
     // Delete all S3 objects in the bucket.
     let continuationToken: string | undefined;
     do {
-      const list = await this.#s3.send(new ListObjectsV2Command({
+      const list = await this.#s3.send(new this.#aws.ListObjectsV2Command({
         Bucket            : this.#bucket,
         ContinuationToken : continuationToken,
       }));
@@ -176,7 +210,7 @@ export class DataStoreS3 implements DataStore {
         .map((obj): { Key: string } => ({ Key: obj.Key }));
 
       if (objects.length > 0) {
-        await this.#s3.send(new DeleteObjectsCommand({
+        await this.#s3.send(new this.#aws.DeleteObjectsCommand({
           Bucket : this.#bucket,
           Delete : { Objects: objects },
         }));
@@ -258,7 +292,7 @@ export class DataStoreS3 implements DataStore {
       },
     });
 
-    const upload = new Upload({
+    const upload = new this.#aws.Upload({
       client : this.#s3,
       params : {
         Bucket : this.#bucket,
@@ -301,7 +335,7 @@ export type DataStoreS3Config = {
   bucket: string;
 
   /** Optional pre-configured S3Client instance. If omitted, one is created from region/endpoint. */
-  s3Client?: S3Client;
+  s3Client?: AwsClientS3.S3Client;
 
   /** AWS region. Default: `'us-east-1'`. */
   region?: string;

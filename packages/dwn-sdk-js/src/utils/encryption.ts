@@ -1,7 +1,6 @@
 import type { Jwk } from '@enbox/crypto';
 import type { PublicKeyJwk } from '../types/jose-types.js';
 
-import { concatBytes } from '@noble/ciphers/utils';
 import { AesCtr, AesKw, computeJwkThumbprint, Hkdf, X25519 } from '@enbox/crypto';
 
 import { Encoder } from './encoder.js';
@@ -22,6 +21,19 @@ const AES_256_KEY_LENGTH_BYTES = 32;
 const AES_CTR_COUNTER_LENGTH_BYTES = 16;
 const AES_CTR_COUNTER_LENGTH_BITS = 128;
 const KEK_INFO_PREFIX = KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;
+
+function concatBytes(...arrays: Uint8Array[]): Uint8Array {
+  const byteLength = arrays.reduce((total, array): number => total + array.byteLength, 0);
+  const result = new Uint8Array(byteLength);
+  let offset = 0;
+
+  for (const array of arrays) {
+    result.set(array, offset);
+    offset += array.byteLength;
+  }
+
+  return result;
+}
 
 export type X25519KeyEncryptionBase = {
   algorithm: KeyAgreementAlgorithm.X25519HkdfSha256A256Kw;

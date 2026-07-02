@@ -4,7 +4,6 @@ import type { AdminWebhook, AdminWebhookInput } from './types.js';
 import { createHmac } from 'crypto';
 import log from 'loglevel';
 import { sleep } from '@enbox/common';
-import { v4 as uuidv4 } from 'uuid';
 import { Kysely, sql } from 'kysely';
 
 /**
@@ -74,7 +73,7 @@ export class WebhookManager {
    */
   public async register(input: AdminWebhookInput): Promise<AdminWebhook> {
     const webhook: AdminWebhook = {
-      id        : uuidv4(),
+      id        : crypto.randomUUID(),
       url       : input.url,
       events    : input.events,
       createdAt : new Date().toISOString(),
@@ -147,7 +146,7 @@ export class WebhookManager {
       .execute();
 
     const payload: WebhookPayload = {
-      id        : uuidv4(),
+      id        : crypto.randomUUID(),
       timestamp : new Date().toISOString(),
       event,
       target,

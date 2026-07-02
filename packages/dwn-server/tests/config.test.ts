@@ -5,6 +5,29 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { describe, expect, it } from 'bun:test';
 
 describe('config', () => {
+  describe('parseByteSize()', () => {
+    it('should parse byte counts and supported suffixes', async () => {
+      const { parseByteSize } = await import('../src/config.js');
+
+      expect(parseByteSize('524288')).toBe(524288);
+      expect(parseByteSize('1b')).toBe(1);
+      expect(parseByteSize('1kb')).toBe(1024);
+      expect(parseByteSize('100mb')).toBe(104857600);
+      expect(parseByteSize('1gb')).toBe(1073741824);
+      expect(parseByteSize('1.5mb')).toBe(1572864);
+      expect(parseByteSize('100MB')).toBe(104857600);
+    });
+
+    it('should reject invalid byte-size strings', async () => {
+      const { parseByteSize } = await import('../src/config.js');
+
+      expect(() => parseByteSize('')).toThrow('Invalid byte size');
+      expect(() => parseByteSize('abc')).toThrow('Invalid byte size');
+      expect(() => parseByteSize('-1mb')).toThrow('Invalid byte size');
+      expect(() => parseByteSize('2 tb')).toThrow('Invalid byte size');
+    });
+  });
+
   // NOTE: The original version of these tests asserted exact default values
   // (e.g. `expect(config.port).toBe(3000)`, `expect(config.maxRecordDataSize).toBe(...)`)
   // which made them snapshot-style assertions that would break any time a default
@@ -14,7 +37,7 @@ describe('config', () => {
     it('should parse all config fields to the expected types', async () => {
       // The config object reads env vars at module load time. We verify that
       // the parsing logic produces values of the correct types — this catches
-      // regressions like `parseInt` being removed or `bytes()` returning NaN.
+      // regressions like `parseInt` being removed or byte-size parsing returning NaN.
       const { config } = await import('../src/config.js');
 
       expect(typeof config.port).toBe('number');

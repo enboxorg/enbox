@@ -93,8 +93,8 @@ describe('Secp256k1 — fuzz', () => {
           const jwkFromCompressed = await Secp256k1.publicKeyToJwk(compressedKey);
 
           // Get uncompressed form via getPublicKey with false
-          const { getPublicKey } = await import('@noble/secp256k1');
-          const uncompressedKey = getPublicKey(privateKey, false);
+          const { secp256k1 } = await import('@noble/curves/secp256k1');
+          const uncompressedKey = secp256k1.getPublicKey(privateKey, false);
           const jwkFromUncompressed = await Secp256k1.publicKeyToJwk(uncompressedKey);
 
           const compressedEc = jwkFromCompressed as { x: string; y?: string };

@@ -5,7 +5,6 @@ import log from 'loglevel';
 
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
-import { v4 as uuidv4 } from 'uuid';
 import { Cid, DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder } from '@enbox/dwn-sdk-js';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { enforceQuota, enforceTenantRateLimit, validateInboundDwnMessageTransport } from './inbound-message.js';
@@ -16,7 +15,7 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
 ) => {
   const { dwn, dataStream } = context;
   const { encodedData, target, message } = dwnRequest.params as { encodedData?: string, target: string, message: GenericMessage };
-  const requestId = dwnRequest.id ?? uuidv4();
+  const requestId = dwnRequest.id ?? crypto.randomUUID();
 
   try {
     const transportResult = validateInboundDwnMessageTransport({

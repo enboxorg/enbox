@@ -11,11 +11,76 @@ import { resolveAllSchemas, resolveSchema } from '../src/schema-resolver.js';
 const FIXTURES_DIR = join(import.meta.dir, 'fixtures');
 const SCHEMAS_DIR = join(FIXTURES_DIR, 'schemas');
 const SCHEMAS_URI_PATH_DIR = join(FIXTURES_DIR, 'schemas-uri-path');
+const PACKAGE_DIR = join(import.meta.dir, '..');
+
+type CliResult = {
+  exitCode : number;
+  stderr : string;
+  stdout : string;
+};
 
 async function loadDefinition(): Promise<Record<string, unknown>> {
   const raw = await readFile(join(FIXTURES_DIR, 'todo-definition.json'), 'utf-8');
   return JSON.parse(raw);
 }
+
+async function runCli(args: string[]): Promise<CliResult> {
+  const proc = Bun.spawn(['bun', 'src/cli.ts', ...args], {
+    cwd    : PACKAGE_DIR,
+    env    : process.env,
+    stderr : 'pipe',
+    stdout : 'pipe',
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  return { exitCode, stderr, stdout };
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+describe('protocol-codegen CLI', () => {
+  it('should print help', async () => {
+    const result = await runCli(['--help']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('protocol-codegen <command> [options]');
+    expect(result.stdout).toContain('generate');
+  });
+
+  it('should print version', async () => {
+    const result = await runCli(['--version']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('0.1.0\n');
+  });
+
+  it('should fail when required generate flags are missing', async () => {
+    const result = await runCli(['generate', '--definition', join(FIXTURES_DIR, 'todo-definition.json'), '--name', 'Todo']);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('Missing required argument: schemas');
+  });
+
+  it('should generate TypeScript to stdout', async () => {
+    const result = await runCli([
+      'generate',
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('export interface ListData');
+    expect(result.stderr).toContain('+ list: local-type-name');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Schema resolution

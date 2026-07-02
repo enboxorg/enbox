@@ -1,7 +1,6 @@
 import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 
 import { Encoder } from './encoder.js';
-import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
 import { X25519 } from '@enbox/crypto';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -82,7 +81,7 @@ export class HdKey {
   }): Promise<Uint8Array> {
     const { hashAlgorithm, initialKeyMaterial, info, keyLengthInBytes } = params;
 
-    const webCrypto = getWebcryptoSubtle() as SubtleCrypto;
+    const webCrypto = globalThis.crypto.subtle;
 
     // Import the `initialKeyMaterial` into the Web Crypto API to use for the key derivation operation.
     const webCryptoKey = await webCrypto.importKey('raw', initialKeyMaterial as BufferSource, { name: 'HKDF' }, false, ['deriveBits']);

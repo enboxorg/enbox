@@ -59,12 +59,11 @@ describe('InMemoryConnectionManager', () => {
       filter : { schema: 'foo/bar' },
     });
 
-    const { v4: uuidv4 } = await import('uuid');
     const { createJsonRpcSubscriptionRequest } = await import('@enbox/dwn-clients');
 
     const connection = await JsonRpcSocket.connect(wsUrl);
-    const requestId = uuidv4();
-    const subscriptionId = uuidv4();
+    const requestId = crypto.randomUUID();
+    const subscriptionId = crypto.randomUUID();
     const dwnRequest = createJsonRpcSubscriptionRequest(
       requestId, 'rpc.subscribe.dwn.processMessage',
       { message, target: alice.did },

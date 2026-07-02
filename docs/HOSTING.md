@@ -43,6 +43,10 @@ Key settings:
 
 See the [`@enbox/dwn-server` README](../packages/dwn-server/README.md) for the full list of configuration options, storage backends, plugin system, and JSON-RPC API documentation.
 
+Backend drivers are optional. LevelDB and SQLite need no extra packages; PostgreSQL
+deployments must include `pg` and `pg-cursor`, MySQL deployments must include
+`mysql2`, and the NATS event-bus plugin needs `@nats-io/transport-node`.
+
 ## Production Considerations
 
 1. **Change default passwords** -- use Docker secrets or external secret management

@@ -15,6 +15,7 @@ SQL backed implementations of DWN `MessageStore` and `DataStore`.
   - [SQLite](#sqlite)
   - [MySQL](#mysql)
   - [PostgreSQL](#postgresql)
+  - [S3 Data Store](#s3-data-store)
 - [Development](#development)
   - [Prerequisites](#prerequisites)
     - [Bun](#bun)
@@ -35,6 +36,13 @@ See [SQL Dialect Variations](./sql-dialect-variations.md) for the list of specia
 
 ```bash
 bun add @enbox/dwn-sql-store
+```
+
+`DataStoreS3` is published from a separate subpath so SQL-only users do not install
+the AWS SDK dependency tree. S3 users must install the optional AWS peers:
+
+```bash
+bun add @enbox/dwn-sql-store @aws-sdk/client-s3 @aws-sdk/lib-storage
 ```
 
 # Usage
@@ -126,6 +134,15 @@ const resumableTaskStore = new ResumableTaskStoreSql(postgresDialect);
 
 const dwn = await Dwn.create({ messageStore, dataStore, resumableTaskStore });
 ```
+
+## S3 Data Store
+
+```typescript
+import { DataStoreS3 } from '@enbox/dwn-sql-store/s3';
+```
+
+Use the `/s3` subpath when constructing the S3-backed `DataStore`. The root
+`@enbox/dwn-sql-store` entry intentionally does not export `DataStoreS3`.
 
 # Development
 

@@ -64,6 +64,15 @@ Storage URLs use a scheme prefix to select the backend:
 | `postgres://` | `postgres://user:pass@host:5432/dwn` | PostgreSQL (recommended for production) |
 | `mysql://` | `mysql://user:pass@host:3306/dwn` | MySQL |
 
+Optional backend packages:
+
+| Feature | Install command |
+|---|---|
+| LevelDB / SQLite | No extra package |
+| PostgreSQL storage | `bun add pg pg-cursor` |
+| MySQL storage | `bun add mysql2` |
+| NATS event-bus plugin | `bun add @nats-io/transport-node` |
+
 | Variable | Default | Description |
 |---|---|---|
 | `DWN_STORAGE` | `level://data` | Default storage URL for all stores |

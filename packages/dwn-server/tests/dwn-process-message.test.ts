@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 import { DataStream, Jws, Message, MessagesRead, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { describe, expect, it, spyOn } from 'bun:test';
 
@@ -19,7 +18,7 @@ describe('handleDwnProcessMessage', () => {
 
     // Construct a well-formed DWN Request that will be successfully processed.
     const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
@@ -44,7 +43,7 @@ describe('handleDwnProcessMessage', () => {
   it('returns a JSON RPC Success Response when DWN returns a 4XX/5XX status code', async () => {
     // Construct a DWN Request that is missing the descriptor `method` property to ensure
     // that `dwn.processMessage()` will return an error status.
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
       message: {
         descriptor: { interface: 'Records' },
@@ -75,7 +74,7 @@ describe('handleDwnProcessMessage', () => {
 
     // Write a record to later read
     const { recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
@@ -96,7 +95,7 @@ describe('handleDwnProcessMessage', () => {
 
 
     // Read the record to get the data back
-    const readRequestId = uuidv4();
+    const readRequestId = crypto.randomUUID();
     const recordsRead = await RecordsRead.create({
       signer : Jws.createSigner(alice),
       filter : { recordId: recordsWrite.message.recordId },
@@ -126,7 +125,7 @@ describe('handleDwnProcessMessage', () => {
 
     // Create a record to read
     const { recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
@@ -148,7 +147,7 @@ describe('handleDwnProcessMessage', () => {
     const messageCid = await Message.getCid(recordsWrite.message);
 
     // read the message
-    const readRequestId = uuidv4();
+    const readRequestId = crypto.randomUUID();
     const messageRead = await MessagesRead.create({
       signer: Jws.createSigner(alice),
       messageCid,
@@ -172,7 +171,7 @@ describe('handleDwnProcessMessage', () => {
   });
 
   it('should fail if no subscriptionRequest context exists for a `Subscribe` message', async () => {
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
       message: {
         descriptor: { interface: 'Records', method: 'Subscribe' },
@@ -195,7 +194,7 @@ describe('handleDwnProcessMessage', () => {
   });
 
   it('should fail on http requests for a `Subscribe` message', async () => {
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
       message: {
         descriptor: { interface: 'Records', method: 'Subscribe' },
@@ -218,7 +217,7 @@ describe('handleDwnProcessMessage', () => {
   });
 
   it('should return a JsonRpc Internal Error for an unexpected thrown error within the handler', async () => {
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
       message: {
         descriptor: { interface: 'Records' },
@@ -255,14 +254,14 @@ describe('handleDwnProcessMessage', () => {
       };
 
       // First request consumes the one available token.
-      const dwnRequest1 = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+      const dwnRequest1 = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
         message : { descriptor: { interface: 'Records', method: 'Query', messageTimestamp: new Date().toISOString(), filter: {} } },
         target  : 'did:key:rate-limited',
       });
       await handleDwnProcessMessage(dwnRequest1, context);
 
       // Second request should be rate-limited.
-      const dwnRequest2 = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+      const dwnRequest2 = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
         message : { descriptor: { interface: 'Records', method: 'Query', messageTimestamp: new Date().toISOString(), filter: {} } },
         target  : 'did:key:rate-limited',
       });
@@ -296,7 +295,7 @@ describe('handleDwnProcessMessage', () => {
       config     : { quotaMaxMessages: 5, quotaMaxStorageBytes: 0 } as any,
     };
 
-    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
       message: {
         descriptor: {
           interface        : 'Records',
@@ -333,7 +332,7 @@ describe('handleDwnProcessMessage', () => {
       config     : { quotaMaxMessages: 0, quotaMaxStorageBytes: 1000 } as any,
     };
 
-    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
       message: {
         descriptor: {
           interface        : 'Records',
@@ -379,7 +378,7 @@ describe('handleDwnProcessMessage', () => {
       config            : { quotaMaxMessages: 100, quotaMaxStorageBytes: 0 } as any,
     };
 
-    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
       message: {
         descriptor: {
           interface        : 'Records',
@@ -418,7 +417,7 @@ describe('handleDwnProcessMessage', () => {
 
     // Even though the tenant has 999 messages and 999999 bytes, the quota is
     // unlimited (0/0), so the request should NOT be rejected by the quota check.
-    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
       message: {
         descriptor: {
           interface        : 'Records',
@@ -460,7 +459,7 @@ describe('handleDwnProcessMessage', () => {
 
     // This request has invalid message format, so DWN will reject it with 400,
     // but importantly the quota check should NOT reject it (quota allows it).
-    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.processMessage', {
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
       message: {
         descriptor: {
           interface        : 'Records',

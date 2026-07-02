@@ -3,13 +3,19 @@ import type { MessageSigner } from '../types/signer.js';
 import type { SignatureEntry } from '../types/jws-types.js';
 import type { KeyMaterial, PublicKeyJwk } from '../types/jose-types.js';
 
-import isPlainObject from 'lodash/isPlainObject.js';
-
 import { Encoder } from './encoder.js';
 import { PrivateKeySigner } from './private-key-signer.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { signatureAlgorithms, type SupportedCurve } from '../jose/algorithms/signing/signature-algorithms.js';
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
 
 /**
  * Utility class for JWS related operations.

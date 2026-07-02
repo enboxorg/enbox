@@ -1,5 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
-
 import type {
   HandlerResponse,
   JsonRpcHandler,
@@ -20,7 +18,7 @@ export const handleSubscriptionsClose: JsonRpcHandler = async (
   jsonRpcRequest,
   context,
 ) => {
-  const requestId = jsonRpcRequest.id ?? uuidv4();
+  const requestId = jsonRpcRequest.id ?? crypto.randomUUID();
   if (context.socketConnection === undefined) {
     const jsonRpcResponse = createJsonRpcErrorResponse(requestId, JsonRpcErrorCodes.InvalidRequest, 'socket connection does not exist');
     return { jsonRpcResponse };

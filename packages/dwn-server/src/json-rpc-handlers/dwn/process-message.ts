@@ -10,7 +10,6 @@ import log from 'loglevel';
 import { DwnMethodName } from '@enbox/dwn-sdk-js';
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
-import { v4 as uuidv4 } from 'uuid';
 import {
   createJsonRpcErrorResponse,
   createJsonRpcSuccessResponse,
@@ -25,7 +24,7 @@ export const handleDwnProcessMessage: JsonRpcHandler = async (
 ) => {
   const { dwn, dataStream, subscriptionRequest, socketConnection, transport } = context;
   const { target, message } = dwnRequest.params as { target: string, message: GenericMessage };
-  const requestId = dwnRequest.id ?? uuidv4();
+  const requestId = dwnRequest.id ?? crypto.randomUUID();
 
   try {
     const transportResult = validateInboundDwnMessageTransport({ context, message, requestId, target });

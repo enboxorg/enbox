@@ -1,6 +1,7 @@
-import * as Ed25519 from '@noble/ed25519';
 import type { JwkParamsOkpPrivate, JwkParamsOkpPublic } from '@enbox/crypto';
 import type { PrivateKeyJwk, PublicKeyJwk, SignatureAlgorithm } from '../../../types/jose-types.js';
+
+import { ed25519 as Ed25519 } from '@noble/curves/ed25519';
 
 import { Encoder } from '../../../utils/encoder.js';
 import { DwnError, DwnErrorCode } from '../../../core/dwn-error.js';
@@ -30,7 +31,7 @@ export const ed25519: SignatureAlgorithm = {
 
     const privateKeyBytes = Encoder.base64UrlToBytes((privateJwk as JwkParamsOkpPrivate).d);
 
-    return Ed25519.signAsync(content, privateKeyBytes);
+    return Ed25519.sign(content, privateKeyBytes);
   },
 
   verify: async (content: Uint8Array, signature: Uint8Array, publicJwk: PublicKeyJwk): Promise<boolean> => {
@@ -38,12 +39,12 @@ export const ed25519: SignatureAlgorithm = {
 
     const publicKeyBytes = Encoder.base64UrlToBytes((publicJwk as JwkParamsOkpPublic).x);
 
-    return Ed25519.verifyAsync(signature, content, publicKeyBytes);
+    return Ed25519.verify(signature, content, publicKeyBytes);
   },
 
   generateKeyPair: async (): Promise<{publicJwk: PublicKeyJwk, privateJwk: PrivateKeyJwk}> => {
     const privateKeyBytes = Ed25519.utils.randomPrivateKey();
-    const publicKeyBytes = await Ed25519.getPublicKeyAsync(privateKeyBytes);
+    const publicKeyBytes = Ed25519.getPublicKey(privateKeyBytes);
 
     const d = Encoder.bytesToBase64Url(privateKeyBytes);
 

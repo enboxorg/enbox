@@ -1,7 +1,10 @@
+import type * as Mysql2 from 'mysql2';
+import type * as Pg from 'pg';
 import type { Dialect } from '@enbox/dwn-sql-store';
 import type { DidResolver } from '@enbox/dids';
 import type { DwnServerConfig } from './config.js';
 import type { EventBus } from './event-bus.js';
+import type PgCursor from 'pg-cursor';
 import type {
   DataStore,
   DwnConfig,
@@ -14,9 +17,7 @@ import type {
 } from '@enbox/dwn-sdk-js';
 
 import * as fs from 'fs';
-import Cursor from 'pg-cursor';
-import { createPool as MySQLCreatePool } from 'mysql2';
-import pg from 'pg';
+import { createRequire } from 'node:module';
 
 import { Kysely } from 'kysely';
 
@@ -39,6 +40,8 @@ import {
   runDwnStoreMigrations,
   SqliteDialect,
 } from '@enbox/dwn-sql-store';
+
+const require = createRequire(import.meta.url);
 
 export enum StoreType {
   DataStore,
@@ -69,6 +72,47 @@ type WakePublisherAwareStore = {
   setWakePublisher(wakePublisher: WakePublisher | undefined): void;
 };
 
+type Mysql2Module = {
+  createPool : typeof Mysql2.createPool;
+};
+
+type MysqlPool = ReturnType<typeof Mysql2.createPool>;
+
+type PgCursorModule = typeof PgCursor;
+
+type PgModule = {
+  Pool : typeof Pg.Pool;
+};
+
+type PgPool = Pg.Pool;
+
+type PostgresDependencies = {
+  Cursor : PgCursorModule;
+  pg : PgModule;
+};
+
+function loadOptionalDependency<TModule>(specifier: string, installCommand: string): TModule {
+  try {
+    return require(specifier) as TModule;
+  } catch {
+    throw new Error(`${specifier} is required for this backend. Install it with: ${installCommand}`);
+  }
+}
+
+function loadMysqlCreatePool(): typeof Mysql2.createPool {
+  return loadOptionalDependency<Mysql2Module>(
+    'mysql2',
+    'bun add mysql2'
+  ).createPool;
+}
+
+function loadPostgresDependencies(): PostgresDependencies {
+  return {
+    Cursor : loadOptionalDependency<PgCursorModule>('pg-cursor', 'bun add pg pg-cursor'),
+    pg     : loadOptionalDependency<PgModule>('pg', 'bun add pg pg-cursor'),
+  };
+}
+
 /**
  * Returns a (potentially cached) dialect for the given connection URL. For
  * Postgres, creates a pool with configurable sizing from the server config.
@@ -95,6 +139,8 @@ function getOrCreateDialect(connectionUrl: URL, config: DwnServerConfig): Dialec
     return cached;
   }
 
+  const { Cursor, pg } = loadPostgresDependencies();
+
   // Create a single pg.Pool instance with configurable sizing.
   const pool = new pg.Pool({
     connectionString  : connectionUrl.toString(),
@@ -104,7 +150,7 @@ function getOrCreateDialect(connectionUrl: URL, config: DwnServerConfig): Dialec
   });
 
   const dialect = new PostgresDialect({
-    pool   : async (): Promise<pg.Pool> => pool,
+    pool   : async (): Promise<PgPool> => pool,
     cursor : Cursor,
   });
 
@@ -461,14 +507,20 @@ export function getDialectFromUrl(connectionUrl: URL): Dialect {
       });
     }
     case BackendTypes.MYSQL:
+    {
+      const createPool = loadMysqlCreatePool();
       return new MysqlDialect({
-        pool: async () => MySQLCreatePool(connectionUrl.toString()),
+        pool: async (): Promise<MysqlPool> => createPool(connectionUrl.toString()),
       });
+    }
     case BackendTypes.POSTGRES:
+    {
+      const { Cursor, pg } = loadPostgresDependencies();
       return new PostgresDialect({
-        pool   : async () => new pg.Pool({ connectionString: connectionUrl.toString() }),
+        pool   : async (): Promise<PgPool> => new pg.Pool({ connectionString: connectionUrl.toString() }),
         cursor : Cursor,
       });
+    }
     default:
       throw new Error(`Unsupported database protocol: ${connectionUrl.protocol}`);
   }

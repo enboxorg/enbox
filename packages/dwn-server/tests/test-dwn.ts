@@ -10,7 +10,7 @@ import {
   runDwnStoreMigrations,
   SqliteDialect,
 } from '@enbox/dwn-sql-store';
-import { DidDht, DidIon, DidKey, UniversalResolver } from '@enbox/dids';
+import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
 import { DurableEventLog, Dwn, EventEmitterWakePublisher } from '@enbox/dwn-sdk-js';
 
 import { runServerMigrations } from '../src/server-migration-runner.js';
@@ -52,7 +52,7 @@ export async function getTestDwn(options: {
 
   // NOTE: no resolver cache used here to avoid locking LevelDB
   const didResolver = new UniversalResolver({
-    didResolvers: [DidDht, DidIon, DidKey],
+    didResolvers: [DidDht, DidKey],
   });
 
   const dwn = await Dwn.create({

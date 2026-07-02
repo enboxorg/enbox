@@ -113,6 +113,15 @@ individually with `DWN_STORAGE_MESSAGES`, `DWN_STORAGE_DATA`, and
 | MySQL      | `mysql://user:pass@host:3306/db`    | [Connection options](https://github.com/mysqljs/mysql#connection-options) as query params. |
 | PostgreSQL | `postgres://user:pass@host:5432/db` | Recommended for production. Also honors standard `PG*` env vars.                  |
 
+Optional drivers are installed by backend:
+
+| Backend / feature | Install command |
+| ----------------- | --------------- |
+| LevelDB / SQLite  | No extra package |
+| PostgreSQL        | `bun add pg pg-cursor` |
+| MySQL             | `bun add mysql2` |
+| NATS event bus    | `bun add @nats-io/transport-node` |
+
 For production, point every store at a shared SQL database:
 
 ```bash

@@ -1,6 +1,5 @@
 import type { JsonRpcId, JsonRpcRequest, JsonRpcSocketOptions, JsonRpcSuccessResponse } from '@enbox/dwn-clients';
 
-import { v4 as uuidv4 } from 'uuid';
 import { WebSocketServer } from 'ws';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
@@ -64,7 +63,7 @@ describe('JsonRpcSocket', () => {
     });
 
     const client = await connectToTestServer();
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const request = createJsonRpcRequest(requestId, 'test.method', { param1: 'test-param1', param2: 'test-param2' });
     const response = await client.request(request);
     expect(response.id).toBe(request.id);
@@ -73,7 +72,7 @@ describe('JsonRpcSocket', () => {
   it('request times out', async () => {
     // time out after 1 ms
     const client = await connectToTestServer({ responseTimeout: 1 });
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const request = createJsonRpcRequest(requestId, 'test.method', { param1: 'test-param1', param2: 'test-param2' });
     const requestPromise = client.request(request);
 
@@ -91,8 +90,8 @@ describe('JsonRpcSocket', () => {
     });
 
     const client = await connectToTestServer({ responseTimeout: 100 });
-    const requestId = uuidv4();
-    const subscribeId = uuidv4();
+    const requestId = crypto.randomUUID();
+    const subscribeId = crypto.randomUUID();
     const request = createJsonRpcSubscriptionRequest(
       requestId,
       'rpc.subscribe.test.method',
@@ -124,8 +123,8 @@ describe('JsonRpcSocket', () => {
     });
 
     const client = await connectToTestServer({ responseTimeout: 100 });
-    const requestId = uuidv4();
-    const subscribeId = uuidv4();
+    const requestId = crypto.randomUUID();
+    const subscribeId = crypto.randomUUID();
     const request = createJsonRpcSubscriptionRequest(
       requestId,
       'rpc.subscribe.test.method',
@@ -163,7 +162,7 @@ describe('JsonRpcSocket', () => {
       });
     });
     const client = await connectToTestServer();
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const request = createJsonRpcRequest(requestId, 'test.method', { param1: 'test-param1', param2: 'test-param2' });
     client.send(request);
     const result = await receivedPromise;
@@ -200,8 +199,8 @@ describe('JsonRpcSocket', () => {
     });
 
     const client = await connectToTestServer({ responseTimeout: 100 });
-    const requestId = uuidv4();
-    const subscribeId = uuidv4();
+    const requestId = crypto.randomUUID();
+    const subscribeId = crypto.randomUUID();
     const request = createJsonRpcSubscriptionRequest(
       requestId,
       'rpc.subscribe.test.method',
@@ -234,7 +233,7 @@ describe('JsonRpcSocket', () => {
 
   it('only JSON RPC Methods prefixed with `rpc.subscribe.` are accepted for a subscription', async () => {
     const client = await connectToTestServer();
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const request = createJsonRpcRequest(requestId, 'test.method', { param1: 'test-param1', param2: 'test-param2' });
     const subscribePromise = client.subscribe(request, () => {});
     await expect(subscribePromise).rejects.toThrow('subscribe rpc requests must include the `rpc.subscribe` prefix');
@@ -242,7 +241,7 @@ describe('JsonRpcSocket', () => {
 
   it('subscribe methods must contain a subscribe object within the request which contains the subscription JsonRpcId', async () => {
     const client = await connectToTestServer();
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const request = createJsonRpcRequest(requestId, 'rpc.subscribe.test.method', { param1: 'test-param1', param2: 'test-param2' });
     const subscribePromise = client.subscribe(request, () => {});
     await expect(subscribePromise).rejects.toThrow('subscribe rpc requests must include subscribe options');

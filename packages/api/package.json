@@ -84,12 +84,12 @@
     "@enbox/agent": "workspace:*",
     "@enbox/auth": "workspace:*",
     "@enbox/common": "workspace:*",
-    "@enbox/dwn-clients": "workspace:*"
+    "@enbox/dids": "workspace:*",
+    "@enbox/dwn-clients": "workspace:*",
+    "@enbox/dwn-sdk-js": "workspace:*"
   },
   "devDependencies": {
     "@enbox/crypto": "workspace:*",
-    "@enbox/dids": "workspace:*",
-    "@enbox/dwn-sdk-js": "workspace:*",
     "@types/node": "22.19.15",
     "@types/sinon": "17.0.3",
     "@typescript-eslint/eslint-plugin": "8.32.1",

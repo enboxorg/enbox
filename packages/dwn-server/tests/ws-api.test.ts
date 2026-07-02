@@ -4,7 +4,6 @@ import type { Dwn, MessageEvent, ProgressToken, SubscriptionMessage } from '@enb
 
 import { base64url } from 'multiformats/bases/base64';
 import { useFakeTimers } from 'sinon';
-import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, Message, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
@@ -86,7 +85,7 @@ describe('websocket api', function () {
     const dataBytes = await DataStream.toBytes(dataStream);
     const encodedData = base64url.baseEncode(dataBytes);
 
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
@@ -169,7 +168,7 @@ describe('websocket api', function () {
     await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
 
     const { recordsWrite } = await createRecordsWriteMessage(alice);
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
@@ -200,7 +199,7 @@ describe('websocket api', function () {
 
     let connection: JsonRpcSocket | undefined;
     try {
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
         encodedData : base64url.baseEncode(new Uint8Array(9)),
         message     : {
@@ -243,7 +242,7 @@ describe('websocket api', function () {
       records.push(await Message.getCid(message));
     };
 
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.dwn.processMessage', {
       message : message,
       target  : alice.did,
@@ -319,8 +318,8 @@ describe('websocket api', function () {
       records.push(await Message.getCid(message));
     };
 
-    const requestId = uuidv4();
-    const subscribeId = uuidv4();
+    const requestId = crypto.randomUUID();
+    const subscribeId = crypto.randomUUID();
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.dwn.processMessage', {
       message : message,
       target  : alice.did,
@@ -410,8 +409,8 @@ describe('websocket api', function () {
       records.push(await Message.getCid(message));
     };
 
-    const requestId = uuidv4();
-    const subscribeId = uuidv4();
+    const requestId = crypto.randomUUID();
+    const subscribeId = crypto.randomUUID();
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.dwn.processMessage', {
       message : message,
       target  : alice.did
@@ -429,7 +428,7 @@ describe('websocket api', function () {
     const { message: message2 } = await TestDataGenerator.generateRecordsSubscribe({ filter: { schema: 'bar/baz' }, author: alice });
 
     // We are checking for the subscription Id not the request Id
-    const request2Id = uuidv4();
+    const request2Id = crypto.randomUUID();
     const dwnRequest2 = createJsonRpcSubscriptionRequest(request2Id, 'rpc.subscribe.dwn.processMessage', {
       message : message2,
       target  : alice.did
@@ -522,8 +521,8 @@ describe('websocket api', function () {
       records.push(await Message.getCid(message));
     };
 
-    const requestId = uuidv4();
-    const subscribeId = uuidv4();
+    const requestId = crypto.randomUUID();
+    const subscribeId = crypto.randomUUID();
     const dwnRequest = createJsonRpcSubscriptionRequest(requestId, 'rpc.subscribe.dwn.processMessage', {
       message : message,
       target  : alice.did
@@ -626,8 +625,8 @@ describe('websocket backpressure (rpc.ack)', function () {
     close: () => Promise<void>;
   }> {
     const receivedMessages: SubscriptionMessage[] = [];
-    const requestId = uuidv4();
-    const subscriptionId = uuidv4();
+    const requestId = crypto.randomUUID();
+    const subscriptionId = crypto.randomUUID();
 
     const socket = new WebSocket(wsUrl);
 
@@ -681,7 +680,7 @@ describe('websocket backpressure (rpc.ack)', function () {
 
     const close = async (): Promise<void> => {
       // Send subscription close request
-      const closeRequestId = uuidv4();
+      const closeRequestId = crypto.randomUUID();
       const closeRequest = createJsonRpcSubscriptionRequest(
         closeRequestId, 'rpc.subscribe.close', {}, subscriptionId
       );
@@ -807,10 +806,10 @@ describe('websocket backpressure (rpc.ack)', function () {
     // Here we replicate auto-ack inline.
     const records: string[] = [];
     const connection = await JsonRpcSocket.connect(wsUrl);
-    const subscriptionId = uuidv4();
+    const subscriptionId = crypto.randomUUID();
 
     const dwnRequest = createJsonRpcSubscriptionRequest(
-      uuidv4(), 'rpc.subscribe.dwn.processMessage',
+      crypto.randomUUID(), 'rpc.subscribe.dwn.processMessage',
       { message, target: alice.did },
       subscriptionId,
     );

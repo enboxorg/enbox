@@ -1,7 +1,8 @@
 import type { JwkParamsEcPrivate, JwkParamsEcPublic } from '@enbox/crypto';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 
-import * as secp256k1 from '@noble/secp256k1';
+import { bytesToNumberBE } from '@noble/curves/abstract/utils';
+import { secp256k1 } from '@noble/curves/secp256k1';
 
 import { Encoder } from '../utils/encoder.js';
 import { sha256 } from 'multiformats/hashes/sha2';
@@ -76,8 +77,8 @@ export class Secp256k1 {
     const y = Encoder.base64UrlToBytes(ecJwk.y!);
 
     return secp256k1.ProjectivePoint.fromAffine({
-      x : secp256k1.etc.bytesToNumberBE(x),
-      y : secp256k1.etc.bytesToNumberBE(y)
+      x : bytesToNumberBE(x),
+      y : bytesToNumberBE(y)
     }).toRawBytes(true);
   }
 
@@ -100,7 +101,7 @@ export class Secp256k1 {
     const hashedContent = await sha256.encode(content);
     const privateKeyBytes = Secp256k1.privateJwkToBytes(privateJwk);
 
-    return (await secp256k1.signAsync(hashedContent, privateKeyBytes)).toCompactRawBytes();
+    return secp256k1.sign(hashedContent, privateKeyBytes).toCompactRawBytes();
   }
 
   /**
@@ -156,4 +157,3 @@ export class Secp256k1 {
     return publicKey as PublicKeyJwk;
   }
 }
-

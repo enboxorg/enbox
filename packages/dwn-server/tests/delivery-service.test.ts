@@ -3,7 +3,6 @@ import type { RequestContext } from '../src/lib/json-rpc-router.js';
 import type { Dwn, GenericMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
-import { v4 as uuidv4 } from 'uuid';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, TestDataGenerator } from '@enbox/dwn-sdk-js';
@@ -138,7 +137,7 @@ describe('DeliveryService', () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,
@@ -177,7 +176,7 @@ describe('DeliveryService', () => {
     });
 
     it('should invoke onMessageProcessed even on non-202 status (hooks filter internally)', async () => {
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message: {
           descriptor: { interface: 'Records', method: 'Write' },
@@ -218,7 +217,7 @@ describe('DeliveryService', () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,
@@ -246,7 +245,7 @@ describe('DeliveryService', () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,

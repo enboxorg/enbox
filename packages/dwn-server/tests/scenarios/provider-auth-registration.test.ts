@@ -11,7 +11,6 @@ import { DwnServer } from '../../src/dwn-server.js';
 import { DwnServerErrorCode } from '../../src/dwn-error.js';
 import { ProofOfWork } from '../../src/registration/proof-of-work.js';
 import { useFakeTimers } from 'sinon';
-import { v4 as uuidv4 } from 'uuid';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { DataStream, Jws, ProtocolsConfigure, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
@@ -394,7 +393,7 @@ async function installDefaultTestProtocolViaHttp(endpoint: string, persona: Pers
     signer: Jws.createSigner(persona),
   });
 
-  const requestId = uuidv4();
+  const requestId = crypto.randomUUID();
   const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
     message : protocolsConfigure.toJSON(),
     target  : persona.did,
@@ -417,7 +416,7 @@ async function generateRecordsWriteJsonRpcRequest(persona: Persona): Promise<{
 }> {
   const { recordsWrite, dataStream } = await createRecordsWriteMessage(persona);
 
-  const requestId = uuidv4();
+  const requestId = crypto.randomUUID();
   const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
     message : recordsWrite.toJSON(),
     target  : persona.did,
