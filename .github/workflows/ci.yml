@@ -5,12 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      release_pr_number:
-        description: "Version packages PR number that requested this CI run"
-        required: false
-        type: string
   workflow_call:
 
 permissions:
@@ -18,8 +12,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.inputs.release_pr_number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event.inputs.release_pr_number != '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ---------------------------------------------------------------------------
