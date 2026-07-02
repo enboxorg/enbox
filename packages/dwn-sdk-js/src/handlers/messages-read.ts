@@ -6,7 +6,6 @@ import type { MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry } f
 import { authenticate } from '../core/auth.js';
 import { DataStream } from '../utils/data-stream.js';
 import { Encoder } from '../utils/encoder.js';
-import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
@@ -81,7 +80,7 @@ export class MessagesReadHandler implements MethodHandler {
     deps: HandlerDependencies
   ): Promise<void> {
 
-    const requester = EncryptionControl.getRequester(messagesRead.message);
+    const requester = Message.getRequester(messagesRead.message);
     if (messagesRead.author === tenant && requester === tenant) {
       // If the author is the tenant, no further authorization is needed
       return;

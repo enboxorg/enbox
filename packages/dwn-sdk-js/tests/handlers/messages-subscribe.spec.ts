@@ -11,7 +11,6 @@ import sinon from 'sinon';
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encoder } from '../../src/utils/encoder.js';
-import { EncryptionControl } from '../../src/core/encryption-control.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
@@ -434,7 +433,7 @@ export function testMessagesSubscribeHandler(): void {
           });
         });
 
-        it('filters delivery control events that are not addressed to the subscriber', async () => {
+        it('delivers control record envelopes to delegated MessagesSubscribe streams', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
           const carol = await TestDataGenerator.generateDidKeyPersona();
@@ -524,25 +523,9 @@ export function testMessagesSubscribeHandler(): void {
 
           await Poller.pollUntilSuccessOrTimeout(async () => {
             expect(messageCids).toContain(recordCid);
+            expect(messageCids).toContain(deliveryCid);
           });
-          expect(messageCids).not.toContain(deliveryCid);
-
-          sinon.stub(EncryptionControl, 'filterVisibleControlRecords').rejects(new Error('visibility check failed'));
-          const failedDelivery = await createDeliveryControlWrite({
-            author             : alice,
-            keyId              : audience.keyId,
-            protocol           : protocolDefinition.protocol,
-            recipient          : bob.did,
-            recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
-            rolePath           : 'member',
-            roleRuleSet,
-          });
-          await processControlWrite(dwn, alice.did, failedDelivery);
-
-          await Poller.pollUntilSuccessOrTimeout(async () => {
-            const errorMessage = received.find(msg => msg.type === 'error');
-            expect(errorMessage?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryFailed);
-          });
+          expect(received.every(msg => msg.type !== 'error')).toBe(true);
         });
 
         it('rejects subscribe of messages with mismatching interface grant scope', async () => {
@@ -963,6 +946,7 @@ export function testMessagesSubscribeHandler(): void {
             });
             await Time.minimalSleep();
             expect(received.filter(msg => msg.type === 'error').length).toBe(1);
+            expect(received.find(msg => msg.type === 'error')?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryFailed);
             expect(received.filter(msg => msg.type === 'event').length).toBe(0);
           });
 

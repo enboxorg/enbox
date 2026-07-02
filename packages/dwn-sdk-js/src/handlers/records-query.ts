@@ -34,7 +34,7 @@ export class RecordsQueryHandler implements MethodHandler {
 
     let recordsWrites: RecordsQueryReplyEntry[];
     let cursor: PaginationCursor | undefined;
-    const requester = EncryptionControl.getRequester(recordsQuery.message);
+    const requester = Message.getRequester(recordsQuery.message);
     // if this is an anonymous query and the filter supports published records, query only published records
     if (Records.filterIncludesPublishedRecords(recordsQuery.message.descriptor.filter) && recordsQuery.author === undefined) {
       const results = await this.fetchPublishedRecords(tenant, recordsQuery, requester);

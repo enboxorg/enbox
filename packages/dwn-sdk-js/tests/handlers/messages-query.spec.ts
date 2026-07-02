@@ -341,7 +341,7 @@ export function testMessagesQueryHandler(): void {
       ].sort());
     });
 
-    it('filters hidden delivery control events without shrinking limited MessagesQuery pages', async () => {
+    it('transports delivery control events and accumulator fingerprints for delegated MessagesQuery', async () => {
       const feedReader = getFeedReader(messageStore);
       if (feedReader === undefined) {
         return;
@@ -424,10 +424,10 @@ export function testMessagesQueryHandler(): void {
         cidsOnly           : true,
       });
       const reply = await dwn.processMessage(alice.did, query);
+      const deliveryCid = await Message.getCid(delivery.recordsWrite.message);
 
       expect(reply.status.code).toBe(200);
-      expect(reply.entries?.map(entry => entry.messageCid)).toEqual([await Message.getCid(record.message)]);
-      expect(reply.entries?.map(entry => entry.messageCid)).not.toContain(await Message.getCid(delivery.recordsWrite.message));
+      expect(reply.entries?.map(entry => entry.messageCid)).toEqual([deliveryCid]);
 
       const { message: fullQuery } = await TestDataGenerator.generateMessagesQuery({
         author             : carol,
@@ -446,9 +446,18 @@ export function testMessagesQueryHandler(): void {
       expect(fullReply.status.code).toBe(200);
       expect(fullReply.drained).toBe(true);
       expect(fullReplyCids).toContain(await Message.getCid(audience.recordsWrite.message));
-      expect(fullReplyCids).not.toContain(await Message.getCid(delivery.recordsWrite.message));
+      expect(fullReplyCids).toContain(deliveryCid);
       expect(fullReply.fingerprint).toBe(await fingerprintFromCids(fullReplyCids));
-      expect(fullReply.fingerprint).not.toBe(rawFingerprint);
+      expect(fullReply.fingerprint).toBe(rawFingerprint);
+
+      const { message: ownerQuery } = await TestDataGenerator.generateMessagesQuery({
+        author   : alice,
+        filters  : [{ protocol: protocolDefinition.protocol }],
+        cidsOnly : true,
+      });
+      const ownerReply = await dwn.processMessage(alice.did, ownerQuery);
+      expect(ownerReply.status.code).toBe(200);
+      expect(fullReply.fingerprint).toBe(ownerReply.fingerprint);
     });
 
     it('rejects unfiltered delegated queries with a protocol-scoped grant', async () => {

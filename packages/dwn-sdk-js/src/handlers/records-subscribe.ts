@@ -53,7 +53,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
 
     let eventFilters: Filter[] = [];
     let queryFilters: Filter[] = [];
-    const requester = EncryptionControl.getRequester(recordsSubscribe.message);
+    const requester = Message.getRequester(recordsSubscribe.message);
 
     // if this is an anonymous subscribe and the filter supports published records, subscribe to only published records
     if (Records.filterIncludesPublishedRecords(recordsSubscribe.message.descriptor.filter) && recordsSubscribe.author === undefined) {
@@ -200,7 +200,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     tenant: string;
   }): ProjectedRecordsSubscriptionHandler {
     const { deps, recordsSubscribe, subscriptionHandler, tenant } = input;
-    const requester = EncryptionControl.getRequester(recordsSubscribe.message);
+    const requester = Message.getRequester(recordsSubscribe.message);
     let subscription: EventSubscription | undefined;
     let closeRequested = false;
     let terminalErrorEmitted = false;
