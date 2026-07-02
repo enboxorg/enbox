@@ -1392,6 +1392,7 @@ async function submitConnectResponse(
                 granteeDid            : delegateBearerDid.uri,
                 granteeRootPrivateKey : delegateX25519PrivateKey as PrivateKeyJwk,
                 grantMessages         : grants,
+                protocolDefinitions   : [protocolDefinition],
               });
               durableGrantKeyRecords.push(...grantKeyRecords);
             }

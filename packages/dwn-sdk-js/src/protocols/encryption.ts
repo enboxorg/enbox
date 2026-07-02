@@ -19,8 +19,8 @@ import { Message } from '../core/message.js';
 import { Records } from '../utils/records.js';
 import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
-import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { grantKeyScopeCoversDeliveredScope, isGrantKeyEligibleRecordsScope, isGrantKeyRecordsScope } from '../utils/grant-key-coverage.js';
 import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
 type AudienceTags = {
@@ -40,9 +40,6 @@ export class EncryptionProtocol implements CoreProtocol {
   public static readonly audienceEpochPath = 'audienceEpoch';
   public static readonly audienceKeyPath = 'audienceKey';
   public static readonly grantKeyPath = 'grantKey';
-  private static readonly grantKeyScopeMethodsByInterface: Record<string, DwnMethodName | undefined> = {
-    [DwnInterfaceName.Records]: DwnMethodName.Read,
-  };
 
   public static readonly definition: ProtocolDefinition = {
     published : true,
@@ -255,7 +252,14 @@ export class EncryptionProtocol implements CoreProtocol {
     await EncryptionProtocol.verifyGrantActive(tenant, message, grant, validationStateReader);
     EncryptionProtocol.verifyGrantKeyAuthor(message, grant);
     EncryptionProtocol.verifyGrantKeyRecipient(message, grant);
-    EncryptionProtocol.verifyGrantKeyScope(grant.scope, protocol, protocolPath);
+    await EncryptionProtocol.verifyGrantKeyScope({
+      tenant,
+      message,
+      grantScope: grant.scope,
+      protocol,
+      protocolPath,
+      validationStateReader,
+    });
   }
 
   private static verifyEncryptedDelivery(message: RecordsWriteMessage): void {
@@ -408,39 +412,62 @@ export class EncryptionProtocol implements CoreProtocol {
     );
   }
 
-  private static verifyGrantKeyScope(grantScope: PermissionScope, protocol: string, protocolPath: string | undefined): void {
-    if (!EncryptionProtocol.isReadScope(grantScope)) {
+  private static async verifyGrantKeyScope(params: {
+    tenant: string;
+    message: RecordsWriteMessage;
+    grantScope: PermissionScope;
+    protocol: string;
+    protocolPath: string | undefined;
+    validationStateReader: ValidationStateReader;
+  }): Promise<void> {
+    const { grantScope, protocol, protocolPath } = params;
+
+    if (!isGrantKeyRecordsScope(grantScope)) {
       throw new DwnError(
         DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
-        'grantKey must reference a Records.Read permission grant.'
+        'grantKey must reference a Records.Read or Records.Write permission grant.'
       );
     }
 
-    if ('protocol' in grantScope && grantScope.protocol !== undefined && grantScope.protocol !== protocol) {
+    if (!isGrantKeyEligibleRecordsScope(grantScope)) {
+      throw new DwnError(
+        DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
+        'grantKey must not reference a context-scoped permission grant.'
+      );
+    }
+
+    if (grantScope.protocol !== protocol) {
       throw new DwnError(
         DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
         `grantKey protocol ${protocol} is outside the permission grant scope.`
       );
     }
 
-    if (!('protocolPath' in grantScope) || grantScope.protocolPath === undefined) {
+    const deliveredScope = { protocol, protocolPath };
+    if (grantKeyScopeCoversDeliveredScope({ grantScope, deliveredScope })) {
       return;
     }
 
-    if (protocolPath === undefined || !EncryptionProtocol.isBoundaryAwareSubtree(grantScope.protocolPath, protocolPath)) {
+    if (protocolPath === undefined) {
       throw new DwnError(
         DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
         `grantKey protocolPath ${protocolPath ?? '<protocol>'} is outside the permission grant scope.`
       );
     }
-  }
 
-  private static isReadScope(scope: PermissionScope): boolean {
-    return Object.is(EncryptionProtocol.grantKeyScopeMethodsByInterface[scope.interface], scope.method);
-  }
+    const protocolDefinition = await params.validationStateReader.fetchProtocolDefinition(
+      params.tenant,
+      params.protocol,
+      params.message.descriptor.messageTimestamp,
+    );
+    if (grantKeyScopeCoversDeliveredScope({ grantScope, deliveredScope, protocolDefinition })) {
+      return;
+    }
 
-  private static isBoundaryAwareSubtree(scopePath: string, candidatePath: string): boolean {
-    return candidatePath === scopePath || candidatePath.startsWith(scopePath + '/');
+    throw new DwnError(
+      DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
+      `grantKey protocolPath ${protocolPath ?? '<protocol>'} is outside the permission grant scope.`
+    );
   }
 
   private static async verifyRoleAudienceDefinition(

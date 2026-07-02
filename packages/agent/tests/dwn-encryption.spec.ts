@@ -1,5 +1,5 @@
 import type { AudienceEpochPayload } from '../src/dwn-encryption.js';
-import type { DerivedPrivateJwk, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { DerivedPrivateJwk, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -547,17 +547,17 @@ describe('dwn-encryption', () => {
   });
 
   describe('createGrantKeyRecordsForGrants', () => {
-    it('should skip grants that cannot carry durable encrypted read access', async () => {
+    it('should skip grants that cannot carry durable encrypted access', async () => {
       const grantor = await TestDataGenerator.generatePersona({ did: 'did:example:alice' });
       const grantee = await TestDataGenerator.generatePersona({ did: 'did:example:delegate' });
-      const writeGrant = await TestDataGenerator.generateGrantCreate({
+      const deleteGrant = await TestDataGenerator.generateGrantCreate({
         author      : grantor,
         grantedTo   : grantee,
         delegated   : true,
         dateExpires : '2040-06-25T16:09:16.693356Z',
         scope       : {
           interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Write,
+          method    : DwnMethodName.Delete,
           protocol  : 'https://proto.example.com',
         },
       });
@@ -584,7 +584,6 @@ describe('dwn-encryption', () => {
           protocol  : 'https://proto.example.com',
         },
       });
-      // Role-path Write grant coverage belongs to the encryption-control workstream.
       const processDwnRequest = sinon.stub().rejects(new Error('ineligible grants should not write records'));
 
       const records = await createGrantKeyRecordsForGrants({
@@ -592,11 +591,98 @@ describe('dwn-encryption', () => {
         ownerDid              : grantor.did,
         granteeDid            : grantee.did,
         granteeRootPrivateKey : await X25519.generateKey(),
-        grantMessages         : [writeGrant.dataEncodedMessage, contextReadGrant.dataEncodedMessage, messagesReadGrant.dataEncodedMessage],
+        grantMessages         : [deleteGrant.dataEncodedMessage, contextReadGrant.dataEncodedMessage, messagesReadGrant.dataEncodedMessage],
       });
 
       expect(records).toHaveLength(0);
       expect(processDwnRequest.called).toBe(false);
+    });
+
+    it('should create grantKey records for read scope keys and referenced local role keys', async () => {
+      const grantor = await TestDataGenerator.generatePersona({ did: 'did:example:alice' });
+      const grantee = await TestDataGenerator.generatePersona({ did: 'did:example:delegate' });
+      const ownerPrivateKey = await X25519.generateKey();
+      const protocolDefinition = await createGrantKeyCoverageProtocolDefinition('https://proto.example.com');
+      const readGrant = await TestDataGenerator.generateGrantCreate({
+        author      : grantor,
+        grantedTo   : grantee,
+        delegated   : true,
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        scope       : {
+          interface    : DwnInterfaceName.Records,
+          method       : DwnMethodName.Read,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'chat/message',
+        },
+      });
+      const processDwnRequest = sinon.stub().callsFake(async (request: any): Promise<any> => ({
+        message: {
+          recordId   : `grant-key-${processDwnRequest.callCount}`,
+          descriptor : {
+            ...request.messageParams,
+            messageTimestamp: Time.getCurrentTimestamp(),
+          },
+        },
+        reply: { status: { code: 202, detail: 'Accepted' } },
+      }));
+      const mockAgent = await createGrantKeyProducerAgent(grantor.did, ownerPrivateKey, processDwnRequest);
+
+      const records = await createGrantKeyRecordsForGrants({
+        agent                 : mockAgent,
+        ownerDid              : grantor.did,
+        granteeDid            : grantee.did,
+        granteeRootPrivateKey : await X25519.generateKey(),
+        grantMessages         : [readGrant.dataEncodedMessage],
+        protocolDefinitions   : [protocolDefinition],
+      });
+
+      expect(records).toHaveLength(2);
+      expect(records.map((record) => record.descriptor.tags?.protocolPath).sort()).toEqual(['chat/member', 'chat/message']);
+      expect(processDwnRequest.callCount).toBe(2);
+      expect(processDwnRequest.getCalls().every((call) => call.args[0].messageType === DwnInterface.RecordsWrite)).toBe(true);
+    });
+
+    it('should create grantKey records for role paths covered by write grants', async () => {
+      const grantor = await TestDataGenerator.generatePersona({ did: 'did:example:alice' });
+      const grantee = await TestDataGenerator.generatePersona({ did: 'did:example:delegate' });
+      const ownerPrivateKey = await X25519.generateKey();
+      const protocolDefinition = await createGrantKeyCoverageProtocolDefinition('https://proto.example.com');
+      const writeGrant = await TestDataGenerator.generateGrantCreate({
+        author      : grantor,
+        grantedTo   : grantee,
+        delegated   : true,
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        scope       : {
+          interface    : DwnInterfaceName.Records,
+          method       : DwnMethodName.Write,
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'chat',
+        },
+      });
+      const processDwnRequest = sinon.stub().callsFake(async (request: any): Promise<any> => ({
+        message: {
+          recordId   : `grant-key-${processDwnRequest.callCount}`,
+          descriptor : {
+            ...request.messageParams,
+            messageTimestamp: Time.getCurrentTimestamp(),
+          },
+        },
+        reply: { status: { code: 202, detail: 'Accepted' } },
+      }));
+      const mockAgent = await createGrantKeyProducerAgent(grantor.did, ownerPrivateKey, processDwnRequest);
+
+      const records = await createGrantKeyRecordsForGrants({
+        agent                 : mockAgent,
+        ownerDid              : grantor.did,
+        granteeDid            : grantee.did,
+        granteeRootPrivateKey : await X25519.generateKey(),
+        grantMessages         : [writeGrant.dataEncodedMessage],
+        protocolDefinitions   : [protocolDefinition],
+      });
+
+      expect(records).toHaveLength(2);
+      expect(records.map((record) => record.descriptor.tags?.protocolPath).sort()).toEqual(['chat/admin', 'chat/member']);
+      expect(processDwnRequest.callCount).toBe(2);
     });
   });
 
@@ -630,6 +716,7 @@ describe('dwn-encryption', () => {
       recordProtocolPath = 'message',
       includeEncodedData = true,
       grantRevoked = false,
+      protocolDefinition,
       mutatePayload,
       mutateRecordTags,
     }: {
@@ -639,6 +726,7 @@ describe('dwn-encryption', () => {
       recordProtocolPath?: string;
       includeEncodedData?: boolean;
       grantRevoked?: boolean;
+      protocolDefinition?: ProtocolDefinition;
       mutatePayload?: (payload: any) => void;
       mutateRecordTags?: (tags: Record<string, string>) => void;
     } = {}): Promise<{
@@ -742,6 +830,16 @@ describe('dwn-encryption', () => {
           },
         },
       });
+      nextCallIndex++;
+      if (protocolDefinition !== undefined) {
+        processDwnRequest.onCall(nextCallIndex).resolves({
+          reply: {
+            status  : { code: 200, detail: 'OK' },
+            entries : [{ descriptor: { definition: protocolDefinition } }],
+          },
+        });
+        nextCallIndex++;
+      }
       const mockAgent = {
         did: {
           resolve: sinon.stub().resolves({
@@ -1210,6 +1308,32 @@ describe('dwn-encryption', () => {
       })).toBe(true);
     });
 
+    it('should hydrate a read-grant role-path durable grantKey referenced by a covered read rule', async () => {
+      const protocolDefinition = await createGrantKeyCoverageProtocolDefinition('https://proto.example.com');
+      const { mockAgent, delegateCache, recordsWrite } = await makeGrantKeyResolverFixture({
+        grantScopeProtocolPath   : 'chat/message',
+        payloadScopeProtocolPath : 'chat/member',
+        protocolDefinition,
+        recordProtocolPath       : 'chat/member',
+      });
+
+      const result = await resolveKeyDecrypter(
+        mockAgent, 'did:example:delegate', recordsWrite, 'did:example:alice',
+        delegateCache,
+        'did:example:delegate',
+      );
+
+      expect(result.derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(delegateCache.set.calledOnce).toBe(true);
+      expect(mockAgent.processDwnRequest.callCount).toBe(3);
+      expect(mockAgent.processDwnRequest.thirdCall.args[0]).toMatchObject({
+        author        : 'did:example:delegate',
+        target        : 'did:example:alice',
+        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { protocol: 'https://proto.example.com' } },
+      });
+    });
+
     it('should read durable grantKey data when the query entry omits encodedData', async () => {
       const { mockAgent, delegateCache, grantKeyRecordId, recordsWrite } = await makeGrantKeyResolverFixture({
         includeEncodedData: false,
@@ -1412,3 +1536,66 @@ describe('dwn-encryption', () => {
     });
   });
 });
+
+async function createGrantKeyCoverageProtocolDefinition(protocol: string): Promise<ProtocolDefinition> {
+  const rolePublicKey = await X25519.getPublicKey({ key: await X25519.generateKey() });
+  return {
+    published : true,
+    protocol,
+    types     : {
+      admin   : { dataFormats: ['application/json'] },
+      chat    : { dataFormats: ['application/json'] },
+      member  : { dataFormats: ['application/json'] },
+      message : { dataFormats: ['application/json'], encryptionRequired: true },
+    },
+    structure: {
+      chat: {
+        admin: {
+          $keyAgreement : { publicKeyJwk: rolePublicKey },
+          $role         : true,
+        },
+        member: {
+          $keyAgreement : { publicKeyJwk: rolePublicKey },
+          $role         : true,
+        },
+        message: {
+          $actions      : [{ can: ['read'], role: 'chat/member' }],
+          $keyAgreement : { publicKeyJwk: rolePublicKey },
+        },
+      },
+    },
+  };
+}
+
+async function createGrantKeyProducerAgent(
+  ownerDid: string,
+  ownerPrivateKey: Awaited<ReturnType<typeof X25519.generateKey>>,
+  processDwnRequest: sinon.SinonStub,
+): Promise<any> {
+  const ownerPublicKey = await X25519.getPublicKey({ key: ownerPrivateKey });
+  const ownerPrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: ownerPrivateKey });
+  return {
+    did: {
+      resolve: sinon.stub().resolves({
+        didDocument: {
+          id                 : ownerDid,
+          keyAgreement       : ['#enc'],
+          verificationMethod : [{
+            controller   : ownerDid,
+            id           : `${ownerDid}#enc`,
+            publicKeyJwk : ownerPublicKey,
+            type         : 'JsonWebKey2020',
+          }],
+        },
+        didResolutionMetadata: {},
+      }),
+    },
+    keyManager: {
+      derivePrivateKeyBytes: sinon.stub().callsFake(async ({ derivationPath }: { derivationPath: string[] }): Promise<Uint8Array> => {
+        return HdKey.derivePrivateKeyBytes(ownerPrivateKeyBytes, derivationPath);
+      }),
+      getKeyUri: sinon.stub().resolves('owner-key-uri'),
+    },
+    processDwnRequest,
+  };
+}
