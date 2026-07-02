@@ -584,6 +584,7 @@ describe('dwn-encryption', () => {
           protocol  : 'https://proto.example.com',
         },
       });
+      // Role-path Write grant coverage belongs to the encryption-control workstream.
       const processDwnRequest = sinon.stub().rejects(new Error('ineligible grants should not write records'));
 
       const records = await createGrantKeyRecordsForGrants({
