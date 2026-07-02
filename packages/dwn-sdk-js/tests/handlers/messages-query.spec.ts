@@ -25,6 +25,15 @@ function getFeedReader(messageStore: MessageStore): ReplicationFeedReader | unde
   }
 }
 
+async function fingerprintFromCids(messageCids: string[]): Promise<string> {
+  let fingerprint = Replication.emptyFingerprint();
+  for (const messageCid of messageCids) {
+    fingerprint = Replication.xorFingerprint(fingerprint, await Replication.hashMessageCid(messageCid));
+  }
+
+  return Replication.fingerprintToHex(fingerprint);
+}
+
 export function testMessagesQueryHandler(): void {
   describe('MessagesQueryHandler.handle()', () => {
     let didResolver: DidResolver;
@@ -419,6 +428,27 @@ export function testMessagesQueryHandler(): void {
       expect(reply.status.code).toBe(200);
       expect(reply.entries?.map(entry => entry.messageCid)).toEqual([await Message.getCid(record.message)]);
       expect(reply.entries?.map(entry => entry.messageCid)).not.toContain(await Message.getCid(delivery.recordsWrite.message));
+
+      const { message: fullQuery } = await TestDataGenerator.generateMessagesQuery({
+        author             : carol,
+        filters            : [{ protocol: protocolDefinition.protocol }],
+        permissionGrantIds : [grant.message.recordId],
+        cidsOnly           : true,
+      });
+      const fullReply = await dwn.processMessage(alice.did, fullQuery);
+      const fullReplyCids = fullReply.entries!.map(entry => entry.messageCid);
+      const rawFingerprint = await feedReader.fingerprint(alice.did, [
+        Replication.protocolDomain(protocolDefinition.protocol),
+        Replication.permissionDomain(protocolDefinition.protocol),
+        Replication.encryptionDomain(protocolDefinition.protocol),
+      ]);
+
+      expect(fullReply.status.code).toBe(200);
+      expect(fullReply.drained).toBe(true);
+      expect(fullReplyCids).toContain(await Message.getCid(audience.recordsWrite.message));
+      expect(fullReplyCids).not.toContain(await Message.getCid(delivery.recordsWrite.message));
+      expect(fullReply.fingerprint).toBe(await fingerprintFromCids(fullReplyCids));
+      expect(fullReply.fingerprint).not.toBe(rawFingerprint);
     });
 
     it('rejects unfiltered delegated queries with a protocol-scoped grant', async () => {

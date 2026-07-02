@@ -11,10 +11,17 @@ import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
 import { EncryptionControl } from './encryption-control.js';
 import { EncryptionProtocol } from '../protocols/encryption.js';
 import { GrantAuthorization } from './grant-authorization.js';
+import { Jws } from '../utils/jws.js';
+import { Message } from './message.js';
 import { PermissionScopeMatcher } from '../utils/permission-scope.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { Records } from '../utils/records.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
+
+export type MessagesQueryOrSubscribeGrantSet = {
+  permissionGrants: PermissionGrant[];
+  requester: string;
+};
 
 export class MessagesGrantAuthorization {
 
@@ -52,15 +59,46 @@ export class MessagesGrantAuthorization {
       validationStateReader
     });
 
+    const controlRecordsWrite = await MessagesGrantAuthorization.getControlRecordsWrite(
+      expectedGrantor,
+      messageToRead,
+      validationStateReader
+    );
+    if (controlRecordsWrite !== undefined) {
+      if (!MessagesGrantAuthorization.someScopeMatches(
+        permissionGrants.map(permissionGrant => permissionGrant.scope as MessagesPermissionScope),
+        MessagesGrantAuthorization.getControlScopeTarget(controlRecordsWrite)
+      )) {
+        throw new DwnError(DwnErrorCode.MessagesReadVerifyScopeFailed, 'record message failed scope authorization');
+      }
+
+      try {
+        if (await EncryptionControl.canRead({
+          tenant                : expectedGrantor,
+          incomingMessage       : messagesReadMessage,
+          permissionGrants      : permissionGrants,
+          requester             : expectedGrantee,
+          recordsWriteMessage   : controlRecordsWrite,
+          validationStateReader : validationStateReader,
+        })) {
+          return;
+        }
+      } catch (error) {
+        if (!(error instanceof DwnError)) {
+          throw error;
+        }
+      }
+
+      throw new DwnError(DwnErrorCode.MessagesReadVerifyScopeFailed, 'record message failed scope authorization');
+    }
+
     for (const permissionGrant of permissionGrants) {
       const scope = permissionGrant.scope as MessagesPermissionScope;
       if (await MessagesGrantAuthorization.isScopeAuthorized({
-        tenant          : expectedGrantor,
-        incomingMessage : messagesReadMessage,
-        messageToGet    : messageToRead,
-        incomingScope   : scope,
-        requester       : expectedGrantee,
-        validationStateReader,
+        tenant                : expectedGrantor,
+        messageToGet          : messageToRead,
+        incomingScope         : scope,
+        validationStateReader : validationStateReader,
       })) {
         return;
       }
@@ -97,6 +135,36 @@ export class MessagesGrantAuthorization {
     MessagesGrantAuthorization.authorizeFilterScope(incomingMessage, scopes);
   }
 
+  public static async authorizeQueryOrSubscribeInvocation(input: {
+    tenant: string;
+    incomingMessage: MessagesQueryMessage | MessagesSubscribeMessage;
+    validationStateReader: ValidationStateReader;
+    failureCode: DwnErrorCode;
+  }): Promise<MessagesQueryOrSubscribeGrantSet | undefined> {
+    const {
+      tenant, incomingMessage, validationStateReader, failureCode
+    } = input;
+    const requester = EncryptionControl.getRequester(incomingMessage);
+    if (Message.getAuthor(incomingMessage) === tenant && requester === tenant) {
+      return undefined;
+    }
+
+    const permissionGrantIds = Message.getPermissionGrantIds(Jws.decodePlainObjectPayload(incomingMessage.authorization.signature));
+    if (requester !== undefined && permissionGrantIds.length > 0) {
+      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, validationStateReader, permissionGrantIds);
+      await MessagesGrantAuthorization.authorizeQueryOrSubscribe({
+        incomingMessage       : incomingMessage,
+        expectedGrantor       : tenant,
+        expectedGrantee       : requester,
+        permissionGrants      : permissionGrants,
+        validationStateReader : validationStateReader,
+      });
+      return { permissionGrants, requester };
+    }
+
+    throw new DwnError(failureCode, 'message failed authorization');
+  }
+
   private static authorizeFilterScope(
     messagesMessage: MessagesQueryMessage | MessagesSubscribeMessage,
     scopes: MessagesPermissionScope[]
@@ -124,6 +192,18 @@ export class MessagesGrantAuthorization {
 
   private static someScopeMatches(scopes: MessagesPermissionScope[], target: ProtocolScope): boolean {
     return scopes.some(scope => PermissionScopeMatcher.matches(scope, target));
+  }
+
+  private static getControlScopeTarget(recordsWriteMessage: RecordsWriteMessage): ProtocolScope {
+    const rolePath = recordsWriteMessage.descriptor.tags?.rolePath;
+    if (typeof rolePath === 'string') {
+      return {
+        protocol     : recordsWriteMessage.descriptor.protocol,
+        protocolPath : rolePath,
+      };
+    }
+
+    return { protocol: recordsWriteMessage.descriptor.protocol };
   }
 
   private static hasUnscopedGrant(scopes: MessagesPermissionScope[]): boolean {
@@ -202,23 +282,19 @@ export class MessagesGrantAuthorization {
   private static async isScopeAuthorized(
     input: {
       tenant: string;
-      incomingMessage: MessagesReadMessage;
       messageToGet: GenericMessage;
       incomingScope: MessagesPermissionScope;
-      requester: string;
       validationStateReader: ValidationStateReader;
     },
   ): Promise<boolean> {
     const {
-      tenant, incomingMessage, messageToGet, incomingScope, requester, validationStateReader
+      tenant, messageToGet, incomingScope, validationStateReader
     } = input;
     if (messageToGet.descriptor.interface === DwnInterfaceName.Records) {
       return MessagesGrantAuthorization.isRecordsMessageScopeAuthorized(
         tenant,
-        incomingMessage,
         messageToGet as RecordsWriteMessage | RecordsDeleteMessage,
         incomingScope,
-        requester,
         validationStateReader
       );
     }
@@ -239,10 +315,8 @@ export class MessagesGrantAuthorization {
 
   private static async isRecordsMessageScopeAuthorized(
     tenant: string,
-    incomingMessage: MessagesReadMessage,
     recordsMessage: RecordsWriteMessage | RecordsDeleteMessage,
     incomingScope: MessagesPermissionScope,
-    requester: string,
     validationStateReader: ValidationStateReader,
   ): Promise<boolean> {
     const recordsWriteMessage = await MessagesGrantAuthorization.getAssociatedRecordsWrite(
@@ -250,22 +324,6 @@ export class MessagesGrantAuthorization {
       recordsMessage,
       validationStateReader
     );
-
-    const isScopedToRecordProtocol = incomingScope.protocol === undefined ||
-      PermissionScopeMatcher.matches(incomingScope, { protocol: recordsWriteMessage.descriptor.protocol });
-    if (EncryptionControl.isControlMessage(recordsWriteMessage)) {
-      if (!isScopedToRecordProtocol) {
-        return false;
-      }
-
-      return EncryptionControl.canRead({
-        tenant,
-        incomingMessage,
-        requester,
-        recordsWriteMessage,
-        validationStateReader,
-      });
-    }
 
     if (incomingScope.protocol === undefined) {
       return true;
@@ -285,6 +343,23 @@ export class MessagesGrantAuthorization {
     }
 
     return PermissionScopeMatcher.matches(incomingScope, MessagesGrantAuthorization.getRecordsScopeTarget(recordsWriteMessage));
+  }
+
+  private static async getControlRecordsWrite(
+    tenant: string,
+    messageToGet: GenericMessage,
+    validationStateReader: ValidationStateReader,
+  ): Promise<RecordsWriteMessage | undefined> {
+    if (messageToGet.descriptor.interface !== DwnInterfaceName.Records) {
+      return undefined;
+    }
+
+    const recordsWriteMessage = await MessagesGrantAuthorization.getAssociatedRecordsWrite(
+      tenant,
+      messageToGet as RecordsWriteMessage | RecordsDeleteMessage,
+      validationStateReader
+    );
+    return EncryptionControl.isControlMessage(recordsWriteMessage) ? recordsWriteMessage : undefined;
   }
 
   private static async isPermissionRecordScopeAuthorized(

@@ -1,3 +1,4 @@
+import type { PermissionGrant } from '../protocols/permission-grant.js';
 import type { EventLogEntry, EventLogReadResult, ProgressGapInfo, ProgressToken, ReplicationFeedReader } from '../types/subscriptions.js';
 import type { Filter, KeyValues } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
@@ -16,9 +17,10 @@ import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 type MessagesQueryAuthorization =
   | { kind: 'owner' }
-  | { kind: 'nonOwner'; requester: string };
+  | { kind: 'nonOwner'; permissionGrants: PermissionGrant[]; requester: string };
 
 export class MessagesQueryHandler implements MethodHandler {
+  private static readonly ProjectedFingerprintPageLimit = 256;
 
   constructor(private readonly deps: HandlerDependencies) { }
 
@@ -69,7 +71,14 @@ export class MessagesQueryHandler implements MethodHandler {
 
       const fingerprintScopes = MessagesQueryHandler.computeFingerprintScopes(message.descriptor.filters);
       if (fingerprintScopes !== undefined) {
-        reply.fingerprint = await replicationFeedReader.fingerprint(tenant, fingerprintScopes);
+        reply.fingerprint = await this.computeVisibleFingerprint({
+          tenant,
+          messagesQuery,
+          authorization,
+          replicationFeedReader,
+          filters,
+          fingerprintScopes,
+        });
       }
 
       return reply;
@@ -90,29 +99,17 @@ export class MessagesQueryHandler implements MethodHandler {
     tenant: string,
     messagesQuery: MessagesQuery,
   ): Promise<MessagesQueryAuthorization> {
-    const requester = EncryptionControl.getRequester(messagesQuery.message);
-    if (messagesQuery.author === tenant && requester === tenant) {
+    const grantSet = await MessagesGrantAuthorization.authorizeQueryOrSubscribeInvocation({
+      tenant                : tenant,
+      incomingMessage       : messagesQuery.message,
+      validationStateReader : this.deps.validationStateReader,
+      failureCode           : DwnErrorCode.MessagesQueryAuthorizationFailed,
+    });
+    if (grantSet === undefined) {
       return { kind: 'owner' };
     }
 
-    const permissionGrantIds = Message.getPermissionGrantIds(messagesQuery.signaturePayload!);
-    if (requester !== undefined && permissionGrantIds.length > 0) {
-      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(
-        tenant,
-        this.deps.validationStateReader,
-        permissionGrantIds
-      );
-      await MessagesGrantAuthorization.authorizeQueryOrSubscribe({
-        incomingMessage       : messagesQuery.message,
-        expectedGrantor       : tenant,
-        expectedGrantee       : requester,
-        permissionGrants,
-        validationStateReader : this.deps.validationStateReader
-      });
-      return { kind: 'nonOwner', requester };
-    }
-
-    throw new DwnError(DwnErrorCode.MessagesQueryAuthorizationFailed, 'message failed authorization');
+    return { kind: 'nonOwner', ...grantSet };
   }
 
   private async logReadVisibleEvents(input: {
@@ -131,17 +128,17 @@ export class MessagesQueryHandler implements MethodHandler {
       return replicationFeedReader.logRead(tenant, { cursor, filters, limit });
     }
 
+    const visibilityCache = new Map<string, boolean>();
     if (limit === undefined || limit <= 0) {
       const result = await replicationFeedReader.logRead(tenant, { cursor, filters, limit });
       return {
         ...result,
-        events: await this.filterVisibleControlEvents(tenant, messagesQuery, authorization.requester, result.events),
+        events: await this.filterVisibleControlEvents(tenant, messagesQuery, authorization, result.events, visibilityCache),
       };
     }
 
     const visibleEvents: EventLogEntry[] = [];
     let nextCursor = cursor;
-    let resultCursor: ProgressToken | undefined;
     let drained = false;
     do {
       const result = await replicationFeedReader.logRead(tenant, {
@@ -149,9 +146,9 @@ export class MessagesQueryHandler implements MethodHandler {
         filters,
         limit  : limit - visibleEvents.length,
       });
-      const filteredEvents = await this.filterVisibleControlEvents(tenant, messagesQuery, authorization.requester, result.events);
+      // Keeps visible-page pagination stable until #1100 moves control visibility into indexed store filters.
+      const filteredEvents = await this.filterVisibleControlEvents(tenant, messagesQuery, authorization, result.events, visibilityCache);
       visibleEvents.push(...filteredEvents);
-      resultCursor = result.cursor;
       nextCursor = result.cursor;
       drained = result.drained;
       if (result.events.length === 0) {
@@ -159,41 +156,72 @@ export class MessagesQueryHandler implements MethodHandler {
       }
     } while (visibleEvents.length < limit && !drained && nextCursor !== undefined);
 
-    return { events: visibleEvents, cursor: resultCursor, drained };
+    return { events: visibleEvents, cursor: nextCursor, drained };
+  }
+
+  private async computeVisibleFingerprint(input: {
+    tenant: string;
+    messagesQuery: MessagesQuery;
+    authorization: MessagesQueryAuthorization;
+    replicationFeedReader: ReplicationFeedReader;
+    filters?: Filter[];
+    fingerprintScopes: string[];
+  }): Promise<string> {
+    const {
+      tenant, messagesQuery, authorization, replicationFeedReader, filters, fingerprintScopes
+    } = input;
+    if (authorization.kind === 'owner') {
+      return replicationFeedReader.fingerprint(tenant, fingerprintScopes);
+    }
+
+    let cursor: ProgressToken | undefined;
+    let drained = false;
+    let fingerprint = Replication.emptyFingerprint();
+    const visibilityCache = new Map<string, boolean>();
+
+    do {
+      const result = await replicationFeedReader.logRead(tenant, {
+        cursor,
+        filters,
+        limit: MessagesQueryHandler.ProjectedFingerprintPageLimit,
+      });
+      const visibleEvents = await this.filterVisibleControlEvents(tenant, messagesQuery, authorization, result.events, visibilityCache);
+      for (const event of visibleEvents) {
+        const messageCid = event.messageCid ?? await Message.getCid(event.event.message);
+        fingerprint = Replication.xorFingerprint(fingerprint, await Replication.hashMessageCid(messageCid));
+      }
+
+      cursor = result.cursor;
+      drained = result.drained;
+      if (result.events.length === 0) {
+        break;
+      }
+    } while (!drained && cursor !== undefined);
+
+    return Replication.fingerprintToHex(fingerprint);
   }
 
   private async filterVisibleControlEvents(
     tenant: string,
     messagesQuery: MessagesQuery,
-    requester: string,
+    authorization: Extract<MessagesQueryAuthorization, { kind: 'nonOwner' }>,
     events: EventLogEntry[],
+    visibilityCache?: Map<string, boolean>,
   ): Promise<EventLogEntry[]> {
-    const visibleEvents: EventLogEntry[] = [];
-    for (const event of events) {
-      const { message } = event.event;
-      if (!Records.isRecordsWrite(message) || !EncryptionControl.isControlMessage(message)) {
-        visibleEvents.push(event);
-        continue;
-      }
+    const recordsWriteMessages = events
+      .map(event => event.event.message)
+      .filter(Records.isRecordsWrite);
+    const visibleRecordsWrites = new Set(await EncryptionControl.filterVisibleControlRecords({
+      tenant,
+      incomingMessage       : messagesQuery.message,
+      permissionGrants      : authorization.permissionGrants,
+      requester             : authorization.requester,
+      recordsWriteMessages,
+      visibilityCache,
+      validationStateReader : this.deps.validationStateReader,
+    }));
 
-      try {
-        if (await EncryptionControl.canRead({
-          tenant,
-          incomingMessage       : messagesQuery.message,
-          requester,
-          recordsWriteMessage   : message,
-          validationStateReader : this.deps.validationStateReader,
-        })) {
-          visibleEvents.push(event);
-        }
-      } catch (error) {
-        if (!(error instanceof DwnError)) {
-          throw error;
-        }
-      }
-    }
-
-    return visibleEvents;
+    return events.filter(event => !Records.isRecordsWrite(event.event.message) || visibleRecordsWrites.has(event.event.message));
   }
 
   private static asReplicationFeedReader(candidate: unknown): ReplicationFeedReader | undefined {

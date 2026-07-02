@@ -103,30 +103,22 @@ export class MessagesSubscribeHandler implements MethodHandler {
     messagesSubscribe: MessagesSubscribe,
     deps: HandlerDependencies
   ): Promise<MessagesSubscribeAuthorization> {
-    const requester = EncryptionControl.getRequester(messagesSubscribe.message);
-    if (messagesSubscribe.author === tenant && requester === tenant) {
+    const grantSet = await MessagesGrantAuthorization.authorizeQueryOrSubscribeInvocation({
+      tenant                : tenant,
+      incomingMessage       : messagesSubscribe.message,
+      validationStateReader : deps.validationStateReader,
+      failureCode           : DwnErrorCode.MessagesSubscribeAuthorizationFailed,
+    });
+    if (grantSet === undefined) {
       return { kind: 'owner' };
     }
 
-    const permissionGrantIds = Message.getPermissionGrantIds(messagesSubscribe.signaturePayload!);
-    if (requester !== undefined && permissionGrantIds.length > 0) {
-      const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, deps.validationStateReader, permissionGrantIds);
-      await MessagesGrantAuthorization.authorizeQueryOrSubscribe({
-        incomingMessage       : messagesSubscribe.message,
-        expectedGrantor       : tenant,
-        expectedGrantee       : requester,
-        permissionGrants,
-        validationStateReader : deps.validationStateReader
-      });
-      return {
-        kind            : 'delegate',
-        expectedGrantor : tenant,
-        expectedGrantee : requester,
-        permissionGrants,
-      };
-    } else {
-      throw new DwnError(DwnErrorCode.MessagesSubscribeAuthorizationFailed, 'message failed authorization');
-    }
+    return {
+      kind             : 'delegate',
+      expectedGrantor  : tenant,
+      expectedGrantee  : grantSet.requester,
+      permissionGrants : grantSet.permissionGrants,
+    };
   }
 
   private static createAuthorizationGuard(input: {
@@ -194,13 +186,21 @@ export class MessagesSubscribeHandler implements MethodHandler {
         return;
       }
 
-      const visible = await MessagesSubscribeHandler.canDeliverEvent({
-        tenant,
-        authorization,
-        deps,
-        messagesSubscribe,
-        subMessage,
-      });
+      let visible: boolean;
+      try {
+        visible = await MessagesSubscribeHandler.canDeliverEvent({
+          tenant,
+          authorization,
+          deps,
+          messagesSubscribe,
+          subMessage,
+        });
+      } catch {
+        emitTerminalAuthorizationError(subMessage.cursor);
+        closeSubscription();
+        return;
+      }
+
       if (!visible) {
         return;
       }
@@ -257,20 +257,14 @@ export class MessagesSubscribeHandler implements MethodHandler {
       return true;
     }
 
-    try {
-      return await EncryptionControl.canRead({
-        tenant,
-        incomingMessage       : messagesSubscribe.message,
-        requester             : authorization.expectedGrantee,
-        recordsWriteMessage   : message,
-        validationStateReader : deps.validationStateReader,
-      });
-    } catch (error) {
-      if (!(error instanceof DwnError)) {
-        throw error;
-      }
-
-      return false;
-    }
+    const visibleRecordsWrites = await EncryptionControl.filterVisibleControlRecords({
+      tenant,
+      incomingMessage       : messagesSubscribe.message,
+      permissionGrants      : authorization.permissionGrants,
+      requester             : authorization.expectedGrantee,
+      recordsWriteMessages  : [message],
+      validationStateReader : deps.validationStateReader,
+    });
+    return visibleRecordsWrites.length === 1;
   }
 }

@@ -418,6 +418,16 @@ export function testMessagesReadHandler(): void {
         });
         expect((await dwn.processMessage(alice.did, carolGrant.message, { dataStream: carolGrant.dataStream })).status.code).toBe(202);
 
+        const audienceCid = await Message.getCid(audience.recordsWrite.message);
+        const carolAudienceRead = await TestDataGenerator.generateMessagesRead({
+          author             : carol,
+          messageCid         : audienceCid,
+          permissionGrantIds : [carolGrant.message.recordId],
+        });
+        const carolAudienceReply = await dwn.processMessage(alice.did, carolAudienceRead.message);
+        expect(carolAudienceReply.status.code).toBe(200);
+        expect(carolAudienceReply.entry?.messageCid).toBe(audienceCid);
+
         const bobRead = await TestDataGenerator.generateMessagesRead({
           author             : bob,
           messageCid         : deliveryCid,

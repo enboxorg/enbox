@@ -11,6 +11,7 @@ import sinon from 'sinon';
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encoder } from '../../src/utils/encoder.js';
+import { EncryptionControl } from '../../src/core/encryption-control.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
@@ -483,7 +484,9 @@ export function testMessagesSubscribeHandler(): void {
           expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
 
           const messageCids: string[] = [];
+          const received: SubscriptionMessage[] = [];
           const handler = async (msg: SubscriptionMessage): Promise<void> => {
+            received.push(msg);
             if (msg.type !== 'event') {
               return;
             }
@@ -523,6 +526,23 @@ export function testMessagesSubscribeHandler(): void {
             expect(messageCids).toContain(recordCid);
           });
           expect(messageCids).not.toContain(deliveryCid);
+
+          sinon.stub(EncryptionControl, 'filterVisibleControlRecords').rejects(new Error('visibility check failed'));
+          const failedDelivery = await createDeliveryControlWrite({
+            author             : alice,
+            keyId              : audience.keyId,
+            protocol           : protocolDefinition.protocol,
+            recipient          : bob.did,
+            recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+            rolePath           : 'member',
+            roleRuleSet,
+          });
+          await processControlWrite(dwn, alice.did, failedDelivery);
+
+          await Poller.pollUntilSuccessOrTimeout(async () => {
+            const errorMessage = received.find(msg => msg.type === 'error');
+            expect(errorMessage?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed);
+          });
         });
 
         it('rejects subscribe of messages with mismatching interface grant scope', async () => {
