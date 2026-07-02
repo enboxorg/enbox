@@ -19,8 +19,8 @@ import { Message } from '../core/message.js';
 import { Records } from '../utils/records.js';
 import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
-import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { grantKeyScopeCoversDeliveredScope, isGrantKeyEligibleRecordsScope, isGrantKeyRecordsScope } from '../utils/grant-key-coverage.js';
 import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
 
 type AudienceTags = {
@@ -422,14 +422,14 @@ export class EncryptionProtocol implements CoreProtocol {
   }): Promise<void> {
     const { grantScope, protocol, protocolPath } = params;
 
-    if (!EncryptionProtocol.isGrantKeyEligibleRecordsScope(grantScope)) {
+    if (!isGrantKeyRecordsScope(grantScope)) {
       throw new DwnError(
         DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
         'grantKey must reference a Records.Read or Records.Write permission grant.'
       );
     }
 
-    if (grantScope.contextId !== undefined) {
+    if (!isGrantKeyEligibleRecordsScope(grantScope)) {
       throw new DwnError(
         DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
         'grantKey must not reference a context-scoped permission grant.'
@@ -443,59 +443,16 @@ export class EncryptionProtocol implements CoreProtocol {
       );
     }
 
-    if (await EncryptionProtocol.grantScopeCoversDeliveredPath({ ...params, grantScope })) {
+    const deliveredScope = { protocol, protocolPath };
+    if (grantKeyScopeCoversDeliveredScope({ grantScope, deliveredScope })) {
       return;
     }
 
-    throw new DwnError(
-      DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
-      `grantKey protocolPath ${protocolPath ?? '<protocol>'} is outside the permission grant scope.`
-    );
-  }
-
-  private static async grantScopeCoversDeliveredPath(params: {
-    tenant: string;
-    message: RecordsWriteMessage;
-    grantScope: PermissionScope & {
-      interface: typeof DwnInterfaceName.Records;
-      method: typeof DwnMethodName.Read | typeof DwnMethodName.Write;
-      protocol: string;
-      protocolPath?: string;
-      contextId?: string;
-    };
-    protocol: string;
-    protocolPath: string | undefined;
-    validationStateReader: ValidationStateReader;
-  }): Promise<boolean> {
-    const { grantScope, protocolPath } = params;
-
-    if (grantScope.method === DwnMethodName.Read) {
-      if (grantScope.protocolPath === undefined) {
-        return true;
-      }
-
-      if (protocolPath !== undefined && EncryptionProtocol.isBoundaryAwareSubtree(grantScope.protocolPath, protocolPath)) {
-        return true;
-      }
-
-      if (protocolPath === undefined) {
-        return false;
-      }
-
-      const protocolDefinition = await params.validationStateReader.fetchProtocolDefinition(
-        params.tenant,
-        params.protocol,
-        params.message.descriptor.messageTimestamp,
-      );
-      return EncryptionProtocol.readScopeReferencesRolePath(protocolDefinition, grantScope.protocolPath, protocolPath);
-    }
-
     if (protocolPath === undefined) {
-      return false;
-    }
-
-    if (grantScope.protocolPath !== undefined && !EncryptionProtocol.isBoundaryAwareSubtree(grantScope.protocolPath, protocolPath)) {
-      return false;
+      throw new DwnError(
+        DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
+        `grantKey protocolPath ${protocolPath ?? '<protocol>'} is outside the permission grant scope.`
+      );
     }
 
     const protocolDefinition = await params.validationStateReader.fetchProtocolDefinition(
@@ -503,68 +460,14 @@ export class EncryptionProtocol implements CoreProtocol {
       params.protocol,
       params.message.descriptor.messageTimestamp,
     );
-    return EncryptionProtocol.isLocalRolePath(protocolDefinition, protocolPath);
-  }
-
-  private static isGrantKeyEligibleRecordsScope(scope: PermissionScope): scope is PermissionScope & {
-    interface: typeof DwnInterfaceName.Records;
-    method: typeof DwnMethodName.Read | typeof DwnMethodName.Write;
-    protocol: string;
-    protocolPath?: string;
-    contextId?: string;
-  } {
-    return scope.interface === DwnInterfaceName.Records &&
-      (scope.method === DwnMethodName.Read || scope.method === DwnMethodName.Write) &&
-      'protocol' in scope &&
-      typeof scope.protocol === 'string';
-  }
-
-  private static readScopeReferencesRolePath(
-    protocolDefinition: ProtocolDefinition,
-    scopeProtocolPath: string,
-    rolePath: string,
-  ): boolean {
-    const scopedRuleSet = getRuleSetAtPath(scopeProtocolPath, protocolDefinition.structure);
-    if (scopedRuleSet === undefined || !EncryptionProtocol.isLocalRolePath(protocolDefinition, rolePath)) {
-      return false;
+    if (grantKeyScopeCoversDeliveredScope({ grantScope, deliveredScope, protocolDefinition })) {
+      return;
     }
 
-    const referencedRoles = EncryptionProtocol.collectReadRolePaths(protocolDefinition, scopedRuleSet);
-    return referencedRoles.has(rolePath);
-  }
-
-  private static collectReadRolePaths(protocolDefinition: ProtocolDefinition, ruleSet: ProtocolRuleSet): Set<string> {
-    const rolePaths = new Set<string>();
-
-    for (const actionRule of ruleSet.$actions ?? []) {
-      if (!actionRule.can.includes(ProtocolAction.Read) || actionRule.role === undefined || parseCrossProtocolRef(actionRule.role) !== undefined) {
-        continue;
-      }
-
-      if (EncryptionProtocol.isLocalRolePath(protocolDefinition, actionRule.role)) {
-        rolePaths.add(actionRule.role);
-      }
-    }
-
-    for (const [key, value] of Object.entries(ruleSet)) {
-      if (key.startsWith('$')) {
-        continue;
-      }
-      for (const rolePath of EncryptionProtocol.collectReadRolePaths(protocolDefinition, value as ProtocolRuleSet)) {
-        rolePaths.add(rolePath);
-      }
-    }
-
-    return rolePaths;
-  }
-
-  private static isLocalRolePath(protocolDefinition: ProtocolDefinition, protocolPath: string): boolean {
-    const ruleSet = getRuleSetAtPath(protocolPath, protocolDefinition.structure);
-    return ruleSet?.$role === true && ruleSet.$keyAgreement !== undefined;
-  }
-
-  private static isBoundaryAwareSubtree(scopePath: string, candidatePath: string): boolean {
-    return candidatePath === scopePath || candidatePath.startsWith(scopePath + '/');
+    throw new DwnError(
+      DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
+      `grantKey protocolPath ${protocolPath ?? '<protocol>'} is outside the permission grant scope.`
+    );
   }
 
   private static async verifyRoleAudienceDefinition(
