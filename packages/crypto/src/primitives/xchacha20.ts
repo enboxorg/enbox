@@ -1,9 +1,9 @@
 import { Convert } from '@enbox/common';
-import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
-import { xchacha20 } from '@noble/ciphers/chacha';
+import { xchacha20 } from '@noble/ciphers/chacha.js';
 
 import type { Jwk } from '../jose/jwk.js';
 
+import { getWebcryptoSubtle } from './webcrypto.js';
 import { computeJwkThumbprint, isOctPrivateJwk } from '../jose/jwk.js';
 
 /**

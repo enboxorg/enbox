@@ -57,7 +57,7 @@ describe('Crypto Utils', () => {
     });
 
     it('handles invalid input gracefully', () => {
-      expect(() => CryptoUtils.randomBytes(-1)).toThrow('length'); // Length cannot be negative.
+      expect(() => CryptoUtils.randomBytes(-1)).toThrow('"bytesLength" expected integer >= 0'); // Length cannot be negative.
     });
 
     it('produces unique values on each call', () => {

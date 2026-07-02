@@ -1,5 +1,5 @@
 import { Convert } from '@enbox/common';
-import { ed25519, edwardsToMontgomeryPriv, edwardsToMontgomeryPub, x25519 } from '@noble/curves/ed25519';
+import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 
 import type { Jwk } from '../jose/jwk.js';
 import type { ComputePublicKeyParams, GetPublicKeyParams, SignParams, VerifyParams } from '../types/params-direct.js';
@@ -214,7 +214,7 @@ export class Ed25519 {
     const ed25519PrivateKeyBytes = await Ed25519.privateKeyToBytes({ privateKey });
 
     // Convert the Ed25519 private key to an X25519 private key.
-    const x25519PrivateKeyBytes = edwardsToMontgomeryPriv(ed25519PrivateKeyBytes);
+    const x25519PrivateKeyBytes = ed25519.utils.toMontgomerySecret(ed25519PrivateKeyBytes);
 
     // Derive the X25519 public key from the X25519 private key.
     const x25519PublicKeyBytes = x25519.getPublicKey(x25519PrivateKeyBytes);
@@ -268,7 +268,7 @@ export class Ed25519 {
     }
 
     // Convert the Ed25519 public key to an X25519 private key.
-    const x25519PublicKeyBytes = edwardsToMontgomeryPub(ed25519PublicKeyBytes);
+    const x25519PublicKeyBytes = ed25519.utils.toMontgomery(ed25519PublicKeyBytes);
 
     // Construct the X25519 private key in JWK format.
     const x25519PublicKey: Jwk = {
@@ -308,7 +308,7 @@ export class Ed25519 {
    */
   public static async generateKey(): Promise<Jwk> {
     // Generate a random private key.
-    const privateKeyBytes = ed25519.utils.randomPrivateKey();
+    const privateKeyBytes = ed25519.utils.randomSecretKey();
 
     // Convert private key from bytes to JWK format.
     const privateKey = await Ed25519.bytesToPrivateKey({ privateKeyBytes });
@@ -497,7 +497,7 @@ export class Ed25519 {
   }): Promise<boolean> {
     try {
     // Decode Edwards points from key bytes.
-      const point = ed25519.ExtendedPoint.fromHex(publicKeyBytes);
+      const point = ed25519.Point.fromBytes(publicKeyBytes);
 
       // Check if points are on the Twisted Edwards curve.
       point.assertValidity();

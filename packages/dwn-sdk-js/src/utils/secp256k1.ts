@@ -1,8 +1,8 @@
 import type { JwkParamsEcPrivate, JwkParamsEcPublic } from '@enbox/crypto';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 
-import { bytesToNumberBE } from '@noble/curves/abstract/utils';
-import { secp256k1 } from '@noble/curves/secp256k1';
+import { bytesToNumberBE } from '@noble/curves/utils.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 
 import { Encoder } from '../utils/encoder.js';
 import { sha256 } from 'multiformats/hashes/sha2';
@@ -31,8 +31,8 @@ export class Secp256k1 {
     let uncompressedPublicKeyBytes;
     if (publicKeyBytes.byteLength === 33) {
       // this means given key is compressed
-      const curvePoints = secp256k1.ProjectivePoint.fromHex(publicKeyBytes);
-      uncompressedPublicKeyBytes = curvePoints.toRawBytes(false); // isCompressed = false
+      const curvePoints = secp256k1.Point.fromBytes(publicKeyBytes);
+      uncompressedPublicKeyBytes = curvePoints.toBytes(false); // isCompressed = false
     } else {
       uncompressedPublicKeyBytes = publicKeyBytes;
     }
@@ -76,10 +76,10 @@ export class Secp256k1 {
     const x = Encoder.base64UrlToBytes(ecJwk.x);
     const y = Encoder.base64UrlToBytes(ecJwk.y!);
 
-    return secp256k1.ProjectivePoint.fromAffine({
+    return secp256k1.Point.fromAffine({
       x : bytesToNumberBE(x),
       y : bytesToNumberBE(y)
-    }).toRawBytes(true);
+    }).toBytes(true);
   }
 
   /**
@@ -101,7 +101,7 @@ export class Secp256k1 {
     const hashedContent = await sha256.encode(content);
     const privateKeyBytes = Secp256k1.privateJwkToBytes(privateJwk);
 
-    return secp256k1.sign(hashedContent, privateKeyBytes).toCompactRawBytes();
+    return secp256k1.sign(hashedContent, privateKeyBytes, { prehash: false });
   }
 
   /**
@@ -113,14 +113,14 @@ export class Secp256k1 {
 
     const publicKeyBytes = Secp256k1.publicJwkToBytes(publicJwk);
     const hashedContent = await sha256.encode(content);
-    return secp256k1.verify(signature, hashedContent, publicKeyBytes, { lowS: false });
+    return secp256k1.verify(signature, hashedContent, publicKeyBytes, { lowS: false, prehash: false });
   }
 
   /**
    * Generates a random key pair in JWK format.
    */
   public static async generateKeyPair(): Promise<{publicJwk: PublicKeyJwk, privateJwk: PrivateKeyJwk}> {
-    const privateKeyBytes = secp256k1.utils.randomPrivateKey();
+    const privateKeyBytes = secp256k1.utils.randomSecretKey();
     const publicKeyBytes = secp256k1.getPublicKey(privateKeyBytes, false); // `false` = uncompressed
 
     const d = Encoder.bytesToBase64Url(privateKeyBytes);
@@ -134,7 +134,7 @@ export class Secp256k1 {
    * Generates key pair in raw bytes, where the `publicKey` is compressed.
    */
   public static async generateKeyPairRaw(): Promise<{publicKey: Uint8Array, privateKey: Uint8Array}> {
-    const privateKey = secp256k1.utils.randomPrivateKey();
+    const privateKey = secp256k1.utils.randomSecretKey();
     const publicKey = secp256k1.getPublicKey(privateKey, true); // `true` = compressed
 
     return { publicKey, privateKey };

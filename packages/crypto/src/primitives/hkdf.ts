@@ -1,6 +1,6 @@
 import type { DeriveKeyBytesParams } from '../types/params-direct.js';
 
-import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
+import { getWebcryptoSubtle } from './webcrypto.js';
 
 import { Convert } from '@enbox/common';
 
@@ -97,7 +97,7 @@ export class Hkdf {
     DeriveKeyBytesParams & HkdfParams
   ): Promise<Uint8Array> {
     // Get the Web Crypto API interface.
-    const webCrypto = getWebcryptoSubtle() as SubtleCrypto;
+    const webCrypto = getWebcryptoSubtle() as unknown as SubtleCrypto;
 
     // Import the baseKeyBytes into the Web Crypto API to use for the key derivation operation.
     const webCryptoKey = await webCrypto.importKey('raw', baseKeyBytes as BufferSource, { name: 'HKDF' }, false, ['deriveBits']);

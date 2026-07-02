@@ -64,18 +64,11 @@ export class DataStoreSql implements DataStore {
 
     // Use ipfs-unixfs-exporter to stream data from DAG-PB blocks.
     const dataDagRoot = await exporter(dataCid, blockstore);
-    const contentIterator = dataDagRoot.content();
+    if (dataDagRoot.type !== 'file' && dataDagRoot.type !== 'raw' && dataDagRoot.type !== 'identity') {
+      throw new Error(`DataStoreSql: Expected UnixFS file content for '${dataCid}', got '${dataDagRoot.type}'.`);
+    }
 
-    const dataStream = new ReadableStream<Uint8Array>({
-      async pull(controller): Promise<void> {
-        const result = await contentIterator.next();
-        if (result.done) {
-          controller.close();
-        } else {
-          controller.enqueue(result.value);
-        }
-      },
-    });
+    const dataStream = DataStream.fromAsyncIterable(dataDagRoot.content());
 
     return {
       dataSize,

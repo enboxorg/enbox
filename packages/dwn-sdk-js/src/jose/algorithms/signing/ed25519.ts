@@ -1,7 +1,7 @@
 import type { JwkParamsOkpPrivate, JwkParamsOkpPublic } from '@enbox/crypto';
 import type { PrivateKeyJwk, PublicKeyJwk, SignatureAlgorithm } from '../../../types/jose-types.js';
 
-import { ed25519 as Ed25519 } from '@noble/curves/ed25519';
+import { ed25519 as Ed25519 } from '@noble/curves/ed25519.js';
 
 import { Encoder } from '../../../utils/encoder.js';
 import { DwnError, DwnErrorCode } from '../../../core/dwn-error.js';
@@ -43,7 +43,7 @@ export const ed25519: SignatureAlgorithm = {
   },
 
   generateKeyPair: async (): Promise<{publicJwk: PublicKeyJwk, privateJwk: PrivateKeyJwk}> => {
-    const privateKeyBytes = Ed25519.utils.randomPrivateKey();
+    const privateKeyBytes = Ed25519.utils.randomSecretKey();
     const publicKeyBytes = Ed25519.getPublicKey(privateKeyBytes);
 
     const d = Encoder.bytesToBase64Url(privateKeyBytes);

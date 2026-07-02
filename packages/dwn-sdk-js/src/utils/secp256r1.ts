@@ -1,8 +1,8 @@
 import type { JwkParamsEcPrivate, JwkParamsEcPublic } from '@enbox/crypto';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 
-import { bytesToNumberBE } from '@noble/curves/abstract/utils';
-import { p256, secp256r1 } from '@noble/curves/p256';
+import { bytesToNumberBE } from '@noble/curves/utils.js';
+import { p256 } from '@noble/curves/nist.js';
 
 import { Encoder } from './encoder.js';
 import { sha256 } from 'multiformats/hashes/sha2';
@@ -35,8 +35,8 @@ export class Secp256r1 {
     let uncompressedPublicKeyBytes;
     if (publicKeyBytes.byteLength === 33) {
       // this means given key is compressed
-      const curvePoints = p256.ProjectivePoint.fromHex(publicKeyBytes);
-      uncompressedPublicKeyBytes = curvePoints.toRawBytes(false); // isCompressed = false
+      const curvePoints = p256.Point.fromBytes(publicKeyBytes);
+      uncompressedPublicKeyBytes = curvePoints.toBytes(false); // isCompressed = false
     } else {
       uncompressedPublicKeyBytes = publicKeyBytes;
     }
@@ -85,9 +85,7 @@ export class Secp256r1 {
     const hashedContent = await sha256.encode(content);
     const privateKeyBytes = Secp256r1.privateJwkToBytes(privateJwk);
 
-    return Promise.resolve(
-      p256.sign(hashedContent, privateKeyBytes).toCompactRawBytes()
-    );
+    return Promise.resolve(p256.sign(hashedContent, privateKeyBytes, { prehash: false }));
   }
 
   /**
@@ -102,21 +100,15 @@ export class Secp256r1 {
   ): Promise<boolean> {
     Secp256r1.validateKey(publicJwk);
 
-    // handle DER vs compact signature formats
-    let sig;
-    if (signature.length === 64) {
-      sig = p256.Signature.fromCompact(signature);
-    } else {
-      sig = p256.Signature.fromDER(signature);
-    }
+    const signatureFormat = signature.length === 64 ? 'compact' : 'der';
     const hashedContent = await sha256.encode(content);
     const ecJwk = publicJwk as JwkParamsEcPublic;
-    const keyBytes = p256.ProjectivePoint.fromAffine({
+    const keyBytes = p256.Point.fromAffine({
       x : Secp256r1.bytesToBigInt(Encoder.base64UrlToBytes(ecJwk.x)),
       y : Secp256r1.bytesToBigInt(Encoder.base64UrlToBytes(ecJwk.y!)),
-    }).toRawBytes(false);
+    }).toBytes(false);
 
-    return p256.verify(sig, hashedContent, keyBytes);
+    return p256.verify(signature, hashedContent, keyBytes, { format: signatureFormat, lowS: false, prehash: false });
   }
 
   /**
@@ -126,8 +118,8 @@ export class Secp256r1 {
     publicJwk: PublicKeyJwk;
     privateJwk: PrivateKeyJwk;
   }> {
-    const privateKeyBytes = p256.utils.randomPrivateKey();
-    const publicKeyBytes = secp256r1.getPublicKey(privateKeyBytes, false); // `false` = uncompressed
+    const privateKeyBytes = p256.utils.randomSecretKey();
+    const publicKeyBytes = p256.getPublicKey(privateKeyBytes, false); // `false` = uncompressed
 
     const d = Encoder.bytesToBase64Url(privateKeyBytes);
     const publicJwk: PublicKeyJwk = await Secp256r1.publicKeyToJwk(publicKeyBytes);

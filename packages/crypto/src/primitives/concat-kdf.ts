@@ -1,7 +1,7 @@
-import type { TypedArray } from '@noble/hashes/utils';
+import type { TypedArray } from '@noble/hashes/utils.js';
 
-import { concatBytes } from '@noble/hashes/utils';
-import { sha256 } from '@noble/hashes/sha256';
+import { concatBytes } from '@noble/hashes/utils.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { Convert, universalTypeOf } from '@enbox/common';
 
 /**

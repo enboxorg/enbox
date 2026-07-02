@@ -131,6 +131,44 @@ describe('DataStream', () => {
     });
   });
 
+  describe('fromAsyncIterable()', () => {
+    it('should stream chunks from an async iterable', async () => {
+      async function* chunks(): AsyncGenerator<Uint8Array> {
+        yield new Uint8Array([1, 2]);
+        yield new Uint8Array([3, 4]);
+      }
+
+      const stream = DataStream.fromAsyncIterable(chunks());
+      const result = await DataStream.toBytes(stream);
+
+      expect(result).toEqual(new Uint8Array([1, 2, 3, 4]));
+    });
+
+    it('should cancel the underlying iterator when the stream is canceled', async () => {
+      let canceled = false;
+
+      async function* chunks(): AsyncGenerator<Uint8Array> {
+        try {
+          yield new Uint8Array([1]);
+          yield new Uint8Array([2]);
+        } finally {
+          canceled = true;
+        }
+      }
+
+      const stream = DataStream.fromAsyncIterable(chunks());
+      const reader = stream.getReader();
+      const result = await reader.read();
+
+      expect(result.value).toEqual(new Uint8Array([1]));
+
+      await reader.cancel();
+      reader.releaseLock();
+
+      expect(canceled).toBe(true);
+    });
+  });
+
   describe('duplicateDataStream()', () => {
     it('should return an empty array when count is 0', () => {
       const stream = DataStream.fromBytes(new Uint8Array([1, 2, 3]));

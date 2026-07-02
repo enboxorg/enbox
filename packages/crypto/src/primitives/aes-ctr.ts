@@ -1,8 +1,8 @@
 import { Convert } from '@enbox/common';
-import { getWebcryptoSubtle } from '@noble/ciphers/crypto';
 
 import type { Jwk } from '../jose/jwk.js';
 
+import { getWebcryptoSubtle } from './webcrypto.js';
 import { computeJwkThumbprint, isOctPrivateJwk } from '../jose/jwk.js';
 
 /**

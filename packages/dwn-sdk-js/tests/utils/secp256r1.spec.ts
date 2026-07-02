@@ -3,7 +3,7 @@ import type { PublicKeyJwk } from '../../src/types/jose-types.js';
 
 import { base64url } from 'multiformats/bases/base64';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import { p256 } from '@noble/curves/p256';
+import { p256 } from '@noble/curves/nist.js';
 import { Secp256r1 } from '../../src/utils/secp256r1.js';
 import { TestDataGenerator } from './test-data-generator.js';
 import { describe, expect, it } from 'bun:test';
@@ -54,8 +54,7 @@ describe('Secp256r1', () => {
       const signature = await Secp256r1.sign(content, privateJwk);
 
       // Convert the signature to DER format
-      const derSignature =
-        p256.Signature.fromCompact(signature).toDERRawBytes();
+      const derSignature = p256.Signature.fromBytes(signature, 'compact').toBytes('der');
 
       const result = await Secp256r1.verify(content, derSignature, publicJwk);
 

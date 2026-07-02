@@ -1,9 +1,8 @@
 import type { Jwk } from '../jose/jwk.js';
 import type { UnwrapKeyParams, WrapKeyParams } from '../types/params-direct.js';
 
-import { getWebcryptoSubtle } from '@noble/ciphers/webcrypto';
-
 import { Convert } from '@enbox/common';
+import { getWebcryptoSubtle } from './webcrypto.js';
 import { computeJwkThumbprint, isOctPrivateJwk } from '../jose/jwk.js';
 import { CryptoError, CryptoErrorCode } from '../crypto-error.js';
 
@@ -104,7 +103,7 @@ export class AesKw {
     }
 
     // Get the Web Crypto API interface.
-    const webCrypto = getWebcryptoSubtle() as SubtleCrypto;
+    const webCrypto = getWebcryptoSubtle() as unknown as SubtleCrypto;
 
     // Generate a random private key.
     // See https://developer.mozilla.org/en-US/docs/Web/API/Crypto/getRandomValues#usage_notes for
@@ -165,7 +164,7 @@ export class AesKw {
     }
 
     // Get the Web Crypto API interface.
-    const webCrypto = getWebcryptoSubtle() as SubtleCrypto;
+    const webCrypto = getWebcryptoSubtle() as unknown as SubtleCrypto;
 
     // Import the decryption key for use with the Web Crypto API.
     const decryptionCryptoKey = await webCrypto.importKey(
@@ -224,7 +223,7 @@ export class AesKw {
     }
 
     // Get the Web Crypto API interface.
-    const webCrypto = getWebcryptoSubtle() as SubtleCrypto;
+    const webCrypto = getWebcryptoSubtle() as unknown as SubtleCrypto;
 
     // Import the encryption key for use with the Web Crypto API.
     const encryptionCryptoKey = await webCrypto.importKey(

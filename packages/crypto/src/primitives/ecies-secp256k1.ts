@@ -1,9 +1,8 @@
-import { concatBytes } from '@noble/ciphers/utils';
-import { gcm } from '@noble/ciphers/aes';
-import { hkdf } from '@noble/hashes/hkdf';
-import { randomBytes } from '@noble/ciphers/webcrypto';
-import { secp256k1 } from '@noble/curves/secp256k1';
-import { sha256 } from '@noble/hashes/sha256';
+import { gcm } from '@noble/ciphers/aes.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { concatBytes, randomBytes } from '@noble/ciphers/utils.js';
 
 /**
  * AEAD tag length for AES-256-GCM (16 bytes / 128 bits).
@@ -60,7 +59,7 @@ export class EciesSecp256k1 {
    */
   public static encrypt(publicKeyBytes: Uint8Array, plaintext: Uint8Array): EciesSecp256k1EncryptionOutput {
     // Generate ephemeral key pair.
-    const ephemeralPrivateKey = secp256k1.utils.randomPrivateKey();
+    const ephemeralPrivateKey = secp256k1.utils.randomSecretKey();
     const ephemeralPubCompressed = secp256k1.getPublicKey(ephemeralPrivateKey, true);
     const ephemeralPubUncompressed = secp256k1.getPublicKey(ephemeralPrivateKey, false);
 
@@ -91,7 +90,7 @@ export class EciesSecp256k1 {
     const { privateKey, ephemeralPublicKey, initializationVector, messageAuthenticationCode, ciphertext } = input;
 
     // Decompress ephemeral public key (HKDF needs uncompressed form).
-    const ephemeralPubUncompressed = secp256k1.ProjectivePoint.fromHex(ephemeralPublicKey).toRawBytes(false);
+    const ephemeralPubUncompressed = secp256k1.Point.fromBytes(ephemeralPublicKey).toBytes(false);
 
     // ECDH: shared point (uncompressed).
     const sharedPointUncompressed = secp256k1.getSharedSecret(privateKey, ephemeralPublicKey, false);

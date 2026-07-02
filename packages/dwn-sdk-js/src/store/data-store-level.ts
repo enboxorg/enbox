@@ -118,18 +118,11 @@ export class DataStoreLevel implements DataStore {
 
     // Data is chunked into DAG-PB UnixFS blocks. Re-inflate the chunks.
     const dataDagRoot = await exporter(dataCid, blocksPartition);
-    const contentIterator = dataDagRoot.content();
+    if (dataDagRoot.type !== 'file' && dataDagRoot.type !== 'raw' && dataDagRoot.type !== 'identity') {
+      throw new Error(`DataStoreLevel: Expected UnixFS file content for '${dataCid}', got '${dataDagRoot.type}'.`);
+    }
 
-    const dataStream = new ReadableStream<Uint8Array>({
-      async pull(controller): Promise<void> {
-        const result = await contentIterator.next();
-        if (result.done) {
-          controller.close();
-        } else {
-          controller.enqueue(result.value);
-        }
-      }
-    });
+    const dataStream = DataStream.fromAsyncIterable(dataDagRoot.content());
 
     return { dataSize, dataStream };
   }

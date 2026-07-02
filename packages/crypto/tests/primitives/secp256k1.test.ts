@@ -150,7 +150,7 @@ describe('Secp256k1', () => {
         throw new Error('Expected method to throw an error.');
       } catch (error) {
         expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toContain('Point of length 65 was invalid');
+        expect((error as Error).message).toContain('bad point: got length 65');
       }
     });
   });
@@ -257,7 +257,7 @@ describe('Secp256k1', () => {
         throw new Error('Expected method to throw an error.');
       } catch (error) {
         expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toContain('Invalid signature: incorrect length');
+        expect((error as Error).message).toContain('tlv.decode: wrong value length');
       }
     });
 
@@ -272,7 +272,7 @@ describe('Secp256k1', () => {
         throw new Error('Expected method to throw an error.');
       } catch (error) {
         expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toContain('Invalid signature: left bytes after parsing');
+        expect((error as Error).message).toContain('invalid signature: left bytes after parsing');
       }
     });
   });
@@ -304,7 +304,7 @@ describe('Secp256k1', () => {
         throw new Error('Expected method to throw an error.');
       } catch (error) {
         expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toContain('Point of length 33 was invalid');
+        expect((error as Error).message).toContain('bad point: got length 33');
       }
     });
   });
@@ -344,7 +344,7 @@ describe('Secp256k1', () => {
       await expect(
         // @ts-expect-error because getCurvePoint() is a private method.
         Secp256k1.getCurvePoint({ keyBytes: new Uint8Array(16) })
-      ).rejects.toThrow('Point of length 16 was invalid. Expected 33 compressed bytes or 65 uncompressed bytes');
+      ).rejects.toThrow('bad point: got length 16, expected compressed=33 or uncompressed=65');
     });
   });
 

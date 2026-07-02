@@ -1,6 +1,12 @@
-import { CID } from 'multiformats';
-import type { AbortOptions, AwaitIterable } from 'interface-store';
-import type { Blockstore, Pair } from 'interface-blockstore';
+import type { CID } from 'multiformats';
+import type { Blockstore, InputPair, Pair } from 'interface-blockstore';
+import type { BlockstoreAbortOptions, BlockstoreInput, BlockstoreSource } from './blockstore-utils.js';
+
+import {
+  deleteManyBlockstoreItems,
+  getManyBlockstoreItems,
+  putManyBlockstoreItems,
+} from './blockstore-utils.js';
 
 /**
  * Mock implementation for the Blockstore interface.
@@ -16,60 +22,40 @@ export class BlockstoreMock implements Blockstore {
   async close(): Promise<void> {
   }
 
-  async put(key: CID, _val: Uint8Array, _options?: AbortOptions): Promise<CID> {
+  async put(key: CID, _val: BlockstoreInput, _options?: BlockstoreAbortOptions): Promise<CID> {
     return key;
   }
 
-  async get(_key: CID, _options?: AbortOptions): Promise<Uint8Array> {
-    return new Uint8Array();
+  async * get(_key: CID, _options?: BlockstoreAbortOptions): AsyncGenerator<Uint8Array> {
+    yield new Uint8Array();
   }
 
-  async has(_key: CID, _options?: AbortOptions): Promise<boolean> {
+  async has(_key: CID, _options?: BlockstoreAbortOptions): Promise<boolean> {
     return false;
   }
 
-  async delete(_key: CID, _options?: AbortOptions): Promise<void> {
+  async delete(_key: CID, _options?: BlockstoreAbortOptions): Promise<void> {
+    return;
   }
 
-  async isEmpty(_options?: AbortOptions): Promise<boolean> {
+  async isEmpty(_options?: BlockstoreAbortOptions): Promise<boolean> {
     return true;
   }
 
-  async * putMany(source: AwaitIterable<Pair>, options?: AbortOptions): AsyncIterable<CID> {
-    for await (const entry of source) {
-      await this.put(entry.cid, entry.block, options);
-
-      yield entry.cid;
-    }
+  async * putMany(source: BlockstoreSource<InputPair>, options?: BlockstoreAbortOptions): AsyncGenerator<CID> {
+    yield * putManyBlockstoreItems(this, source, options);
   }
 
-  async * getMany(source: AwaitIterable<CID>, options?: AbortOptions): AsyncIterable<Pair> {
-    for await (const key of source) {
-      yield {
-        cid   : key,
-        block : await this.get(key, options)
-      };
-    }
+  async * getMany(source: BlockstoreSource<CID>, options?: BlockstoreAbortOptions): AsyncGenerator<Pair> {
+    yield * getManyBlockstoreItems(this, source, options);
   }
 
-  async * getAll(options?: AbortOptions): AsyncIterable<Pair> {
-    // @ts-expect-error keyEncoding is 'buffer' but types for db.iterator always return the key type as 'string'
-    const li: AsyncGenerator<[Uint8Array, Uint8Array]> = this.db.iterator({
-      keys        : true,
-      keyEncoding : 'buffer'
-    }, options);
-
-    for await (const [key, value] of li) {
-      yield { cid: CID.decode(key), block: value };
-    }
+  async * getAll(_options?: BlockstoreAbortOptions): AsyncGenerator<Pair> {
+    yield * [];
   }
 
-  async * deleteMany(source: AwaitIterable<CID>, options?: AbortOptions): AsyncIterable<CID> {
-    for await (const key of source) {
-      await this.delete(key, options);
-
-      yield key;
-    }
+  async * deleteMany(source: BlockstoreSource<CID>, options?: BlockstoreAbortOptions): AsyncGenerator<CID> {
+    yield * deleteManyBlockstoreItems(this, source, options);
   }
 
   /**

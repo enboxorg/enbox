@@ -3,8 +3,9 @@ import type { Jwk } from './jose/jwk.js';
 import type { KeyWrapper } from './types/key-wrapper.js';
 import type { KeyExporter, KeyImporter } from './types/key-io.js';
 
-import { crypto } from '@noble/hashes/crypto';
-import { randomBytes as nobleRandomBytes } from '@noble/hashes/utils';
+import { randomBytes as nobleRandomBytes } from '@noble/hashes/utils.js';
+
+import { getWebcrypto } from './primitives/webcrypto.js';
 
 /**
  * A collection of cryptographic utility methods.
@@ -114,7 +115,7 @@ export class CryptoUtils {
    * @returns A string containing a randomly generated, 36 character long v4 UUID.
    */
   static randomUuid(): string {
-    const uuid = crypto.randomUUID();
+    const uuid = getWebcrypto().randomUUID();
 
     return uuid;
   }
