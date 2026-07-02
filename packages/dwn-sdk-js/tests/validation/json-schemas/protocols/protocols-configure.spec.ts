@@ -1,6 +1,7 @@
-import { ProtocolAction, type ProtocolDefinition, type ProtocolsConfigureMessage } from '../../../../src/types/protocols-types.js';
+import { ProtocolAction, type ProtocolDefinition, type ProtocolRuleSet, type ProtocolsConfigureMessage } from '../../../../src/types/protocols-types.js';
 
 import { Message } from '../../../../src/core/message.js';
+import { Protocols } from '../../../../src/utils/protocols.js';
 import { TestDataGenerator } from '../../../utils/test-data-generator.js';
 import { validateJsonSchema } from '../../../../src/schema-validator.js';
 import { describe, expect, it } from 'bun:test';
@@ -118,6 +119,58 @@ describe('ProtocolsConfigure schema definition', () => {
     expect(() => {
       validateJsonSchema('ProtocolDefinition', protocolDefinition);
     }).toThrow();
+  });
+
+  it('should allow encrypted protocol definitions after public key injection', async () => {
+    const alice = await TestDataGenerator.generatePersona();
+    const protocolDefinition: ProtocolDefinition = {
+      protocol  : 'encrypted-protocol',
+      published : true,
+      types     : {
+        message: {
+          dataFormats        : ['application/json'],
+          encryptionRequired : true,
+          schema             : 'message',
+        },
+        reply: {
+          dataFormats        : ['text/plain'],
+          encryptionRequired : true,
+          schema             : 'reply',
+        },
+      },
+      structure: {
+        message: {
+          $actions: [
+            {
+              can : [ProtocolAction.Create],
+              who : 'anyone',
+            }
+          ],
+          reply: {
+            $actions: [
+              {
+                can : [ProtocolAction.Create],
+                who : 'anyone',
+              }
+            ],
+          },
+        },
+      },
+    };
+
+    const hydratedDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+      protocolDefinition,
+      'root-key-id',
+      alice.encryptionKeyPair.privateJwk,
+    );
+
+    const messageRuleSet = hydratedDefinition.structure.message;
+    const replyRuleSet = messageRuleSet.reply as ProtocolRuleSet;
+
+    expect(hydratedDefinition.$keyAgreement?.publicKeyJwk).toBeDefined();
+    expect(messageRuleSet.$keyAgreement?.publicKeyJwk).toBeDefined();
+    expect(replyRuleSet.$keyAgreement?.publicKeyJwk).toBeDefined();
+    validateJsonSchema('ProtocolDefinition', hydratedDefinition);
   });
 
   it('should throw if unknown actor is encountered in action rule', async () => {
