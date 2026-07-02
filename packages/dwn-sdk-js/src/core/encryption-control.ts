@@ -800,21 +800,15 @@ export class EncryptionControl {
 
   private static grantCoversAudienceEnumeration(grant: PermissionGrant, tags: RoleAudienceKeyId): boolean {
     const scope = grant.scope as MessagesPermissionScope | RecordsPermissionScope;
-    if (scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read) {
-      return PermissionScopeMatcher.matches(scope, {
-        protocol     : tags.protocol,
-        protocolPath : tags.rolePath,
-      });
+    const interfaceIsEligible = scope.interface === DwnInterfaceName.Records || scope.interface === DwnInterfaceName.Messages;
+    if (!interfaceIsEligible || scope.method !== DwnMethodName.Read) {
+      return false;
     }
 
-    if (scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Read) {
-      return PermissionScopeMatcher.matches(scope, {
-        protocol     : tags.protocol,
-        protocolPath : tags.rolePath,
-      });
-    }
-
-    return false;
+    return PermissionScopeMatcher.matches(scope, {
+      protocol     : tags.protocol,
+      protocolPath : tags.rolePath,
+    });
   }
 
   private static async resolveRoleAudienceDefinition(input: {

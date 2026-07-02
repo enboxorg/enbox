@@ -20,7 +20,7 @@ type MessagesQueryAuthorization =
   | { kind: 'nonOwner'; permissionGrants: PermissionGrant[]; requester: string };
 
 export class MessagesQueryHandler implements MethodHandler {
-  private static readonly ProjectedFingerprintPageLimit = 256;
+  private static readonly projectedFingerprintPageLimit = 256;
 
   constructor(private readonly deps: HandlerDependencies) { }
 
@@ -183,7 +183,7 @@ export class MessagesQueryHandler implements MethodHandler {
       const result = await replicationFeedReader.logRead(tenant, {
         cursor,
         filters,
-        limit: MessagesQueryHandler.ProjectedFingerprintPageLimit,
+        limit: MessagesQueryHandler.projectedFingerprintPageLimit,
       });
       const visibleEvents = await this.filterVisibleControlEvents(tenant, messagesQuery, authorization, result.events, visibilityCache);
       for (const event of visibleEvents) {

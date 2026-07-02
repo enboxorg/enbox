@@ -541,7 +541,7 @@ export function testMessagesSubscribeHandler(): void {
 
           await Poller.pollUntilSuccessOrTimeout(async () => {
             const errorMessage = received.find(msg => msg.type === 'error');
-            expect(errorMessage?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed);
+            expect(errorMessage?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryFailed);
           });
         });
 
