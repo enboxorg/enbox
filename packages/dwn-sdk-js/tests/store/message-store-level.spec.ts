@@ -13,6 +13,7 @@ import { ProtocolsConfigureHandler } from '../../src/handlers/protocols-configur
 import { Replication } from '../../src/utils/replication.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
 
 const ZERO_FINGERPRINT = '0'.repeat(64);
 
@@ -92,10 +93,13 @@ describe('MessageStoreLevel Test Suite', () => {
 
   async function generateStoredMessage(overrides: {
     protocol?: string;
+    protocolPath?: string;
+    recipient?: string;
     tags?: Record<string, string>;
   } = {}): Promise<{ message: any, messageCid: string, indexes: KeyValues }> {
     const { message } = await TestDataGenerator.generateRecordsWrite({
-      ...(overrides.protocol !== undefined && { protocol: overrides.protocol, protocolPath: 'post' }),
+      ...(overrides.protocol !== undefined && { protocol: overrides.protocol, protocolPath: overrides.protocolPath ?? 'post' }),
+      ...(overrides.recipient !== undefined && { recipient: overrides.recipient }),
       ...(overrides.tags !== undefined && { tags: overrides.tags }),
     });
     const messageCid = await Message.getCid(message);
@@ -107,6 +111,9 @@ describe('MessageStoreLevel Test Suite', () => {
       protocol          : message.descriptor.protocol,
       protocolPath      : message.descriptor.protocolPath,
     };
+    if (message.descriptor.recipient !== undefined) {
+      indexes.recipient = message.descriptor.recipient;
+    }
 
     if (message.descriptor.tags !== undefined) {
       for (const [key, value] of Object.entries(message.descriptor.tags)) {
@@ -439,6 +446,74 @@ describe('MessageStoreLevel Test Suite', () => {
 
       expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)]))
         .toBe(xorHex(xorHex(configFingerprint, photoFingerprint), deleteFingerprint));
+    });
+
+    it('should fold encryption control records into capability domains only', async () => {
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const protocol = 'https://example.com/encrypted-chat';
+      const rolePath = 'chat/member';
+      const contextId = '';
+      const keyId = 'a'.repeat(43);
+      const roleAudienceHash = await Replication.roleAudienceHash({ contextId, protocol, rolePath });
+      const recipientHash = await Replication.recipientHash(bob.did);
+
+      const audience = await generateStoredMessage({
+        protocol,
+        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags         : { protocol, rolePath, contextId, keyId },
+      });
+      await messageStore.put(alice.did, audience.message, audience.indexes);
+      const audienceProjection = await Replication.projectIndexes(audience.message, audience.indexes);
+      const audienceFingerprint = await cidFingerprint(audience.messageCid);
+
+      const delivery = await generateStoredMessage({
+        protocol,
+        protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+        recipient    : bob.did,
+        tags         : {
+          protocol,
+          rolePath,
+          contextId,
+          keyId,
+          recipientAuthority: 'roleHolder',
+        },
+      });
+      await messageStore.put(alice.did, delivery.message, delivery.indexes);
+      const deliveryProjection = await Replication.projectIndexes(delivery.message, delivery.indexes);
+      const deliveryFingerprint = await cidFingerprint(delivery.messageCid);
+
+      expect(audienceProjection.indexes[Replication.controlClassIndex]).toBe('audience');
+      expect(audienceProjection.indexes[Replication.roleAudienceHashIndex]).toBe(roleAudienceHash);
+      expect(audienceProjection.indexes[Replication.replicationDomainIndex]).toEqual([
+        Replication.audienceControlDomain(protocol),
+        Replication.audienceControlRoleDomain(protocol, roleAudienceHash),
+      ]);
+      expect(deliveryProjection.indexes[Replication.controlClassIndex]).toBe('delivery');
+      expect(deliveryProjection.indexes[Replication.roleAudienceHashIndex]).toBe(roleAudienceHash);
+      expect(deliveryProjection.indexes[Replication.recipientHashIndex]).toBe(recipientHash);
+
+      expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(ZERO_FINGERPRINT);
+      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(protocol)])).toBe(ZERO_FINGERPRINT);
+      expect(await messageStore.fingerprint(alice.did, [Replication.audienceControlDomain(protocol)])).toBe(audienceFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.audienceControlRoleDomain(protocol, roleAudienceHash)]))
+        .toBe(audienceFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.deliveryControlDomain(protocol, roleAudienceHash)]))
+        .toBe(deliveryFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.deliveryControlRecipientDomain(protocol, roleAudienceHash, recipientHash)]))
+        .toBe(deliveryFingerprint);
+
+      const audienceDomainQuery = await messageStore.query(alice.did, [{
+        [Replication.replicationDomainIndex]: Replication.audienceControlDomain(protocol),
+      }]);
+      expect(audienceDomainQuery.messages.map((message) => (message.descriptor as { protocolPath?: string }).protocolPath))
+        .toEqual([ENCRYPTION_CONTROL_AUDIENCE_PATH]);
+
+      const recipientDomainQuery = await messageStore.query(alice.did, [{
+        [Replication.replicationDomainIndex]: Replication.deliveryControlRecipientDomain(protocol, roleAudienceHash, recipientHash),
+      }]);
+      expect(recipientDomainQuery.messages.map((message) => (message.descriptor as { protocolPath?: string }).protocolPath))
+        .toEqual([ENCRYPTION_CONTROL_DELIVERY_PATH]);
     });
 
     it('should converge fingerprints across stores that learn the same messages in different orders', async () => {

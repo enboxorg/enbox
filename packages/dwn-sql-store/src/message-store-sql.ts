@@ -179,8 +179,8 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
         }
 
         const seq = await this.#dialect.incrementReplicationCounter(tx, tenant);
-        const fingerprintScopes = Replication.computeFingerprintScopes(message, indexes);
-        const { indexes: putIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
+        const projection = await Replication.projectIndexes(message, indexes);
+        const { indexes: putIndexes, tags } = extractTagsAndSanitizeIndexes(projection.indexes);
 
         const messageIndexValues: InsertObject<DwnDatabaseType, 'messageStoreMessages'> = {
           tenant,
@@ -188,7 +188,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
           encodedMessageBytes,
           encodedData,
           seq               : seq.toString(),
-          fingerprintScopes : JSON.stringify(fingerprintScopes),
+          fingerprintScopes : JSON.stringify(projection.fingerprintScopes),
           ...putIndexes,
         };
 
@@ -200,7 +200,7 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
           await this.#tags.executeTagsInsert(result.insertId, tags, tx);
         }
 
-        await this.foldFingerprints(tx, tenant, messageCid, fingerprintScopes);
+        await this.foldFingerprints(tx, tenant, messageCid, projection.fingerprintScopes);
         return seq;
       });
 
@@ -534,7 +534,6 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
   }): Promise<void> {
     const { tenant, messageCid, indexes, encodedMessageBytes, encodedData, messageForScopeCheck, notFoundErrorCode } = input;
     const db = this.requireDb('replaceRowIndexes');
-    const { indexes: replacementIndexes, tags } = extractTagsAndSanitizeIndexes(indexes);
 
     await executeWithTransaction(db, async (tx) => {
       await this.#dialect.lockReplicationCounter(tx, tenant);
@@ -551,12 +550,13 @@ export class MessageStoreSql implements MessageStore, ReplicationFeedReader {
       }
 
       const message = messageForScopeCheck ?? await this.parseEncodedMessage(existingRow.encodedMessageBytes, existingRow.encodedData);
-      Replication.assertFingerprintScopesUntouched(
+      const projection = await Replication.projectIndexes(message, indexes);
+      Replication.assertFingerprintScopesMatch(
         MessageStoreSql.parseFingerprintScopes(existingRow.fingerprintScopes, messageCid),
-        message,
-        messageCid,
-        indexes
+        projection.fingerprintScopes,
+        messageCid
       );
+      const { indexes: replacementIndexes, tags } = extractTagsAndSanitizeIndexes(projection.indexes);
 
       const replacementColumns = {
         ...NULLED_INDEX_COLUMNS,

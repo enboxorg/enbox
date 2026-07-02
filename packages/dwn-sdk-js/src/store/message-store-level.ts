@@ -407,13 +407,13 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
 
       const head = await this.getHead(partitions, tenant);
       const seq = head + 1n;
-      const fingerprintScopes = Replication.computeFingerprintScopes(message, indexes);
+      const projection = await Replication.projectIndexes(message, indexes);
 
       const logEntry: LogEntryValue = {
-        seq: seq.toString(),
+        seq               : seq.toString(),
         messageCid,
-        indexes,
-        fingerprintScopes,
+        indexes           : projection.indexes,
+        fingerprintScopes : projection.fingerprintScopes,
       };
 
       const tenantBlocks = await partitions.blocks.partition(tenant);
@@ -422,11 +422,11 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       const tenantLog = await partitions.log.partition(tenant);
       const operations: LevelWrapperBatchOperation<string>[] = [
         blockOperation as unknown as LevelWrapperBatchOperation<string>,
-        ...await index.createPutOperations(tenant, messageCid, indexes),
+        ...await index.createPutOperations(tenant, messageCid, projection.indexes),
         tenantLog.createOperation({ type: 'put', key: Replication.encodePositionKey(seq), value: JSON.stringify(logEntry) }),
         tenantCidToSeq.createOperation({ type: 'put', key: messageCid, value: seq.toString() }),
         partitions.heads.createOperation({ type: 'put', key: tenant, value: seq.toString() }),
-        ...await this.createFingerprintFoldOperations(partitions, tenant, messageCid, fingerprintScopes),
+        ...await this.createFingerprintFoldOperations(partitions, tenant, messageCid, projection.fingerprintScopes),
       ];
 
       await partitions.root.batch(operations);
@@ -460,15 +460,16 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
       const storedMessage = await this.readStoredMessage(
         partitions, tenant, messageCid, DwnErrorCode.MessageStoreUpdateIndexesMessageNotFound, options
       );
-      Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, storedMessage, messageCid, indexes);
+      const projection = await Replication.projectIndexes(storedMessage, indexes);
+      Replication.assertFingerprintScopesMatch(entry.fingerprintScopes, projection.fingerprintScopes, messageCid);
 
       // Same row, same seq: indexes replaced; fingerprint scopes carried forward verbatim;
       // fingerprints and head stay untouched.
-      const updatedEntry: LogEntryValue = { ...entry, indexes };
+      const updatedEntry: LogEntryValue = { ...entry, indexes: projection.indexes };
 
       const operations: LevelWrapperBatchOperation<string>[] = [
         ...await index.createDeleteOperations(tenant, messageCid),
-        ...await index.createPutOperations(tenant, messageCid, indexes),
+        ...await index.createPutOperations(tenant, messageCid, projection.indexes),
         tenantLog.createOperation({ type: 'put', key: positionKey, value: JSON.stringify(updatedEntry) }),
       ];
 
@@ -503,16 +504,17 @@ export class MessageStoreLevel implements MessageStore, ReplicationFeedReader {
         partitions, tenant, normalizedMessageCid, DwnErrorCode.MessageStoreUpdateMessageAndIndexesMessageNotFound
       );
 
-      Replication.assertFingerprintScopesUntouched(entry.fingerprintScopes, message, normalizedMessageCid, indexes);
+      const projection = await Replication.projectIndexes(message, indexes);
+      Replication.assertFingerprintScopesMatch(entry.fingerprintScopes, projection.fingerprintScopes, normalizedMessageCid);
 
-      const updatedEntry: LogEntryValue = { ...entry, indexes };
+      const updatedEntry: LogEntryValue = { ...entry, indexes: projection.indexes };
 
       const tenantBlocks = await partitions.blocks.partition(tenant);
       const blockOperation = tenantBlocks.createOperation({ type: 'put', key: normalizedMessageCid, value: encodedMessageBlock.bytes });
       const operations: LevelWrapperBatchOperation<string>[] = [
         blockOperation as unknown as LevelWrapperBatchOperation<string>,
         ...await index.createDeleteOperations(tenant, normalizedMessageCid),
-        ...await index.createPutOperations(tenant, normalizedMessageCid, indexes),
+        ...await index.createPutOperations(tenant, normalizedMessageCid, projection.indexes),
         tenantLog.createOperation({ type: 'put', key: positionKey, value: JSON.stringify(updatedEntry) }),
       ];
 
