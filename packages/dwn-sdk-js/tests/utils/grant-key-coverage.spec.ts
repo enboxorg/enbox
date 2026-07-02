@@ -1,6 +1,6 @@
-import type { GrantKeyEligibleRecordsScope } from '../../src/utils/grant-key-coverage.js';
 import type { PermissionScope } from '../../src/types/permission-types.js';
 import type { PublicKeyJwk } from '../../src/types/jose-types.js';
+import type { GrantKeyEligibleRecordsScope, GrantKeyProtocolPathScope } from '../../src/utils/grant-key-coverage.js';
 import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
 
 import { describe, expect, it } from 'bun:test';
@@ -139,8 +139,13 @@ describe('GrantKeyCoverage', () => {
       ]);
     });
 
-    it('should return no write-grant delivery scopes without a protocol definition', () => {
-      expect(getGrantKeyDeliveryScopes(recordsWriteScope())).toEqual([]);
+    it('should reject write-grant delivery scope generation without a protocol definition', () => {
+      const getDeliveryScopes = getGrantKeyDeliveryScopes as (
+        grantScope: GrantKeyEligibleRecordsScope,
+        protocolDefinition?: ProtocolDefinition,
+      ) => GrantKeyProtocolPathScope[];
+
+      expect(() => getDeliveryScopes(recordsWriteScope())).toThrow('write grants require a protocol definition');
     });
   });
 

@@ -39,7 +39,7 @@ export type { DataStore, DataStorePutResult, DataStoreGetResult } from './types/
 export type { ResumableTaskStore, ManagedResumableTask } from './types/resumable-task-store.js';
 export { DataStream } from './utils/data-stream.js';
 export { getGrantKeyDeliveryScopes, grantKeyScopeCoversDeliveredScope, isGrantKeyEligibleRecordsScope, isGrantKeyRecordsScope } from './utils/grant-key-coverage.js';
-export type { GrantKeyEligibleRecordsScope, GrantKeyProtocolPathScope, GrantKeyRecordsScope } from './utils/grant-key-coverage.js';
+export type { GrantKeyEligibleRecordsScope, GrantKeyProtocolPathScope, GrantKeyReadRecordsScope, GrantKeyRecordsScope, GrantKeyWriteRecordsScope } from './utils/grant-key-coverage.js';
 export { HdKey, KeyDerivationScheme } from './utils/hd-key.js';
 export type { DerivedPrivateJwk } from './utils/hd-key.js';
 export { Dwn } from './dwn.js';

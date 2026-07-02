@@ -6,15 +6,26 @@ import { ProtocolAction } from '../types/protocols-types.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { getRuleSetAtPath, parseCrossProtocolRef } from './protocols.js';
 
-export type GrantKeyRecordsScope = RecordsPermissionScope & {
+type GrantKeyRecordsScopeBase = RecordsPermissionScope & {
   interface: typeof DwnInterfaceName.Records;
-  method: typeof DwnMethodName.Read | typeof DwnMethodName.Write;
   protocol: string;
 };
 
-export type GrantKeyEligibleRecordsScope = GrantKeyRecordsScope & {
-  contextId?: undefined;
+export type GrantKeyRecordsScope = GrantKeyRecordsScopeBase & {
+  method: typeof DwnMethodName.Read | typeof DwnMethodName.Write;
 };
+
+export type GrantKeyReadRecordsScope = GrantKeyRecordsScopeBase & {
+  contextId?: undefined;
+  method: typeof DwnMethodName.Read;
+};
+
+export type GrantKeyWriteRecordsScope = GrantKeyRecordsScopeBase & {
+  contextId?: undefined;
+  method: typeof DwnMethodName.Write;
+};
+
+export type GrantKeyEligibleRecordsScope = GrantKeyReadRecordsScope | GrantKeyWriteRecordsScope;
 
 export type GrantKeyProtocolPathScope = {
   scheme: typeof KeyDerivationScheme.ProtocolPath;
@@ -65,6 +76,16 @@ export function isGrantKeyEligibleRecordsScope(scope: PermissionScope): scope is
 }
 
 export function getGrantKeyDeliveryScopes(
+  grantScope: GrantKeyReadRecordsScope,
+  protocolDefinition?: ProtocolDefinition,
+): GrantKeyProtocolPathScope[];
+
+export function getGrantKeyDeliveryScopes(
+  grantScope: GrantKeyWriteRecordsScope,
+  protocolDefinition: ProtocolDefinition,
+): GrantKeyProtocolPathScope[];
+
+export function getGrantKeyDeliveryScopes(
   grantScope: GrantKeyEligibleRecordsScope,
   protocolDefinition?: ProtocolDefinition,
 ): GrantKeyProtocolPathScope[] {
@@ -112,7 +133,7 @@ function getWriteGrantKeyDeliveryScopes(
   protocolDefinition?: ProtocolDefinition,
 ): GrantKeyProtocolPathScope[] {
   if (protocolDefinition === undefined) {
-    return [];
+    throw new Error('getGrantKeyDeliveryScopes: write grants require a protocol definition.');
   }
 
   return getGrantKeyRolePathsCoveredByScope(protocolDefinition, grantScope.protocolPath)

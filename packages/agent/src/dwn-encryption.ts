@@ -1378,10 +1378,18 @@ async function buildGrantKeyPayloads(
   },
   protocolDefinitions: Map<string, ProtocolDefinition>,
 ): Promise<GrantKeyPayload[]> {
-  const protocolDefinition = grant.scope.method === DwnMethodName.Read && grant.scope.protocolPath === undefined
-    ? undefined
-    : await getGrantKeyProtocolDefinition(agent, ownerDid, ownerDid, grant.scope.protocol, protocolDefinitions);
-  const scopes = getGrantKeyDeliveryScopes(grant.scope, protocolDefinition);
+  const grantScope = grant.scope;
+  let scopes: GrantKeyProtocolPathScope[];
+  if (grantScope.method === DwnMethodName.Read) {
+    const protocolDefinition = grantScope.protocolPath === undefined
+      ? undefined
+      : await getGrantKeyProtocolDefinition(agent, ownerDid, ownerDid, grantScope.protocol, protocolDefinitions);
+    scopes = getGrantKeyDeliveryScopes(grantScope, protocolDefinition);
+  } else {
+    const protocolDefinition = await getGrantKeyProtocolDefinition(agent, ownerDid, ownerDid, grantScope.protocol, protocolDefinitions);
+    scopes = getGrantKeyDeliveryScopes(grantScope, protocolDefinition);
+  }
+
   if (scopes.length === 0) {
     return [];
   }
