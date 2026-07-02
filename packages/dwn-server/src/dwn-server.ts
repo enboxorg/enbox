@@ -23,7 +23,6 @@ import { loadProviderAuthPlugin } from './registration/provider-auth-plugin.js';
 import log from 'loglevel';
 import { OpenAuthHandler } from './registration/open-auth-handler.js';
 import { PluginLoader } from './plugin-loader.js';
-import prefix from 'loglevel-plugin-prefix';
 import { RateLimiter } from './rate-limiter.js';
 import { RegistrationManager } from './registration/registration-manager.js';
 import { WebhookManager } from './admin/webhook-manager.js';
@@ -119,9 +118,6 @@ export class DwnServer {
     this.#externalOpenAuthHandler = options.openAuthHandler;
 
     log.setLevel(this.config.logLevel as log.LogLevelDesc);
-
-    prefix.reg(log);
-    prefix.apply(log);
   }
 
   /**

@@ -31,8 +31,6 @@ export default defineConfig({
     alias: {
       'bun:test' : resolve(__dirname, '../../testing/bun-test-shim.ts'),
       // Polyfill Node events module for transitive dependencies that may use it.
-      // EventEmitterStream now uses mitt directly, but packages in the
-      // dependency tree may still reference Node's events module.
       'events'   : 'eventemitter3',
     },
   },
@@ -72,7 +70,6 @@ export default defineConfig({
 
       // --- Dual-format packages (CJS default, ESM via exports) ---
       // Pre-bundling these avoids edge cases where Vite picks the CJS entry.
-      'mitt',
       '@js-temporal/polyfill',
       '@noble/ciphers/aes.js',
       '@noble/ciphers/chacha.js',
@@ -82,7 +79,6 @@ export default defineConfig({
       '@noble/curves/nist.js',
       '@noble/curves/secp256k1.js',
       '@noble/curves/utils.js',
-      'lru-cache',
 
       // --- Vitest coverage provider (loaded in-browser by the test runner) ---
       '@vitest/coverage-istanbul',

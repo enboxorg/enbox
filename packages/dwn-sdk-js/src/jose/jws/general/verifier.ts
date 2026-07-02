@@ -64,7 +64,7 @@ export class GeneralJwsVerifier {
       }
 
       const cacheKey = `${signatureEntry.protected}.${jws.payload}.${signatureEntry.signature}`;
-      const cachedValue = await this.cache.get(cacheKey);
+      const cachedValue = await this.cache.get<boolean>(cacheKey);
 
       // explicit `undefined` check to differentiate `false`
       if (cachedValue === undefined) {

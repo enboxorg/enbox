@@ -76,8 +76,6 @@
     "ipfs-unixfs-exporter": "16.0.2",
     "ipfs-unixfs-importer": "17.0.1",
     "level": "8.0.1",
-    "lru-cache": "11.5.1",
-    "mitt": "3.0.1",
     "multiformats": "14.0.3"
   },
   "devDependencies": {

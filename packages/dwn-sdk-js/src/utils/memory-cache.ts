@@ -1,31 +1,62 @@
 import type { Cache } from '../types/cache.js';
-import { LRUCache } from 'lru-cache';
+
+type CacheEntry = {
+  expiresAt: number;
+  value: unknown;
+};
 
 /**
  * A cache using local memory.
  */
 export class MemoryCache implements Cache {
-  private readonly cache: LRUCache<string, any>;
+  private static readonly maxEntries = 100_000;
+
+  private readonly cache = new Map<string, CacheEntry>();
 
   /**
    * @param timeToLiveInSeconds time-to-live for every key-value pair set in the cache
    */
-  public constructor (private readonly timeToLiveInSeconds: number) {
-    this.cache = new LRUCache({
-      max : 100_000,
-      ttl : timeToLiveInSeconds * 1000
-    });
+  public constructor(private readonly timeToLiveInSeconds: number) {
   }
 
-  async set(key: string, value: any): Promise<void> {
+  public async set<T = unknown>(key: string, value: T): Promise<void> {
     try {
-      this.cache.set(key, value);
+      const entry = {
+        expiresAt : Date.now() + this.timeToLiveInSeconds * 1000,
+        value     : value,
+      };
+
+      this.cache.delete(key);
+      this.cache.set(key, entry);
+      this.evictOldestEntries();
     } catch {
       // let the code continue as this is a non-fatal error
     }
   }
 
-  async get(key: string): Promise<any | undefined> {
-    return this.cache.get(key);
+  public async get<T = unknown>(key: string): Promise<T | undefined> {
+    const entry = this.cache.get(key);
+    if (entry === undefined) {
+      return undefined;
+    }
+
+    if (Date.now() >= entry.expiresAt) {
+      this.cache.delete(key);
+      return undefined;
+    }
+
+    this.cache.delete(key);
+    this.cache.set(key, entry);
+    return entry.value as T;
+  }
+
+  private evictOldestEntries(): void {
+    while (this.cache.size > MemoryCache.maxEntries) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey === undefined) {
+        return;
+      }
+      this.cache.delete(oldestKey);
+    }
   }
 }

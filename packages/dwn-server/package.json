@@ -43,7 +43,6 @@
     "jose": "6.1.3",
     "kysely": "0.28.14",
     "loglevel": "1.8.1",
-    "loglevel-plugin-prefix": "0.8.4",
     "prom-client": "14.2.0"
   },
   "optionalDependencies": {
