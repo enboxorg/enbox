@@ -5,6 +5,7 @@ import type {
   DataStore,
   MessageStore,
   ProtocolDefinition,
+  ProtocolRuleSet,
   RecordsDeleteMessage,
   RecordsWriteMessage,
   ResumableTaskStore,
@@ -23,6 +24,7 @@ import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from '../../src/core/constants.js';
 import { Message } from '../../src/core/message.js';
 import { normalizeSchemaUrl } from '../../src/utils/url.js';
 import { Poller } from '../utils/poller.js';
@@ -32,9 +34,10 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
-import { DataStream, Dwn, Encoder, Jws, MessageStoreLevel, PermissionsProtocol, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
+import { DataStream, Dwn, Encoder, Jws, MessageStoreLevel, PermissionsProtocol, Protocols, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
+import { Encryption, KeyAgreementAlgorithm } from '../../src/utils/encryption.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
 
@@ -212,6 +215,78 @@ export function testRecordsDeleteHandler(): void {
 
         const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
         expect(deleteReply.status.code).toBe(404);
+      });
+
+      it('should reject deleting encryption control records', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-delete-rejected.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+          protocolDefinition, alice.keyId, alice.encryptionKeyPair.privateJwk
+        );
+        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          author             : alice,
+          protocolDefinition : encryptedProtocolDefinition,
+        });
+        expect((await dwn.processMessage(alice.did, protocolConfig.message)).status.code).toBe(202);
+
+        const roleRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+        const audienceKeyId = await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk);
+        const sealKeyId = await Encryption.getKeyId(roleRuleSet.$keyAgreement!.publicKeyJwk);
+        const audienceData = Encoder.objectToBytes({
+          protocol         : protocolDefinition.protocol,
+          rolePath         : 'member',
+          contextId        : '',
+          keyId            : audienceKeyId,
+          publicKeyJwk     : alice.encryptionKeyPair.publicJwk,
+          sealedPrivateKey : {
+            algorithm          : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+            derivationScheme   : 'seal',
+            keyId              : sealKeyId,
+            ephemeralPublicKey : alice.encryptionKeyPair.publicJwk,
+            encryptedKey       : Encoder.bytesToBase64Url(TestDataGenerator.randomBytes(32)),
+          },
+        });
+        const audience = await RecordsWrite.create({
+          data         : audienceData,
+          dataFormat   : 'application/json',
+          protocol     : protocolDefinition.protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          schema       : 'https://identity.foundation/dwn/json-schemas/encryption/audience.json',
+          signer       : Jws.createSigner(alice),
+          tags         : {
+            protocol  : protocolDefinition.protocol,
+            rolePath  : 'member',
+            contextId : '',
+            keyId     : audienceKeyId,
+          },
+        });
+        const writeReply = await dwn.processMessage(alice.did, audience.message, { dataStream: DataStream.fromBytes(audienceData) });
+        expect(writeReply.status.code).toBe(202);
+
+        const recordsDelete = await RecordsDelete.create({
+          recordId : audience.message.recordId,
+          signer   : Jws.createSigner(alice),
+        });
+        const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
+        expect(deleteReply.status.code).toBe(400);
+        expect(deleteReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateUnexpectedRecord);
+
+        const queryData = await TestDataGenerator.generateRecordsQuery({
+          author : alice,
+          filter : { recordId: audience.message.recordId },
+        });
+        const queryReply = await dwn.processMessage(alice.did, queryData.message);
+        expect(queryReply.status.code).toBe(200);
+        expect(queryReply.entries?.length).toBe(1);
       });
 
       it('should apply a tombstone over a newer RecordsWrite (delete-wins)', async () => {

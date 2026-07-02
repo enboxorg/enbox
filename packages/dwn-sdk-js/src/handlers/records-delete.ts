@@ -6,6 +6,7 @@ import type { HandlerDependencies, MethodHandler } from '../types/method-handler
 
 import { authenticate } from '../core/auth.js';
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
+import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -13,6 +14,7 @@ import { Records } from '../utils/records.js';
 import { RecordsDelete } from '../interfaces/records-delete.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { ResumableTaskName } from '../core/resumable-task-manager.js';
+import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export class RecordsDeleteHandler implements MethodHandler {
 
@@ -71,6 +73,12 @@ export class RecordsDeleteHandler implements MethodHandler {
       // but if the latest record state is a RecordsDelete (ie. when we are pruning a non-prune delete),
       // we'd need to use the initial write because RecordsDelete does not contain the immutable properties needed for processing.
       const initialWrite = await this.deps.validationStateReader.fetchInitialRecordsWrite(tenant, message.descriptor.recordId);
+      if (EncryptionControl.isControlMessage(initialWrite!.message)) {
+        throw new DwnError(
+          DwnErrorCode.EncryptionControlValidateUnexpectedRecord,
+          'encryption control records cannot be deleted.'
+        );
+      }
 
       await this.authorizeRecordsDelete(
         tenant,
@@ -79,6 +87,13 @@ export class RecordsDeleteHandler implements MethodHandler {
       );
 
     } catch (e) {
+      if (e instanceof DwnError) {
+        const statusCode = EncryptionControl.mapErrorToStatusCode(e.code);
+        if (statusCode !== undefined) {
+          return messageReplyFromError(e, statusCode);
+        }
+      }
+
       return messageReplyFromError(e, 401);
     }
 
