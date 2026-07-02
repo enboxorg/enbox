@@ -573,6 +573,17 @@ describe('dwn-encryption', () => {
           contextId : 'context-a',
         },
       });
+      const messagesReadGrant = await TestDataGenerator.generateGrantCreate({
+        author      : grantor,
+        grantedTo   : grantee,
+        delegated   : true,
+        dateExpires : '2040-06-25T16:09:16.693356Z',
+        scope       : {
+          interface : DwnInterfaceName.Messages,
+          method    : DwnMethodName.Read,
+          protocol  : 'https://proto.example.com',
+        },
+      });
       const processDwnRequest = sinon.stub().rejects(new Error('ineligible grants should not write records'));
 
       const records = await createGrantKeyRecordsForGrants({
@@ -580,7 +591,7 @@ describe('dwn-encryption', () => {
         ownerDid              : grantor.did,
         granteeDid            : grantee.did,
         granteeRootPrivateKey : await X25519.generateKey(),
-        grantMessages         : [writeGrant.dataEncodedMessage, contextReadGrant.dataEncodedMessage],
+        grantMessages         : [writeGrant.dataEncodedMessage, contextReadGrant.dataEncodedMessage, messagesReadGrant.dataEncodedMessage],
       });
 
       expect(records).toHaveLength(0);
