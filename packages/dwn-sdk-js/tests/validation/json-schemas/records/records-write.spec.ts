@@ -1,6 +1,7 @@
 import { Message } from '../../../../src/core/message.js';
 import { TestDataGenerator } from '../../../utils/test-data-generator.js';
 import { describe, expect, it } from 'bun:test';
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, ENCRYPTION_CONTROL_ROOT_PATH } from '../../../../src/core/constants.js';
 
 describe('RecordsWrite schema definition', () => {
   it('should allow descriptor with only required properties', async () => {
@@ -158,7 +159,55 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).toThrow('protocolPath: must match pattern "^[a-zA-Z]+(/[a-zA-Z]+)*$');
+    }).toThrow('protocolPath: must match pattern');
+  });
+
+  it('should allow exact reserved encryption control protocol paths', () => {
+    for (const protocolPath of [ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH]) {
+      const message = {
+        recordId   : 'anyRecordId',
+        contextId  : 'someContext',
+        descriptor : {
+          interface        : 'Records',
+          method           : 'Write',
+          protocol         : 'http://foo.bar',
+          protocolPath,
+          schema           : 'http://foo.bar/schema',
+          dataCid          : 'anyCid',
+          dataFormat       : 'application/json',
+          dataSize         : 123,
+          dateCreated      : '2022-12-19T10:20:30.123456Z',
+          messageTimestamp : '2022-12-19T10:20:30.123456Z'
+        },
+        authorization: TestDataGenerator.generateAuthorization()
+      };
+
+      Message.validateJsonSchema(message);
+    }
+  });
+
+  it('should reject root-only and lookalike encryption control protocol paths', () => {
+    for (const protocolPath of [ENCRYPTION_CONTROL_ROOT_PATH, '$encryptionx/audience', '$encryption/audience/child']) {
+      const message = {
+        recordId   : 'anyRecordId',
+        contextId  : 'someContext',
+        descriptor : {
+          interface        : 'Records',
+          method           : 'Write',
+          protocol         : 'http://foo.bar',
+          protocolPath,
+          schema           : 'http://foo.bar/schema',
+          dataCid          : 'anyCid',
+          dataFormat       : 'application/json',
+          dataSize         : 123,
+          dateCreated      : '2022-12-19T10:20:30.123456Z',
+          messageTimestamp : '2022-12-19T10:20:30.123456Z'
+        },
+        authorization: TestDataGenerator.generateAuthorization()
+      };
+
+      expect(() => Message.validateJsonSchema(message)).toThrow('protocolPath: must match pattern');
+    }
   });
 
   it('should throw if `contextId` is malformed', () => {
