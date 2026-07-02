@@ -94,11 +94,21 @@ describe('BlockstoreLevel', () => {
     expect(await collectBytes(results[1].bytes)).toEqual(block2.bytes);
   });
 
-  // NOTE: getAll() is not tested because it assumes keys are binary-encoded CIDs
-  // (via keyEncoding: 'buffer' + CID.decode), but put() stores keys as String(cid).
-  // This mismatch means getAll() would fail with "Invalid CID version" when decoding
-  // the string bytes. This appears to be a pre-existing bug in the codebase — getAll()
-  // is never called by any production code.
+  it('should getAll blocks', async () => {
+    const block1 = await Block.encode({ value: new TextEncoder().encode('all1'), codec: Raw, hasher: sha256 });
+    const block2 = await Block.encode({ value: new TextEncoder().encode('all2'), codec: Raw, hasher: sha256 });
+    await blockstore.put(block1.cid, block1.bytes);
+    await blockstore.put(block2.cid, block2.bytes);
+
+    const entries = new Map<string, Uint8Array>();
+    for await (const pair of blockstore.getAll()) {
+      entries.set(pair.cid.toString(), await collectBytes(pair.bytes));
+    }
+
+    expect(entries.size).toBe(2);
+    expect(entries.get(block1.cid.toString())).toEqual(block1.bytes);
+    expect(entries.get(block2.cid.toString())).toEqual(block2.bytes);
+  });
 
   it('should deleteMany blocks', async () => {
     const block1 = await Block.encode({ value: new TextEncoder().encode('del1'), codec: Raw, hasher: sha256 });
