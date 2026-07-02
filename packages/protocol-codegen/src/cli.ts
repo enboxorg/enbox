@@ -12,11 +12,10 @@
  * @module
  */
 
-import { existsSync } from 'node:fs';
 import { generateTypes } from './codegen.js';
 import { parseArgs } from 'node:util';
-import { resolve } from 'node:path';
-import { readFile, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -44,7 +43,13 @@ Options:
   -h, --help        Show help
 `;
 
-type GenerateArgs = {
+export type CliIo = {
+  cwd: string;
+  stderr: { write(chunk: string): boolean };
+  stdout: { write(chunk: string): boolean };
+};
+
+export type GenerateArgs = {
   definition : string;
   name : string;
   output? : string;
@@ -53,21 +58,33 @@ type GenerateArgs = {
 
 type ParsedOptionValues = Record<string, string | boolean | (string | boolean)[] | undefined>;
 
-function printError(message: string): never {
-  process.stderr.write(`Error: ${message}\n`);
-  process.exit(1);
+export class CliUsageError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'CliUsageError';
+  }
+}
+
+const defaultIo: CliIo = {
+  cwd    : process.cwd(),
+  stderr : process.stderr,
+  stdout : process.stdout,
+};
+
+function fail(message: string): never {
+  throw new CliUsageError(message);
 }
 
 function readRequiredOption(values: ParsedOptionValues, key: string): string {
   const value = values[key];
   if (typeof value !== 'string' || value.length === 0) {
-    printError(`Missing required argument: ${key}`);
+    fail(`Missing required argument: ${key}`);
   }
 
   return value;
 }
 
-function parseGenerateArgs(args: string[]): GenerateArgs | undefined {
+export function parseGenerateArgs(args: string[], io: CliIo = defaultIo): GenerateArgs | undefined {
   let parsed: ReturnType<typeof parseArgs>;
   try {
     parsed = parseArgs({
@@ -84,11 +101,11 @@ function parseGenerateArgs(args: string[]): GenerateArgs | undefined {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unable to parse arguments.';
-    printError(message);
+    fail(message);
   }
 
   if (parsed.values.help === true) {
-    process.stdout.write(generateUsage);
+    io.stdout.write(generateUsage);
     return undefined;
   }
 
@@ -100,17 +117,100 @@ function parseGenerateArgs(args: string[]): GenerateArgs | undefined {
   };
 }
 
-async function runGenerate(args: GenerateArgs): Promise<void> {
-  const definitionPath = resolve(args.definition);
-  const schemasDir = resolve(args.schemas);
-
-  if (!existsSync(definitionPath)) {
-    printError(`definition file not found: ${definitionPath}`);
+function assertPathWithinCwd(path: string, cwd: string, label: string): void {
+  const relativePath = relative(cwd, path);
+  if (relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))) {
+    return;
   }
 
-  if (!existsSync(schemasDir)) {
-    printError(`schemas directory not found: ${schemasDir}`);
+  fail(`${label} path must be within the current working directory: ${path}`);
+}
+
+async function resolveCwd(cwd: string): Promise<string> {
+  const cwdPath = await realpath(cwd);
+  const cwdStats = await stat(cwdPath);
+  if (!cwdStats.isDirectory()) {
+    fail(`current working directory not found: ${cwdPath}`);
   }
+
+  return cwdPath;
+}
+
+async function resolveExistingFilePath(inputPath: string, cwd: string, label: string): Promise<string> {
+  const candidatePath = resolve(cwd, inputPath);
+  assertPathWithinCwd(candidatePath, cwd, label);
+
+  try {
+    const filePath = await realpath(candidatePath);
+    assertPathWithinCwd(filePath, cwd, label);
+
+    const fileStats = await stat(filePath);
+    if (!fileStats.isFile()) {
+      fail(`${label} file not found: ${filePath}`);
+    }
+
+    return filePath;
+  } catch (error: unknown) {
+    if (error instanceof CliUsageError) {
+      throw error;
+    }
+
+    fail(`${label} file not found: ${candidatePath}`);
+  }
+}
+
+async function resolveExistingDirectoryPath(inputPath: string, cwd: string, label: string): Promise<string> {
+  const candidatePath = resolve(cwd, inputPath);
+  assertPathWithinCwd(candidatePath, cwd, label);
+
+  try {
+    const directoryPath = await realpath(candidatePath);
+    assertPathWithinCwd(directoryPath, cwd, label);
+
+    const directoryStats = await stat(directoryPath);
+    if (!directoryStats.isDirectory()) {
+      fail(`${label} directory not found: ${directoryPath}`);
+    }
+
+    return directoryPath;
+  } catch (error: unknown) {
+    if (error instanceof CliUsageError) {
+      throw error;
+    }
+
+    fail(`${label} directory not found: ${candidatePath}`);
+  }
+}
+
+async function resolveOutputFilePath(inputPath: string, cwd: string): Promise<string> {
+  const candidatePath = resolve(cwd, inputPath);
+  assertPathWithinCwd(candidatePath, cwd, 'output');
+
+  try {
+    const parentPath = await realpath(dirname(candidatePath));
+    assertPathWithinCwd(parentPath, cwd, 'output');
+
+    const parentStats = await stat(parentPath);
+    if (!parentStats.isDirectory()) {
+      fail(`output directory not found: ${parentPath}`);
+    }
+
+    const outputPath = resolve(parentPath, basename(candidatePath));
+    assertPathWithinCwd(outputPath, cwd, 'output');
+    return outputPath;
+  } catch (error: unknown) {
+    if (error instanceof CliUsageError) {
+      throw error;
+    }
+
+    fail(`output directory not found: ${dirname(candidatePath)}`);
+  }
+}
+
+export async function runGenerate(args: GenerateArgs, io: CliIo = defaultIo): Promise<void> {
+  const cwd = await resolveCwd(io.cwd);
+  const definitionPath = await resolveExistingFilePath(args.definition, cwd, 'definition');
+  const schemasDir = await resolveExistingDirectoryPath(args.schemas, cwd, 'schemas');
 
   // Read the protocol definition JSON.
   const definitionJson = await readFile(definitionPath, 'utf-8');
@@ -124,44 +224,55 @@ async function runGenerate(args: GenerateArgs): Promise<void> {
   // Report resolution results to stderr.
   for (const [typeName, resolution] of resolutions) {
     const icon = resolution.source === 'unresolved' ? '?' : '+';
-    process.stderr.write(`  ${icon} ${typeName}: ${resolution.source}\n`);
+    io.stderr.write(`  ${icon} ${typeName}: ${resolution.source}\n`);
   }
 
   // Write or print.
   if (args.output === undefined) {
-    process.stdout.write(code);
+    io.stdout.write(code);
   } else {
-    const outputPath = resolve(args.output);
+    const outputPath = await resolveOutputFilePath(args.output, cwd);
     await writeFile(outputPath, code, 'utf-8');
-    process.stderr.write(`\nWrote ${outputPath}\n`);
+    io.stderr.write(`\nWrote ${outputPath}\n`);
   }
 }
 
-async function main(argv: string[]): Promise<void> {
+export async function main(argv: string[], io: CliIo = defaultIo): Promise<void> {
   const [command, ...args] = argv;
 
   if (command === '--help' || command === '-h') {
-    process.stdout.write(usage);
+    io.stdout.write(usage);
     return;
   }
 
   if (command === '--version' || command === '-v') {
-    process.stdout.write(`${VERSION}\n`);
+    io.stdout.write(`${VERSION}\n`);
     return;
   }
 
   if (command === undefined) {
-    printError('You must specify a command.');
+    fail('You must specify a command.');
   }
 
   if (command !== 'generate') {
-    printError(`Unknown command: ${command}`);
+    fail(`Unknown command: ${command}`);
   }
 
-  const generateArgs = parseGenerateArgs(args);
+  const generateArgs = parseGenerateArgs(args, io);
   if (generateArgs !== undefined) {
-    await runGenerate(generateArgs);
+    await runGenerate(generateArgs, io);
   }
 }
 
-await main(process.argv.slice(2));
+if (import.meta.main) {
+  try {
+    await main(process.argv.slice(2));
+  } catch (error: unknown) {
+    if (error instanceof CliUsageError) {
+      process.stderr.write(`Error: ${error.message}\n`);
+      process.exit(1);
+    }
+
+    throw error;
+  }
+}

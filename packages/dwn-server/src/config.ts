@@ -15,7 +15,7 @@ const byteSizeUnits: Record<string, number> = {
 export function parseByteSize(value: string): number {
   const match = /^(\d+(?:\.\d+)?)(b|kb|mb|gb)?$/i.exec(value.trim());
   if (match === null) {
-    throw new Error(`Invalid byte size '${value}'. Use a byte count or b/kb/mb/gb suffix.`);
+    throw new TypeError(`Invalid byte size '${value}'. Use a byte count or b/kb/mb/gb suffix.`);
   }
 
   const amount = Number.parseFloat(match[1]);
@@ -23,7 +23,7 @@ export function parseByteSize(value: string): number {
   const byteSize = Math.floor(amount * byteSizeUnits[unit]);
 
   if (!Number.isSafeInteger(byteSize)) {
-    throw new Error(`Invalid byte size '${value}'. Parsed value is outside the safe integer range.`);
+    throw new TypeError(`Invalid byte size '${value}'. Parsed value is outside the safe integer range.`);
   }
 
   return byteSize;
