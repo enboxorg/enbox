@@ -509,7 +509,7 @@ describe('EncryptionProtocol', () => {
       await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }));
     });
 
-    it('should accept grantKey records covered by a Messages read grant', async () => {
+    it('should reject grantKey records covered only by a Messages read grant', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const bob = await TestDataGenerator.generatePersona();
       const protocol = 'https://example.com/protocol';
@@ -529,7 +529,9 @@ describe('EncryptionProtocol', () => {
 
       const encryptionProtocol = new EncryptionProtocol();
 
-      await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }));
+      await expect(
+        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch);
     });
 
     it('should reject protocol-scoped grantKey records for protocolPath-scoped read grants', async () => {

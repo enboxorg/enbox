@@ -40,6 +40,9 @@ export class EncryptionProtocol implements CoreProtocol {
   public static readonly audienceEpochPath = 'audienceEpoch';
   public static readonly audienceKeyPath = 'audienceKey';
   public static readonly grantKeyPath = 'grantKey';
+  private static readonly grantKeyScopeMethodsByInterface: Record<string, DwnMethodName | undefined> = {
+    [DwnInterfaceName.Records]: DwnMethodName.Read,
+  };
 
   public static readonly definition: ProtocolDefinition = {
     published : true,
@@ -409,7 +412,7 @@ export class EncryptionProtocol implements CoreProtocol {
     if (!EncryptionProtocol.isReadScope(grantScope)) {
       throw new DwnError(
         DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
-        'grantKey must reference a read permission grant.'
+        'grantKey must reference a Records.Read permission grant.'
       );
     }
 
@@ -433,8 +436,7 @@ export class EncryptionProtocol implements CoreProtocol {
   }
 
   private static isReadScope(scope: PermissionScope): boolean {
-    return (scope.interface === DwnInterfaceName.Records || scope.interface === DwnInterfaceName.Messages) &&
-      scope.method === DwnMethodName.Read;
+    return Object.is(EncryptionProtocol.grantKeyScopeMethodsByInterface[scope.interface], scope.method);
   }
 
   private static isBoundaryAwareSubtree(scopePath: string, candidatePath: string): boolean {
