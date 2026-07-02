@@ -77,6 +77,28 @@ export class DataStream {
   }
 
   /**
+   * Adapts an iterable or async iterable of byte chunks into a Web ReadableStream.
+   */
+  public static fromAsyncIterable(iterable: AsyncIterable<Uint8Array> | Iterable<Uint8Array>): ReadableStream<Uint8Array> {
+    const iterator = DataStream.toAsyncGenerator(iterable);
+
+    return new ReadableStream<Uint8Array>({
+      async pull(controller): Promise<void> {
+        const result = await iterator.next();
+        if (result.done) {
+          controller.close();
+        } else {
+          controller.enqueue(result.value);
+        }
+      },
+
+      async cancel(): Promise<void> {
+        await iterator.return(undefined);
+      }
+    });
+  }
+
+  /**
    * Creates a readable stream from the object given.
    */
   public static fromObject(object: Record<string, any>): ReadableStream<Uint8Array> {
@@ -103,6 +125,12 @@ export class DataStream {
       }
     } finally {
       reader.releaseLock();
+    }
+  }
+
+  private static async * toAsyncGenerator<T>(iterable: AsyncIterable<T> | Iterable<T>): AsyncGenerator<T> {
+    for await (const item of iterable) {
+      yield item;
     }
   }
 

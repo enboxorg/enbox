@@ -68,18 +68,7 @@ export class DataStoreSql implements DataStore {
       throw new Error(`DataStoreSql: Expected UnixFS file content for '${dataCid}', got '${dataDagRoot.type}'.`);
     }
 
-    const contentIterator = dataDagRoot.content();
-
-    const dataStream = new ReadableStream<Uint8Array>({
-      async pull(controller): Promise<void> {
-        const result = await contentIterator.next();
-        if (result.done) {
-          controller.close();
-        } else {
-          controller.enqueue(result.value);
-        }
-      },
-    });
+    const dataStream = DataStream.fromAsyncIterable(dataDagRoot.content());
 
     return {
       dataSize,

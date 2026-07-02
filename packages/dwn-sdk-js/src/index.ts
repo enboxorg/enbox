@@ -124,6 +124,14 @@ export * from './types/records-types.js';
 // concrete implementations of stores and event log
 export { BlockstoreLevel } from './store/blockstore-level.js';
 export type { BlockstoreLevelConfig } from './store/blockstore-level.js';
+export {
+  collectBlockstoreBytes,
+  deleteManyBlockstoreItems,
+  getManyBlockstoreItems,
+  putManyBlockstoreItems,
+  yieldBlockstoreBytes,
+} from './store/blockstore-utils.js';
+export type { BlockstoreAbortOptions, BlockstoreInput, BlockstoreSource } from './store/blockstore-utils.js';
 export { DataStoreLevel } from './store/data-store-level.js';
 export type { DataStoreLevelConfig } from './store/data-store-level.js';
 export { IndexLevel } from './store/index-level.js';

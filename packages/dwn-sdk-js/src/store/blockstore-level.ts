@@ -1,42 +1,16 @@
-import { CID } from 'multiformats';
 import type { Blockstore, InputPair, Pair } from 'interface-blockstore';
+import type { BlockstoreAbortOptions, BlockstoreInput, BlockstoreSource } from './blockstore-utils.js';
 
+import { CID } from 'multiformats';
 import { NotFoundError } from 'interface-store';
+import {
+  collectBlockstoreBytes,
+  deleteManyBlockstoreItems,
+  getManyBlockstoreItems,
+  putManyBlockstoreItems,
+  yieldBlockstoreBytes,
+} from './blockstore-utils.js';
 import { createLevelDatabase, LevelWrapper } from './level-wrapper.js';
-
-type AbortOptions = { signal?: AbortSignal };
-type BlockstoreInput = Uint8Array | Iterable<Uint8Array> | AsyncIterable<Uint8Array>;
-type BlockstoreSource<T> = Iterable<T> | AsyncIterable<T>;
-
-async function collectBytes(input: BlockstoreInput): Promise<Uint8Array> {
-  if (input instanceof Uint8Array) {
-    return input;
-  }
-
-  const chunks: Uint8Array[] = [];
-  let byteLength = 0;
-  for await (const chunk of input) {
-    chunks.push(chunk);
-    byteLength += chunk.byteLength;
-  }
-
-  if (chunks.length === 1) {
-    return chunks[0];
-  }
-
-  const bytes = new Uint8Array(byteLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-
-  return bytes;
-}
-
-async function* yieldBytes(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
-  yield bytes;
-}
 
 // `level` works in Node.js 12+ and Electron 5+ on Linux, Mac OS, Windows and
 // FreeBSD, including any future Node.js and Electron release thanks to Node-API, including ARM
@@ -74,13 +48,13 @@ export class BlockstoreLevel implements Blockstore {
     return new BlockstoreLevel({ ...this.config, location: '' }, db);
   }
 
-  async put(key: CID | string, val: BlockstoreInput, options?: AbortOptions): Promise<CID> {
-    const bytes = await collectBytes(val);
+  async put(key: CID | string, val: BlockstoreInput, options?: BlockstoreAbortOptions): Promise<CID> {
+    const bytes = await collectBlockstoreBytes(val);
     await this.db.put(String(key), bytes, options);
     return CID.parse(key.toString());
   }
 
-  async * get(key: CID | string, options?: AbortOptions): AsyncGenerator<Uint8Array> {
+  async * get(key: CID | string, options?: BlockstoreAbortOptions): AsyncGenerator<Uint8Array> {
     const result = await this.db.get(String(key), options);
     if (result === undefined) {
       throw new NotFoundError();
@@ -89,49 +63,36 @@ export class BlockstoreLevel implements Blockstore {
     yield result;
   }
 
-  async has(key: CID | string, options?: AbortOptions): Promise<boolean> {
+  async has(key: CID | string, options?: BlockstoreAbortOptions): Promise<boolean> {
     return this.db.has(String(key), options);
   }
 
-  async delete(key: CID | string, options?: AbortOptions): Promise<void> {
+  async delete(key: CID | string, options?: BlockstoreAbortOptions): Promise<void> {
     return this.db.delete(String(key), options);
   }
 
-  async isEmpty(options?: AbortOptions): Promise<boolean> {
+  async isEmpty(options?: BlockstoreAbortOptions): Promise<boolean> {
     return this.db.isEmpty(options);
   }
 
-  async * putMany(source: BlockstoreSource<InputPair>, options?: AbortOptions): AsyncGenerator<CID> {
-    for await (const entry of source) {
-      await this.put(entry.cid, entry.bytes, options);
-
-      yield entry.cid;
-    }
+  async * putMany(source: BlockstoreSource<InputPair>, options?: BlockstoreAbortOptions): AsyncGenerator<CID> {
+    yield * putManyBlockstoreItems(this, source, options);
   }
 
-  async * getMany(source: BlockstoreSource<CID>, options?: AbortOptions): AsyncGenerator<Pair> {
-    for await (const key of source) {
-      yield {
-        cid   : key,
-        bytes : this.get(key, options)
-      };
-    }
+  async * getMany(source: BlockstoreSource<CID>, options?: BlockstoreAbortOptions): AsyncGenerator<Pair> {
+    yield * getManyBlockstoreItems(this, source, options);
   }
 
-  async * getAll(options?: AbortOptions): AsyncGenerator<Pair> {
+  async * getAll(options?: BlockstoreAbortOptions): AsyncGenerator<Pair> {
     const li: AsyncGenerator<[string, Uint8Array]> = this.db.iterator({ keys: true }, options);
 
     for await (const [key, value] of li) {
-      yield { cid: CID.parse(key), bytes: yieldBytes(value) };
+      yield { cid: CID.parse(key), bytes: yieldBlockstoreBytes(value) };
     }
   }
 
-  async * deleteMany(source: BlockstoreSource<CID>, options?: AbortOptions): AsyncGenerator<CID> {
-    for await (const key of source) {
-      await this.delete(key, options);
-
-      yield key;
-    }
+  async * deleteMany(source: BlockstoreSource<CID>, options?: BlockstoreAbortOptions): AsyncGenerator<CID> {
+    yield * deleteManyBlockstoreItems(this, source, options);
   }
 
   /**
