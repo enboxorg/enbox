@@ -119,6 +119,38 @@ export function matchesEncryptionProtocolDependency(
   return true;
 }
 
+/** Predicate matching the exact source-protocol encryption control record named by a dependency ref. */
+export function matchesEncryptionControlDependency(
+  message: GenericMessage | undefined,
+  ref: Extract<DependencyRef, { type: 'EncryptionControl' }>,
+): boolean {
+  if (message === undefined || message.descriptor.interface !== DwnInterfaceName.Records) {
+    return false;
+  }
+
+  const descriptor = message.descriptor as Record<string, unknown>;
+  if (descriptor.protocol !== ref.protocol || descriptor.protocolPath !== ref.protocolPath) {
+    return false;
+  }
+
+  if (ref.recipient !== undefined && descriptor.recipient !== ref.recipient) {
+    return false;
+  }
+
+  const tags = descriptor.tags;
+  if (!isRecordObject(tags)) {
+    return ref.tags === undefined;
+  }
+
+  for (const [key, value] of Object.entries(ref.tags ?? {})) {
+    if (tags[key] !== value) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function isRecordObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }

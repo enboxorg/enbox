@@ -1,3 +1,4 @@
+import type { EncryptionControlPath } from './constants.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { ProgressToken } from '../types/subscriptions.js';
 import type { ProtocolDefinition } from '../types/protocols-types.js';
@@ -5,6 +6,7 @@ import type { ValidationStateReader } from '../types/validation-state-reader.js'
 
 import { DwnErrorCode } from './dwn-error.js';
 import { Encoder } from '../utils/encoder.js';
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from './constants.js';
 import { EncryptionProtocol } from '../protocols/encryption.js';
 import { Message } from './message.js';
 import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
@@ -60,6 +62,15 @@ export type DependencyRef =
   | {
       type: 'EncryptionProtocol';
       protocolPath: 'audienceEpoch' | 'audienceKey' | 'grantKey';
+      tags?: Record<string, string | number>;
+      recipient?: string;
+      messageCid?: string;
+      terminal?: boolean;
+    }
+  | {
+      type: 'EncryptionControl';
+      protocol: string;
+      protocolPath: EncryptionControlPath;
       tags?: Record<string, string | number>;
       recipient?: string;
       messageCid?: string;
@@ -202,7 +213,7 @@ function dependencyRefsFromStatus(
   case DwnErrorCode.EncryptionProtocolValidateAudienceEpochMissing:
     return toRefList(encryptionProtocolDependencyFromMessage(message, EncryptionProtocol.audienceEpochPath));
   case DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing:
-    return toRefList(encryptionProtocolDependencyFromRoleAudienceEntry(message, detail));
+    return toRefList(encryptionAudienceDependencyFromRoleAudienceEntry(message, detail));
   case DwnErrorCode.EncryptionProtocolValidateAudienceKeyRoleRecordMissing:
     return toRefList(roleDependencyFromEncryptionAudienceRecipient(message));
   case DwnErrorCode.RecordsWriteMissingDataInPrevious:
@@ -429,10 +440,10 @@ function encryptionProtocolDependencyFromMessage(
     : { type: 'EncryptionProtocol', protocolPath, tags };
 }
 
-function encryptionProtocolDependencyFromRoleAudienceEntry(
+function encryptionAudienceDependencyFromRoleAudienceEntry(
   message: GenericMessage,
   detail: string,
-): DependencyRef | undefined {
+): Extract<DependencyRef, { type: 'EncryptionControl' | 'EncryptionProtocol' }> | undefined {
   const descriptor = message.descriptor as Record<string, unknown>;
   const messageContextId = (message as { contextId?: unknown }).contextId;
   const contextId = typeof messageContextId === 'string' ? messageContextId : descriptor.contextId;
@@ -446,6 +457,33 @@ function encryptionProtocolDependencyFromRoleAudienceEntry(
   }
 
   const missingRole = /role '([^']+)'/.exec(detail)?.[1];
+  const sourceEntry = keyEncryption.find((candidate): boolean =>
+    candidate.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
+    typeof candidate.protocol === 'string' &&
+    typeof candidate.rolePath === 'string' &&
+    (missingRole === undefined || candidate.rolePath === missingRole) &&
+    typeof candidate.keyId === 'string'
+  );
+  if (sourceEntry !== undefined) {
+    const rolePath = sourceEntry.rolePath as string;
+    const audienceContextId = roleAudienceContextId(rolePath, contextId);
+    if (audienceContextId === undefined) {
+      return undefined;
+    }
+
+    return {
+      type         : 'EncryptionControl',
+      protocol     : sourceEntry.protocol as string,
+      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      tags         : {
+        protocol  : sourceEntry.protocol as string,
+        rolePath,
+        contextId : audienceContextId,
+        keyId     : sourceEntry.keyId as string,
+      },
+    };
+  }
+
   const entry = keyEncryption.find((candidate): boolean =>
     candidate.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
     typeof candidate.protocol === 'string' &&

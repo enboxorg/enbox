@@ -416,11 +416,10 @@ describe('RecordsWrite', () => {
           keyEncryptionInputs  : [{
             algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
             derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-            epoch            : 1,
             keyId            : await Encryption.getKeyId(publicKey),
             protocol         : 'https://example.com/protocol',
             publicKey,
-            role             : 'thread/member',
+            rolePath         : 'thread/member',
           }],
         },
         protocol     : 'https://example.com/protocol',
@@ -432,9 +431,10 @@ describe('RecordsWrite', () => {
 
       const keyEncryption = recordsWrite.message.encryption!.keyEncryption[0];
       expect(keyEncryption.derivationScheme).toBe(ROLE_AUDIENCE_DERIVATION_SCHEME);
-      expect('epoch' in keyEncryption && keyEncryption.epoch).toBe(1);
       expect('protocol' in keyEncryption && keyEncryption.protocol).toBe('https://example.com/protocol');
-      expect('role' in keyEncryption && keyEncryption.role).toBe('thread/member');
+      expect('rolePath' in keyEncryption && keyEncryption.rolePath).toBe('thread/member');
+      expect('epoch' in keyEncryption).toBe(false);
+      expect('role' in keyEncryption).toBe(false);
     });
   });
 

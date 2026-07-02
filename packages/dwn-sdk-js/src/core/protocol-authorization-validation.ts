@@ -1,7 +1,7 @@
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
-import type { RoleAudienceKeyEncryption } from '../utils/encryption.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
+import type { LegacyRoleAudienceKeyEncryption, SourceRoleAudienceKeyEncryption } from '../utils/encryption.js';
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet, ProtocolType, ProtocolTypes } from '../types/protocols-types.js';
 
 import { KeyDerivationScheme } from '../utils/hd-key.js';
@@ -319,34 +319,61 @@ async function verifyRoleAudienceEncryptionIfNeeded(
       continue;
     }
 
-    const matchingEntry = inboundMessage.encryption!.keyEncryption.find((entry): entry is RoleAudienceKeyEncryption =>
+    const matchingEntry = inboundMessage.encryption!.keyEncryption.find((entry): entry is SourceRoleAudienceKeyEncryption =>
       entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
       entry.protocol === roleAudience.protocol &&
-      entry.role === roleAudience.role
+      'rolePath' in entry &&
+      entry.rolePath === roleAudience.rolePath
     );
 
-    if (matchingEntry === undefined) {
+    if (matchingEntry !== undefined) {
+      const matchingAudienceRecords = await validationStateReader.queryAudienceRecords({
+        tenant,
+        protocol  : roleAudience.protocol,
+        contextId : roleAudience.contextId,
+        rolePath  : roleAudience.rolePath,
+        keyId     : matchingEntry.keyId,
+      });
+
+      if (matchingAudienceRecords.length > 0) {
+        continue;
+      }
+    }
+
+    const matchingLegacyEntry = inboundMessage.encryption!.keyEncryption.find((entry): entry is LegacyRoleAudienceKeyEncryption =>
+      entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
+      entry.protocol === roleAudience.protocol &&
+      'role' in entry &&
+      entry.role === roleAudience.rolePath &&
+      'epoch' in entry
+    );
+
+    if (matchingEntry === undefined && matchingLegacyEntry === undefined) {
       throw new DwnError(
         DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEntryMissing,
-        `encrypted record is missing a roleAudience keyEncryption entry for role '${roleAudience.role}'`
+        `encrypted record is missing a roleAudience keyEncryption entry for role '${roleAudience.rolePath}'`
       );
     }
 
-    const matchingEpochs = await validationStateReader.queryAudienceEpochs({
-      tenant,
-      protocol  : roleAudience.protocol,
-      contextId : roleAudience.contextId,
-      role      : roleAudience.role,
-      epoch     : matchingEntry.epoch,
-      keyId     : matchingEntry.keyId,
-    });
+    if (matchingLegacyEntry !== undefined) {
+      const matchingEpochs = await validationStateReader.queryAudienceEpochs({
+        tenant,
+        protocol  : roleAudience.protocol,
+        contextId : roleAudience.contextId,
+        role      : roleAudience.rolePath,
+        epoch     : matchingLegacyEntry.epoch,
+        keyId     : matchingLegacyEntry.keyId,
+      });
 
-    if (matchingEpochs.length === 0) {
-      throw new DwnError(
-        DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing,
-        `encrypted record references a missing audienceEpoch for role '${roleAudience.role}'`
-      );
+      if (matchingEpochs.length > 0) {
+        continue;
+      }
     }
+
+    throw new DwnError(
+      DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEpochMissing,
+      `encrypted record references a missing audience for role '${roleAudience.rolePath}'`
+    );
   }
 }
 
@@ -354,7 +381,7 @@ function resolveRoleAudience(
   actionRule: ProtocolActionRule,
   inboundMessage: RecordsWriteMessage,
   protocolDefinition: ProtocolDefinition,
-): { protocol: string; role: string; contextId: string } | undefined {
+): { protocol: string; rolePath: string; contextId: string } | undefined {
   const roleRef = actionRule.role;
   if (roleRef === undefined) {
     return undefined;
@@ -364,13 +391,13 @@ function resolveRoleAudience(
   const protocol = parsed === undefined
     ? inboundMessage.descriptor.protocol
     : protocolDefinition.uses?.[parsed.alias];
-  const role = parsed === undefined ? roleRef : parsed.protocolPath;
+  const rolePath = parsed === undefined ? roleRef : parsed.protocolPath;
   if (protocol === undefined) {
     return undefined;
   }
 
-  const contextId = getRoleAudienceContextId(inboundMessage, role);
-  return contextId === undefined ? undefined : { protocol, role, contextId };
+  const contextId = getRoleAudienceContextId(inboundMessage, rolePath);
+  return contextId === undefined ? undefined : { protocol, rolePath, contextId };
 }
 
 function getRoleAudienceContextId(

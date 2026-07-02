@@ -1,7 +1,7 @@
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DwnErrorCode, Encoder, EncryptionProtocol, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, EncryptionProtocol, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../src/sync-admit-closure.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -474,6 +474,70 @@ describe('admitClosure', () => {
       },
     });
     expect(agent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(audienceEpoch.message);
+  });
+
+  it('fetches encryption control dependencies from the source protocol feed', async () => {
+    const protocol = 'https://example.com/protocol-control';
+    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const tags = {
+      protocol,
+      contextId : 'root-context',
+      rolePath  : 'thread/member',
+      keyId     : 'key-id',
+    };
+    const audience = await TestDataGenerator.generateRecordsWrite({
+      protocol,
+      protocolPath: ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      tags,
+    });
+    const rootCid = await Message.getCid(root.message);
+    const audienceCid = await Message.getCid(audience.message);
+    const agent = createMockAgent();
+
+    agent.rpc.sendDwnRequest.resolves({
+      status  : { code: 200 },
+      entries : [{
+        seq               : '1',
+        messageCid        : audienceCid,
+        isLatestBaseState : true,
+        protocol,
+        message           : audience.message,
+        encodedData       : Encoder.bytesToBase64Url(audience.dataBytes!),
+      }],
+    });
+    agent.dwn.applyReplicatedMessage
+      .onFirstCall().resolves({
+        kind    : 'Incomplete',
+        missing : [{
+          type         : 'EncryptionControl',
+          protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags,
+        }],
+      })
+      .onSecondCall().resolves({ kind: 'Applied' })
+      .onThirdCall().resolves({ kind: 'Applied' });
+
+    const outcome = await admitClosure(rootCid, {
+      did                : 'did:example:alice',
+      dwnUrl             : 'https://dwn.example.com',
+      delegateDid        : 'did:example:delegate',
+      permissionGrantIds : ['messages-query-grant'],
+      agent,
+      prefetched         : [{ message: root.message }],
+    });
+
+    expect(outcome).toEqual({ kind: 'admitted', appliedCids: [audienceCid, rootCid] });
+    expect(agent.processDwnRequest.firstCall.args[0]).toMatchObject({
+      author        : 'did:example:alice',
+      granteeDid    : 'did:example:delegate',
+      messageType   : DwnInterface.MessagesQuery,
+      messageParams : {
+        filters            : [{ protocol }],
+        permissionGrantIds : ['messages-query-grant'],
+      },
+    });
+    expect(agent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(audience.message);
   });
 
   it('fetches record data with RecordsRead and retries with the data stream', async () => {

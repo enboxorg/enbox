@@ -32,6 +32,7 @@ import {
   dependencyKey,
   hasTerminalDependency,
   isTenantProtocolConfig,
+  matchesEncryptionControlDependency,
   matchesEncryptionProtocolDependency,
   missingDependencyDetail,
   newestProtocolConfig,
@@ -720,6 +721,8 @@ class RemoteApplyPushContext {
         return this.fetchRecordsByRecordId(ref.permissionGrantId);
       case 'RecordData':
         return this.fetchRecordData(ref);
+      case 'EncryptionControl':
+        return this.fetchEncryptionControlRecord(ref);
       case 'EncryptionProtocol':
         return this.fetchEncryptionProtocolRecord(ref);
       default:
@@ -858,6 +861,34 @@ class RemoteApplyPushContext {
     const entries: SyncMessageEntry[] = [];
     for (const entry of reply.entries) {
       if (!matchesEncryptionProtocolDependency(entry.message, ref)) {
+        continue;
+      }
+
+      entries.push(await this.entryForMessageFeedEntry(entry));
+    }
+
+    await this.rememberEntries(entries);
+    return { kind: 'fetched', entries };
+  }
+
+  private async fetchEncryptionControlRecord(ref: Extract<DependencyRef, { type: 'EncryptionControl' }>): Promise<FetchDependencyResult> {
+    const reply = await queryLocalMessageFeed({
+      did                : this.deps.did,
+      delegateDid        : this.deps.delegateDid,
+      permissionGrantIds : this.deps.permissionGrantIds,
+      filters            : [{ protocol: ref.protocol }],
+      agent              : this.deps.agent,
+    });
+    if (reply.status.code !== 200 || reply.entries === undefined) {
+      return {
+        kind   : 'failed',
+        detail : `local encryption control feed query failed for ${ref.protocol}: ${reply.status.code} ${reply.status.detail ?? ''}`,
+      };
+    }
+
+    const entries: SyncMessageEntry[] = [];
+    for (const entry of reply.entries) {
+      if (!matchesEncryptionControlDependency(entry.message, ref)) {
         continue;
       }
 

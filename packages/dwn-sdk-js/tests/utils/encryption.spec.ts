@@ -186,7 +186,6 @@ describe('Encryption', () => {
       const baseKeyInput = {
         algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
         derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-        epoch            : 1,
         keyId,
         publicKey        : recipientPublicKey,
       } as const;
@@ -197,7 +196,7 @@ describe('Encryption', () => {
         keyInput: {
           ...baseKeyInput,
           protocol : 'https://example.com/a|b',
-          role     : 'c',
+          rolePath : 'c',
         },
       });
       const wrappedKey2 = await Encryption.wrapKey({
@@ -206,7 +205,7 @@ describe('Encryption', () => {
         keyInput: {
           ...baseKeyInput,
           protocol : 'https://example.com/a',
-          role     : 'b|c',
+          rolePath : 'b|c',
         },
       });
 
@@ -217,14 +216,14 @@ describe('Encryption', () => {
         encryptedKey       : Encoder.bytesToBase64Url(wrappedKey1.encryptedKey),
         ephemeralPublicKey : wrappedKey1.ephemeralPublicKey,
         protocol           : 'https://example.com/a|b',
-        role               : 'c',
+        rolePath           : 'c',
       });
       const unwrapped2 = await Encryption.unwrapKey(recipientPrivateKey, {
         ...baseKeyInput,
         encryptedKey       : Encoder.bytesToBase64Url(wrappedKey2.encryptedKey),
         ephemeralPublicKey : wrappedKey2.ephemeralPublicKey,
         protocol           : 'https://example.com/a',
-        role               : 'b|c',
+        rolePath           : 'b|c',
       });
 
       expect(ArrayUtility.byteArraysEqual(unwrapped1, cek)).toBe(true);
