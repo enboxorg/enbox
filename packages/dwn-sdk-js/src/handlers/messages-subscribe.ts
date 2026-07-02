@@ -26,13 +26,6 @@ type GuardedSubscriptionHandler = {
   setSubscription(subscription: EventSubscription): Promise<void>;
 };
 
-type DeliveryStepDwnErrorOutcome =
-  { kind: 'terminal'; code: DwnErrorCode; detail: string };
-
-type DeliveryStepResult<T> =
-  | { kind: 'ok'; value: T }
-  | DeliveryStepDwnErrorOutcome;
-
 export class MessagesSubscribeHandler implements MethodHandler {
 
   constructor(private readonly deps: HandlerDependencies) {}
@@ -167,19 +160,6 @@ export class MessagesSubscribeHandler implements MethodHandler {
       });
     };
 
-    const applyDeliveryStepResult = <T>(
-      result: DeliveryStepResult<T>,
-      cursor: SubscriptionEvent['cursor']
-    ): result is { kind: 'ok'; value: T } => {
-      if (result.kind === 'ok') {
-        return true;
-      }
-
-      emitTerminalDeliveryError(cursor, result.code, result.detail);
-      closeSubscription();
-      return false;
-    };
-
     // Deliberately do not cache delivery authorization here. Subscribe-open
     // authorization validates static grant shape and filter scope; this per-event
     // check revalidates dynamic grant state so expiry or revocation stops delivery
@@ -187,24 +167,30 @@ export class MessagesSubscribeHandler implements MethodHandler {
     // split static and dynamic checks explicitly and document any bounded staleness
     // introduced by caching revocation lookups.
     const authorizeAndDeliverEvent = async (subMessage: SubscriptionEvent): Promise<void> => {
-      const authorizationResult = await MessagesSubscribeHandler.evaluateDeliveryStep({
-        step: async (): Promise<void> => {
-          await MessagesGrantAuthorization.authorizeSubscribeDelivery({
-            messagesSubscribeMessage : messagesSubscribe.message,
-            expectedGrantor          : authorization.expectedGrantor,
-            expectedGrantee          : authorization.expectedGrantee,
-            permissionGrants         : authorization.permissionGrants,
-            validationStateReader    : deps.validationStateReader,
-            deliveryTimestamp        : Time.getCurrentTimestamp(),
-          });
-        },
-        dwnErrorOutcome: {
-          kind   : 'terminal',
-          code   : DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
-          detail : 'subscription authorization failed during delivery',
-        },
-      });
-      if (!applyDeliveryStepResult(authorizationResult, subMessage.cursor)) {
+      try {
+        await MessagesGrantAuthorization.authorizeSubscribeDelivery({
+          messagesSubscribeMessage : messagesSubscribe.message,
+          expectedGrantor          : authorization.expectedGrantor,
+          expectedGrantee          : authorization.expectedGrantee,
+          permissionGrants         : authorization.permissionGrants,
+          validationStateReader    : deps.validationStateReader,
+          deliveryTimestamp        : Time.getCurrentTimestamp(),
+        });
+      } catch (error) {
+        if (error instanceof DwnError) {
+          emitTerminalDeliveryError(
+            subMessage.cursor,
+            DwnErrorCode.MessagesSubscribeDeliveryAuthorizationFailed,
+            'subscription authorization failed during delivery',
+          );
+        } else {
+          emitTerminalDeliveryError(
+            subMessage.cursor,
+            DwnErrorCode.MessagesSubscribeDeliveryFailed,
+            'subscription delivery failed',
+          );
+        }
+        closeSubscription();
         return;
       }
 
@@ -245,24 +231,5 @@ export class MessagesSubscribeHandler implements MethodHandler {
         }
       },
     };
-  }
-
-  private static async evaluateDeliveryStep<T>(input: {
-    dwnErrorOutcome: DeliveryStepDwnErrorOutcome;
-    step: () => Promise<T>;
-  }): Promise<DeliveryStepResult<T>> {
-    try {
-      return { kind: 'ok', value: await input.step() };
-    } catch (error) {
-      if (error instanceof DwnError) {
-        return input.dwnErrorOutcome;
-      }
-
-      return {
-        kind   : 'terminal',
-        code   : DwnErrorCode.MessagesSubscribeDeliveryFailed,
-        detail : 'subscription delivery failed',
-      };
-    }
   }
 }

@@ -946,6 +946,7 @@ export function testMessagesSubscribeHandler(): void {
             });
             await Time.minimalSleep();
             expect(received.filter(msg => msg.type === 'error').length).toBe(1);
+            expect(received.find(msg => msg.type === 'error')?.error.code).toBe(DwnErrorCode.MessagesSubscribeDeliveryFailed);
             expect(received.filter(msg => msg.type === 'event').length).toBe(0);
           });
 

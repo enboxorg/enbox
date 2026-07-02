@@ -25,6 +25,15 @@ function getFeedReader(messageStore: MessageStore): ReplicationFeedReader | unde
   }
 }
 
+async function fingerprintFromCids(messageCids: string[]): Promise<string> {
+  let fingerprint = Replication.emptyFingerprint();
+  for (const messageCid of messageCids) {
+    fingerprint = Replication.xorFingerprint(fingerprint, await Replication.hashMessageCid(messageCid));
+  }
+
+  return Replication.fingerprintToHex(fingerprint);
+}
+
 export function testMessagesQueryHandler(): void {
   describe('MessagesQueryHandler.handle()', () => {
     let didResolver: DidResolver;
@@ -438,6 +447,7 @@ export function testMessagesQueryHandler(): void {
       expect(fullReply.drained).toBe(true);
       expect(fullReplyCids).toContain(await Message.getCid(audience.recordsWrite.message));
       expect(fullReplyCids).toContain(deliveryCid);
+      expect(fullReply.fingerprint).toBe(await fingerprintFromCids(fullReplyCids));
       expect(fullReply.fingerprint).toBe(rawFingerprint);
 
       const { message: ownerQuery } = await TestDataGenerator.generateMessagesQuery({
