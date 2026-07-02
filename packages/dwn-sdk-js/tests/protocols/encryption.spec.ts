@@ -509,6 +509,147 @@ describe('EncryptionProtocol', () => {
       await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }));
     });
 
+    it('should accept read-grant grantKey records for referenced role paths outside the read subtree', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const rolePublicKey = (await TestDataGenerator.generatePersona()).encryptionKeyPair.publicJwk;
+      const protocol = 'https://example.com/protocol';
+      const protocolDefinition = createGrantKeyCoverageProtocolDefinition(protocol, rolePublicKey);
+      const grant = createGrant({
+        grantor      : alice.did,
+        grantee      : bob.did,
+        id           : 'grant1',
+        protocol,
+        protocolPath : 'chat/message',
+      });
+      const message = await createGrantKeyMessage({
+        grant,
+        protocol,
+        protocolPath : 'chat/member',
+        recipient    : bob.did,
+        signer       : Jws.createSigner(alice),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant, protocolDefinition }));
+    });
+
+    it('should reject read-grant grantKey records for unreferenced role paths outside the read subtree', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const rolePublicKey = (await TestDataGenerator.generatePersona()).encryptionKeyPair.publicJwk;
+      const protocol = 'https://example.com/protocol';
+      const protocolDefinition = createGrantKeyCoverageProtocolDefinition(protocol, rolePublicKey);
+      const grant = createGrant({
+        grantor      : alice.did,
+        grantee      : bob.did,
+        id           : 'grant1',
+        protocol,
+        protocolPath : 'chat/message',
+      });
+      const message = await createGrantKeyMessage({
+        grant,
+        protocol,
+        protocolPath : 'chat/admin',
+        recipient    : bob.did,
+        signer       : Jws.createSigner(alice),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant, protocolDefinition }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch);
+    });
+
+    it('should reject read-grant grantKey records for cross-protocol role references', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const rolePublicKey = (await TestDataGenerator.generatePersona()).encryptionKeyPair.publicJwk;
+      const protocol = 'https://example.com/protocol';
+      const protocolDefinition = createGrantKeyCoverageProtocolDefinition(protocol, rolePublicKey, {
+        messageRole : 'contacts:member',
+        uses        : { contacts: 'https://example.com/contacts' },
+      });
+      const grant = createGrant({
+        grantor      : alice.did,
+        grantee      : bob.did,
+        id           : 'grant1',
+        protocol,
+        protocolPath : 'chat/message',
+      });
+      const message = await createGrantKeyMessage({
+        grant,
+        protocol,
+        protocolPath : 'chat/member',
+        recipient    : bob.did,
+        signer       : Jws.createSigner(alice),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant, protocolDefinition }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch);
+    });
+
+    it('should accept write-grant grantKey records for covered role paths', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const rolePublicKey = (await TestDataGenerator.generatePersona()).encryptionKeyPair.publicJwk;
+      const protocol = 'https://example.com/protocol';
+      const protocolDefinition = createGrantKeyCoverageProtocolDefinition(protocol, rolePublicKey);
+      const grant = createGrant({
+        grantor      : alice.did,
+        grantee      : bob.did,
+        id           : 'grant1',
+        method       : DwnMethodName.Write,
+        protocol,
+        protocolPath : 'chat',
+      });
+      const message = await createGrantKeyMessage({
+        grant,
+        protocol,
+        protocolPath : 'chat/member',
+        recipient    : bob.did,
+        signer       : Jws.createSigner(alice),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant, protocolDefinition }));
+    });
+
+    it('should reject write-grant grantKey records for covered non-role paths', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const bob = await TestDataGenerator.generatePersona();
+      const rolePublicKey = (await TestDataGenerator.generatePersona()).encryptionKeyPair.publicJwk;
+      const protocol = 'https://example.com/protocol';
+      const protocolDefinition = createGrantKeyCoverageProtocolDefinition(protocol, rolePublicKey);
+      const grant = createGrant({
+        grantor      : alice.did,
+        grantee      : bob.did,
+        id           : 'grant1',
+        method       : DwnMethodName.Write,
+        protocol,
+        protocolPath : 'chat',
+      });
+      const message = await createGrantKeyMessage({
+        grant,
+        protocol,
+        protocolPath : 'chat/message',
+        recipient    : bob.did,
+        signer       : Jws.createSigner(alice),
+      });
+
+      const encryptionProtocol = new EncryptionProtocol();
+
+      await expect(
+        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant, protocolDefinition }))
+      ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch);
+    });
+
     it('should reject grantKey records covered only by a Messages read grant', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const bob = await TestDataGenerator.generatePersona();
@@ -537,7 +678,9 @@ describe('EncryptionProtocol', () => {
     it('should reject protocol-scoped grantKey records for protocolPath-scoped read grants', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const bob = await TestDataGenerator.generatePersona();
+      const rolePublicKey = (await TestDataGenerator.generatePersona()).encryptionKeyPair.publicJwk;
       const protocol = 'https://example.com/protocol';
+      const protocolDefinition = createGrantKeyCoverageProtocolDefinition(protocol, rolePublicKey);
       const grant = createGrant({
         grantor      : alice.did,
         grantee      : bob.did,
@@ -555,7 +698,7 @@ describe('EncryptionProtocol', () => {
       const encryptionProtocol = new EncryptionProtocol();
 
       await expect(
-        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }))
+        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant, protocolDefinition }))
       ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch);
     });
 
@@ -585,7 +728,9 @@ describe('EncryptionProtocol', () => {
     it('should reject grantKey records outside the grant protocolPath subtree', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const bob = await TestDataGenerator.generatePersona();
+      const rolePublicKey = (await TestDataGenerator.generatePersona()).encryptionKeyPair.publicJwk;
       const protocol = 'https://example.com/protocol';
+      const protocolDefinition = createGrantKeyCoverageProtocolDefinition(protocol, rolePublicKey);
       const grant = createGrant({
         grantor      : alice.did,
         grantee      : bob.did,
@@ -604,7 +749,7 @@ describe('EncryptionProtocol', () => {
       const encryptionProtocol = new EncryptionProtocol();
 
       await expect(
-        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant }))
+        encryptionProtocol.preProcessWrite('did:example:tenant', message, createValidationStateReader({ grant, protocolDefinition }))
       ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch);
     });
 
@@ -789,15 +934,15 @@ describe('EncryptionProtocol', () => {
       ).rejects.toThrow(DwnErrorCode.EncryptionProtocolValidateEncryptedDeliveryMissingEncryption);
     });
 
-    it('should reject grantKey records for non-read permission grants', async () => {
+    it('should reject grantKey records for context-scoped permission grants', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const bob = await TestDataGenerator.generatePersona();
       const protocol = 'https://example.com/protocol';
       const grant = createGrant({
-        grantor : alice.did,
-        grantee : bob.did,
-        id      : 'grant1',
-        method  : DwnMethodName.Write,
+        contextId : 'context1',
+        grantor   : alice.did,
+        grantee   : bob.did,
+        id        : 'grant1',
         protocol,
       });
       const message = await createGrantKeyMessage({
@@ -959,6 +1104,7 @@ function createGrant(input: {
   protocol: string;
   interface?: DwnInterfaceName.Records | DwnInterfaceName.Messages;
   protocolPath?: string;
+  contextId?: string;
   method?: DwnMethodName;
   dateExpires?: string;
   dateGranted?: string;
@@ -977,6 +1123,7 @@ function createGrant(input: {
       interface    : input.interface ?? DwnInterfaceName.Records,
       method       : input.method ?? DwnMethodName.Read,
       protocol     : input.protocol,
+      contextId    : input.contextId,
       protocolPath : input.protocolPath,
     },
   } as PermissionGrant;
@@ -1041,6 +1188,43 @@ function createRoleProtocolDefinition(
       },
     },
   } as ProtocolDefinition;
+}
+
+function createGrantKeyCoverageProtocolDefinition(
+  protocol: string,
+  publicKeyJwk: PublicKeyJwk,
+  options: {
+    messageRole?: string;
+    uses?: Record<string, string>;
+  } = {},
+): ProtocolDefinition {
+  return {
+    published : true,
+    protocol,
+    uses      : options.uses,
+    types     : {
+      admin   : { dataFormats: ['application/json'] },
+      chat    : { dataFormats: ['application/json'] },
+      member  : { dataFormats: ['application/json'] },
+      message : { dataFormats: ['application/json'], encryptionRequired: true },
+    },
+    structure: {
+      chat: {
+        admin: {
+          $keyAgreement : { publicKeyJwk },
+          $role         : true,
+        },
+        member: {
+          $keyAgreement : { publicKeyJwk },
+          $role         : true,
+        },
+        message: {
+          $actions      : [{ can: ['read'], role: options.messageRole ?? 'chat/member' }],
+          $keyAgreement : { publicKeyJwk },
+        },
+      },
+    },
+  };
 }
 
 async function createAudienceEpochMessage(input: {

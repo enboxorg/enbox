@@ -40,9 +40,6 @@ export class EncryptionProtocol implements CoreProtocol {
   public static readonly audienceEpochPath = 'audienceEpoch';
   public static readonly audienceKeyPath = 'audienceKey';
   public static readonly grantKeyPath = 'grantKey';
-  private static readonly grantKeyScopeMethodsByInterface: Record<string, DwnMethodName | undefined> = {
-    [DwnInterfaceName.Records]: DwnMethodName.Read,
-  };
 
   public static readonly definition: ProtocolDefinition = {
     published : true,
@@ -255,7 +252,14 @@ export class EncryptionProtocol implements CoreProtocol {
     await EncryptionProtocol.verifyGrantActive(tenant, message, grant, validationStateReader);
     EncryptionProtocol.verifyGrantKeyAuthor(message, grant);
     EncryptionProtocol.verifyGrantKeyRecipient(message, grant);
-    EncryptionProtocol.verifyGrantKeyScope(grant.scope, protocol, protocolPath);
+    await EncryptionProtocol.verifyGrantKeyScope({
+      tenant,
+      message,
+      grantScope: grant.scope,
+      protocol,
+      protocolPath,
+      validationStateReader,
+    });
   }
 
   private static verifyEncryptedDelivery(message: RecordsWriteMessage): void {
@@ -408,35 +412,155 @@ export class EncryptionProtocol implements CoreProtocol {
     );
   }
 
-  private static verifyGrantKeyScope(grantScope: PermissionScope, protocol: string, protocolPath: string | undefined): void {
-    if (!EncryptionProtocol.isReadScope(grantScope)) {
+  private static async verifyGrantKeyScope(params: {
+    tenant: string;
+    message: RecordsWriteMessage;
+    grantScope: PermissionScope;
+    protocol: string;
+    protocolPath: string | undefined;
+    validationStateReader: ValidationStateReader;
+  }): Promise<void> {
+    const { grantScope, protocol, protocolPath } = params;
+
+    if (!EncryptionProtocol.isGrantKeyEligibleRecordsScope(grantScope)) {
       throw new DwnError(
         DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
-        'grantKey must reference a Records.Read permission grant.'
+        'grantKey must reference a Records.Read or Records.Write permission grant.'
       );
     }
 
-    if ('protocol' in grantScope && grantScope.protocol !== undefined && grantScope.protocol !== protocol) {
+    if (grantScope.contextId !== undefined) {
+      throw new DwnError(
+        DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
+        'grantKey must not reference a context-scoped permission grant.'
+      );
+    }
+
+    if (grantScope.protocol !== protocol) {
       throw new DwnError(
         DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
         `grantKey protocol ${protocol} is outside the permission grant scope.`
       );
     }
 
-    if (!('protocolPath' in grantScope) || grantScope.protocolPath === undefined) {
+    if (await EncryptionProtocol.grantScopeCoversDeliveredPath({ ...params, grantScope })) {
       return;
     }
 
-    if (protocolPath === undefined || !EncryptionProtocol.isBoundaryAwareSubtree(grantScope.protocolPath, protocolPath)) {
-      throw new DwnError(
-        DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
-        `grantKey protocolPath ${protocolPath ?? '<protocol>'} is outside the permission grant scope.`
-      );
-    }
+    throw new DwnError(
+      DwnErrorCode.EncryptionProtocolValidateGrantKeyGrantScopeMismatch,
+      `grantKey protocolPath ${protocolPath ?? '<protocol>'} is outside the permission grant scope.`
+    );
   }
 
-  private static isReadScope(scope: PermissionScope): boolean {
-    return Object.is(EncryptionProtocol.grantKeyScopeMethodsByInterface[scope.interface], scope.method);
+  private static async grantScopeCoversDeliveredPath(params: {
+    tenant: string;
+    message: RecordsWriteMessage;
+    grantScope: PermissionScope & {
+      interface: typeof DwnInterfaceName.Records;
+      method: typeof DwnMethodName.Read | typeof DwnMethodName.Write;
+      protocol: string;
+      protocolPath?: string;
+      contextId?: string;
+    };
+    protocol: string;
+    protocolPath: string | undefined;
+    validationStateReader: ValidationStateReader;
+  }): Promise<boolean> {
+    const { grantScope, protocolPath } = params;
+
+    if (grantScope.method === DwnMethodName.Read) {
+      if (grantScope.protocolPath === undefined) {
+        return true;
+      }
+
+      if (protocolPath !== undefined && EncryptionProtocol.isBoundaryAwareSubtree(grantScope.protocolPath, protocolPath)) {
+        return true;
+      }
+
+      if (protocolPath === undefined) {
+        return false;
+      }
+
+      const protocolDefinition = await params.validationStateReader.fetchProtocolDefinition(
+        params.tenant,
+        params.protocol,
+        params.message.descriptor.messageTimestamp,
+      );
+      return EncryptionProtocol.readScopeReferencesRolePath(protocolDefinition, grantScope.protocolPath, protocolPath);
+    }
+
+    if (protocolPath === undefined) {
+      return false;
+    }
+
+    if (grantScope.protocolPath !== undefined && !EncryptionProtocol.isBoundaryAwareSubtree(grantScope.protocolPath, protocolPath)) {
+      return false;
+    }
+
+    const protocolDefinition = await params.validationStateReader.fetchProtocolDefinition(
+      params.tenant,
+      params.protocol,
+      params.message.descriptor.messageTimestamp,
+    );
+    return EncryptionProtocol.isLocalRolePath(protocolDefinition, protocolPath);
+  }
+
+  private static isGrantKeyEligibleRecordsScope(scope: PermissionScope): scope is PermissionScope & {
+    interface: typeof DwnInterfaceName.Records;
+    method: typeof DwnMethodName.Read | typeof DwnMethodName.Write;
+    protocol: string;
+    protocolPath?: string;
+    contextId?: string;
+  } {
+    return scope.interface === DwnInterfaceName.Records &&
+      (scope.method === DwnMethodName.Read || scope.method === DwnMethodName.Write) &&
+      'protocol' in scope &&
+      typeof scope.protocol === 'string';
+  }
+
+  private static readScopeReferencesRolePath(
+    protocolDefinition: ProtocolDefinition,
+    scopeProtocolPath: string,
+    rolePath: string,
+  ): boolean {
+    const scopedRuleSet = getRuleSetAtPath(scopeProtocolPath, protocolDefinition.structure);
+    if (scopedRuleSet === undefined || !EncryptionProtocol.isLocalRolePath(protocolDefinition, rolePath)) {
+      return false;
+    }
+
+    const referencedRoles = EncryptionProtocol.collectReadRolePaths(protocolDefinition, scopedRuleSet);
+    return referencedRoles.has(rolePath);
+  }
+
+  private static collectReadRolePaths(protocolDefinition: ProtocolDefinition, ruleSet: ProtocolRuleSet): Set<string> {
+    const rolePaths = new Set<string>();
+
+    for (const actionRule of ruleSet.$actions ?? []) {
+      if (!actionRule.can.includes(ProtocolAction.Read) || actionRule.role === undefined || parseCrossProtocolRef(actionRule.role) !== undefined) {
+        continue;
+      }
+
+      if (EncryptionProtocol.isLocalRolePath(protocolDefinition, actionRule.role)) {
+        rolePaths.add(actionRule.role);
+      }
+    }
+
+    for (const [key, value] of Object.entries(ruleSet)) {
+      if (key.startsWith('$')) {
+        continue;
+      }
+      for (const rolePath of EncryptionProtocol.collectReadRolePaths(protocolDefinition, value as ProtocolRuleSet)) {
+        rolePaths.add(rolePath);
+      }
+    }
+
+    return rolePaths;
+  }
+
+  private static isLocalRolePath(protocolDefinition: ProtocolDefinition, protocolPath: string): boolean {
+    const ruleSet = getRuleSetAtPath(protocolPath, protocolDefinition.structure);
+    return ruleSet?.$role === true && ruleSet.$keyAgreement !== undefined;
   }
 
   private static isBoundaryAwareSubtree(scopePath: string, candidatePath: string): boolean {

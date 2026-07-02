@@ -6,6 +6,8 @@ import type {
   KeyDecrypter,
   KeyDecrypterDerivationScheme,
   PermissionGrant,
+  ProtocolDefinition,
+  ProtocolRuleSet,
   RecordsQueryReply,
   RecordsReadReply,
   RecordsWriteMessage,
@@ -30,10 +32,12 @@ import {
   Encoder,
   Encryption,
   EncryptionProtocol,
+  getRuleSetAtPath,
   HdKey,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
+  parseCrossProtocolRef,
   Records,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
   Time,
@@ -389,8 +393,17 @@ export async function createGrantKeyRecordsForGrants(params: {
   granteeDid: string;
   granteeRootPrivateKey: PrivateKeyJwk;
   grantMessages: DataEncodedRecordsWriteMessage[];
+  protocolDefinitions?: ProtocolDefinition[];
 }): Promise<DataEncodedRecordsWriteMessage[]> {
   const grantKeyRecords: DataEncodedRecordsWriteMessage[] = [];
+  const protocolDefinitions = new Map(
+    (params.protocolDefinitions ?? []).map((definition) => [definition.protocol, definition])
+  );
+  const granteeGrantKeyPublicKey = await derivePublicKeyFromPrivateKey(
+    params.granteeRootPrivateKey,
+    GRANT_KEY_DERIVATION_PATH,
+  );
+  const granteeGrantKeyKeyId = await Encryption.getKeyId(granteeGrantKeyPublicKey);
 
   for (const grantMessage of params.grantMessages) {
     const grant = DwnPermissionGrant.parse(grantMessage);
@@ -398,61 +411,58 @@ export async function createGrantKeyRecordsForGrants(params: {
       continue;
     }
 
-    const payload = await buildGrantKeyPayload(params.agent, params.ownerDid, grant);
-    const payloadBytes = Encoder.objectToBytes(payload);
-    const contentEncryptionAlgorithm = ContentEncryptionAlgorithm.A256CTR;
-    const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
-    const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(ivLength(contentEncryptionAlgorithm)));
-    const granteeGrantKeyPublicKey = await derivePublicKeyFromPrivateKey(
-      params.granteeRootPrivateKey,
-      GRANT_KEY_DERIVATION_PATH,
-    );
-    const granteeGrantKeyKeyId = await Encryption.getKeyId(granteeGrantKeyPublicKey);
-    const encryptionInput = buildEncryptionInput(
-      dataEncryptionKey,
-      dataEncryptionIV,
-      granteeGrantKeyKeyId,
-      granteeGrantKeyPublicKey,
-      KeyDerivationScheme.ProtocolPath,
-    );
-    const { encryptedBytes, dataCid, dataSize } = await encryptAndComputeCid(
-      payloadBytes,
-      dataEncryptionKey,
-      dataEncryptionIV,
-      contentEncryptionAlgorithm,
-    );
+    const payloads = await buildGrantKeyPayloads(params.agent, params.ownerDid, grant, protocolDefinitions);
+    for (const payload of payloads) {
+      const payloadBytes = Encoder.objectToBytes(payload);
+      const contentEncryptionAlgorithm = ContentEncryptionAlgorithm.A256CTR;
+      const dataEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
+      const dataEncryptionIV = crypto.getRandomValues(new Uint8Array(ivLength(contentEncryptionAlgorithm)));
+      const encryptionInput = buildEncryptionInput(
+        dataEncryptionKey,
+        dataEncryptionIV,
+        granteeGrantKeyKeyId,
+        granteeGrantKeyPublicKey,
+        KeyDerivationScheme.ProtocolPath,
+      );
+      const { encryptedBytes, dataCid, dataSize } = await encryptAndComputeCid(
+        payloadBytes,
+        dataEncryptionKey,
+        dataEncryptionIV,
+        contentEncryptionAlgorithm,
+      );
 
-    const { reply, message } = await params.agent.processDwnRequest({
-      author        : params.ownerDid,
-      target        : params.ownerDid,
-      messageType   : DwnInterface.RecordsWrite,
-      messageParams : {
-        recipient    : params.granteeDid,
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.grantKeyPath,
-        schema       : EncryptionProtocol.definition.types.grantKey.schema,
-        dataFormat   : 'application/json',
-        dataCid,
-        dataSize,
-        encryptionInput,
-        tags         : {
-          grantId  : grant.id,
-          protocol : grant.scope.protocol,
-          ...(grant.scope.protocolPath ? { protocolPath: grant.scope.protocolPath } : {}),
-          keyId    : payload.keyMaterial.keyId,
+      const { reply, message } = await params.agent.processDwnRequest({
+        author        : params.ownerDid,
+        target        : params.ownerDid,
+        messageType   : DwnInterface.RecordsWrite,
+        messageParams : {
+          recipient    : params.granteeDid,
+          protocol     : EncryptionProtocol.uri,
+          protocolPath : EncryptionProtocol.grantKeyPath,
+          schema       : EncryptionProtocol.definition.types.grantKey.schema,
+          dataFormat   : 'application/json',
+          dataCid,
+          dataSize,
+          encryptionInput,
+          tags         : {
+            grantId  : grant.id,
+            protocol : payload.scope.protocol,
+            ...(payload.scope.protocolPath ? { protocolPath: payload.scope.protocolPath } : {}),
+            keyId    : payload.keyMaterial.keyId,
+          },
         },
-      },
-      dataStream: DataStream.fromBytes(encryptedBytes),
-    });
+        dataStream: DataStream.fromBytes(encryptedBytes),
+      });
 
-    if (reply.status.code !== 202 && reply.status.code !== 409) {
-      throw new Error(`AgentDwnApi: Failed to create grantKey record: ${reply.status.detail}`);
+      if (reply.status.code !== 202 && reply.status.code !== 409) {
+        throw new Error(`AgentDwnApi: Failed to create grantKey record: ${reply.status.detail}`);
+      }
+
+      grantKeyRecords.push({
+        ...message!,
+        encodedData: Encoder.bytesToBase64Url(encryptedBytes),
+      } as DataEncodedRecordsWriteMessage);
     }
-
-    grantKeyRecords.push({
-      ...message!,
-      encodedData: Encoder.bytesToBase64Url(encryptedBytes),
-    } as DataEncodedRecordsWriteMessage);
   }
 
   return grantKeyRecords;
@@ -1362,30 +1372,51 @@ function getRoleAudienceContextId(
 function isGrantKeyEligibleGrant(grant: PermissionGrant): grant is PermissionGrant & {
   scope: PermissionGrant['scope'] & {
     interface: typeof DwnInterfaceName.Records;
-    method: typeof DwnMethodName.Read;
+    method: typeof DwnMethodName.Read | typeof DwnMethodName.Write;
     protocol: string;
     protocolPath?: string;
   };
 } {
   return grant.scope.interface === DwnInterfaceName.Records &&
-    grant.scope.method === DwnMethodName.Read &&
+    (grant.scope.method === DwnMethodName.Read || grant.scope.method === DwnMethodName.Write) &&
     'protocol' in grant.scope &&
     typeof grant.scope.protocol === 'string' &&
     !('contextId' in grant.scope && grant.scope.contextId !== undefined);
 }
 
-async function buildGrantKeyPayload(
+async function buildGrantKeyPayloads(
   agent: EnboxPlatformAgent,
   ownerDid: string,
   grant: PermissionGrant & {
     scope: PermissionGrant['scope'] & {
+      method: typeof DwnMethodName.Read | typeof DwnMethodName.Write;
       protocol: string;
       protocolPath?: string;
     };
   },
-): Promise<GrantKeyPayload> {
+  protocolDefinitions: Map<string, ProtocolDefinition>,
+): Promise<GrantKeyPayload[]> {
+  const scopes = await getGrantKeyDeliveryScopes(agent, ownerDid, grant, protocolDefinitions);
+  if (scopes.length === 0) {
+    return [];
+  }
+
   const { keyUri } = await getEncryptionKeyInfo(agent, ownerDid);
-  const derivationPath = getScopeDerivationPath(grant.scope.protocol, grant.scope.protocolPath);
+  const payloads: GrantKeyPayload[] = [];
+  for (const scope of scopes) {
+    payloads.push(await buildGrantKeyPayload(agent, keyUri, grant.id, scope));
+  }
+
+  return payloads;
+}
+
+async function buildGrantKeyPayload(
+  agent: EnboxPlatformAgent,
+  keyUri: string,
+  grantId: string,
+  scope: GrantKeyScope,
+): Promise<GrantKeyPayload> {
+  const derivationPath = getScopeDerivationPath(scope.protocol, scope.protocolPath);
   const privateKeyBytes = await agent.keyManager.derivePrivateKeyBytes({
     keyUri,
     derivationPath,
@@ -1395,11 +1426,11 @@ async function buildGrantKeyPayload(
   const keyId = await Encryption.getKeyId(publicKeyJwk);
 
   return {
-    grantId : grant.id,
-    scope   : {
+    grantId,
+    scope: {
       scheme   : KeyDerivationScheme.ProtocolPath,
-      protocol : grant.scope.protocol,
-      ...(grant.scope.protocolPath ? { protocolPath: grant.scope.protocolPath } : {}),
+      protocol : scope.protocol,
+      ...(scope.protocolPath ? { protocolPath: scope.protocolPath } : {}),
     },
     keyMaterial: {
       algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
@@ -1410,6 +1441,152 @@ async function buildGrantKeyPayload(
       publicKeyJwk,
     },
   };
+}
+
+async function getGrantKeyDeliveryScopes(
+  agent: EnboxPlatformAgent,
+  ownerDid: string,
+  grant: PermissionGrant & {
+    scope: PermissionGrant['scope'] & {
+      method: typeof DwnMethodName.Read | typeof DwnMethodName.Write;
+      protocol: string;
+      protocolPath?: string;
+    };
+  },
+  protocolDefinitions: Map<string, ProtocolDefinition>,
+): Promise<GrantKeyScope[]> {
+  const deliveredScopes = new Map<string, GrantKeyScope>();
+  const addScope = (scope: GrantKeyScope): void => {
+    deliveredScopes.set(getGrantKeyScopeCacheKey(scope), scope);
+  };
+
+  if (grant.scope.method === DwnMethodName.Read) {
+    addScope({
+      scheme   : KeyDerivationScheme.ProtocolPath,
+      protocol : grant.scope.protocol,
+      ...(grant.scope.protocolPath !== undefined ? { protocolPath: grant.scope.protocolPath } : {}),
+    });
+
+    if (grant.scope.protocolPath !== undefined) {
+      const protocolDefinition = await getGrantKeyProtocolDefinition(agent, ownerDid, ownerDid, grant.scope.protocol, protocolDefinitions);
+      for (const rolePath of getReadRolePathsForScope(protocolDefinition, grant.scope.protocolPath)) {
+        addScope({
+          scheme       : KeyDerivationScheme.ProtocolPath,
+          protocol     : grant.scope.protocol,
+          protocolPath : rolePath,
+        });
+      }
+    }
+  }
+
+  if (grant.scope.method === DwnMethodName.Write) {
+    const protocolDefinition = await getGrantKeyProtocolDefinition(agent, ownerDid, ownerDid, grant.scope.protocol, protocolDefinitions);
+    for (const rolePath of getRolePathsCoveredByScope(protocolDefinition, grant.scope.protocolPath)) {
+      addScope({
+        scheme       : KeyDerivationScheme.ProtocolPath,
+        protocol     : grant.scope.protocol,
+        protocolPath : rolePath,
+      });
+    }
+  }
+
+  return [...deliveredScopes.values()];
+}
+
+async function getGrantKeyProtocolDefinition(
+  agent: EnboxPlatformAgent,
+  authorDid: string,
+  targetDid: string,
+  protocol: string,
+  protocolDefinitions: Map<string, ProtocolDefinition>,
+): Promise<ProtocolDefinition> {
+  const cachedDefinition = protocolDefinitions.get(protocol);
+  if (cachedDefinition !== undefined) {
+    return cachedDefinition;
+  }
+
+  const { reply } = await agent.processDwnRequest({
+    author        : authorDid,
+    target        : targetDid,
+    messageType   : DwnInterface.ProtocolsQuery,
+    messageParams : { filter: { protocol } },
+  });
+  const definition = reply.entries?.[0]?.descriptor.definition;
+  if (reply.status.code !== 200 || definition === undefined) {
+    throw new Error(`AgentDwnApi: unable to resolve protocol definition '${protocol}' for grantKey coverage.`);
+  }
+
+  protocolDefinitions.set(protocol, definition);
+  return definition;
+}
+
+function getReadRolePathsForScope(protocolDefinition: ProtocolDefinition, scopeProtocolPath: string): string[] {
+  const scopedRuleSet = getRuleSetAtPath(scopeProtocolPath, protocolDefinition.structure);
+  if (scopedRuleSet === undefined) {
+    return [];
+  }
+
+  return [...collectReadRolePaths(protocolDefinition, scopedRuleSet)];
+}
+
+function collectReadRolePaths(protocolDefinition: ProtocolDefinition, ruleSet: ProtocolRuleSet): Set<string> {
+  const rolePaths = new Set<string>();
+
+  for (const actionRule of ruleSet.$actions ?? []) {
+    if (!actionRule.can.includes('read') || actionRule.role === undefined || parseCrossProtocolRef(actionRule.role) !== undefined) {
+      continue;
+    }
+
+    if (isLocalRolePath(protocolDefinition, actionRule.role)) {
+      rolePaths.add(actionRule.role);
+    }
+  }
+
+  for (const [key, value] of Object.entries(ruleSet)) {
+    if (key.startsWith('$')) {
+      continue;
+    }
+    for (const rolePath of collectReadRolePaths(protocolDefinition, value as ProtocolRuleSet)) {
+      rolePaths.add(rolePath);
+    }
+  }
+
+  return rolePaths;
+}
+
+function getRolePathsCoveredByScope(protocolDefinition: ProtocolDefinition, scopeProtocolPath?: string): string[] {
+  return collectRolePaths(protocolDefinition, protocolDefinition.structure as ProtocolRuleSet)
+    .filter((rolePath) => scopeProtocolPath === undefined || isBoundaryAwareSubtree(scopeProtocolPath, rolePath));
+}
+
+function collectRolePaths(protocolDefinition: ProtocolDefinition, ruleSet: ProtocolRuleSet, parentPath?: string): string[] {
+  const rolePaths: string[] = [];
+
+  for (const [key, value] of Object.entries(ruleSet)) {
+    if (key.startsWith('$')) {
+      continue;
+    }
+
+    const protocolPath = parentPath === undefined ? key : `${parentPath}/${key}`;
+    const childRuleSet = value as ProtocolRuleSet;
+    if (isLocalRolePath(protocolDefinition, protocolPath)) {
+      rolePaths.push(protocolPath);
+    }
+    rolePaths.push(...collectRolePaths(protocolDefinition, childRuleSet, protocolPath));
+  }
+
+  return rolePaths;
+}
+
+function isLocalRolePath(protocolDefinition: ProtocolDefinition, protocolPath: string): boolean {
+  const ruleSet = getRuleSetAtPath(protocolPath, protocolDefinition.structure);
+  return ruleSet?.$role === true && ruleSet.$keyAgreement !== undefined;
+}
+
+function getGrantKeyScopeCacheKey(scope: GrantKeyScope): string {
+  return scope.protocolPath === undefined
+    ? `${scope.protocol}~protocol`
+    : `${scope.protocol}~protocolPath~${scope.protocolPath}`;
 }
 
 async function derivePublicKeyFromPrivateKey(
@@ -1535,6 +1712,7 @@ async function resolveGrantKeyRecords(params: {
       await verifyPermissionGrantActive(params.agent, params.granteeDid, params.grantorDid, grant);
 
       await verifyGrantKeyPayload({
+        agent        : params.agent,
         payload,
         grant,
         grantKeyMessage,
@@ -1639,6 +1817,7 @@ async function verifyPermissionGrantActive(
 }
 
 async function verifyGrantKeyPayload(params: {
+  agent: EnboxPlatformAgent;
   payload: GrantKeyPayload;
   grant: PermissionGrant;
   grantKeyMessage: RecordsWriteMessage;
@@ -1662,7 +1841,7 @@ async function verifyGrantKeyPayload(params: {
   if (grant.id !== payload.grantId ||
       grant.grantor !== params.grantorDid ||
       grant.grantee !== params.granteeDid ||
-      !grantScopeCoversPayload(grant, payload)) {
+      !await grantScopeCoversPayload(params.agent, params.granteeDid, params.grantorDid, grant, payload)) {
     throw new Error('grantKey payload is not covered by the referenced grant.');
   }
 
@@ -1685,7 +1864,13 @@ async function verifyGrantKeyPayload(params: {
   }
 }
 
-function grantScopeCoversPayload(grant: PermissionGrant, payload: GrantKeyPayload): boolean {
+async function grantScopeCoversPayload(
+  agent: EnboxPlatformAgent,
+  requesterDid: string,
+  ownerDid: string,
+  grant: PermissionGrant,
+  payload: GrantKeyPayload,
+): Promise<boolean> {
   if (!isGrantKeyEligibleGrant(grant)) {
     return false;
   }
@@ -1694,12 +1879,36 @@ function grantScopeCoversPayload(grant: PermissionGrant, payload: GrantKeyPayloa
     return false;
   }
 
-  if (grant.scope.protocolPath === undefined) {
+  if (grant.scope.method === DwnMethodName.Read && grant.scope.protocolPath === undefined) {
     return true;
   }
 
-  return payload.scope.protocolPath !== undefined &&
-    isBoundaryAwareSubtree(grant.scope.protocolPath, payload.scope.protocolPath);
+  if (grant.scope.method === DwnMethodName.Read) {
+    const grantProtocolPath = grant.scope.protocolPath;
+    if (grantProtocolPath === undefined) {
+      return false;
+    }
+
+    if (payload.scope.protocolPath !== undefined &&
+        isBoundaryAwareSubtree(grantProtocolPath, payload.scope.protocolPath)) {
+      return true;
+    }
+
+    if (payload.scope.protocolPath === undefined) {
+      return false;
+    }
+
+    const protocolDefinition = await getGrantKeyProtocolDefinition(agent, requesterDid, ownerDid, grant.scope.protocol, new Map());
+    return getReadRolePathsForScope(protocolDefinition, grantProtocolPath).includes(payload.scope.protocolPath);
+  }
+
+  if (payload.scope.protocolPath === undefined ||
+      (grant.scope.protocolPath !== undefined && !isBoundaryAwareSubtree(grant.scope.protocolPath, payload.scope.protocolPath))) {
+    return false;
+  }
+
+  const protocolDefinition = await getGrantKeyProtocolDefinition(agent, requesterDid, ownerDid, grant.scope.protocol, new Map());
+  return isLocalRolePath(protocolDefinition, payload.scope.protocolPath);
 }
 
 function scopeCoversRecord(scope: GrantKeyScope, protocol: string, protocolPath: string | undefined): boolean {
