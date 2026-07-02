@@ -50,6 +50,13 @@ export class Message {
   }
 
   /**
+   * Gets the DID whose authority is being exercised by the request.
+   */
+  public static getRequester(message: GenericMessage): string | undefined {
+    return Message.isSignedByAuthorDelegate(message) ? Message.getSigner(message) : Message.getAuthor(message);
+  }
+
+  /**
    * Validates the given message against the corresponding JSON schema.
    * @throws {Error} if fails validation.
    */

@@ -29,7 +29,7 @@ export class RecordsCountHandler implements MethodHandler {
     }
 
     let count: number;
-    const requester = EncryptionControl.getRequester(recordsCount.message);
+    const requester = Message.getRequester(recordsCount.message);
 
     // if this is an anonymous count and the filter supports published records, count only published records
     if (Records.filterIncludesPublishedRecords(recordsCount.message.descriptor.filter) && recordsCount.author === undefined) {

@@ -1,4 +1,3 @@
-import type { GenericMessage } from '../types/message-types.js';
 import type { RecordsPermissionScope } from '../types/permission-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
@@ -64,12 +63,6 @@ type ControlRecordVisibilityInput<T extends RecordsWriteMessage> = Omit<ControlF
 export class EncryptionControl {
   public static isControlMessage(message: RecordsWriteMessage): boolean {
     return isEncryptionControlPath(message.descriptor.protocolPath);
-  }
-
-  public static getRequester(
-    message: GenericMessage,
-  ): string | undefined {
-    return Message.isSignedByAuthorDelegate(message) ? Message.getSigner(message) : Message.getAuthor(message);
   }
 
   public static isExactAudienceFilter(filter: RecordsFilter): boolean {
@@ -943,23 +936,19 @@ export class EncryptionControl {
     }
 
     try {
-      return await EncryptionControl.resolveVisibleControlRecord(input);
+      return await EncryptionControl.canRead({
+        tenant                : input.tenant,
+        incomingMessage       : input.incomingMessage,
+        requester             : input.requester,
+        recordsWriteMessage   : input.recordsWriteMessage,
+        validationStateReader : input.validationStateReader,
+      });
     } catch (error) {
       if (error instanceof DwnError) {
         return false;
       }
       throw error;
     }
-  }
-
-  private static async resolveVisibleControlRecord<T extends RecordsWriteMessage>(input: ControlRecordVisibilityInput<T>): Promise<boolean> {
-    return EncryptionControl.canRead({
-      tenant                : input.tenant,
-      incomingMessage       : input.incomingMessage,
-      requester             : input.requester,
-      recordsWriteMessage   : input.recordsWriteMessage,
-      validationStateReader : input.validationStateReader,
-    });
   }
 
   private static exactAudienceFilterMatchesRecord(filter: RecordsFilter, tags: RoleAudienceKeyId, recordId: string): boolean {

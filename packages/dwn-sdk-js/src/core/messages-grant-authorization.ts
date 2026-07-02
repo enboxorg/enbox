@@ -8,7 +8,6 @@ import type { DataEncodedRecordsWriteMessage, RecordsDeleteMessage, RecordsWrite
 import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
 
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
-import { EncryptionControl } from './encryption-control.js';
 import { EncryptionProtocol } from '../protocols/encryption.js';
 import { GrantAuthorization } from './grant-authorization.js';
 import { Jws } from '../utils/jws.js';
@@ -111,7 +110,7 @@ export class MessagesGrantAuthorization {
     const {
       tenant, incomingMessage, validationStateReader, failureCode
     } = input;
-    const requester = EncryptionControl.getRequester(incomingMessage);
+    const requester = Message.getRequester(incomingMessage);
     if (Message.getAuthor(incomingMessage) === tenant && requester === tenant) {
       return undefined;
     }

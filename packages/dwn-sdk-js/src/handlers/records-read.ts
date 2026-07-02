@@ -189,7 +189,7 @@ export class RecordsReadHandler implements MethodHandler {
       await EncryptionControl.authorizeRead({
         tenant,
         incomingMessage       : recordsRead.message,
-        requester             : EncryptionControl.getRequester(recordsRead.message),
+        requester             : Message.getRequester(recordsRead.message),
         recordsWriteMessage   : matchedRecordsWrite.message,
         validationStateReader : deps.validationStateReader,
       });

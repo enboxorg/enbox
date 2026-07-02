@@ -98,6 +98,43 @@ describe('Message', () => {
     });
   });
 
+  describe('getRequester()', () => {
+    it('should return the signer for delegated messages and author for direct messages', async () => {
+      const alice = await TestDataGenerator.generatePersona();
+      const deviceX = await TestDataGenerator.generatePersona();
+      const scope: PermissionScope = {
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Write,
+        protocol  : 'https://example.com/protocol/test',
+      };
+      const delegatedGrant = await PermissionsProtocol.createGrant({
+        delegated   : true,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+        grantedTo   : deviceX.did,
+        scope,
+        signer      : Jws.createSigner(alice),
+      });
+      const delegatedWrite = await RecordsWrite.create({
+        signer         : Jws.createSigner(deviceX),
+        delegatedGrant : delegatedGrant.dataEncodedMessage,
+        protocol       : 'https://example.com/protocol/test',
+        protocolPath   : 'test/path',
+        dataFormat     : 'application/json',
+        data           : TestDataGenerator.randomBytes(32),
+      });
+      const directWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
+      const unsignedRead = await RecordsRead.create({
+        filter: {
+          recordId: await TestDataGenerator.randomCborSha256Cid()
+        }
+      });
+
+      expect(Message.getRequester(delegatedWrite.message)).toBe(deviceX.did);
+      expect(Message.getRequester(directWrite.message)).toBe(alice.did);
+      expect(Message.getRequester(unsignedRead.message)).toBeUndefined();
+    });
+  });
+
   describe('toJSON()', () => {
     it('should return the message passed in to the constructor', async () => {
       // create a message without `authorization`
