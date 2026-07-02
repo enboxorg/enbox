@@ -2,7 +2,7 @@ import type { Cache } from '../types/cache.js';
 
 type CacheEntry = {
   expiresAt: number;
-  value: any;
+  value: unknown;
 };
 
 /**
@@ -19,7 +19,7 @@ export class MemoryCache implements Cache {
   public constructor(private readonly timeToLiveInSeconds: number) {
   }
 
-  public async set(key: string, value: any): Promise<void> {
+  public async set<T = unknown>(key: string, value: T): Promise<void> {
     try {
       const entry = {
         expiresAt : Date.now() + this.timeToLiveInSeconds * 1000,
@@ -34,7 +34,7 @@ export class MemoryCache implements Cache {
     }
   }
 
-  public async get(key: string): Promise<any | undefined> {
+  public async get<T = unknown>(key: string): Promise<T | undefined> {
     const entry = this.cache.get(key);
     if (entry === undefined) {
       return undefined;
@@ -47,7 +47,7 @@ export class MemoryCache implements Cache {
 
     this.cache.delete(key);
     this.cache.set(key, entry);
-    return entry.value;
+    return entry.value as T;
   }
 
   private evictOldestEntries(): void {
