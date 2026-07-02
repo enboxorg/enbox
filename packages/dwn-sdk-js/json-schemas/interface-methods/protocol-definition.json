@@ -62,8 +62,9 @@
     },
     "types": {
       "type": "object",
+      "additionalProperties": false,
       "patternProperties": {
-        ".*": {
+        "^[^$].*$": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -86,8 +87,9 @@
     },
     "structure": {
       "type": "object",
+      "additionalProperties": false,
       "patternProperties": {
-        ".*": {
+        "^[^$].*$": {
           "$ref": "https://identity.foundation/dwn/json-schemas/protocol-rule-set.json"
         }
       }

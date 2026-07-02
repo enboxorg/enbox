@@ -21,9 +21,11 @@ import standaloneCode from 'ajv/dist/standalone/index.js';
 import Authorization from '../json-schemas/authorization.json' with { type: 'json' };
 import AuthorizationDelegatedGrant from '../json-schemas/authorization-delegated-grant.json' with { type: 'json' };
 import AuthorizationOwner from '../json-schemas/authorization-owner.json' with { type: 'json' };
+import Audience from '../json-schemas/encryption/audience.json' with { type: 'json' };
 import AudienceEpoch from '../json-schemas/encryption/audience-epoch.json' with { type: 'json' };
 import AudienceKey from '../json-schemas/encryption/audience-key.json' with { type: 'json' };
 import Definitions from '../json-schemas/definitions.json' with { type: 'json' };
+import Delivery from '../json-schemas/encryption/delivery.json' with { type: 'json' };
 import GeneralJwk from '../json-schemas/jwk/general-jwk.json' with { type: 'json' };
 import GeneralJws from '../json-schemas/general-jws.json' with { type: 'json' };
 import GrantKey from '../json-schemas/encryption/grant-key.json' with { type: 'json' };
@@ -62,8 +64,10 @@ const schemas = {
   Authorization,
   AuthorizationDelegatedGrant,
   AuthorizationOwner,
+  Audience,
   AudienceEpoch,
   AudienceKey,
+  Delivery,
   GrantKey,
   RecordsCount,
   RecordsDelete,

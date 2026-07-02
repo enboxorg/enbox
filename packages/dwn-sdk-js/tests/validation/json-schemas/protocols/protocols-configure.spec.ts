@@ -7,6 +7,119 @@ import { describe, expect, it } from 'bun:test';
 import { DwnInterfaceName, DwnMethodName } from '../../../../src/index.js';
 
 describe('ProtocolsConfigure schema definition', () => {
+  it('should reject reserved top-level structure keys', () => {
+    const protocolDefinition: ProtocolDefinition = {
+      protocol  : 'reserved-structure',
+      published : true,
+      types     : {
+        record: {
+          dataFormats : ['text/plain'],
+          schema      : 'record',
+        }
+      },
+      structure: {
+        $encryption: {
+          $actions: [
+            {
+              can : [ProtocolAction.Create],
+              who : 'anyone',
+            }
+          ]
+        },
+        record: {
+          $actions: [
+            {
+              can : [ProtocolAction.Create],
+              who : 'anyone',
+            }
+          ]
+        }
+      }
+    };
+
+    expect(() => {
+      validateJsonSchema('ProtocolDefinition', protocolDefinition);
+    }).toThrow();
+  });
+
+  it('should reject nested reserved structure keys', () => {
+    const protocolDefinition: ProtocolDefinition = {
+      protocol  : 'reserved-nested-structure',
+      published : true,
+      types     : {
+        child: {
+          dataFormats : ['text/plain'],
+          schema      : 'child',
+        },
+        record: {
+          dataFormats : ['text/plain'],
+          schema      : 'record',
+        }
+      },
+      structure: {
+        record: {
+          $actions: [
+            {
+              can : [ProtocolAction.Create],
+              who : 'anyone',
+            }
+          ],
+          $encryption: {
+            $actions: [
+              {
+                can : [ProtocolAction.Create],
+                who : 'anyone',
+              }
+            ]
+          },
+          child: {
+            $actions: [
+              {
+                can : [ProtocolAction.Create],
+                who : 'anyone',
+              }
+            ]
+          }
+        }
+      }
+    };
+
+    expect(() => {
+      validateJsonSchema('ProtocolDefinition', protocolDefinition);
+    }).toThrow();
+  });
+
+  it('should reject reserved type names', () => {
+    const protocolDefinition: ProtocolDefinition = {
+      protocol  : 'reserved-types',
+      published : true,
+      types     : {
+        $encryption: {
+          dataFormats : ['application/json'],
+          schema      : 'encryption',
+        },
+        record: {
+          dataFormats : ['text/plain'],
+          schema      : 'record',
+        }
+      },
+      structure: {
+        record: {
+          $actions: [
+            {
+              can : [ProtocolAction.Create],
+              who : 'anyone',
+            }
+          ]
+        }
+      }
+    };
+
+    expect(() => {
+      validateJsonSchema('ProtocolDefinition', protocolDefinition);
+    }).toThrow();
+  });
+
   it('should throw if unknown actor is encountered in action rule', async () => {
     const protocolDefinition: ProtocolDefinition = {
       protocol  : 'email',

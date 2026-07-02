@@ -20,6 +20,57 @@ export const PERMISSIONS_PROTOCOL_URI = 'https://identity.foundation/dwn/permiss
  */
 export const ENCRYPTION_PROTOCOL_URI = 'https://identity.foundation/dwn/protocols/encryption';
 
+/**
+ * Reserved virtual protocol path root for source-protocol-native encryption
+ * control records.
+ */
+export const ENCRYPTION_CONTROL_ROOT_PATH = '$encryption';
+
+/**
+ * Reserved protocol path for role-audience public keys and owner seals.
+ */
+export const ENCRYPTION_CONTROL_AUDIENCE_PATH = `${ENCRYPTION_CONTROL_ROOT_PATH}/audience`;
+
+/**
+ * Reserved protocol path for role-audience key deliveries.
+ */
+export const ENCRYPTION_CONTROL_DELIVERY_PATH = `${ENCRYPTION_CONTROL_ROOT_PATH}/delivery`;
+
+/**
+ * Reserved encryption control protocol paths.
+ */
+export const ENCRYPTION_CONTROL_PATHS = [
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
+] as const;
+
+export type EncryptionControlPath = typeof ENCRYPTION_CONTROL_PATHS[number];
+
+export enum EncryptionControlRecordType {
+  Audience = 'audience',
+  Delivery = 'delivery',
+}
+
+/**
+ * Returns true when the protocol path is one of the exact reserved encryption
+ * control paths.
+ */
+export function isEncryptionControlPath(protocolPath: string | undefined): protocolPath is EncryptionControlPath {
+  return protocolPath !== undefined &&
+    (ENCRYPTION_CONTROL_PATHS as readonly string[]).includes(protocolPath);
+}
+
+/**
+ * Returns the encryption control record type for exact reserved paths.
+ */
+export function getEncryptionControlRecordType(protocolPath: EncryptionControlPath): EncryptionControlRecordType {
+  if (protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+    return EncryptionControlRecordType.Audience;
+  }
+
+  return EncryptionControlRecordType.Delivery;
+}
+
 const RECORDS_PRIMARY_PROJECTION_EXCLUDED_PROTOCOLS = new Set<string>([
   ENCRYPTION_PROTOCOL_URI,
   PERMISSIONS_PROTOCOL_URI,
