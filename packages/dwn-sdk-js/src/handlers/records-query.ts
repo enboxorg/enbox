@@ -5,6 +5,7 @@ import type { RecordsQueryMessage, RecordsQueryReply, RecordsQueryReplyEntry } f
 
 import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
+import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -54,7 +55,11 @@ export class RecordsQueryHandler implements MethodHandler {
         cursor = results.cursor;
       } else {
         const results = await this.fetchRecordsAsNonOwner(tenant, recordsQuery);
-        recordsWrites = results.messages as RecordsQueryReplyEntry[];
+        recordsWrites = await this.filterControlRecordsForNonOwner(
+          tenant,
+          recordsQuery,
+          results.messages as RecordsQueryReplyEntry[],
+        );
         cursor = results.cursor;
       }
     }
@@ -162,6 +167,10 @@ export class RecordsQueryHandler implements MethodHandler {
     }
 
     if (Records.filterIncludesUnpublishedRecords(filter)) {
+      if (EncryptionControl.isExactAudienceFilter(filter)) {
+        filters.push(RecordsQueryHandler.buildUnpublishedControlRecordsFilter(recordsQuery));
+      }
+
       if (Records.shouldBuildUnpublishedAuthorFilter(filter, recordsQuery.author!)) {
         filters.push(RecordsQueryHandler.buildUnpublishedRecordsByQueryAuthorFilter(recordsQuery));
       }
@@ -268,6 +277,17 @@ export class RecordsQueryHandler implements MethodHandler {
     };
   }
 
+  private static buildUnpublishedControlRecordsFilter(recordsQuery: RecordsQuery): Filter {
+    const { dateSort, filter } = recordsQuery.message.descriptor;
+    return {
+      ...Records.convertFilter(filter, dateSort),
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+      published         : false,
+    };
+  }
+
   /**
    * Creates a filter for only unpublished records where the author is the same as the query author.
    */
@@ -316,5 +336,31 @@ export class RecordsQueryHandler implements MethodHandler {
     if (Records.shouldProtocolAuthorize(recordsQuery.signaturePayload!)) {
       await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsQuery, deps.validationStateReader);
     }
+  }
+
+  private async filterControlRecordsForNonOwner(
+    tenant: string,
+    recordsQuery: RecordsQuery,
+    recordsWrites: RecordsQueryReplyEntry[],
+  ): Promise<RecordsQueryReplyEntry[]> {
+    const visibleRecordsWrites: RecordsQueryReplyEntry[] = [];
+    for (const recordsWrite of recordsWrites) {
+      if (!EncryptionControl.isControlMessage(recordsWrite)) {
+        visibleRecordsWrites.push(recordsWrite);
+        continue;
+      }
+
+      if (await EncryptionControl.canRead({
+        tenant,
+        incomingMessage       : recordsQuery.message,
+        requester             : recordsQuery.author,
+        recordsWriteMessage   : recordsWrite,
+        validationStateReader : this.deps.validationStateReader,
+      })) {
+        visibleRecordsWrites.push(recordsWrite);
+      }
+    }
+
+    return visibleRecordsWrites;
   }
 }

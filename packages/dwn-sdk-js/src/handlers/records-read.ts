@@ -5,6 +5,7 @@ import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsReadMessage, 
 import { authenticate } from '../core/auth.js';
 import { DataStream } from '../utils/data-stream.js';
 import { Encoder } from '../utils/encoder.js';
+import { EncryptionControl } from '../core/encryption-control.js';
 import { isRecordLimitOccupant } from '../utils/record-limit-occupancy.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
@@ -195,6 +196,14 @@ export class RecordsReadHandler implements MethodHandler {
     ) {
       // The recipient or author of a message may always read it
       return;
+    } else if (EncryptionControl.isControlMessage(matchedRecordsWrite.message)) {
+      await EncryptionControl.authorizeRead({
+        tenant,
+        incomingMessage       : recordsRead.message,
+        requester             : recordsRead.author,
+        recordsWriteMessage   : matchedRecordsWrite.message,
+        validationStateReader : deps.validationStateReader,
+      });
     } else if (recordsRead.author !== undefined && Message.getPermissionGrantId(recordsRead.signaturePayload!) !== undefined) {
       const permissionGrantId = Message.getPermissionGrantId(recordsRead.signaturePayload!)!;
       const permissionGrant = await deps.validationStateReader.fetchGrant(tenant, permissionGrantId);

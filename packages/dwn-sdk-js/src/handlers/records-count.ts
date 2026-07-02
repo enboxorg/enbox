@@ -1,15 +1,17 @@
 import type { Filter } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
-import type { RecordsCountMessage, RecordsCountReply } from '../types/records-types.js';
+import type { RecordsCountMessage, RecordsCountReply, RecordsWriteMessage } from '../types/records-types.js';
 
 import { authenticate } from '../core/auth.js';
-import { countRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
+import { EncryptionControl } from '../core/encryption-control.js';
+import { isEncryptionControlPath } from '../core/constants.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsCount } from '../interfaces/records-count.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
+import { countRecordsWithRecordLimitOccupancy, queryRecordsWithRecordLimitOccupancy } from '../utils/record-limit-occupancy.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export class RecordsCountHandler implements MethodHandler {
@@ -82,6 +84,10 @@ export class RecordsCountHandler implements MethodHandler {
     }
 
     if (Records.filterIncludesUnpublishedRecords(filter)) {
+      if (EncryptionControl.isExactAudienceFilter(filter)) {
+        filters.push(RecordsCountHandler.buildUnpublishedControlRecordsFilter(recordsCount));
+      }
+
       if (Records.shouldBuildUnpublishedAuthorFilter(filter, recordsCount.author!)) {
         filters.push(RecordsCountHandler.buildUnpublishedRecordsByCountAuthorFilter(recordsCount));
       }
@@ -99,7 +105,7 @@ export class RecordsCountHandler implements MethodHandler {
       }
     }
 
-    return this.countProjectedRecords(tenant, recordsCount, filters);
+    return this.countProjectedRecordsAsNonOwner(tenant, recordsCount, filters);
   }
 
   /**
@@ -118,6 +124,22 @@ export class RecordsCountHandler implements MethodHandler {
       filters,
       messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
     });
+  }
+
+  private async countProjectedRecordsAsNonOwner(tenant: string, recordsCount: RecordsCount, filters: Filter[]): Promise<number> {
+    if (!RecordsCountHandler.filtersMayIncludeControlRecords(filters)) {
+      return this.countProjectedRecords(tenant, recordsCount, filters);
+    }
+
+    const { messages } = await queryRecordsWithRecordLimitOccupancy({
+      messageStore          : this.deps.messageStore,
+      validationStateReader : this.deps.validationStateReader,
+      tenant,
+      filters,
+      messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
+    });
+    const visibleMessages = await this.filterControlRecordsForNonOwner(tenant, recordsCount, messages);
+    return visibleMessages.length;
   }
 
   private static buildPublishedRecordsFilter(recordsCount: RecordsCount): Filter {
@@ -174,6 +196,17 @@ export class RecordsCountHandler implements MethodHandler {
     };
   }
 
+  private static buildUnpublishedControlRecordsFilter(recordsCount: RecordsCount): Filter {
+    const { filter } = recordsCount.message.descriptor;
+    return {
+      ...Records.convertFilter(filter),
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+      published         : false,
+    };
+  }
+
   /**
    * Creates a filter for only unpublished records where the author is the same as the count author.
    */
@@ -187,6 +220,13 @@ export class RecordsCountHandler implements MethodHandler {
       isLatestBaseState : true,
       published         : false
     };
+  }
+
+  private static filtersMayIncludeControlRecords(filters: Filter[]): boolean {
+    return filters.some((filter): boolean => {
+      const protocolPath = filter.protocolPath;
+      return typeof protocolPath !== 'string' || isEncryptionControlPath(protocolPath);
+    });
   }
 
   /**
@@ -221,5 +261,31 @@ export class RecordsCountHandler implements MethodHandler {
     if (Records.shouldProtocolAuthorize(recordsCount.signaturePayload!)) {
       await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsCount, deps.validationStateReader);
     }
+  }
+
+  private async filterControlRecordsForNonOwner(
+    tenant: string,
+    recordsCount: RecordsCount,
+    recordsWrites: RecordsWriteMessage[],
+  ): Promise<RecordsWriteMessage[]> {
+    const visibleRecordsWrites: RecordsWriteMessage[] = [];
+    for (const recordsWrite of recordsWrites) {
+      if (!EncryptionControl.isControlMessage(recordsWrite)) {
+        visibleRecordsWrites.push(recordsWrite);
+        continue;
+      }
+
+      if (await EncryptionControl.canRead({
+        tenant,
+        incomingMessage       : recordsCount.message,
+        requester             : recordsCount.author,
+        recordsWriteMessage   : recordsWrite,
+        validationStateReader : this.deps.validationStateReader,
+      })) {
+        visibleRecordsWrites.push(recordsWrite);
+      }
+    }
+
+    return visibleRecordsWrites;
   }
 }

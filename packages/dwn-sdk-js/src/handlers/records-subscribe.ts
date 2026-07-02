@@ -6,6 +6,7 @@ import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeR
 
 import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
+import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -139,7 +140,11 @@ export class RecordsSubscribeHandler implements MethodHandler {
         pagination,
         messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
       });
-      entries = queryResult.messages;
+      entries = await this.filterControlRecordsForNonOwner(
+        tenant,
+        recordsSubscribe,
+        queryResult.messages,
+      );
       paginationCursor = queryResult.cursor;
 
       // attach initialWrite for non-initial writes
@@ -230,6 +235,16 @@ export class RecordsSubscribeHandler implements MethodHandler {
     const deliverProjectedEvent = async (subscriptionEvent: SubscriptionEvent): Promise<void> => {
       const { message } = subscriptionEvent.event;
       if (Records.isRecordsWrite(message)) {
+        if (!await EncryptionControl.canRead({
+          tenant,
+          incomingMessage       : recordsSubscribe.message,
+          requester             : recordsSubscribe.author,
+          recordsWriteMessage   : message,
+          validationStateReader : deps.validationStateReader,
+        })) {
+          return;
+        }
+
         let isOccupant: boolean;
         try {
           isOccupant = await isRecordLimitOccupant({
@@ -315,6 +330,15 @@ export class RecordsSubscribeHandler implements MethodHandler {
     }
 
     if (Records.filterIncludesUnpublishedRecords(filter)) {
+      if (EncryptionControl.isExactAudienceFilter(filter)) {
+        filters.push({
+          ...Records.convertFilter(filter),
+          interface : DwnInterfaceName.Records,
+          method    : [DwnMethodName.Write, DwnMethodName.Delete],
+          published : false,
+        });
+      }
+
       if (Records.shouldBuildUnpublishedAuthorFilter(filter, recordsSubscribe.author!)) {
         filters.push({
           ...Records.convertFilter(filter),
@@ -397,6 +421,16 @@ export class RecordsSubscribeHandler implements MethodHandler {
     }
 
     if (Records.filterIncludesUnpublishedRecords(filter)) {
+      if (EncryptionControl.isExactAudienceFilter(filter)) {
+        filters.push({
+          ...Records.convertFilter(filter, dateSort),
+          interface         : DwnInterfaceName.Records,
+          method            : DwnMethodName.Write,
+          isLatestBaseState : true,
+          published         : false,
+        });
+      }
+
       if (Records.shouldBuildUnpublishedAuthorFilter(filter, recordsSubscribe.author!)) {
         filters.push({
           ...Records.convertFilter(filter, dateSort),
@@ -488,5 +522,35 @@ export class RecordsSubscribeHandler implements MethodHandler {
     if (Records.shouldProtocolAuthorize(recordsSubscribe.signaturePayload!)) {
       await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsSubscribe, deps.validationStateReader);
     }
+  }
+
+  private async filterControlRecordsForNonOwner(
+    tenant: string,
+    recordsSubscribe: RecordsSubscribe,
+    recordsWrites: RecordsQueryReplyEntry[],
+  ): Promise<RecordsQueryReplyEntry[]> {
+    if (recordsSubscribe.author === tenant) {
+      return recordsWrites;
+    }
+
+    const visibleRecordsWrites: RecordsQueryReplyEntry[] = [];
+    for (const recordsWrite of recordsWrites) {
+      if (!EncryptionControl.isControlMessage(recordsWrite)) {
+        visibleRecordsWrites.push(recordsWrite);
+        continue;
+      }
+
+      if (await EncryptionControl.canRead({
+        tenant,
+        incomingMessage       : recordsSubscribe.message,
+        requester             : recordsSubscribe.author,
+        recordsWriteMessage   : recordsWrite,
+        validationStateReader : this.deps.validationStateReader,
+      })) {
+        visibleRecordsWrites.push(recordsWrite);
+      }
+    }
+
+    return visibleRecordsWrites;
   }
 }

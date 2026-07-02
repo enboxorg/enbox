@@ -12,6 +12,7 @@ import { DataStream } from './data-stream.js';
 import { DateSort } from '../types/records-types.js';
 import { Encoder } from './encoder.js';
 import { FilterUtility } from './filter.js';
+import { isEncryptionControlPath } from '../core/constants.js';
 import { Jws } from './jws.js';
 import { Message } from '../core/message.js';
 import { PermissionGrant } from '../protocols/permission-grant.js';
@@ -331,6 +332,10 @@ export class Records {
   ): void {
     const { contextId, protocolPath } = filter;
     if (!protocolPath?.includes('/')) {
+      return;
+    }
+
+    if (isEncryptionControlPath(protocolPath)) {
       return;
     }
 

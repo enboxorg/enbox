@@ -1,22 +1,27 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ResumableTaskStore } from '../../src/index.js';
 
 import sinon from 'sinon';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { DataStream } from '../../src/utils/data-stream.js';
+import { Encoder } from '../../src/utils/encoder.js';
+import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
+import { RecordsCount } from '../../src/interfaces/records-count.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Time } from '../../src/index.js';
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
 
 export function testRecordsCountHandler(): void {
   describe('RecordsCountHandler.handle()', () => {
@@ -192,6 +197,118 @@ export function testRecordsCountHandler(): void {
 
         expect(reply.status.code).toBe(200);
         expect(reply.count).toBe(1);
+      });
+
+      it('should count exact-tuple audience control records without broad enumeration', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-count-audience.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const audience = await createAudienceControlWrite({
+          author      : alice,
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet : encryptedDefinition.structure.member as ProtocolRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const exactCount = await RecordsCount.create({
+          filter: {
+            protocol     : protocolDefinition.protocol,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags         : {
+              protocol  : protocolDefinition.protocol,
+              rolePath  : 'member',
+              contextId : '',
+            },
+          },
+          signer: Jws.createSigner(bob),
+        });
+        const exactReply = await dwn.processMessage(alice.did, exactCount.message);
+        expect(exactReply.status.code).toBe(200);
+        expect(exactReply.count).toBe(1);
+
+        const broadCount = await RecordsCount.create({
+          filter : { protocol: protocolDefinition.protocol },
+          signer : Jws.createSigner(bob),
+        });
+        const broadReply = await dwn.processMessage(alice.did, broadCount.message);
+        expect(broadReply.status.code).toBe(200);
+        expect(broadReply.count).toBe(0);
+      });
+
+      it('should count delivery control records only for the recipient', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-count-delivery.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const audience = await createAudienceControlWrite({
+          author   : alice,
+          protocol : protocolDefinition.protocol,
+          rolePath : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const roleRecord = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          data         : Encoder.stringToBytes('bob is a member'),
+          dataFormat   : 'application/json',
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          recipient    : bob.did,
+          schema       : 'http://member-schema',
+        });
+        expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
+
+        const delivery = await createDeliveryControlWrite({
+          author             : alice,
+          keyId              : audience.keyId,
+          protocol           : protocolDefinition.protocol,
+          recipient          : bob.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, delivery);
+
+        const bobCount = await RecordsCount.create({
+          filter : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          signer : Jws.createSigner(bob),
+        });
+        const bobReply = await dwn.processMessage(alice.did, bobCount.message);
+        expect(bobReply.status.code).toBe(200);
+        expect(bobReply.count).toBe(1);
+
+        const carolCount = await RecordsCount.create({
+          filter : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          signer : Jws.createSigner(carol),
+        });
+        const carolReply = await dwn.processMessage(alice.did, carolCount.message);
+        expect(carolReply.status.code).toBe(200);
+        expect(carolReply.count).toBe(0);
       });
 
       it('should count unpublished records authorized by permissionGrantId', async () => {

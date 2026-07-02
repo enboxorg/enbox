@@ -3,7 +3,7 @@ import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { EncryptionControlAudiencePayload, EncryptionControlDeliveryTags, RoleAudienceKeyId } from '../types/encryption-types.js';
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
-import type { RecordsWriteMessage, RecordsWriteTags } from '../types/records-types.js';
+import type { RecordsCountMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage, RecordsWriteTags } from '../types/records-types.js';
 
 import { checkActor } from './protocol-authorization-action.js';
 import { DwnConstant } from './dwn-constant.js';
@@ -33,9 +33,74 @@ type EffectiveControlActor = {
   grant?: PermissionGrant;
 };
 
+type ExactAudienceFilterTuple = Omit<RoleAudienceKeyId, 'keyId'> & {
+  keyId?: string;
+};
+
 export class EncryptionControl {
   public static isControlMessage(message: RecordsWriteMessage): boolean {
     return isEncryptionControlPath(message.descriptor.protocolPath);
+  }
+
+  public static isExactAudienceFilter(filter: RecordsFilter): boolean {
+    return EncryptionControl.getExactAudienceFilterTuple(filter) !== undefined;
+  }
+
+  public static async authorizeRead(input: {
+    tenant: string;
+    incomingMessage: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+    requester: string | undefined;
+    recordsWriteMessage: RecordsWriteMessage;
+    validationStateReader: ValidationStateReader;
+  }): Promise<void> {
+    if (await EncryptionControl.canRead(input)) {
+      return;
+    }
+
+    throw new DwnError(
+      DwnErrorCode.EncryptionControlReadUnauthorized,
+      'requester is not authorized to read the encryption control record.'
+    );
+  }
+
+  public static async canRead(input: {
+    tenant: string;
+    incomingMessage: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+    requester: string | undefined;
+    recordsWriteMessage: RecordsWriteMessage;
+    validationStateReader: ValidationStateReader;
+  }): Promise<boolean> {
+    const { requester, recordsWriteMessage, tenant } = input;
+    if (!EncryptionControl.isControlMessage(recordsWriteMessage)) {
+      return true;
+    }
+
+    if (requester === tenant) {
+      return true;
+    }
+
+    if (requester === undefined) {
+      return false;
+    }
+
+    const recordType = EncryptionControl.getRecordType(recordsWriteMessage);
+    if (recordType === 'delivery') {
+      return requester === recordsWriteMessage.descriptor.recipient ||
+        requester === Message.getAuthor(recordsWriteMessage);
+    }
+
+    const tags = EncryptionControl.getRoleAudienceKeyId(recordsWriteMessage, 'audience');
+    if (EncryptionControl.exactAudienceFilterMatchesRecord(input.incomingMessage.descriptor.filter, tags, recordsWriteMessage.recordId)) {
+      return true;
+    }
+
+    return EncryptionControl.canEnumerateAudience({
+      tenant,
+      actorDid              : requester,
+      incomingMessage       : input.incomingMessage,
+      tags,
+      validationStateReader : input.validationStateReader,
+    });
   }
 
   public static async authorizeWrite(
@@ -389,30 +454,55 @@ export class EncryptionControl {
     message: RecordsWriteMessage;
   }): Promise<void> {
     const { tenant, actor, tags, protocolDefinition, ruleSet, validationStateReader, message } = input;
-    if (actor.did === tenant) {
+    const signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature);
+    if (await EncryptionControl.actorCanCreateRole({
+      tenant,
+      actor,
+      tags,
+      protocolDefinition,
+      ruleSet,
+      validationStateReader,
+      invokedRole: signaturePayload.protocolRole,
+    })) {
       return;
+    }
+
+    throw new DwnError(
+      DwnErrorCode.EncryptionControlValidateAudienceWriterUnauthorized,
+      'control records must be written by a DID authorized to create the referenced role.'
+    );
+  }
+
+  private static async actorCanCreateRole(input: {
+    tenant: string;
+    actor: EffectiveControlActor;
+    tags: RoleAudienceKeyId;
+    protocolDefinition: ProtocolDefinition;
+    ruleSet: ProtocolRuleSet;
+    validationStateReader: ValidationStateReader;
+    invokedRole: string | undefined;
+  }): Promise<boolean> {
+    const { tenant, actor, tags, protocolDefinition, ruleSet, validationStateReader, invokedRole } = input;
+    if (actor.did === tenant) {
+      return true;
     }
 
     if (actor.did === undefined) {
-      throw new DwnError(
-        DwnErrorCode.EncryptionControlValidateAudienceWriterUnauthorized,
-        'control records must be written by a DID authorized to create the referenced role.'
-      );
+      return false;
     }
 
     if (actor.grant !== undefined && EncryptionControl.grantCoversRoleCreate(actor.grant, tags)) {
-      return;
+      return true;
     }
 
     const recordChain = await EncryptionControl.constructRoleParentChain(tenant, tags, validationStateReader);
-    const signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature);
     for (const actionRule of ruleSet.$actions ?? []) {
       if (!actionRule.can.includes(ProtocolAction.Create)) {
         continue;
       }
 
       if (actionRule.who === ProtocolActor.Anyone) {
-        return;
+        return true;
       }
 
       if (await EncryptionControl.roleRuleAllowsActor(
@@ -422,20 +512,17 @@ export class EncryptionControl {
         tags,
         protocolDefinition,
         validationStateReader,
-        signaturePayload.protocolRole,
+        invokedRole,
       )) {
-        return;
+        return true;
       }
 
       if (await checkActor(actor.did, actionRule, recordChain, protocolDefinition)) {
-        return;
+        return true;
       }
     }
 
-    throw new DwnError(
-      DwnErrorCode.EncryptionControlValidateAudienceWriterUnauthorized,
-      'control records must be written by a DID authorized to create the referenced role.'
-    );
+    return false;
   }
 
   private static async verifyDeliveryRecipientAuthority(input: {
@@ -570,6 +657,107 @@ export class EncryptionControl {
     });
   }
 
+  private static async canEnumerateAudience(input: {
+    tenant: string;
+    actorDid: string;
+    incomingMessage: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+    tags: RoleAudienceKeyId;
+    validationStateReader: ValidationStateReader;
+  }): Promise<boolean> {
+    const {
+      tenant, actorDid, incomingMessage, tags, validationStateReader
+    } = input;
+    const grant = await EncryptionControl.getInvokedReadGrant({
+      tenant,
+      actorDid,
+      incomingMessage,
+      validationStateReader,
+    });
+    if (grant !== undefined && EncryptionControl.grantCoversAudienceEnumeration(grant, tags)) {
+      return true;
+    }
+
+    const { protocolDefinition, ruleSet } = await EncryptionControl.getRoleAudienceDefinition({
+      tenant,
+      tags,
+      messageTimestamp: incomingMessage.descriptor.messageTimestamp,
+      validationStateReader,
+    });
+    const invokedRole = incomingMessage.authorization === undefined
+      ? undefined
+      : Jws.decodePlainObjectPayload(incomingMessage.authorization.signature).protocolRole;
+
+    return EncryptionControl.actorCanCreateRole({
+      tenant,
+      actor: { did: actorDid },
+      tags,
+      protocolDefinition,
+      ruleSet,
+      validationStateReader,
+      invokedRole,
+    });
+  }
+
+  private static async getInvokedReadGrant(input: {
+    tenant: string;
+    actorDid: string;
+    incomingMessage: RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+    validationStateReader: ValidationStateReader;
+  }): Promise<PermissionGrant | undefined> {
+    const grantId = input.incomingMessage.descriptor.permissionGrantId;
+    if (grantId === undefined) {
+      return undefined;
+    }
+
+    const grant = await input.validationStateReader.fetchGrant(input.tenant, grantId);
+    await GrantAuthorization.performBaseValidation({
+      incomingMessage       : input.incomingMessage,
+      expectedGrantor       : input.tenant,
+      expectedGrantee       : input.actorDid,
+      permissionGrant       : grant,
+      validationStateReader : input.validationStateReader,
+    });
+    return grant;
+  }
+
+  private static grantCoversAudienceEnumeration(grant: PermissionGrant, tags: RoleAudienceKeyId): boolean {
+    const scope = grant.scope as RecordsPermissionScope;
+    if (scope.interface !== DwnInterfaceName.Records || scope.method !== DwnMethodName.Read) {
+      return false;
+    }
+
+    return PermissionScopeMatcher.matches(scope, {
+      protocol     : tags.protocol,
+      protocolPath : tags.rolePath,
+    });
+  }
+
+  private static async getRoleAudienceDefinition(input: {
+    tenant: string;
+    tags: RoleAudienceKeyId;
+    messageTimestamp: string;
+    validationStateReader: ValidationStateReader;
+  }): Promise<RoleAudienceDefinition> {
+    const { tenant, tags, messageTimestamp, validationStateReader } = input;
+    EncryptionControl.verifyRoleAudienceContext(tags.rolePath, tags.contextId);
+
+    const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
+      tenant,
+      tags.protocol,
+      messageTimestamp,
+    );
+    const ruleSet = getRuleSetAtPath(tags.rolePath, protocolDefinition.structure);
+
+    if (ruleSet?.$role !== true || ruleSet.$keyAgreement === undefined) {
+      throw new DwnError(
+        DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid,
+        `role audience path '${tags.rolePath}' must be a role path with $keyAgreement.`
+      );
+    }
+
+    return { protocolDefinition, ruleSet };
+  }
+
   private static verifyGrantConditions(message: RecordsWriteMessage, grant: PermissionGrant): void {
     if (grant.conditions?.publication === PermissionConditionPublication.Required && message.descriptor.published !== true) {
       throw new DwnError(
@@ -693,6 +881,47 @@ export class EncryptionControl {
 
   private static getRecordType(message: RecordsWriteMessage): 'audience' | 'delivery' {
     return message.descriptor.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH ? 'delivery' : 'audience';
+  }
+
+  private static exactAudienceFilterMatchesRecord(filter: RecordsFilter, tags: RoleAudienceKeyId, recordId: string): boolean {
+    if (filter.recordId === recordId) {
+      return true;
+    }
+
+    const tuple = EncryptionControl.getExactAudienceFilterTuple(filter);
+    if (tuple === undefined) {
+      return false;
+    }
+
+    return tuple.protocol === tags.protocol &&
+      tuple.rolePath === tags.rolePath &&
+      tuple.contextId === tags.contextId &&
+      (tuple.keyId === undefined || tuple.keyId === tags.keyId);
+  }
+
+  private static getExactAudienceFilterTuple(filter: RecordsFilter): ExactAudienceFilterTuple | undefined {
+    if (filter.protocol === undefined || filter.protocolPath !== ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+      return undefined;
+    }
+
+    const protocol = EncryptionControl.getExactFilterTag(filter, 'protocol');
+    const rolePath = EncryptionControl.getExactFilterTag(filter, 'rolePath');
+    const contextId = EncryptionControl.getExactFilterTag(filter, 'contextId');
+    if (protocol !== filter.protocol || rolePath === undefined || contextId === undefined) {
+      return undefined;
+    }
+
+    const keyId = EncryptionControl.getExactFilterTag(filter, 'keyId');
+    if (keyId === undefined) {
+      return { protocol, rolePath, contextId };
+    }
+
+    return { protocol, rolePath, contextId, keyId };
+  }
+
+  private static getExactFilterTag(filter: RecordsFilter, tag: string): string | undefined {
+    const value = filter.tags?.[tag];
+    return typeof value === 'string' ? value : undefined;
   }
 
   private static getRequiredStringTag(message: RecordsWriteMessage, tag: string, recordType: 'audience' | 'delivery'): string {
