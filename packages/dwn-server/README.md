@@ -153,6 +153,18 @@ The server uses three logical stores: a **message store**, a **data store**, and
 | MySQL      | `mysql://user:pass@host:3306/db?debug=true&timezone=-0700` | [Connection options](https://github.com/mysqljs/mysql#connection-options) as query params. |
 | PostgreSQL | `postgres://user:pass@host:5432/db`                    | Also honors [standard `PG*` env vars](https://node-postgres.com/features/connecting). |
 
+#### Optional backend packages
+
+`@enbox/dwn-server` keeps non-default backend drivers optional. Install the
+driver for the backend you configure:
+
+| Feature | Install command |
+| ------- | --------------- |
+| LevelDB / SQLite | No extra package |
+| PostgreSQL storage | `bun add pg pg-cursor` |
+| MySQL storage | `bun add mysql2` |
+| NATS event-bus plugin | `bun add @nats-io/transport-node` |
+
 > **TTL cache constraint:** if a registration store is configured (via `DWN_REGISTRATION_STORE_URL`, or its fallback to `DWN_STORAGE`) and `DWN_TTL_CACHE_URL` points at a *different* SQL database, the server throws at startup — the `cacheEntries` table is managed by the server migration system and must live in the same database. Point both at the same SQL URL.
 
 #### Plugins

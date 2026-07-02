@@ -8,7 +8,6 @@ import { fileURLToPath } from 'url';
 import fs from 'node:fs';
 import { Kysely } from 'kysely';
 import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import { Cid, DataStream, Message, RecordsWrite, Replication } from '@enbox/dwn-sdk-js';
 import { createBunSqliteDatabase, SqliteDialect } from '@enbox/dwn-sql-store';
@@ -127,7 +126,7 @@ export async function sendHttpMessage(options: {
 }): Promise<UnionMessageReply> {
   const { url, target, message, data } = options;
   // First RecordsWrite that creates the record.
-  const requestId = uuidv4();
+  const requestId = crypto.randomUUID();
   const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
     target,
     message,

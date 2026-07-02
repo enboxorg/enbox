@@ -1,7 +1,5 @@
 import type { ProgressToken } from '@enbox/dwn-sdk-js';
 
-import { v4 as uuidv4 } from 'uuid';
-
 import type { JsonRpcId } from '@enbox/dwn-clients';
 import type {
   HandlerResponse,
@@ -45,7 +43,7 @@ export const handleSubscriptionAck: JsonRpcHandler = async (
   jsonRpcRequest,
   context,
 ) => {
-  const requestId = jsonRpcRequest.id ?? uuidv4();
+  const requestId = jsonRpcRequest.id ?? crypto.randomUUID();
 
   if (context.socketConnection === undefined) {
     const jsonRpcResponse = createJsonRpcErrorResponse(

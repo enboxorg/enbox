@@ -5,7 +5,6 @@ import { DwnServerErrorCode } from '../src/dwn-error.js';
 import { getTestDwn } from './test-dwn.js';
 import { handleDwnApplyReplicatedMessage } from '../src/json-rpc-handlers/dwn/apply-replicated-message.js';
 import { RateLimiter } from '../src/rate-limiter.js';
-import { v4 as uuidv4 } from 'uuid';
 import { createJsonRpcRequest, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { createRecordsWriteMessage, expectAppliedResultWithPosition } from './utils.js';
 import { DataStream, DwnErrorCode, Encoder, TestDataGenerator } from '@enbox/dwn-sdk-js';
@@ -15,7 +14,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
   it('returns a structured replication result from the DWN apply path', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
@@ -36,7 +35,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
   });
 
   it('rejects RecordsWrite over non-HTTP transports', async () => {
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       message: {
         descriptor: {
@@ -68,7 +67,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     dataBytes[0] = 1;
     dataBytes[dataBytes.length - 1] = 2;
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data: dataBytes });
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       encodedData : Encoder.bytesToBase64Url(dataBytes),
       message     : recordsWrite.toJSON(),
@@ -98,7 +97,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const dataBytes = new Uint8Array([1, 2, 3, 4]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data: dataBytes });
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       encodedData : Encoder.bytesToBase64Url(dataBytes.slice(0, 2)),
       message     : recordsWrite.toJSON(),
@@ -122,7 +121,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
   });
 
   it('rejects encoded data with invalid base64url characters', async () => {
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       encodedData : 'abc+',
       message     : {
@@ -151,7 +150,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
   });
 
   it('rejects padded encoded data before decoding', async () => {
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       encodedData : 'AA==',
       message     : {
@@ -180,7 +179,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
   });
 
   it('rejects encoded data that exceeds the configured max record data size before decoding', async () => {
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       encodedData : Encoder.bytesToBase64Url(new Uint8Array([1, 2, 3, 4])),
       message     : {
@@ -215,7 +214,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
   it('invokes message processed hooks only when replicated apply returns Applied', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
@@ -245,7 +244,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
   it('does not invoke message processed hooks for non-Applied replication outcomes', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const { recordsWrite } = await createRecordsWriteMessage(alice);
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
@@ -289,13 +288,13 @@ describe('handleDwnApplyReplicatedMessage', () => {
         },
       };
 
-      const firstRequest = createJsonRpcRequest(uuidv4(), 'dwn.applyReplicatedMessage', {
+      const firstRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
         message,
         target: 'did:key:rate-limited',
       });
       await handleDwnApplyReplicatedMessage(firstRequest, context);
 
-      const secondRequest = createJsonRpcRequest(uuidv4(), 'dwn.applyReplicatedMessage', {
+      const secondRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
         message,
         target: 'did:key:rate-limited',
       });
@@ -317,7 +316,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([1, 2, 3, 4]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
@@ -353,7 +352,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([5, 6, 7, 8]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
-    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.applyReplicatedMessage', {
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
     });
@@ -396,7 +395,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([5, 6, 7, 8]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
-    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.applyReplicatedMessage', {
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
     });
@@ -445,7 +444,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([1, 2, 3, 4]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
-    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.applyReplicatedMessage', {
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
     });
@@ -493,7 +492,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const data = new Uint8Array([9, 10, 11, 12]);
     const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
-    const dwnRequest = createJsonRpcRequest(uuidv4(), 'dwn.applyReplicatedMessage', {
+    const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.applyReplicatedMessage', {
       message : recordsWrite.toJSON(),
       target  : alice.did,
     });
@@ -533,7 +532,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
   });
 
   it('returns an internal JSON-RPC error for unexpected thrown errors', async () => {
-    const requestId = uuidv4();
+    const requestId = crypto.randomUUID();
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       message: {
         descriptor: {

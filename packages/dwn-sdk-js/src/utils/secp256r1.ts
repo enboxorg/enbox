@@ -1,14 +1,12 @@
 import type { JwkParamsEcPrivate, JwkParamsEcPublic } from '@enbox/crypto';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../types/jose-types.js';
 
+import { bytesToNumberBE } from '@noble/curves/abstract/utils';
 import { p256, secp256r1 } from '@noble/curves/p256';
 
 import { Encoder } from './encoder.js';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
-import { fromString, toString } from 'uint8arrays';
-
-const u8a = { toString, fromString };
 
 /**
  * Class containing SECP256R1 related utility methods.
@@ -139,6 +137,6 @@ export class Secp256r1 {
   }
 
   public static bytesToBigInt(b: Uint8Array): bigint {
-    return BigInt(`0x` + u8a.toString(b, 'base16'));
+    return bytesToNumberBE(b);
   }
 }

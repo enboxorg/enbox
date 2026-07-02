@@ -57,10 +57,6 @@ export default defineConfig({
       'eventemitter3',
       'interface-store',
       'level',
-      'lodash',
-      'lodash/isPlainObject.js',
-      'mockdate',
-      'ms',
       'sinon',
       'uuid',
 
@@ -87,10 +83,7 @@ export default defineConfig({
       '@noble/curves/ed25519',
       '@noble/curves/p256',
       '@noble/curves/secp256k1',
-      '@noble/ed25519',
-      '@noble/secp256k1',
       'lru-cache',
-      'ulidx',
 
       // --- Vitest coverage provider (loaded in-browser by the test runner) ---
       '@vitest/coverage-istanbul',

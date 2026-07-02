@@ -1,5 +1,3 @@
-import 'reflect-metadata';
-
 import type { DwnServerConfig } from '@enbox/dwn-server';
 
 import { resolve } from 'node:path';

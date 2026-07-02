@@ -1,8 +1,33 @@
 import { readFileSync } from 'fs';
 
-import bytes from 'bytes';
-
 export type DwnServerConfig = typeof config;
+
+const byteSizeUnits: Record<string, number> = {
+  b  : 1,
+  gb : 1024 ** 3,
+  kb : 1024,
+  mb : 1024 ** 2,
+};
+
+/**
+ * Parses a byte-size string with optional b/kb/mb/gb suffix into bytes.
+ */
+export function parseByteSize(value: string): number {
+  const match = /^(\d+(?:\.\d+)?)(b|kb|mb|gb)?$/i.exec(value.trim());
+  if (match === null) {
+    throw new TypeError(`Invalid byte size '${value}'. Use a byte count or b/kb/mb/gb suffix.`);
+  }
+
+  const amount = Number.parseFloat(match[1]);
+  const unit = match[2]?.toLowerCase() ?? 'b';
+  const byteSize = Math.floor(amount * byteSizeUnits[unit]);
+
+  if (!Number.isSafeInteger(byteSize)) {
+    throw new TypeError(`Invalid byte size '${value}'. Parsed value is outside the safe integer range.`);
+  }
+
+  return byteSize;
+}
 
 export const config = {
   /**
@@ -47,7 +72,7 @@ export const config = {
    * concurrent large uploads. Operators can raise the limit via the
    * `MAX_RECORD_DATA_SIZE` env var (e.g. `'1gb'`).
    */
-  maxRecordDataSize : bytes(process.env.MAX_RECORD_DATA_SIZE || '100mb'),
+  maxRecordDataSize : parseByteSize(process.env.MAX_RECORD_DATA_SIZE || '100mb'),
 
   /**
    * Maximum number of unacknowledged subscription events the server will send

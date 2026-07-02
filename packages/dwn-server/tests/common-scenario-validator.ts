@@ -1,10 +1,8 @@
 import type { JsonRpcSuccessResponse } from '@enbox/dwn-clients';
 import type { Persona } from '@enbox/dwn-sdk-js';
 
-import { expect } from 'bun:test';
-import { v4 as uuidv4 } from 'uuid';
-
 import { createJsonRpcRequest } from '@enbox/dwn-clients';
+import { expect } from 'bun:test';
 import { getFileAsReadStream } from './utils.js';
 import { Cid, DwnConstant, Jws, ProtocolsConfigure, RecordsRead, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
@@ -36,7 +34,7 @@ export default class CommonScenarioValidator {
       definition : protocolDefinition
     });
 
-    const protocolConfigureRequestId = uuidv4();
+    const protocolConfigureRequestId = crypto.randomUUID();
     const protocolConfigureRequest = createJsonRpcRequest(protocolConfigureRequestId, 'dwn.processMessage', {
       target  : alice.did,
       message : protocolsConfig.message,
@@ -70,7 +68,7 @@ export default class CommonScenarioValidator {
       dataSize
     });
 
-    const recordsWriteRequestId = uuidv4();
+    const recordsWriteRequestId = crypto.randomUUID();
     const recordsWriteRequest = createJsonRpcRequest(recordsWriteRequestId, 'dwn.processMessage', {
       target  : alice.did,
       message : recordsWrite.message,
@@ -95,7 +93,7 @@ export default class CommonScenarioValidator {
       },
     });
 
-    const recordsReadRequestId = uuidv4();
+    const recordsReadRequestId = crypto.randomUUID();
     const recordsReadRequest = createJsonRpcRequest(recordsReadRequestId, 'dwn.processMessage', {
       target  : alice.did,
       message : recordsRead.message

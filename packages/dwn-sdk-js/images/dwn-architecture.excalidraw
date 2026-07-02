@@ -1750,11 +1750,11 @@
       "locked": false,
       "fontSize": 20,
       "fontFamily": 1,
-      "text": "Built-In\ndid:ion & did:key\nImplementation",
+      "text": "Built-In\ndid:dht & did:key\nImplementation",
       "textAlign": "center",
       "verticalAlign": "middle",
       "containerId": "b1tLpgX0OJTe1T-Nqsf6p",
-      "originalText": "Built-In\ndid:ion & did:key\nImplementation",
+      "originalText": "Built-In\ndid:dht & did:key\nImplementation",
       "lineHeight": 1.2,
       "baseline": 65
     },

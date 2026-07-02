@@ -1,7 +1,10 @@
+import type { CliIo } from '../src/cli.js';
+
 import { generateTypes } from '../src/codegen.js';
 import { join } from 'node:path';
-import { readFile } from 'node:fs/promises';
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
+import { CliUsageError, main, parseGenerateArgs, runGenerate } from '../src/cli.js';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { resolveAllSchemas, resolveSchema } from '../src/schema-resolver.js';
 
 // ---------------------------------------------------------------------------
@@ -11,11 +14,263 @@ import { resolveAllSchemas, resolveSchema } from '../src/schema-resolver.js';
 const FIXTURES_DIR = join(import.meta.dir, 'fixtures');
 const SCHEMAS_DIR = join(FIXTURES_DIR, 'schemas');
 const SCHEMAS_URI_PATH_DIR = join(FIXTURES_DIR, 'schemas-uri-path');
+const PACKAGE_DIR = join(import.meta.dir, '..');
+const TMP_DIR = join(PACKAGE_DIR, '.tmp-codegen-tests');
+
+type CliResult = {
+  exitCode : number;
+  stderr : string;
+  stdout : string;
+};
+
+type MemoryCliIo = {
+  io : CliIo;
+  stderr : () => string;
+  stdout : () => string;
+};
+
+function createMemoryIo(cwd = PACKAGE_DIR): MemoryCliIo {
+  let stderr = '';
+  let stdout = '';
+
+  return {
+    io: {
+      cwd,
+      stderr: {
+        write: (chunk: string): boolean => {
+          stderr += chunk;
+          return true;
+        },
+      },
+      stdout: {
+        write: (chunk: string): boolean => {
+          stdout += chunk;
+          return true;
+        },
+      },
+    },
+    stderr : (): string => stderr,
+    stdout : (): string => stdout,
+  };
+}
 
 async function loadDefinition(): Promise<Record<string, unknown>> {
   const raw = await readFile(join(FIXTURES_DIR, 'todo-definition.json'), 'utf-8');
   return JSON.parse(raw);
 }
+
+async function runCli(args: string[]): Promise<CliResult> {
+  const proc = Bun.spawn(['bun', 'src/cli.ts', ...args], {
+    cwd    : PACKAGE_DIR,
+    env    : process.env,
+    stderr : 'pipe',
+    stdout : 'pipe',
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  return { exitCode, stderr, stdout };
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+describe('protocol-codegen CLI', () => {
+  afterEach(async (): Promise<void> => {
+    await rm(TMP_DIR, { force: true, recursive: true });
+  });
+
+  it('should parse generate help without running generation', () => {
+    const memory = createMemoryIo();
+
+    const result = parseGenerateArgs(['--help'], memory.io);
+
+    expect(result).toBeUndefined();
+    expect(memory.stdout()).toContain('protocol-codegen generate [options]');
+  });
+
+  it('should parse generate arguments', () => {
+    const result = parseGenerateArgs([
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+      '--output', join(TMP_DIR, 'todo.generated.ts'),
+    ], createMemoryIo().io);
+
+    expect(result).toEqual({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output     : join(TMP_DIR, 'todo.generated.ts'),
+      schemas    : SCHEMAS_DIR,
+    });
+  });
+
+  it('should throw on invalid generate options', () => {
+    const memory = createMemoryIo();
+
+    expect(() => parseGenerateArgs(['--invalid'], memory.io)).toThrow(CliUsageError);
+  });
+
+  it('should throw on missing generate options', () => {
+    const memory = createMemoryIo();
+
+    expect(() => parseGenerateArgs([
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--name', 'Todo',
+    ], memory.io)).toThrow('Missing required argument: schemas');
+  });
+
+  it('should handle top-level help and version in process', async () => {
+    const helpMemory = createMemoryIo();
+    await main(['--help'], helpMemory.io);
+    expect(helpMemory.stdout()).toContain('protocol-codegen <command> [options]');
+
+    const versionMemory = createMemoryIo();
+    await main(['--version'], versionMemory.io);
+    expect(versionMemory.stdout()).toBe('0.1.0\n');
+  });
+
+  it('should throw when no command is provided', async () => {
+    const memory = createMemoryIo();
+
+    await expect(main([], memory.io)).rejects.toThrow('You must specify a command.');
+  });
+
+  it('should throw when an unknown command is provided', async () => {
+    const memory = createMemoryIo();
+
+    await expect(main(['unknown'], memory.io)).rejects.toThrow('Unknown command: unknown');
+  });
+
+  it('should throw when generate paths escape the working directory', async () => {
+    const memory = createMemoryIo();
+
+    await expect(runGenerate({
+      definition : '../package.json',
+      name       : 'Todo',
+      schemas    : SCHEMAS_DIR,
+    }, memory.io)).rejects.toThrow('definition path must be within the current working directory');
+  });
+
+  it('should throw when the working directory is not a directory', async () => {
+    const memory = createMemoryIo(join(FIXTURES_DIR, 'todo-definition.json'));
+
+    await expect(runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      schemas    : SCHEMAS_DIR,
+    }, memory.io)).rejects.toThrow('current working directory not found');
+  });
+
+  it('should throw when the definition path is not a file', async () => {
+    const memory = createMemoryIo();
+
+    await expect(runGenerate({
+      definition : FIXTURES_DIR,
+      name       : 'Todo',
+      schemas    : SCHEMAS_DIR,
+    }, memory.io)).rejects.toThrow('definition file not found');
+  });
+
+  it('should throw when the schemas path is not a directory', async () => {
+    const memory = createMemoryIo();
+
+    await expect(runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      schemas    : join(FIXTURES_DIR, 'todo-definition.json'),
+    }, memory.io)).rejects.toThrow('schemas directory not found');
+  });
+
+  it('should throw when the output directory does not exist', async () => {
+    const memory = createMemoryIo();
+
+    await expect(runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output     : join(TMP_DIR, 'missing', 'todo.generated.ts'),
+      schemas    : SCHEMAS_DIR,
+    }, memory.io)).rejects.toThrow('output directory not found');
+  });
+
+  it('should generate TypeScript in process to stdout', async () => {
+    const memory = createMemoryIo();
+
+    await runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      schemas    : SCHEMAS_DIR,
+    }, memory.io);
+
+    expect(memory.stdout()).toContain('export interface ListData');
+    expect(memory.stderr()).toContain('+ list: local-type-name');
+  });
+
+  it('should generate TypeScript in process to a file', async () => {
+    const memory = createMemoryIo();
+    await mkdir(TMP_DIR, { recursive: true });
+
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output,
+      schemas    : SCHEMAS_DIR,
+    }, memory.io);
+
+    const generated = await readFile(output, 'utf-8');
+    expect(generated).toContain('export interface ListData');
+    expect(memory.stderr()).toContain(`Wrote ${output}`);
+  });
+
+  it('should route generate help through main', async () => {
+    const memory = createMemoryIo();
+
+    await main(['generate', '--help'], memory.io);
+
+    expect(memory.stdout()).toContain('protocol-codegen generate [options]');
+  });
+
+  it('should print help', async () => {
+    const result = await runCli(['--help']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('protocol-codegen <command> [options]');
+    expect(result.stdout).toContain('generate');
+  });
+
+  it('should print version', async () => {
+    const result = await runCli(['--version']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('0.1.0\n');
+  });
+
+  it('should fail when required generate flags are missing', async () => {
+    const result = await runCli(['generate', '--definition', join(FIXTURES_DIR, 'todo-definition.json'), '--name', 'Todo']);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('Missing required argument: schemas');
+  });
+
+  it('should generate TypeScript to stdout', async () => {
+    const result = await runCli([
+      'generate',
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('export interface ListData');
+    expect(result.stderr).toContain('+ list: local-type-name');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Schema resolution
@@ -423,11 +678,11 @@ describe('CLI', () => {
     const cliPath = join(import.meta.dir, '..', 'src', 'cli.ts');
 
     const proc = Bun.spawn([
-      'bun', 'run', cliPath,
-      'generate',
-      '--definition', '/nonexistent/path.json',
-      '--schemas', SCHEMAS_DIR,
-      '--name', 'Test',
+	      'bun', 'run', cliPath,
+	      'generate',
+	      '--definition', join(FIXTURES_DIR, 'missing-definition.json'),
+	      '--schemas', SCHEMAS_DIR,
+	      '--name', 'Test',
     ], {
       stdout : 'pipe',
       stderr : 'pipe',

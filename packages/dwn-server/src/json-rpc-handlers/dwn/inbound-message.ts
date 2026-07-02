@@ -3,7 +3,6 @@ import type { JsonRpcId } from '@enbox/dwn-clients';
 import type { HandlerResponse, JsonRpcHandler } from '../../lib/json-rpc-router.js';
 
 import { DwnServerErrorCode } from '../../dwn-error.js';
-import { v4 as uuidv4 } from 'uuid';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
@@ -92,7 +91,7 @@ export async function enforceQuota(
   context: Parameters<JsonRpcHandler>[1],
 ): Promise<HandlerResponse | undefined> {
   const { config, adminStore, registrationStore } = context;
-  const requestId = (message as { recordId?: string }).recordId ?? uuidv4();
+  const requestId = (message as { recordId?: string }).recordId ?? crypto.randomUUID();
 
   // Resolve effective quota: per-tenant override > global config > unlimited.
   let maxMessages = config!.quotaMaxMessages ?? 0;

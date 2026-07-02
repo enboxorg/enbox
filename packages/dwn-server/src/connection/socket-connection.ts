@@ -16,7 +16,6 @@ import log from 'loglevel';
 import { DwnMethodName } from '@enbox/dwn-sdk-js';
 import { jsonRpcRouter } from '../json-rpc-api.js';
 import { requestCounter } from '../metrics.js';
-import { v4 as uuidv4 } from 'uuid';
 import { createJsonRpcErrorResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { DEFAULT_MAX_IN_FLIGHT, FlowController } from './flow-controller.js';
 import { DwnServerError, DwnServerErrorCode } from '../dwn-error.js';
@@ -33,7 +32,7 @@ const HEARTBEAT_INTERVAL = 30_000;
  */
 export class SocketConnection {
   /** Unique identifier for this connection (for admin introspection). */
-  public readonly id: string = uuidv4();
+  public readonly id: string = crypto.randomUUID();
 
   /** Timestamp when the connection was established (for admin introspection). */
   public readonly connectedAt: number = Date.now();
@@ -171,7 +170,7 @@ export class SocketConnection {
     const requestData = dataBuffer.toString();
     if (!requestData) {
       return this.send(createJsonRpcErrorResponse(
-        uuidv4(),
+        crypto.randomUUID(),
         JsonRpcErrorCodes.BadRequest,
         'request payload required.'
       ));
@@ -182,7 +181,7 @@ export class SocketConnection {
       jsonRequest = JSON.parse(requestData);
     } catch (error) {
       const errorResponse = createJsonRpcErrorResponse(
-        uuidv4(),
+        crypto.randomUUID(),
         JsonRpcErrorCodes.BadRequest,
         (error as Error).message
       );

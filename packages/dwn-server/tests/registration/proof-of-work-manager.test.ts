@@ -1,5 +1,4 @@
 import { randomBytes } from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import sinon, { useFakeTimers } from 'sinon';
 
@@ -106,7 +105,7 @@ describe('ProofOfWorkManager', () => {
 
     // Load up desiredSolveRatePerMinute number of proof-of-work entries, so all future new entries will increase the complexity.
     for (let i = 0; i < desiredSolveCountPerMinute; i++) {
-      await proofOfWorkManager.recordProofOfWork(uuidv4());
+      await proofOfWorkManager.recordProofOfWork(crypto.randomUUID());
     }
 
     let baselineMaximumAllowedHashValue = proofOfWorkManager.currentMaximumAllowedHashValue;
@@ -114,7 +113,7 @@ describe('ProofOfWorkManager', () => {
     const lastSolveCountPerMinute = 0;
     for (let i = 0; i < 100; i++) {
       // Simulating 1 proof-of-work per second for 100 seconds.
-      await proofOfWorkManager.recordProofOfWork(uuidv4());
+      await proofOfWorkManager.recordProofOfWork(crypto.randomUUID());
       expect(proofOfWorkManager.currentSolveCountPerMinute).toBeGreaterThanOrEqual(lastSolveCountPerMinute);
       await clock.tickAsync(1000);
 
@@ -154,12 +153,12 @@ describe('ProofOfWorkManager', () => {
 
     // Load up desiredSolveRatePerMinute number of proof-of-work entries, so all future new entries will increase the complexity.
     for (let i = 0; i < desiredSolveCountPerMinute; i++) {
-      await proofOfWorkManager.recordProofOfWork(uuidv4());
+      await proofOfWorkManager.recordProofOfWork(crypto.randomUUID());
     }
 
     // Simulating 1 proof-of-work per second for 100 seconds to increase proof-of-work difficulty.
     for (let i = 0; i < 100; i++) {
-      await proofOfWorkManager.recordProofOfWork(uuidv4());
+      await proofOfWorkManager.recordProofOfWork(crypto.randomUUID());
       clock.tick(1000);
     }
     expect(proofOfWorkManager.currentMaximumAllowedHashValue < initialMaximumAllowedHashValueAsBigInt).toBe(true);

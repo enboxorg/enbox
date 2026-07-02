@@ -6,7 +6,6 @@ import { Convert } from '@enbox/common';
 import log from 'loglevel';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { v4 as uuidv4 } from 'uuid';
 import {
   DataStream,
   ProtocolsConfigure,
@@ -119,7 +118,7 @@ describe('http api', function () {
       const message = recordsWrite.toJSON();
       delete message['descriptor']['interface'];
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : message,
         target  : alice.did,
@@ -179,7 +178,7 @@ describe('http api', function () {
         signer: alice.signer,
       });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : recordsQuery.toJSON(),
         target  : alice.did,
@@ -213,7 +212,7 @@ describe('http api', function () {
 
       const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data: dataBytes });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,
@@ -243,7 +242,7 @@ describe('http api', function () {
       const { recordsWrite: initialWrite, dataStream } =
         await createRecordsWriteMessage(alice);
       const dataBytes = await DataStream.toBytes(dataStream);
-      let requestId = uuidv4();
+      let requestId = crypto.randomUUID();
       let dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : initialWrite.toJSON(),
         target  : alice.did,
@@ -271,7 +270,7 @@ describe('http api', function () {
         published   : true,
       });
 
-      requestId = uuidv4();
+      requestId = crypto.randomUUID();
       dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : overWrite.toJSON(),
         target  : alice.did,
@@ -298,7 +297,7 @@ describe('http api', function () {
       const { recordsWrite: tombstone } =
         await createRecordsWriteMessage(alice);
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : tombstone.toJSON(),
         target  : alice.did,
@@ -355,7 +354,7 @@ describe('http api', function () {
         published : true,
       });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,
@@ -399,7 +398,7 @@ describe('http api', function () {
         dataSize : size,
       });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,
@@ -471,7 +470,7 @@ describe('http api', function () {
         published : true,
       });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,
@@ -515,7 +514,7 @@ describe('http api', function () {
         dataSize : size,
       });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,
@@ -589,7 +588,7 @@ describe('http api', function () {
         signer: alice.signer,
       });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : protocolConfigure.toJSON(),
         target  : alice.did,
@@ -631,7 +630,7 @@ describe('http api', function () {
         signer: alice.signer,
       });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : protocolConfigure.toJSON(),
         target  : alice.did,
@@ -678,7 +677,7 @@ describe('http api', function () {
         signer: alice.signer,
       });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : protocolConfigurePublished.toJSON(),
         target  : alice.did,
@@ -706,7 +705,7 @@ describe('http api', function () {
         signer: alice.signer,
       });
 
-      const requestId2 = uuidv4();
+      const requestId2 = crypto.randomUUID();
       const dwnRequest2 = createJsonRpcRequest(requestId2, 'dwn.processMessage', {
         message : protocolConfigureNotPublished.toJSON(),
         target  : alice.did,
@@ -752,7 +751,7 @@ describe('http api', function () {
         signer: alice.signer,
       });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : protocolConfigure.toJSON(),
         target  : alice.did,
@@ -782,7 +781,7 @@ describe('http api', function () {
         protocolPath : 'foo',
       });
 
-      const recordsWriteRequestId = uuidv4();
+      const recordsWriteRequestId = crypto.randomUUID();
       const recordsWriteDwnRequest = createJsonRpcRequest(recordsWriteRequestId, 'dwn.processMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,
@@ -845,7 +844,7 @@ describe('http api', function () {
         signer: alice.signer,
       });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : protocolConfigure.toJSON(),
         target  : alice.did,
@@ -875,7 +874,7 @@ describe('http api', function () {
         protocolPath : 'foo',
       });
 
-      const recordsWriteRequestId = uuidv4();
+      const recordsWriteRequestId = crypto.randomUUID();
       const recordsWriteDwnRequest = createJsonRpcRequest(recordsWriteRequestId, 'dwn.processMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,
@@ -931,7 +930,7 @@ describe('http api', function () {
         published : true,
       });
 
-      const requestId = uuidv4();
+      const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message : recordsWrite.toJSON(),
         target  : alice.did,

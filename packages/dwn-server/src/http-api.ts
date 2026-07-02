@@ -23,7 +23,6 @@ import log from 'loglevel';
 
 import { Convert } from '@enbox/common';
 import { register } from 'prom-client';
-import { v4 as uuidv4 } from 'uuid';
 import {
   createJsonRpcErrorResponse,
   JsonRpcErrorCodes,
@@ -564,7 +563,7 @@ export class HttpApi {
 
     if (!dwnRpcRequestString) {
       const reply = createJsonRpcErrorResponse(
-        uuidv4(), JsonRpcErrorCodes.BadRequest, 'request payload required.'
+        crypto.randomUUID(), JsonRpcErrorCodes.BadRequest, 'request payload required.'
       );
       return Response.json(reply, { status: 400 });
     }
@@ -574,7 +573,7 @@ export class HttpApi {
       dwnRpcRequest = JSON.parse(dwnRpcRequestString);
     } catch (e) {
       const reply = createJsonRpcErrorResponse(
-        uuidv4(), JsonRpcErrorCodes.BadRequest, (e as Error).message
+        crypto.randomUUID(), JsonRpcErrorCodes.BadRequest, (e as Error).message
       );
       return Response.json(reply, { status: 400 });
     }

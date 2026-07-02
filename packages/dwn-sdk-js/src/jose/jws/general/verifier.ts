@@ -109,7 +109,7 @@ export class GeneralJwsVerifier {
     for (const method of verificationMethods) {
       // consider optimizing using a set for O(1) lookups if needed
       // key ID in DID Document may or may not be fully qualified. e.g.
-      // `did:ion:alice#key1` or `#key1`
+      // `did:example:alice#key1` or `#key1`
       if (kid.endsWith(method.id)) {
         verificationMethod = method;
         break;

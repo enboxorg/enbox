@@ -3,7 +3,6 @@ import type { JsonRpcRequest } from '@enbox/dwn-clients';
 import type { RequestContext } from '../src/lib/json-rpc-router.js';
 
 import sinon from 'sinon';
-import { v4 as uuidv4 } from 'uuid';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import { JsonRpcErrorCodes } from '@enbox/dwn-clients';
@@ -27,7 +26,7 @@ describe('handleSubscriptionAck', () => {
   it('should return error when socket connection does not exist', async () => {
     const request: JsonRpcRequest = {
       jsonrpc      : '2.0',
-      id           : uuidv4(),
+      id           : crypto.randomUUID(),
       method       : 'rpc.ack',
       params       : { cursor: 'some-cursor' },
       subscription : { id: 'sub-1' },
@@ -70,7 +69,7 @@ describe('handleSubscriptionAck', () => {
 
     const request: JsonRpcRequest = {
       jsonrpc : '2.0',
-      id      : uuidv4(),
+      id      : crypto.randomUUID(),
       method  : 'rpc.ack',
       params  : { cursor: 'some-cursor' },
       // No subscription field.
@@ -115,7 +114,7 @@ describe('handleSubscriptionAck', () => {
 
     const request: JsonRpcRequest = {
       jsonrpc      : '2.0',
-      id           : uuidv4(),
+      id           : crypto.randomUUID(),
       method       : 'rpc.ack',
       params       : {}, // No cursor.
       subscription : { id: 'sub-1' },
@@ -160,7 +159,7 @@ describe('handleSubscriptionAck', () => {
 
     const request: JsonRpcRequest = {
       jsonrpc      : '2.0',
-      id           : uuidv4(),
+      id           : crypto.randomUUID(),
       method       : 'rpc.ack',
       params       : { cursor: '' },
       subscription : { id: 'sub-1' },
@@ -205,7 +204,7 @@ describe('handleSubscriptionAck', () => {
 
     const request: JsonRpcRequest = {
       jsonrpc      : '2.0',
-      id           : uuidv4(),
+      id           : crypto.randomUUID(),
       method       : 'rpc.ack',
       params       : { cursor: { streamId: 's1', epoch: 'e1', position: '42', messageCid: 'cid-42' } },
       subscription : { id: 'sub-123' },
@@ -228,7 +227,7 @@ describe('handleSubscriptionAck', () => {
     const ackSubscription = sinon.stub();
     const request: JsonRpcRequest = {
       jsonrpc      : '2.0',
-      id           : uuidv4(),
+      id           : crypto.randomUUID(),
       method       : 'rpc.ack',
       params       : { cursor: { streamId: 's1', epoch: 'e1', position: '42' } },
       subscription : { id: 'sub-123' },

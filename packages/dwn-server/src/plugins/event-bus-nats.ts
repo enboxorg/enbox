@@ -1,10 +1,8 @@
 import type { EventBus } from '../event-bus.js';
 import type { Wake } from '@enbox/dwn-sdk-js';
-import type { NatsConnection, Subscription } from '@nats-io/transport-node';
+import type { connect as natsConnect, NatsConnection, Subscription } from '@nats-io/transport-node';
 
 import log from 'loglevel';
-
-import { connect } from '@nats-io/transport-node';
 
 type NatsEventBusConfig = {
   /** NATS connection URL(s), comma-separated. */
@@ -23,6 +21,19 @@ function loadConfig(): NatsEventBusConfig {
 }
 
 type WakeListener = (wake: Wake) => void;
+type NatsTransportModule = {
+  connect : typeof natsConnect;
+};
+
+async function loadNatsTransport(): Promise<NatsTransportModule> {
+  try {
+    return await import('@nats-io/transport-node');
+  } catch {
+    throw new Error(
+      '@nats-io/transport-node is required for the NATS event-bus plugin. Install it with: bun add @nats-io/transport-node'
+    );
+  }
+}
 
 /**
  * NATS-backed {@link EventBus}.
@@ -46,6 +57,7 @@ export default class NatsEventBus implements EventBus {
     }
 
     const servers = this.#config.url.split(',').map((server): string => server.trim());
+    const { connect } = await loadNatsTransport();
     this.#nc = await connect({ servers });
     this.#subscription = this.#nc.subscribe(this.#allWakesSubject());
     await this.#nc.flush();

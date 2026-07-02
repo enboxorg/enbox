@@ -4,7 +4,6 @@ export * from './dialect/mysql-dialect.js';
 export * from './dialect/postgres-dialect.js';
 export * from './dialect/sqlite-dialect.js';
 export * from './blockstore-sql.js';
-export * from './data-store-s3.js';
 export * from './data-store-sql.js';
 export * from './message-store-sql.js';
 export * from './migration-provider.js';

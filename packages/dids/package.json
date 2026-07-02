@@ -65,7 +65,6 @@
     "decentralized",
     "decentralized-identity",
     "DID",
-    "did:ion",
     "did:key",
     "did-utils",
     "self-sovereign-identity",
@@ -78,7 +77,6 @@
     "bun": ">=1.0.0"
   },
   "dependencies": {
-    "@decentralized-identity/ion-sdk": "1.0.4",
     "@dnsquery/dns-packet": "6.1.1",
     "@enbox/common": "workspace:*",
     "@enbox/crypto": "workspace:*",
