@@ -2,7 +2,7 @@ import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EncryptionInput } from '../../src/interfaces/records-write.js';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ProtocolsConfigureMessage, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, ResumableTaskStore } from '../../src/index.js';
 
 import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
 import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
@@ -15,6 +15,8 @@ import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread
 import { ArrayUtility } from '../../src/utils/array.js';
 import { authenticate } from '../../src/core/auth.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
+import { Encoder } from '../../src/utils/encoder.js';
+import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { HdKey } from '../../src/utils/hd-key.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { RecordsReadHandler } from '../../src/handlers/records-read.js';
@@ -24,6 +26,7 @@ import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm } from '../../src/utils/encryption.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DataStoreLevel, DwnConstant, MessageStoreLevel, PermissionsProtocol, Time } from '../../src/index.js';
 import { DataStream, DateSort, Dwn, Jws, Protocols, ProtocolsConfigure, ProtocolsQuery, Records, RecordsDelete, RecordsRead , RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -119,6 +122,127 @@ export function testRecordsReadHandler(): void {
 
         const readReply = await dwn.processMessage(alice.did, recordsRead.message);
         expect(readReply.status.code).toBe(401);
+      });
+
+      it('should allow authenticated exact-record reads of audience control records', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-read-audience.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const audience = await createAudienceControlWrite({
+          author      : alice,
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet : encryptedDefinition.structure.member as ProtocolRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const recordsRead = await RecordsRead.create({
+          filter : { recordId: audience.recordsWrite.message.recordId },
+          signer : Jws.createSigner(bob),
+        });
+        const readReply = await dwn.processMessage(alice.did, recordsRead.message);
+        expect(readReply.status.code).toBe(200);
+        expect(readReply.entry?.recordsWrite?.recordId).toBe(audience.recordsWrite.message.recordId);
+
+        const anonymousRead = await RecordsRead.create({
+          filter: { recordId: audience.recordsWrite.message.recordId },
+        });
+        const anonymousReply = await dwn.processMessage(alice.did, anonymousRead.message);
+        expect(anonymousReply.status.code).toBe(401);
+      });
+
+      it('should only allow delivery control reads by the recipient or writer', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-read-delivery.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const audience = await createAudienceControlWrite({
+          author   : alice,
+          protocol : protocolDefinition.protocol,
+          rolePath : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const roleRecord = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          data         : Encoder.stringToBytes('bob is a member'),
+          dataFormat   : 'application/json',
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          recipient    : bob.did,
+          schema       : 'http://member-schema',
+        });
+        expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
+
+        const delivery = await createDeliveryControlWrite({
+          author             : alice,
+          keyId              : audience.keyId,
+          protocol           : protocolDefinition.protocol,
+          recipient          : bob.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, delivery);
+
+        const bobRead = await RecordsRead.create({
+          filter : { recordId: delivery.recordsWrite.message.recordId },
+          signer : Jws.createSigner(bob),
+        });
+        const bobReply = await dwn.processMessage(alice.did, bobRead.message);
+        expect(bobReply.status.code).toBe(200);
+        expect(bobReply.entry?.recordsWrite?.recordId).toBe(delivery.recordsWrite.message.recordId);
+
+        const carolRead = await RecordsRead.create({
+          filter : { recordId: delivery.recordsWrite.message.recordId },
+          signer : Jws.createSigner(carol),
+        });
+        const carolReply = await dwn.processMessage(alice.did, carolRead.message);
+        expect(carolReply.status.code).toBe(401);
+
+        const carolGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : carol,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, carolGrant.message, { dataStream: carolGrant.dataStream })).status.code).toBe(202);
+
+        const delegatedCarolRead = await RecordsRead.create({
+          delegatedGrant : carolGrant.dataEncodedMessage,
+          filter         : { recordId: delivery.recordsWrite.message.recordId },
+          signer         : Jws.createSigner(carol),
+        });
+        const delegatedCarolReply = await dwn.processMessage(alice.did, delegatedCarolRead.message);
+        expect(delegatedCarolReply.status.code).toBe(401);
       });
 
       it('should allow reading of data that is published without `authorization`', async () => {

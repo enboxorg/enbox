@@ -5,6 +5,7 @@ import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsReadMessage, 
 import { authenticate } from '../core/auth.js';
 import { DataStream } from '../utils/data-stream.js';
 import { Encoder } from '../utils/encoder.js';
+import { EncryptionControl } from '../core/encryption-control.js';
 import { isRecordLimitOccupant } from '../utils/record-limit-occupancy.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
@@ -184,8 +185,16 @@ export class RecordsReadHandler implements MethodHandler {
 
     const { descriptor } = matchedRecordsWrite.message;
 
-    // if author is the same as the target tenant, we can directly grant access
-    if (recordsRead.author === tenant) {
+    if (EncryptionControl.isControlMessage(matchedRecordsWrite.message)) {
+      await EncryptionControl.authorizeRead({
+        tenant,
+        incomingMessage       : recordsRead.message,
+        requester             : EncryptionControl.getRequester(recordsRead.message),
+        recordsWriteMessage   : matchedRecordsWrite.message,
+        validationStateReader : deps.validationStateReader,
+      });
+    } else if (recordsRead.author === tenant) {
+      // if author is the same as the target tenant, we can directly grant access
       return;
     } else if (descriptor.published === true) {
       // authentication is not required for published data

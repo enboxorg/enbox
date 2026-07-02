@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, EventLog, GenericMessage, MessageStore, ProtocolDefinition, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, EventLog, GenericMessage, MessageStore, ProtocolDefinition, ProtocolRuleSet, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
 import type { RecordsQueryReply, RecordsQueryReplyEntry, RecordsWriteDescriptor } from '../../src/types/records-types.js';
 
 import sinon from 'sinon';
@@ -17,6 +17,7 @@ import { DateSort } from '../../src/types/records-types.js';
 import { DwnConstant } from '../../src/core/dwn-constant.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encoder } from '../../src/utils/encoder.js';
+import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
@@ -27,9 +28,11 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { CoreProtocolRegistry, DataStoreLevel, Dwn, MessageStoreLevel, ProtocolsConfigure, RecordsWrite, Time } from '../../src/index.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
 
@@ -161,6 +164,268 @@ export function testRecordsQueryHandler(): void {
 
         expect(reply2.status.code).toBe(200);
         expect(reply2.entries?.length).toBe(1); // only 1 entry should match the query
+      });
+
+      it('should allow exact-tuple audience control queries without broad enumeration', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-query-audience.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const audience = await createAudienceControlWrite({
+          author      : alice,
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet : encryptedDefinition.structure.member as ProtocolRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const exactQuery = await RecordsQuery.create({
+          filter: {
+            protocol     : protocolDefinition.protocol,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags         : {
+              protocol  : protocolDefinition.protocol,
+              rolePath  : 'member',
+              contextId : '',
+            },
+          },
+          signer: Jws.createSigner(bob),
+        });
+        const exactReply = await dwn.processMessage(alice.did, exactQuery.message);
+        expect(exactReply.status.code).toBe(200);
+        expect(exactReply.entries?.map(entry => entry.recordId)).toEqual([audience.recordsWrite.message.recordId]);
+
+        const broadQuery = await RecordsQuery.create({
+          filter : { protocol: protocolDefinition.protocol },
+          signer : Jws.createSigner(bob),
+        });
+        const broadReply = await dwn.processMessage(alice.did, broadQuery.message);
+        expect(broadReply.status.code).toBe(200);
+        expect(broadReply.entries?.map(entry => entry.recordId)).not.toContain(audience.recordsWrite.message.recordId);
+      });
+
+      it('should allow grant-backed audience control enumeration', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-query-grant-enumeration.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const audience = await createAudienceControlWrite({
+          author      : alice,
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet : encryptedDefinition.structure.member as ProtocolRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const grant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : bob,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+        const query = await RecordsQuery.create({
+          filter            : { protocol: protocolDefinition.protocol },
+          permissionGrantId : grant.message.recordId,
+          signer            : Jws.createSigner(bob),
+        });
+        const reply = await dwn.processMessage(alice.did, query.message);
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries?.map(entry => entry.recordId)).toContain(audience.recordsWrite.message.recordId);
+      });
+
+      it('should hide stale audience control records from delegated broad queries', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-query-stale-audience.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const audience = await createAudienceControlWrite({
+          author      : alice,
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet : encryptedDefinition.structure.member as ProtocolRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        await installEncryptedProtocol(dwn, alice, {
+          ...protocolDefinition,
+          structure: {
+            member: {},
+          },
+        });
+
+        const grant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : bob,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+        const query = await RecordsQuery.create({
+          delegatedGrant : grant.dataEncodedMessage,
+          filter         : { protocol: protocolDefinition.protocol },
+          signer         : Jws.createSigner(bob),
+        });
+        const reply = await dwn.processMessage(alice.did, query.message);
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries?.map(entry => entry.recordId)).not.toContain(audience.recordsWrite.message.recordId);
+      });
+
+      it('should return delivery control records only to the recipient', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-query-delivery.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const audience = await createAudienceControlWrite({
+          author   : alice,
+          protocol : protocolDefinition.protocol,
+          rolePath : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const roleRecord = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          data         : Encoder.stringToBytes('bob is a member'),
+          dataFormat   : 'application/json',
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          recipient    : bob.did,
+          schema       : 'http://member-schema',
+        });
+        expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
+
+        const delivery = await createDeliveryControlWrite({
+          author             : alice,
+          keyId              : audience.keyId,
+          protocol           : protocolDefinition.protocol,
+          recipient          : bob.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, delivery);
+
+        const bobQuery = await RecordsQuery.create({
+          filter : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          signer : Jws.createSigner(bob),
+        });
+        const bobReply = await dwn.processMessage(alice.did, bobQuery.message);
+        expect(bobReply.status.code).toBe(200);
+        expect(bobReply.entries?.map(entry => entry.recordId)).toContain(delivery.recordsWrite.message.recordId);
+
+        const carolQuery = await RecordsQuery.create({
+          filter : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          signer : Jws.createSigner(carol),
+        });
+        const carolReply = await dwn.processMessage(alice.did, carolQuery.message);
+        expect(carolReply.status.code).toBe(200);
+        expect(carolReply.entries?.map(entry => entry.recordId)).not.toContain(delivery.recordsWrite.message.recordId);
+
+        const carolGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : carol,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, carolGrant.message, { dataStream: carolGrant.dataStream })).status.code).toBe(202);
+
+        const delegatedCarolQuery = await RecordsQuery.create({
+          delegatedGrant : carolGrant.dataEncodedMessage,
+          filter         : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          signer         : Jws.createSigner(carol),
+        });
+        const delegatedCarolReply = await dwn.processMessage(alice.did, delegatedCarolQuery.message);
+        expect(delegatedCarolReply.status.code).toBe(200);
+        expect(delegatedCarolReply.entries?.map(entry => entry.recordId)).not.toContain(delivery.recordsWrite.message.recordId);
+
+        const carolRoleRecord = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          data         : Encoder.stringToBytes('carol is a member'),
+          dataFormat   : 'application/json',
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          recipient    : carol.did,
+          schema       : 'http://member-schema',
+        });
+        expect((await dwn.processMessage(alice.did, carolRoleRecord.message, { dataStream: carolRoleRecord.dataStream })).status.code).toBe(202);
+
+        const carolDelivery = await createDeliveryControlWrite({
+          author             : alice,
+          keyId              : audience.keyId,
+          protocol           : protocolDefinition.protocol,
+          recipient          : carol.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, carolDelivery);
+
+        const pagedDelegatedCarolQuery = await RecordsQuery.create({
+          dateSort       : DateSort.CreatedAscending,
+          delegatedGrant : carolGrant.dataEncodedMessage,
+          filter         : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          pagination     : { limit: 1 },
+          signer         : Jws.createSigner(carol),
+        });
+        const pagedDelegatedCarolReply = await dwn.processMessage(alice.did, pagedDelegatedCarolQuery.message);
+        expect(pagedDelegatedCarolReply.status.code).toBe(200);
+        expect(pagedDelegatedCarolReply.entries?.map(entry => entry.recordId)).toEqual([carolDelivery.recordsWrite.message.recordId]);
       });
 
       it('should return `encodedData` if data size is within the spec threshold', async () => {

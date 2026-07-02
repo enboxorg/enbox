@@ -21,6 +21,7 @@ import { X25519 } from '@enbox/crypto';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { Encryption, ROLE_AUDIENCE_DERIVATION_SCHEME } from './encryption.js';
+import { ENCRYPTION_CONTROL_PATHS, isEncryptionControlPath } from '../core/constants.js';
 import { HdKey, KeyDerivationScheme } from './hd-key.js';
 import { normalizeProtocolUrl, normalizeSchemaUrl } from './url.js';
 
@@ -334,6 +335,10 @@ export class Records {
       return;
     }
 
+    if (isEncryptionControlPath(protocolPath)) {
+      return;
+    }
+
     const expectedParentDepth = protocolPath.split('/').length - 1;
     const contextIdSegments = contextId?.split('/');
     if (
@@ -440,6 +445,35 @@ export class Records {
     }
 
     return filterCopy;
+  }
+
+  public static buildUnpublishedControlRecordsFilter(filter: RecordsFilter, dateSort?: DateSort): Filter {
+    return {
+      ...Records.convertFilter(filter, dateSort),
+      interface         : DwnInterfaceName.Records,
+      method            : DwnMethodName.Write,
+      isLatestBaseState : true,
+      published         : false,
+    };
+  }
+
+  public static buildControlRecordsFilters(filters: Filter[]): Filter[] {
+    const controlFilters: Filter[] = [];
+    for (const filter of filters) {
+      const protocolPath = filter.protocolPath;
+      if (typeof protocolPath === 'string') {
+        if (isEncryptionControlPath(protocolPath)) {
+          controlFilters.push(filter);
+        }
+        continue;
+      }
+
+      for (const controlPath of ENCRYPTION_CONTROL_PATHS) {
+        controlFilters.push({ ...filter, protocolPath: controlPath });
+      }
+    }
+
+    return controlFilters;
   }
 
   /**

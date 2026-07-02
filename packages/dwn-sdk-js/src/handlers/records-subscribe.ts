@@ -6,6 +6,7 @@ import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeR
 
 import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
+import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ProtocolAuthorization } from '../core/protocol-authorization.js';
@@ -52,6 +53,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
 
     let eventFilters: Filter[] = [];
     let queryFilters: Filter[] = [];
+    const requester = EncryptionControl.getRequester(recordsSubscribe.message);
 
     // if this is an anonymous subscribe and the filter supports published records, subscribe to only published records
     if (Records.filterIncludesPublishedRecords(recordsSubscribe.message.descriptor.filter) && recordsSubscribe.author === undefined) {
@@ -130,15 +132,14 @@ export class RecordsSubscribeHandler implements MethodHandler {
     try {
       const { dateSort, pagination } = recordsSubscribe.message.descriptor;
       const messageSort = RecordsSubscribeHandler.convertDateSort(dateSort);
-      const queryResult = await queryRecordsWithRecordLimitOccupancy({
-        messageStore          : this.deps.messageStore,
-        validationStateReader : this.deps.validationStateReader,
+      const queryResult = await this.queryRecordsWithVisibleControlFiltering(
         tenant,
-        filters               : queryFilters,
+        recordsSubscribe,
+        requester,
+        queryFilters,
         messageSort,
         pagination,
-        messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
-      });
+      );
       entries = queryResult.messages;
       paginationCursor = queryResult.cursor;
 
@@ -199,6 +200,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     tenant: string;
   }): ProjectedRecordsSubscriptionHandler {
     const { deps, recordsSubscribe, subscriptionHandler, tenant } = input;
+    const requester = EncryptionControl.getRequester(recordsSubscribe.message);
     let subscription: EventSubscription | undefined;
     let closeRequested = false;
     let terminalErrorEmitted = false;
@@ -230,6 +232,17 @@ export class RecordsSubscribeHandler implements MethodHandler {
     const deliverProjectedEvent = async (subscriptionEvent: SubscriptionEvent): Promise<void> => {
       const { message } = subscriptionEvent.event;
       if (Records.isRecordsWrite(message)) {
+        const visibleMessages = await EncryptionControl.filterVisibleControlRecords({
+          tenant,
+          incomingMessage       : recordsSubscribe.message,
+          requester,
+          recordsWriteMessages  : [message],
+          validationStateReader : deps.validationStateReader,
+        });
+        if (visibleMessages.length === 0) {
+          return;
+        }
+
         let isOccupant: boolean;
         try {
           isOccupant = await isRecordLimitOccupant({
@@ -315,6 +328,15 @@ export class RecordsSubscribeHandler implements MethodHandler {
     }
 
     if (Records.filterIncludesUnpublishedRecords(filter)) {
+      if (EncryptionControl.isExactAudienceFilter(filter)) {
+        filters.push({
+          ...Records.convertFilter(filter),
+          interface : DwnInterfaceName.Records,
+          method    : [DwnMethodName.Write, DwnMethodName.Delete],
+          published : false,
+        });
+      }
+
       if (Records.shouldBuildUnpublishedAuthorFilter(filter, recordsSubscribe.author!)) {
         filters.push({
           ...Records.convertFilter(filter),
@@ -397,6 +419,10 @@ export class RecordsSubscribeHandler implements MethodHandler {
     }
 
     if (Records.filterIncludesUnpublishedRecords(filter)) {
+      if (EncryptionControl.isExactAudienceFilter(filter)) {
+        filters.push(Records.buildUnpublishedControlRecordsFilter(filter, dateSort));
+      }
+
       if (Records.shouldBuildUnpublishedAuthorFilter(filter, recordsSubscribe.author!)) {
         filters.push({
           ...Records.convertFilter(filter, dateSort),
@@ -488,5 +514,87 @@ export class RecordsSubscribeHandler implements MethodHandler {
     if (Records.shouldProtocolAuthorize(recordsSubscribe.signaturePayload!)) {
       await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, recordsSubscribe, deps.validationStateReader);
     }
+  }
+
+  private async filterControlRecordsForNonOwner(
+    tenant: string,
+    recordsSubscribe: RecordsSubscribe,
+    requester: string | undefined,
+    recordsWrites: RecordsQueryReplyEntry[],
+  ): Promise<RecordsQueryReplyEntry[]> {
+    return EncryptionControl.filterVisibleControlRecords({
+      tenant,
+      incomingMessage       : recordsSubscribe.message,
+      requester,
+      recordsWriteMessages  : recordsWrites,
+      validationStateReader : this.deps.validationStateReader,
+    });
+  }
+
+  private async queryRecordsWithVisibleControlFiltering(
+    tenant: string,
+    recordsSubscribe: RecordsSubscribe,
+    requester: string | undefined,
+    filters: Filter[],
+    messageSort: MessageSort,
+    pagination: { cursor?: PaginationCursor; limit?: number } | undefined,
+  ): Promise<{ messages: RecordsQueryReplyEntry[], cursor?: PaginationCursor }> {
+    const controlFilters = Records.buildControlRecordsFilters(filters);
+    if (controlFilters.length === 0) {
+      const result = await queryRecordsWithRecordLimitOccupancy({
+        messageStore          : this.deps.messageStore,
+        validationStateReader : this.deps.validationStateReader,
+        tenant,
+        filters,
+        messageSort,
+        pagination,
+        messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
+      });
+      return { messages: result.messages, cursor: result.cursor };
+    }
+
+    if (pagination?.limit === undefined || pagination.limit <= 0) {
+      const result = await queryRecordsWithRecordLimitOccupancy({
+        messageStore          : this.deps.messageStore,
+        validationStateReader : this.deps.validationStateReader,
+        tenant,
+        filters,
+        messageSort,
+        pagination,
+        messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
+      });
+      return {
+        messages : await this.filterControlRecordsForNonOwner(tenant, recordsSubscribe, requester, result.messages),
+        cursor   : result.cursor,
+      };
+    }
+
+    const visibleMessages: RecordsQueryReplyEntry[] = [];
+    let cursor = pagination.cursor;
+    let nextCursor: PaginationCursor | undefined;
+    // Keeps visible-page pagination stable until #1100 moves control visibility into indexed store filters.
+    do {
+      const remainingLimit = pagination.limit - visibleMessages.length;
+      const result = await queryRecordsWithRecordLimitOccupancy({
+        messageStore          : this.deps.messageStore,
+        validationStateReader : this.deps.validationStateReader,
+        tenant,
+        filters,
+        messageSort,
+        pagination            : { ...pagination, cursor, limit: remainingLimit },
+        messageTimestamp      : recordsSubscribe.message.descriptor.messageTimestamp,
+      });
+      const filteredMessages = await this.filterControlRecordsForNonOwner(
+        tenant,
+        recordsSubscribe,
+        requester,
+        result.messages,
+      );
+      visibleMessages.push(...filteredMessages);
+      nextCursor = result.cursor;
+      cursor = result.cursor;
+    } while (visibleMessages.length < pagination.limit && cursor !== undefined);
+
+    return { messages: visibleMessages, cursor: nextCursor };
   }
 }

@@ -297,6 +297,33 @@ export function testRecordsWriteHandler(): void {
         expect(reply.status.code).toBe(202);
       });
 
+      it('should reject published encryption control records', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-published-rejected.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
+        const audience = await createAudienceControlWrite({
+          author      : alice,
+          protocol    : protocolDefinition.protocol,
+          published   : true,
+          rolePath    : 'member',
+          roleRuleSet : encryptedProtocolDefinition.structure.member as ProtocolRuleSet,
+        });
+
+        const reply = await dwn.processMessage(alice.did, audience.recordsWrite.message, { dataStream: DataStream.fromBytes(audience.dataBytes) });
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateUnexpectedRecord);
+      });
+
       it('should reject dataless and update attempts for immutable audience control records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 

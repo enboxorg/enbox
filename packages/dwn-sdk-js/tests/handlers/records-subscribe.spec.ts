@@ -1,5 +1,5 @@
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, MessageStore, ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, RecordsDeleteMessage, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
 import type { EventLog, SubscriptionListener, SubscriptionMessage } from '../../src/types/subscriptions.js';
 import type { RecordEvent, RecordsFilter } from '../../src/types/records-types.js';
 
@@ -12,6 +12,8 @@ import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend
 import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
 
 import { DataStream } from '../../src/utils/data-stream.js';
+import { Encoder } from '../../src/utils/encoder.js';
+import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
@@ -22,8 +24,10 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DurableEventLog, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, MessageStoreLevel, Time } from '../../src/index.js';
+import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
 
@@ -256,6 +260,174 @@ export function testRecordsSubscribeHandler(): void {
           expect(receivedEvents.length).toBe(1);
           expect((receivedEvents[0].message as RecordsWriteMessage).recordId).toBe(write2.message.recordId);
         });
+      });
+
+      it('should authorize exact-tuple audience control subscriptions for snapshots and live events', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-subscribe-audience.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const initialAudience = await createAudienceControlWrite({
+          author   : alice,
+          protocol : protocolDefinition.protocol,
+          rolePath : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, initialAudience);
+
+        const receivedEvents: RecordEvent[] = [];
+        const subscriptionHandler: SubscriptionListener = (msg): void => {
+          if (msg.type === 'event') {
+            receivedEvents.push(msg.event as RecordEvent);
+          }
+        };
+        const recordsSubscribe = await RecordsSubscribe.create({
+          filter: {
+            protocol     : protocolDefinition.protocol,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags         : {
+              protocol  : protocolDefinition.protocol,
+              rolePath  : 'member',
+              contextId : '',
+            },
+          },
+          signer: Jws.createSigner(bob),
+        });
+        const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
+        expect(subReply.status.code).toBe(200);
+        expect(subReply.entries?.map(entry => entry.recordId)).toEqual([initialAudience.recordsWrite.message.recordId]);
+
+        const liveAudience = await createAudienceControlWrite({
+          author   : alice,
+          protocol : protocolDefinition.protocol,
+          rolePath : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, liveAudience);
+
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(receivedEvents.map(event => (event.message as RecordsWriteMessage).recordId)).toContain(liveAudience.recordsWrite.message.recordId);
+        });
+      });
+
+      it('should deliver live delivery control events only to the recipient', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-subscribe-delivery.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const audience = await createAudienceControlWrite({
+          author   : alice,
+          protocol : protocolDefinition.protocol,
+          rolePath : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        const roleRecord = await TestDataGenerator.generateRecordsWrite({
+          author       : alice,
+          data         : Encoder.stringToBytes('bob is a member'),
+          dataFormat   : 'application/json',
+          protocol     : protocolDefinition.protocol,
+          protocolPath : 'member',
+          recipient    : bob.did,
+          schema       : 'http://member-schema',
+        });
+        expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
+
+        const bobEvents: RecordEvent[] = [];
+        const carolEvents: RecordEvent[] = [];
+        const delegatedCarolEvents: RecordEvent[] = [];
+        const carolGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : carol,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            protocol  : protocolDefinition.protocol,
+          },
+        });
+        expect((await dwn.processMessage(alice.did, carolGrant.message, { dataStream: carolGrant.dataStream })).status.code).toBe(202);
+
+        const bobSubscribe = await RecordsSubscribe.create({
+          filter : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          signer : Jws.createSigner(bob),
+        });
+        const carolSubscribe = await RecordsSubscribe.create({
+          filter : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          signer : Jws.createSigner(carol),
+        });
+        const delegatedCarolSubscribe = await RecordsSubscribe.create({
+          delegatedGrant : carolGrant.dataEncodedMessage,
+          filter         : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          signer         : Jws.createSigner(carol),
+        });
+        const bobReply = await dwn.processMessage(alice.did, bobSubscribe.message, {
+          subscriptionHandler: (msg): void => {
+            if (msg.type === 'event') {
+              bobEvents.push(msg.event as RecordEvent);
+            }
+          },
+        });
+        const carolReply = await dwn.processMessage(alice.did, carolSubscribe.message, {
+          subscriptionHandler: (msg): void => {
+            if (msg.type === 'event') {
+              carolEvents.push(msg.event as RecordEvent);
+            }
+          },
+        });
+        const delegatedCarolReply = await dwn.processMessage(alice.did, delegatedCarolSubscribe.message, {
+          subscriptionHandler: (msg): void => {
+            if (msg.type === 'event') {
+              delegatedCarolEvents.push(msg.event as RecordEvent);
+            }
+          },
+        });
+        expect(bobReply.status.code).toBe(200);
+        expect(carolReply.status.code).toBe(200);
+        expect(delegatedCarolReply.status.code).toBe(200);
+
+        const delivery = await createDeliveryControlWrite({
+          author             : alice,
+          keyId              : audience.keyId,
+          protocol           : protocolDefinition.protocol,
+          recipient          : bob.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, delivery);
+
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(bobEvents.map(event => (event.message as RecordsWriteMessage).recordId)).toContain(delivery.recordsWrite.message.recordId);
+        });
+        await sleep(200);
+        expect(carolEvents.map(event => (event.message as RecordsWriteMessage).recordId)).not.toContain(delivery.recordsWrite.message.recordId);
+        const delegatedCarolRecordIds = delegatedCarolEvents.map(event => (event.message as RecordsWriteMessage).recordId);
+        expect(delegatedCarolRecordIds).not.toContain(delivery.recordsWrite.message.recordId);
       });
 
       describe('cursor-based subscriptions', () => {
