@@ -1,6 +1,34 @@
 import { describe, expect, it } from 'bun:test';
 
-import { nowMs, sleep, timed } from '../src/time.js';
+import { nowMs, parseDurationInMilliseconds, sleep, timed } from '../src/time.js';
+
+describe('parseDurationInMilliseconds', () => {
+  it('parses existing default duration strings', () => {
+    expect(parseDurationInMilliseconds('15m')).toBe(15 * 60 * 1000);
+    expect(parseDurationInMilliseconds('15 minutes')).toBe(15 * 60 * 1000);
+    expect(parseDurationInMilliseconds('21 days')).toBe(21 * 24 * 60 * 60 * 1000);
+    expect(parseDurationInMilliseconds('1 hour')).toBe(60 * 60 * 1000);
+    expect(parseDurationInMilliseconds('2m')).toBe(2 * 60 * 1000);
+    expect(parseDurationInMilliseconds('5m')).toBe(5 * 60 * 1000);
+  });
+
+  it('parses supported short and long units', () => {
+    expect(parseDurationInMilliseconds('250')).toBe(250);
+    expect(parseDurationInMilliseconds('250ms')).toBe(250);
+    expect(parseDurationInMilliseconds('30s')).toBe(30 * 1000);
+    expect(parseDurationInMilliseconds('1.5 hours')).toBe(90 * 60 * 1000);
+    expect(parseDurationInMilliseconds('2 weeks')).toBe(14 * 24 * 60 * 60 * 1000);
+    expect(parseDurationInMilliseconds('1 year')).toBe(365.25 * 24 * 60 * 60 * 1000);
+  });
+
+  it('rejects invalid duration strings', () => {
+    expect(() => parseDurationInMilliseconds('')).toThrow('Invalid duration');
+    expect(() => parseDurationInMilliseconds('-1s')).toThrow('Invalid duration');
+    expect(() => parseDurationInMilliseconds('1 month')).toThrow('Invalid duration unit');
+    expect(() => parseDurationInMilliseconds('abc')).toThrow('Invalid duration');
+    expect(() => parseDurationInMilliseconds('1 second later')).toThrow('Invalid duration');
+  });
+});
 
 describe('sleep', () => {
   it('returns a Promise that resolves after at least the given duration', async () => {

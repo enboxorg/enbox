@@ -3,11 +3,9 @@ import type { AbstractLevel } from 'abstract-level';
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
 import type { GenericMessage, MessageEvent, MessagesFilter, MessagesQueryReply, MessagesQueryReplyEntry, MessagesSubscribeReply, ProgressToken, ProtocolDefinition, RecordsQueryReply, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
-import ms from 'ms';
-
 import { Level } from 'level';
-import { sleep } from '@enbox/common';
 import { DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
+import { parseDurationInMilliseconds, sleep } from '@enbox/common';
 
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PermissionsApi } from './types/permissions.js';
@@ -1130,7 +1128,7 @@ export class SyncEngineLevel implements SyncEngine {
   public async startSync(params: StartSyncParams): Promise<void> {
     const mode = params.mode ?? 'poll';
     const intervalStr = params.interval ?? (mode === 'live' ? '5m' : '2m');
-    const intervalMilliseconds = ms(intervalStr);
+    const intervalMilliseconds = parseDurationInMilliseconds(intervalStr);
 
     // Tear down previous mode if there are active live resources.
     if (this._liveSubscriptions.length > 0 || this._localSubscriptions.length > 0) {

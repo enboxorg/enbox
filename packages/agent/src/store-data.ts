@@ -1,13 +1,11 @@
 import type { Jwk } from '@enbox/crypto';
-
-import ms from 'ms';
-import { Convert, Stream, TtlCache } from '@enbox/common';
-
-import type { DwnMessageParams } from './types/dwn.js';
-import type { EnboxPlatformAgent } from './types/agent.js';
 import type { ProtocolDefinition, RecordsReadReplyEntry } from '@enbox/dwn-sdk-js';
 
 import { Protocols } from '@enbox/dwn-sdk-js';
+import { Convert, parseDurationInMilliseconds, Stream, TtlCache } from '@enbox/common';
+
+import type { DwnMessageParams } from './types/dwn.js';
+import type { EnboxPlatformAgent } from './types/agent.js';
 
 import { DwnInterface } from './types/dwn.js';
 import { getDataStoreTenant, TENANT_SEPARATOR } from './utils-internal.js';
@@ -54,7 +52,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
      *
      * Up to 100 entries are retained for 15 minutes.
      */
-  protected _cache = new TtlCache<string, TStoreObject>({ ttl: ms('15 minutes'), max: 100 });
+  protected _cache = new TtlCache<string, TStoreObject>({ ttl: parseDurationInMilliseconds('15 minutes'), max: 100 });
 
   /**
    * Index for mappings from Store Identifier to DWN record ID.
@@ -63,7 +61,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * Up to 1,000 entries are retained for 21 days.
    * NOTE: The maximum number for the ttl is 2^31 - 1 milliseconds (24.8 days), setting to 21 days to be safe.
    */
-  protected _index = new TtlCache<string, string>({ ttl: ms('21 days'), max: 1000 });
+  protected _index = new TtlCache<string, string>({ ttl: parseDurationInMilliseconds('21 days'), max: 1000 });
 
   /**
    * Cache of tenant DIDs that have been initialized with the protocol.
@@ -76,7 +74,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * together — otherwise `initialize()` could return early while the
    * encryption state is stale.
    */
-  protected _protocolInitializedCache: TtlCache<string, boolean> = new TtlCache({ ttl: ms('1 hour'), max: 1000 });
+  protected _protocolInitializedCache: TtlCache<string, boolean> = new TtlCache({ ttl: parseDurationInMilliseconds('1 hour'), max: 1000 });
 
   /**
    * The protocol assigned to this storage instance.
@@ -93,7 +91,7 @@ export class DwnDataStore<TStoreObject extends Record<string, any> = Jwk> implem
    * Uses the same 1-hour TTL as `_protocolInitializedCache` so both
    * caches expire and re-derive together. See comment above.
    */
-  private readonly _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: ms('1 hour'), max: 1000 });
+  private readonly _tenantEncryptionActive: TtlCache<string, boolean> = new TtlCache({ ttl: parseDurationInMilliseconds('1 hour'), max: 1000 });
 
   /** Cached result of the `encryptionRequired` check on the protocol definition.
    *  Computed lazily on first access — the definition is immutable after assignment. */

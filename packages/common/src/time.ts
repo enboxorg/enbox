@@ -11,6 +11,40 @@ export type TimedOptions = {
   log?: (message: string) => void;
 };
 
+const durationUnitMultipliers = new Map<string, number>([
+  ['ms', 1],
+  ['msec', 1],
+  ['msecs', 1],
+  ['millisecond', 1],
+  ['milliseconds', 1],
+  ['s', 1000],
+  ['sec', 1000],
+  ['secs', 1000],
+  ['second', 1000],
+  ['seconds', 1000],
+  ['m', 60 * 1000],
+  ['min', 60 * 1000],
+  ['mins', 60 * 1000],
+  ['minute', 60 * 1000],
+  ['minutes', 60 * 1000],
+  ['h', 60 * 60 * 1000],
+  ['hr', 60 * 60 * 1000],
+  ['hrs', 60 * 60 * 1000],
+  ['hour', 60 * 60 * 1000],
+  ['hours', 60 * 60 * 1000],
+  ['d', 24 * 60 * 60 * 1000],
+  ['day', 24 * 60 * 60 * 1000],
+  ['days', 24 * 60 * 60 * 1000],
+  ['w', 7 * 24 * 60 * 60 * 1000],
+  ['week', 7 * 24 * 60 * 60 * 1000],
+  ['weeks', 7 * 24 * 60 * 60 * 1000],
+  ['y', 365.25 * 24 * 60 * 60 * 1000],
+  ['yr', 365.25 * 24 * 60 * 60 * 1000],
+  ['yrs', 365.25 * 24 * 60 * 60 * 1000],
+  ['year', 365.25 * 24 * 60 * 60 * 1000],
+  ['years', 365.25 * 24 * 60 * 60 * 1000],
+]);
+
 /**
  * Returns a high-resolution monotonic timestamp in milliseconds.
  *
@@ -24,6 +58,36 @@ export function nowMs(): number {
   }
 
   return Date.now();
+}
+
+/**
+ * Parses a human-readable duration string into milliseconds.
+ *
+ * Accepted units: milliseconds (`ms`), seconds (`s`), minutes (`m`), hours (`h`),
+ * days (`d`), weeks (`w`), and years (`y`), including their common long-form
+ * aliases such as `minutes` and `hours`. A bare numeric string is treated as
+ * milliseconds.
+ *
+ * @throws Error if the input is empty, negative, non-finite, or uses an unknown unit.
+ */
+export function parseDurationInMilliseconds(duration: string): number {
+  const match = /^((?:\d+|\d*\.\d+))\s*([a-zA-Z]+)?$/.exec(duration.trim());
+  if (match === null) {
+    throw new Error(`Invalid duration: '${duration}'`);
+  }
+
+  const durationUnit = match[2]?.toLowerCase() ?? 'ms';
+  const multiplier = durationUnitMultipliers.get(durationUnit);
+  if (multiplier === undefined) {
+    throw new Error(`Invalid duration unit: '${durationUnit}'`);
+  }
+
+  const durationInMilliseconds = Number(match[1]) * multiplier;
+  if (!Number.isFinite(durationInMilliseconds)) {
+    throw new Error(`Invalid duration: '${duration}'`);
+  }
+
+  return durationInMilliseconds;
 }
 
 /**

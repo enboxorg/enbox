@@ -1,7 +1,7 @@
 import type { AbstractLevel } from 'abstract-level';
 
 import { Level } from 'level';
-import ms from 'ms';
+import { parseDurationInMilliseconds } from '@enbox/common';
 
 import type { DidResolutionResult } from '../types/did-core.js';
 import type { DidResolverCache } from '../types/did-resolution.js';
@@ -84,7 +84,7 @@ export class DidResolverCacheLevel implements DidResolverCache {
     ttl = '15m'
   }: DidResolverCacheLevelParams = {}) {
     this.cache = db ?? new Level<string, string>(location);
-    this.ttl = ms(ttl);
+    this.ttl = parseDurationInMilliseconds(ttl);
   }
 
   /**

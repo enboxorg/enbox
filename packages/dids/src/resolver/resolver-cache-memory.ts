@@ -1,5 +1,4 @@
-import ms from 'ms';
-import { TtlCache } from '@enbox/common';
+import { parseDurationInMilliseconds, TtlCache } from '@enbox/common';
 
 import type { DidResolutionResult } from '../types/did-core.js';
 import type { DidResolverCache } from '../types/did-resolution.js';
@@ -23,7 +22,7 @@ export class DidResolverCacheMemory implements DidResolverCache {
   private readonly cache: TtlCache<string, DidResolutionResult>;
 
   constructor({ ttl = '15m' }: DidResolverCacheMemoryParams = {}) {
-    this.cache = new TtlCache({ ttl: ms(ttl) });
+    this.cache = new TtlCache({ ttl: parseDurationInMilliseconds(ttl) });
   }
 
   /**
