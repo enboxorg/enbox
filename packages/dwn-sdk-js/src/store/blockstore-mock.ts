@@ -35,6 +35,7 @@ export class BlockstoreMock implements Blockstore {
   }
 
   async delete(_key: CID, _options?: BlockstoreAbortOptions): Promise<void> {
+    return;
   }
 
   async isEmpty(_options?: BlockstoreAbortOptions): Promise<boolean> {
@@ -50,6 +51,7 @@ export class BlockstoreMock implements Blockstore {
   }
 
   async * getAll(_options?: BlockstoreAbortOptions): AsyncGenerator<Pair> {
+    return;
   }
 
   async * deleteMany(source: BlockstoreSource<CID>, options?: BlockstoreAbortOptions): AsyncGenerator<CID> {

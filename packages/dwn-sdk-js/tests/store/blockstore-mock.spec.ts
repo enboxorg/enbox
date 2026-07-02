@@ -130,11 +130,11 @@ describe('BlockstoreMock', () => {
     expect(results[0].cid).toEqual(cid1);
     const bytes1 = await collectBytes(results[0].bytes);
     expect(bytes1).toBeInstanceOf(Uint8Array);
-    expect(bytes1.length).toBe(0);
+    expect(bytes1).toHaveLength(0);
     expect(results[1].cid).toEqual(cid2);
     const bytes2 = await collectBytes(results[1].bytes);
     expect(bytes2).toBeInstanceOf(Uint8Array);
-    expect(bytes2.length).toBe(0);
+    expect(bytes2).toHaveLength(0);
   });
 
   it('should implement deleteMany method', async () => {

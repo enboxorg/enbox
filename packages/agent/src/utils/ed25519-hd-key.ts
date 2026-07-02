@@ -104,25 +104,10 @@ export class Ed25519HdKey {
     }
 
     const parts = path.replace(/^[mM]'?\//, '').split('/');
-    let child: Ed25519HdKey = this;
-    for (const part of parts) {
-      const match = /^(\d+)('?)$/.exec(part);
-      if (!match || match.length !== 3) {
-        throw new Error(`Invalid child index: ${part}`);
-      }
-
-      let index = Number(match[1]);
-      if (!Number.isSafeInteger(index) || index >= HARDENED_OFFSET) {
-        throw new Error('Invalid index');
-      }
-
-      if (forceHardened || match[2] === '\'') {
-        index += HARDENED_OFFSET;
-      }
-      child = child.deriveChild(index);
-    }
-
-    return child;
+    return parts.reduce(
+      (parent: Ed25519HdKey, part: string): Ed25519HdKey => parent.deriveChild(Ed25519HdKey.parseChildIndex(part, forceHardened)),
+      this
+    );
   }
 
   public deriveChild(index: number): Ed25519HdKey {
@@ -138,5 +123,23 @@ export class Ed25519HdKey {
       parentFingerprint : this.fingerprint,
       privateKey        : digest.slice(0, 32),
     });
+  }
+
+  private static parseChildIndex(part: string, forceHardened: boolean): number {
+    const match = /^(\d+)('?)$/.exec(part);
+    if (match?.length !== 3) {
+      throw new Error(`Invalid child index: ${part}`);
+    }
+
+    let index = Number(match[1]);
+    if (!Number.isSafeInteger(index) || index >= HARDENED_OFFSET) {
+      throw new Error('Invalid index');
+    }
+
+    if (forceHardened || match[2] === '\'') {
+      index += HARDENED_OFFSET;
+    }
+
+    return index;
   }
 }
