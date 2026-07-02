@@ -1,0 +1,112 @@
+{
+  "$id": "https://identity.foundation/dwn/json-schemas/encryption/delivery.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "rolePath",
+    "contextId",
+    "keyId",
+    "keyMaterial"
+  ],
+  "properties": {
+    "protocol": {
+      "type": "string"
+    },
+    "rolePath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contextId": {
+      "type": "string"
+    },
+    "keyId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "keyMaterial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "derivationScheme",
+        "keyId",
+        "publicKeyJwk",
+        "privateKeyJwk"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "X25519-HKDF-SHA256+A256KW"
+        },
+        "derivationScheme": {
+          "const": "roleAudience"
+        },
+        "keyId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "publicKeyJwk": {
+          "$ref": "#/$defs/x25519PublicKey"
+        },
+        "privateKeyJwk": {
+          "$ref": "#/$defs/x25519PrivateKey"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "x25519PublicKey": {
+      "allOf": [
+        {
+          "$ref": "https://identity.foundation/dwn/json-schemas/public-jwk.json"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "kty",
+        "crv",
+        "x"
+      ],
+      "properties": {
+        "kty": {
+          "const": "OKP"
+        },
+        "crv": {
+          "const": "X25519"
+        },
+        "x": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+        }
+      }
+    },
+    "x25519PrivateKey": {
+      "allOf": [
+        {
+          "$ref": "https://identity.foundation/dwn/json-schemas/general-jwk.json"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "kty",
+        "crv",
+        "x",
+        "d"
+      ],
+      "properties": {
+        "kty": {
+          "const": "OKP"
+        },
+        "crv": {
+          "const": "X25519"
+        },
+        "x": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+        },
+        "d": {
+          "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/base64url"
+        }
+      }
+    }
+  }
+}

@@ -16,7 +16,17 @@ export type { DataEncodedRecordsWriteMessage, RecordsCountDescriptor, RecordsCou
 export type { GeneralJws, SignatureEntry } from './types/jws-types.js';
 export { authenticate } from './core/auth.js';
 export { CoreProtocolRegistry } from './core/core-protocol.js';
-export { PERMISSIONS_REVOCATION_PATH } from './core/constants.js';
+export {
+  ENCRYPTION_CONTROL_AUDIENCE_PATH,
+  ENCRYPTION_CONTROL_DELIVERY_PATH,
+  ENCRYPTION_CONTROL_PATHS,
+  ENCRYPTION_CONTROL_ROOT_PATH,
+  ENCRYPTION_PROTOCOL_URI,
+  EncryptionControlRecordType,
+  PERMISSIONS_REVOCATION_PATH,
+  isEncryptionControlPath,
+} from './core/constants.js';
+export type { EncryptionControlPath } from './core/constants.js';
 export type { CoreProtocol, CoreProtocolStores } from './core/core-protocol.js';
 export { AllowAllTenantGate } from './core/tenant-gate.js';
 export type { ActiveTenantCheckResult, TenantGate } from './core/tenant-gate.js';
@@ -91,7 +101,20 @@ export { Secp256r1 } from './utils/secp256r1.js';
 export type { SupportedCurve } from './jose/algorithms/signing/signature-algorithms.js';
 export type { MessageSigner } from './types/signer.js';
 export { SortDirection } from './types/query-types.js';
-export type { EncryptionKeyDeriver, KeyDecrypter, KeyDecrypterDerivationScheme } from './types/encryption-types.js';
+export type {
+  EncryptionControlAudiencePayload,
+  EncryptionControlDeliveryPayload,
+  EncryptionControlDeliveryTags,
+  EncryptionControlSeal,
+  EncryptionKeyDeriver,
+  KeyDecrypter,
+  KeyDecrypterDerivationScheme,
+  RoleAudienceKeyId,
+  RoleAudienceKeyMaterial,
+  RoleAudienceTuple,
+  X25519KeyWrap,
+} from './types/encryption-types.js';
+export { EncryptionControlDeliveryRecipientAuthority } from './types/encryption-types.js';
 export { Time } from './utils/time.js';
 export * from './types/permission-types.js';
 export * from './types/records-types.js';
