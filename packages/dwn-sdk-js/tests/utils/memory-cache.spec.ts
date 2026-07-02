@@ -26,4 +26,20 @@ describe('MemoryCache', () => {
     await memoryCache.set('key', 'aValue');
     expect(setStub.called).toBe(true);
   });
+
+  it('should evict least recently used values when max entries is exceeded', async () => {
+    const memoryCache = new MemoryCache(60);
+    const maxEntries = 100_000;
+
+    for (let i = 0; i < maxEntries; i++) {
+      await memoryCache.set(`key-${i}`, `value-${i}`);
+    }
+
+    await memoryCache.get('key-0');
+    await memoryCache.set('overflow', 'overflow-value');
+
+    expect(await memoryCache.get('key-0')).toBe('value-0');
+    expect(await memoryCache.get('key-1')).toBeUndefined();
+    expect(await memoryCache.get('overflow')).toBe('overflow-value');
+  });
 });
