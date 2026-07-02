@@ -103,7 +103,6 @@ export type { MessageSigner } from './types/signer.js';
 export { SortDirection } from './types/query-types.js';
 export type {
   EncryptionControlAudiencePayload,
-  EncryptionControlAudienceTags,
   EncryptionControlDeliveryPayload,
   EncryptionControlDeliveryTags,
   EncryptionControlSeal,

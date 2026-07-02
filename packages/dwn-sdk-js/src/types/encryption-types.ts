@@ -19,8 +19,6 @@ export enum EncryptionControlDeliveryRecipientAuthority {
   RoleHolder = 'roleHolder',
 }
 
-export type EncryptionControlAudienceTags = RoleAudienceKeyId;
-
 export type EncryptionControlDeliveryTags = RoleAudienceKeyId & {
   recipientAuthority: EncryptionControlDeliveryRecipientAuthority | `${EncryptionControlDeliveryRecipientAuthority}`;
   grantId?: string;
