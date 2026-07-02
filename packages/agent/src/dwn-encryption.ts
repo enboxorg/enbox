@@ -1461,21 +1461,27 @@ async function getGrantKeyDeliveryScopes(
   };
 
   if (grant.scope.method === DwnMethodName.Read) {
+    if (grant.scope.protocolPath === undefined) {
+      addScope({
+        scheme   : KeyDerivationScheme.ProtocolPath,
+        protocol : grant.scope.protocol,
+      });
+      return [...deliveredScopes.values()];
+    }
+
     addScope({
-      scheme   : KeyDerivationScheme.ProtocolPath,
-      protocol : grant.scope.protocol,
-      ...(grant.scope.protocolPath !== undefined ? { protocolPath: grant.scope.protocolPath } : {}),
+      scheme       : KeyDerivationScheme.ProtocolPath,
+      protocol     : grant.scope.protocol,
+      protocolPath : grant.scope.protocolPath,
     });
 
-    if (grant.scope.protocolPath !== undefined) {
-      const protocolDefinition = await getGrantKeyProtocolDefinition(agent, ownerDid, ownerDid, grant.scope.protocol, protocolDefinitions);
-      for (const rolePath of getReadRolePathsForScope(protocolDefinition, grant.scope.protocolPath)) {
-        addScope({
-          scheme       : KeyDerivationScheme.ProtocolPath,
-          protocol     : grant.scope.protocol,
-          protocolPath : rolePath,
-        });
-      }
+    const protocolDefinition = await getGrantKeyProtocolDefinition(agent, ownerDid, ownerDid, grant.scope.protocol, protocolDefinitions);
+    for (const rolePath of getReadRolePathsForScope(protocolDefinition, grant.scope.protocolPath)) {
+      addScope({
+        scheme       : KeyDerivationScheme.ProtocolPath,
+        protocol     : grant.scope.protocol,
+        protocolPath : rolePath,
+      });
     }
   }
 
