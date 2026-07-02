@@ -4,11 +4,13 @@ import type { HandlerDependencies, MethodHandler } from '../types/method-handler
 import type { MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
 
 import { authenticate } from '../core/auth.js';
+import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
 import { MessagesSubscribe } from '../interfaces/messages-subscribe.js';
+import { Records } from '../utils/records.js';
 import { Time } from '../utils/time.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
@@ -63,9 +65,10 @@ export class MessagesSubscribeHandler implements MethodHandler {
 
     const guardedHandler = MessagesSubscribeHandler.createAuthorizationGuard({
       authorization,
+      deps: this.deps,
       messagesSubscribe,
-      validationStateReader: this.deps.validationStateReader,
       subscriptionHandler,
+      tenant,
     });
 
     const { filters, cursor: eventLogCursor } = message.descriptor;
@@ -100,25 +103,25 @@ export class MessagesSubscribeHandler implements MethodHandler {
     messagesSubscribe: MessagesSubscribe,
     deps: HandlerDependencies
   ): Promise<MessagesSubscribeAuthorization> {
-    // if `MessagesSubscribe` author is the same as the target tenant, we can directly grant access
-    if (messagesSubscribe.author === tenant) {
+    const requester = EncryptionControl.getRequester(messagesSubscribe.message);
+    if (messagesSubscribe.author === tenant && requester === tenant) {
       return { kind: 'owner' };
     }
 
     const permissionGrantIds = Message.getPermissionGrantIds(messagesSubscribe.signaturePayload!);
-    if (messagesSubscribe.author !== undefined && permissionGrantIds.length > 0) {
+    if (requester !== undefined && permissionGrantIds.length > 0) {
       const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, deps.validationStateReader, permissionGrantIds);
       await MessagesGrantAuthorization.authorizeQueryOrSubscribe({
         incomingMessage       : messagesSubscribe.message,
         expectedGrantor       : tenant,
-        expectedGrantee       : messagesSubscribe.author,
+        expectedGrantee       : requester,
         permissionGrants,
         validationStateReader : deps.validationStateReader
       });
       return {
         kind            : 'delegate',
         expectedGrantor : tenant,
-        expectedGrantee : messagesSubscribe.author,
+        expectedGrantee : requester,
         permissionGrants,
       };
     } else {
@@ -128,11 +131,12 @@ export class MessagesSubscribeHandler implements MethodHandler {
 
   private static createAuthorizationGuard(input: {
     authorization: MessagesSubscribeAuthorization;
+    deps: HandlerDependencies;
     messagesSubscribe: MessagesSubscribe;
-    validationStateReader: HandlerDependencies['validationStateReader'];
     subscriptionHandler: SubscriptionListener;
+    tenant: string;
   }): GuardedSubscriptionHandler {
-    const { authorization, messagesSubscribe, validationStateReader, subscriptionHandler } = input;
+    const { authorization, deps, messagesSubscribe, subscriptionHandler, tenant } = input;
     if (authorization.kind === 'owner') {
       return {
         listener        : subscriptionHandler,
@@ -181,12 +185,23 @@ export class MessagesSubscribeHandler implements MethodHandler {
           expectedGrantor          : authorization.expectedGrantor,
           expectedGrantee          : authorization.expectedGrantee,
           permissionGrants         : authorization.permissionGrants,
-          validationStateReader,
+          validationStateReader    : deps.validationStateReader,
           deliveryTimestamp        : Time.getCurrentTimestamp(),
         });
       } catch {
         emitTerminalAuthorizationError(subMessage.cursor);
         closeSubscription();
+        return;
+      }
+
+      const visible = await MessagesSubscribeHandler.canDeliverEvent({
+        tenant,
+        authorization,
+        deps,
+        messagesSubscribe,
+        subMessage,
+      });
+      if (!visible) {
         return;
       }
 
@@ -227,5 +242,35 @@ export class MessagesSubscribeHandler implements MethodHandler {
         }
       },
     };
+  }
+
+  private static async canDeliverEvent(input: {
+    tenant: string;
+    authorization: Extract<MessagesSubscribeAuthorization, { kind: 'delegate' }>;
+    deps: HandlerDependencies;
+    messagesSubscribe: MessagesSubscribe;
+    subMessage: SubscriptionEvent;
+  }): Promise<boolean> {
+    const { authorization, deps, messagesSubscribe, subMessage, tenant } = input;
+    const { message } = subMessage.event;
+    if (!Records.isRecordsWrite(message) || !EncryptionControl.isControlMessage(message)) {
+      return true;
+    }
+
+    try {
+      return await EncryptionControl.canRead({
+        tenant,
+        incomingMessage       : messagesSubscribe.message,
+        requester             : authorization.expectedGrantee,
+        recordsWriteMessage   : message,
+        validationStateReader : deps.validationStateReader,
+      });
+    } catch (error) {
+      if (!(error instanceof DwnError)) {
+        throw error;
+      }
+
+      return false;
+    }
   }
 }

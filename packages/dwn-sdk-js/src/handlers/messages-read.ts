@@ -6,6 +6,7 @@ import type { MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry } f
 import { authenticate } from '../core/auth.js';
 import { DataStream } from '../utils/data-stream.js';
 import { Encoder } from '../utils/encoder.js';
+import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { MessagesGrantAuthorization } from '../core/messages-grant-authorization.js';
@@ -80,19 +81,20 @@ export class MessagesReadHandler implements MethodHandler {
     deps: HandlerDependencies
   ): Promise<void> {
 
-    if (messagesRead.author === tenant) {
+    const requester = EncryptionControl.getRequester(messagesRead.message);
+    if (messagesRead.author === tenant && requester === tenant) {
       // If the author is the tenant, no further authorization is needed
       return;
     }
 
     const permissionGrantIds = Message.getPermissionGrantIds(messagesRead.signaturePayload!);
-    if (messagesRead.author !== undefined && permissionGrantIds.length > 0) {
+    if (requester !== undefined && permissionGrantIds.length > 0) {
       const permissionGrants = await MessagesGrantAuthorization.fetchPermissionGrants(tenant, deps.validationStateReader, permissionGrantIds);
       await MessagesGrantAuthorization.authorizeMessagesRead({
         messagesReadMessage   : messagesRead.message,
         messageToRead         : matchedMessage,
         expectedGrantor       : tenant,
-        expectedGrantee       : messagesRead.author,
+        expectedGrantee       : requester,
         permissionGrants,
         validationStateReader : deps.validationStateReader
       });

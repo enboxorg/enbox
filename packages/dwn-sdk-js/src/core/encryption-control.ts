@@ -2,6 +2,7 @@ import type { RecordsPermissionScope } from '../types/permission-types.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { EncryptionControlAudiencePayload, EncryptionControlDeliveryTags, RoleAudienceKeyId } from '../types/encryption-types.js';
+import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
 import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
 import type { RecordsCountMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage, RecordsWriteTags } from '../types/records-types.js';
 
@@ -37,7 +38,21 @@ type ExactAudienceFilterTuple = Omit<RoleAudienceKeyId, 'keyId'> & {
   keyId?: string;
 };
 
-type ControlReadMessage = RecordsCountMessage | RecordsReadMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+type ControlReadMessage =
+  | MessagesQueryMessage
+  | MessagesReadMessage
+  | MessagesSubscribeMessage
+  | RecordsCountMessage
+  | RecordsReadMessage
+  | RecordsQueryMessage
+  | RecordsSubscribeMessage;
+
+type ControlFilterMessage =
+  | MessagesQueryMessage
+  | MessagesSubscribeMessage
+  | RecordsCountMessage
+  | RecordsQueryMessage
+  | RecordsSubscribeMessage;
 
 export class EncryptionControl {
   public static isControlMessage(message: RecordsWriteMessage): boolean {
@@ -56,7 +71,7 @@ export class EncryptionControl {
 
   public static async filterVisibleControlRecords<T extends RecordsWriteMessage>(input: {
     tenant: string;
-    incomingMessage: RecordsCountMessage | RecordsQueryMessage | RecordsSubscribeMessage;
+    incomingMessage: ControlFilterMessage;
     requester: string | undefined;
     recordsWriteMessages: T[];
     validationStateReader: ValidationStateReader;
@@ -132,7 +147,7 @@ export class EncryptionControl {
     }
 
     const tags = EncryptionControl.getRoleAudienceKeyId(recordsWriteMessage, 'audience');
-    if (EncryptionControl.exactAudienceFilterMatchesRecord(input.incomingMessage.descriptor.filter, tags, recordsWriteMessage.recordId)) {
+    if (EncryptionControl.exactAudienceRequestMatchesRecord(input.incomingMessage, tags, recordsWriteMessage.recordId)) {
       return true;
     }
 
@@ -746,7 +761,12 @@ export class EncryptionControl {
       return PermissionGrant.parse(input.incomingMessage.authorization!.authorDelegatedGrant!);
     }
 
-    const grantId = input.incomingMessage.descriptor.permissionGrantId;
+    const { descriptor } = input.incomingMessage;
+    if (!('permissionGrantId' in descriptor)) {
+      return undefined;
+    }
+
+    const grantId = descriptor.permissionGrantId;
     if (grantId === undefined) {
       return undefined;
     }
@@ -959,6 +979,19 @@ export class EncryptionControl {
     }
 
     return { protocol, rolePath, contextId, keyId };
+  }
+
+  private static exactAudienceRequestMatchesRecord(
+    incomingMessage: ControlReadMessage,
+    tags: RoleAudienceKeyId,
+    recordId: string,
+  ): boolean {
+    const { descriptor } = incomingMessage;
+    if ('filter' in descriptor) {
+      return EncryptionControl.exactAudienceFilterMatchesRecord(descriptor.filter, tags, recordId);
+    }
+
+    return false;
   }
 
   private static getExactFilterTag(filter: RecordsFilter, tag: string): string | undefined {

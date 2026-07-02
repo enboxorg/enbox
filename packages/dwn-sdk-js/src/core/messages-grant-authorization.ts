@@ -8,6 +8,7 @@ import type { DataEncodedRecordsWriteMessage, RecordsDeleteMessage, RecordsWrite
 import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
 
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
+import { EncryptionControl } from './encryption-control.js';
 import { EncryptionProtocol } from '../protocols/encryption.js';
 import { GrantAuthorization } from './grant-authorization.js';
 import { PermissionScopeMatcher } from '../utils/permission-scope.js';
@@ -53,7 +54,14 @@ export class MessagesGrantAuthorization {
 
     for (const permissionGrant of permissionGrants) {
       const scope = permissionGrant.scope as MessagesPermissionScope;
-      if (await MessagesGrantAuthorization.isScopeAuthorized(expectedGrantor, messageToRead, scope, validationStateReader)) {
+      if (await MessagesGrantAuthorization.isScopeAuthorized({
+        tenant          : expectedGrantor,
+        incomingMessage : messagesReadMessage,
+        messageToGet    : messageToRead,
+        incomingScope   : scope,
+        requester       : expectedGrantee,
+        validationStateReader,
+      })) {
         return;
       }
     }
@@ -192,22 +200,31 @@ export class MessagesGrantAuthorization {
    * Determines whether the given record is inside a grant scope.
    */
   private static async isScopeAuthorized(
-    tenant: string,
-    messageToGet: GenericMessage,
-    incomingScope: MessagesPermissionScope,
-    validationStateReader: ValidationStateReader,
+    input: {
+      tenant: string;
+      incomingMessage: MessagesReadMessage;
+      messageToGet: GenericMessage;
+      incomingScope: MessagesPermissionScope;
+      requester: string;
+      validationStateReader: ValidationStateReader;
+    },
   ): Promise<boolean> {
-    if (incomingScope.protocol === undefined) {
-      return true;
-    }
-
+    const {
+      tenant, incomingMessage, messageToGet, incomingScope, requester, validationStateReader
+    } = input;
     if (messageToGet.descriptor.interface === DwnInterfaceName.Records) {
       return MessagesGrantAuthorization.isRecordsMessageScopeAuthorized(
         tenant,
+        incomingMessage,
         messageToGet as RecordsWriteMessage | RecordsDeleteMessage,
         incomingScope,
+        requester,
         validationStateReader
       );
+    }
+
+    if (incomingScope.protocol === undefined) {
+      return true;
     }
 
     if (messageToGet.descriptor.interface === DwnInterfaceName.Protocols) {
@@ -222,8 +239,10 @@ export class MessagesGrantAuthorization {
 
   private static async isRecordsMessageScopeAuthorized(
     tenant: string,
+    incomingMessage: MessagesReadMessage,
     recordsMessage: RecordsWriteMessage | RecordsDeleteMessage,
     incomingScope: MessagesPermissionScope,
+    requester: string,
     validationStateReader: ValidationStateReader,
   ): Promise<boolean> {
     const recordsWriteMessage = await MessagesGrantAuthorization.getAssociatedRecordsWrite(
@@ -231,6 +250,26 @@ export class MessagesGrantAuthorization {
       recordsMessage,
       validationStateReader
     );
+
+    const isScopedToRecordProtocol = incomingScope.protocol === undefined ||
+      PermissionScopeMatcher.matches(incomingScope, { protocol: recordsWriteMessage.descriptor.protocol });
+    if (EncryptionControl.isControlMessage(recordsWriteMessage)) {
+      if (!isScopedToRecordProtocol) {
+        return false;
+      }
+
+      return EncryptionControl.canRead({
+        tenant,
+        incomingMessage,
+        requester,
+        recordsWriteMessage,
+        validationStateReader,
+      });
+    }
+
+    if (incomingScope.protocol === undefined) {
+      return true;
+    }
 
     if (recordsWriteMessage.descriptor.protocol === PermissionsProtocol.uri) {
       return MessagesGrantAuthorization.isPermissionRecordScopeAuthorized(
