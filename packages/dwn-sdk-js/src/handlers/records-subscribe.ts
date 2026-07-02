@@ -572,6 +572,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
     const visibleMessages: RecordsQueryReplyEntry[] = [];
     let cursor = pagination.cursor;
     let nextCursor: PaginationCursor | undefined;
+    // Keeps visible-page pagination stable until #1100 moves control visibility into indexed store filters.
     do {
       const remainingLimit = pagination.limit - visibleMessages.length;
       const result = await queryRecordsWithRecordLimitOccupancy({

@@ -713,7 +713,7 @@ export class EncryptionControl {
       return true;
     }
 
-    const { protocolDefinition, ruleSet } = await EncryptionControl.getRoleAudienceDefinition({
+    const { protocolDefinition, ruleSet } = await EncryptionControl.resolveRoleAudienceDefinition({
       tenant,
       tags,
       messageTimestamp: incomingMessage.descriptor.messageTimestamp,
@@ -796,15 +796,6 @@ export class EncryptionControl {
     }
 
     return { protocolDefinition, ruleSet };
-  }
-
-  private static async getRoleAudienceDefinition(input: {
-    tenant: string;
-    tags: RoleAudienceKeyId;
-    messageTimestamp: string;
-    validationStateReader: ValidationStateReader;
-  }): Promise<RoleAudienceDefinition> {
-    return EncryptionControl.resolveRoleAudienceDefinition(input);
   }
 
   private static verifyGrantConditions(message: RecordsWriteMessage, grant: PermissionGrant): void {
