@@ -435,15 +435,13 @@ function runReplicationLogTests(dialect: Dialect): void {
       expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(ZERO_FINGERPRINT);
     });
 
-    it('should fold encryption control records into capability domains and SQL indexes', async () => {
+    it('should fold encryption control records into aggregate capability domains', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const protocol = 'https://example.com/encrypted-chat-sql';
       const rolePath = 'chat/member';
       const contextId = 'chatRootRecordId';
       const keyId = 'a'.repeat(43);
-      const roleAudienceHash = await Replication.roleAudienceHash({ contextId, protocol, rolePath });
-      const recipientHash = await Replication.recipientHash(bob.did);
 
       const audience = await generateStoredMessage({
         protocol,
@@ -471,27 +469,8 @@ function runReplicationLogTests(dialect: Dialect): void {
       expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(xorHex(audienceFingerprint, deliveryFingerprint));
       expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(protocol)])).toBe(ZERO_FINGERPRINT);
       expect(await messageStore.fingerprint(alice.did, [Replication.audienceControlDomain(protocol)])).toBe(audienceFingerprint);
-      expect(await messageStore.fingerprint(alice.did, [Replication.audienceControlRoleDomain(protocol, roleAudienceHash)]))
-        .toBe(audienceFingerprint);
       expect(await messageStore.fingerprint(alice.did, [Replication.deliveryControlDomain(protocol)]))
         .toBe(deliveryFingerprint);
-      expect(await messageStore.fingerprint(alice.did, [Replication.deliveryControlRoleDomain(protocol, roleAudienceHash)]))
-        .toBe(deliveryFingerprint);
-      expect(await messageStore.fingerprint(alice.did, [Replication.deliveryControlRecipientDomain(protocol, recipientHash)]))
-        .toBe(deliveryFingerprint);
-
-      const audienceQuery = await messageStore.query(alice.did, [{ protocol, [Replication.controlClassIndex]: 'audience' }]);
-      expect(audienceQuery.messages.map((message) => (message.descriptor as { protocolPath?: string }).protocolPath))
-        .toEqual([ENCRYPTION_CONTROL_AUDIENCE_PATH]);
-
-      const deliveryQuery = await messageStore.query(alice.did, [{
-        protocol,
-        [Replication.controlClassIndex]     : 'delivery',
-        [Replication.recipientHashIndex]    : recipientHash,
-        [Replication.roleAudienceHashIndex] : roleAudienceHash,
-      }]);
-      expect(deliveryQuery.messages.map((message) => (message.descriptor as { protocolPath?: string }).protocolPath))
-        .toEqual([ENCRYPTION_CONTROL_DELIVERY_PATH]);
     });
   });
 }

@@ -57,18 +57,6 @@ export function testRecordsTags(): void {
     });
 
     describe('RecordsWrite with tags', () => {
-      it('should reject record tags using the reserved __dwn prefix', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-        const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-          author : alice,
-          tags   : { '__dwn.controlClass': 'delivery' },
-        });
-
-        const reply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
-        expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain(DwnErrorCode.SchemaValidatorFailure);
-      });
-
       describe('protocol rules', () => {
         describe('ProtocolsConfigure', () => {
           it('should support protocol tag types of string, number, integer, boolean and array types of numbers, integers and strings', async () => {
@@ -153,33 +141,6 @@ export function testRecordsTags(): void {
                     } as any, // intentionally invalid to test validation
                   }
                 }
-              },
-            };
-
-            const protocolConfigure = TestDataGenerator.generateProtocolsConfigure({
-              author             : alice,
-              protocolDefinition : invalidSchemaProtocol,
-            });
-
-            await expect(protocolConfigure).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidTagSchema);
-          });
-
-          it('should reject protocol tag definitions using the reserved __dwn prefix', async () => {
-            const alice = await TestDataGenerator.generateDidKeyPersona();
-            const invalidSchemaProtocol: ProtocolDefinition = {
-              protocol  : 'http://example.com/protocol/withReservedTags',
-              published : true,
-              types     : {
-                foo: {}
-              },
-              structure: {
-                foo: {
-                  $tags: {
-                    '__dwn.controlClass': {
-                      type: 'string',
-                    },
-                  },
-                },
               },
             };
 

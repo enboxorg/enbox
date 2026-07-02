@@ -35,9 +35,6 @@ type MessageStoreTable = {
   permissionGrantId: string | null;
   prune: boolean | null;
   squash: boolean | null;
-  controlClass: string | null;
-  roleAudienceHash: string | null;
-  recipientHash: string | null;
   // "indexes" end
 };
 

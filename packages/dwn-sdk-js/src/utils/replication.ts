@@ -1,7 +1,6 @@
 import type { GenericMessage } from '../types/message-types.js';
 import type { KeyValues } from '../types/query-types.js';
 
-import { Encoder } from './encoder.js';
 import { EncryptionProtocol } from '../protocols/encryption.js';
 import { PermissionsProtocol } from '../protocols/permissions.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
@@ -17,7 +16,6 @@ const POSITION_PAD_WIDTH = 20;
 type ReplicationMessageDescriptor = GenericMessage['descriptor'] & {
   protocol?: string;
   protocolPath?: string;
-  recipient?: string;
   tags?: Record<string, unknown>;
 };
 
@@ -31,9 +29,6 @@ export type ReplicationIndexProjection = {
  */
 export class Replication {
   public static readonly globalDomain = '';
-  public static readonly controlClassIndex = 'controlClass';
-  public static readonly recipientHashIndex = 'recipientHash';
-  public static readonly roleAudienceHashIndex = 'roleAudienceHash';
 
   public static protocolDomain(protocolUri: string): string {
     return `protocol:${protocolUri}`;
@@ -66,20 +61,8 @@ export class Replication {
     return `ctl:${protocolUri}:audience`;
   }
 
-  public static audienceControlRoleDomain(protocolUri: string, roleAudienceHash: string): string {
-    return `${Replication.audienceControlDomain(protocolUri)}:${roleAudienceHash}`;
-  }
-
   public static deliveryControlDomain(protocolUri: string): string {
     return `ctl:${protocolUri}:delivery`;
-  }
-
-  public static deliveryControlRoleDomain(protocolUri: string, roleAudienceHash: string): string {
-    return `${Replication.deliveryControlDomain(protocolUri)}:${roleAudienceHash}`;
-  }
-
-  public static deliveryControlRecipientDomain(protocolUri: string, recipientHash: string): string {
-    return `${Replication.deliveryControlDomain(protocolUri)}:rcpt:${recipientHash}`;
   }
 
   public static async deriveStreamId(tenant: string): Promise<string> {
@@ -89,24 +72,13 @@ export class Replication {
     return Array.from(hashArray.slice(0, 8), (b: number) => b.toString(16).padStart(2, '0')).join('');
   }
 
-  public static async projectIndexes(message: GenericMessage, indexes: KeyValues): Promise<ReplicationIndexProjection> {
-    const controlRecord = await Replication.classifyControlRecord(message, indexes);
-    const baseIndexes = Replication.stripControlIndexes(indexes);
-    if (controlRecord !== undefined) {
-      return {
-        fingerprintScopes : controlRecord.fingerprintScopes,
-        indexes           : {
-          ...baseIndexes,
-          [Replication.controlClassIndex]     : controlRecord.controlClass,
-          [Replication.roleAudienceHashIndex] : controlRecord.roleAudienceHash,
-          ...(controlRecord.recipientHash !== undefined && { [Replication.recipientHashIndex]: controlRecord.recipientHash }),
-        },
-      };
-    }
+  public static projectIndexes(message: GenericMessage, indexes: KeyValues): ReplicationIndexProjection {
+    const controlScopes = Replication.computeControlFingerprintScopes(message, indexes);
+    const fingerprintScopes = controlScopes ?? Replication.computeStandardFingerprintScopes(message, indexes);
 
     return {
-      fingerprintScopes : Replication.computeStandardFingerprintScopes(message, baseIndexes),
-      indexes           : baseIndexes,
+      fingerprintScopes,
+      indexes,
     };
   }
 
@@ -118,21 +90,6 @@ export class Replication {
     if (!Replication.scopeSetsMatch(persistedScopes, expectedScopes)) {
       Replication.throwFingerprintScopeMutation(messageCid);
     }
-  }
-
-  public static async roleAudienceHash(input: {
-    contextId: string;
-    protocol: string;
-    rolePath: string;
-  }): Promise<string> {
-    const canonicalTuple = JSON.stringify([input.protocol, input.rolePath, input.contextId]);
-    const digest = await Replication.sha256(Encoder.stringToBytes(canonicalTuple));
-    return Encoder.bytesToBase64Url(digest);
-  }
-
-  public static async recipientHash(recipient: string): Promise<string> {
-    const digest = await Replication.sha256(Encoder.stringToBytes(recipient));
-    return Encoder.bytesToBase64Url(digest);
   }
 
   private static computeStandardFingerprintScopes(message: GenericMessage, indexes: KeyValues): string[] {
@@ -157,15 +114,10 @@ export class Replication {
     return scopes;
   }
 
-  private static async classifyControlRecord(
+  private static computeControlFingerprintScopes(
     message: GenericMessage,
     indexes: KeyValues,
-  ): Promise<{
-    controlClass: EncryptionControlRecordType;
-    fingerprintScopes: string[];
-    recipientHash?: string;
-    roleAudienceHash: string;
-  } | undefined> {
+  ): string[] | undefined {
     const descriptor: ReplicationMessageDescriptor = message.descriptor;
     if (
       descriptor.interface !== DwnInterfaceName.Records ||
@@ -176,45 +128,17 @@ export class Replication {
       return undefined;
     }
 
-    const protocol = Replication.getStringIndex(indexes, 'protocol', descriptor);
-    const rolePath = Replication.getStringTag(message, indexes, 'rolePath');
-    const contextId = Replication.getStringTag(message, indexes, 'contextId');
-    if (protocol === undefined || rolePath === undefined || contextId === undefined) {
+    const protocol = Replication.getProtocolIndex(indexes, descriptor);
+    if (protocol === undefined) {
       return undefined;
     }
 
-    const roleAudienceHash = await Replication.roleAudienceHash({ contextId, protocol, rolePath });
     const controlClass = getEncryptionControlRecordType(descriptor.protocolPath);
-
     if (controlClass === EncryptionControlRecordType.Audience) {
-      return {
-        controlClass,
-        roleAudienceHash,
-        fingerprintScopes: [
-          Replication.globalDomain,
-          Replication.audienceControlDomain(protocol),
-          Replication.audienceControlRoleDomain(protocol, roleAudienceHash),
-        ],
-      };
+      return [Replication.globalDomain, Replication.audienceControlDomain(protocol)];
     }
 
-    const recipient = Replication.getStringIndex(indexes, 'recipient', descriptor);
-    if (recipient === undefined) {
-      return undefined;
-    }
-
-    const recipientHash = await Replication.recipientHash(recipient);
-    return {
-      controlClass,
-      recipientHash,
-      roleAudienceHash,
-      fingerprintScopes: [
-        Replication.globalDomain,
-        Replication.deliveryControlDomain(protocol),
-        Replication.deliveryControlRoleDomain(protocol, roleAudienceHash),
-        Replication.deliveryControlRecipientDomain(protocol, recipientHash),
-      ],
-    };
+    return [Replication.globalDomain, Replication.deliveryControlDomain(protocol)];
   }
 
   private static scopeSetsMatch(left: string[], right: string[]): boolean {
@@ -236,27 +160,9 @@ export class Replication {
     return protocolUri === PermissionsProtocol.uri || protocolUri === EncryptionProtocol.uri;
   }
 
-  private static stripControlIndexes(indexes: KeyValues): KeyValues {
-    const {
-      [Replication.controlClassIndex]     : _controlClass,
-      [Replication.recipientHashIndex]    : _recipientHash,
-      [Replication.roleAudienceHashIndex] : _roleAudienceHash,
-      ...cleanIndexes
-    } = indexes;
-    return cleanIndexes;
-  }
-
-  private static getStringIndex(indexes: KeyValues, key: 'protocol' | 'recipient', descriptor: ReplicationMessageDescriptor): string | undefined {
-    const descriptorValue = key === 'protocol' ? descriptor.protocol : descriptor.recipient;
-    const value = indexes[key] ?? descriptorValue;
-    return typeof value === 'string' ? value : undefined;
-  }
-
-  private static getStringTag(message: GenericMessage, indexes: KeyValues, key: string): string | undefined {
-    const indexedValue = indexes[`tag.${key}`];
-    const descriptor: ReplicationMessageDescriptor = message.descriptor;
-    const descriptorValue = descriptor.tags?.[key];
-    const value = indexedValue ?? descriptorValue;
+  private static getProtocolIndex(indexes: KeyValues, descriptor: ReplicationMessageDescriptor): string | undefined {
+    const descriptorValue = descriptor.protocol;
+    const value = indexes.protocol ?? descriptorValue;
     return typeof value === 'string' ? value : undefined;
   }
 
