@@ -137,6 +137,15 @@ describe('BlockstoreMock', () => {
     expect(bytes2).toHaveLength(0);
   });
 
+  it('should implement getAll method', async () => {
+    const results = [];
+    for await (const pair of blockstore.getAll()) {
+      results.push(pair);
+    }
+
+    expect(results).toHaveLength(0);
+  });
+
   it('should implement deleteMany method', async () => {
     const cid1 = CID.parse('bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi');
     const cid2 = CID.parse('bafkreifjjcie6lypi6ny7amxnfftagclbuxndqonfipmb64f2km2devei4');

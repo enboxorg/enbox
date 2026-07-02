@@ -51,7 +51,7 @@ export class BlockstoreMock implements Blockstore {
   }
 
   async * getAll(_options?: BlockstoreAbortOptions): AsyncGenerator<Pair> {
-    return;
+    yield * [];
   }
 
   async * deleteMany(source: BlockstoreSource<CID>, options?: BlockstoreAbortOptions): AsyncGenerator<CID> {
