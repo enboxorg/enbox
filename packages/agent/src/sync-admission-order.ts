@@ -7,6 +7,7 @@ import {
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   EncryptionProtocol,
   getRoleAudienceContextId,
+  getRoleContextPrefix,
   isCrossProtocolRef,
   Jws,
   Message,
@@ -127,15 +128,6 @@ function isInitialWrite(message: GenericMessage): boolean {
 
 function getContextId(message: GenericMessage): string | undefined {
   return (message as GenericMessage & { contextId?: string }).contextId;
-}
-
-export function getRoleContextPrefix(protocolPath: string, contextId?: string): string | undefined {
-  const ancestorSegmentCount = protocolPath.split('/').length - 1;
-  if (ancestorSegmentCount === 0 || contextId === undefined || contextId === '') {
-    return undefined;
-  }
-
-  return contextId.split('/').slice(0, ancestorSegmentCount).join('/');
 }
 
 export function getRoleKey(protocol: string, protocolPath: string, recipient: string, contextPrefix?: string): string {

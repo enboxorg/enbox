@@ -11,7 +11,7 @@ import { EncryptionProtocol } from '../protocols/encryption.js';
 import { Message } from './message.js';
 import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRoleAudienceContextId, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleAudienceContextId, getRoleContextPrefix, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
 
 export type ReplicationApplyOptions = {
   dataStream?: ReadableStream<Uint8Array>;
@@ -423,10 +423,7 @@ function roleDependencyFromMessage(message: GenericMessage, context: Replication
   } else if (typeof filter?.contextId === 'string') {
     contextId = filter.contextId;
   }
-  const roleSegments = roleProtocolPath.split('/').length - 1;
-  const contextPrefix = roleSegments > 0 && contextId !== undefined
-    ? contextId.split('/').slice(0, roleSegments).join('/')
-    : undefined;
+  const contextPrefix = getRoleContextPrefix(roleProtocolPath, contextId);
 
   return {
     type         : 'Role',
@@ -562,7 +559,7 @@ function roleDependencyFromEncryptionAudienceWriter(
     roleProtocolPath = parsed.protocolPath;
   }
 
-  const contextPrefix = roleContextPrefix(roleProtocolPath, tags.contextId);
+  const contextPrefix = getRoleContextPrefix(roleProtocolPath, tags.contextId);
   return {
     type         : 'Role',
     protocol     : roleProtocol,
@@ -613,15 +610,6 @@ function isEncryptionProtocolMessage(message: GenericMessage): boolean {
   const descriptor = message.descriptor as Record<string, unknown>;
   return descriptor.interface === DwnInterfaceName.Records &&
     descriptor.protocol === EncryptionProtocol.uri;
-}
-
-function roleContextPrefix(rolePath: string, contextId: string): string | undefined {
-  const roleSegments = rolePath.split('/').length - 1;
-  if (roleSegments === 0 || contextId === '') {
-    return undefined;
-  }
-
-  return contextId.split('/').slice(0, roleSegments).join('/');
 }
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {
