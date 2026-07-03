@@ -42,7 +42,6 @@ export type ReplicationApplyResultContext = {
    * single fetch pass instead of one ancestry level per retry.
    */
   missingAncestorRecordIds?: string[];
-
 };
 
 type AudienceDependencyTags = {
