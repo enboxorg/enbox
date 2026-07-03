@@ -23,6 +23,88 @@ describe('findMissingRoleAudienceEncryptionContext', () => {
     expect(result).toBeUndefined();
   });
 
+  it('returns undefined when the protocol path does not resolve to a rule set', async () => {
+    const reader = makeValidationStateReader({
+      queryAudienceRecords: async (): Promise<RecordsWriteMessage[]> => {
+        throw new Error('queryAudienceRecords should not be called');
+      },
+    });
+
+    const result = await findMissingRoleAudienceEncryptionContext(tenant, makeMessage({
+      keyEncryption : [],
+      protocolPath  : 'thread/unknown',
+    }), reader);
+
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined when no read role rules apply', async () => {
+    const reader = makeValidationStateReader({
+      fetchProtocolDefinition: async (): Promise<ProtocolDefinition> => ({
+        ...protocolDefinition,
+        structure: {
+          thread: {
+            message: {
+              $actions: [
+                { role: 'thread/member', can: [ProtocolAction.Create] },
+                { who: 'anyone', can: [ProtocolAction.Read] },
+              ],
+            },
+          },
+        },
+      }),
+      queryAudienceRecords: async (): Promise<RecordsWriteMessage[]> => {
+        throw new Error('queryAudienceRecords should not be called');
+      },
+    });
+
+    const result = await findMissingRoleAudienceEncryptionContext(tenant, makeMessage({
+      keyEncryption: [
+        {
+          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          protocol,
+          rolePath         : 'thread/member',
+          keyId            : 'member-key',
+        },
+      ],
+    }), reader);
+
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined when a cross-protocol role rule cannot be resolved', async () => {
+    const reader = makeValidationStateReader({
+      fetchProtocolDefinition: async (): Promise<ProtocolDefinition> => ({
+        ...protocolDefinition,
+        structure: {
+          thread: {
+            message: {
+              $actions: [
+                { role: 'missing:member', can: [ProtocolAction.Read] },
+              ],
+            },
+          },
+        },
+      }),
+      queryAudienceRecords: async (): Promise<RecordsWriteMessage[]> => {
+        throw new Error('queryAudienceRecords should not be called');
+      },
+    });
+
+    const result = await findMissingRoleAudienceEncryptionContext(tenant, makeMessage({
+      keyEncryption: [
+        {
+          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          protocol,
+          rolePath         : 'member',
+          keyId            : 'member-key',
+        },
+      ],
+    }), reader);
+
+    expect(result).toBeUndefined();
+  });
+
   it('returns the source role path whose carried audience entry has no accepted audience record', async () => {
     const queries: unknown[] = [];
     const reader = makeValidationStateReader({
@@ -113,6 +195,64 @@ describe('findMissingRoleAudienceEncryptionContext', () => {
 
     expect(result).toEqual({ rolePath: 'thread/admin' });
   });
+
+  it('returns undefined when the carried source audience entry is accepted', async () => {
+    const reader = makeValidationStateReader({
+      queryAudienceRecords: async (): Promise<RecordsWriteMessage[]> => {
+        return [{} as RecordsWriteMessage];
+      },
+    });
+
+    const result = await findMissingRoleAudienceEncryptionContext(tenant, makeMessage({
+      keyEncryption: [
+        {
+          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          protocol,
+          rolePath         : 'thread/member',
+          keyId            : 'member-key',
+        },
+      ],
+    }), reader);
+
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined when the carried legacy audience entry is accepted', async () => {
+    const reader = makeValidationStateReader({
+      queryAudienceEpochs: async (): Promise<RecordsWriteMessage[]> => {
+        return [{} as RecordsWriteMessage];
+      },
+    });
+
+    const result = await findMissingRoleAudienceEncryptionContext(tenant, makeMessage({
+      keyEncryption: [
+        {
+          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          protocol,
+          role             : 'thread/member',
+          epoch            : 1,
+          keyId            : 'member-key',
+        },
+      ],
+    }), reader);
+
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined when no carried entry matches a required role audience', async () => {
+    const result = await findMissingRoleAudienceEncryptionContext(tenant, makeMessage({
+      keyEncryption: [
+        {
+          derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+          protocol,
+          rolePath         : 'thread/other',
+          keyId            : 'other-key',
+        },
+      ],
+    }), makeValidationStateReader());
+
+    expect(result).toBeUndefined();
+  });
 });
 
 type ReaderOverrides = {
@@ -129,12 +269,12 @@ function makeValidationStateReader(overrides: ReaderOverrides = {}): ValidationS
   } as ValidationStateReader;
 }
 
-function makeMessage(options: { keyEncryption?: Record<string, unknown>[] } = {}): RecordsWriteMessage {
+function makeMessage(options: { keyEncryption?: Record<string, unknown>[]; protocolPath?: string } = {}): RecordsWriteMessage {
   return {
     contextId  : 'thread-record/message-record',
     descriptor : {
       protocol         : protocol,
-      protocolPath     : 'thread/message',
+      protocolPath     : options.protocolPath ?? 'thread/message',
       messageTimestamp : messageTimestamp,
     },
     encryption: options.keyEncryption === undefined
