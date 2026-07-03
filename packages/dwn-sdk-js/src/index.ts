@@ -16,6 +16,7 @@ export type { DataEncodedRecordsWriteMessage, RecordsCountDescriptor, RecordsCou
 export type { GeneralJws, SignatureEntry } from './types/jws-types.js';
 export { authenticate } from './core/auth.js';
 export { CoreProtocolRegistry } from './core/core-protocol.js';
+export { EncryptionControl } from './core/encryption-control.js';
 export {
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,

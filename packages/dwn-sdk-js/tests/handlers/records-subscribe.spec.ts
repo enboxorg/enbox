@@ -263,9 +263,10 @@ export function testRecordsSubscribeHandler(): void {
         });
       });
 
-      it('should authorize exact-tuple audience control subscriptions for snapshots and live events', async () => {
+      it('should project exact-tuple audience control subscription snapshots and live events to the current key', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
 
         const protocolDefinition: ProtocolDefinition = {
           protocol  : 'http://encryption-control-subscribe-audience.xyz',
@@ -274,15 +275,19 @@ export function testRecordsSubscribeHandler(): void {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
           },
           structure: {
-            member: { $role: true },
+            member: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: ['create'] }],
+            },
           },
         };
         const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
         const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
         const initialAudience = await createAudienceControlWrite({
-          author   : alice,
-          protocol : protocolDefinition.protocol,
-          rolePath : 'member',
+          author      : bob,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, initialAudience);
@@ -309,16 +314,97 @@ export function testRecordsSubscribeHandler(): void {
         expect(subReply.status.code).toBe(200);
         expect(subReply.entries?.map(entry => entry.recordId)).toEqual([initialAudience.recordsWrite.message.recordId]);
 
-        const liveAudience = await createAudienceControlWrite({
-          author   : alice,
-          protocol : protocolDefinition.protocol,
-          rolePath : 'member',
+        const nonCurrentLiveAudience = await createAudienceControlWrite({
+          author      : carol,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 2 }),
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
           roleRuleSet,
         });
-        await processControlWrite(dwn, alice.did, liveAudience);
+        await processControlWrite(dwn, alice.did, nonCurrentLiveAudience);
+
+        const currentLiveAudience = await createAudienceControlWrite({
+          author      : alice,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 3 }),
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, currentLiveAudience);
 
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          expect(receivedEvents.map(event => (event.message as RecordsWriteMessage).recordId)).toContain(liveAudience.recordsWrite.message.recordId);
+          const liveRecordIds = receivedEvents.map(event => (event.message as RecordsWriteMessage).recordId);
+          expect(liveRecordIds).toContain(currentLiveAudience.recordsWrite.message.recordId);
+          expect(liveRecordIds).not.toContain(nonCurrentLiveAudience.recordsWrite.message.recordId);
+        });
+      });
+
+      it('should deliver live exact-keyId audience events even when the key is not current', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+
+        const protocolDefinition: ProtocolDefinition = {
+          protocol  : 'http://encryption-control-subscribe-exact-audience.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: ['create'] }],
+            },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const currentAudience = await createAudienceControlWrite({
+          author      : alice,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, currentAudience);
+
+        const nonCurrentLiveAudience = await createAudienceControlWrite({
+          author      : carol,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 2 }),
+          protocol    : protocolDefinition.protocol,
+          rolePath    : 'member',
+          roleRuleSet,
+        });
+
+        const receivedEvents: RecordEvent[] = [];
+        const subscriptionHandler: SubscriptionListener = (msg): void => {
+          if (msg.type === 'event') {
+            receivedEvents.push(msg.event as RecordEvent);
+          }
+        };
+        const recordsSubscribe = await RecordsSubscribe.create({
+          filter: {
+            protocol     : protocolDefinition.protocol,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags         : {
+              protocol  : protocolDefinition.protocol,
+              rolePath  : 'member',
+              contextId : '',
+              keyId     : nonCurrentLiveAudience.keyId,
+            },
+          },
+          signer: Jws.createSigner(bob),
+        });
+        const subReply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler });
+        expect(subReply.status.code).toBe(200);
+        expect(subReply.entries?.map(entry => entry.recordId)).toEqual([]);
+
+        await processControlWrite(dwn, alice.did, nonCurrentLiveAudience);
+
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(receivedEvents.map(event => (event.message as RecordsWriteMessage).recordId)).toEqual([
+            nonCurrentLiveAudience.recordsWrite.message.recordId,
+          ]);
         });
       });
 

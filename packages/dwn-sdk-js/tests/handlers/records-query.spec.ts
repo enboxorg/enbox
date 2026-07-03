@@ -1,5 +1,6 @@
+import type { AudienceControlWrite } from '../utils/encryption-control-test-utils.js';
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, EventLog, GenericMessage, MessageStore, ProtocolDefinition, ProtocolRuleSet, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
+import type { DataEncodedRecordsWriteMessage, DataStore, EventLog, GenericMessage, MessageStore, Persona, ProtocolDefinition, ProtocolRuleSet, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
 import type { RecordsQueryReply, RecordsQueryReplyEntry, RecordsWriteDescriptor } from '../../src/types/records-types.js';
 
 import sinon from 'sinon';
@@ -17,12 +18,14 @@ import { DateSort } from '../../src/types/records-types.js';
 import { DwnConstant } from '../../src/core/dwn-constant.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Encoder } from '../../src/utils/encoder.js';
+import { Encryption } from '../../src/utils/encryption.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
 import { PermissionsProtocol } from '../../src/protocols/permissions.js';
 import { RecordsQuery } from '../../src/interfaces/records-query.js';
 import { RecordsQueryHandler } from '../../src/handlers/records-query.js';
+import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -77,6 +80,88 @@ export function testRecordsQueryHandler(): void {
       afterAll(async () => {
         await dwn.close();
       });
+
+      async function installAudienceProjectionProtocol(
+        author: Persona,
+        protocol: string,
+      ): Promise<{
+        protocolDefinition: ProtocolDefinition;
+        encryptedDefinition: ProtocolDefinition;
+        roleRuleSet: ProtocolRuleSet;
+      }> {
+        const protocolDefinition: ProtocolDefinition = {
+          protocol,
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: ['create'] }],
+            },
+          },
+        };
+        const encryptedDefinition = await installEncryptedProtocol(dwn, author, protocolDefinition);
+        return {
+          protocolDefinition,
+          encryptedDefinition,
+          roleRuleSet: encryptedDefinition.structure.member as ProtocolRuleSet,
+        };
+      }
+
+      async function createAudienceControlWriteWithFreshKey(input: {
+        author: Persona;
+        dateCreated?: string;
+        delegatedGrant?: DataEncodedRecordsWriteMessage;
+        protocol: string;
+        roleRuleSet: ProtocolRuleSet;
+        signer?: Persona;
+      }): Promise<AudienceControlWrite> {
+        const audienceKeyPersona = await TestDataGenerator.generateDidKeyPersona();
+        const publicKeyJwk = audienceKeyPersona.encryptionKeyPair.publicJwk;
+        const keyId = await Encryption.getKeyId(publicKeyJwk);
+
+        return createAudienceControlWrite({
+          author           : input.author,
+          dateCreated      : input.dateCreated,
+          delegatedGrant   : input.delegatedGrant,
+          payloadOverrides : { keyId, publicKeyJwk },
+          protocol         : input.protocol,
+          rolePath         : 'member',
+          roleRuleSet      : input.roleRuleSet,
+          signer           : input.signer,
+          tags             : { keyId },
+        });
+      }
+
+      async function queryAudienceRecordIds(input: {
+        tenant: string;
+        requester: Persona;
+        protocol: string;
+        keyId?: string;
+      }): Promise<string[]> {
+        const tags: Record<string, string> = {
+          protocol  : input.protocol,
+          rolePath  : 'member',
+          contextId : '',
+        };
+        if (input.keyId !== undefined) {
+          tags.keyId = input.keyId;
+        }
+
+        const query = await RecordsQuery.create({
+          filter: {
+            protocol     : input.protocol,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags,
+          },
+          signer: Jws.createSigner(input.requester),
+        });
+        const reply = await dwn.processMessage(input.tenant, query.message);
+        expect(reply.status.code).toBe(200);
+        return reply.entries?.map(entry => entry.recordId) ?? [];
+      }
 
       it('should reject when published is set to false with a dateSort set to sorting by `PublishedAscending` or `PublishedDescending`', async () => {
         const alice = await TestDataGenerator.generatePersona();
@@ -309,6 +394,269 @@ export function testRecordsQueryHandler(): void {
         const reply = await dwn.processMessage(alice.did, query.message);
         expect(reply.status.code).toBe(200);
         expect(reply.entries?.map(entry => entry.recordId)).not.toContain(audience.recordsWrite.message.recordId);
+      });
+
+      it('should project current audience records deterministically across ingestion order', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+        const { protocolDefinition, roleRuleSet } = await installAudienceProjectionProtocol(
+          alice,
+          'http://encryption-control-query-current-deterministic.xyz',
+        );
+        const dateCreated = Time.createOffsetTimestamp({ seconds: 1 });
+        const firstAudience = await createAudienceControlWriteWithFreshKey({
+          author   : bob,
+          dateCreated,
+          protocol : protocolDefinition.protocol,
+          roleRuleSet,
+        });
+        const secondAudience = await createAudienceControlWriteWithFreshKey({
+          author   : carol,
+          dateCreated,
+          protocol : protocolDefinition.protocol,
+          roleRuleSet,
+        });
+        const expectedRecordId = [firstAudience.recordsWrite.message.recordId, secondAudience.recordsWrite.message.recordId].sort()[0];
+
+        await processControlWrite(dwn, alice.did, firstAudience);
+        await processControlWrite(dwn, alice.did, secondAudience);
+        const firstOrderRecordIds = await queryAudienceRecordIds({
+          tenant    : alice.did,
+          requester : alice,
+          protocol  : protocolDefinition.protocol,
+        });
+
+        await messageStore.clear();
+        await dataStore.clear();
+        await resumableTaskStore.clear();
+        await installEncryptedProtocol(dwn, alice, {
+          ...protocolDefinition,
+          structure: {
+            member: {
+              $role    : true,
+              $actions : [{ who: 'anyone', can: ['create'] }],
+            },
+          },
+        });
+        await processControlWrite(dwn, alice.did, secondAudience);
+        await processControlWrite(dwn, alice.did, firstAudience);
+
+        const secondOrderRecordIds = await queryAudienceRecordIds({
+          tenant    : alice.did,
+          requester : alice,
+          protocol  : protocolDefinition.protocol,
+        });
+        expect(firstOrderRecordIds).toEqual([expectedRecordId]);
+        expect(secondOrderRecordIds).toEqual([expectedRecordId]);
+      });
+
+      it('should prefer tenant-signed audience records and treat author-delegated mints as non-tenant', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+        const { protocolDefinition, roleRuleSet } = await installAudienceProjectionProtocol(
+          alice,
+          'http://encryption-control-query-current-tenant-precedence.xyz',
+        );
+
+        const nonTenantAudience = await createAudienceControlWriteWithFreshKey({
+          author      : bob,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
+          protocol    : protocolDefinition.protocol,
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, nonTenantAudience);
+
+        const grant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : carol,
+          delegated : true,
+          scope     : {
+            interface    : DwnInterfaceName.Records,
+            method       : DwnMethodName.Write,
+            protocol     : protocolDefinition.protocol,
+            protocolPath : 'member',
+          },
+        });
+        expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+        const delegatedAudience = await createAudienceControlWriteWithFreshKey({
+          author         : alice,
+          dateCreated    : Time.createOffsetTimestamp({ seconds: 2 }),
+          delegatedGrant : grant.dataEncodedMessage,
+          protocol       : protocolDefinition.protocol,
+          roleRuleSet,
+          signer         : carol,
+        });
+        await processControlWrite(dwn, alice.did, delegatedAudience);
+
+        expect(await queryAudienceRecordIds({
+          tenant    : alice.did,
+          requester : alice,
+          protocol  : protocolDefinition.protocol,
+        })).toEqual([nonTenantAudience.recordsWrite.message.recordId]);
+
+        const tenantAudience = await createAudienceControlWriteWithFreshKey({
+          author      : alice,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 3 }),
+          protocol    : protocolDefinition.protocol,
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, tenantAudience);
+
+        expect(await queryAudienceRecordIds({
+          tenant    : alice.did,
+          requester : alice,
+          protocol  : protocolDefinition.protocol,
+        })).toEqual([tenantAudience.recordsWrite.message.recordId]);
+
+        const pagedQuery = await RecordsQuery.create({
+          filter: {
+            protocol     : protocolDefinition.protocol,
+            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags         : {
+              protocol  : protocolDefinition.protocol,
+              rolePath  : 'member',
+              contextId : '',
+            },
+          },
+          pagination : { limit: 1 },
+          signer     : Jws.createSigner(alice),
+        });
+        const pagedReply = await dwn.processMessage(alice.did, pagedQuery.message);
+        expect(pagedReply.status.code).toBe(200);
+        expect(pagedReply.entries?.map(entry => entry.recordId)).toEqual([tenantAudience.recordsWrite.message.recordId]);
+      });
+
+      it('should use oldest dateCreated for non-tenant audience projection and make later floods inert', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const { protocolDefinition, roleRuleSet } = await installAudienceProjectionProtocol(
+          alice,
+          'http://encryption-control-query-current-date-order.xyz',
+        );
+        const oldestAuthor = await TestDataGenerator.generateDidKeyPersona();
+        const oldestAudience = await createAudienceControlWriteWithFreshKey({
+          author      : oldestAuthor,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
+          protocol    : protocolDefinition.protocol,
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, oldestAudience);
+
+        for (let i = 0; i < 8; i++) {
+          const floodAuthor = await TestDataGenerator.generateDidKeyPersona();
+          const floodAudience = await createAudienceControlWriteWithFreshKey({
+            author      : floodAuthor,
+            dateCreated : Time.createOffsetTimestamp({ seconds: i + 2 }),
+            protocol    : protocolDefinition.protocol,
+            roleRuleSet,
+          });
+          await processControlWrite(dwn, alice.did, floodAudience);
+        }
+
+        expect(await queryAudienceRecordIds({
+          tenant    : alice.did,
+          requester : alice,
+          protocol  : protocolDefinition.protocol,
+        })).toEqual([oldestAudience.recordsWrite.message.recordId]);
+      });
+
+      it('should bypass current-key projection for exact keyId queries and RecordsRead by recordId', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const { protocolDefinition, roleRuleSet } = await installAudienceProjectionProtocol(
+          alice,
+          'http://encryption-control-query-current-exact-bypass.xyz',
+        );
+        const loserAudience = await createAudienceControlWriteWithFreshKey({
+          author      : bob,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
+          protocol    : protocolDefinition.protocol,
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, loserAudience);
+
+        const tenantAudience = await createAudienceControlWriteWithFreshKey({
+          author      : alice,
+          dateCreated : Time.createOffsetTimestamp({ seconds: 2 }),
+          protocol    : protocolDefinition.protocol,
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, tenantAudience);
+
+        expect(await queryAudienceRecordIds({
+          tenant    : alice.did,
+          requester : alice,
+          protocol  : protocolDefinition.protocol,
+          keyId     : loserAudience.keyId,
+        })).toEqual([loserAudience.recordsWrite.message.recordId]);
+
+        const recordsRead = await RecordsRead.create({
+          filter : { recordId: loserAudience.recordsWrite.message.recordId },
+          signer : Jws.createSigner(alice),
+        });
+        const readReply = await dwn.processMessage(alice.did, recordsRead.message);
+        expect(readReply.status.code).toBe(200);
+        expect(readReply.entry?.recordsWrite?.recordId).toBe(loserAudience.recordsWrite.message.recordId);
+      });
+
+      it('should not inject a current audience record that does not match an enumeration filter', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const { protocolDefinition, roleRuleSet } = await installAudienceProjectionProtocol(
+          alice,
+          'http://encryption-control-query-current-range-filter.xyz',
+        );
+        const currentDateCreated = Time.createOffsetTimestamp({ seconds: 1 });
+        const loserDateCreated = Time.createOffsetTimestamp({ seconds: 2 });
+        const currentAudience = await createAudienceControlWriteWithFreshKey({
+          author      : alice,
+          dateCreated : currentDateCreated,
+          protocol    : protocolDefinition.protocol,
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, currentAudience);
+
+        const loserAudience = await createAudienceControlWriteWithFreshKey({
+          author      : bob,
+          dateCreated : loserDateCreated,
+          protocol    : protocolDefinition.protocol,
+          roleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, loserAudience);
+
+        const rangeFilter = {
+          protocol     : protocolDefinition.protocol,
+          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          dateCreated  : { from: loserDateCreated },
+          tags         : {
+            protocol  : protocolDefinition.protocol,
+            rolePath  : 'member',
+            contextId : '',
+          },
+        };
+        const rangeQuery = await RecordsQuery.create({
+          filter : rangeFilter,
+          signer : Jws.createSigner(alice),
+        });
+        const rangeReply = await dwn.processMessage(alice.did, rangeQuery.message);
+        expect(rangeReply.status.code).toBe(200);
+        expect(rangeReply.entries?.map(entry => entry.recordId)).toEqual([]);
+
+        const exactLoserQuery = await RecordsQuery.create({
+          filter: {
+            ...rangeFilter,
+            tags: {
+              ...rangeFilter.tags,
+              keyId: loserAudience.keyId,
+            },
+          },
+          signer: Jws.createSigner(alice),
+        });
+        const exactLoserReply = await dwn.processMessage(alice.did, exactLoserQuery.message);
+        expect(exactLoserReply.status.code).toBe(200);
+        expect(exactLoserReply.entries?.map(entry => entry.recordId)).toEqual([loserAudience.recordsWrite.message.recordId]);
       });
 
       it('should return delivery control records only to the recipient', async () => {

@@ -614,7 +614,7 @@ async function installDefaultTestProtocolViaHttp(endpoint: string, persona: Pers
   });
   const responseBody = await response.json() as JsonRpcResponse;
   const { code, detail } = responseBody.result.reply.status;
-  if (code !== 202) {
+  if (code !== 202 && code !== 409) {
     throw new Error(`Failed to install default test protocol via HTTP: ${code} ${detail}`);
   }
 }

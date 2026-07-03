@@ -126,14 +126,13 @@ export class RecordsQueryHandler implements MethodHandler {
     };
 
     const messageSort = this.convertDateSort(dateSort);
-    return queryRecordsWithRecordLimitOccupancy({
-      messageStore          : this.deps.messageStore,
-      validationStateReader : this.deps.validationStateReader,
+    return this.queryRecordsWithVisibleControlFiltering({
       tenant,
-      filters               : [queryFilter],
+      recordsQuery,
+      requester : tenant,
+      filters   : [queryFilter],
       messageSort,
       pagination,
-      messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
     });
   }
 
@@ -257,6 +256,7 @@ export class RecordsQueryHandler implements MethodHandler {
       tenant, recordsQuery, requester, filters, messageSort, pagination
     } = input;
     const controlFilters = Records.buildControlRecordsFilters(filters);
+    const currentAudienceRecordIdCache = new Map<string, string | undefined>();
     if (controlFilters.length === 0) {
       const result = await queryRecordsWithRecordLimitOccupancy({
         messageStore          : this.deps.messageStore,
@@ -267,7 +267,16 @@ export class RecordsQueryHandler implements MethodHandler {
         pagination,
         messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
       });
-      return { messages: result.messages as RecordsQueryReplyEntry[], cursor: result.cursor };
+      return EncryptionControl.projectCurrentAudienceRecordPage({
+        messageStore : this.deps.messageStore,
+        tenant,
+        filters,
+        currentAudienceRecordIdCache,
+        result       : {
+          messages : result.messages as RecordsQueryReplyEntry[],
+          cursor   : result.cursor,
+        },
+      });
     }
 
     if (pagination?.limit === undefined || pagination.limit <= 0) {
@@ -280,9 +289,19 @@ export class RecordsQueryHandler implements MethodHandler {
         pagination,
         messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
       });
+      const projectedResult = await EncryptionControl.projectCurrentAudienceRecordPage({
+        messageStore : this.deps.messageStore,
+        tenant,
+        filters,
+        currentAudienceRecordIdCache,
+        result       : {
+          messages : result.messages as RecordsQueryReplyEntry[],
+          cursor   : result.cursor,
+        },
+      });
       return {
-        messages : await this.filterControlRecordsForRequester(tenant, recordsQuery, requester, result.messages as RecordsQueryReplyEntry[]),
-        cursor   : result.cursor,
+        messages : await this.filterControlRecordsForRequester(tenant, recordsQuery, requester, projectedResult.messages),
+        cursor   : projectedResult.cursor,
       };
     }
 
@@ -301,15 +320,25 @@ export class RecordsQueryHandler implements MethodHandler {
         pagination            : { ...pagination, cursor, limit: remainingLimit },
         messageTimestamp      : recordsQuery.message.descriptor.messageTimestamp,
       });
+      const projectedResult = await EncryptionControl.projectCurrentAudienceRecordPage({
+        messageStore : this.deps.messageStore,
+        tenant,
+        filters,
+        currentAudienceRecordIdCache,
+        result       : {
+          messages : result.messages as RecordsQueryReplyEntry[],
+          cursor   : result.cursor,
+        },
+      });
       const filteredMessages = await this.filterControlRecordsForRequester(
         tenant,
         recordsQuery,
         requester,
-        result.messages as RecordsQueryReplyEntry[],
+        projectedResult.messages,
       );
       visibleMessages.push(...filteredMessages);
-      nextCursor = result.cursor;
-      cursor = result.cursor;
+      nextCursor = projectedResult.cursor;
+      cursor = projectedResult.cursor;
     } while (visibleMessages.length < pagination.limit && cursor !== undefined);
 
     return { messages: visibleMessages, cursor: nextCursor };

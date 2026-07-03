@@ -143,13 +143,33 @@ export class RecordsCountHandler implements MethodHandler {
   }
 
   private async countProjectedRecords(tenant: string, recordsCount: RecordsCount, filters: Filter[]): Promise<number> {
-    return countRecordsWithRecordLimitOccupancy({
+    const totalCount = await countRecordsWithRecordLimitOccupancy({
       messageStore          : this.deps.messageStore,
       validationStateReader : this.deps.validationStateReader,
       tenant,
       filters,
       messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
     });
+
+    const audienceFilters = EncryptionControl.buildAudienceRecordFilters(filters);
+    if (audienceFilters.length === 0) {
+      return totalCount;
+    }
+
+    const storedAudienceCount = await this.deps.messageStore.count(tenant, audienceFilters);
+    if (storedAudienceCount === 0) {
+      return totalCount;
+    }
+
+    const { messages } = await this.deps.messageStore.query(tenant, audienceFilters);
+    const projectedAudienceMessages = await EncryptionControl.projectCurrentAudienceRecords({
+      messageStore         : this.deps.messageStore,
+      tenant,
+      recordsWriteMessages : messages.filter(Records.isRecordsWrite),
+      bypassFilters        : audienceFilters,
+    });
+
+    return totalCount - storedAudienceCount + projectedAudienceMessages.length;
   }
 
   private async countProjectedRecordsForRequester(
@@ -176,11 +196,17 @@ export class RecordsCountHandler implements MethodHandler {
       filters               : controlFilters,
       messageTimestamp      : recordsCount.message.descriptor.messageTimestamp,
     });
+    const projectedMessages = await EncryptionControl.projectCurrentAudienceRecords({
+      messageStore         : this.deps.messageStore,
+      tenant,
+      recordsWriteMessages : messages,
+      bypassFilters        : controlFilters,
+    });
     const visibleMessages = await EncryptionControl.filterVisibleControlRecords({
       tenant,
       incomingMessage       : recordsCount.message,
       requester,
-      recordsWriteMessages  : messages,
+      recordsWriteMessages  : projectedMessages,
       validationStateReader : this.deps.validationStateReader,
     });
     return totalCount - controlCount + visibleMessages.length;
