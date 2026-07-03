@@ -152,6 +152,32 @@ describe('TtlCache', () => {
     expect(disposed).toEqual(['key:value:stale']);
   });
 
+  it('should call timer unref with the timer as receiver', () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const timer = {
+      refed: true,
+      unref(): void {
+        this.refed = false;
+      },
+    };
+
+    globalThis.setTimeout = ((_handler: TimerHandler, _timeout?: number): ReturnType<typeof setTimeout> => {
+      return timer as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((_timer?: ReturnType<typeof setTimeout>): void => undefined) as typeof clearTimeout;
+
+    try {
+      const cache = new TtlCache({ ttl: 25 });
+      cache.set('key', 'value');
+
+      expect(timer.refed).toBe(false);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
   it('should cancel the background timer without synchronously purging stale entries', async () => {
     const disposed: string[] = [];
     const cache = new TtlCache<string, string>({

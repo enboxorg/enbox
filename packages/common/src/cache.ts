@@ -28,8 +28,8 @@ function assertTtl(ttl: number | undefined): asserts ttl is number {
 
 function unrefTimer(timer: TtlCacheTimer): void {
   if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
-    const { unref } = timer as { unref?: () => void };
-    unref?.();
+    const unrefableTimer = timer as TtlCacheTimer & { unref?: () => void };
+    unrefableTimer.unref?.();
   }
 }
 
