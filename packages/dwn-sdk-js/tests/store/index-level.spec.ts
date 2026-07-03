@@ -8,8 +8,8 @@ import { DwnErrorCode } from '../../src/index.js';
 import { IndexLevel } from '../../src/store/index-level.js';
 import { lexicographicalCompare } from '../../src/utils/string.js';
 import { SortDirection } from '../../src/types/query-types.js';
-import { Temporal } from '@js-temporal/polyfill';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
+import { Time } from '../../src/utils/time.js';
 import { v4 as uuid } from 'uuid';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
@@ -585,7 +585,7 @@ describe('IndexLevel', () => {
           const id = uuid();
           const doc = {
             id,
-            dateCreated: Temporal.PlainDateTime.from({ year: 2023, month: 1, day: 15 + i }).toString({ smallestUnit: 'microseconds' })
+            dateCreated: Time.createTimestamp({ year: 2023, month: 1, day: 15 + i })
           };
 
           await testIndex.put(tenant, id, doc);
@@ -593,7 +593,7 @@ describe('IndexLevel', () => {
 
         const filters = [{
           dateCreated: {
-            gte: Temporal.PlainDateTime.from({ year: 2023, month: 1, day: 15 }).toString({ smallestUnit: 'microseconds' })
+            gte: Time.createTimestamp({ year: 2023, month: 1, day: 15 })
           }
         }];
         const entries = await testIndex.query(tenant, filters, { sortProperty: 'id' });
