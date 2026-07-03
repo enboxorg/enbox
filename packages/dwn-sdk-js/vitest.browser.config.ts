@@ -70,7 +70,6 @@ export default defineConfig({
 
       // --- Dual-format packages (CJS default, ESM via exports) ---
       // Pre-bundling these avoids edge cases where Vite picks the CJS entry.
-      '@js-temporal/polyfill',
       '@noble/ciphers/aes.js',
       '@noble/ciphers/chacha.js',
       '@noble/ciphers/crypto.js',

@@ -30,12 +30,14 @@ describe('Time — fuzz', () => {
       fc.assert(
         fc.property(
           fc.record({
-            year   : fc.integer({ min: 1, max: 9999 }),
-            month  : fc.integer({ min: 1, max: 12 }),
-            day    : fc.integer({ min: 1, max: 28 }), // 28 is always valid
-            hour   : fc.integer({ min: 0, max: 23 }),
-            minute : fc.integer({ min: 0, max: 59 }),
-            second : fc.integer({ min: 0, max: 59 }),
+            year        : fc.integer({ min: 1, max: 9999 }),
+            month       : fc.integer({ min: 1, max: 12 }),
+            day         : fc.integer({ min: 1, max: 28 }), // 28 is always valid
+            hour        : fc.integer({ min: 0, max: 23 }),
+            minute      : fc.integer({ min: 0, max: 59 }),
+            second      : fc.integer({ min: 0, max: 59 }),
+            millisecond : fc.integer({ min: 0, max: 999 }),
+            microsecond : fc.integer({ min: 0, max: 999 }),
           }),
           (opts) => {
             const timestamp = Time.createTimestamp(opts);
@@ -51,16 +53,18 @@ describe('Time — fuzz', () => {
   describe('createTimestamp — format consistency', () => {
     it('should always produce ISO-8601 timestamps ending with Z (UTC) and microsecond precision', () => {
       // Pattern: YYYY-MM-DDTHH:MM:SS.xxxxxxZ
-      const isoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+      const isoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
       fc.assert(
         fc.property(
           fc.record({
-            year   : fc.integer({ min: 1, max: 9999 }),
-            month  : fc.integer({ min: 1, max: 12 }),
-            day    : fc.integer({ min: 1, max: 28 }),
-            hour   : fc.integer({ min: 0, max: 23 }),
-            minute : fc.integer({ min: 0, max: 59 }),
-            second : fc.integer({ min: 0, max: 59 }),
+            year        : fc.integer({ min: 1, max: 9999 }),
+            month       : fc.integer({ min: 1, max: 12 }),
+            day         : fc.integer({ min: 1, max: 28 }),
+            hour        : fc.integer({ min: 0, max: 23 }),
+            minute      : fc.integer({ min: 0, max: 59 }),
+            second      : fc.integer({ min: 0, max: 59 }),
+            millisecond : fc.integer({ min: 0, max: 999 }),
+            microsecond : fc.integer({ min: 0, max: 999 }),
           }),
           (opts) => {
             const timestamp = Time.createTimestamp(opts);
@@ -77,12 +81,14 @@ describe('Time — fuzz', () => {
       fc.assert(
         fc.property(
           fc.record({
-            year   : fc.integer({ min: 100, max: 9000 }),
-            month  : fc.integer({ min: 1, max: 12 }),
-            day    : fc.integer({ min: 1, max: 28 }),
-            hour   : fc.integer({ min: 0, max: 23 }),
-            minute : fc.integer({ min: 0, max: 59 }),
-            second : fc.integer({ min: 0, max: 59 }),
+            year        : fc.integer({ min: 100, max: 9000 }),
+            month       : fc.integer({ min: 1, max: 12 }),
+            day         : fc.integer({ min: 1, max: 28 }),
+            hour        : fc.integer({ min: 0, max: 23 }),
+            minute      : fc.integer({ min: 0, max: 59 }),
+            second      : fc.integer({ min: 0, max: 59 }),
+            millisecond : fc.integer({ min: 0, max: 999 }),
+            microsecond : fc.integer({ min: 0, max: 999 }),
           }),
           fc.integer({ min: 1, max: 86400 }),
           (opts, offsetSeconds) => {

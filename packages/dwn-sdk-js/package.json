@@ -68,7 +68,6 @@
     "@enbox/crypto": "workspace:*",
     "@enbox/dids": "workspace:*",
     "@ipld/dag-cbor": "10.0.1",
-    "@js-temporal/polyfill": "0.4.4",
     "@noble/curves": "2.2.0",
     "ajv": "8.18.0",
     "interface-blockstore": "7.0.1",

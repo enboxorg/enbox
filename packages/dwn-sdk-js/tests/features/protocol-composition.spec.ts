@@ -2148,7 +2148,7 @@ export function testProtocolComposition(): void {
     });
 
     // =========================================================================
-    // Temporal correctness — incoming timestamp for cross-protocol lookups
+    // Timestamp correctness — incoming timestamp for cross-protocol lookups
     // =========================================================================
 
     describe('temporal correctness — incoming message timestamp', () => {

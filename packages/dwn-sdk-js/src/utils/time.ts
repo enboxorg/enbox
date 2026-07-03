@@ -1,6 +1,23 @@
 import { sleep } from '@enbox/common';
-import { Temporal } from '@js-temporal/polyfill';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
+
+type ParsedTimestamp = {
+  epochMilliseconds: number;
+  microsecond: number;
+};
+
+type TimestampOptions = {
+  year?: number;
+  month?: number;
+  day?: number;
+  hour?: number;
+  minute?: number;
+  second?: number;
+  millisecond?: number;
+  microsecond?: number;
+};
+
+const timestampRegex = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{6})Z$/;
 
 /**
  * Time related utilities.
@@ -19,10 +36,9 @@ export class Time {
 
   /**
    * Returns an UTC ISO-8601 timestamp with microsecond precision accepted by DWN.
-   * using @js-temporal/polyfill
    */
   public static getCurrentTimestamp(): string {
-    return Temporal.Now.instant().toString({ smallestUnit: 'microseconds' });
+    return Time.formatUtcTimestamp(Date.now(), 0);
   }
 
   /**
@@ -30,21 +46,21 @@ export class Time {
    * @param options - Options for creating the timestamp.
    * @returns string
    */
-  public static createTimestamp(options: {
-    year?: number, month?: number, day?: number, hour?: number, minute?: number, second?: number, millisecond?: number, microsecond?: number
-  }): string {
-    const { year, month, day, hour, minute, second, millisecond, microsecond } = options;
-    return Temporal.ZonedDateTime.from({
-      timeZone: 'UTC',
-      year,
-      month,
-      day,
-      hour,
-      minute,
-      second,
-      millisecond,
-      microsecond
-    }).toInstant().toString({ smallestUnit: 'microseconds' });
+  public static createTimestamp(options: TimestampOptions): string {
+    const year = Time.constrainInteger(Time.requireTimestampField(options.year, 'year'), 0, 9999);
+    const month = Time.constrainInteger(Time.requireTimestampField(options.month, 'month'), 1, 12);
+    const day = Time.constrainInteger(Time.requireTimestampField(options.day, 'day'), 1, Time.daysInUtcMonth(year, month));
+    const hour = Time.constrainInteger(options.hour ?? 0, 0, 23);
+    const minute = Time.constrainInteger(options.minute ?? 0, 0, 59);
+    const second = Time.constrainInteger(options.second ?? 0, 0, 59);
+    const millisecond = Time.constrainInteger(options.millisecond ?? 0, 0, 999);
+    const microsecond = Time.constrainInteger(options.microsecond ?? 0, 0, 999);
+    const date = new Date(0);
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCFullYear(year, month - 1, day);
+    date.setUTCHours(hour, minute, second, millisecond);
+
+    return Time.formatUtcTimestamp(date.getTime(), microsecond);
   }
 
   /**
@@ -52,22 +68,124 @@ export class Time {
    * @param offset Negative number means offset into the past.
    */
   public static createOffsetTimestamp(offset: { seconds: number }, timestamp?: string): string {
-    const timestampInstant = timestamp ? Temporal.Instant.from(timestamp) : Temporal.Now.instant();
-    const offsetDuration = Temporal.Duration.from(offset);
-    const offsetInstant = timestampInstant.add(offsetDuration);
-    return offsetInstant.toString({ smallestUnit: 'microseconds' });
+    const parsedTimestamp = timestamp !== undefined ? Time.parseTimestamp(timestamp) : { epochMilliseconds: Date.now(), microsecond: 0 };
+    if (parsedTimestamp === undefined) {
+      throw new DwnError(DwnErrorCode.TimestampInvalid, `Invalid timestamp: ${timestamp}`);
+    }
+
+    const offsetSeconds = Time.requireWholeNumber(offset.seconds, 'seconds');
+    return Time.formatUtcTimestamp(parsedTimestamp.epochMilliseconds + (offsetSeconds * 1000), parsedTimestamp.microsecond);
   }
 
   /**
-   * Validates that the provided timestamp is a valid number
+   * Validates that the provided timestamp is a DWN-compatible UTC timestamp.
    * @param timestamp the timestamp to validate
-   * @throws DwnError if timestamp is not a valid number
+   * @throws DwnError if timestamp is invalid
    */
   public static validateTimestamp(timestamp: string): void {
-    try {
-      Temporal.Instant.from(timestamp);
-    } catch {
+    if (Time.parseTimestamp(timestamp) === undefined) {
       throw new DwnError(DwnErrorCode.TimestampInvalid, `Invalid timestamp: ${timestamp}`);
     }
+  }
+
+  private static constrainInteger(value: number, min: number, max: number): number {
+    if (!Number.isFinite(value)) {
+      throw new RangeError('timestamp field must be finite');
+    }
+
+    const integer = Math.trunc(value);
+    return Math.min(Math.max(integer, min), max);
+  }
+
+  private static daysInUtcMonth(year: number, month: number): number {
+    const date = new Date(0);
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCFullYear(year, month, 0);
+
+    return date.getUTCDate();
+  }
+
+  private static formatUtcTimestamp(epochMilliseconds: number, microsecond: number): string {
+    if (!Number.isFinite(epochMilliseconds)) {
+      throw new RangeError('timestamp is outside the supported Date range');
+    }
+
+    const date = new Date(epochMilliseconds);
+    const year = date.getUTCFullYear();
+    if (year < 0 || year > 9999) {
+      throw new RangeError('timestamp year must be between 0000 and 9999');
+    }
+
+    const fraction = String((date.getUTCMilliseconds() * 1000) + microsecond).padStart(6, '0');
+    return `${Time.pad(year, 4)}-${Time.pad(date.getUTCMonth() + 1, 2)}-${Time.pad(date.getUTCDate(), 2)}` +
+      `T${Time.pad(date.getUTCHours(), 2)}:${Time.pad(date.getUTCMinutes(), 2)}:${Time.pad(date.getUTCSeconds(), 2)}.${fraction}Z`;
+  }
+
+  private static pad(value: number, length: number): string {
+    return String(value).padStart(length, '0');
+  }
+
+  private static parseTimestamp(timestamp: string): ParsedTimestamp | undefined {
+    const match = timestampRegex.exec(timestamp);
+    if (match === null) {
+      return undefined;
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6]);
+    const fraction = match[7];
+    const millisecond = Number(fraction.slice(0, 3));
+    const microsecond = Number(fraction.slice(3));
+    const isLeapSecond = hour === 23 && minute === 59 && second === 60;
+
+    if (
+      month < 1 ||
+      month > 12 ||
+      day < 1 ||
+      day > Time.daysInUtcMonth(year, month) ||
+      hour > 23 ||
+      minute > 59 ||
+      (second > 59 && !isLeapSecond)
+    ) {
+      return undefined;
+    }
+
+    const date = new Date(0);
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCFullYear(year, month - 1, day);
+    date.setUTCHours(hour, minute, isLeapSecond ? 59 : second, millisecond);
+
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day ||
+      date.getUTCHours() !== hour ||
+      date.getUTCMinutes() !== minute ||
+      date.getUTCSeconds() !== (isLeapSecond ? 59 : second)
+    ) {
+      return undefined;
+    }
+
+    return { epochMilliseconds: date.getTime(), microsecond };
+  }
+
+  private static requireTimestampField(value: number | undefined, fieldName: string): number {
+    if (value === undefined) {
+      throw new TypeError(`required property '${fieldName}' missing or undefined`);
+    }
+
+    return value;
+  }
+
+  private static requireWholeNumber(value: number, fieldName: string): number {
+    if (!Number.isFinite(value) || !Number.isInteger(value)) {
+      throw new RangeError(`${fieldName} must be a finite integer`);
+    }
+
+    return value;
   }
 }
