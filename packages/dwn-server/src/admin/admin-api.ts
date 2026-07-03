@@ -1,3 +1,4 @@
+import type * as SimpleWebAuthnServer from '@simplewebauthn/server';
 import type { ActivityLog } from './activity-log.js';
 import type { AdminPasskeyStore } from './admin-passkey-store.js';
 import type { AdminSessionManager } from './admin-session.js';
@@ -25,15 +26,8 @@ import type {
   TenantQuotaInput,
   TenantQuotaStatus,
 } from './types.js';
-import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 
 import log from 'loglevel';
-import {
-  generateAuthenticationOptions,
-  generateRegistrationOptions,
-  verifyAuthenticationResponse,
-  verifyRegistrationResponse,
-} from '@simplewebauthn/server';
 
 import { validateAdminAuth } from './admin-auth.js';
 import {
@@ -44,6 +38,11 @@ import {
   websocketSubscriptions,
 } from '../metrics.js';
 
+type WebAuthnServerModule = typeof SimpleWebAuthnServer;
+type WebAuthnServerLoader = () => Promise<WebAuthnServerModule>;
+
+const defaultWebAuthnServerLoader: WebAuthnServerLoader = async (): Promise<WebAuthnServerModule> => import('@simplewebauthn/server');
+
 /** Parses a string to an integer, returning `defaultValue` when the input is null or non-numeric. */
 function parseIntOrDefault(value: string | null, defaultValue: number): number {
   if (value === null) {
@@ -51,6 +50,29 @@ function parseIntOrDefault(value: string | null, defaultValue: number): number {
   }
   const parsed = parseInt(value, 10);
   return Number.isNaN(parsed) ? defaultValue : parsed;
+}
+
+/** Returns `true` when the optional WebAuthn server package itself is missing. */
+function isMissingWebAuthnServerDependency(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message;
+  return (
+    message.includes('Cannot find package @simplewebauthn/server') ||
+    message.includes('Cannot find package \'@simplewebauthn/server\'') ||
+    message.includes('Cannot find module @simplewebauthn/server') ||
+    message.includes('Cannot find module \'@simplewebauthn/server\'')
+  );
+}
+
+/** Builds the response returned when passkey routes are used without the optional WebAuthn dependency installed. */
+function webAuthnServerUnavailableResponse(): Response {
+  return Response.json(
+    { error: 'Admin passkey support requires optional dependency @simplewebauthn/server. Install it to use passkey admin authentication.' },
+    { status: 501 },
+  );
 }
 
 /**
@@ -71,6 +93,7 @@ export class AdminApi {
   #webhookManager: WebhookManager | undefined;
   #passkeyStore: AdminPasskeyStore | undefined;
   #sessionManager: AdminSessionManager | undefined;
+  #webAuthnServerLoader: WebAuthnServerLoader = defaultWebAuthnServerLoader;
   /** In-memory challenge store: maps challenge → expiry timestamp. */
   readonly #challenges: Map<string, number> = new Map();
   /** Challenge TTL: 60 seconds. */
@@ -104,6 +127,7 @@ export class AdminApi {
     webhookManager? : WebhookManager;
     passkeyStore? : AdminPasskeyStore;
     sessionManager? : AdminSessionManager;
+    webAuthnServerLoader? : WebAuthnServerLoader;
     packageInfo? : { version?: string };
   }): AdminApi {
     const api = new AdminApi();
@@ -120,6 +144,7 @@ export class AdminApi {
     api.#webhookManager = options.webhookManager;
     api.#passkeyStore = options.passkeyStore;
     api.#sessionManager = options.sessionManager;
+    api.#webAuthnServerLoader = options.webAuthnServerLoader ?? defaultWebAuthnServerLoader;
     api.#packageInfo = options.packageInfo ?? {};
     return api;
   }
@@ -1324,6 +1349,11 @@ export class AdminApi {
       );
     }
 
+    const webAuthn = await this.#getWebAuthnServer();
+    if (webAuthn instanceof Response) {
+      return webAuthn;
+    }
+
     let body: { name?: string };
     try {
       body = await req.json() as { name?: string };
@@ -1341,7 +1371,7 @@ export class AdminApi {
       transports : JSON.parse(cred.transports) as AuthenticatorTransport[],
     }));
 
-    const options = await generateRegistrationOptions({
+    const options = await webAuthn.generateRegistrationOptions({
       rpName,
       rpID                   : rpId,
       userName               : 'admin',
@@ -1372,7 +1402,12 @@ export class AdminApi {
       );
     }
 
-    let body: { credential: RegistrationResponseJSON; name?: string };
+    const webAuthn = await this.#getWebAuthnServer();
+    if (webAuthn instanceof Response) {
+      return webAuthn;
+    }
+
+    let body: { credential: SimpleWebAuthnServer.RegistrationResponseJSON; name?: string };
     try {
       body = await req.json() as typeof body;
     } catch {
@@ -1388,7 +1423,7 @@ export class AdminApi {
 
     let verification;
     try {
-      verification = await verifyRegistrationResponse({
+      verification = await webAuthn.verifyRegistrationResponse({
         response          : body.credential,
         expectedChallenge : (challenge: string): boolean => this.#consumeChallenge(challenge),
         expectedOrigin,
@@ -1432,6 +1467,11 @@ export class AdminApi {
       return Response.json({ error: 'Passkeys are not enabled.' }, { status: 501 });
     }
 
+    const webAuthn = await this.#getWebAuthnServer();
+    if (webAuthn instanceof Response) {
+      return webAuthn;
+    }
+
     const existing = await this.#passkeyStore.list();
     if (existing.length === 0) {
       return Response.json({ error: 'No passkeys registered.' }, { status: 404 });
@@ -1444,7 +1484,7 @@ export class AdminApi {
       transports : JSON.parse(cred.transports) as AuthenticatorTransport[],
     }));
 
-    const options = await generateAuthenticationOptions({
+    const options = await webAuthn.generateAuthenticationOptions({
       rpID             : rpId,
       allowCredentials,
       userVerification : 'preferred',
@@ -1468,7 +1508,12 @@ export class AdminApi {
       return Response.json({ error: 'Passkeys are not enabled.' }, { status: 501 });
     }
 
-    let body: { credential: AuthenticationResponseJSON };
+    const webAuthn = await this.#getWebAuthnServer();
+    if (webAuthn instanceof Response) {
+      return webAuthn;
+    }
+
+    let body: { credential: SimpleWebAuthnServer.AuthenticationResponseJSON };
     try {
       body = await req.json() as typeof body;
     } catch {
@@ -1490,7 +1535,7 @@ export class AdminApi {
 
     let verification;
     try {
-      verification = await verifyAuthenticationResponse({
+      verification = await webAuthn.verifyAuthenticationResponse({
         response          : body.credential,
         expectedChallenge : (challenge: string): boolean => this.#consumeChallenge(challenge),
         expectedOrigin,
@@ -1585,6 +1630,21 @@ export class AdminApi {
       return new URL(this.#config.baseUrl).hostname;
     } catch {
       return 'localhost';
+    }
+  }
+
+  /**
+   * Loads the optional WebAuthn server implementation when passkey operations need it.
+   */
+  async #getWebAuthnServer(): Promise<WebAuthnServerModule | Response> {
+    try {
+      return await this.#webAuthnServerLoader();
+    } catch (error) {
+      if (isMissingWebAuthnServerDependency(error)) {
+        return webAuthnServerUnavailableResponse();
+      }
+
+      throw error;
     }
   }
 
