@@ -2,7 +2,8 @@ import { Level } from 'level';
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
-import { LevelStore, MemoryStore } from '../src/stores.js';
+import { LevelStore } from '../src/level-store.js';
+import { MemoryStore } from '../src/stores.js';
 
 describe('LevelStore', () => {
   let levelStore: LevelStore<string, string>;

@@ -147,7 +147,6 @@
       "version": "0.1.1",
       "dependencies": {
         "@isaacs/ttlcache": "1.4.1",
-        "level": "8.0.1",
         "multiformats": "14.0.3",
       },
       "devDependencies": {
@@ -162,6 +161,14 @@
         "typescript": "5.9.3",
         "vitest": "4.0.18",
       },
+      "peerDependencies": {
+        "abstract-level": "1.0.4",
+        "level": "8.0.1",
+      },
+      "optionalPeers": [
+        "abstract-level",
+        "level",
+      ],
     },
     "packages/crypto": {
       "name": "@enbox/crypto",

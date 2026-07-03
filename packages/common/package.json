@@ -53,6 +53,10 @@
     ".": {
       "types": "./dist/types/index.d.ts",
       "import": "./dist/esm/index.js"
+    },
+    "./level-store": {
+      "types": "./dist/types/level-store.d.ts",
+      "import": "./dist/esm/level-store.js"
     }
   },
   "react-native": "./dist/esm/index.js",
@@ -73,8 +77,19 @@
   },
   "dependencies": {
     "@isaacs/ttlcache": "1.4.1",
-    "level": "8.0.1",
     "multiformats": "14.0.3"
+  },
+  "peerDependencies": {
+    "abstract-level": "1.0.4",
+    "level": "8.0.1"
+  },
+  "peerDependenciesMeta": {
+    "abstract-level": {
+      "optional": true
+    },
+    "level": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "22.19.15",

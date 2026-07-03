@@ -20,7 +20,7 @@ import { DwnIdentityStore } from './store-identity.js';
 import { DwnKeyStore } from './store-key.js';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { HdIdentityVault } from './hd-identity-vault.js';
-import { LevelStore } from '@enbox/common';
+import { LevelStore } from '@enbox/common/level-store';
 import { LocalKeyManager } from './local-key-manager.js';
 import { SyncEngineLevel } from './sync-engine-level.js';
 import { DidDht, DidJwk } from '@enbox/dids';

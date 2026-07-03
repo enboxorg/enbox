@@ -1,11 +1,10 @@
+import type { IdentityVaultBackup } from '../src/types/identity-vault.js';
 import type { KeyValueStore } from '@enbox/common';
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { LevelStore, MemoryStore } from '@enbox/common';
-
-import type { IdentityVaultBackup } from '../src/types/identity-vault.js';
-
 import { HdIdentityVault } from '../src/hd-identity-vault.js';
+import { LevelStore } from '@enbox/common/level-store';
+import { MemoryStore } from '@enbox/common';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 describe('HdIdentityVault', () => {
   ['MemoryStore', 'LevelStore'].forEach((vaultStoreType) => {
